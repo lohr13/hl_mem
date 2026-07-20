@@ -55,13 +55,53 @@ class ClaimRepository:
         self.connection.commit()
         return cursor.rowcount == 1
 
+    def find_active(self, namespace: str, subject_entity_id: str | None) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? AND subject_entity_id IS ? "
+            "AND status='active'", (namespace, subject_entity_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def find_by_conflict_key(self, conflict_key: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM claims WHERE conflict_key=? AND status IN ('active','candidate','disputed')",
+            (conflict_key,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_embedded(self, as_of: str | None = None) -> list[dict[str, Any]]:
+        reference = as_of or datetime.now(timezone.utc).isoformat()
+        statuses = "('active','disputed','superseded')" if as_of else "('active','disputed')"
+        rows = self.connection.execute(
+            f"SELECT * FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
+            "AND (valid_from IS NULL OR valid_from<=?) AND (valid_to IS NULL OR valid_to>?) "
+            "AND (expires_at IS NULL OR expires_at>?)", (reference, reference, reference),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def supersede(self, old_id: str, new_valid_from: str) -> None:
+        self.connection.execute(
+            "UPDATE claims SET status='superseded',valid_to=?,recorded_to=? WHERE id=?",
+            (new_valid_from, new_valid_from, old_id),
+        )
+        self.connection.commit()
+
+    def retract(self, claim_id: str) -> bool:
+        cursor = self.connection.execute(
+            "UPDATE claims SET status='retracted',embedding_dense=NULL,embedding_sparse=NULL WHERE id=?",
+            (claim_id,),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
     def search_claims_fts(
         self, query: str, limit: int = 20, as_of: str | None = None
     ) -> list[dict[str, Any]]:
         reference = as_of or datetime.now(timezone.utc).isoformat()
+        statuses = "('active','disputed','superseded')" if as_of else "('active','disputed')"
         rows = self.connection.execute(
             "SELECT c.* FROM claims_fts f JOIN claims c ON c.rowid=f.rowid "
-            "WHERE claims_fts MATCH ? AND c.status IN ('active','disputed') "
+            f"WHERE claims_fts MATCH ? AND c.status IN {statuses} "
             "AND (c.valid_from IS NULL OR c.valid_from<=?) "
             "AND (c.valid_to IS NULL OR c.valid_to>?) "
             "AND (c.expires_at IS NULL OR c.expires_at>?) "

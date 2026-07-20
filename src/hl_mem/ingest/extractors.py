@@ -22,6 +22,7 @@ class FakeExtractor:
     """Small deterministic rule extractor used without an LLM or network."""
 
     patterns = (
+        (re.compile(r"现在(?:用|使用)\s*(.+?)(?:[。！!]|$)"), "preference"),
         (re.compile(r"我喜欢\s*(.+?)(?:[。！!]|$)"), "preference"),
         (re.compile(r"记住\s*(.+?)(?:[。！!]|$)"), "explicit_memory"),
         (re.compile(r"使用\s*(.+?)(?:[。！!]|$)"), "uses"),
@@ -39,6 +40,7 @@ class FakeExtractor:
                         predicate=predicate,
                         value=match.group(1).strip(),
                         volatility="ephemeral" if predicate == "service_status" else "stable",
+                        qualifiers={"state_change": True} if text.startswith("现在") else {},
                     )
                 )
                 break
