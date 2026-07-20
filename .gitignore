@@ -7,3 +7,6 @@ __pycache__/
 dist/
 build/
 .venv/
+hl_mem_test.db
+hl_mem_budget_test.json
+.env
