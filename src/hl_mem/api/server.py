@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -12,12 +11,9 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hl_mem.api.pipeline import hybrid_claims, new_id, stale_observations, store_extracted
+from hl_mem.api.pipeline import hybrid_claims, new_id, stale_observations
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
-from hl_mem.ingest.event_filter import EventFilter
-from hl_mem.ingest.extractors import ExtractedClaim, FakeExtractor
-from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import ClaimRepository, EventRepository, EvidenceRepository, JobRepository
 
@@ -72,12 +68,8 @@ def _make_embedder() -> Any:
 
 def create_app(database_path: str | Path | None = None) -> FastAPI:
     path = database_path or os.getenv("HL_MEM_DB_PATH", "hl_mem.db")
-    database, event_filter, embedder = Database(path), EventFilter(), _make_embedder()
+    database, embedder = Database(path), _make_embedder()
     budget = TokenBudget(int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")), Path(path).with_suffix(".budget.json"))
-    extractor_name = os.getenv("HL_MEM_EXTRACTOR", "fake").lower()
-    extractor: Any = FakeExtractor() if extractor_name == "fake" else LLMExtractor(
-        os.environ["LLM_API_KEY"], os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
-        os.getenv("LLM_MODEL", "qwen3.7-plus"))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -87,7 +79,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         database.close()
 
     app = FastAPI(title="HL-Mem", lifespan=lifespan)
-    app.state.db, app.state.token_budget, app.state.extractor = database, budget, extractor
+    app.state.db, app.state.token_budget = database, budget
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -110,7 +102,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
                      content_hash=hashlib.sha256(content_json.encode()).hexdigest())
         created = events.insert_event(event)
         if created:
-            _queue_and_extract(connection, event, content, timestamp, event_filter, budget, extractor, embedder)
+            _queue_event(connection, event_id, timestamp)
         return {"id": event_id, "created": created}
 
     @app.post("/v1/recall")
@@ -140,12 +132,14 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         text = payload.text or payload.content
         if not text:
             raise HTTPException(422, "text or content is required")
+        memory = {"text": text, "subject": payload.subject, "predicate": payload.predicate,
+                  "qualifiers": payload.qualifiers}
         event = {"id": event_id, "idempotency_key": None, "tenant_id": "default", "event_type": "explicit_memory",
-                 "actor_type": "user", "content_json": json.dumps({"text": text}, ensure_ascii=False),
+                 "actor_type": "user", "content_json": json.dumps({"text": text, "memory": memory}, ensure_ascii=False),
                  "occurred_at": now, "recorded_at": now}
         EventRepository(database.open()).insert_event(event)
-        claim = ExtractedClaim(payload.predicate, text, 1.0, "stable", payload.subject, payload.qualifiers)
-        return {"id": store_extracted(database.open(), claim, event, now, embedder, "high")}
+        _queue_event(database.open(), event_id, now)
+        return {"id": event_id}
 
     @app.delete("/v1/memories/{memory_id}")
     def forget(memory_id: str) -> dict[str, Any]:
@@ -163,30 +157,17 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
                 "claims": connection.execute("SELECT count(*) FROM claims").fetchone()[0],
                 "tokens_today": token_stats["used_tokens"], "jobs_pending": connection.execute(
                     "SELECT count(*) FROM jobs WHERE status='pending'").fetchone()[0]}
+
+    @app.get("/v1/jobs")
+    def jobs() -> dict[str, int]:
+        return JobRepository(database.open()).counts()
     return app
 
 
-def _queue_and_extract(connection: Any, event: dict[str, Any], content: dict[str, Any], now: str,
-                       event_filter: EventFilter, budget: TokenBudget, extractor: Any, embedder: Any) -> None:
-    should_extract, reason = event_filter.should_extract({**event, "content": content})
-    if not should_extract:
-        logging.getLogger(__name__).info("event extraction skipped: %s", reason)
-        return
+def _queue_event(connection: Any, event_id: str, now: str) -> None:
     JobRepository(connection).insert_job({"id": new_id(), "job_type": "extract_event",
-        "payload_json": json.dumps({"event_id": event["id"]}), "idempotency_key": f"extract:{event['id']}",
+        "payload_json": json.dumps({"event_id": event_id}), "idempotency_key": f"extract:{event_id}",
         "created_at": now, "updated_at": now})
-    if not budget.can_spend(max(1, len(json.dumps(content, ensure_ascii=False)) // 2)):
-        return
-    try:
-        extracted = extractor.extract(content, event) if isinstance(extractor, LLMExtractor) else extractor.extract(content)
-    except Exception:
-        logging.getLogger(__name__).exception("event extraction failed; job remains pending")
-        return
-    if isinstance(extractor, LLMExtractor):
-        budget.record_usage(extractor.last_usage_tokens)
-        event["extractor"] = "llm"
-    for claim in extracted:
-        store_extracted(connection, claim, event, now, embedder)
 
 
 app = create_app()

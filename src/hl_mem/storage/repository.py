@@ -19,8 +19,6 @@ def _insert(connection: sqlite3.Connection, table: str, data: dict[str, Any]) ->
     )
     connection.commit()
     return connection.total_changes > before
-
-
 class EventRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -38,8 +36,6 @@ class EventRepository:
             (query, limit),
         ).fetchall()
         return [dict(row) for row in rows]
-
-
 class ClaimRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -109,8 +105,6 @@ class ClaimRepository:
             (query, reference, reference, reference, limit),
         ).fetchall()
         return [dict(row) for row in rows]
-
-
 class EvidenceRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -131,8 +125,6 @@ class EvidenceRepository:
             (evidence_type, evidence_id),
         ).fetchall()
         return [dict(row) for row in rows]
-
-
 class JobRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -140,28 +132,50 @@ class JobRepository:
     def insert_job(self, job: dict[str, Any]) -> bool:
         return _insert(self.connection, "jobs", job)
 
-    def lease_job(self, job_type: str, leased_until: str) -> dict[str, Any] | None:
-        row = self.connection.execute(
-            "SELECT * FROM jobs WHERE job_type=? AND status='pending' "
-            "AND (run_after IS NULL OR run_after<=CURRENT_TIMESTAMP) ORDER BY created_at LIMIT 1",
-            (job_type,),
-        ).fetchone()
-        if not row:
-            return None
-        self.connection.execute(
-            "UPDATE jobs SET status='running', leased_until=?, attempts=attempts+1 WHERE id=?",
-            (leased_until, row["id"]),
-        )
-        self.connection.commit()
-        return _row(self.connection.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
+    def lease_job(self, leased_until: str, updated_at: str) -> dict[str, Any] | None:
+        """Atomically claim the oldest runnable job across worker processes."""
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT id FROM jobs WHERE (status='pending' OR "
+                "(status='running' AND leased_until<?)) "
+                "AND (run_after IS NULL OR run_after<=?) ORDER BY created_at,id LIMIT 1",
+                (updated_at, updated_at),
+            ).fetchone()
+            if not row:
+                self.connection.commit()
+                return None
+            cursor = self.connection.execute(
+                "UPDATE jobs SET status='running',leased_until=?,updated_at=?,attempts=attempts+1 "
+                "WHERE id=? AND (status='pending' OR (status='running' AND leased_until<?))",
+                (leased_until, updated_at, row["id"], updated_at),
+            )
+            self.connection.commit()
+            if cursor.rowcount != 1:
+                return None
+            return _row(self.connection.execute(
+                "SELECT * FROM jobs WHERE id=?", (row["id"],)
+            ).fetchone())
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def complete_job(self, job_id: str, updated_at: str) -> bool:
         return self._finish(job_id, "succeeded", updated_at, None)
 
     def fail_job(self, job_id: str, error: str, updated_at: str) -> bool:
         row = self.connection.execute("SELECT attempts,max_attempts FROM jobs WHERE id=?", (job_id,)).fetchone()
-        status = "dead" if row and row["attempts"] >= row["max_attempts"] else "failed"
+        status = "dead" if row and row["attempts"] >= row["max_attempts"] else "pending"
         return self._finish(job_id, status, updated_at, error)
+
+    def counts(self) -> dict[str, int]:
+        counts = {key: 0 for key in ("pending", "running", "failed", "dead")}
+        rows = self.connection.execute(
+            "SELECT status,count(*) AS count FROM jobs GROUP BY status").fetchall()
+        for row in rows:
+            if row["status"] in counts:
+                counts[row["status"]] = row["count"]
+        return counts
 
     def _finish(self, job_id: str, status: str, updated_at: str, error: str | None) -> bool:
         cursor = self.connection.execute(
@@ -170,8 +184,6 @@ class JobRepository:
         )
         self.connection.commit()
         return cursor.rowcount == 1
-
-
 class DerivationRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
