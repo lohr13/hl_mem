@@ -13,6 +13,9 @@ class ExtractedClaim:
     value: str
     confidence: float = 0.9
     volatility: str = "stable"
+    subject: str = "用户"
+    qualifiers: dict[str, Any] | None = None
+    reason: str = ""
 
 
 class FakeExtractor:
