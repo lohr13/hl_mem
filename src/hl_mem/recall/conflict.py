@@ -68,4 +68,6 @@ class ConflictResolver:
                 qualifiers = json.loads(qualifiers)
             except json.JSONDecodeError:
                 qualifiers = {}
-        return bool(qualifiers.get("state_change") or qualifiers.get("current"))
+        return bool(
+            qualifiers.get("state_change") or qualifiers.get("current") or qualifiers.get("change")
+        )

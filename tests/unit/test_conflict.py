@@ -14,3 +14,10 @@ def test_deterministic_conflict_rules() -> None:
     assert resolver.resolve(base, {"predicate": "uses", "value_json": '"SQLite"'}) == "compatible"
     generic = {"predicate": "count", "value_json": "1", "source_authority": "high"}
     assert resolver.resolve(generic, {**generic, "value_json": "2"}) == "contradicts"
+
+
+def test_change_qualifier_signals_state_change() -> None:
+    resolver = ConflictResolver()
+    base = {"predicate": "偏好", "value_json": '"深色模式"', "source_authority": "medium"}
+    changed = {**base, "value_json": '"浅色模式"', "qualifiers": {"change": True}}
+    assert resolver.resolve(base, changed) == "state_change"

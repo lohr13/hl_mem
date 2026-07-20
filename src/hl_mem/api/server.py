@@ -61,7 +61,10 @@ def _make_embedder() -> Any:
         return FakeEmbedder(dim)
     if mode != "real":
         raise ValueError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
-    return Embedder(os.environ["EMBEDDING_API_KEY"], os.getenv(
+    api_key = os.getenv("EMBEDDING_API_KEY")
+    if not api_key:
+        return FakeEmbedder(dim)
+    return Embedder(api_key, os.getenv(
         "EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         os.getenv("EMBEDDING_MODEL", "text-embedding-v4"), dim)
 
