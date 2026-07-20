@@ -38,6 +38,15 @@ def test_should_memorize_false_returns_no_claims(monkeypatch) -> None:
     assert LLMExtractor("key", "https://example.test", "model").extract("闲聊") == []
 
 
+def test_normalizes_predicate_and_preserves_chinese_value(monkeypatch) -> None:
+    raw = ('{"claims":[{"subject":"用户","predicate":"Prefers",'
+           '"value":"深色模式","qualifiers":{}}],"should_memorize":true}')
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: Response(raw))
+    claim = LLMExtractor("key", "https://example.test", "model").extract("我喜欢深色模式")[0]
+    assert claim.predicate == "偏好"
+    assert claim.value == "深色模式"
+
+
 def test_invalid_json_is_rejected(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: Response("not json"))
     with pytest.raises(ValueError, match="valid JSON"):

@@ -111,10 +111,16 @@ class Worker:
     def _make_extractor(self) -> Any:
         if self.config.get("extractor_name", os.getenv("HL_MEM_EXTRACTOR", "fake")) == "fake":
             return FakeExtractor()
-        return LLMExtractor(os.environ["LLM_API_KEY"], os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"), os.getenv("LLM_MODEL", "qwen3.7-plus"))
+        api_key = os.getenv("LLM_API_KEY")
+        if not api_key:
+            return FakeExtractor()
+        return LLMExtractor(api_key, os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"), os.getenv("LLM_MODEL", "qwen3.7-plus"))
 
     def _make_embedder(self) -> Any:
         dim = int(self.config.get("embedding_dim", os.getenv("EMBEDDING_DIM", "2048")))
         if self.config.get("embedder_name", os.getenv("HL_MEM_EMBEDDER", "fake")) == "fake":
             return FakeEmbedder(dim)
-        return Embedder(os.environ["EMBEDDING_API_KEY"], os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), os.getenv("EMBEDDING_MODEL", "text-embedding-v4"), dim)
+        api_key = os.getenv("EMBEDDING_API_KEY")
+        if not api_key:
+            return FakeEmbedder(dim)
+        return Embedder(api_key, os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), os.getenv("EMBEDDING_MODEL", "text-embedding-v4"), dim)

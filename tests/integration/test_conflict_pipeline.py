@@ -18,3 +18,5 @@ def test_preference_state_change_and_history(tmp_path, monkeypatch) -> None:
         assert [item["text"] for item in current if item["type"] == "claim"] == ["浅色模式"]
         history = client.post("/v1/recall", json={"query": "深色", "as_of": "2026-01-15T00:00:00+00:00"}).json()
         assert any(item.get("text") == "深色模式" for item in history["results"])
+        subject_results = client.post("/v1/recall", json={"query": "用户"}).json()["results"]
+        assert any(item.get("text") == "浅色模式" for item in subject_results)

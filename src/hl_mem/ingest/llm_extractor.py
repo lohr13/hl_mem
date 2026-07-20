@@ -9,12 +9,21 @@ import httpx
 
 from .extractors import ExtractedClaim
 
-SYSTEM_PROMPT = """你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。
-输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、
-value、qualifiers、confidence、volatility、reason。volatility 只能是 ephemeral（实时状态或临时数据）或
-stable（偏好、配置和事实）。不要输出 JSON 以外的解释。"""
+SYSTEM_PROMPT = """你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、value、qualifiers、confidence、volatility、reason。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
+value 必须保持用户使用的原始语言：中文原文输出中文值，英文原文输出英文值，不要翻译。
+predicate 只能是以下标准值之一：偏好（喜欢或不喜欢的事物）、使用（工具、数据库、操作系统等技术选择）、状态（当前服务或运行状态）、身份（用户名、角色、联系方式）、配置（端口、路径、参数）、计划（计划事项、截止日期）、事实（其他客观事实）。
+subject 默认为“用户”；明确提到项目名或服务名时使用该名称；不要使用“我”“他”等代词。
+如果新事实与已有相同 subject+predicate 的事实不同，或文本包含“改用”“换成”“现在用”“不用了”“改为”等变更信号，在 qualifiers 中加入 \"change\": true。
+不要输出 JSON 以外的解释。"""
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
+PREDICATE_NORMALIZE = {
+    "prefers": "偏好", "preference": "偏好", "偏好": "偏好", "喜欢": "偏好",
+    "uses": "使用", "use": "使用", "使用": "使用", "用": "使用",
+    "status": "状态", "状态": "状态", "identity": "身份", "身份": "身份",
+    "config": "配置", "配置": "配置", "plan": "计划", "计划": "计划",
+    "fact": "事实", "事实": "事实",
+}
 
 
 class LLMExtractor:
@@ -87,9 +96,11 @@ class LLMExtractor:
     def _claim(item: dict[str, Any]) -> ExtractedClaim:
         value = str(item.get("value", "")).strip()
         value = ALIASES.get(value.casefold(), value)
+        predicate = str(item.get("predicate", "事实")).strip()
+        predicate = PREDICATE_NORMALIZE.get(predicate.casefold(), predicate)
         volatility = item.get("volatility", "stable")
         return ExtractedClaim(
-            predicate=str(item.get("predicate", "fact")), value=value,
+            predicate=predicate, value=value,
             confidence=float(item.get("confidence", 0.5)),
             volatility=volatility if volatility in {"stable", "ephemeral"} else "stable",
             subject=str(item.get("subject", "用户")), qualifiers=item.get("qualifiers") or {},
