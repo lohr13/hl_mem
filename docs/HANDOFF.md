@@ -1,7 +1,7 @@
 # HL-Mem 项目交接状态
 
 - 最后更新：2026-07-20
-- 当前阶段：架构设计完成，尚未开始实现
+- 当前阶段：首版（Phase 1-2）开发完成，35 测试全绿，真实 API 验证通过
 - 当前分支：`main`
 - 当前负责人：待定
 
@@ -33,28 +33,19 @@ HL-Mem 不直接复刻 MemOS 或 Hindsight，也不让 Hermes 同时加载两个
 - [x] 制定分阶段实现计划与验收指标。
 - [x] 完成 Hermes × Codex 三轮 review，形成并一致接受 `review/consensus.md` 首版方案。
 - [x] 将首版范围、Embedding 选型和 5 周排期固化为 ADR-0002。
+- [x] Week 1: 项目骨架 + SQLite Schema + API + FTS (7 tests)
+- [x] Week 2: LLM Extractor + Event Filter + Token Budget (19 tests)
+- [x] Week 3: Embedding + 去重 + Conflict + Observation + Forget (28 tests)
+- [x] Week 4: Worker + TTL + Hermes Provider (33 tests)
+- [x] Week 5: 真实 API 端到端验证 + prompt 调优 (35 tests)
+- [x] Prompt 调优：中文值保持 + predicate 标准化 + conflict 修复
 
 ## 下一步
 
-按共识排期执行，完成后更新本文件：
-
-| 周次 | 内容 |
-|---|---|
-| Week 1 | 项目骨架（uv + SQLite + 测试）、`events/claims/evidence_links/jobs` Schema、Repository 接口、30–50 条中文 NER + 检索测试集 |
-| Week 2 | 幂等 event 写入、LLM batch 提取、event filter、日 token 预算和证据链 |
-| Week 3 | `text-embedding-v4` 向量检索、去重、Observation 规则和 Conflict Key |
-| Week 4 | 单写 Worker、TTL/expire、forget 级联、Hermes Provider timeout/circuit breaker |
-| Week 5 | 联调、离线评测、压测，并替换 Hindsight 跑一周 |
-
-以下原始执行清单保留作为任务拆解参考；如与上表冲突，以上述共识排期和首版边界为准：
-
-1. 建立 Python 项目骨架、配置模型、日志和测试框架。
-2. 实现 SQLite 迁移及 `events`、`claims`、`derivations`、`jobs` 四个最小仓储。
-3. 实现 `POST /v1/events` 和幂等事件写入。
-4. 实现结构化候选提取接口，先使用可替换的 Fake Extractor 完成测试。
-5. 实现关键词召回、时间过滤和最小 `POST /v1/recall`。
-6. 实现 Hermes 独立 MemoryProvider 插件骨架。
-7. 建立最小端到端测试：两次会话写入，第三次会话能召回且带证据。
+- 调试偏好变更 supersede 边界 case（LLM 对“改用”的提取一致性）
+- 接入 Hermes MemoryProvider 正式替换 Hindsight 试跑
+- 根据实际使用反馈调优提取 prompt 和召回质量
+- 考虑开启 Phase 3（Mental Model）或 Phase 4（Experience 通道）
 
 ## 开始编码前需要确认但不阻塞设计的问题
 

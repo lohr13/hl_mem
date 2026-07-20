@@ -23,3 +23,7 @@
 - Decision：首版范围精简为 3 种记忆类型（event/claim/observation）、2 档 volatility（ephemeral/stable）、2 档 visibility（private/shared），[首版不实现] Experience 表。
 - 影响：`docs/README.md`、`docs/HANDOFF.md`、`docs/research/memos-vs-hindsight.md`、`docs/adr/0001-core-strategy.md`、`docs/architecture.md`、`docs/implementation-plan.md`。
 - 影响：所有设计文档；本轮具体更新 `docs/HANDOFF.md`、`docs/architecture.md`、`docs/implementation-plan.md`、`docs/CHANGELOG.md` 和 `docs/adr/0002-mvp-scope-and-embedding.md`。
+- Implemented：首版完整实现（Week 1-5），包括事件日志、LLM提取、混合检索、矛盾检测、TTL、遗忘、Worker、Hermes Provider。
+- Implemented：Prompt 调优（中文值保持、predicate 标准化、conflict 检测修复）。
+- Verified：qwen3.7-plus + text-embedding-v4 端到端验证通过。
+- Impact：全部 `src/` 和 `tests/`。
