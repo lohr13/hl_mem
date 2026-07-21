@@ -59,6 +59,22 @@ def test_narrowed_trigger_ignores_metadata_but_refreshes_text(tmp_path):
     assert connection.execute("SELECT count(*) FROM claims_fts WHERE claims_fts MATCH 'tea'").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("query", ["[", "]", "(", ")", ":", "*", "^", '"', "   "])
+@pytest.mark.parametrize("as_of", [None, NOW])
+def test_claim_fts_special_characters_do_not_raise(tmp_path, query, as_of):
+    connection = Database(tmp_path / "fts-special.db").open()
+    _claim(connection)
+
+    assert ClaimRepository(connection).search_claims_fts(query, as_of=as_of) == []
+
+
+def test_claim_fts_quoted_tokens_still_match_text(tmp_path):
+    connection = Database(tmp_path / "fts-literal.db").open()
+    _claim(connection)
+
+    assert [claim["id"] for claim in ClaimRepository(connection).search_claims_fts("likes tea")] == ["c"]
+
+
 def test_extracted_fields_are_appended_defaults():
     claim = ExtractedClaim("p", "v", .9, "stable", "s", {}, "r")
     assert claim.scope == "permanent" and claim.importance == .5
