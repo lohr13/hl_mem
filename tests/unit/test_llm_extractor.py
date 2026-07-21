@@ -79,4 +79,4 @@ def test_http_call_has_timeout_and_two_retries(monkeypatch) -> None:
     monkeypatch.setattr("hl_mem.ingest.llm_extractor.time.sleep", lambda _: None)
     with pytest.raises(httpx.ConnectError):
         LLMExtractor("key", "https://example.test", "model").extract("内容")
-    assert calls == [30.0, 30.0, 30.0]
+    assert calls == [90.0, 90.0, 90.0]
