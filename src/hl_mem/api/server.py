@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from hl_mem.api.pipeline import hybrid_claims, new_id, stale_observations
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
+from hl_mem.recall.reranker import FakeReranker, Reranker
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import ClaimRepository, EventRepository, EvidenceRepository, JobRepository
 
@@ -69,9 +70,24 @@ def _make_embedder() -> Any:
         os.getenv("EMBEDDING_MODEL", "text-embedding-v4"), dim)
 
 
+def _make_reranker() -> Any:
+    mode = os.getenv("HL_MEM_RERANKER", "off").lower()
+    if mode == "off":
+        return None
+    if mode == "fake":
+        return FakeReranker()
+    if mode != "real":
+        raise ValueError("HL_MEM_RERANKER must be 'off', 'fake', or 'real'")
+    return Reranker(
+        os.getenv("RERANKER_API_KEY", ""),
+        os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
+        os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
+    )
+
+
 def create_app(database_path: str | Path | None = None) -> FastAPI:
     path = database_path or os.getenv("HL_MEM_DB_PATH", "hl_mem.db")
-    database, embedder = Database(path), _make_embedder()
+    database, embedder, reranker = Database(path), _make_embedder(), _make_reranker()
     budget = TokenBudget(int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")), Path(path).with_suffix(".budget.json"))
 
     @asynccontextmanager
@@ -82,7 +98,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         database.close()
 
     app = FastAPI(title="HL-Mem", lifespan=lifespan)
-    app.state.db, app.state.token_budget = database, budget
+    app.state.db, app.state.token_budget, app.state.reranker = database, budget, reranker
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -112,7 +128,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     def recall(payload: RecallInput, request: Request) -> dict[str, Any]:
         connection = database.open()
         claims = hybrid_claims(ClaimRepository(connection), payload.query,
-                               embedder.embed_one(payload.query), payload.limit, payload.as_of)
+                               embedder.embed_one(payload.query), payload.limit, payload.as_of, reranker)
         evidence_repo, results = EvidenceRepository(connection), []
         for claim in claims:
             evidence = [{"type": "event", "id": link["evidence_id"]} for link in
