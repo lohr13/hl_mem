@@ -13,6 +13,7 @@ from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim, FakeExtractor
 from hl_mem.ingest.llm_extractor import LLMExtractor
+from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import EventRepository, JobRepository
 from hl_mem.workers.ttl import expire_claims
@@ -37,6 +38,7 @@ class Worker:
             int(self.config.get("daily_token_limit", os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000"))),
             self.db_path.with_suffix(".budget.json"),
         )
+        self.audit = self.config.get("audit") or NullAuditLogger()
 
     def run_once(self) -> dict[str, Any]:
         now = _now()
@@ -63,15 +65,17 @@ class Worker:
                 current = time.monotonic()
                 if current >= next_ttl:
                     expire_claims(self.connection)
+                    self.audit.cleanup(int(self.config.get("audit_retention_days", 30)))
                     next_ttl = current + 600.0
                 if self.run_once()["status"] == "idle":
                     time.sleep(poll_interval)
         finally:
+            self.audit.close()
             self.database.close()
 
     def _dispatch(self, job: dict[str, Any]) -> dict[str, Any]:
         if job["job_type"] == "extract_event":
-            return self._extract(json.loads(job["payload_json"] or "{}"))
+            return self._extract(json.loads(job["payload_json"] or "{}"), job["id"])
         if job["job_type"] == "expire_ttl":
             return expire_claims(self.connection)
         if job["job_type"] == "retry_failed":
@@ -82,41 +86,69 @@ class Worker:
             return {"retried": cursor.rowcount}
         raise ValueError(f"unknown job type: {job['job_type']}")
 
-    def _extract(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _extract(self, payload: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
         events = EventRepository(self.connection)
         event = events.get_event(payload["event_id"])
         if not event:
             raise ValueError(f"event not found: {payload['event_id']}")
-        content = json.loads(event["content_json"])
-        allowed, _ = self.filter.should_extract({**event, "content": content})
-        if not allowed:
-            return {"claims": 0}
-        estimate = max(1, len(event["content_json"]) // 2)
-        if not self.budget.can_spend(estimate):
-            raise RuntimeError("daily token budget exhausted")
-        if event["event_type"] == "explicit_memory" and content.get("memory"):
-            memory = content["memory"]
-            extracted = [ExtractedClaim(memory["predicate"], memory["text"], 1.0, "stable",
-                                        memory["subject"], memory.get("qualifiers") or {})]
-        else:
-            recent = events.get_recent_events(event["session_id"], event, 3) if event.get(
-                "session_id"
-            ) else []
-            event_context = {
-                "occurred_at": event["occurred_at"],
-                "recent_events": [
-                    {**item, "content": json.loads(item["content_json"])} for item in reversed(recent)
-                ],
-            }
-            extracted = self.extractor.extract(content, event_context) if isinstance(
-                self.extractor, LLMExtractor) else self.extractor.extract(content)
-        if isinstance(self.extractor, LLMExtractor):
-            self.budget.record_usage(self.extractor.last_usage_tokens)
-            event["extractor"] = "llm"
-        for claim in extracted:
-            authority = "high" if event["event_type"] == "explicit_memory" else None
-            store_extracted(self.connection, claim, event, _now(), self.embedder, authority)
-        return {"claims": len(extracted)}
+        with audit_scope(self.audit, trace_id=event["id"], event_id=event["id"], job_id=job_id,
+                         tenant_id=event.get("tenant_id", "default")):
+            content = json.loads(event["content_json"])
+            started = time.perf_counter_ns()
+            allowed, reason = self.filter.should_extract({**event, "content": content})
+            self.audit.emit("filter", "evaluated", "allow" if allowed else "reject",
+                            duration_us=(time.perf_counter_ns() - started) // 1000,
+                            detail={"reason": reason, "event_type": event["event_type"],
+                                    "actor_type": event["actor_type"],
+                                    "content_chars": len(event["content_json"])})
+            if not allowed:
+                return {"claims": 0}
+            estimate = max(1, len(event["content_json"]) // 2)
+            can_spend = self.budget.can_spend(estimate)
+            self.audit.emit("budget", "checked", "allow" if can_spend else "reject",
+                            detail={"estimated_tokens": estimate, **self.budget.get_stats()})
+            if not can_spend:
+                raise RuntimeError("daily token budget exhausted")
+            recent: list[dict[str, Any]] = []
+            started = time.perf_counter_ns()
+            try:
+                if event["event_type"] == "explicit_memory" and content.get("memory"):
+                    memory = content["memory"]
+                    extracted = [ExtractedClaim(memory["predicate"], memory["text"], 1.0,
+                                                "stable", memory["subject"],
+                                                memory.get("qualifiers") or {})]
+                else:
+                    recent = events.get_recent_events(event["session_id"], event, 3) if event.get(
+                        "session_id"
+                    ) else []
+                    event_context = {"occurred_at": event["occurred_at"], "recent_events": [
+                        {**item, "content": json.loads(item["content_json"])}
+                        for item in reversed(recent)]}
+                    extracted = self.extractor.extract(content, event_context) if isinstance(
+                        self.extractor, LLMExtractor) else self.extractor.extract(content)
+            except Exception as error:
+                self.audit.emit("extraction", "evaluated", "error",
+                                duration_us=(time.perf_counter_ns() - started) // 1000,
+                                detail={"extractor": type(self.extractor).__name__,
+                                        "error_class": type(error).__name__,
+                                        "error": str(error)[:256]})
+                raise
+            self.audit.emit("extraction", "evaluated", "claims" if extracted else "no_claims",
+                            duration_us=(time.perf_counter_ns() - started) // 1000,
+                            detail={"extractor": "explicit_memory" if event["event_type"] ==
+                                    "explicit_memory" else type(self.extractor).__name__,
+                                    "claim_count": len(extracted),
+                                    "context_event_ids": [item["id"] for item in recent]})
+            if isinstance(self.extractor, LLMExtractor):
+                self.budget.record_usage(self.extractor.last_usage_tokens)
+                self.audit.emit("budget", "recorded", "success",
+                                detail={"actual_tokens": self.extractor.last_usage_tokens,
+                                        **self.budget.get_stats()})
+                event["extractor"] = "llm"
+            for claim in extracted:
+                authority = "high" if event["event_type"] == "explicit_memory" else None
+                store_extracted(self.connection, claim, event, _now(), self.embedder, authority)
+            return {"claims": len(extracted)}
 
     def _make_extractor(self) -> Any:
         if self.config.get("extractor_name", os.getenv("HL_MEM_EXTRACTOR", "fake")) == "fake":

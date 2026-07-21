@@ -16,6 +16,12 @@ class Database:
             return self.connection
         connection = sqlite3.connect(self.path, check_same_thread=False)
         connection.row_factory = sqlite3.Row
+        if connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 0:
+            has_tables = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
+            ).fetchone()
+            if not has_tables:
+                connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")

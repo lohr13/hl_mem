@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from hl_mem.api.pipeline import hybrid_claims, new_id, stale_observations
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
+from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.reranker import FakeReranker, Reranker
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import ClaimRepository, EventRepository, EvidenceRepository, JobRepository
@@ -85,20 +86,23 @@ def _make_reranker() -> Any:
     )
 
 
-def create_app(database_path: str | Path | None = None) -> FastAPI:
+def create_app(database_path: str | Path | None = None, audit: Any = None) -> FastAPI:
     path = database_path or os.getenv("HL_MEM_DB_PATH", "hl_mem.db")
     database, embedder, reranker = Database(path), _make_embedder(), _make_reranker()
     budget = TokenBudget(int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")), Path(path).with_suffix(".budget.json"))
+    audit = audit or NullAuditLogger()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.db = database
         database.open()
         yield
+        audit.close()
         database.close()
 
     app = FastAPI(title="HL-Mem", lifespan=lifespan)
     app.state.db, app.state.token_budget, app.state.reranker = database, budget, reranker
+    app.state.audit = audit
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -111,6 +115,9 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         key = idempotency_key or payload.idempotency_key
         existing = connection.execute("SELECT id FROM events WHERE idempotency_key=?", (key,)).fetchone() if key else None
         if existing:
+            audit.emit("ingest", "accepted", "duplicate", trace_id=existing["id"],
+                       event_id=existing["id"], tenant_id=payload.tenant_id,
+                       detail={"event_type": payload.event_type, "actor_type": payload.actor_type})
             return {"id": existing["id"], "created": False}
         event_id, timestamp = payload.id or new_id(), _now()
         content = payload.content if isinstance(payload.content, dict) else {"text": payload.content}
@@ -122,13 +129,22 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         created = events.insert_event(event)
         if created:
             _queue_event(connection, event_id, timestamp)
+        audit.emit("ingest", "accepted", "queued" if created else "duplicate",
+                   trace_id=event_id, event_id=event_id, tenant_id=payload.tenant_id,
+                   detail={"event_type": payload.event_type, "actor_type": payload.actor_type,
+                           "content_chars": len(content_json),
+                           "content_hash": event["content_hash"],
+                           "sensitivity": payload.sensitivity})
         return {"id": event_id, "created": created}
 
     @app.post("/v1/recall")
     def recall(payload: RecallInput, request: Request) -> dict[str, Any]:
         connection = database.open()
-        claims = hybrid_claims(ClaimRepository(connection), payload.query,
-                               embedder.embed_one(payload.query), payload.limit, payload.as_of, reranker)
+        query_id = request.headers.get("X-Request-ID") or new_id()
+        with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
+            claims = hybrid_claims(ClaimRepository(connection), payload.query,
+                                   embedder.embed_one(payload.query), payload.limit,
+                                   payload.as_of, reranker)
         evidence_repo, results = EvidenceRepository(connection), []
         for claim in claims:
             evidence = [{"type": "event", "id": link["evidence_id"]} for link in
@@ -143,7 +159,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
                                for item in observations]
         return {"results": results + observation_results, "observations": observations,
                 "total": len(results) + len(observation_results),
-                "query_id": request.headers.get("X-Request-ID", new_id())}
+                "query_id": query_id}
 
     @app.post("/v1/memories")
     def save_memory(payload: MemoryInput) -> dict[str, str]:
@@ -158,6 +174,9 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
                  "occurred_at": now, "recorded_at": now}
         EventRepository(database.open()).insert_event(event)
         _queue_event(database.open(), event_id, now)
+        audit.emit("ingest", "accepted", "queued", trace_id=event_id, event_id=event_id,
+                   detail={"event_type": "explicit_memory", "actor_type": "user",
+                           "content_chars": len(event["content_json"]), "sensitivity": "normal"})
         return {"id": event_id}
 
     @app.delete("/v1/memories/{memory_id}")
