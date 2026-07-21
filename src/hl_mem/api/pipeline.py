@@ -4,11 +4,14 @@ import hashlib
 import json
 import unicodedata
 import uuid
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from hl_mem.ingest.embeddings import cosine_similarity
 from hl_mem.ingest.llm_extractor import LLMExtractor
+from hl_mem.observability.audit import current_audit
+from hl_mem.recall.reranker import RerankResult
 from hl_mem.recall.conflict import ConflictResolver, compute_conflict_key
 from hl_mem.recall.dedup import Deduplicator
 from hl_mem.recall.observation import ObservationBuilder
@@ -30,10 +33,20 @@ def compute_fact_hash(subject: str, predicate: str, value: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _summary(claim: Any) -> dict[str, Any]:
+    value = claim.get("value_json", getattr(claim, "value", None))
+    return {"subject": claim.get("subject_entity_id", getattr(claim, "subject", None)),
+            "predicate": claim.get("predicate", getattr(claim, "predicate", None)),
+            "value_hash": hashlib.sha256(str(value).encode()).hexdigest(),
+            "confidence": claim.get("confidence", getattr(claim, "confidence", None)),
+            "status": claim.get("status")}
+
+
 def store_extracted(
     connection: Any, extracted: Any, event: dict[str, Any], now: str, embedder: Any,
     authority: str | None = None,
 ) -> str:
+    audit = current_audit()
     claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
     namespace, subject = event.get("tenant_id", "default"), extracted.subject
     qualifiers = extracted.qualifiers or {}
@@ -53,13 +66,26 @@ def store_extracted(
         "extractor_version": "llm-v1" if event.get("extractor") == "llm" else "fake-v1",
         "embedding_model": getattr(embedder, "model", "fake"), "embedding_dim": embedder.dim,
     }
+    started = time.perf_counter_ns()
     exact = claims.find_by_fact_hash(namespace, claim["fact_hash"])
+    audit.emit("dedup", "fact_hash_checked", "match" if exact else "new",
+               event_id=event["id"], claim_id=claim["id"],
+               related_claim_id=exact["id"] if exact else None,
+               duration_us=(time.perf_counter_ns() - started) // 1000,
+               detail={"fact_hash": claim["fact_hash"], "predicate": claim["predicate"]})
     if exact:
         _link_event(evidence, exact["id"], event["id"])
         return exact["id"]
     existing = claims.find_by_conflict_key(claim["conflict_key"])
     if existing:
+        started = time.perf_counter_ns()
         resolution = ConflictResolver().resolve(existing[-1], {**claim, "qualifiers": qualifiers})
+        audit.emit("conflict", "resolved", resolution, event_id=event["id"],
+                   claim_id=claim["id"], related_claim_id=existing[-1]["id"],
+                   duration_us=(time.perf_counter_ns() - started) // 1000,
+                   detail={"conflict_key": claim["conflict_key"],
+                           "candidate_count": len(existing), "old": _summary(existing[-1]),
+                           "new": _summary(claim)})
         if resolution == "entails":
             _link_event(evidence, existing[-1]["id"], event["id"])
             return existing[-1]["id"]
@@ -72,8 +98,15 @@ def store_extracted(
         elif resolution == "uncertain":
             claim["status"] = "candidate"
     else:
+        audit.emit("conflict", "not_applicable", "no_existing", event_id=event["id"],
+                   claim_id=claim["id"], detail={"conflict_key": claim["conflict_key"]})
         claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
+        started = time.perf_counter_ns()
         duplicate_id, _ = Deduplicator(claims, embedder).find_duplicate(claim)
+        audit.emit("dedup", "semantic_checked", "match" if duplicate_id else "new",
+                   event_id=event["id"], claim_id=claim["id"], related_claim_id=duplicate_id,
+                   duration_us=(time.perf_counter_ns() - started) // 1000,
+                   detail={"matched": duplicate_id is not None})
         if duplicate_id:
             _link_event(evidence, duplicate_id, event["id"])
             return duplicate_id
@@ -114,24 +147,56 @@ def hybrid_claims(
     repo: ClaimRepository, query: str, query_blob: bytes, limit: int,
     as_of: str | None, reranker: Any = None,
 ):
+    audit = current_audit()
+    total_started = time.perf_counter_ns()
     candidate_limit = max(limit * 3, limit + 10) if reranker is not None else limit
+    started = time.perf_counter_ns()
     fts = repo.search_claims_fts(query, candidate_limit, as_of)
+    fts_us = (time.perf_counter_ns() - started) // 1000
+    started = time.perf_counter_ns()
     dense = sorted(repo.list_embedded(as_of),
                    key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]), reverse=True)[:candidate_limit]
+    dense_us = (time.perf_counter_ns() - started) // 1000
     scores: dict[str, float] = {}
     by_id = {claim["id"]: claim for claim in fts + dense}
     for ranked in (fts, dense):
         for rank, claim in enumerate(ranked, 1):
             scores[claim["id"]] = scores.get(claim["id"], 0) + 1 / (60 + rank)
     ranked_claims = [by_id[key] for key in sorted(scores, key=scores.get, reverse=True)]
-    if reranker is None or len(ranked_claims) <= 1:
-        return ranked_claims[:limit]
-    candidate_count = min(len(ranked_claims), max(limit * 3, limit + 10))
-    candidates = ranked_claims[:candidate_count]
-    reranked = reranker.rerank(query, [claim_text(claim) for claim in candidates], top_n=limit)
-    if not reranked:
-        return ranked_claims[:limit]
-    return [candidates[index] for index, _score in reranked[:limit]]
+    rerank_us = 0
+    if reranker is None:
+        outcome, final = "disabled", ranked_claims[:limit]
+    elif len(ranked_claims) <= 1:
+        outcome, final = "skipped", ranked_claims[:limit]
+    else:
+        candidate_count = min(len(ranked_claims), max(limit * 3, limit + 10))
+        candidates = ranked_claims[:candidate_count]
+        started = time.perf_counter_ns()
+        returned = reranker.rerank(query, [claim_text(claim) for claim in candidates], top_n=limit)
+        rerank_us = (time.perf_counter_ns() - started) // 1000
+        if isinstance(returned, RerankResult):
+            reranked, result_status = returned.results, returned.outcome
+        else:
+            reranked = returned
+            last = getattr(reranker, "last_outcome", None)
+            result_status = (getattr(last, "outcome", None) or last or
+                             ("empty" if not reranked else "success"))
+        if reranked:
+            outcome, final = "applied", [candidates[index] for index, _score in reranked[:limit]]
+        else:
+            outcome = "error_fallback" if result_status == "error" else "empty_fallback"
+            final = ranked_claims[:limit]
+    audit.emit("recall", "ranked", outcome,
+               duration_us=(time.perf_counter_ns() - total_started) // 1000,
+               detail={"query_hash": hashlib.sha256(query.encode()).hexdigest(), "limit": limit,
+                       "as_of": as_of, "candidate_limit": candidate_limit,
+                       "fts_ids": [item["id"] for item in fts],
+                       "dense_ids": [item["id"] for item in dense],
+                       "rrf_ids": [item["id"] for item in ranked_claims],
+                       "returned_ids": [item["id"] for item in final],
+                       "timing_us": {"fts": fts_us, "dense": dense_us,
+                                     "reranker": rerank_us}})
+    return final
 
 
 def stale_observations(connection: Any, claim_id: str) -> None:
