@@ -10,3 +10,6 @@ build/
 hl_mem_test.db
 hl_mem_budget_test.json
 .env
+*.db
+*.db-*
+*.budget.json

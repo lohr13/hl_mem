@@ -7,6 +7,14 @@ from typing import Any
 from hl_mem.ingest.embeddings import cosine_similarity
 
 
+def _sanitize_fts_query(query: str) -> str:
+    """Quote user-provided tokens so FTS5 treats them as literals."""
+    tokens = query.strip().split()
+    if not tokens:
+        return '""'
+    return " ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+
+
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
 
@@ -43,11 +51,14 @@ class EventRepository:
         return [dict(row) for row in rows]
 
     def search_events_fts(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
-        rows = self.connection.execute(
-            "SELECT e.* FROM events_fts f JOIN events e ON e.rowid=f.rowid "
-            "WHERE events_fts MATCH ? ORDER BY bm25(events_fts) LIMIT ?",
-            (query, limit),
-        ).fetchall()
+        try:
+            rows = self.connection.execute(
+                "SELECT e.* FROM events_fts f JOIN events e ON e.rowid=f.rowid "
+                "WHERE events_fts MATCH ? ORDER BY bm25(events_fts) LIMIT ?",
+                (_sanitize_fts_query(query), limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
         return [dict(row) for row in rows]
 class ClaimRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
@@ -146,15 +157,18 @@ class ClaimRepository:
     ) -> list[dict[str, Any]]:
         reference = as_of or datetime.now(timezone.utc).isoformat()
         statuses = "('active','disputed','superseded')" if as_of else "('active','disputed')"
-        rows = self.connection.execute(
-            "SELECT c.* FROM claims_fts f JOIN claims c ON c.rowid=f.rowid "
-            f"WHERE claims_fts MATCH ? AND c.status IN {statuses} "
-            "AND (c.valid_from IS NULL OR c.valid_from<=?) "
-            "AND (c.valid_to IS NULL OR c.valid_to>?) "
-            "AND (c.expires_at IS NULL OR c.expires_at>?) "
-            "ORDER BY bm25(claims_fts) LIMIT ?",
-            (query, reference, reference, reference, limit),
-        ).fetchall()
+        try:
+            rows = self.connection.execute(
+                "SELECT c.* FROM claims_fts f JOIN claims c ON c.rowid=f.rowid "
+                f"WHERE claims_fts MATCH ? AND c.status IN {statuses} "
+                "AND (c.valid_from IS NULL OR c.valid_from<=?) "
+                "AND (c.valid_to IS NULL OR c.valid_to>?) "
+                "AND (c.expires_at IS NULL OR c.expires_at>?) "
+                "ORDER BY bm25(claims_fts) LIMIT ?",
+                (_sanitize_fts_query(query), reference, reference, reference, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
         return [dict(row) for row in rows]
 class EvidenceRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
