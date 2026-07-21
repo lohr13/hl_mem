@@ -1,0 +1,159 @@
+"""记忆召回、混合排序与 observation 失效处理。"""
+
+from __future__ import annotations
+
+import hashlib
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+from hl_mem.ingest.embeddings import cosine_similarity
+from hl_mem.observability.audit import current_audit
+from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
+from hl_mem.recall.reranker import RerankResult
+from hl_mem.storage.repository import ClaimRepository, DerivationRepository
+
+
+def _claim_text(claim: dict[str, Any]) -> str:
+    return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} {claim.get('value_json', '')}"
+
+
+def _recorded_epoch(claim: dict[str, Any]) -> float:
+    try:
+        return datetime.fromisoformat(str(claim.get("recorded_from") or "")).timestamp()
+    except (TypeError, ValueError):
+        return float("-inf")
+
+
+def _access_count(claim: dict[str, Any]) -> int:
+    try:
+        return max(0, int(claim.get("access_count", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def hybrid_claims(
+    repo: ClaimRepository,
+    query: str,
+    query_blob: bytes,
+    limit: int,
+    as_of: str | None,
+    reranker: Any = None,
+    now: str | None = None,
+) -> list[dict[str, Any]]:
+    """融合全文、向量、多因子先验及 reranker 结果召回 claim。"""
+    audit = current_audit()
+    total_started = time.perf_counter_ns()
+    candidate_limit = min(200, max(limit * 5, 50))
+    started = time.perf_counter_ns()
+    fts = repo.search_claims_fts(query, candidate_limit, as_of)
+    fts_us = (time.perf_counter_ns() - started) // 1000
+    started = time.perf_counter_ns()
+    if hasattr(repo, "search_claims_vector"):
+        dense = repo.search_claims_vector(query_blob, candidate_limit, as_of)
+    else:
+        dense = sorted(
+            repo.list_embedded(as_of),
+            key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]),
+            reverse=True,
+        )[:candidate_limit]
+    dense_us = (time.perf_counter_ns() - started) // 1000
+    scores: dict[str, float] = {}
+    by_id = {claim["id"]: claim for claim in fts + dense}
+    for ranked in (fts, dense):
+        for rank, claim in enumerate(ranked, 1):
+            scores[claim["id"]] = scores.get(claim["id"], 0) + 1 / (60 + rank)
+    ranking_now = now or datetime.now(timezone.utc).isoformat()
+    max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
+    feature_by_id = {
+        claim_id: memory_features(claim, scores[claim_id] / (2 / 61), max_access, ranking_now)
+        for claim_id, claim in by_id.items()
+    }
+    pre_scores = {claim_id: memory_score(features) for claim_id, features in feature_by_id.items()}
+    ranked_claims = sorted(
+        by_id.values(),
+        key=lambda claim: (
+            -pre_scores[claim["id"]],
+            -feature_by_id[claim["id"]]["semantic"],
+            -_recorded_epoch(claim),
+            str(claim["id"]),
+        ),
+    )
+    rerank_us = 0
+    reranked: list[tuple[int, float]] = []
+    rerank_scores: dict[str, float] = {}
+    if reranker is None:
+        outcome, final = "disabled", ranked_claims[:limit]
+    elif len(ranked_claims) <= 1:
+        outcome, final = "skipped", ranked_claims[:limit]
+    else:
+        candidates = ranked_claims[:candidate_limit]
+        started = time.perf_counter_ns()
+        returned = reranker.rerank(query, [_claim_text(claim) for claim in candidates], top_n=candidate_limit)
+        rerank_us = (time.perf_counter_ns() - started) // 1000
+        if isinstance(returned, RerankResult):
+            reranked, result_status = returned.results, returned.outcome
+        else:
+            reranked = returned
+            last = getattr(reranker, "last_outcome", None)
+            result_status = getattr(last, "outcome", None) or last or ("empty" if not reranked else "success")
+        if reranked:
+            valid = [(candidates[index], score) for index, score in reranked if 0 <= index < len(candidates)]
+            raw_rerank_scores = {claim["id"]: float(score) for claim, score in valid}
+            rerank_scores = {
+                claim["id"]: blend_reranker_score(score, feature_by_id[claim["id"]]) for claim, score in valid
+            }
+            final = sorted(
+                (claim for claim, _ in valid),
+                key=lambda claim: (
+                    -rerank_scores[claim["id"]],
+                    -raw_rerank_scores[claim["id"]],
+                    -feature_by_id[claim["id"]]["semantic"],
+                    -_recorded_epoch(claim),
+                    str(claim["id"]),
+                ),
+            )[:limit]
+            outcome = "applied"
+        else:
+            outcome = "error_fallback" if result_status == "error" else "empty_fallback"
+            final = ranked_claims[:limit]
+    audit.emit(
+        "recall",
+        "ranked",
+        outcome,
+        duration_us=(time.perf_counter_ns() - total_started) // 1000,
+        detail={
+            "query_hash": hashlib.sha256(query.encode()).hexdigest(),
+            "limit": limit,
+            "as_of": as_of,
+            "candidate_limit": candidate_limit,
+            "fts_ids": [item["id"] for item in fts],
+            "dense_ids": [item["id"] for item in dense],
+            "rrf_ids": [item["id"] for item in ranked_claims],
+            "returned_ids": [item["id"] for item in final],
+            "weights": DEFAULT_WEIGHTS,
+            "scores": {
+                item["id"]: {
+                    **feature_by_id[item["id"]],
+                    "pre_rank": pre_scores[item["id"]],
+                    "final": rerank_scores.get(item["id"], pre_scores[item["id"]])
+                    if reranked
+                    else pre_scores[item["id"]],
+                }
+                for item in final
+            },
+            "timing_us": {"fts": fts_us, "dense": dense_us, "reranker": rerank_us},
+        },
+    )
+    return final
+
+
+def stale_observations(connection: Any, claim_id: str) -> None:
+    """将依赖指定 claim 的 observation 标记为过期。"""
+    rows = connection.execute(
+        "SELECT derived_id FROM evidence_links WHERE derived_type='observation' "
+        "AND evidence_type='claim' AND evidence_id=?",
+        (claim_id,),
+    ).fetchall()
+    for row in rows:
+        DerivationRepository(connection).update_status(row["derived_id"], "stale")
