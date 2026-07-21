@@ -2,6 +2,19 @@
 
 本文档目录是 `hl_mem` 项目的长期交接入口。设计、实现状态和架构决策应落在仓库里，不依赖任何一次对话的上下文。
 
+## 冲突归并运行配置
+
+M5 的 `consolidate_conflicts` 任务默认每天本地时间 03:30 幂等入队。以下参数均可通过环境变量覆盖：
+
+```text
+HL_MEM_CONSOLIDATE_CRON=03:30
+HL_MEM_CONSOLIDATE_BATCH_SIZE=100
+HL_MEM_CONSOLIDATE_CONFIDENCE=0.8
+```
+
+归并判定复用 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL` 与 `LLM_TIMEOUT`。Job payload 可设置
+`dry_run=true`，用于输出分类统计且不修改 claim 状态。
+
 ## 新对话或新开发者的阅读顺序
 
 1. [HANDOFF.md](HANDOFF.md)：当前状态、已完成内容、下一步和未决问题。

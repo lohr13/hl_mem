@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.ingest.embeddings import cosine_similarity
+from hl_mem.recall.policy import RecallIntent, claim_is_visible
+
+
+@dataclass(frozen=True)
+class SupersedeResult:
+    """原子替代操作结果。"""
+
+    applied: bool
 
 
 def _sanitize_fts_query(query: str) -> str:
@@ -19,7 +29,7 @@ def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def _insert(connection: sqlite3.Connection, table: str, data: dict[str, Any]) -> bool:
+def _insert(connection: sqlite3.Connection, table: str, data: dict[str, Any], commit: bool = True) -> bool:
     columns = ", ".join(data)
     placeholders = ", ".join("?" for _ in data)
     before = connection.total_changes
@@ -27,8 +37,11 @@ def _insert(connection: sqlite3.Connection, table: str, data: dict[str, Any]) ->
         f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ({placeholders})",
         tuple(data.values()),
     )
-    connection.commit()
+    if commit:
+        connection.commit()
     return connection.total_changes > before
+
+
 class EventRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -39,9 +52,7 @@ class EventRepository:
     def get_event(self, event_id: str) -> dict[str, Any] | None:
         return _row(self.connection.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone())
 
-    def get_recent_events(
-        self, session_id: str, before: dict[str, Any], limit: int
-    ) -> list[dict[str, Any]]:
+    def get_recent_events(self, session_id: str, before: dict[str, Any], limit: int) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             "SELECT * FROM events WHERE session_id=? AND "
             "(occurred_at<? OR (occurred_at=? AND id<?)) "
@@ -60,12 +71,14 @@ class EventRepository:
         except sqlite3.OperationalError:
             return []
         return [dict(row) for row in rows]
+
+
 class ClaimRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_claim(self, claim: dict[str, Any]) -> bool:
-        return _insert(self.connection, "claims", claim)
+    def insert_claim(self, claim: dict[str, Any], commit: bool = True) -> bool:
+        return _insert(self.connection, "claims", claim, commit)
 
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:
         return _row(self.connection.execute("SELECT * FROM claims WHERE id=?", (claim_id,)).fetchone())
@@ -77,8 +90,8 @@ class ClaimRepository:
 
     def find_active(self, namespace: str, subject_entity_id: str | None) -> list[dict[str, Any]]:
         rows = self.connection.execute(
-            "SELECT * FROM claims WHERE namespace_key=? AND subject_entity_id IS ? "
-            "AND status='active'", (namespace, subject_entity_id),
+            "SELECT * FROM claims WHERE namespace_key=? AND subject_entity_id IS ? " "AND status='active'",
+            (namespace, subject_entity_id),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -90,37 +103,52 @@ class ClaimRepository:
         return [dict(row) for row in rows]
 
     def find_by_fact_hash(self, namespace: str, fact_hash: str) -> dict[str, Any] | None:
-        return _row(self.connection.execute(
-            "SELECT * FROM claims WHERE namespace_key=? AND fact_hash=? "
-            "AND status IN ('active','candidate','disputed') ORDER BY recorded_from DESC LIMIT 1",
-            (namespace, fact_hash),
-        ).fetchone())
+        return _row(
+            self.connection.execute(
+                "SELECT * FROM claims WHERE namespace_key=? AND fact_hash=? "
+                "AND status IN ('active','candidate','disputed') ORDER BY recorded_from DESC LIMIT 1",
+                (namespace, fact_hash),
+            ).fetchone()
+        )
 
-    def list_embedded(self, as_of: str | None = None) -> list[dict[str, Any]]:
+    def list_embedded(
+        self,
+        as_of: str | None = None,
+        intent: RecallIntent | str | None = None,
+        known_as_of: str | None = None,
+    ) -> list[dict[str, Any]]:
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        statuses = "('active','disputed','superseded')" if as_of else "('active','disputed')"
+        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
         rows = self.connection.execute(
             f"SELECT * FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
-            "AND (valid_from IS NULL OR valid_from<=?) AND (valid_to IS NULL OR valid_to>?) "
-            "AND (expires_at IS NULL OR expires_at>?)", (reference, reference, reference),
+            "AND (valid_from IS NULL OR valid_from<=?) AND (valid_to IS NULL OR valid_to>?)",
+            (reference, reference),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [claim for row in rows if claim_is_visible(claim := dict(row), reference, known_as_of, selected_intent)]
 
     def search_claims_vector(
-        self, query_blob: bytes, limit: int = 200, as_of: str | None = None
+        self,
+        query_blob: bytes,
+        limit: int = 200,
+        as_of: str | None = None,
+        intent: RecallIntent | str | None = None,
+        known_as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         # A 100k x 2048 float32 full scan is about 819 MB; indexed retrieval must
         # be reconsidered before deployments approach that scale.
-        return sorted(self.list_embedded(as_of),
-                      key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]),
-                      reverse=True)[:limit]
+        return sorted(
+            self.list_embedded(as_of, intent, known_as_of),
+            key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]),
+            reverse=True,
+        )[:limit]
 
     def record_access(self, claim_ids: list[str], accessed_at: str) -> int:
         unique_ids = list(dict.fromkeys(claim_ids))
         total = 0
         try:
             for start in range(0, len(unique_ids), 500):
-                chunk = unique_ids[start:start + 500]
+                chunk = unique_ids[start : start + 500]
                 if not chunk:
                     continue
                 placeholders = ",".join("?" for _ in chunk)
@@ -144,6 +172,87 @@ class ClaimRepository:
         )
         self.connection.commit()
 
+    def supersede_with_inline(
+        self,
+        old_id: str,
+        new_claim_id: str,
+        new_value: Any,
+        changed_at: str,
+        recorded_at: str,
+    ) -> SupersedeResult:
+        """以 compare-and-set 方式内联旧值并建立替代证据。"""
+        if old_id == new_claim_id:
+            raise ValueError("a claim cannot supersede itself")
+        started_transaction = not self.connection.in_transaction
+        if started_transaction:
+            self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            old = self.connection.execute("SELECT * FROM claims WHERE id=?", (old_id,)).fetchone()
+            if not old:
+                raise ValueError(f"claim not found: {old_id}")
+            if old["status"] == "superseded" and old["superseded_by_id"] == new_claim_id:
+                if started_transaction:
+                    self.connection.commit()
+                return SupersedeResult(False)
+            if old["status"] not in {"active", "candidate", "disputed"}:
+                if started_transaction:
+                    self.connection.rollback()
+                return SupersedeResult(False)
+            decoded = json.loads(old["value_json"])
+            old_value = (
+                decoded.get("old_value")
+                if isinstance(decoded, dict) and decoded.get("_type") == "superseded_value"
+                else decoded
+            )
+            envelope = json.dumps(
+                {
+                    "_type": "superseded_value",
+                    "schema_version": 1,
+                    "old_value": old_value,
+                    "new_value": new_value,
+                    "superseded_by_id": new_claim_id,
+                    "changed_at": changed_at,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            cursor = self.connection.execute(
+                "UPDATE claims SET status='superseded',valid_to=?,recorded_to=?,value_json=?,"
+                "superseded_by_id=? WHERE id=? AND status=?",
+                (changed_at, recorded_at, envelope, new_claim_id, old_id, old["status"]),
+            )
+            if cursor.rowcount:
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO evidence_links(id,derived_type,derived_id,evidence_type,"
+                    "evidence_id,relation,weight) VALUES (lower(hex(randomblob(16))),'claim',?,'claim',"
+                    "?,'supersedes',1.0)",
+                    (new_claim_id, old_id),
+                )
+            if started_transaction:
+                self.connection.commit()
+            return SupersedeResult(cursor.rowcount == 1)
+        except Exception:
+            if started_transaction:
+                self.connection.rollback()
+            raise
+
+    def search_visible(
+        self,
+        query: str | None,
+        query_blob: bytes | None,
+        limit: int,
+        intent: RecallIntent,
+        valid_as_of: str,
+        known_as_of: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """使用统一策略返回 FTS 或向量候选。"""
+        candidates = (
+            self.search_claims_fts(query, limit, valid_as_of)
+            if query is not None
+            else self.search_claims_vector(query_blob or b"", limit, valid_as_of)
+        )
+        return [item for item in candidates if claim_is_visible(item, valid_as_of, known_as_of, intent)]
+
     def retract(self, claim_id: str) -> bool:
         cursor = self.connection.execute(
             "UPDATE claims SET status='retracted',embedding_dense=NULL,embedding_sparse=NULL WHERE id=?",
@@ -153,29 +262,36 @@ class ClaimRepository:
         return cursor.rowcount == 1
 
     def search_claims_fts(
-        self, query: str, limit: int = 20, as_of: str | None = None
+        self,
+        query: str,
+        limit: int = 20,
+        as_of: str | None = None,
+        intent: RecallIntent | str | None = None,
+        known_as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        statuses = "('active','disputed','superseded')" if as_of else "('active','disputed')"
+        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
         try:
             rows = self.connection.execute(
                 "SELECT c.* FROM claims_fts f JOIN claims c ON c.rowid=f.rowid "
                 f"WHERE claims_fts MATCH ? AND c.status IN {statuses} "
                 "AND (c.valid_from IS NULL OR c.valid_from<=?) "
                 "AND (c.valid_to IS NULL OR c.valid_to>?) "
-                "AND (c.expires_at IS NULL OR c.expires_at>?) "
                 "ORDER BY bm25(claims_fts) LIMIT ?",
-                (_sanitize_fts_query(query), reference, reference, reference, limit),
+                (_sanitize_fts_query(query), reference, reference, limit),
             ).fetchall()
         except sqlite3.OperationalError:
             return []
-        return [dict(row) for row in rows]
+        return [claim for row in rows if claim_is_visible(claim := dict(row), reference, known_as_of, selected_intent)]
+
+
 class EvidenceRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def add_link(self, link: dict[str, Any]) -> bool:
-        return _insert(self.connection, "evidence_links", link)
+    def add_link(self, link: dict[str, Any], commit: bool = True) -> bool:
+        return _insert(self.connection, "evidence_links", link, commit)
 
     def get_links_for_derived(self, derived_type: str, derived_id: str) -> list[dict[str, Any]]:
         rows = self.connection.execute(
@@ -190,6 +306,8 @@ class EvidenceRepository:
             (evidence_type, evidence_id),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
 class JobRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -218,9 +336,7 @@ class JobRepository:
             self.connection.commit()
             if cursor.rowcount != 1:
                 return None
-            return _row(self.connection.execute(
-                "SELECT * FROM jobs WHERE id=?", (row["id"],)
-            ).fetchone())
+            return _row(self.connection.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
         except Exception:
             self.connection.rollback()
             raise
@@ -235,8 +351,7 @@ class JobRepository:
 
     def counts(self) -> dict[str, int]:
         counts = {key: 0 for key in ("pending", "running", "failed", "dead")}
-        rows = self.connection.execute(
-            "SELECT status,count(*) AS count FROM jobs GROUP BY status").fetchall()
+        rows = self.connection.execute("SELECT status,count(*) AS count FROM jobs GROUP BY status").fetchall()
         for row in rows:
             if row["status"] in counts:
                 counts[row["status"]] = row["count"]
@@ -249,6 +364,8 @@ class JobRepository:
         )
         self.connection.commit()
         return cursor.rowcount == 1
+
+
 class DerivationRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection

@@ -18,8 +18,13 @@ from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.attribute_map import infer_canonical_attribute
 from hl_mem.storage.database import Database, default_database_path
 from hl_mem.storage.repository import EventRepository, JobRepository
-from hl_mem.workers.ttl import expire_claims
+from hl_mem.workers.consolidate import (
+    ConflictConsolidator,
+    LLMConflictJudge,
+    enqueue_daily_consolidation,
+)
 from hl_mem.workers.decay import decay_claims
+from hl_mem.workers.ttl import expire_claims
 
 
 def _now() -> str:
@@ -55,11 +60,13 @@ class Worker:
             return {"status": "succeeded", "job_id": job["id"], **result}
         except Exception as error:
             self.jobs.fail_job(job["id"], str(error), _now())
-            current = self.connection.execute(
-                "SELECT status,attempts FROM jobs WHERE id=?", (job["id"],)
-            ).fetchone()
-            return {"status": current["status"], "job_id": job["id"],
-                    "attempts": current["attempts"], "error": str(error)}
+            current = self.connection.execute("SELECT status,attempts FROM jobs WHERE id=?", (job["id"],)).fetchone()
+            return {
+                "status": current["status"],
+                "job_id": job["id"],
+                "attempts": current["attempts"],
+                "error": str(error),
+            }
 
     def run_forever(self, poll_interval: float = 2.0) -> None:
         next_ttl = 0.0
@@ -70,6 +77,11 @@ class Worker:
                     expire_claims(self.connection)
                     decay_claims(self.connection)
                     self.audit.cleanup(int(self.config.get("audit_retention_days", 30)))
+                    enqueue_daily_consolidation(
+                        self.connection,
+                        _now(),
+                        self.config.get("consolidate_cron", os.getenv("HL_MEM_CONSOLIDATE_CRON", "03:30")),
+                    )
                     next_ttl = current + 600.0
                 if self.run_once()["status"] == "idle":
                     time.sleep(poll_interval)
@@ -84,10 +96,22 @@ class Worker:
             return expire_claims(self.connection)
         if job["job_type"] == "decay_access":
             return decay_claims(self.connection)
-        if job["job_type"] == "retry_failed":
-            cursor = self.connection.execute(
-                "UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'"
+        if job["job_type"] == "consolidate_conflicts":
+            consolidator = self.config.get("consolidator") or self._make_consolidator()
+            payload = json.loads(job["payload_json"] or "{}")
+            return consolidator.run_batch(
+                int(
+                    payload.get(
+                        "limit",
+                        self.config.get("consolidate_batch_size", os.getenv("HL_MEM_CONSOLIDATE_BATCH_SIZE", "100")),
+                    )
+                ),
+                payload.get("namespace", "default"),
+                payload.get("watermark"),
+                bool(payload.get("dry_run", False)),
             )
+        if job["job_type"] == "retry_failed":
+            cursor = self.connection.execute("UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'")
             self.connection.commit()
             return {"retried": cursor.rowcount}
         raise ValueError(f"unknown job type: {job['job_type']}")
@@ -97,22 +121,38 @@ class Worker:
         event = events.get_event(payload["event_id"])
         if not event:
             raise ValueError(f"event not found: {payload['event_id']}")
-        with audit_scope(self.audit, trace_id=event["id"], event_id=event["id"], job_id=job_id,
-                         tenant_id=event.get("tenant_id", "default")):
+        with audit_scope(
+            self.audit,
+            trace_id=event["id"],
+            event_id=event["id"],
+            job_id=job_id,
+            tenant_id=event.get("tenant_id", "default"),
+        ):
             content = json.loads(event["content_json"])
             started = time.perf_counter_ns()
             allowed, reason = self.filter.should_extract({**event, "content": content})
-            self.audit.emit("filter", "evaluated", "allow" if allowed else "reject",
-                            duration_us=(time.perf_counter_ns() - started) // 1000,
-                            detail={"reason": reason, "event_type": event["event_type"],
-                                    "actor_type": event["actor_type"],
-                                    "content_chars": len(event["content_json"])})
+            self.audit.emit(
+                "filter",
+                "evaluated",
+                "allow" if allowed else "reject",
+                duration_us=(time.perf_counter_ns() - started) // 1000,
+                detail={
+                    "reason": reason,
+                    "event_type": event["event_type"],
+                    "actor_type": event["actor_type"],
+                    "content_chars": len(event["content_json"]),
+                },
+            )
             if not allowed:
                 return {"claims": 0}
             estimate = max(1, len(event["content_json"]) // 2)
             can_spend = self.budget.can_spend(estimate)
-            self.audit.emit("budget", "checked", "allow" if can_spend else "reject",
-                            detail={"estimated_tokens": estimate, **self.budget.get_stats()})
+            self.audit.emit(
+                "budget",
+                "checked",
+                "allow" if can_spend else "reject",
+                detail={"estimated_tokens": estimate, **self.budget.get_stats()},
+            )
             if not can_spend:
                 raise RuntimeError("daily token budget exhausted")
             recent: list[dict[str, Any]] = []
@@ -120,50 +160,76 @@ class Worker:
             try:
                 if event["event_type"] == "explicit_memory" and content.get("memory"):
                     memory = content["memory"]
-                    extracted = [ExtractedClaim(
-                        predicate=memory["predicate"], value=memory["text"], confidence=1.0,
-                        volatility="stable", subject=memory["subject"],
-                        qualifiers=memory.get("qualifiers") or {}, scope="permanent",
-                        importance=1.0,
-                        canonical_attribute=infer_canonical_attribute(
-                            memory["predicate"], memory["subject"], memory["text"],
-                            memory.get("qualifiers") or {},
-                        ),
-                    )]
+                    extracted = [
+                        ExtractedClaim(
+                            predicate=memory["predicate"],
+                            value=memory["text"],
+                            confidence=1.0,
+                            volatility="stable",
+                            subject=memory["subject"],
+                            qualifiers=memory.get("qualifiers") or {},
+                            scope="permanent",
+                            importance=1.0,
+                            canonical_attribute=infer_canonical_attribute(
+                                memory["predicate"],
+                                memory["subject"],
+                                memory["text"],
+                                memory.get("qualifiers") or {},
+                            ),
+                        )
+                    ]
                 else:
-                    recent = events.get_recent_events(event["session_id"], event, 3) if event.get(
-                        "session_id"
-                    ) else []
-                    event_context = {"occurred_at": event["occurred_at"], "recent_events": [
-                        {**item, "content": json.loads(item["content_json"])}
-                        for item in reversed(recent)]}
-                    extracted = self.extractor.extract(content, event_context) if isinstance(
-                        self.extractor, LLMExtractor) else self.extractor.extract(content)
+                    recent = events.get_recent_events(event["session_id"], event, 3) if event.get("session_id") else []
+                    event_context = {
+                        "occurred_at": event["occurred_at"],
+                        "recent_events": [
+                            {**item, "content": json.loads(item["content_json"])} for item in reversed(recent)
+                        ],
+                    }
+                    extracted = (
+                        self.extractor.extract(content, event_context)
+                        if isinstance(self.extractor, LLMExtractor)
+                        else self.extractor.extract(content)
+                    )
             except Exception as error:
-                self.audit.emit("extraction", "evaluated", "error",
-                                duration_us=(time.perf_counter_ns() - started) // 1000,
-                                detail={"extractor": type(self.extractor).__name__,
-                                        "error_class": type(error).__name__,
-                                        "error": str(error)[:256]})
+                self.audit.emit(
+                    "extraction",
+                    "evaluated",
+                    "error",
+                    duration_us=(time.perf_counter_ns() - started) // 1000,
+                    detail={
+                        "extractor": type(self.extractor).__name__,
+                        "error_class": type(error).__name__,
+                        "error": str(error)[:256],
+                    },
+                )
                 raise
-            self.audit.emit("extraction", "evaluated", "claims" if extracted else "no_claims",
-                            duration_us=(time.perf_counter_ns() - started) // 1000,
-                            detail={"extractor": "explicit_memory" if event["event_type"] ==
-                                    "explicit_memory" else type(self.extractor).__name__,
-                                    "claim_count": len(extracted),
-                                    "context_event_ids": [item["id"] for item in recent]})
+            self.audit.emit(
+                "extraction",
+                "evaluated",
+                "claims" if extracted else "no_claims",
+                duration_us=(time.perf_counter_ns() - started) // 1000,
+                detail={
+                    "extractor": (
+                        "explicit_memory" if event["event_type"] == "explicit_memory" else type(self.extractor).__name__
+                    ),
+                    "claim_count": len(extracted),
+                    "context_event_ids": [item["id"] for item in recent],
+                },
+            )
             if isinstance(self.extractor, LLMExtractor):
                 self.budget.record_usage(self.extractor.last_usage_tokens)
-                self.audit.emit("budget", "recorded", "success",
-                                detail={"actual_tokens": self.extractor.last_usage_tokens,
-                                        **self.budget.get_stats()})
+                self.audit.emit(
+                    "budget",
+                    "recorded",
+                    "success",
+                    detail={"actual_tokens": self.extractor.last_usage_tokens, **self.budget.get_stats()},
+                )
                 event["extractor"] = "llm"
             for claim in extracted:
                 authority = "high" if event["event_type"] == "explicit_memory" else None
-                ttl_days = int(self.config.get("memory_temporal_ttl_days", os.getenv(
-                    "HL_MEM_TEMPORAL_TTL_DAYS", "7")))
-                store_extracted(self.connection, claim, event, _now(), self.embedder,
-                                authority, ttl_days)
+                ttl_days = int(self.config.get("memory_temporal_ttl_days", os.getenv("HL_MEM_TEMPORAL_TTL_DAYS", "7")))
+                store_extracted(self.connection, claim, event, _now(), self.embedder, authority, ttl_days)
             return {"claims": len(extracted)}
 
     def _make_extractor(self) -> Any:
@@ -172,7 +238,11 @@ class Worker:
         api_key = os.getenv("LLM_API_KEY")
         if not api_key:
             return FakeExtractor()
-        return LLMExtractor(api_key, os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"), os.getenv("LLM_MODEL", "qwen3.7-plus"))
+        return LLMExtractor(
+            api_key,
+            os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
+            os.getenv("LLM_MODEL", "qwen3.7-plus"),
+        )
 
     def _make_embedder(self) -> Any:
         dim = int(self.config.get("embedding_dim", os.getenv("EMBEDDING_DIM", "2048")))
@@ -181,7 +251,28 @@ class Worker:
         api_key = os.getenv("EMBEDDING_API_KEY")
         if not api_key:
             return FakeEmbedder(dim)
-        return Embedder(api_key, os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), os.getenv("EMBEDDING_MODEL", "text-embedding-v4"), dim)
+        return Embedder(
+            api_key,
+            os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
+            dim,
+        )
+
+    def _make_consolidator(self) -> ConflictConsolidator:
+        """从环境配置构建冲突归并器。"""
+        api_key = os.getenv("LLM_API_KEY")
+        if not api_key:
+            raise RuntimeError("LLM_API_KEY is required for consolidate_conflicts")
+        judge = LLMConflictJudge(
+            api_key,
+            os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
+            os.getenv("LLM_MODEL", "qwen3.7-plus"),
+        )
+        return ConflictConsolidator(
+            self.connection,
+            judge,
+            float(self.config.get("consolidate_confidence", os.getenv("HL_MEM_CONSOLIDATE_CONFIDENCE", "0.8"))),
+        )
 
 
 def main() -> None:

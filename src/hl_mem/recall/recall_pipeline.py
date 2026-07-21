@@ -9,6 +9,7 @@ from typing import Any
 
 from hl_mem.ingest.embeddings import cosine_similarity
 from hl_mem.observability.audit import current_audit
+from hl_mem.recall.policy import RecallIntent, claim_is_visible, route_recall_intent
 from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
 from hl_mem.recall.reranker import RerankResult
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository
@@ -40,17 +41,28 @@ def hybrid_claims(
     as_of: str | None,
     reranker: Any = None,
     now: str | None = None,
+    intent: RecallIntent | str | None = None,
+    known_as_of: str | None = None,
 ) -> list[dict[str, Any]]:
     """融合全文、向量、多因子先验及 reranker 结果召回 claim。"""
     audit = current_audit()
     total_started = time.perf_counter_ns()
     candidate_limit = min(200, max(limit * 5, 50))
+    ranking_now = now or datetime.now(timezone.utc).isoformat()
+    selected_intent = RecallIntent(intent) if intent else route_recall_intent(query, as_of, ranking_now)
+    reference = as_of or ranking_now
     started = time.perf_counter_ns()
-    fts = repo.search_claims_fts(query, candidate_limit, as_of)
+    try:
+        fts = repo.search_claims_fts(query, candidate_limit, reference, selected_intent, known_as_of)
+    except TypeError:
+        fts = repo.search_claims_fts(query, candidate_limit, as_of)
     fts_us = (time.perf_counter_ns() - started) // 1000
     started = time.perf_counter_ns()
     if hasattr(repo, "search_claims_vector"):
-        dense = repo.search_claims_vector(query_blob, candidate_limit, as_of)
+        try:
+            dense = repo.search_claims_vector(query_blob, candidate_limit, reference, selected_intent, known_as_of)
+        except TypeError:
+            dense = repo.search_claims_vector(query_blob, candidate_limit, as_of)
     else:
         dense = sorted(
             repo.list_embedded(as_of),
@@ -59,11 +71,11 @@ def hybrid_claims(
         )[:candidate_limit]
     dense_us = (time.perf_counter_ns() - started) // 1000
     scores: dict[str, float] = {}
-    by_id = {claim["id"]: claim for claim in fts + dense}
+    visible = [claim for claim in fts + dense if claim_is_visible(claim, reference, known_as_of, selected_intent)]
+    by_id = {claim["id"]: claim for claim in visible}
     for ranked in (fts, dense):
         for rank, claim in enumerate(ranked, 1):
             scores[claim["id"]] = scores.get(claim["id"], 0) + 1 / (60 + rank)
-    ranking_now = now or datetime.now(timezone.utc).isoformat()
     max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
     feature_by_id = {
         claim_id: memory_features(claim, scores[claim_id] / (2 / 61), max_access, ranking_now)
@@ -126,6 +138,8 @@ def hybrid_claims(
             "query_hash": hashlib.sha256(query.encode()).hexdigest(),
             "limit": limit,
             "as_of": as_of,
+            "intent": selected_intent.value,
+            "known_as_of": known_as_of,
             "candidate_limit": candidate_limit,
             "fts_ids": [item["id"] for item in fts],
             "dense_ids": [item["id"] for item in dense],
@@ -136,9 +150,9 @@ def hybrid_claims(
                 item["id"]: {
                     **feature_by_id[item["id"]],
                     "pre_rank": pre_scores[item["id"]],
-                    "final": rerank_scores.get(item["id"], pre_scores[item["id"]])
-                    if reranked
-                    else pre_scores[item["id"]],
+                    "final": (
+                        rerank_scores.get(item["id"], pre_scores[item["id"]]) if reranked else pre_scores[item["id"]]
+                    ),
                 }
                 for item in final
             },
