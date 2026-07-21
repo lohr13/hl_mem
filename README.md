@@ -22,7 +22,7 @@ HL-Mem 把两者合并为统一的**事件溯源双通道**设计：事实通道
 | 记忆分层 | event → claim → observation | 三层抽象：原始输入、原子事实、归纳知识 |
 | 双时间模型 | valid_from/to + recorded_from/to | 区分"事实何时有效"和"系统何时知道" |
 | 证据链 | 所有派生记忆必须链接到原始事件 | 防止归纳漂移和自证循环 |
-| 矛盾检测 | Conflict Key 收窄 → 确定性规则 | 避免 LLM 全库扫描，先 hash 匹配再分级判定 |
+| 矛盾检测 | 三层去重 + 确定性规则 | fact_hash 精确去重 → conflict_key 矛盾检测 → semantic 兜底 |
 | 存储 | SQLite WAL + FTS5 + 向量 BLOB | 零运维，单文件，暴力余弦首版够用 |
 | LLM 提取 | qwen3.7-plus（百炼 Coding Plan） | 已验证的中文提取质量，JSON mode 稳定 |
 | Embedding | text-embedding-v4（百炼通用） | MTEB SOTA，dense+sparse 混合，全开源 |
@@ -47,7 +47,7 @@ src/hl_mem/
 │   └── pipeline.py         # 提取管道：dedup → conflict → claim → evidence → observation
 ├── ingest/
 │   ├── extractors.py       # FakeExtractor + ExtractedClaim 数据结构
-│   ├── llm_extractor.py    # LLM 提取器（qwen3.7-plus，中文 prompt，predicate 标准化）
+│   ├── llm_extractor.py    # LLM 提取器（qwen3.7-plus，中文 prompt，predicate 标准化，时间锚定，ADD-only）
 │   ├── event_filter.py     # 预过滤：短文本/确认语/工具原始输出 → 跳过 LLM
 │   ├── budget.py           # 日 token 预算（自然日重置，JSON 持久化）
 │   └── embeddings.py       # text-embedding-v4 Embedder（10条分片，float32 BLOB）
@@ -60,9 +60,10 @@ src/hl_mem/
 │   ├── repository.py       # 5 个 Repository：Event/Claim/Evidence/Job/Derivation
 │   └── migrations/
 │       ├── 001_initial.sql # 5 表 + 2 FTS 虚拟表 + 6 triggers
-│       └── 002_claims_fts_subject.sql  # FTS 索引增加 subject
+│       ├── 002_claims_fts_subject.sql  # FTS 索引增加 subject
+│       └── 003_fact_hash.sql           # claims.fact_hash 列 + 索引
 ├── workers/
-│   ├── worker.py           # 串行 Job 消费者（lease 机制，失败重试 → dead）
+│   ├── worker.py           # 串行 Job 消费者（lease 机制，前序上下文窗口，失败重试 → dead）
 │   └── ttl.py              # TTL 自动过期扫描
 ├── adapters/hermes/
 │   └── provider.py         # Hermes Provider（2s timeout + circuit breaker + 无感降级）
@@ -76,12 +77,14 @@ src/hl_mem/
                                                               ↓
 Worker (串行消费) ← EventFilter → 过滤低价值事件
                     ↓ 通过
-               LLMExtractor → qwen3.7-plus 提取结构化 claim
+               LLMExtractor → qwen3.7-plus 提取（前序上下文窗口 + 时间锚定 + ADD-only）
                     ↓
-               Deduplicator → L1精确去重 + L2语义去重(>0.95)
+               fact_hash 精确去重 → 命中则合并证据跳过（常数级）
                     ↓ 新事实
-               ConflictResolver → Conflict Key 匹配 → state_change/contradicts/...
+               ConflictResolver → conflict_key 匹配 → state_change/contradicts/...
                     ↓
+               Deduplicator → 语义去重(cosine > 0.95)
+                    ↓ 新事实
                Embedder → text-embedding-v4 2048维 → BLOB 存储
                     ↓
                ObservationBuilder → ≥2独立证据 → 生成 Observation
@@ -169,28 +172,28 @@ python -m hl_mem.worker run
 | [docs/adr/0001-core-strategy.md](docs/adr/0001-core-strategy.md) | ADR：双通道架构选型 |
 | [docs/adr/0002-mvp-scope-and-embedding.md](docs/adr/0002-mvp-scope-and-embedding.md) | ADR：首版范围 + Embedding 选型 |
 | [docs/review/consensus.md](docs/review/consensus.md) | Hermes × Codex 三轮 review 共识 |
+| [docs/review/optimization-consensus.md](docs/review/optimization-consensus.md) | MemOS/Zep/Mem0 对比后的优化共识 |
 | [docs/research/memos-vs-hindsight.md](docs/research/memos-vs-hindsight.md) | MemOS vs Hindsight 适配分析 |
 | [docs/HANDOFF.md](docs/HANDOFF.md) | 项目交接状态 |
 
 ## 项目状态
 
-首版 5 周开发完成，35 个测试全绿，真实 API 端到端验证通过。
+首版开发完成，38 个测试全绿，真实 API 端到端验证通过。经过 MemOS/Zep/Mem0 源码对比后做了 4 项低复杂度优化（时间锚定、前序上下文、ADD-only 质量约束、fact_hash 去重快路径）。
 
 | 组件 | 状态 |
 |------|------|
-| SQLite Schema（5表 + FTS + triggers） | ✅ |
+| SQLite Schema（5表 + FTS + triggers + 3 migrations） | ✅ |
 | 幂等事件写入 | ✅ |
-| LLM 提取（qwen3.7-plus） | ✅ |
+| LLM 提取（qwen3.7-plus，时间锚定，前序上下文，ADD-only） | ✅ |
 | Event Filter + Token Budget | ✅ |
 | Embedding（text-embedding-v4 2048d） | ✅ |
-| 去重（L1精确 + L2语义） | ✅ |
-| 矛盾检测（Conflict Key + 确定性规则） | ✅ |
-| Observation 生成 | ✅ |
+| 三层去重（fact_hash 精确 → conflict_key 矛盾 → semantic 兜底） | ✅ |
+| Observation 生成（≥2独立证据） | ✅ |
 | 混合召回（FTS + Dense RRF） | ✅ |
 | TTL 自动过期 | ✅ |
-| 显式遗忘（级联删除） | ✅ |
-| Hermes Provider（timeout + circuit breaker） | ✅ |
-| 后台 Worker（串行化 + 重试） | ✅ |
+| 显式遗忘（级联：retracted + embedding 清空 + obs→stale） | ✅ |
+| Hermes Provider（2s timeout + circuit breaker + 无感降级） | ✅ |
+| 后台 Worker（串行化 + lease + 重试 → dead） | ✅ |
 | 30 条中文测试集 | ✅ |
 | Experience 通道 | 📋 设计完成，代码延后 |
 | Mental Model | 📋 设计完成，代码延后 |
