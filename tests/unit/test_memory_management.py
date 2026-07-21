@@ -169,6 +169,39 @@ def test_decay_boundaries(tmp_path, scope, days, expected):
     assert connection.execute("SELECT status FROM claims").fetchone()[0] == expected
 
 
+def test_decay_access_count_bonus_extends_threshold(tmp_path):
+    """A temporal claim with 50 accesses gets +150 days (5×30) to its thresholds."""
+    connection = _decay_db(tmp_path)
+    # 50 accesses → bonus = min(5*30, 365) = 150 days
+    # temporal archive = 180 + 150 = 330 days
+    # 200 days inactive: > base 180 but < adjusted 330 → still active
+    recorded = (datetime.fromisoformat(NOW) - timedelta(days=200)).isoformat()
+    _claim(connection, scope="temporal", recorded_from=recorded,
+           last_accessed_at=recorded, access_count=50)
+    decay_claims(connection, NOW)
+    assert connection.execute("SELECT status FROM claims").fetchone()[0] == "active"
+
+    # Same claim at 400 days: > adjusted 330 → archived
+    connection2 = _decay_db(tmp_path)
+    recorded2 = (datetime.fromisoformat(NOW) - timedelta(days=400)).isoformat()
+    _claim(connection2, "c2", scope="temporal", recorded_from=recorded2,
+           last_accessed_at=recorded2, access_count=50)
+    decay_claims(connection2, NOW)
+    assert connection2.execute("SELECT status FROM claims WHERE id='c2'").fetchone()[0] == "archived"
+
+
+def test_decay_access_count_bonus_capped_at_365(tmp_path):
+    """1000 accesses → bonus capped at 365 days, not 3000."""
+    connection = _decay_db(tmp_path)
+    # temporal base archive = 180 + 365 cap = 545 days
+    # 500 days: < 545 → active
+    recorded = (datetime.fromisoformat(NOW) - timedelta(days=500)).isoformat()
+    _claim(connection, scope="temporal", recorded_from=recorded,
+           last_accessed_at=recorded, access_count=1000)
+    decay_claims(connection, NOW)
+    assert connection.execute("SELECT status FROM claims").fetchone()[0] == "active"
+
+
 def test_decay_elapsed_linear_once_daily_and_floor(tmp_path):
     connection = _decay_db(tmp_path)
     recorded = (datetime.fromisoformat(NOW) - timedelta(days=100)).isoformat()

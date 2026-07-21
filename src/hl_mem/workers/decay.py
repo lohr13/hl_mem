@@ -6,6 +6,13 @@ from datetime import datetime, timedelta, timezone
 
 POLICY = {"temporal": (90, 180), "permanent": (180, 365)}
 
+# Access-frequency decay bonus: every ACCESS_BONUS_EVERY hits adds
+# ACCESS_BONUS_DAYS to both decay_after and archive_after, capped at
+# ACCESS_BONUS_CAP.  A frequently-recalled memory decays slower.
+ACCESS_BONUS_EVERY = 10
+ACCESS_BONUS_DAYS = 30
+ACCESS_BONUS_CAP = 365
+
 
 def _parse(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -32,7 +39,7 @@ def decay_claims(
         grace_until = (migration_at + timedelta(days=rollout_grace_days)
                        if migration_at else None)
         rows = connection.execute(
-            "SELECT id,scope,confidence,recorded_from,last_accessed_at,last_decayed_at "
+            "SELECT id,scope,confidence,access_count,recorded_from,last_accessed_at,last_decayed_at "
             "FROM claims WHERE status IN ('active','disputed')"
         ).fetchall()
         for row in rows:
@@ -42,6 +49,10 @@ def decay_claims(
                     and reference < grace_until and anchor <= migration_at):
                 continue
             decay_after, archive_after = POLICY.get(claim["scope"], POLICY["permanent"])
+            access_count = max(0, int(claim.get("access_count") or 0))
+            bonus = min(access_count // ACCESS_BONUS_EVERY * ACCESS_BONUS_DAYS, ACCESS_BONUS_CAP)
+            decay_after += bonus
+            archive_after += bonus
             inactive_days = (reference - anchor).total_seconds() / 86400.0
             if inactive_days > archive_after:
                 cursor = connection.execute(
