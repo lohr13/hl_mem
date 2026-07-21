@@ -76,7 +76,7 @@ class LLMExtractor:
         for attempt in range(3):
             try:
                 response = httpx.post(
-                    f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=30.0
+                    f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=90.0
                 )
                 response.raise_for_status()
                 return response.json()
