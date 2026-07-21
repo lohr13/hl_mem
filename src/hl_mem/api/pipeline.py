@@ -110,16 +110,28 @@ def _build_observation(connection: Any, conflict_key: str, now: str) -> None:
                            "relation": "supports", "weight": 1.0})
 
 
-def hybrid_claims(repo: ClaimRepository, query: str, query_blob: bytes, limit: int, as_of: str | None):
-    fts = repo.search_claims_fts(query, limit, as_of)
+def hybrid_claims(
+    repo: ClaimRepository, query: str, query_blob: bytes, limit: int,
+    as_of: str | None, reranker: Any = None,
+):
+    candidate_limit = max(limit * 3, limit + 10) if reranker is not None else limit
+    fts = repo.search_claims_fts(query, candidate_limit, as_of)
     dense = sorted(repo.list_embedded(as_of),
-                   key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]), reverse=True)[:limit]
+                   key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]), reverse=True)[:candidate_limit]
     scores: dict[str, float] = {}
     by_id = {claim["id"]: claim for claim in fts + dense}
     for ranked in (fts, dense):
         for rank, claim in enumerate(ranked, 1):
             scores[claim["id"]] = scores.get(claim["id"], 0) + 1 / (60 + rank)
-    return [by_id[key] for key in sorted(scores, key=scores.get, reverse=True)[:limit]]
+    ranked_claims = [by_id[key] for key in sorted(scores, key=scores.get, reverse=True)]
+    if reranker is None or len(ranked_claims) <= 1:
+        return ranked_claims[:limit]
+    candidate_count = min(len(ranked_claims), max(limit * 3, limit + 10))
+    candidates = ranked_claims[:candidate_count]
+    reranked = reranker.rerank(query, [claim_text(claim) for claim in candidates], top_n=limit)
+    if not reranked:
+        return ranked_claims[:limit]
+    return [candidates[index] for index, _score in reranked[:limit]]
 
 
 def stale_observations(connection: Any, claim_id: str) -> None:
