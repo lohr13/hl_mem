@@ -3,30 +3,81 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from datetime import datetime
 from typing import Any
+
+from hl_mem.recall.attribute_map import canonical_conflict_slot, normalize_canonical_attribute
 
 
 EXCLUSIVE_QUALIFIERS = {"scope", "context", "environment", "project", "channel"}
 
 
 def compute_conflict_key(
-    namespace: str, subject: str, predicate: str, qualifiers: dict[str, Any] | None
+    namespace: str,
+    subject: str,
+    canonical_attribute: str,
+    qualifiers: dict[str, Any] | None,
+    *,
+    version: int = 2,
 ) -> str:
+    """计算 canonical attribute v2 冲突键。"""
+    if version != 2:
+        raise ValueError("compute_conflict_key only supports version 2")
+    canonical_namespace = unicodedata.normalize("NFKC", namespace).strip().casefold()
+    canonical_subject = re.sub(r"\s+", "", unicodedata.normalize("NFKC", subject)).casefold()
+    exclusive = {
+        key: _canonicalize_json(value)
+        for key, value in (qualifiers or {}).items()
+        if key in EXCLUSIVE_QUALIFIERS
+    }
+    slot = canonical_conflict_slot(normalize_canonical_attribute(canonical_attribute))
+    raw = json.dumps(
+        ["v2", canonical_namespace, canonical_subject, slot, exclusive],
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def compute_legacy_conflict_key(
+    namespace: str,
+    subject: str,
+    predicate: str,
+    qualifiers: dict[str, Any] | None,
+) -> str:
+    """复现 v1 算法，供迁移期审计和回滚使用。"""
     canonical_subject = re.sub(r"\s+", "", subject).casefold()
     exclusive = {key: value for key, value in (qualifiers or {}).items() if key in EXCLUSIVE_QUALIFIERS}
     raw = json.dumps(
         [namespace.casefold(), canonical_subject, predicate.casefold(), exclusive],
-        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _canonicalize_json(value: Any) -> Any:
+    if isinstance(value, str):
+        return unicodedata.normalize("NFKC", value).strip().casefold()
+    if isinstance(value, dict):
+        return {str(key): _canonicalize_json(item) for key, item in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_canonicalize_json(item) for item in value]
+    return value
 
 
 class ConflictResolver:
     """First-version deterministic conflict classifier; it never calls an LLM."""
 
     def resolve(self, existing: dict[str, Any], new: dict[str, Any]) -> str:
-        if existing.get("predicate") != new.get("predicate"):
+        existing_attribute = existing.get("canonical_attribute")
+        new_attribute = new.get("canonical_attribute")
+        if existing_attribute and new_attribute:
+            same_slot = canonical_conflict_slot(existing_attribute) == canonical_conflict_slot(new_attribute)
+        else:
+            same_slot = existing.get("predicate") == new.get("predicate")
+        if not same_slot:
             return "compatible"
         old_value, new_value = self._value(existing), self._value(new)
         if old_value == new_value:

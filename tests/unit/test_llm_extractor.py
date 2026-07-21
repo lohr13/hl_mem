@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from hl_mem.ingest.llm_extractor import LLMExtractor
+from hl_mem.ingest.llm_extractor import LLMExtractor, SYSTEM_PROMPT
 
 
 class Response:
@@ -87,3 +87,23 @@ def test_timeout_reads_from_env(monkeypatch) -> None:
     monkeypatch.setenv("LLM_TIMEOUT", "60")
     ext = LLMExtractor("key", "https://example.test", "model")
     assert ext.timeout == 60.0
+
+
+def test_prompt_requires_canonical_attribute() -> None:
+    assert "canonical_attribute" in SYSTEM_PROMPT
+    assert "preference.ui_theme" in SYSTEM_PROMPT
+
+
+def test_claim_validates_canonical_attribute_against_predicate() -> None:
+    valid = LLMExtractor._claim(
+        {"predicate": "偏好", "value": "Codex", "canonical_attribute": "preference.tool_choice"}
+    )
+    invalid = LLMExtractor._claim(
+        {"predicate": "偏好", "value": "深色", "canonical_attribute": "invented.slot"}
+    )
+    wrong_domain = LLMExtractor._claim(
+        {"predicate": "偏好", "value": "深色", "canonical_attribute": "config.port"}
+    )
+    assert valid.canonical_attribute == "preference.tool_choice"
+    assert invalid.canonical_attribute == "custom.unknown"
+    assert wrong_domain.canonical_attribute == "preference.other"

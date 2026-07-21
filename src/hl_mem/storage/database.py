@@ -4,6 +4,8 @@ import os
 import sqlite3
 from pathlib import Path
 
+from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
+
 
 def default_database_path() -> Path:
     """返回环境变量配置或项目 var 目录下的默认数据库路径。"""
@@ -57,6 +59,10 @@ class Database:
                 "INSERT INTO schema_migrations(version) VALUES (?)", (version,)
             )
             self.connection.commit()
+        if self.connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version='006_canonical_attribute'"
+        ).fetchone():
+            backfill_conflict_keys_v2(self.connection)
 
     def close(self) -> None:
         if self.connection is not None:

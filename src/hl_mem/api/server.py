@@ -163,14 +163,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             results.append({"type": "claim", "id": claim["id"], "text": json.loads(claim["value_json"]),
                             "status": claim["status"], "confidence": claim["confidence"],
                             "valid_from": claim["valid_from"], "evidence": evidence})
-        observations = [dict(row) for row in connection.execute(
-            "SELECT * FROM derivations WHERE kind='observation' AND status='active'").fetchall()]
-        observation_results = [{"type": "observation", "id": item["id"], "text": item["body"],
-                                "status": item["status"], "confidence": item["confidence"]}
-                               for item in observations]
-        return {"results": results + observation_results, "observations": observations,
-                "total": len(results) + len(observation_results),
-                "query_id": query_id}
+        return {"results": results, "observations": [], "total": len(results), "query_id": query_id}
 
     @app.post("/v1/memories")
     def save_memory(payload: MemoryInput) -> dict[str, str]:
