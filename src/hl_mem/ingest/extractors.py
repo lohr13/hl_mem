@@ -16,6 +16,8 @@ class ExtractedClaim:
     subject: str = "用户"
     qualifiers: dict[str, Any] | None = None
     reason: str = ""
+    scope: str = "permanent"
+    importance: float = 0.5
 
 
 class FakeExtractor:
@@ -41,6 +43,7 @@ class FakeExtractor:
                         value=match.group(1).strip(),
                         volatility="ephemeral" if predicate == "service_status" else "stable",
                         qualifiers={"state_change": True} if text.startswith("现在") else {},
+                        scope="temporal" if predicate == "service_status" else "permanent",
                     )
                 )
                 break

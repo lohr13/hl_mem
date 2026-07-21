@@ -15,6 +15,9 @@ from hl_mem.recall.reranker import RerankResult
 from hl_mem.recall.conflict import ConflictResolver, compute_conflict_key
 from hl_mem.recall.dedup import Deduplicator
 from hl_mem.recall.observation import ObservationBuilder
+from hl_mem.recall.ranking import (
+    DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score,
+)
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository, EvidenceRepository
 
 
@@ -24,6 +27,20 @@ def new_id() -> str:
 
 def claim_text(claim: dict[str, Any]) -> str:
     return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} {claim.get('value_json', '')}"
+
+
+def _recorded_epoch(claim: dict[str, Any]) -> float:
+    try:
+        return datetime.fromisoformat(str(claim.get("recorded_from") or "")).timestamp()
+    except (TypeError, ValueError):
+        return float("-inf")
+
+
+def _access_count(claim: dict[str, Any]) -> int:
+    try:
+        return max(0, int(claim.get("access_count", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def compute_fact_hash(subject: str, predicate: str, value: Any) -> str:
@@ -44,13 +61,20 @@ def _summary(claim: Any) -> dict[str, Any]:
 
 def store_extracted(
     connection: Any, extracted: Any, event: dict[str, Any], now: str, embedder: Any,
-    authority: str | None = None,
+    authority: str | None = None, ttl_days: int = 7,
 ) -> str:
     audit = current_audit()
     claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
     namespace, subject = event.get("tenant_id", "default"), extracted.subject
     qualifiers = extracted.qualifiers or {}
     value_json = json.dumps(extracted.value, ensure_ascii=False, sort_keys=True)
+    scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
+    expires_at = ((datetime.fromisoformat(now) + timedelta(days=ttl_days)).isoformat()
+                  if extracted.volatility == "ephemeral" and scope == "temporal" else None)
+    try:
+        importance = min(1.0, max(0.0, float(extracted.importance)))
+    except (TypeError, ValueError):
+        importance = 0.5
     claim = {
         "id": new_id(), "namespace_key": namespace, "subject_entity_id": subject,
         "predicate": extracted.predicate, "value_json": value_json,
@@ -59,9 +83,9 @@ def store_extracted(
         "conflict_key": compute_conflict_key(namespace, subject, extracted.predicate, qualifiers),
         "valid_from": event.get("occurred_at", now), "recorded_from": now,
         "observed_at": event.get("occurred_at", now),
-        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-        if extracted.volatility == "ephemeral" else None,
+        "expires_at": expires_at,
         "volatility": extracted.volatility, "status": "active", "confidence": extracted.confidence,
+        "scope": scope, "importance": importance, "access_count": 0, "last_accessed_at": None,
         "source_authority": authority or ("low" if event.get("actor_type") == "assistant" else "medium"),
         "extractor_version": "llm-v1" if event.get("extractor") == "llm" else "fake-v1",
         "embedding_model": getattr(embedder, "model", "fake"), "embedding_dim": embedder.dim,
@@ -145,34 +169,48 @@ def _build_observation(connection: Any, conflict_key: str, now: str) -> None:
 
 def hybrid_claims(
     repo: ClaimRepository, query: str, query_blob: bytes, limit: int,
-    as_of: str | None, reranker: Any = None,
-):
+    as_of: str | None, reranker: Any = None, now: str | None = None,
+) -> list[dict[str, Any]]:
     audit = current_audit()
     total_started = time.perf_counter_ns()
-    candidate_limit = max(limit * 3, limit + 10) if reranker is not None else limit
+    candidate_limit = min(200, max(limit * 5, 50))
     started = time.perf_counter_ns()
     fts = repo.search_claims_fts(query, candidate_limit, as_of)
     fts_us = (time.perf_counter_ns() - started) // 1000
     started = time.perf_counter_ns()
-    dense = sorted(repo.list_embedded(as_of),
-                   key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]), reverse=True)[:candidate_limit]
+    if hasattr(repo, "search_claims_vector"):
+        dense = repo.search_claims_vector(query_blob, candidate_limit, as_of)
+    else:
+        dense = sorted(repo.list_embedded(as_of),
+                       key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]),
+                       reverse=True)[:candidate_limit]
     dense_us = (time.perf_counter_ns() - started) // 1000
     scores: dict[str, float] = {}
     by_id = {claim["id"]: claim for claim in fts + dense}
     for ranked in (fts, dense):
         for rank, claim in enumerate(ranked, 1):
             scores[claim["id"]] = scores.get(claim["id"], 0) + 1 / (60 + rank)
-    ranked_claims = [by_id[key] for key in sorted(scores, key=scores.get, reverse=True)]
+    ranking_now = now or datetime.now(timezone.utc).isoformat()
+    max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
+    feature_by_id = {claim_id: memory_features(claim, score / (2 / 61), max_access, ranking_now)
+                     for claim_id, claim in by_id.items() for score in [scores[claim_id]]}
+    pre_scores = {claim_id: memory_score(features)
+                  for claim_id, features in feature_by_id.items()}
+    ranked_claims = sorted(by_id.values(), key=lambda claim: (
+        -pre_scores[claim["id"]], -feature_by_id[claim["id"]]["semantic"],
+        -_recorded_epoch(claim), str(claim["id"])))
     rerank_us = 0
+    reranked: list[tuple[int, float]] = []
+    rerank_scores: dict[str, float] = {}
     if reranker is None:
         outcome, final = "disabled", ranked_claims[:limit]
     elif len(ranked_claims) <= 1:
         outcome, final = "skipped", ranked_claims[:limit]
     else:
-        candidate_count = min(len(ranked_claims), max(limit * 3, limit + 10))
-        candidates = ranked_claims[:candidate_count]
+        candidates = ranked_claims[:candidate_limit]
         started = time.perf_counter_ns()
-        returned = reranker.rerank(query, [claim_text(claim) for claim in candidates], top_n=limit)
+        returned = reranker.rerank(
+            query, [claim_text(claim) for claim in candidates], top_n=candidate_limit)
         rerank_us = (time.perf_counter_ns() - started) // 1000
         if isinstance(returned, RerankResult):
             reranked, result_status = returned.results, returned.outcome
@@ -182,7 +220,16 @@ def hybrid_claims(
             result_status = (getattr(last, "outcome", None) or last or
                              ("empty" if not reranked else "success"))
         if reranked:
-            outcome, final = "applied", [candidates[index] for index, _score in reranked[:limit]]
+            valid = [(candidates[index], score) for index, score in reranked
+                     if 0 <= index < len(candidates)]
+            raw_rerank_scores = {claim["id"]: float(score) for claim, score in valid}
+            rerank_scores = {claim["id"]: blend_reranker_score(score, feature_by_id[claim["id"]])
+                             for claim, score in valid}
+            final = sorted((claim for claim, _ in valid), key=lambda claim: (
+                -rerank_scores[claim["id"]], -raw_rerank_scores[claim["id"]],
+                -feature_by_id[claim["id"]]["semantic"],
+                -_recorded_epoch(claim), str(claim["id"])))[:limit]
+            outcome = "applied"
         else:
             outcome = "error_fallback" if result_status == "error" else "empty_fallback"
             final = ranked_claims[:limit]
@@ -194,6 +241,12 @@ def hybrid_claims(
                        "dense_ids": [item["id"] for item in dense],
                        "rrf_ids": [item["id"] for item in ranked_claims],
                        "returned_ids": [item["id"] for item in final],
+                       "weights": DEFAULT_WEIGHTS,
+                       "scores": {item["id"]: {**feature_by_id[item["id"]],
+                                   "pre_rank": pre_scores[item["id"]],
+                                   "final": rerank_scores.get(item["id"], pre_scores[item["id"]])
+                                   if reranked else pre_scores[item["id"]]}
+                                  for item in final},
                        "timing_us": {"fts": fts_us, "dense": dense_us,
                                      "reranker": rerank_us}})
     return final

@@ -17,6 +17,16 @@ subject 默认为“用户”；明确提到项目名或服务名时使用该名
 文本包含“改用”“换成”“现在用”“不用了”“改为”等变更信号时，在 qualifiers 中加入 \"change\": true。
 不要输出 JSON 以外的解释。"""
 
+SYSTEM_PROMPT += """
+Every claim must also include scope and importance. Scope is independent from volatility.
+scope must be temporal (useful for a bounded real-world period, such as a trip next week,
+a current project deadline, or a temporary service state) or permanent (a durable preference,
+identity, convention, configuration, or explicit long-term memory). Volatility describes only
+change rate, not retention. importance must be a number from 0.0 to 1.0: 0.0-0.3 incidental,
+0.4-0.6 useful, 0.7-0.9 an important preference, commitment, or constraint, and 1.0 an explicit
+must-remember instruction. Do not infer importance merely from emotional wording.
+"""
+
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
 PREDICATE_NORMALIZE = {
     "prefers": "偏好", "preference": "偏好", "偏好": "偏好", "喜欢": "偏好",
@@ -102,10 +112,20 @@ class LLMExtractor:
         predicate = str(item.get("predicate", "事实")).strip()
         predicate = PREDICATE_NORMALIZE.get(predicate.casefold(), predicate)
         volatility = item.get("volatility", "stable")
+        scope = item.get("scope", "permanent")
+        scope = scope if scope in {"temporal", "permanent"} else "permanent"
+        try:
+            confidence = min(1.0, max(0.0, float(item.get("confidence", 0.5))))
+        except (TypeError, ValueError):
+            confidence = 0.5
+        try:
+            importance = min(1.0, max(0.0, float(item.get("importance", 0.5))))
+        except (TypeError, ValueError):
+            importance = 0.5
         return ExtractedClaim(
             predicate=predicate, value=value,
-            confidence=float(item.get("confidence", 0.5)),
+            confidence=confidence,
             volatility=volatility if volatility in {"stable", "ephemeral"} else "stable",
             subject=str(item.get("subject", "用户")), qualifiers=item.get("qualifiers") or {},
-            reason=str(item.get("reason", "")),
+            reason=str(item.get("reason", "")), scope=scope, importance=importance,
         )
