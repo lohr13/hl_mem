@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -21,6 +23,13 @@ def claim_text(claim: dict[str, Any]) -> str:
     return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} {claim.get('value_json', '')}"
 
 
+def compute_fact_hash(subject: str, predicate: str, value: Any) -> str:
+    stable_value = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    raw = unicodedata.normalize("NFKC", subject).strip()
+    raw += unicodedata.normalize("NFKC", predicate).strip() + stable_value
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
 def store_extracted(
     connection: Any, extracted: Any, event: dict[str, Any], now: str, embedder: Any,
     authority: str | None = None,
@@ -32,6 +41,7 @@ def store_extracted(
     claim = {
         "id": new_id(), "namespace_key": namespace, "subject_entity_id": subject,
         "predicate": extracted.predicate, "value_json": value_json,
+        "fact_hash": compute_fact_hash(subject, extracted.predicate, extracted.value),
         "qualifiers_json": json.dumps(qualifiers, ensure_ascii=False, sort_keys=True),
         "conflict_key": compute_conflict_key(namespace, subject, extracted.predicate, qualifiers),
         "valid_from": event.get("occurred_at", now), "recorded_from": now,
@@ -43,11 +53,10 @@ def store_extracted(
         "extractor_version": "llm-v1" if event.get("extractor") == "llm" else "fake-v1",
         "embedding_model": getattr(embedder, "model", "fake"), "embedding_dim": embedder.dim,
     }
-    claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
-    duplicate_id, _ = Deduplicator(claims, embedder).find_duplicate(claim)
-    if duplicate_id:
-        _link_event(evidence, duplicate_id, event["id"])
-        return duplicate_id
+    exact = claims.find_by_fact_hash(namespace, claim["fact_hash"])
+    if exact:
+        _link_event(evidence, exact["id"], event["id"])
+        return exact["id"]
     existing = claims.find_by_conflict_key(claim["conflict_key"])
     if existing:
         resolution = ConflictResolver().resolve(existing[-1], {**claim, "qualifiers": qualifiers})
@@ -62,6 +71,14 @@ def store_extracted(
             claim["status"] = "disputed"
         elif resolution == "uncertain":
             claim["status"] = "candidate"
+    else:
+        claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
+        duplicate_id, _ = Deduplicator(claims, embedder).find_duplicate(claim)
+        if duplicate_id:
+            _link_event(evidence, duplicate_id, event["id"])
+            return duplicate_id
+    if "embedding_dense" not in claim:
+        claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
     claims.insert_claim(claim)
     _link_event(evidence, claim["id"], event["id"])
     _build_observation(connection, claim["conflict_key"], now)

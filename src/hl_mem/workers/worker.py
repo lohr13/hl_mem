@@ -83,7 +83,8 @@ class Worker:
         raise ValueError(f"unknown job type: {job['job_type']}")
 
     def _extract(self, payload: dict[str, Any]) -> dict[str, Any]:
-        event = EventRepository(self.connection).get_event(payload["event_id"])
+        events = EventRepository(self.connection)
+        event = events.get_event(payload["event_id"])
         if not event:
             raise ValueError(f"event not found: {payload['event_id']}")
         content = json.loads(event["content_json"])
@@ -98,7 +99,16 @@ class Worker:
             extracted = [ExtractedClaim(memory["predicate"], memory["text"], 1.0, "stable",
                                         memory["subject"], memory.get("qualifiers") or {})]
         else:
-            extracted = self.extractor.extract(content, event) if isinstance(
+            recent = events.get_recent_events(event["session_id"], event, 3) if event.get(
+                "session_id"
+            ) else []
+            event_context = {
+                "occurred_at": event["occurred_at"],
+                "recent_events": [
+                    {**item, "content": json.loads(item["content_json"])} for item in reversed(recent)
+                ],
+            }
+            extracted = self.extractor.extract(content, event_context) if isinstance(
                 self.extractor, LLMExtractor) else self.extractor.extract(content)
         if isinstance(self.extractor, LLMExtractor):
             self.budget.record_usage(self.extractor.last_usage_tokens)
