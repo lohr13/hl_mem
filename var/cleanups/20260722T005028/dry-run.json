@@ -1,0 +1,33 @@
+{
+  "plan": {
+    "rules_version": "scheme-1-status-only-v1",
+    "generated_at": "2026-07-21T16:50:28.531573+00:00",
+    "disputed_count": 120,
+    "eligible_ids": [
+      "0935b081585144aba0e46d7c60ea1e1e",
+      "168ecb6b0ee94b2aa97e56df2b44d1a5",
+      "2120bb47bbb84f1094c21fd96e5f1fce",
+      "519db5b7c9254ebcb773664ae09cc6e2",
+      "63ee6955aad24dc39e90d796b80d53c3",
+      "6b5005884a0449adb550962bf9a4e5bd",
+      "791eac946dd24aa79cab79c99b8546aa",
+      "8831730b6e0e4477bd3cc61878f7dff2",
+      "a37dfffdf7374938b190b4c88784b412",
+      "bccb24b6b85f47e7bf43b14bfec36184",
+      "c67d13bc130044f590eff32c250bf9af",
+      "c972722a8ab54ef18711e67ce61f206d",
+      "da2ce35d5f6a4593b7355d42d91a932b",
+      "f105f5611e4f41648a34737b2c6ff32d",
+      "f6d65bbcc5804cf58a18e72da0f832c5",
+      "fc3ad0af1b954699a645f0b785d2bbaa"
+    ],
+    "skipped_reasons": {
+      "expired": 0,
+      "live_peer": 104
+    },
+    "state_token": "d67138c30ac38724dc4b4688b32b1195f5a0dfa1310474bc87c97ea147f3c9f0",
+    "evidence_token": "e525d65b28779c468930db94396d45d0fc24a0ea79475708427b28e45f2e65a2",
+    "evidence_count": 235
+  },
+  "result": null
+}

@@ -1,0 +1,16 @@
+{
+  "plan": {
+    "rules_version": "scheme-1-status-only-v1",
+    "generated_at": "2026-07-21T16:51:29.401052+00:00",
+    "disputed_count": 104,
+    "eligible_ids": [],
+    "skipped_reasons": {
+      "expired": 0,
+      "live_peer": 104
+    },
+    "state_token": "7e9ddbe9f8a996f41882fc8a0881b65307e2e56774fc29dc442222188a5420b4",
+    "evidence_token": "e525d65b28779c468930db94396d45d0fc24a0ea79475708427b28e45f2e65a2",
+    "evidence_count": 235
+  },
+  "result": null
+}
