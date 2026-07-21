@@ -1,0 +1,6 @@
+{
+  "dataset": "recall_v2.jsonl",
+  "binding_strategy": "normalized_keyword_all_unique",
+  "case_count": 50,
+  "snapshot": "由 build_snapshot.py 在本地生成，不提交数据库或敏感原文"
+}
