@@ -9,8 +9,7 @@ import httpx
 class HLMemProvider:
     """Hermes-compatible HTTP adapter with graceful degradation."""
 
-    def __init__(self, db_path: str | None = None, daemon_url: str | None = None,
-                 timeout: float = 2.0) -> None:
+    def __init__(self, db_path: str | None = None, daemon_url: str | None = None, timeout: float = 2.0) -> None:
         self.db_path = db_path
         self.daemon_url = (daemon_url or "http://127.0.0.1:8000").rstrip("/")
         self.timeout = timeout
@@ -30,14 +29,19 @@ class HLMemProvider:
         except Exception:
             self._on_failure()
 
-    async def prefetch(self, query: str, limit: int = 10) -> dict[str, Any]:
+    async def prefetch(
+        self, query: str, limit: int = 10, intent: str | None = None, as_of: str | None = None
+    ) -> dict[str, Any]:
         if not self._can_call():
             return {"results": [], "error": "circuit_open"}
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.daemon_url}/v1/recall", json={"query": query, "limit": limit}
-                )
+                payload = {"query": query, "limit": limit}
+                if intent is not None:
+                    payload["intent"] = intent
+                if as_of is not None:
+                    payload["as_of"] = as_of
+                response = await client.post(f"{self.daemon_url}/v1/recall", json=payload)
                 response.raise_for_status()
                 self._on_success()
                 return response.json()
@@ -59,8 +63,7 @@ class HLMemProvider:
             self._on_failure()
 
     def on_memory_write(self, key: str, content: str, target: str = "memory") -> None:
-        self._sync_post("/v1/memories", {"text": content, "qualifiers": {
-            "key": key, "target": target}})
+        self._sync_post("/v1/memories", {"text": content, "qualifiers": {"key": key, "target": target}})
 
     def on_pre_compress(self, messages: list[dict[str, Any]]) -> None:
         if not self._can_call():
@@ -99,8 +102,7 @@ class HLMemProvider:
     @staticmethod
     def _event_payload(message: dict[str, Any]) -> dict[str, Any]:
         role = message.get("role", "user")
-        return {"event_type": "message", "actor_type": role,
-                "content": {"text": str(message.get("content", ""))}}
+        return {"event_type": "message", "actor_type": role, "content": {"text": str(message.get("content", ""))}}
 
     @staticmethod
     def _error_name(error: Exception) -> str:

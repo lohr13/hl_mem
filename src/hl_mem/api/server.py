@@ -12,10 +12,11 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from hl_mem.api.pipeline import new_id
-from hl_mem.recall.recall_pipeline import hybrid_claims, stale_observations
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
+from hl_mem.recall.policy import RecallIntent, route_recall_intent
+from hl_mem.recall.recall_pipeline import hybrid_claims, stale_observations
 from hl_mem.recall.reranker import FakeReranker, Reranker
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import ClaimRepository, EventRepository, EvidenceRepository, JobRepository
@@ -47,6 +48,8 @@ class RecallInput(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)
     as_of: str | None = None
     session_id: str | None = None
+    intent: RecallIntent | None = None
+    known_as_of: str | None = None
 
 
 class MemoryInput(BaseModel):
@@ -67,9 +70,12 @@ def _make_embedder() -> Any:
     api_key = os.getenv("EMBEDDING_API_KEY")
     if not api_key:
         return FakeEmbedder(dim)
-    return Embedder(api_key, os.getenv(
-        "EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        os.getenv("EMBEDDING_MODEL", "text-embedding-v4"), dim)
+    return Embedder(
+        api_key,
+        os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
+        dim,
+    )
 
 
 def _make_reranker() -> Any:
@@ -115,28 +121,50 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     def post_event(payload: EventInput, idempotency_key: str | None = Header(default=None)) -> dict[str, Any]:
         connection, events = database.open(), EventRepository(database.open())
         key = idempotency_key or payload.idempotency_key
-        existing = connection.execute("SELECT id FROM events WHERE idempotency_key=?", (key,)).fetchone() if key else None
+        existing = (
+            connection.execute("SELECT id FROM events WHERE idempotency_key=?", (key,)).fetchone() if key else None
+        )
         if existing:
-            audit.emit("ingest", "accepted", "duplicate", trace_id=existing["id"],
-                       event_id=existing["id"], tenant_id=payload.tenant_id,
-                       detail={"event_type": payload.event_type, "actor_type": payload.actor_type})
+            audit.emit(
+                "ingest",
+                "accepted",
+                "duplicate",
+                trace_id=existing["id"],
+                event_id=existing["id"],
+                tenant_id=payload.tenant_id,
+                detail={"event_type": payload.event_type, "actor_type": payload.actor_type},
+            )
             return {"id": existing["id"], "created": False}
         event_id, timestamp = payload.id or new_id(), _now()
         content = payload.content if isinstance(payload.content, dict) else {"text": payload.content}
         content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
         event = payload.model_dump(exclude={"content", "id"})
-        event.update(id=event_id, idempotency_key=key, content_json=content_json,
-                     occurred_at=payload.occurred_at or timestamp, recorded_at=timestamp,
-                     content_hash=hashlib.sha256(content_json.encode()).hexdigest())
+        event.update(
+            id=event_id,
+            idempotency_key=key,
+            content_json=content_json,
+            occurred_at=payload.occurred_at or timestamp,
+            recorded_at=timestamp,
+            content_hash=hashlib.sha256(content_json.encode()).hexdigest(),
+        )
         created = events.insert_event(event)
         if created:
             _queue_event(connection, event_id, timestamp)
-        audit.emit("ingest", "accepted", "queued" if created else "duplicate",
-                   trace_id=event_id, event_id=event_id, tenant_id=payload.tenant_id,
-                   detail={"event_type": payload.event_type, "actor_type": payload.actor_type,
-                           "content_chars": len(content_json),
-                           "content_hash": event["content_hash"],
-                           "sensitivity": payload.sensitivity})
+        audit.emit(
+            "ingest",
+            "accepted",
+            "queued" if created else "duplicate",
+            trace_id=event_id,
+            event_id=event_id,
+            tenant_id=payload.tenant_id,
+            detail={
+                "event_type": payload.event_type,
+                "actor_type": payload.actor_type,
+                "content_chars": len(content_json),
+                "content_hash": event["content_hash"],
+                "sensitivity": payload.sensitivity,
+            },
+        )
         return {"id": event_id, "created": created}
 
     @app.post("/v1/recall")
@@ -144,25 +172,62 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         connection = database.open()
         query_id = request.headers.get("X-Request-ID") or new_id()
         with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
-            claims = hybrid_claims(ClaimRepository(connection), payload.query,
-                                   embedder.embed_one(payload.query), payload.limit,
-                                   payload.as_of, reranker)
+            intent = payload.intent or route_recall_intent(payload.query, payload.as_of)
+            claims = hybrid_claims(
+                ClaimRepository(connection),
+                payload.query,
+                embedder.embed_one(payload.query),
+                payload.limit,
+                payload.as_of,
+                reranker,
+                intent=intent,
+                known_as_of=payload.known_as_of,
+            )
             try:
                 ClaimRepository(connection).record_access([claim["id"] for claim in claims], _now())
             except Exception as error:
                 try:
-                    audit.emit("recall", "access_record", "access_record_failed",
-                               detail={"error_class": type(error).__name__,
-                                       "claim_count": len(claims)})
+                    audit.emit(
+                        "recall",
+                        "access_record",
+                        "access_record_failed",
+                        detail={"error_class": type(error).__name__, "claim_count": len(claims)},
+                    )
                 except Exception:
                     pass
         evidence_repo, results = EvidenceRepository(connection), []
         for claim in claims:
-            evidence = [{"type": "event", "id": link["evidence_id"]} for link in
-                        evidence_repo.get_links_for_derived("claim", claim["id"])]
-            results.append({"type": "claim", "id": claim["id"], "text": json.loads(claim["value_json"]),
-                            "status": claim["status"], "confidence": claim["confidence"],
-                            "valid_from": claim["valid_from"], "evidence": evidence})
+            evidence = [
+                {"type": "event", "id": link["evidence_id"]}
+                for link in evidence_repo.get_links_for_derived("claim", claim["id"])
+            ]
+            decoded = json.loads(claim["value_json"])
+            text = (
+                decoded.get("old_value")
+                if isinstance(decoded, dict) and decoded.get("_type") == "superseded_value"
+                else decoded
+            )
+            replacement = None
+            if claim.get("superseded_by_id"):
+                replacement_claim = ClaimRepository(connection).get_claim(claim["superseded_by_id"])
+                if replacement_claim:
+                    replacement = {
+                        "id": replacement_claim["id"],
+                        "text": json.loads(replacement_claim["value_json"]),
+                        "valid_from": replacement_claim["valid_from"],
+                    }
+            results.append(
+                {
+                    "type": "claim",
+                    "id": claim["id"],
+                    "text": text,
+                    "status": claim["status"],
+                    "confidence": claim["confidence"],
+                    "valid_from": claim["valid_from"],
+                    "replacement": replacement,
+                    "evidence": evidence,
+                }
+            )
         return {"results": results, "observations": [], "total": len(results), "query_id": query_id}
 
     @app.post("/v1/memories")
@@ -171,16 +236,37 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         text = payload.text or payload.content
         if not text:
             raise HTTPException(422, "text or content is required")
-        memory = {"text": text, "subject": payload.subject, "predicate": payload.predicate,
-                  "qualifiers": payload.qualifiers}
-        event = {"id": event_id, "idempotency_key": None, "tenant_id": "default", "event_type": "explicit_memory",
-                 "actor_type": "user", "content_json": json.dumps({"text": text, "memory": memory}, ensure_ascii=False),
-                 "occurred_at": now, "recorded_at": now}
+        memory = {
+            "text": text,
+            "subject": payload.subject,
+            "predicate": payload.predicate,
+            "qualifiers": payload.qualifiers,
+        }
+        event = {
+            "id": event_id,
+            "idempotency_key": None,
+            "tenant_id": "default",
+            "event_type": "explicit_memory",
+            "actor_type": "user",
+            "content_json": json.dumps({"text": text, "memory": memory}, ensure_ascii=False),
+            "occurred_at": now,
+            "recorded_at": now,
+        }
         EventRepository(database.open()).insert_event(event)
         _queue_event(database.open(), event_id, now)
-        audit.emit("ingest", "accepted", "queued", trace_id=event_id, event_id=event_id,
-                   detail={"event_type": "explicit_memory", "actor_type": "user",
-                           "content_chars": len(event["content_json"]), "sensitivity": "normal"})
+        audit.emit(
+            "ingest",
+            "accepted",
+            "queued",
+            trace_id=event_id,
+            event_id=event_id,
+            detail={
+                "event_type": "explicit_memory",
+                "actor_type": "user",
+                "content_chars": len(event["content_json"]),
+                "sensitivity": "normal",
+            },
+        )
         return {"id": event_id}
 
     @app.delete("/v1/memories/{memory_id}")
@@ -195,21 +281,31 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     @app.get("/v1/stats")
     def stats() -> dict[str, Any]:
         connection, token_stats = database.open(), budget.get_stats()
-        return {"events": connection.execute("SELECT count(*) FROM events").fetchone()[0],
-                "claims": connection.execute("SELECT count(*) FROM claims").fetchone()[0],
-                "tokens_today": token_stats["used_tokens"], "jobs_pending": connection.execute(
-                    "SELECT count(*) FROM jobs WHERE status='pending'").fetchone()[0]}
+        return {
+            "events": connection.execute("SELECT count(*) FROM events").fetchone()[0],
+            "claims": connection.execute("SELECT count(*) FROM claims").fetchone()[0],
+            "tokens_today": token_stats["used_tokens"],
+            "jobs_pending": connection.execute("SELECT count(*) FROM jobs WHERE status='pending'").fetchone()[0],
+        }
 
     @app.get("/v1/jobs")
     def jobs() -> dict[str, int]:
         return JobRepository(database.open()).counts()
+
     return app
 
 
 def _queue_event(connection: Any, event_id: str, now: str) -> None:
-    JobRepository(connection).insert_job({"id": new_id(), "job_type": "extract_event",
-        "payload_json": json.dumps({"event_id": event_id}), "idempotency_key": f"extract:{event_id}",
-        "created_at": now, "updated_at": now})
+    JobRepository(connection).insert_job(
+        {
+            "id": new_id(),
+            "job_type": "extract_event",
+            "payload_json": json.dumps({"event_id": event_id}),
+            "idempotency_key": f"extract:{event_id}",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
 
 
 app = create_app()
