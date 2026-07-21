@@ -38,6 +38,21 @@ def test_should_memorize_false_returns_no_claims(monkeypatch) -> None:
     assert LLMExtractor("key", "https://example.test", "model").extract("闲聊") == []
 
 
+def test_occurred_at_is_injected_into_user_prompt(monkeypatch) -> None:
+    captured = {}
+
+    def post(*args, **kwargs):
+        captured.update(kwargs["json"])
+        return Response('{"claims":[],"should_memorize":true}')
+
+    monkeypatch.setattr(httpx, "post", post)
+    occurred_at = "2026-07-21T08:30:00+08:00"
+    LLMExtractor("key", "https://example.test", "model").extract(
+        "明天交付", {"occurred_at": occurred_at}
+    )
+    assert occurred_at in captured["messages"][1]["content"]
+
+
 def test_normalizes_predicate_and_preserves_chinese_value(monkeypatch) -> None:
     raw = ('{"claims":[{"subject":"用户","predicate":"Prefers",'
            '"value":"深色模式","qualifiers":{}}],"should_memorize":true}')

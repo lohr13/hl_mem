@@ -29,6 +29,17 @@ class EventRepository:
     def get_event(self, event_id: str) -> dict[str, Any] | None:
         return _row(self.connection.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone())
 
+    def get_recent_events(
+        self, session_id: str, before: dict[str, Any], limit: int
+    ) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM events WHERE session_id=? AND "
+            "(occurred_at<? OR (occurred_at=? AND id<?)) "
+            "ORDER BY occurred_at DESC,id DESC LIMIT ?",
+            (session_id, before["occurred_at"], before["occurred_at"], before["id"], limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def search_events_fts(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             "SELECT e.* FROM events_fts f JOIN events e ON e.rowid=f.rowid "
@@ -64,6 +75,13 @@ class ClaimRepository:
             (conflict_key,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def find_by_fact_hash(self, namespace: str, fact_hash: str) -> dict[str, Any] | None:
+        return _row(self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? AND fact_hash=? "
+            "AND status IN ('active','candidate','disputed') ORDER BY recorded_from DESC LIMIT 1",
+            (namespace, fact_hash),
+        ).fetchone())
 
     def list_embedded(self, as_of: str | None = None) -> list[dict[str, Any]]:
         reference = as_of or datetime.now(timezone.utc).isoformat()
