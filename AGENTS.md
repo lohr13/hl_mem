@@ -29,6 +29,7 @@ src/hl_mem/
 │   ├── event_filter.py     # 事件过滤
 │   └── budget.py           # 预算控制
 ├── recall/        # 召回层
+│   ├── recall_pipeline.py  # 召回管道（从 api/pipeline.py 拆出）
 │   ├── dedup.py            # L1 精确去重 + L2 语义去重
 │   ├── conflict.py         # 矛盾检测
 │   ├── ranking.py          # 多因子排序
@@ -38,7 +39,7 @@ src/hl_mem/
 │   ├── database.py         # SQLite 连接 + schema 初始化
 │   └── repository.py       # CRUD 操作
 ├── workers/       # 后台任务
-│   ├── worker.py           # Worker 基类
+│   ├── worker.py           # Worker 基类 + main() CLI 入口
 │   ├── decay.py            # 衰减任务
 │   ├── ttl.py              # TTL 过期
 │   └── reclassify.py       # 记忆重分类
@@ -119,6 +120,7 @@ EMBEDDING_MODEL=text-embedding-v4
 ## 当前状态
 
 - 首版功能已实现（event + claim + observation）
-- 93 测试通过
+- 90 单元测试通过
+- 架构重构完成：FakeEmbedder 合并、pipeline 拆分、tests 整理、var/ 数据目录
 - Hermes provider 适配器已完成（commit 248093f）
 - 衰减策略：temporal 90/180d, permanent 180/365d
