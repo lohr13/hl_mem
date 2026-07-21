@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from hl_mem.observability.audit import current_audit
-from hl_mem.recall.conflict import ConflictResolver, compute_conflict_key
+from hl_mem.recall.attribute_map import validate_canonical_attribute
+from hl_mem.recall.conflict import ConflictResolver, compute_conflict_key, compute_legacy_conflict_key
 from hl_mem.recall.dedup import Deduplicator
 from hl_mem.recall.observation import ObservationBuilder
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository, EvidenceRepository
@@ -47,6 +48,9 @@ def store_extracted(
     claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
     namespace, subject = event.get("tenant_id", "default"), extracted.subject
     qualifiers = extracted.qualifiers or {}
+    canonical_attribute = validate_canonical_attribute(
+        extracted.predicate, getattr(extracted, "canonical_attribute", None)
+    )
     value_json = json.dumps(extracted.value, ensure_ascii=False, sort_keys=True)
     scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
     expires_at = ((datetime.fromisoformat(now) + timedelta(days=ttl_days)).isoformat()
@@ -58,9 +62,14 @@ def store_extracted(
     claim = {
         "id": new_id(), "namespace_key": namespace, "subject_entity_id": subject,
         "predicate": extracted.predicate, "value_json": value_json,
+        "canonical_attribute": canonical_attribute,
         "fact_hash": compute_fact_hash(subject, extracted.predicate, extracted.value),
         "qualifiers_json": json.dumps(qualifiers, ensure_ascii=False, sort_keys=True),
-        "conflict_key": compute_conflict_key(namespace, subject, extracted.predicate, qualifiers),
+        "conflict_key": compute_conflict_key(namespace, subject, canonical_attribute, qualifiers),
+        "conflict_key_version": 2,
+        "legacy_conflict_key": compute_legacy_conflict_key(
+            namespace, subject, extracted.predicate, qualifiers
+        ),
         "valid_from": event.get("occurred_at", now), "recorded_from": now,
         "observed_at": event.get("occurred_at", now),
         "expires_at": expires_at,
@@ -118,7 +127,6 @@ def store_extracted(
         claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
     claims.insert_claim(claim)
     _link_event(evidence, claim["id"], event["id"])
-    _build_observation(connection, claim["conflict_key"], now)
     return claim["id"]
 
 
@@ -145,4 +153,3 @@ def _build_observation(connection: Any, conflict_key: str, now: str) -> None:
         evidence.add_link({"id": new_id(), "derived_type": "observation", "derived_id": observation_id,
                            "evidence_type": "claim", "evidence_id": claim_id,
                            "relation": "supports", "weight": 1.0})
-

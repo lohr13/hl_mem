@@ -15,6 +15,7 @@ from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim, FakeExtractor
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
+from hl_mem.recall.attribute_map import infer_canonical_attribute
 from hl_mem.storage.database import Database, default_database_path
 from hl_mem.storage.repository import EventRepository, JobRepository
 from hl_mem.workers.ttl import expire_claims
@@ -124,6 +125,10 @@ class Worker:
                         volatility="stable", subject=memory["subject"],
                         qualifiers=memory.get("qualifiers") or {}, scope="permanent",
                         importance=1.0,
+                        canonical_attribute=infer_canonical_attribute(
+                            memory["predicate"], memory["subject"], memory["text"],
+                            memory.get("qualifiers") or {},
+                        ),
                     )]
                 else:
                     recent = events.get_recent_events(event["session_id"], event, 3) if event.get(

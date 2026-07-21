@@ -9,11 +9,13 @@ from typing import Any
 import httpx
 
 from .extractors import ExtractedClaim
+from hl_mem.recall.attribute_map import normalize_predicate, validate_canonical_attribute
 
-SYSTEM_PROMPT = """你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。只提取事实，不判断是否与已有记忆冲突。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、value、qualifiers、confidence、volatility、reason。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
+SYSTEM_PROMPT = """你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。只提取事实，不判断是否与已有记忆冲突。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、canonical_attribute、value、qualifiers、confidence、volatility、reason。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
 value 必须保持用户使用的原始语言：中文原文输出中文值，英文原文输出英文值，不要翻译。保留原文中的精确数字和日期，不得模糊化或改写。
 结合事件上下文中的 occurred_at 解析“今天”“明天”“下周”等相对时间，并在事实中输出对应的绝对日期。
 predicate 只能是以下标准值之一：偏好（喜欢或不喜欢的事物）、使用（工具、数据库、操作系统等技术选择）、状态（当前服务或运行状态）、身份（用户名、角色、联系方式）、配置（端口、路径、参数）、计划（计划事项、截止日期）、事实（其他客观事实）。
+canonical_attribute 必须使用受控的小写 ASCII domain.slot，例如 preference.ui_theme、preference.tool_choice、choice.tool、choice.database、state.service_health、identity.role、config.port、config.path、config.env、plan.deadline、fact.tool_choice、fact.other；必须选择与 predicate 和事实内容匹配的最细粒度属性，不得创造新值。
 subject 默认为“用户”；明确提到项目名或服务名时使用该名称。代词（他、她、它、那个）必须结合上下文替换为具体名称；不要在事实中保留代词。
 文本包含“改用”“换成”“现在用”“不用了”“改为”等变更信号时，在 qualifiers 中加入 \"change\": true。
 不要输出 JSON 以外的解释。"""
@@ -29,15 +31,6 @@ must-remember instruction. Do not infer importance merely from emotional wording
 """
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
-PREDICATE_NORMALIZE = {
-    "prefers": "偏好", "preference": "偏好", "偏好": "偏好", "喜欢": "偏好",
-    "uses": "使用", "use": "使用", "使用": "使用", "用": "使用",
-    "status": "状态", "状态": "状态", "identity": "身份", "身份": "身份",
-    "config": "配置", "配置": "配置", "plan": "计划", "计划": "计划",
-    "fact": "事实", "事实": "事实",
-}
-
-
 class LLMExtractor:
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float | None = None) -> None:
         self.api_key = api_key
@@ -112,7 +105,10 @@ class LLMExtractor:
         value = str(item.get("value", "")).strip()
         value = ALIASES.get(value.casefold(), value)
         predicate = str(item.get("predicate", "事实")).strip()
-        predicate = PREDICATE_NORMALIZE.get(predicate.casefold(), predicate)
+        predicate = normalize_predicate(predicate)
+        canonical_attribute = validate_canonical_attribute(
+            predicate, str(item.get("canonical_attribute", ""))
+        )
         volatility = item.get("volatility", "stable")
         scope = item.get("scope", "permanent")
         scope = scope if scope in {"temporal", "permanent"} else "permanent"
@@ -130,4 +126,5 @@ class LLMExtractor:
             volatility=volatility if volatility in {"stable", "ephemeral"} else "stable",
             subject=str(item.get("subject", "用户")), qualifiers=item.get("qualifiers") or {},
             reason=str(item.get("reason", "")), scope=scope, importance=importance,
+            canonical_attribute=canonical_attribute,
         )
