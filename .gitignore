@@ -13,3 +13,5 @@ hl_mem_budget_test.json
 *.db
 *.db-*
 *.budget.json
+var/*.db
+var/*.db-*

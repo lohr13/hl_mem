@@ -14,7 +14,9 @@ os.environ.setdefault("HL_MEM_RERANKER", "off")
 os.environ.setdefault("HL_MEM_EMBEDDER", "real")
 os.environ.setdefault("HL_MEM_EXTRACTOR", "llm")
 
-db_path = os.getenv("HL_MEM_DB_PATH", str(Path(__file__).parent / "hl_mem.db"))
+from hl_mem.storage.database import default_database_path
+
+db_path = str(default_database_path())
 
 # Start Worker in background
 from hl_mem.workers.worker import Worker

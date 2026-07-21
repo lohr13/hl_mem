@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import EventRepository
@@ -39,3 +40,10 @@ def test_get_recent_events_uses_session_time_and_id_boundary(tmp_path) -> None:
     )
     assert [event["id"] for event in recent] == ["b", "a"]
     database.close()
+def test_database_path_defaults_to_var_and_allows_environment_override(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("HL_MEM_DB_PATH", raising=False)
+    assert Path(Database().path).as_posix().endswith("/var/hl_mem.db")
+
+    configured = tmp_path / "configured.db"
+    monkeypatch.setenv("HL_MEM_DB_PATH", str(configured))
+    assert Path(Database().path) == configured

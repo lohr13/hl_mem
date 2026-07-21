@@ -67,7 +67,7 @@ src/hl_mem/
 │   └── ttl.py              # TTL 自动过期扫描
 ├── adapters/hermes/
 │   └── provider.py         # Hermes Provider（2s timeout + circuit breaker + 无感降级）
-└── worker.py               # CLI 入口：python -m hl_mem.worker {run|run-once|status}
+└── workers/worker.py       # CLI 入口：python -m hl_mem.workers.worker {run|run-once|status}
 ```
 
 ### 数据流
@@ -159,7 +159,7 @@ python tests/e2e_real.py
 uvicorn hl_mem.api.server:app --port 9178
 
 # 启动 Worker（另开终端）
-python -m hl_mem.worker run
+python -m hl_mem.workers.worker run
 ```
 
 ## 设计文档

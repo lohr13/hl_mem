@@ -11,7 +11,8 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hl_mem.api.pipeline import hybrid_claims, new_id, stale_observations
+from hl_mem.api.pipeline import new_id
+from hl_mem.recall.recall_pipeline import hybrid_claims, stale_observations
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
@@ -87,9 +88,10 @@ def _make_reranker() -> Any:
 
 
 def create_app(database_path: str | Path | None = None, audit: Any = None) -> FastAPI:
-    path = database_path or os.getenv("HL_MEM_DB_PATH", "hl_mem.db")
-    database, embedder, reranker = Database(path), _make_embedder(), _make_reranker()
-    budget = TokenBudget(int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")), Path(path).with_suffix(".budget.json"))
+    database, embedder, reranker = Database(database_path), _make_embedder(), _make_reranker()
+    budget = TokenBudget(
+        int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")), Path(database.path).with_suffix(".budget.json")
+    )
     audit = audit or NullAuditLogger()
 
     @asynccontextmanager

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -48,14 +47,3 @@ class FakeExtractor:
                 )
                 break
         return results
-
-
-class FakeEmbedder:
-    """Return a deterministic pseudo-random vector for repeatable tests."""
-
-    def __init__(self, dimension: int = 16) -> None:
-        self.dimension = dimension
-
-    def embed(self, text: str) -> list[float]:
-        generator = random.Random(text)
-        return [generator.uniform(-1.0, 1.0) for _ in range(self.dimension)]

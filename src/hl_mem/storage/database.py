@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
+
+
+def default_database_path() -> Path:
+    """返回环境变量配置或项目 var 目录下的默认数据库路径。"""
+    configured = os.getenv("HL_MEM_DB_PATH")
+    if configured:
+        return Path(configured)
+    return Path(__file__).resolve().parents[3] / "var" / "hl_mem.db"
 
 
 class Database:
     """Own a SQLite connection and apply ordered SQL migrations."""
 
-    def __init__(self, path: str | Path) -> None:
-        self.path = str(path)
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.path = str(Path(path) if path is not None else default_database_path())
         self.connection: sqlite3.Connection | None = None
 
     def open(self) -> sqlite3.Connection:

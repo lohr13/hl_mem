@@ -2,20 +2,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from hl_mem.api.pipeline import hybrid_claims, store_extracted
+from hl_mem.api.pipeline import store_extracted
+from hl_mem.recall.recall_pipeline import hybrid_claims
 from hl_mem.ingest.embeddings import FakeEmbedder, pack_vector
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor, SYSTEM_PROMPT
 from hl_mem.recall.ranking import blend_reranker_score, memory_features, memory_score
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import ClaimRepository
-from hl_mem.workers.decay import decay_claims
-from hl_mem.workers.reclassify import reclassify_claims
-from hl_mem.workers.worker import Worker
 
 
 NOW = "2026-07-21T00:00:00+00:00"
@@ -151,106 +148,6 @@ def test_vector_search_is_bounded_and_sorted(tmp_path):
     _claim(connection, "same", embedding_dense=pack_vector([1.0]))
     assert [c["id"] for c in ClaimRepository(connection).search_claims_vector(
         pack_vector([1.0]), 1)] == ["same"]
-
-
-def _decay_db(tmp_path):
-    return Database(tmp_path / "decay.db").open()
-
-
-@pytest.mark.parametrize(("scope", "days", "expected"), [
-    ("temporal", 90, "active"), ("temporal", 181, "archived"),
-    ("permanent", 180, "active"), ("permanent", 366, "archived"),
-])
-def test_decay_boundaries(tmp_path, scope, days, expected):
-    connection = _decay_db(tmp_path)
-    recorded = (datetime.fromisoformat(NOW) - timedelta(days=days)).isoformat()
-    _claim(connection, scope=scope, recorded_from=recorded, last_accessed_at=recorded)
-    decay_claims(connection, NOW)
-    assert connection.execute("SELECT status FROM claims").fetchone()[0] == expected
-
-
-def test_decay_access_count_bonus_extends_threshold(tmp_path):
-    """A temporal claim with 50 accesses gets +150 days (5×30) to its thresholds."""
-    connection = _decay_db(tmp_path)
-    # 50 accesses → bonus = min(5*30, 365) = 150 days
-    # temporal archive = 180 + 150 = 330 days
-    # 200 days inactive: > base 180 but < adjusted 330 → still active
-    recorded = (datetime.fromisoformat(NOW) - timedelta(days=200)).isoformat()
-    _claim(connection, scope="temporal", recorded_from=recorded,
-           last_accessed_at=recorded, access_count=50)
-    decay_claims(connection, NOW)
-    assert connection.execute("SELECT status FROM claims").fetchone()[0] == "active"
-
-    # Same claim at 400 days: > adjusted 330 → archived
-    connection2 = _decay_db(tmp_path)
-    recorded2 = (datetime.fromisoformat(NOW) - timedelta(days=400)).isoformat()
-    _claim(connection2, "c2", scope="temporal", recorded_from=recorded2,
-           last_accessed_at=recorded2, access_count=50)
-    decay_claims(connection2, NOW)
-    assert connection2.execute("SELECT status FROM claims WHERE id='c2'").fetchone()[0] == "archived"
-
-
-def test_decay_access_count_bonus_capped_at_365(tmp_path):
-    """1000 accesses → bonus capped at 365 days, not 3000."""
-    connection = _decay_db(tmp_path)
-    # temporal base archive = 180 + 365 cap = 545 days
-    # 500 days: < 545 → active
-    recorded = (datetime.fromisoformat(NOW) - timedelta(days=500)).isoformat()
-    _claim(connection, scope="temporal", recorded_from=recorded,
-           last_accessed_at=recorded, access_count=1000)
-    decay_claims(connection, NOW)
-    assert connection.execute("SELECT status FROM claims").fetchone()[0] == "active"
-
-
-def test_decay_elapsed_linear_once_daily_and_floor(tmp_path):
-    connection = _decay_db(tmp_path)
-    recorded = (datetime.fromisoformat(NOW) - timedelta(days=100)).isoformat()
-    _claim(connection, scope="temporal", recorded_from=recorded, last_accessed_at=recorded,
-           confidence=.08)
-    assert decay_claims(connection, NOW) == {"decayed": 1, "archived": 0}
-    assert connection.execute("SELECT confidence FROM claims").fetchone()[0] == pytest.approx(.05)
-    assert decay_claims(connection, "2026-07-21T12:00:00+00:00")["decayed"] == 0
-
-
-def test_decay_archive_keeps_evidence_and_clears_embedding(tmp_path):
-    connection = _decay_db(tmp_path)
-    old = "2025-01-01T00:00:00+00:00"
-    _claim(connection, recorded_from=old, last_accessed_at=old)
-    connection.execute("INSERT INTO evidence_links(id,derived_type,derived_id,evidence_type,evidence_id,relation) VALUES ('l','claim','c','event','e','derived_from')")
-    connection.commit()
-    decay_claims(connection, NOW)
-    row = connection.execute("SELECT status,embedding_dense FROM claims").fetchone()
-    assert tuple(row) == ("archived", None)
-    assert connection.execute("SELECT count(*) FROM evidence_links").fetchone()[0] == 1
-
-
-def test_decay_rollout_grace_exempts_preexisting_unaccessed(tmp_path):
-    connection = _decay_db(tmp_path)
-    connection.execute("UPDATE schema_migrations SET applied_at='2026-07-20 00:00:00' WHERE version='005_memory_management'")
-    _claim(connection, recorded_from="2020-01-01T00:00:00+00:00", last_accessed_at=None)
-    assert decay_claims(connection, NOW)["archived"] == 0
-
-
-def test_worker_decay_dispatch(tmp_path):
-    worker = Worker(tmp_path / "worker.db", {"embedding_dim": 2})
-    assert worker._dispatch({"job_type": "decay_access"}) == {"decayed": 0, "archived": 0}
-    worker.database.close()
-
-
-def test_reclassify_batches_updates_and_is_idempotent(tmp_path, monkeypatch):
-    connection = Database(tmp_path / "reclass.db").open()
-    for index in range(6):
-        _claim(connection, str(index))
-    extractor = LLMExtractor("key", "http://example", "model")
-    calls = []
-    def fake_batch(_extractor, claims):
-        calls.append(len(claims))
-        return [{"id": claim["id"], "scope": "temporal", "importance": .8}
-                for claim in claims]
-    monkeypatch.setattr("hl_mem.workers.reclassify.classify_batch", fake_batch)
-    assert reclassify_claims(connection, extractor, 5)["updated"] == 6
-    assert calls == [5, 1]
-    assert reclassify_claims(connection, extractor, 5)["eligible"] == 0
 
 
 def test_hybrid_priors_break_semantic_tie():

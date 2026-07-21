@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import time
@@ -14,7 +15,7 @@ from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim, FakeExtractor
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
-from hl_mem.storage.database import Database
+from hl_mem.storage.database import Database, default_database_path
 from hl_mem.storage.repository import EventRepository, JobRepository
 from hl_mem.workers.ttl import expire_claims
 from hl_mem.workers.decay import decay_claims
@@ -176,3 +177,31 @@ class Worker:
         if not api_key:
             return FakeEmbedder(dim)
         return Embedder(api_key, os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), os.getenv("EMBEDDING_MODEL", "text-embedding-v4"), dim)
+
+
+def main() -> None:
+    """运行 worker、处理单个任务或查看任务队列状态。"""
+    parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.worker")
+    parser.add_argument("command", choices=("run", "run-once", "status"))
+    parser.add_argument("--db", default=str(default_database_path()))
+    parser.add_argument("--poll-interval", type=float, default=2.0)
+    args = parser.parse_args()
+    if args.command == "status":
+        database = Database(args.db)
+        try:
+            print(json.dumps(JobRepository(database.open()).counts(), sort_keys=True))
+        finally:
+            database.close()
+        return
+    worker = Worker(args.db)
+    if args.command == "run-once":
+        try:
+            print(json.dumps(worker.run_once(), ensure_ascii=False, sort_keys=True))
+        finally:
+            worker.database.close()
+    else:
+        worker.run_forever(args.poll_interval)
+
+
+if __name__ == "__main__":
+    main()

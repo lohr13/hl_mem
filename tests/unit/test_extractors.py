@@ -1,4 +1,6 @@
-from hl_mem.ingest.extractors import FakeEmbedder, FakeExtractor
+import hl_mem.ingest as ingest
+from hl_mem.ingest.embeddings import FakeEmbedder, unpack_vector
+from hl_mem.ingest.extractors import FakeExtractor
 from tests.scenarios.chinese_test_cases import CHINESE_TEST_CASES
 
 
@@ -10,8 +12,14 @@ def test_fake_extractor_rules() -> None:
 
 def test_fake_embedder_is_local_and_repeatable() -> None:
     embedder = FakeEmbedder(8)
-    assert embedder.embed("中文") == embedder.embed("中文")
-    assert len(embedder.embed("中文")) == 8
+    first = embedder.embed_one("中文")
+    second = embedder.embed_one("中文")
+    assert first == second
+    assert len(unpack_vector(first)) == 8
+
+
+def test_fake_embedder_is_not_exported_from_ingest_package() -> None:
+    assert not hasattr(ingest, "FakeEmbedder")
 
 
 def test_chinese_scenario_count_and_shape() -> None:
