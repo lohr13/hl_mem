@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any
@@ -38,10 +39,11 @@ PREDICATE_NORMALIZE = {
 
 
 class LLMExtractor:
-    def __init__(self, api_key: str, base_url: str, model: str) -> None:
+    def __init__(self, api_key: str, base_url: str, model: str, timeout: float | None = None) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.timeout = timeout if timeout is not None else float(os.getenv("LLM_TIMEOUT", "90"))
         self.last_usage_tokens = 0
 
     def extract(
@@ -76,7 +78,7 @@ class LLMExtractor:
         for attempt in range(3):
             try:
                 response = httpx.post(
-                    f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=90.0
+                    f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=self.timeout
                 )
                 response.raise_for_status()
                 return response.json()
