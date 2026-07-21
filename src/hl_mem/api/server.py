@@ -145,6 +145,15 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             claims = hybrid_claims(ClaimRepository(connection), payload.query,
                                    embedder.embed_one(payload.query), payload.limit,
                                    payload.as_of, reranker)
+            try:
+                ClaimRepository(connection).record_access([claim["id"] for claim in claims], _now())
+            except Exception as error:
+                try:
+                    audit.emit("recall", "access_record", "access_record_failed",
+                               detail={"error_class": type(error).__name__,
+                                       "claim_count": len(claims)})
+                except Exception:
+                    pass
         evidence_repo, results = EvidenceRepository(connection), []
         for claim in claims:
             evidence = [{"type": "event", "id": link["evidence_id"]} for link in

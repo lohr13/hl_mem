@@ -17,6 +17,7 @@ from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import EventRepository, JobRepository
 from hl_mem.workers.ttl import expire_claims
+from hl_mem.workers.decay import decay_claims
 
 
 def _now() -> str:
@@ -65,6 +66,7 @@ class Worker:
                 current = time.monotonic()
                 if current >= next_ttl:
                     expire_claims(self.connection)
+                    decay_claims(self.connection)
                     self.audit.cleanup(int(self.config.get("audit_retention_days", 30)))
                     next_ttl = current + 600.0
                 if self.run_once()["status"] == "idle":
@@ -78,6 +80,8 @@ class Worker:
             return self._extract(json.loads(job["payload_json"] or "{}"), job["id"])
         if job["job_type"] == "expire_ttl":
             return expire_claims(self.connection)
+        if job["job_type"] == "decay_access":
+            return decay_claims(self.connection)
         if job["job_type"] == "retry_failed":
             cursor = self.connection.execute(
                 "UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'"
@@ -114,9 +118,12 @@ class Worker:
             try:
                 if event["event_type"] == "explicit_memory" and content.get("memory"):
                     memory = content["memory"]
-                    extracted = [ExtractedClaim(memory["predicate"], memory["text"], 1.0,
-                                                "stable", memory["subject"],
-                                                memory.get("qualifiers") or {})]
+                    extracted = [ExtractedClaim(
+                        predicate=memory["predicate"], value=memory["text"], confidence=1.0,
+                        volatility="stable", subject=memory["subject"],
+                        qualifiers=memory.get("qualifiers") or {}, scope="permanent",
+                        importance=1.0,
+                    )]
                 else:
                     recent = events.get_recent_events(event["session_id"], event, 3) if event.get(
                         "session_id"
@@ -147,7 +154,10 @@ class Worker:
                 event["extractor"] = "llm"
             for claim in extracted:
                 authority = "high" if event["event_type"] == "explicit_memory" else None
-                store_extracted(self.connection, claim, event, _now(), self.embedder, authority)
+                ttl_days = int(self.config.get("memory_temporal_ttl_days", os.getenv(
+                    "HL_MEM_TEMPORAL_TTL_DAYS", "7")))
+                store_extracted(self.connection, claim, event, _now(), self.embedder,
+                                authority, ttl_days)
             return {"claims": len(extracted)}
 
     def _make_extractor(self) -> Any:

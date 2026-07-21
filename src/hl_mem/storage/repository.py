@@ -4,6 +4,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from hl_mem.ingest.embeddings import cosine_similarity
+
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
@@ -92,6 +94,37 @@ class ClaimRepository:
             "AND (expires_at IS NULL OR expires_at>?)", (reference, reference, reference),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def search_claims_vector(
+        self, query_blob: bytes, limit: int = 200, as_of: str | None = None
+    ) -> list[dict[str, Any]]:
+        # A 100k x 2048 float32 full scan is about 819 MB; indexed retrieval must
+        # be reconsidered before deployments approach that scale.
+        return sorted(self.list_embedded(as_of),
+                      key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]),
+                      reverse=True)[:limit]
+
+    def record_access(self, claim_ids: list[str], accessed_at: str) -> int:
+        unique_ids = list(dict.fromkeys(claim_ids))
+        total = 0
+        try:
+            for start in range(0, len(unique_ids), 500):
+                chunk = unique_ids[start:start + 500]
+                if not chunk:
+                    continue
+                placeholders = ",".join("?" for _ in chunk)
+                cursor = self.connection.execute(
+                    "UPDATE claims SET access_count=access_count+1,last_accessed_at=? "
+                    f"WHERE id IN ({placeholders}) "
+                    "AND status IN ('active','disputed','superseded')",
+                    (accessed_at, *chunk),
+                )
+                total += cursor.rowcount
+            self.connection.commit()
+            return total
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def supersede(self, old_id: str, new_valid_from: str) -> None:
         self.connection.execute(
