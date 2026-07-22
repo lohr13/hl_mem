@@ -30,13 +30,15 @@ def induce_policies(connection: Any, now: str) -> dict[str, int]:
         actions = tuple(
             trace["action"]
             for trace in connection.execute(
-                "SELECT action FROM traces WHERE episode_id=? ORDER BY sequence_no", (row["id"],)
+                "SELECT action FROM traces WHERE episode_id=? ORDER BY sequence_no LIMIT 5", (row["id"],)
             ).fetchall()
         )
         if actions:
-            clusters[(task_type, actions)].append(dict(row))
+            # 用前3个action作为聚类key，而非完整序列
+            prefix = actions[:3]
+            clusters[(task_type, prefix)].append(dict(row))
 
-    service = ExperienceService(connection, min_support=3)
+    service = ExperienceService(connection, min_support=2)
     induced = 0
     eligible = 0
     for (task_type, actions), episodes in clusters.items():
