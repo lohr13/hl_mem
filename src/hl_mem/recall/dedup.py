@@ -8,7 +8,7 @@ from hl_mem.storage.repository import ClaimRepository
 
 
 class Deduplicator:
-    def __init__(self, claim_repo: ClaimRepository, embedder: Any, threshold: float = 0.95) -> None:
+    def __init__(self, claim_repo: ClaimRepository, embedder: Any, threshold: float = 0.85) -> None:
         self.claim_repo, self.embedder, self.threshold = claim_repo, embedder, threshold
 
     def find_duplicate(self, new_claim: dict[str, Any]) -> tuple[str | None, str]:
