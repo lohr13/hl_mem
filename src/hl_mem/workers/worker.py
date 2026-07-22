@@ -24,6 +24,7 @@ from hl_mem.workers.consolidate import (
     enqueue_daily_consolidation,
 )
 from hl_mem.workers.decay import decay_claims
+from hl_mem.workers.induce_policies import enqueue_daily_policy_induction, induce_policies
 from hl_mem.workers.ttl import expire_claims
 
 
@@ -82,6 +83,13 @@ class Worker:
                         _now(),
                         self.config.get("consolidate_cron", os.getenv("HL_MEM_CONSOLIDATE_CRON", "03:30")),
                     )
+                    enqueue_daily_policy_induction(
+                        self.connection,
+                        _now(),
+                        self.config.get(
+                            "induce_policies_cron", os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00")
+                        ),
+                    )
                     next_ttl = current + 600.0
                 if self.run_once()["status"] == "idle":
                     time.sleep(poll_interval)
@@ -110,6 +118,8 @@ class Worker:
                 payload.get("watermark"),
                 bool(payload.get("dry_run", False)),
             )
+        if job["job_type"] == "induce_policies":
+            return induce_policies(self.connection, _now())
         if job["job_type"] == "retry_failed":
             cursor = self.connection.execute("UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'")
             self.connection.commit()

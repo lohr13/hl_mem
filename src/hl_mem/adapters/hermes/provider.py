@@ -82,6 +82,14 @@ class HLMemProvider:
     def _sync_post(self, path: str, payload: dict[str, Any]) -> bool:
         if not self._can_call():
             return False
+        try:
+            response = httpx.post(f"{self.daemon_url}{path}", json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            self._on_success()
+            return True
+        except Exception:
+            self._on_failure()
+            return False
 
     async def _sync_episode(self, client: httpx.AsyncClient, messages: list[dict[str, Any]]) -> None:
         """将包含多个工具调用的 turn 旁路记录为 Episode。"""
@@ -163,14 +171,6 @@ class HLMemProvider:
         if observation and any(marker in observation.lower() for marker in ("error", "failed", "exception")):
             return observation[:500]
         return None
-        try:
-            response = httpx.post(f"{self.daemon_url}{path}", json=payload, timeout=self.timeout)
-            response.raise_for_status()
-            self._on_success()
-            return True
-        except Exception:
-            self._on_failure()
-            return False
 
     def _can_call(self) -> bool:
         return time.monotonic() >= self._circuit_open_until

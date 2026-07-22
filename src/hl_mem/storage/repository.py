@@ -165,6 +165,20 @@ class ClaimRepository:
             self.connection.rollback()
             raise
 
+    def helpful_rates(self, claim_ids: list[str]) -> dict[str, float]:
+        """返回已有显式反馈的 claim helpful 比率。"""
+        unique_ids = list(dict.fromkeys(claim_ids))
+        if not unique_ids:
+            return {}
+        placeholders = ",".join("?" for _ in unique_ids)
+        rows = self.connection.execute(
+            "SELECT memory_id,avg(helpful) AS helpful_rate FROM retrieval_feedback "
+            f"WHERE memory_type='claim' AND helpful IS NOT NULL AND memory_id IN ({placeholders}) "
+            "GROUP BY memory_id",
+            unique_ids,
+        ).fetchall()
+        return {row["memory_id"]: float(row["helpful_rate"]) for row in rows}
+
     def supersede(self, old_id: str, new_valid_from: str) -> None:
         self.connection.execute(
             "UPDATE claims SET status='superseded',valid_to=?,recorded_to=? WHERE id=?",

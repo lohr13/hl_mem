@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -13,6 +14,25 @@ from hl_mem.recall.policy import RecallIntent, claim_is_visible, route_recall_in
 from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
 from hl_mem.recall.reranker import RerankResult
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository
+
+
+def matching_policies(policies: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """用 trigger 与 query 的通用关键词或短语重叠筛选策略。"""
+    normalized_query = query.casefold().strip()
+    query_tokens = {token for token in re.findall(r"\w+", normalized_query) if len(token) >= 2}
+    matched: list[dict[str, Any]] = []
+    for policy in policies:
+        trigger = str(policy.get("trigger") or "").casefold().strip()
+        trigger_tokens = {token for token in re.findall(r"\w+", trigger) if len(token) >= 2}
+        if (
+            normalized_query in trigger
+            or trigger in normalized_query
+            or bool(query_tokens & trigger_tokens)
+            or any(token in trigger for token in query_tokens)
+            or any(token in normalized_query for token in trigger_tokens)
+        ):
+            matched.append(policy)
+    return matched
 
 
 def _claim_text(claim: dict[str, Any]) -> str:
@@ -73,6 +93,9 @@ def hybrid_claims(
     scores: dict[str, float] = {}
     visible = [claim for claim in fts + dense if claim_is_visible(claim, reference, known_as_of, selected_intent)]
     by_id = {claim["id"]: claim for claim in visible}
+    helpful_rates = repo.helpful_rates(list(by_id)) if hasattr(repo, "helpful_rates") else {}
+    for claim_id, helpful_rate in helpful_rates.items():
+        by_id[claim_id]["helpful_rate"] = helpful_rate
     for ranked in (fts, dense):
         for rank, claim in enumerate(ranked, 1):
             scores[claim["id"]] = scores.get(claim["id"], 0) + 1 / (60 + rank)
@@ -159,6 +182,8 @@ def hybrid_claims(
             "timing_us": {"fts": fts_us, "dense": dense_us, "reranker": rerank_us},
         },
     )
+    for claim in final:
+        claim["_score"] = rerank_scores.get(claim["id"], pre_scores[claim["id"]])
     return final
 
 

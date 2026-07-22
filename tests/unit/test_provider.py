@@ -38,6 +38,63 @@ class EpisodeResponse(Response):
     def json(self): return {"id": "episode-1"}
 
 
+def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:
+    requests = []
+
+    def post(url, **kwargs):
+        requests.append((url, kwargs))
+        return Response()
+
+    monkeypatch.setattr(httpx, "post", post)
+    provider = HLMemProvider("unused.db", "http://memory.test/", timeout=2.0)
+
+    provider.on_memory_write("preference", "喜欢黑咖啡")
+    provider.on_pre_compress([{"role": "user", "content": "记住这个偏好"}])
+
+    assert requests == [
+        (
+            "http://memory.test/v1/memories",
+            {
+                "json": {
+                    "text": "喜欢黑咖啡",
+                    "qualifiers": {"key": "preference", "target": "memory"},
+                },
+                "timeout": 2.0,
+            },
+        ),
+        (
+            "http://memory.test/v1/events",
+            {
+                "json": {
+                    "event_type": "message",
+                    "actor_type": "user",
+                    "content": {"text": "记住这个偏好"},
+                },
+                "timeout": 2.0,
+            },
+        ),
+    ]
+    assert provider._failure_count == 0
+
+
+def test_sync_hooks_open_circuit_after_repeated_http_failures(monkeypatch) -> None:
+    calls = 0
+
+    def post(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectError("unavailable")
+
+    monkeypatch.setattr(httpx, "post", post)
+    provider = HLMemProvider()
+
+    for _ in range(6):
+        provider.on_memory_write("key", "value")
+
+    assert calls == 5
+    assert provider._circuit_open_until > 0
+
+
 @pytest.mark.asyncio
 async def test_prefetch_success_timeout_and_circuit(monkeypatch) -> None:
     AsyncClient.calls = 0
