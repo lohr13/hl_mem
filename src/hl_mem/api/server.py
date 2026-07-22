@@ -3,17 +3,18 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Iterator
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from hl_mem import __version__
 from hl_mem.api.pipeline import new_id
-from hl_mem.experience.service import ExperienceService, backprop_episode_reward
+from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
@@ -83,7 +84,7 @@ class EpisodeUpdate(BaseModel):
     """更新 Episode 结果的请求。"""
 
     status: str | None = None
-    reward: float | None = None
+    reward: float | None = Field(default=None, ge=0.0, le=1.0)
     outcome_summary: str | None = None
 
 
@@ -98,24 +99,35 @@ class FeedbackInput(BaseModel):
 
 def _make_embedder() -> Any:
     dim = int(os.getenv("EMBEDDING_DIM", "2048"))
-    mode = os.getenv("HL_MEM_EMBEDDER", "fake").lower()
+    production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
+    mode = os.getenv("HL_MEM_EMBEDDER", "real" if production else "fake").lower()
+    if production and mode != "real":
+        raise RuntimeError("HL_MEM_EMBEDDER must be 'real' in production")
     if mode == "fake":
         return FakeEmbedder(dim)
     if mode != "real":
         raise ValueError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
     api_key = os.getenv("EMBEDDING_API_KEY")
     if not api_key:
+        if production:
+            raise RuntimeError("EMBEDDING_API_KEY is required in production")
         return FakeEmbedder(dim)
     return Embedder(
         api_key,
         os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
         dim,
+        float(os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")),
+        float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
+        int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
     )
 
 
 def _make_reranker() -> Any:
-    mode = os.getenv("HL_MEM_RERANKER", "off").lower()
+    production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
+    mode = os.getenv("HL_MEM_RERANKER", "real" if production else "off").lower()
+    if production and mode not in {"on", "real"}:
+        raise RuntimeError("HL_MEM_RERANKER must be enabled in production")
     if mode == "off":
         return None
     if mode == "fake":
@@ -124,6 +136,8 @@ def _make_reranker() -> Any:
         raise ValueError("HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'")
     api_key = os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY")
     if not api_key:
+        if production:
+            raise RuntimeError("RERANKER_API_KEY or EMBEDDING_API_KEY is required in production")
         return None
     try:
         return Reranker(
@@ -132,36 +146,53 @@ def _make_reranker() -> Any:
             os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
         )
     except Exception:
+        if production:
+            raise
         return None
 
 
 def create_app(database_path: str | Path | None = None, audit: Any = None) -> FastAPI:
     database, embedder, reranker = Database(database_path), _make_embedder(), _make_reranker()
     budget = TokenBudget(
-        int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")), Path(database.path).with_suffix(".budget.json")
+        int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")), Path(database.path).with_suffix(".budget.db")
     )
     audit = audit or NullAuditLogger()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.db = database
-        database.open()
-        yield
-        audit.close()
-        database.close()
+        database.open_worker()
+        try:
+            yield
+        finally:
+            audit.close()
+            database.close()
 
     app = FastAPI(title="HL-Mem", lifespan=lifespan)
     app.state.db, app.state.token_budget, app.state.reranker = database, budget, reranker
     app.state.audit = audit
 
+    def get_connection() -> Iterator[sqlite3.Connection]:
+        with database.connect() as connection:
+            yield connection
+
     @app.get("/healthz")
-    def healthz() -> dict[str, str]:
-        database.open().execute("SELECT 1").fetchone()
-        return {"status": "ok", "version": __version__}
+    def healthz(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, str]:
+        connection.execute("SELECT 1").fetchone()
+        return {
+            "status": "ok",
+            "version": __version__,
+            "embedder": "fake" if isinstance(embedder, FakeEmbedder) else "real",
+            "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
+        }
 
     @app.post("/v1/events")
-    def post_event(payload: EventInput, idempotency_key: str | None = Header(default=None)) -> dict[str, Any]:
-        connection, events = database.open(), EventRepository(database.open())
+    def post_event(
+        payload: EventInput,
+        idempotency_key: str | None = Header(default=None),
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
+        events = EventRepository(connection)
         key = idempotency_key or payload.idempotency_key
         existing = (
             connection.execute("SELECT id FROM events WHERE idempotency_key=?", (key,)).fetchone() if key else None
@@ -189,9 +220,15 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             recorded_at=timestamp,
             content_hash=hashlib.sha256(content_json.encode()).hexdigest(),
         )
-        created = events.insert_event(event)
-        if created:
-            _queue_event(connection, event_id, timestamp)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            created = events.insert_event(event, commit=False)
+            if created:
+                _queue_event(connection, event_id, timestamp, commit=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
         audit.emit(
             "ingest",
             "accepted",
@@ -210,8 +247,11 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         return {"id": event_id, "created": created}
 
     @app.post("/v1/recall")
-    def recall(payload: RecallInput, request: Request) -> dict[str, Any]:
-        connection = database.open()
+    def recall(
+        payload: RecallInput,
+        request: Request,
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
         query_id = request.headers.get("X-Request-ID") or new_id()
         with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
             intent = payload.intent or route_recall_intent(payload.query, payload.as_of)
@@ -237,20 +277,35 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                     )
                 except Exception:
                     pass
-            feedback_service = ExperienceService(connection)
-            for rank, claim in enumerate(claims, 1):
-                feedback_service.record_feedback(
-                    new_id(),
-                    query_id,
-                    "claim",
-                    claim["id"],
-                    False,
-                    None,
-                    None,
-                    _now(),
-                    rank,
-                    float(claim.get("_score", 0.0)),
+            try:
+                recorded_at = _now()
+                ExperienceService(connection).record_feedback_batch(
+                    [
+                        (
+                            new_id(),
+                            query_id,
+                            "claim",
+                            claim["id"],
+                            rank,
+                            float(claim.get("_score", 0.0)),
+                            0,
+                            None,
+                            None,
+                            recorded_at,
+                        )
+                        for rank, claim in enumerate(claims, 1)
+                    ]
                 )
+            except Exception as error:
+                try:
+                    audit.emit(
+                        "recall",
+                        "feedback_record",
+                        "feedback_record_failed",
+                        detail={"error_class": type(error).__name__, "claim_count": len(claims)},
+                    )
+                except Exception:
+                    pass
         evidence_repo, results = EvidenceRepository(connection), []
         for claim in claims:
             evidence = [
@@ -294,63 +349,88 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         }
 
     @app.post("/v1/episodes")
-    def create_episode(payload: EpisodeInput) -> dict[str, Any]:
+    def create_episode(
+        payload: EpisodeInput, connection: sqlite3.Connection = Depends(get_connection)
+    ) -> dict[str, Any]:
         episode_id = new_id()
-        service = ExperienceService(database.open())
+        service = ExperienceService(connection)
         service.create_episode(episode_id, payload.goal, _now(), payload.session_id, payload.task_type)
         return service.get_episode(episode_id)
 
     @app.post("/v1/feedback")
-    def post_feedback(payload: FeedbackInput) -> dict[str, bool]:
-        updated = ExperienceService(database.open()).submit_retrieval_feedback(
+    def post_feedback(
+        payload: FeedbackInput, connection: sqlite3.Connection = Depends(get_connection)
+    ) -> dict[str, bool]:
+        updated = ExperienceService(connection).submit_retrieval_feedback(
             payload.query_id, payload.memory_id, payload.helpful, payload.task_outcome, _now()
         )
         return {"updated": updated}
 
     @app.post("/v1/episodes/{episode_id}/traces")
-    def add_episode_trace(episode_id: str, payload: TraceInput) -> dict[str, Any]:
-        service = ExperienceService(database.open())
+    def add_episode_trace(
+        episode_id: str, payload: TraceInput, connection: sqlite3.Connection = Depends(get_connection)
+    ) -> dict[str, Any]:
+        service = ExperienceService(connection)
         try:
             trace_id = service.add_trace(
                 episode_id, payload.action, payload.observation, payload.error_signature, payload.value
             )
+        except InvalidStateTransitionError as error:
+            raise HTTPException(409, str(error)) from error
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
         return {"id": trace_id, "episode_id": episode_id}
 
     @app.patch("/v1/episodes/{episode_id}")
-    def update_episode(episode_id: str, payload: EpisodeUpdate) -> dict[str, Any]:
-        service = ExperienceService(database.open())
+    def update_episode(
+        episode_id: str, payload: EpisodeUpdate, connection: sqlite3.Connection = Depends(get_connection)
+    ) -> dict[str, Any]:
+        service = ExperienceService(connection)
         try:
+            connection.execute("BEGIN IMMEDIATE")
             updated = service.update_episode(
-                episode_id, _now(), payload.status, payload.reward, payload.outcome_summary
+                episode_id, _now(), payload.status, payload.reward, payload.outcome_summary, commit=False
             )
             if payload.reward is not None:
-                backprop_episode_reward(database.open(), episode_id, payload.reward)
+                backprop_episode_reward(connection, episode_id, payload.reward, commit=False)
                 updated = service.get_episode(episode_id)
+            connection.commit()
             return updated
+        except InvalidStateTransitionError as error:
+            connection.rollback()
+            raise HTTPException(409, str(error)) from error
         except ValueError as error:
+            connection.rollback()
             raise HTTPException(404, str(error)) from error
+        except Exception:
+            connection.rollback()
+            raise
 
     @app.get("/v1/episodes")
-    def list_episodes(limit: int = 20, status: str | None = None) -> dict[str, Any]:
+    def list_episodes(
+        limit: int = 20,
+        status: str | None = None,
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
         if not 1 <= limit <= 100:
             raise HTTPException(422, "limit must be between 1 and 100")
-        return {"episodes": ExperienceService(database.open()).list_episodes(limit, status)}
+        return {"episodes": ExperienceService(connection).list_episodes(limit, status)}
 
     @app.get("/v1/episodes/{episode_id}")
-    def get_episode(episode_id: str) -> dict[str, Any]:
+    def get_episode(episode_id: str, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
         try:
-            return ExperienceService(database.open()).get_episode(episode_id)
+            return ExperienceService(connection).get_episode(episode_id)
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
 
     @app.get("/v1/policies")
-    def list_policies(status: str = "active") -> dict[str, Any]:
-        return {"policies": ExperienceService(database.open()).list_policies(status)}
+    def list_policies(
+        status: str = "active", connection: sqlite3.Connection = Depends(get_connection)
+    ) -> dict[str, Any]:
+        return {"policies": ExperienceService(connection).list_policies(status)}
 
     @app.post("/v1/memories")
-    def save_memory(payload: MemoryInput) -> dict[str, str]:
+    def save_memory(payload: MemoryInput, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, str]:
         now, event_id = _now(), new_id()
         text = payload.text or payload.content
         if not text:
@@ -371,8 +451,14 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             "occurred_at": now,
             "recorded_at": now,
         }
-        EventRepository(database.open()).insert_event(event)
-        _queue_event(database.open(), event_id, now)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            EventRepository(connection).insert_event(event, commit=False)
+            _queue_event(connection, event_id, now, commit=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
         audit.emit(
             "ingest",
             "accepted",
@@ -389,17 +475,17 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         return {"id": event_id}
 
     @app.delete("/v1/memories/{memory_id}")
-    def forget(memory_id: str) -> dict[str, Any]:
-        repo = ClaimRepository(database.open())
+    def forget(memory_id: str, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
+        repo = ClaimRepository(connection)
         if not repo.get_claim(memory_id):
             raise HTTPException(404, "memory not found")
         repo.retract(memory_id)
-        stale_observations(database.open(), memory_id)
+        stale_observations(connection, memory_id)
         return {"id": memory_id, "forgotten": True}
 
     @app.get("/v1/stats")
-    def stats() -> dict[str, Any]:
-        connection, token_stats = database.open(), budget.get_stats()
+    def stats(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
+        token_stats = budget.get_stats()
         return {
             "events": connection.execute("SELECT count(*) FROM events").fetchone()[0],
             "claims": connection.execute("SELECT count(*) FROM claims").fetchone()[0],
@@ -408,13 +494,13 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         }
 
     @app.get("/v1/jobs")
-    def jobs() -> dict[str, int]:
-        return JobRepository(database.open()).counts()
+    def jobs(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, int]:
+        return JobRepository(connection).counts()
 
     return app
 
 
-def _queue_event(connection: Any, event_id: str, now: str) -> None:
+def _queue_event(connection: Any, event_id: str, now: str, commit: bool = True) -> None:
     JobRepository(connection).insert_job(
         {
             "id": new_id(),
@@ -423,7 +509,8 @@ def _queue_event(connection: Any, event_id: str, now: str) -> None:
             "idempotency_key": f"extract:{event_id}",
             "created_at": now,
             "updated_at": now,
-        }
+        },
+        commit=commit,
     )
 
 

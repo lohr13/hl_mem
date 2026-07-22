@@ -29,6 +29,12 @@ def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def _is_fts_syntax_error(error: sqlite3.OperationalError) -> bool:
+    """仅识别由用户 MATCH 表达式触发的 FTS 语法错误。"""
+    message = str(error).lower()
+    return any(marker in message for marker in ("fts5: syntax error", "malformed match", "unterminated string"))
+
+
 def _insert(connection: sqlite3.Connection, table: str, data: dict[str, Any], commit: bool = True) -> bool:
     columns = ", ".join(data)
     placeholders = ", ".join("?" for _ in data)
@@ -46,8 +52,8 @@ class EventRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_event(self, event: dict[str, Any]) -> bool:
-        return _insert(self.connection, "events", event)
+    def insert_event(self, event: dict[str, Any], commit: bool = True) -> bool:
+        return _insert(self.connection, "events", event, commit)
 
     def get_event(self, event_id: str) -> dict[str, Any] | None:
         return _row(self.connection.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone())
@@ -68,7 +74,9 @@ class EventRepository:
                 "WHERE events_fts MATCH ? ORDER BY bm25(events_fts) LIMIT ?",
                 (_sanitize_fts_query(query), limit),
             ).fetchall()
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as error:
+            if not _is_fts_syntax_error(error):
+                raise
             return []
         return [dict(row) for row in rows]
 
@@ -295,7 +303,9 @@ class ClaimRepository:
                 "ORDER BY bm25(claims_fts) LIMIT ?",
                 (_sanitize_fts_query(query), reference, reference, limit),
             ).fetchall()
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as error:
+            if not _is_fts_syntax_error(error):
+                raise
             return []
         return [claim for row in rows if claim_is_visible(claim := dict(row), reference, known_as_of, selected_intent)]
 
@@ -326,8 +336,8 @@ class JobRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_job(self, job: dict[str, Any]) -> bool:
-        return _insert(self.connection, "jobs", job)
+    def insert_job(self, job: dict[str, Any], commit: bool = True) -> bool:
+        return _insert(self.connection, "jobs", job, commit)
 
     def lease_job(self, leased_until: str, updated_at: str) -> dict[str, Any] | None:
         """Atomically claim the oldest runnable job across worker processes."""
