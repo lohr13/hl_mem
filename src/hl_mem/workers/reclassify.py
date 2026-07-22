@@ -5,6 +5,7 @@ import json
 import os
 from typing import Any, Iterable
 
+from hl_mem import components
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.storage.database import Database
 
@@ -76,14 +77,12 @@ def main() -> None:
     parser.add_argument("--db", default=os.getenv("HL_MEM_DB_PATH", "hl_mem.db"))
     parser.add_argument("--batch-size", type=int, default=8)
     args = parser.parse_args()
-    api_key = os.getenv("LLM_API_KEY")
-    if not api_key:
-        raise SystemExit("LLM_API_KEY is required")
     database = Database(args.db)
     try:
-        extractor = LLMExtractor(api_key, os.getenv(
-            "LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"), os.getenv(
-            "LLM_MODEL", "qwen3.7-plus"))
+        try:
+            extractor = components.make_extractor({"extractor_name": "real", "require_real": True})
+        except RuntimeError as error:
+            raise SystemExit("LLM_API_KEY is required") from error
         print(json.dumps(reclassify_claims(database.open(), extractor, args.batch_size),
                          ensure_ascii=False, sort_keys=True))
     finally:

@@ -9,11 +9,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from hl_mem import components
 from hl_mem.application.ingest import IngestService
 from hl_mem.ingest.budget import TokenBudget
-from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.ingest.event_filter import EventFilter
-from hl_mem.ingest.extractors import ExtractedClaim, FakeExtractor
+from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.attribute_map import infer_canonical_attribute
@@ -286,45 +286,10 @@ class Worker:
             return {"claims": len(extracted)}
 
     def _make_extractor(self) -> Any:
-        production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
-        extractor_name = self.config.get("extractor_name", os.getenv("HL_MEM_EXTRACTOR", "fake"))
-        if production and extractor_name == "fake":
-            raise RuntimeError("HL_MEM_EXTRACTOR must not be 'fake' in production")
-        if extractor_name == "fake":
-            return FakeExtractor()
-        api_key = os.getenv("LLM_API_KEY")
-        if not api_key:
-            if production:
-                raise RuntimeError("LLM_API_KEY is required in production")
-            return FakeExtractor()
-        return LLMExtractor(
-            api_key,
-            os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
-            os.getenv("LLM_MODEL", "qwen3.7-plus"),
-        )
+        return components.make_extractor(self.config)
 
     def _make_embedder(self) -> Any:
-        dim = int(self.config.get("embedding_dim", os.getenv("EMBEDDING_DIM", "2048")))
-        production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
-        mode = self.config.get("embedder_name", os.getenv("HL_MEM_EMBEDDER", "real" if production else "fake"))
-        if production and mode != "real":
-            raise RuntimeError("HL_MEM_EMBEDDER must be 'real' in production")
-        if mode == "fake":
-            return FakeEmbedder(dim)
-        api_key = os.getenv("EMBEDDING_API_KEY")
-        if not api_key:
-            if production:
-                raise RuntimeError("EMBEDDING_API_KEY is required in production")
-            return FakeEmbedder(dim)
-        return Embedder(
-            api_key,
-            os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-            os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
-            dim,
-            float(os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")),
-            float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
-            int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
-        )
+        return components.make_embedder(self.config)
 
     def _make_consolidator(self) -> ConflictConsolidator:
         """从环境配置构建冲突归并器。"""
