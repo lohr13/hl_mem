@@ -412,7 +412,8 @@ class DerivationRepository:
     def get_observation(self, observation_id: str) -> dict[str, Any] | None:
         return _row(self.connection.execute("SELECT * FROM derivations WHERE id=?", (observation_id,)).fetchone())
 
-    def update_status(self, observation_id: str, status: str) -> bool:
+    def update_status(self, observation_id: str, status: str, commit: bool = True) -> bool:
         cursor = self.connection.execute("UPDATE derivations SET status=? WHERE id=?", (status, observation_id))
-        self.connection.commit()
+        if commit:
+            self.connection.commit()
         return cursor.rowcount == 1
