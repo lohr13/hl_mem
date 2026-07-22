@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from hl_mem import __version__
 from hl_mem.storage.database import Database, default_database_path
 from hl_mem.storage.repository import EventRepository
 
@@ -33,13 +35,14 @@ def import_database(database_path: str | Path, input_path: str | Path) -> int:
     return imported
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     """运行导入或导出管理命令。"""
     parser = argparse.ArgumentParser(prog="hl-mem")
+    parser.add_argument("--version", action="version", version=f"hl_mem {__version__}")
     parser.add_argument("command", choices=("export", "import"))
     parser.add_argument("path", type=Path)
     parser.add_argument("--db", type=Path, default=default_database_path())
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     count = export_database(args.db, args.path) if args.command == "export" else import_database(args.db, args.path)
     print(json.dumps({"processed": count}))
 

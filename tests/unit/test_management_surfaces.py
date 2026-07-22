@@ -1,6 +1,8 @@
 import json
 
-from hl_mem.cli import export_database, import_database
+import pytest
+
+from hl_mem.cli import export_database, import_database, main
 from hl_mem.mcp.server import McpMemoryServer
 from hl_mem.storage.database import Database
 
@@ -26,3 +28,10 @@ def test_cli_export_import_round_trip(tmp_path) -> None:
     target = tmp_path / "target.db"
     assert import_database(target, archive) == 1
     assert Database(target).open().execute("SELECT content_json FROM events WHERE id='e1'").fetchone()[0]
+
+
+def test_cli_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit, match="0"):
+        main(["--version"])
+
+    assert capsys.readouterr().out == "hl_mem 0.2.0\n"

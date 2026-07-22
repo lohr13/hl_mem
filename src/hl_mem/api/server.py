@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from hl_mem import __version__
 from hl_mem.api.pipeline import new_id
 from hl_mem.experience.service import ExperienceService, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
@@ -156,7 +157,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         database.open().execute("SELECT 1").fetchone()
-        return {"status": "ok"}
+        return {"status": "ok", "version": __version__}
 
     @app.post("/v1/events")
     def post_event(payload: EventInput, idempotency_key: str | None = Header(default=None)) -> dict[str, Any]:
