@@ -8,6 +8,7 @@ from typing import Any
 
 from hl_mem.ingest.embeddings import cosine_similarity
 from hl_mem.recall.policy import RecallIntent, claim_is_visible
+from hl_mem.lifecycle import assert_transition
 
 
 @dataclass(frozen=True)
@@ -216,7 +217,9 @@ class ClaimRepository:
                 if started_transaction:
                     self.connection.commit()
                 return SupersedeResult(False)
-            if old["status"] not in {"active", "candidate", "disputed"}:
+            if old["status"] == "active":
+                assert_transition(old["status"], "superseded")
+            elif old["status"] not in {"candidate", "disputed"}:
                 if started_transaction:
                     self.connection.rollback()
                 return SupersedeResult(False)

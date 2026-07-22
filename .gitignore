@@ -15,4 +15,5 @@ hl_mem_budget_test.json
 *.budget.json
 var/*.db
 var/*.db-*
+var/*.db.cleanup_backup_*
 tests/eval/reports/*.json

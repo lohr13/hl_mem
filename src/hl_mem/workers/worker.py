@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,30 @@ from hl_mem.workers.ttl import expire_claims
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def enqueue_daily_reclassify(connection: Any, now: str, cron: str) -> bool:
+    """到达计划时间后幂等创建当天的重分类任务。"""
+    try:
+        hour_text, minute_text = cron.split(":", 1)
+        scheduled_minutes = int(hour_text) * 60 + int(minute_text)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("HL_MEM_RECLASSIFY_CRON must use HH:MM format") from error
+    current = datetime.fromisoformat(now.replace("Z", "+00:00"))
+    if not 0 <= scheduled_minutes < 24 * 60:
+        raise ValueError("HL_MEM_RECLASSIFY_CRON must use HH:MM format")
+    if current.hour * 60 + current.minute < scheduled_minutes:
+        return False
+    return JobRepository(connection).insert_job(
+        {
+            "id": uuid.uuid4().hex,
+            "job_type": "reclassify_claims",
+            "payload_json": "{}",
+            "idempotency_key": f"reclassify:{current.date().isoformat()}",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
 
 
 class Worker:
@@ -77,6 +102,10 @@ class Worker:
                 if current >= next_ttl:
                     expire_claims(self.connection)
                     decay_claims(self.connection)
+                    from hl_mem.security.retention import purge_retained_events
+
+                    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+                    purge_retained_events(self.connection, "default", cutoff)
                     self.audit.cleanup(int(self.config.get("audit_retention_days", 30)))
                     enqueue_daily_consolidation(
                         self.connection,
@@ -87,6 +116,11 @@ class Worker:
                         self.connection,
                         _now(),
                         self.config.get("induce_policies_cron", os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00")),
+                    )
+                    enqueue_daily_reclassify(
+                        self.connection,
+                        _now(),
+                        self.config.get("reclassify_cron", os.getenv("HL_MEM_RECLASSIFY_CRON", "04:30")),
                     )
                     next_ttl = current + 600.0
                 if self.run_once()["status"] == "idle":
@@ -118,6 +152,15 @@ class Worker:
             )
         if job["job_type"] == "induce_policies":
             return induce_policies(self.connection, _now())
+        if job["job_type"] == "reclassify_claims":
+            from hl_mem.workers.reclassify import reclassify_claims
+
+            return reclassify_claims(self.connection, self._make_extractor())
+        if job["job_type"] == "purge_retention":
+            from hl_mem.security.retention import purge_retained_events
+
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+            return {"purged": purge_retained_events(self.connection, "default", cutoff)}
         if job["job_type"] == "retry_failed":
             cursor = self.connection.execute("UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'")
             self.connection.commit()
