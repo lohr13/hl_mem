@@ -13,16 +13,18 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from hl_mem import __version__
+from hl_mem.application.forget import ForgetService
+from hl_mem.application.ingest import IngestService
+from hl_mem.application.recall import RecallService
 from hl_mem.api.pipeline import new_id
 from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
-from hl_mem.recall.policy import RecallIntent, route_recall_intent
-from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies, stale_observations
+from hl_mem.recall.policy import RecallIntent
 from hl_mem.recall.reranker import FakeReranker, Reranker
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import ClaimRepository, EventRepository, EvidenceRepository, JobRepository
+from hl_mem.storage.repository import JobRepository
 
 
 def _now() -> str:
@@ -192,43 +194,14 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         idempotency_key: str | None = Header(default=None),
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
-        events = EventRepository(connection)
         key = idempotency_key or payload.idempotency_key
-        existing = (
-            connection.execute("SELECT id FROM events WHERE idempotency_key=?", (key,)).fetchone() if key else None
-        )
-        if existing:
-            audit.emit(
-                "ingest",
-                "accepted",
-                "duplicate",
-                trace_id=existing["id"],
-                event_id=existing["id"],
-                tenant_id=payload.tenant_id,
-                detail={"event_type": payload.event_type, "actor_type": payload.actor_type},
-            )
-            return {"id": existing["id"], "created": False}
-        event_id, timestamp = payload.id or new_id(), _now()
         content = payload.content if isinstance(payload.content, dict) else {"text": payload.content}
         content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
-        event = payload.model_dump(exclude={"content", "id"})
-        event.update(
-            id=event_id,
-            idempotency_key=key,
-            content_json=content_json,
-            occurred_at=payload.occurred_at or timestamp,
-            recorded_at=timestamp,
-            content_hash=hashlib.sha256(content_json.encode()).hexdigest(),
-        )
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            created = events.insert_event(event, commit=False)
-            if created:
-                _queue_event(connection, event_id, timestamp, commit=False)
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
+        event = payload.model_dump()
+        service = IngestService(connection, embedder)
+        service._queue_event = lambda event_id, now, commit=True: _queue_event(connection, event_id, now, commit)
+        result = service.ingest_event(event, key)
+        event_id, created = result["id"], result["created"]
         audit.emit(
             "ingest",
             "accepted",
@@ -240,11 +213,11 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                 "event_type": payload.event_type,
                 "actor_type": payload.actor_type,
                 "content_chars": len(content_json),
-                "content_hash": event["content_hash"],
+                "content_hash": hashlib.sha256(content_json.encode()).hexdigest(),
                 "sensitivity": payload.sensitivity,
             },
         )
-        return {"id": event_id, "created": created}
+        return result
 
     @app.post("/v1/recall")
     def recall(
@@ -254,99 +227,14 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     ) -> dict[str, Any]:
         query_id = request.headers.get("X-Request-ID") or new_id()
         with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
-            intent = payload.intent or route_recall_intent(payload.query, payload.as_of)
-            claims = hybrid_claims(
-                ClaimRepository(connection),
+            return RecallService(connection, embedder, reranker).recall(
                 payload.query,
-                embedder.embed_one(payload.query),
                 payload.limit,
                 payload.as_of,
-                reranker,
-                intent=intent,
+                intent=payload.intent,
                 known_as_of=payload.known_as_of,
+                query_id=query_id,
             )
-            try:
-                ClaimRepository(connection).record_access([claim["id"] for claim in claims], _now())
-            except Exception as error:
-                try:
-                    audit.emit(
-                        "recall",
-                        "access_record",
-                        "access_record_failed",
-                        detail={"error_class": type(error).__name__, "claim_count": len(claims)},
-                    )
-                except Exception:
-                    pass
-            try:
-                recorded_at = _now()
-                ExperienceService(connection).record_feedback_batch(
-                    [
-                        (
-                            new_id(),
-                            query_id,
-                            "claim",
-                            claim["id"],
-                            rank,
-                            float(claim.get("_score", 0.0)),
-                            0,
-                            None,
-                            None,
-                            recorded_at,
-                        )
-                        for rank, claim in enumerate(claims, 1)
-                    ]
-                )
-            except Exception as error:
-                try:
-                    audit.emit(
-                        "recall",
-                        "feedback_record",
-                        "feedback_record_failed",
-                        detail={"error_class": type(error).__name__, "claim_count": len(claims)},
-                    )
-                except Exception:
-                    pass
-        evidence_repo, results = EvidenceRepository(connection), []
-        for claim in claims:
-            evidence = [
-                {"type": "event", "id": link["evidence_id"]}
-                for link in evidence_repo.get_links_for_derived("claim", claim["id"])
-            ]
-            decoded = json.loads(claim["value_json"])
-            text = (
-                decoded.get("old_value")
-                if isinstance(decoded, dict) and decoded.get("_type") == "superseded_value"
-                else decoded
-            )
-            replacement = None
-            if claim.get("superseded_by_id"):
-                replacement_claim = ClaimRepository(connection).get_claim(claim["superseded_by_id"])
-                if replacement_claim:
-                    replacement = {
-                        "id": replacement_claim["id"],
-                        "text": json.loads(replacement_claim["value_json"]),
-                        "valid_from": replacement_claim["valid_from"],
-                    }
-            results.append(
-                {
-                    "type": "claim",
-                    "id": claim["id"],
-                    "text": text,
-                    "status": claim["status"],
-                    "confidence": claim["confidence"],
-                    "valid_from": claim["valid_from"],
-                    "replacement": replacement,
-                    "evidence": evidence,
-                }
-            )
-        policies = matching_policies(ExperienceService(connection).list_policies("active"), payload.query)
-        return {
-            "results": results,
-            "observations": [],
-            "policies": policies,
-            "total": len(results),
-            "query_id": query_id,
-        }
 
     @app.post("/v1/episodes")
     def create_episode(
@@ -431,34 +319,18 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
 
     @app.post("/v1/memories")
     def save_memory(payload: MemoryInput, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, str]:
-        now, event_id = _now(), new_id()
         text = payload.text or payload.content
         if not text:
             raise HTTPException(422, "text or content is required")
-        memory = {
-            "text": text,
-            "subject": payload.subject,
-            "predicate": payload.predicate,
-            "qualifiers": payload.qualifiers,
-        }
-        event = {
-            "id": event_id,
-            "idempotency_key": None,
-            "tenant_id": "default",
-            "event_type": "explicit_memory",
-            "actor_type": "user",
-            "content_json": json.dumps({"text": text, "memory": memory}, ensure_ascii=False),
-            "occurred_at": now,
-            "recorded_at": now,
-        }
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            EventRepository(connection).insert_event(event, commit=False)
-            _queue_event(connection, event_id, now, commit=False)
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
+        service = IngestService(connection, embedder)
+        service._queue_event = lambda event_id, now, commit=True: _queue_event(connection, event_id, now, commit)
+        result = service.save_explicit_memory(text, payload.subject, payload.predicate, payload.qualifiers)
+        event_id = result["id"]
+        content_json = json.dumps(
+            {"text": text, "memory": {"text": text, "subject": payload.subject, "predicate": payload.predicate,
+             "qualifiers": payload.qualifiers}},
+            ensure_ascii=False,
+        )
         audit.emit(
             "ingest",
             "accepted",
@@ -468,20 +340,20 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             detail={
                 "event_type": "explicit_memory",
                 "actor_type": "user",
-                "content_chars": len(event["content_json"]),
+                "content_chars": len(content_json),
                 "sensitivity": "normal",
             },
         )
-        return {"id": event_id}
+        return result
 
     @app.delete("/v1/memories/{memory_id}")
     def forget(memory_id: str, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
-        repo = ClaimRepository(connection)
-        if not repo.get_claim(memory_id):
-            raise HTTPException(404, "memory not found")
-        repo.retract(memory_id)
-        stale_observations(connection, memory_id)
-        return {"id": memory_id, "forgotten": True}
+        try:
+            return ForgetService(connection).forget(memory_id)
+        except ValueError as error:
+            if str(error).startswith("memory not found"):
+                raise HTTPException(404, "memory not found") from error
+            raise
 
     @app.get("/v1/stats")
     def stats(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:

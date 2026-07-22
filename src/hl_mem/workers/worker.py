@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from hl_mem.api.pipeline import store_extracted
+from hl_mem.application.ingest import IngestService
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.ingest.event_filter import EventFilter
@@ -280,7 +280,9 @@ class Worker:
             for claim in extracted:
                 authority = "high" if event["event_type"] == "explicit_memory" else None
                 ttl_days = int(self.config.get("memory_temporal_ttl_days", os.getenv("HL_MEM_TEMPORAL_TTL_DAYS", "7")))
-                store_extracted(self.connection, claim, event, _now(), self.embedder, authority, ttl_days)
+                IngestService.store_extracted(
+                    self.connection, claim, event, _now(), self.embedder, authority, ttl_days
+                )
             return {"claims": len(extracted)}
 
     def _make_extractor(self) -> Any:

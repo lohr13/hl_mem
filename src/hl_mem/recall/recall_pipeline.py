@@ -187,7 +187,7 @@ def hybrid_claims(
     return final
 
 
-def stale_observations(connection: Any, claim_id: str) -> None:
+def stale_observations(connection: Any, claim_id: str, commit: bool = True) -> None:
     """将依赖指定 claim 的 observation 标记为过期。"""
     rows = connection.execute(
         "SELECT derived_id FROM evidence_links WHERE derived_type='observation' "
@@ -195,4 +195,4 @@ def stale_observations(connection: Any, claim_id: str) -> None:
         (claim_id,),
     ).fetchall()
     for row in rows:
-        DerivationRepository(connection).update_status(row["derived_id"], "stale")
+        DerivationRepository(connection).update_status(row["derived_id"], "stale", commit=commit)
