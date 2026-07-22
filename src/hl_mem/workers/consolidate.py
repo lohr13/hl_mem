@@ -13,7 +13,7 @@ from typing import Any, Literal, Protocol
 
 import httpx
 
-from hl_mem.ingest.embeddings import cosine_similarity
+from hl_mem.core.vector import cosine_similarity
 from hl_mem.storage.repository import ClaimRepository
 from hl_mem.lifecycle import assert_transition
 

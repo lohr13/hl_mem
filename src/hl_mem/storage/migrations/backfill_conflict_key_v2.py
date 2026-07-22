@@ -1,4 +1,8 @@
-"""canonical_attribute 与 conflict_key v2 的幂等数据迁移。"""
+"""⚠️ 冻结模块：此 migration 脚本导入的函数已被快照。
+
+不要修改此文件中使用的算法。如果 recall.conflict 或 recall.attribute_map
+的算法改变，此 migration 应保持使用旧版本逻辑。
+"""
 
 from __future__ import annotations
 

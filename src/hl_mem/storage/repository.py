@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from hl_mem.core.vector import cosine_similarity
+from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.lifecycle import ClaimStatus, assert_transition
-from hl_mem.ingest.embeddings import cosine_similarity
-from hl_mem.recall.policy import RecallIntent, claim_is_visible
 
 
 @dataclass(frozen=True)
