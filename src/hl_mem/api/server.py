@@ -19,7 +19,8 @@ from hl_mem.application.recall import RecallService
 from hl_mem.api.pipeline import new_id
 from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
-from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
+from hl_mem.ingest.embeddings import FakeEmbedder
+from hl_mem import components
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.policy import RecallIntent
 from hl_mem.recall.reranker import FakeReranker, Reranker
@@ -100,29 +101,7 @@ class FeedbackInput(BaseModel):
 
 
 def _make_embedder() -> Any:
-    dim = int(os.getenv("EMBEDDING_DIM", "2048"))
-    production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
-    mode = os.getenv("HL_MEM_EMBEDDER", "real" if production else "fake").lower()
-    if production and mode != "real":
-        raise RuntimeError("HL_MEM_EMBEDDER must be 'real' in production")
-    if mode == "fake":
-        return FakeEmbedder(dim)
-    if mode != "real":
-        raise ValueError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
-    api_key = os.getenv("EMBEDDING_API_KEY")
-    if not api_key:
-        if production:
-            raise RuntimeError("EMBEDDING_API_KEY is required in production")
-        return FakeEmbedder(dim)
-    return Embedder(
-        api_key,
-        os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
-        dim,
-        float(os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")),
-        float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
-        int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
-    )
+    return components.make_embedder()
 
 
 def _make_reranker() -> Any:

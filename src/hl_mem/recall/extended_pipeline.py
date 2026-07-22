@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 
@@ -20,27 +19,6 @@ def reciprocal_rank_fusion(
             items[memory_id] = item
             scores[memory_id] = scores.get(memory_id, 0.0) + 1.0 / (rank_constant + rank)
     return sorted(items.values(), key=lambda item: (-scores[str(item["id"])], str(item["id"])))
-
-
-def maximal_marginal_relevance(
-    candidates: list[dict[str, Any]],
-    limit: int,
-    similarity: Callable[[dict[str, Any], dict[str, Any]], float],
-    relevance_key: str = "score",
-    diversity: float = 0.3,
-) -> list[dict[str, Any]]:
-    """按相关性和候选间差异执行 MMR 选择。"""
-    selected: list[dict[str, Any]] = []
-    remaining = list(candidates)
-    while remaining and len(selected) < limit:
-        best = max(
-            remaining,
-            key=lambda item: float(item.get(relevance_key, 0.0))
-            - diversity * max((similarity(item, chosen) for chosen in selected), default=0.0),
-        )
-        selected.append(best)
-        remaining.remove(best)
-    return selected
 
 
 def budget_pack(items: list[dict[str, Any]], token_budget: int) -> list[dict[str, Any]]:

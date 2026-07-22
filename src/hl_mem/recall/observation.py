@@ -1,3 +1,9 @@
+"""⚠️ ObservationBuilder 当前未接入正式管线。
+
+REST recall 固定返回 observations=[]。
+此模块保留供未来派生记忆功能使用。
+"""
+
 from __future__ import annotations
 
 import json
