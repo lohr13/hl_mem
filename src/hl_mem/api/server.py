@@ -12,6 +12,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from hl_mem.api.pipeline import new_id
+from hl_mem.experience.service import ExperienceService
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
@@ -58,6 +59,31 @@ class MemoryInput(BaseModel):
     subject: str = "用户"
     predicate: str = "explicit_memory"
     qualifiers: dict[str, Any] = Field(default_factory=dict)
+
+
+class EpisodeInput(BaseModel):
+    """创建 Episode 的请求。"""
+
+    goal: str = Field(min_length=1)
+    session_id: str | None = None
+    task_type: str | None = None
+
+
+class TraceInput(BaseModel):
+    """追加 Episode Trace 的请求。"""
+
+    action: str = Field(min_length=1)
+    observation: str | None = None
+    error_signature: str | None = None
+    value: float = 0.0
+
+
+class EpisodeUpdate(BaseModel):
+    """更新 Episode 结果的请求。"""
+
+    status: str | None = None
+    reward: float | None = None
+    outcome_summary: str | None = None
 
 
 def _make_embedder() -> Any:
@@ -228,7 +254,63 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                     "evidence": evidence,
                 }
             )
-        return {"results": results, "observations": [], "total": len(results), "query_id": query_id}
+        policy_keywords = ("coding", "debug", "deploy")
+        policies = (
+            ExperienceService(connection).list_policies("active")
+            if any(keyword in payload.query.lower() for keyword in policy_keywords)
+            else []
+        )
+        return {
+            "results": results,
+            "observations": [],
+            "policies": policies,
+            "total": len(results),
+            "query_id": query_id,
+        }
+
+    @app.post("/v1/episodes")
+    def create_episode(payload: EpisodeInput) -> dict[str, Any]:
+        episode_id = new_id()
+        service = ExperienceService(database.open())
+        service.create_episode(episode_id, payload.goal, _now(), payload.session_id, payload.task_type)
+        return service.get_episode(episode_id)
+
+    @app.post("/v1/episodes/{episode_id}/traces")
+    def add_episode_trace(episode_id: str, payload: TraceInput) -> dict[str, Any]:
+        service = ExperienceService(database.open())
+        try:
+            trace_id = service.add_trace(
+                episode_id, payload.action, payload.observation, payload.error_signature, payload.value
+            )
+        except ValueError as error:
+            raise HTTPException(404, str(error)) from error
+        return {"id": trace_id, "episode_id": episode_id}
+
+    @app.patch("/v1/episodes/{episode_id}")
+    def update_episode(episode_id: str, payload: EpisodeUpdate) -> dict[str, Any]:
+        try:
+            return ExperienceService(database.open()).update_episode(
+                episode_id, _now(), payload.status, payload.reward, payload.outcome_summary
+            )
+        except ValueError as error:
+            raise HTTPException(404, str(error)) from error
+
+    @app.get("/v1/episodes")
+    def list_episodes(limit: int = 20, status: str | None = None) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise HTTPException(422, "limit must be between 1 and 100")
+        return {"episodes": ExperienceService(database.open()).list_episodes(limit, status)}
+
+    @app.get("/v1/episodes/{episode_id}")
+    def get_episode(episode_id: str) -> dict[str, Any]:
+        try:
+            return ExperienceService(database.open()).get_episode(episode_id)
+        except ValueError as error:
+            raise HTTPException(404, str(error)) from error
+
+    @app.get("/v1/policies")
+    def list_policies(status: str = "active") -> dict[str, Any]:
+        return {"policies": ExperienceService(database.open()).list_policies(status)}
 
     @app.post("/v1/memories")
     def save_memory(payload: MemoryInput) -> dict[str, str]:

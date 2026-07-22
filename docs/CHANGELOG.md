@@ -27,3 +27,10 @@
 - Implemented：Prompt 调优（中文值保持、predicate 标准化、conflict 检测修复）。
 - Verified：qwen3.7-plus + text-embedding-v4 端到端验证通过。
 - Impact：全部 `src/` 和 `tests/`。
+## 2026-07-22 — Phase 3–7
+
+- 增加带 proof count、source watermark、证据准入和 stale 传播的派生记忆维护。
+- 完成 Episode、Trace、反馈归因以及内嵌 Procedure 的 Policy 生命周期。
+- 增加确定性查询路由、RRF/MMR、预算装箱、MCP 工具契约和 CLI 导入导出。
+- 增加可选 PostgreSQL 连接边界、SQLite 在线备份恢复、租户配额和保留策略。
+- SQLite WAL 仍是默认后端，离线测试不依赖外部 API 或 PostgreSQL。
