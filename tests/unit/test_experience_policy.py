@@ -55,3 +55,27 @@ def test_policy_steps_link_to_supporting_episodes(tmp_path) -> None:
         (policy_id,),
     ).fetchall()
     assert {row[0] for row in links} == set(episodes)
+
+
+def test_feedback_updates_episode_reward_and_is_idempotent(tmp_path) -> None:
+    connection = Database(tmp_path / "feedback.db").open()
+    service = ExperienceService(connection)
+    service.record_episode("e1", "修复测试", "success", 0.0, "2026-01-01T00:00:00Z")
+
+    assert service.record_feedback(
+        "feedback-1", "query-1", "episode", "e1", True, True, 0.8, "2026-01-02T00:00:00Z"
+    )
+    assert not service.record_feedback(
+        "feedback-1", "query-1", "episode", "e1", True, True, 0.8, "2026-01-02T00:00:00Z"
+    )
+    assert service.get_episode("e1")["reward"] == 0.8
+
+
+def test_episode_returns_ordered_trace(tmp_path) -> None:
+    connection = Database(tmp_path / "trace.db").open()
+    service = ExperienceService(connection)
+    service.record_episode("e1", "部署", "success", 1.0, "2026-01-01T00:00:00Z")
+    service.add_trace("e1", "测试", "通过", None, 0.5)
+    service.add_trace("e1", "部署", "完成", None, 1.0)
+
+    assert [item["action"] for item in service.get_episode("e1")["traces"]] == ["测试", "部署"]

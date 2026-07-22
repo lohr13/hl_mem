@@ -10,6 +10,10 @@ dependencies = [
     "uvicorn>=0.30",
 ]
 
+[project.scripts]
+hl-mem = "hl_mem.cli:main"
+hl-mem-worker = "hl_mem.workers.worker:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

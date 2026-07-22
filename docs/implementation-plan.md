@@ -1,5 +1,7 @@
 # HL-Mem 实施计划
 
+> 交付状态（2026-07-22）：Phase 3–6 已实现；Phase 7 测试体系与质量验证已纳入持续测试。Procedure 不使用独立表，保存在 `policies.procedure` JSON 字段中。SQLite WAL 仍为默认后端，PostgreSQL 仅作为可选适配边界。
+
 - 更新时间：2026-07-20
 - 原则：每个 Phase 都必须可单独运行、测试和与基线比较
 
