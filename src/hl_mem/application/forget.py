@@ -1,4 +1,4 @@
-"""记忆撤回及派生记忆失效传播服务。"""
+"""记忆撤回应用服务。原子化撤回 Claim，清除向量，传播 stale 标记。"""
 
 from __future__ import annotations
 

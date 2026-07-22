@@ -1,4 +1,4 @@
-"""Claim 生命周期状态转换守卫。"""
+"""领域状态机。定义 ClaimStatus 和 EpisodeStatus 枚举、合法转换矩阵和守卫函数。"""
 
 from __future__ import annotations
 

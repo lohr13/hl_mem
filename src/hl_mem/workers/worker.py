@@ -11,6 +11,12 @@ from typing import Any
 
 from hl_mem import components
 from hl_mem.application.ingest import IngestService
+from hl_mem.config import (
+    RETENTION_DAYS,
+    WORKER_JOB_LEASE_MINUTES,
+    WORKER_MAINTENANCE_INTERVAL,
+    WORKER_POLL_INTERVAL,
+)
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
@@ -76,7 +82,7 @@ class Worker:
 
     def run_once(self) -> dict[str, Any]:
         now = _now()
-        lease = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        lease = (datetime.now(timezone.utc) + timedelta(minutes=WORKER_JOB_LEASE_MINUTES)).isoformat()
         job = self.jobs.lease_job(lease, now)
         if not job:
             return {"status": "idle"}
@@ -94,7 +100,7 @@ class Worker:
                 "error": str(error),
             }
 
-    def run_forever(self, poll_interval: float = 2.0) -> None:
+    def run_forever(self, poll_interval: float = WORKER_POLL_INTERVAL) -> None:
         next_ttl = 0.0
         try:
             while True:
@@ -104,9 +110,9 @@ class Worker:
                     decay_claims(self.connection)
                     from hl_mem.security.retention import purge_retained_events
 
-                    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+                    cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
                     purge_retained_events(self.connection, "default", cutoff)
-                    self.audit.cleanup(int(self.config.get("audit_retention_days", 30)))
+                    self.audit.cleanup(int(self.config.get("audit_retention_days", RETENTION_DAYS)))
                     enqueue_daily_consolidation(
                         self.connection,
                         _now(),
@@ -122,7 +128,7 @@ class Worker:
                         _now(),
                         self.config.get("reclassify_cron", os.getenv("HL_MEM_RECLASSIFY_CRON", "04:30")),
                     )
-                    next_ttl = current + 600.0
+                    next_ttl = current + WORKER_MAINTENANCE_INTERVAL
                 if self.run_once()["status"] == "idle":
                     time.sleep(poll_interval)
         finally:
@@ -159,7 +165,7 @@ class Worker:
         if job["job_type"] == "purge_retention":
             from hl_mem.security.retention import purge_retained_events
 
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
             return {"purged": purge_retained_events(self.connection, "default", cutoff)}
         if job["job_type"] == "retry_failed":
             cursor = self.connection.execute("UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'")
@@ -313,7 +319,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.worker")
     parser.add_argument("command", choices=("run", "run-once", "status"))
     parser.add_argument("--db", default=str(default_database_path()))
-    parser.add_argument("--poll-interval", type=float, default=2.0)
+    parser.add_argument("--poll-interval", type=float, default=WORKER_POLL_INTERVAL)
     args = parser.parse_args()
     if args.command == "status":
         database = Database(args.db)
