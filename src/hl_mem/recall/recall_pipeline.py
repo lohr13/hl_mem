@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from hl_mem.config import RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.observability.audit import current_audit
 from hl_mem.recall.policy import RecallIntent, claim_is_visible, route_recall_intent
@@ -67,7 +68,7 @@ def hybrid_claims(
     """融合全文、向量、多因子先验及 reranker 结果召回 claim。"""
     audit = current_audit()
     total_started = time.perf_counter_ns()
-    candidate_limit = min(200, max(limit * 5, 50))
+    candidate_limit = min(RECALL_VECTOR_SCAN_LIMIT, max(limit * 5, 50))
     ranking_now = now or datetime.now(timezone.utc).isoformat()
     selected_intent = RecallIntent(intent) if intent else route_recall_intent(query, as_of, ranking_now)
     reference = as_of or ranking_now

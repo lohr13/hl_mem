@@ -1,3 +1,5 @@
+"""SQLite 数据访问层。提供 Claim、Event、Job、Evidence 的 CRUD 和查询操作。"""
+
 from __future__ import annotations
 
 import json
@@ -6,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.lifecycle import ClaimStatus, assert_transition
@@ -146,7 +149,7 @@ class ClaimRepository:
     def search_claims_vector(
         self,
         query_blob: bytes,
-        limit: int = 200,
+        limit: int = RECALL_VECTOR_SCAN_LIMIT,
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
@@ -298,7 +301,7 @@ class ClaimRepository:
     def search_claims_fts(
         self,
         query: str,
-        limit: int = 20,
+        limit: int = RECALL_DEFAULT_LIMIT,
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,

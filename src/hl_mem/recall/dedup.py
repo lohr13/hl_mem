@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from hl_mem.config import DEDUP_SEMANTIC_THRESHOLD
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.storage.repository import ClaimRepository
 
 
 class Deduplicator:
-    def __init__(self, claim_repo: ClaimRepository, embedder: Any, threshold: float = 0.85) -> None:
+    def __init__(
+        self, claim_repo: ClaimRepository, embedder: Any, threshold: float = DEDUP_SEMANTIC_THRESHOLD
+    ) -> None:
         self.claim_repo, self.embedder, self.threshold = claim_repo, embedder, threshold
 
     def find_duplicate(self, new_claim: dict[str, Any]) -> tuple[str | None, str]:

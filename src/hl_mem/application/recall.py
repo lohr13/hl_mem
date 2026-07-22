@@ -1,4 +1,4 @@
-"""混合召回、访问记录、曝光反馈和证据组装服务。"""
+"""记忆召回应用服务。执行 FTS + 向量 + reranker 混合召回，管理访问记录和反馈。"""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.application.ingest import new_id
+from hl_mem.config import RECALL_DEFAULT_LIMIT
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
 from hl_mem.recall.policy import RecallIntent, route_recall_intent
@@ -29,7 +30,7 @@ class RecallService:
     def recall(
         self,
         query: str,
-        limit: int = 20,
+        limit: int = RECALL_DEFAULT_LIMIT,
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,

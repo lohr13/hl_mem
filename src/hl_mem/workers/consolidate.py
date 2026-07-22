@@ -13,6 +13,7 @@ from typing import Any, Literal, Protocol
 
 import httpx
 
+from hl_mem.config import CONSOLIDATE_GRAY_ZONE_MAX, CONSOLIDATE_GRAY_ZONE_MIN
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.storage.repository import ClaimRepository
 from hl_mem.lifecycle import assert_transition
@@ -165,7 +166,7 @@ class ConflictConsolidator:
                 if not same_slot and left.get("subject_entity_id") != right.get("subject_entity_id"):
                     continue
                 similarity = cosine_similarity(left["embedding_dense"], right["embedding_dense"])
-                if not 0.72 <= similarity < 0.95:
+                if not CONSOLIDATE_GRAY_ZONE_MIN <= similarity < CONSOLIDATE_GRAY_ZONE_MAX:
                     continue
                 ids = sorted((left["id"], right["id"]))
                 pair_key = hashlib.sha256("\0".join(ids).encode()).hexdigest()[:24]

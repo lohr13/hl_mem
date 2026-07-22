@@ -1,4 +1,4 @@
-"""统一组件工厂——集中创建 embedder、extractor 与 reranker。"""
+"""统一组件工厂。集中管理 embedder、reranker、extractor 的创建逻辑和环境变量配置。"""
 
 from __future__ import annotations
 

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
+from hl_mem.config import RETENTION_DAYS
 
 audit_context: ContextVar[dict[str, Any]] = ContextVar("audit_context", default={})
 _audit_logger: ContextVar[Any] = ContextVar("audit_logger", default=None)
@@ -145,7 +146,7 @@ class AuditLogger:
                       duration_us=(time.perf_counter_ns() - started) // 1000,
                       detail=detail, **dimensions)
 
-    def cleanup(self, retention_days: int = 30) -> bool:
+    def cleanup(self, retention_days: int = RETENTION_DAYS) -> bool:
         """Delete expired audit rows and reclaim free pages, at most once per UTC day."""
         if not self.enabled:
             return False
@@ -200,7 +201,7 @@ class NullAuditLogger:
     def span(self, *args: Any, **kwargs: Any) -> Iterator[dict[str, Any]]:
         yield {}
 
-    def cleanup(self, retention_days: int = 30) -> bool:
+    def cleanup(self, retention_days: int = RETENTION_DAYS) -> bool:
         return False
 
     def health(self) -> dict[str, int | bool | str | None]:
