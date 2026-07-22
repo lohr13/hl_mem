@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import struct
 import time
 from typing import Iterable
 
 import httpx
+
+from hl_mem.core.vector import cosine_similarity  # re-export for backward compatibility
 
 
 def pack_vector(values: Iterable[float]) -> bytes:
@@ -18,14 +19,6 @@ def unpack_vector(blob: bytes) -> tuple[float, ...]:
     if len(blob) % 4:
         raise ValueError("embedding BLOB length must be divisible by four")
     return struct.unpack(f"<{len(blob) // 4}f", blob)
-
-
-def cosine_similarity(blob_a: bytes, blob_b: bytes) -> float:
-    a, b = unpack_vector(blob_a), unpack_vector(blob_b)
-    if len(a) != len(b):
-        raise ValueError("embedding dimensions differ")
-    denominator = math.sqrt(sum(x * x for x in a) * sum(x * x for x in b))
-    return sum(x * y for x, y in zip(a, b)) / denominator if denominator else 0.0
 
 
 class Embedder:

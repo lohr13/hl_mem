@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from hl_mem.ingest.embeddings import cosine_similarity
+from hl_mem.core.vector import cosine_similarity
 from hl_mem.storage.repository import ClaimRepository
 
 
