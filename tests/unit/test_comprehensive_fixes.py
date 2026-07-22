@@ -13,8 +13,10 @@ from hl_mem.api import server
 from hl_mem.experience.service import ExperienceService, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder
+from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import EventRepository, JobRepository
+from hl_mem.workers.worker import Worker
 
 
 def test_database_open_returns_independent_connections(tmp_path) -> None:
@@ -111,6 +113,31 @@ def test_production_requires_real_embedder_and_reranker(monkeypatch) -> None:
     monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="RERANKER_API_KEY|EMBEDDING_API_KEY"):
         server._make_reranker()
+
+
+def test_worker_extractor_fail_fast_in_production(monkeypatch) -> None:
+    """生产环境不得将 Worker 提取器静默降级为 FakeExtractor。"""
+    monkeypatch.setenv("HL_MEM_ENV", "production")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    worker = Worker.__new__(Worker)
+
+    worker.config = {"extractor_name": "real"}
+    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+        worker._make_extractor()
+
+    worker.config = {"extractor_name": "fake"}
+    with pytest.raises(RuntimeError, match="HL_MEM_EXTRACTOR"):
+        worker._make_extractor()
+
+
+def test_worker_extractor_fake_allowed_in_dev(monkeypatch) -> None:
+    """开发环境仍允许 Worker 使用 FakeExtractor。"""
+    monkeypatch.setenv("HL_MEM_ENV", "dev")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    worker = Worker.__new__(Worker)
+    worker.config = {"extractor_name": "fake"}
+
+    assert isinstance(worker._make_extractor(), FakeExtractor)
 
 
 def test_health_reports_fake_components_in_test_environment(tmp_path, monkeypatch) -> None:

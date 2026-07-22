@@ -241,10 +241,16 @@ class Worker:
             return {"claims": len(extracted)}
 
     def _make_extractor(self) -> Any:
-        if self.config.get("extractor_name", os.getenv("HL_MEM_EXTRACTOR", "fake")) == "fake":
+        production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
+        extractor_name = self.config.get("extractor_name", os.getenv("HL_MEM_EXTRACTOR", "fake"))
+        if production and extractor_name == "fake":
+            raise RuntimeError("HL_MEM_EXTRACTOR must not be 'fake' in production")
+        if extractor_name == "fake":
             return FakeExtractor()
         api_key = os.getenv("LLM_API_KEY")
         if not api_key:
+            if production:
+                raise RuntimeError("LLM_API_KEY is required in production")
             return FakeExtractor()
         return LLMExtractor(
             api_key,
