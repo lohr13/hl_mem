@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
+from hl_mem.storage.migrations.fact_hash_v2 import backfill_fact_hash_v2
 
 
 def default_database_path() -> Path:
@@ -120,6 +121,8 @@ class Database:
                 raise
         if connection.execute("SELECT 1 FROM schema_migrations WHERE version='006_canonical_attribute'").fetchone():
             backfill_conflict_keys_v2(connection)
+        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='011_fact_hash_v2'").fetchone():
+            backfill_fact_hash_v2(connection)
 
     def close(self) -> None:
         """关闭本实例创建的全部连接。"""

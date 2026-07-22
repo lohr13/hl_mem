@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-import unicodedata
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -13,6 +12,7 @@ from hl_mem.recall.attribute_map import validate_canonical_attribute
 from hl_mem.recall.conflict import ConflictResolver, compute_conflict_key, compute_legacy_conflict_key
 from hl_mem.recall.dedup import Deduplicator
 from hl_mem.recall.observation import ObservationBuilder
+from hl_mem.storage.migrations.fact_hash_v2 import compute_fact_hash_v2
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository, EvidenceRepository
 
 
@@ -25,10 +25,7 @@ def claim_text(claim: dict[str, Any]) -> str:
 
 
 def compute_fact_hash(subject: str, predicate: str, value: Any) -> str:
-    stable_value = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    raw = unicodedata.normalize("NFKC", subject).strip()
-    raw += unicodedata.normalize("NFKC", predicate).strip() + stable_value
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    return compute_fact_hash_v2(subject, predicate, value)
 
 
 def _summary(claim: Any) -> dict[str, Any]:
@@ -110,36 +107,36 @@ def store_extracted(
         detail={"fact_hash": claim["fact_hash"], "predicate": claim["predicate"]},
     )
     if exact:
-        _link_event(evidence, exact["id"], event["id"])
+        _link_event_atomically(connection, evidence, exact["id"], event["id"])
         return exact["id"]
     existing = claims.find_by_conflict_key(claim["conflict_key"])
     superseded_old_id: str | None = None
     if existing:
         started = time.perf_counter_ns()
-        resolution = ConflictResolver().resolve(existing[-1], {**claim, "qualifiers": qualifiers})
+        current = existing[0]
+        resolution = ConflictResolver().resolve(current, {**claim, "qualifiers": qualifiers})
         audit.emit(
             "conflict",
             "resolved",
             resolution,
             event_id=event["id"],
             claim_id=claim["id"],
-            related_claim_id=existing[-1]["id"],
+            related_claim_id=current["id"],
             duration_us=(time.perf_counter_ns() - started) // 1000,
             detail={
                 "conflict_key": claim["conflict_key"],
                 "candidate_count": len(existing),
-                "old": _summary(existing[-1]),
+                "old": _summary(current),
                 "new": _summary(claim),
             },
         )
         if resolution == "entails":
-            _link_event(evidence, existing[-1]["id"], event["id"])
-            return existing[-1]["id"]
+            _link_event_atomically(connection, evidence, current["id"], event["id"])
+            return current["id"]
         if resolution == "state_change":
-            claim["supersedes_id"] = existing[-1]["id"]
-            superseded_old_id = existing[-1]["id"]
+            claim["supersedes_id"] = current["id"]
+            superseded_old_id = current["id"]
         elif resolution == "contradicts":
-            claims.update_status(existing[-1]["id"], "disputed")
             claim["status"] = "disputed"
         elif resolution == "uncertain":
             claim["status"] = "candidate"
@@ -166,22 +163,28 @@ def store_extracted(
             detail={"matched": duplicate_id is not None},
         )
         if duplicate_id:
-            _link_event(evidence, duplicate_id, event["id"])
+            _link_event_atomically(connection, evidence, duplicate_id, event["id"])
             return duplicate_id
     if "embedding_dense" not in claim:
         claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
-    if superseded_old_id:
-        connection.execute("BEGIN IMMEDIATE")
+    connection.execute("BEGIN IMMEDIATE")
     try:
-        claims.insert_claim(claim, commit=not superseded_old_id)
+        if existing and resolution == "contradicts":
+            claims.update_status(existing[0]["id"], "disputed", commit=False)
+        claims.insert_claim(claim, commit=False)
         if superseded_old_id:
-            claims.supersede_with_inline(superseded_old_id, claim["id"], extracted.value, claim["valid_from"], now)
-        _link_event(evidence, claim["id"], event["id"], commit=not superseded_old_id)
-        if superseded_old_id:
-            connection.commit()
+            claims.supersede_with_inline(
+                superseded_old_id,
+                claim["id"],
+                extracted.value,
+                claim["valid_from"],
+                now,
+                commit=False,
+            )
+        _link_event(evidence, claim["id"], event["id"], commit=False)
+        connection.commit()
     except Exception:
-        if superseded_old_id:
-            connection.rollback()
+        connection.rollback()
         raise
     return claim["id"]
 
@@ -199,6 +202,19 @@ def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: 
         },
         commit=commit,
     )
+
+
+def _link_event_atomically(
+    connection: Any, repo: EvidenceRepository, claim_id: str, event_id: str
+) -> None:
+    """在独立事务中原子写入已存在 claim 的事件证据。"""
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        _link_event(repo, claim_id, event_id, commit=False)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
 
 
 def _build_observation(connection: Any, conflict_key: str, now: str) -> None:

@@ -9,8 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from hl_mem.lifecycle import assert_transition
+from hl_mem.recall.recall_pipeline import stale_observations
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import EventRepository
+from hl_mem.storage.repository import ClaimRepository, EvidenceRepository, EventRepository, JobRepository
 
 
 class McpMemoryServer:
@@ -29,11 +31,23 @@ class McpMemoryServer:
         """调用一个记忆工具并返回 JSON 可序列化结果。"""
         if name not in self._TOOLS:
             raise ValueError(f"unknown MCP tool: {name}")
-        connection = self.database.open()
-        if name == "memory_save":
-            now = datetime.now(timezone.utc).isoformat()
-            event_id = uuid.uuid4().hex
-            content_json = json.dumps(arguments, ensure_ascii=False, sort_keys=True)
+        with self.database.connect() as connection:
+            if name == "memory_save":
+                return self._save(connection, arguments)
+            if name == "memory_recall":
+                return self._recall(connection, arguments)
+            if name == "memory_forget":
+                return self._forget(connection, arguments)
+            return self._explain(connection, arguments)
+
+    @staticmethod
+    def _save(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        """原子保存显式记忆事件并创建提取任务。"""
+        now = datetime.now(timezone.utc).isoformat()
+        event_id = uuid.uuid4().hex
+        content_json = json.dumps(arguments, ensure_ascii=False, sort_keys=True)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
             EventRepository(connection).insert_event(
                 {
                     "id": event_id,
@@ -43,28 +57,69 @@ class McpMemoryServer:
                     "occurred_at": now,
                     "recorded_at": now,
                     "content_hash": hashlib.sha256(content_json.encode()).hexdigest(),
-                }
+                },
+                commit=False,
             )
-            return {"id": event_id, "created": True}
-        memory_id = str(arguments.get("id", ""))
-        if name == "memory_explain":
-            event = EventRepository(connection).get_event(memory_id)
-            if event:
-                return {"type": "event", "id": memory_id, "evidence": [{"type": "event", "id": memory_id}]}
-            row = connection.execute("SELECT * FROM claims WHERE id=?", (memory_id,)).fetchone()
-            if not row:
-                raise ValueError(f"memory not found: {memory_id}")
-            evidence = connection.execute(
-                "SELECT evidence_type,evidence_id,relation FROM evidence_links WHERE derived_id=?", (memory_id,)
-            ).fetchall()
-            return {"type": "claim", "id": memory_id, "evidence": [dict(item) for item in evidence]}
-        if name == "memory_forget":
-            cursor = connection.execute("UPDATE claims SET status='retracted' WHERE id=?", (memory_id,))
+            JobRepository(connection).insert_job(
+                {
+                    "id": uuid.uuid4().hex,
+                    "job_type": "extract_event",
+                    "payload_json": json.dumps({"event_id": event_id}),
+                    "idempotency_key": f"extract:{event_id}",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                commit=False,
+            )
             connection.commit()
-            return {"id": memory_id, "forgotten": cursor.rowcount == 1}
+        except Exception:
+            connection.rollback()
+            raise
+        return {"id": event_id, "created": True}
+
+    @staticmethod
+    def _recall(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        """通过正式 FTS 索引召回活跃 claim。"""
         query = str(arguments.get("query", ""))
-        rows = connection.execute(
-            "SELECT id,value_json,status FROM claims WHERE status='active' AND value_json LIKE ? LIMIT ?",
-            (f"%{query}%", int(arguments.get("limit", 20))),
-        ).fetchall()
-        return {"results": [dict(row) for row in rows], "total": len(rows)}
+        limit = int(arguments.get("limit", 20))
+        claims = ClaimRepository(connection).search_claims_fts(query, limit)
+        results = [
+            {"id": claim["id"], "value_json": claim["value_json"], "status": claim["status"]}
+            for claim in claims
+        ]
+        return {"results": results, "total": len(results)}
+
+    @staticmethod
+    def _forget(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        """通过生命周期守卫撤回 claim 并清除其向量。"""
+        memory_id = str(arguments.get("id", ""))
+        repository = ClaimRepository(connection)
+        claim = repository.get_claim(memory_id)
+        if not claim:
+            return {"id": memory_id, "forgotten": False}
+        assert_transition(claim["status"], "retracted")
+        forgotten = repository.retract(memory_id)
+        if forgotten:
+            stale_observations(connection, memory_id)
+        return {"id": memory_id, "forgotten": forgotten}
+
+    @staticmethod
+    def _explain(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        """通过 repository 返回事件或 claim 的证据链。"""
+        memory_id = str(arguments.get("id", ""))
+        event = EventRepository(connection).get_event(memory_id)
+        if event:
+            return {"type": "event", "id": memory_id, "evidence": [{"type": "event", "id": memory_id}]}
+        claim = ClaimRepository(connection).get_claim(memory_id)
+        if not claim:
+            raise ValueError(f"memory not found: {memory_id}")
+        links = EvidenceRepository(connection).get_links_for_derived("claim", memory_id)
+        evidence = [
+            {
+                "evidence_type": link["evidence_type"],
+                "evidence_id": link["evidence_id"],
+                "relation": link["relation"],
+            }
+            for link in links
+        ]
+        return {"type": "claim", "id": memory_id, "evidence": evidence}
