@@ -15,6 +15,7 @@ import httpx
 
 from hl_mem.ingest.embeddings import cosine_similarity
 from hl_mem.storage.repository import ClaimRepository
+from hl_mem.lifecycle import assert_transition
 
 DecisionKind = Literal["contradiction", "compatible", "state_change", "unrelated"]
 
@@ -206,9 +207,29 @@ class ConflictConsolidator:
                 stats["cas_skipped"] += 1
                 continue
             if decision.kind == "contradiction":
-                self.connection.execute(
-                    "UPDATE claims SET status='disputed' WHERE id IN (?,?)", (pair.left["id"], pair.right["id"])
-                )
+                self.connection.execute("BEGIN IMMEDIATE")
+                try:
+                    current_rows = self.connection.execute(
+                        "SELECT status FROM claims WHERE id IN (?,?)",
+                        (pair.left["id"], pair.right["id"]),
+                    ).fetchall()
+                    if len(current_rows) != 2 or any(row["status"] != "active" for row in current_rows):
+                        self.connection.rollback()
+                        stats["cas_skipped"] += 1
+                        continue
+                    for row in current_rows:
+                        assert_transition(row["status"], "disputed")
+                    cursor = self.connection.execute(
+                        "UPDATE claims SET status='disputed' WHERE id IN (?,?) AND status='active'",
+                        (pair.left["id"], pair.right["id"]),
+                    )
+                    if cursor.rowcount != 2:
+                        self.connection.rollback()
+                        stats["cas_skipped"] += 1
+                        continue
+                except Exception:
+                    self.connection.rollback()
+                    raise
             elif decision.kind == "state_change":
                 current_id = decision.current_claim_id
                 if current_id not in {pair.left["id"], pair.right["id"]}:
