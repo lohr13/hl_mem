@@ -13,6 +13,7 @@ class ClaimStatus(str, Enum):
     EXPIRED = "expired"
     ARCHIVED = "archived"
     SUPERSEDED = "superseded"
+    RETRACTED = "retracted"
 
 
 class InvalidTransitionError(ValueError):
@@ -25,9 +26,11 @@ ALLOWED_TRANSITIONS: frozenset[tuple[ClaimStatus, ClaimStatus]] = frozenset(
         (ClaimStatus.ACTIVE, ClaimStatus.EXPIRED),
         (ClaimStatus.ACTIVE, ClaimStatus.ARCHIVED),
         (ClaimStatus.ACTIVE, ClaimStatus.SUPERSEDED),
+        (ClaimStatus.ACTIVE, ClaimStatus.RETRACTED),
         (ClaimStatus.DISPUTED, ClaimStatus.ARCHIVED),
         (ClaimStatus.DISPUTED, ClaimStatus.EXPIRED),
         (ClaimStatus.DISPUTED, ClaimStatus.ACTIVE),
+        (ClaimStatus.DISPUTED, ClaimStatus.RETRACTED),
     }
 )
 

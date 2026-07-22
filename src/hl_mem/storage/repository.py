@@ -92,9 +92,10 @@ class ClaimRepository:
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:
         return _row(self.connection.execute("SELECT * FROM claims WHERE id=?", (claim_id,)).fetchone())
 
-    def update_status(self, claim_id: str, status: str) -> bool:
+    def update_status(self, claim_id: str, status: str, commit: bool = True) -> bool:
         cursor = self.connection.execute("UPDATE claims SET status=? WHERE id=?", (status, claim_id))
-        self.connection.commit()
+        if commit:
+            self.connection.commit()
         return cursor.rowcount == 1
 
     def find_active(self, namespace: str, subject_entity_id: str | None) -> list[dict[str, Any]]:
@@ -106,7 +107,9 @@ class ClaimRepository:
 
     def find_by_conflict_key(self, conflict_key: str) -> list[dict[str, Any]]:
         rows = self.connection.execute(
-            "SELECT * FROM claims WHERE conflict_key=? AND status IN ('active','candidate','disputed')",
+            "SELECT * FROM claims WHERE conflict_key=? AND status IN ('active','candidate','disputed') "
+            "ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'disputed' THEN 1 WHEN 'candidate' THEN 2 END, "
+            "valid_from DESC,recorded_from DESC,id DESC",
             (conflict_key,),
         ).fetchall()
         return [dict(row) for row in rows]
@@ -188,12 +191,13 @@ class ClaimRepository:
         ).fetchall()
         return {row["memory_id"]: float(row["helpful_rate"]) for row in rows}
 
-    def supersede(self, old_id: str, new_valid_from: str) -> None:
+    def supersede(self, old_id: str, new_valid_from: str, commit: bool = True) -> None:
         self.connection.execute(
             "UPDATE claims SET status='superseded',valid_to=?,recorded_to=? WHERE id=?",
             (new_valid_from, new_valid_from, old_id),
         )
-        self.connection.commit()
+        if commit:
+            self.connection.commit()
 
     def supersede_with_inline(
         self,
@@ -202,11 +206,12 @@ class ClaimRepository:
         new_value: Any,
         changed_at: str,
         recorded_at: str,
+        commit: bool = True,
     ) -> SupersedeResult:
         """以 compare-and-set 方式内联旧值并建立替代证据。"""
         if old_id == new_claim_id:
             raise ValueError("a claim cannot supersede itself")
-        started_transaction = not self.connection.in_transaction
+        started_transaction = commit and not self.connection.in_transaction
         if started_transaction:
             self.connection.execute("BEGIN IMMEDIATE")
         try:
