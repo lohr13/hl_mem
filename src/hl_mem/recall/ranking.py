@@ -4,8 +4,8 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-DEFAULT_WEIGHTS = {"semantic": 0.70, "recency": 0.08, "access_frequency": 0.07,
-                   "confidence": 0.075, "importance": 0.075}
+DEFAULT_WEIGHTS = {"semantic": 0.65, "recency": 0.08, "access_frequency": 0.07,
+                   "confidence": 0.075, "importance": 0.075, "utility": 0.05}
 
 
 def _clamp(value: Any) -> float:
@@ -43,7 +43,8 @@ def memory_features(claim: Mapping[str, Any], semantic_score: float,
     return {"semantic": _clamp(semantic_score), "recency": _clamp(recency),
             "access_frequency": _clamp(access_frequency),
             "confidence": _clamp(claim.get("confidence", 0.5)),
-            "importance": _clamp(claim.get("importance", 0.5))}
+            "importance": _clamp(claim.get("importance", 0.5)),
+            "utility": _clamp(claim.get("helpful_rate", 0.5))}
 
 
 def memory_score(features: Mapping[str, float],
@@ -54,5 +55,5 @@ def memory_score(features: Mapping[str, float],
 
 def blend_reranker_score(reranker_score: float, features: Mapping[str, float]) -> float:
     prior = sum(DEFAULT_WEIGHTS[name] * _clamp(features.get(name, 0.0))
-                for name in ("recency", "access_frequency", "confidence", "importance")) / 0.30
+                for name in ("recency", "access_frequency", "confidence", "importance", "utility")) / 0.35
     return 0.80 * _clamp(reranker_score) + 0.20 * prior

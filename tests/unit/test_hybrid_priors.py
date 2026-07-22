@@ -107,11 +107,13 @@ def test_ttl_matrix(tmp_path, volatility, scope, expires):
 
 def test_ranking_features_bounds_and_log_access():
     features = memory_features({"observed_at": "2026-06-21T00:00:00+00:00",
-                                "access_count": 9, "confidence": 2, "importance": -1},
+                                "access_count": 9, "confidence": 2, "importance": -1,
+                                "helpful_rate": 0.75},
                                2, 99, NOW)
     assert features["semantic"] == 1 and features["recency"] == .5
     assert 0 < features["access_frequency"] < 1
     assert features["confidence"] == 1 and features["importance"] == 0
+    assert features["utility"] == 0.75
 
 
 def test_ranking_malformed_date_is_safe():
@@ -120,15 +122,34 @@ def test_ranking_malformed_date_is_safe():
 
 def test_memory_score_exact_weights_and_semantic_dominates():
     high_semantic = {"semantic": 1, "recency": 0, "access_frequency": 0,
-                     "confidence": 0, "importance": 0}
+                     "confidence": 0, "importance": 0, "utility": 0}
     priors = {"semantic": 0, "recency": 1, "access_frequency": 1,
-              "confidence": 1, "importance": 1}
-    assert memory_score(high_semantic) == pytest.approx(.7)
-    assert memory_score(priors) == pytest.approx(.3)
+              "confidence": 1, "importance": 1, "utility": 1}
+    assert memory_score(high_semantic) == pytest.approx(.65)
+    assert memory_score(priors) == pytest.approx(.35)
+
+
+def test_historical_helpful_rate_breaks_otherwise_equal_ranking(tmp_path):
+    connection = Database(tmp_path / "utility.db").open()
+    _claim(connection, "helpful")
+    _claim(connection, "unhelpful")
+    connection.executemany(
+        "INSERT INTO retrieval_feedback(id,query_id,memory_type,memory_id,used_by_model,helpful,created_at) "
+        "VALUES (?,?,?,?,1,?,?)",
+        [
+            ("f1", "q1", "claim", "helpful", 1, NOW),
+            ("f2", "q2", "claim", "unhelpful", 0, NOW),
+        ],
+    )
+    connection.commit()
+
+    results = hybrid_claims(ClaimRepository(connection), "likes tea", pack_vector([1.0]), 2, None, now=NOW)
+
+    assert [item["id"] for item in results] == ["helpful", "unhelpful"]
 
 
 def test_reranker_blend_clamps_and_uses_prior():
-    low = {"recency": 0, "access_frequency": 0, "confidence": 0, "importance": 0}
+    low = {"recency": 0, "access_frequency": 0, "confidence": 0, "importance": 0, "utility": 0}
     high = {key: 1 for key in low}
     assert blend_reranker_score(3, low) == .8
     assert blend_reranker_score(.5, high) == pytest.approx(.6)

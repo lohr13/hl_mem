@@ -12,6 +12,24 @@ def _id() -> str:
     return uuid.uuid4().hex
 
 
+def backprop_episode_reward(connection: sqlite3.Connection, episode_id: str, reward: float) -> None:
+    """将 Episode 奖励回传到其全部 Trace 的价值和优先级。"""
+    if not connection.execute("SELECT 1 FROM episodes WHERE id=?", (episode_id,)).fetchone():
+        raise ValueError(f"episode not found: {episode_id}")
+    priority_delta = 0.1 if reward == 1.0 else (-0.1 if reward < 0.5 else 0.0)
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        connection.execute("UPDATE episodes SET reward=? WHERE id=?", (reward, episode_id))
+        connection.execute(
+            "UPDATE traces SET value=?,priority=min(1.0,max(0.0,priority+?)) WHERE episode_id=?",
+            (reward, priority_delta, episode_id),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+
+
 class ExperienceService:
     """以事务方式维护经验证据和策略生命周期。"""
 
@@ -128,20 +146,49 @@ class ExperienceService:
         memory_id: str,
         used_by_model: bool,
         helpful: bool | None,
-        task_outcome: float | None,
+        task_outcome: float | str | None,
         created_at: str,
+        rank: int | None = None,
+        score: float | None = None,
     ) -> bool:
         """幂等记录检索反馈，并将 Episode 任务结果归因为 reward。"""
         cursor = self.connection.execute(
-            "INSERT OR IGNORE INTO retrieval_feedback(id,query_id,memory_type,memory_id,used_by_model,"
-            "helpful,task_outcome,created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (feedback_id, query_id, memory_type, memory_id, int(used_by_model), helpful, task_outcome, created_at),
+            "INSERT OR IGNORE INTO retrieval_feedback(id,query_id,memory_type,memory_id,rank,score,used_by_model,"
+            "helpful,task_outcome,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                feedback_id,
+                query_id,
+                memory_type,
+                memory_id,
+                rank,
+                score,
+                int(used_by_model),
+                helpful,
+                task_outcome,
+                created_at,
+            ),
         )
         inserted = cursor.rowcount == 1
         if inserted and memory_type == "episode" and task_outcome is not None:
             self.connection.execute("UPDATE episodes SET reward=? WHERE id=?", (task_outcome, memory_id))
         self.connection.commit()
         return inserted
+
+    def submit_retrieval_feedback(
+        self, query_id: str, memory_id: str, helpful: bool, task_outcome: str | None, created_at: str
+    ) -> bool:
+        """回填一次 claim 检索曝光；不存在曝光时创建独立反馈。"""
+        cursor = self.connection.execute(
+            "UPDATE retrieval_feedback SET helpful=?,task_outcome=? "
+            "WHERE id=(SELECT id FROM retrieval_feedback WHERE query_id=? AND memory_type='claim' "
+            "AND memory_id=? ORDER BY created_at DESC,id DESC LIMIT 1)",
+            (int(helpful), task_outcome, query_id, memory_id),
+        )
+        if cursor.rowcount == 0:
+            self.record_feedback(_id(), query_id, "claim", memory_id, True, helpful, task_outcome, created_at)
+        else:
+            self.connection.commit()
+        return cursor.rowcount == 1
 
     def induce_policy(
         self, trigger: str, procedure: dict[str, Any], episode_ids: list[str], created_at: str, namespace: str = "default"

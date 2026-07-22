@@ -12,12 +12,12 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from hl_mem.api.pipeline import new_id
-from hl_mem.experience.service import ExperienceService
+from hl_mem.experience.service import ExperienceService, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.policy import RecallIntent, route_recall_intent
-from hl_mem.recall.recall_pipeline import hybrid_claims, stale_observations
+from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies, stale_observations
 from hl_mem.recall.reranker import FakeReranker, Reranker
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import ClaimRepository, EventRepository, EvidenceRepository, JobRepository
@@ -86,6 +86,15 @@ class EpisodeUpdate(BaseModel):
     outcome_summary: str | None = None
 
 
+class FeedbackInput(BaseModel):
+    """检索结果反馈请求。"""
+
+    query_id: str = Field(min_length=1)
+    memory_id: str = Field(min_length=1)
+    helpful: bool
+    task_outcome: str | None = None
+
+
 def _make_embedder() -> Any:
     dim = int(os.getenv("EMBEDDING_DIM", "2048"))
     mode = os.getenv("HL_MEM_EMBEDDER", "fake").lower()
@@ -110,13 +119,19 @@ def _make_reranker() -> Any:
         return None
     if mode == "fake":
         return FakeReranker()
-    if mode != "real":
-        raise ValueError("HL_MEM_RERANKER must be 'off', 'fake', or 'real'")
-    return Reranker(
-        os.getenv("RERANKER_API_KEY", ""),
-        os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
-        os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
-    )
+    if mode not in {"on", "real"}:
+        raise ValueError("HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'")
+    api_key = os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY")
+    if not api_key:
+        return None
+    try:
+        return Reranker(
+            api_key,
+            os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
+            os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
+        )
+    except Exception:
+        return None
 
 
 def create_app(database_path: str | Path | None = None, audit: Any = None) -> FastAPI:
@@ -221,6 +236,20 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                     )
                 except Exception:
                     pass
+            feedback_service = ExperienceService(connection)
+            for rank, claim in enumerate(claims, 1):
+                feedback_service.record_feedback(
+                    new_id(),
+                    query_id,
+                    "claim",
+                    claim["id"],
+                    False,
+                    None,
+                    None,
+                    _now(),
+                    rank,
+                    float(claim.get("_score", 0.0)),
+                )
         evidence_repo, results = EvidenceRepository(connection), []
         for claim in claims:
             evidence = [
@@ -254,12 +283,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                     "evidence": evidence,
                 }
             )
-        policy_keywords = ("coding", "debug", "deploy")
-        policies = (
-            ExperienceService(connection).list_policies("active")
-            if any(keyword in payload.query.lower() for keyword in policy_keywords)
-            else []
-        )
+        policies = matching_policies(ExperienceService(connection).list_policies("active"), payload.query)
         return {
             "results": results,
             "observations": [],
@@ -275,6 +299,13 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         service.create_episode(episode_id, payload.goal, _now(), payload.session_id, payload.task_type)
         return service.get_episode(episode_id)
 
+    @app.post("/v1/feedback")
+    def post_feedback(payload: FeedbackInput) -> dict[str, bool]:
+        updated = ExperienceService(database.open()).submit_retrieval_feedback(
+            payload.query_id, payload.memory_id, payload.helpful, payload.task_outcome, _now()
+        )
+        return {"updated": updated}
+
     @app.post("/v1/episodes/{episode_id}/traces")
     def add_episode_trace(episode_id: str, payload: TraceInput) -> dict[str, Any]:
         service = ExperienceService(database.open())
@@ -288,10 +319,15 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
 
     @app.patch("/v1/episodes/{episode_id}")
     def update_episode(episode_id: str, payload: EpisodeUpdate) -> dict[str, Any]:
+        service = ExperienceService(database.open())
         try:
-            return ExperienceService(database.open()).update_episode(
+            updated = service.update_episode(
                 episode_id, _now(), payload.status, payload.reward, payload.outcome_summary
             )
+            if payload.reward is not None:
+                backprop_episode_reward(database.open(), episode_id, payload.reward)
+                updated = service.get_episode(episode_id)
+            return updated
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
 

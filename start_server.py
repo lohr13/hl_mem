@@ -10,7 +10,7 @@ if env_file.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-os.environ.setdefault("HL_MEM_RERANKER", "off")
+os.environ.setdefault("HL_MEM_RERANKER", "on")
 os.environ.setdefault("HL_MEM_EMBEDDER", "real")
 os.environ.setdefault("HL_MEM_EXTRACTOR", "llm")
 
