@@ -28,8 +28,7 @@ def test_idempotency_cross_session_and_evidence(tmp_path) -> None:
         assert duplicate.json() == {"id": first.json()["id"], "created": False}
         assert response.status_code == 200
         assert response.json()["total"] == 2
-        assert all(item["evidence"] and item["evidence"][0]["type"] == "event"
-                   for item in response.json()["results"])
+        assert all(item["evidence"] and item["evidence"][0]["type"] == "event" for item in response.json()["results"])
         connection = app.state.db.open()
         assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 2
         assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 2
@@ -48,4 +47,9 @@ def test_data_survives_database_restart(tmp_path) -> None:
 
 def test_healthz(tmp_path) -> None:
     with TestClient(create_app(tmp_path / "health.db")) as client:
-        assert client.get("/healthz").json() == {"status": "ok", "version": "0.2.0"}
+        assert client.get("/healthz").json() == {
+            "status": "ok",
+            "version": "0.2.0",
+            "embedder": "fake",
+            "reranker": "off",
+        }

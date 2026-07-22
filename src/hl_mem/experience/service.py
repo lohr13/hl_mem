@@ -7,26 +7,44 @@ import sqlite3
 import uuid
 from typing import Any
 
+TERMINAL_EPISODE_STATUSES = {"success", "failed", "cancelled"}
+
+
+class InvalidStateTransitionError(ValueError):
+    """表示 Episode 或 Policy 的状态转换非法。"""
+
 
 def _id() -> str:
     return uuid.uuid4().hex
 
 
-def backprop_episode_reward(connection: sqlite3.Connection, episode_id: str, reward: float) -> None:
+def _validate_reward(reward: float) -> None:
+    if not 0.0 <= reward <= 1.0:
+        raise ValueError("reward must be between 0 and 1")
+
+
+def backprop_episode_reward(
+    connection: sqlite3.Connection, episode_id: str, reward: float, commit: bool = True
+) -> None:
     """将 Episode 奖励回传到其全部 Trace 的价值和优先级。"""
+    _validate_reward(reward)
     if not connection.execute("SELECT 1 FROM episodes WHERE id=?", (episode_id,)).fetchone():
         raise ValueError(f"episode not found: {episode_id}")
     priority_delta = 0.1 if reward == 1.0 else (-0.1 if reward < 0.5 else 0.0)
-    connection.execute("BEGIN IMMEDIATE")
+    started_transaction = not connection.in_transaction
+    if started_transaction:
+        connection.execute("BEGIN IMMEDIATE")
     try:
         connection.execute("UPDATE episodes SET reward=? WHERE id=?", (reward, episode_id))
         connection.execute(
             "UPDATE traces SET value=?,priority=min(1.0,max(0.0,priority+?)) WHERE episode_id=?",
             (reward, priority_delta, episode_id),
         )
-        connection.commit()
+        if commit and started_transaction:
+            connection.commit()
     except Exception:
-        connection.rollback()
+        if started_transaction:
+            connection.rollback()
         raise
 
 
@@ -44,6 +62,9 @@ class ExperienceService:
 
     def record_episode(self, episode_id: str, goal: str, status: str, reward: float, occurred_at: str) -> str:
         """记录一次独立 Episode 并返回其 ID。"""
+        if status not in TERMINAL_EPISODE_STATUSES:
+            raise ValueError("recorded episode status must be terminal")
+        _validate_reward(reward)
         self.connection.execute(
             "INSERT OR IGNORE INTO episodes(id,goal,status,started_at,ended_at,reward,outcome_summary) "
             "VALUES (?,?,?,?,?,?,?)",
@@ -76,10 +97,19 @@ class ExperienceService:
         status: str | None = None,
         reward: float | None = None,
         outcome_summary: str | None = None,
+        commit: bool = True,
     ) -> dict[str, Any]:
         """更新 Episode 的完成状态和结果。"""
-        if not self.connection.execute("SELECT 1 FROM episodes WHERE id=?", (episode_id,)).fetchone():
+        row = self.connection.execute("SELECT status FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not row:
             raise ValueError(f"episode not found: {episode_id}")
+        if reward is not None:
+            _validate_reward(reward)
+        if status is not None:
+            if status not in TERMINAL_EPISODE_STATUSES:
+                raise InvalidStateTransitionError(f"illegal episode transition: {row['status']} -> {status}")
+            if row["status"] != "running":
+                raise InvalidStateTransitionError(f"illegal episode transition: {row['status']} -> {status}")
         assignments: list[str] = []
         values: list[Any] = []
         for column, value in (("status", status), ("reward", reward), ("outcome_summary", outcome_summary)):
@@ -92,7 +122,8 @@ class ExperienceService:
         if assignments:
             values.append(episode_id)
             self.connection.execute(f"UPDATE episodes SET {','.join(assignments)} WHERE id=?", values)
-            self.connection.commit()
+            if commit:
+                self.connection.commit()
         return self.get_episode(episode_id)
 
     def list_episodes(self, limit: int = 20, status: str | None = None) -> list[dict[str, Any]]:
@@ -111,17 +142,30 @@ class ExperienceService:
         self, episode_id: str, action: str, observation: str | None, error_signature: str | None, value: float
     ) -> str:
         """向 Episode 追加一个有序 Trace。"""
-        if not self.connection.execute("SELECT 1 FROM episodes WHERE id=?", (episode_id,)).fetchone():
+        self.connection.execute("BEGIN IMMEDIATE")
+        episode = self.connection.execute("SELECT status FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            self.connection.rollback()
             raise ValueError(f"episode not found: {episode_id}")
+        imported_episode = self.connection.execute(
+            "SELECT ended_at=started_at AND outcome_summary=status FROM episodes WHERE id=?", (episode_id,)
+        ).fetchone()[0]
+        if episode["status"] in TERMINAL_EPISODE_STATUSES and not imported_episode:
+            self.connection.rollback()
+            raise InvalidStateTransitionError("cannot add trace to terminal episode")
         sequence_no = self.connection.execute(
             "SELECT coalesce(max(sequence_no),0)+1 FROM traces WHERE episode_id=?", (episode_id,)
         ).fetchone()[0]
         trace_id = _id()
-        self.connection.execute(
-            "INSERT INTO traces(id,episode_id,sequence_no,action,observation,error_signature,value) VALUES (?,?,?,?,?,?,?)",
-            (trace_id, episode_id, sequence_no, action, observation, error_signature, value),
-        )
-        self.connection.commit()
+        try:
+            self.connection.execute(
+                "INSERT INTO traces(id,episode_id,sequence_no,action,observation,error_signature,value) VALUES (?,?,?,?,?,?,?)",
+                (trace_id, episode_id, sequence_no, action, observation, error_signature, value),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
         return trace_id
 
     def get_episode(self, episode_id: str) -> dict[str, Any]:
@@ -150,6 +194,7 @@ class ExperienceService:
         created_at: str,
         rank: int | None = None,
         score: float | None = None,
+        commit: bool = True,
     ) -> bool:
         """幂等记录检索反馈，并将 Episode 任务结果归因为 reward。"""
         cursor = self.connection.execute(
@@ -171,8 +216,26 @@ class ExperienceService:
         inserted = cursor.rowcount == 1
         if inserted and memory_type == "episode" and task_outcome is not None:
             self.connection.execute("UPDATE episodes SET reward=? WHERE id=?", (task_outcome, memory_id))
-        self.connection.commit()
+        if commit:
+            self.connection.commit()
         return inserted
+
+    def record_feedback_batch(self, feedback: list[tuple[Any, ...]]) -> int:
+        """在单个事务中批量写入召回曝光记录。"""
+        if not feedback:
+            return 0
+        before = self.connection.total_changes
+        try:
+            self.connection.executemany(
+                "INSERT OR IGNORE INTO retrieval_feedback(id,query_id,memory_type,memory_id,rank,score,"
+                "used_by_model,helpful,task_outcome,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                feedback,
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.connection.total_changes - before
 
     def submit_retrieval_feedback(
         self, query_id: str, memory_id: str, helpful: bool, task_outcome: str | None, created_at: str
@@ -191,7 +254,12 @@ class ExperienceService:
         return cursor.rowcount == 1
 
     def induce_policy(
-        self, trigger: str, procedure: dict[str, Any], episode_ids: list[str], created_at: str, namespace: str = "default"
+        self,
+        trigger: str,
+        procedure: dict[str, Any],
+        episode_ids: list[str],
+        created_at: str,
+        namespace: str = "default",
     ) -> str:
         """从独立成功 Episode 归纳候选策略。"""
         unique_ids = list(dict.fromkeys(episode_ids))
@@ -211,7 +279,16 @@ class ExperienceService:
             self.connection.execute(
                 "INSERT INTO policies(id,namespace_key,trigger,procedure,support,status,created_at,updated_at) "
                 "VALUES (?,?,?,?,?,?,?,?)",
-                (policy_id, namespace, trigger, json.dumps(procedure, ensure_ascii=False), len(valid_ids), status, created_at, created_at),
+                (
+                    policy_id,
+                    namespace,
+                    trigger,
+                    json.dumps(procedure, ensure_ascii=False),
+                    len(valid_ids),
+                    status,
+                    created_at,
+                    created_at,
+                ),
             )
             for episode_id in valid_ids:
                 self._link_episode(policy_id, episode_id)
@@ -223,9 +300,12 @@ class ExperienceService:
 
     def add_support(self, policy_id: str, episode_id: str) -> None:
         """为策略增加一条未重复的成功 Episode 证据。"""
-        episode = self.connection.execute(
-            "SELECT status,reward FROM episodes WHERE id=?", (episode_id,)
-        ).fetchone()
+        policy = self.connection.execute("SELECT status FROM policies WHERE id=?", (policy_id,)).fetchone()
+        if not policy:
+            raise ValueError(f"policy not found: {policy_id}")
+        if policy["status"] == "retired":
+            raise InvalidStateTransitionError("retired policy cannot accept support")
+        episode = self.connection.execute("SELECT status,reward FROM episodes WHERE id=?", (episode_id,)).fetchone()
         if not episode or episode["status"] != "success" or episode["reward"] <= 0:
             raise ValueError("supporting episode must be successful")
         before = self.connection.total_changes
@@ -239,13 +319,20 @@ class ExperienceService:
 
     def record_policy_outcome(self, policy_id: str, succeeded: bool, occurred_at: str) -> None:
         """回写 Procedure 使用结果，并按可靠度激活或退休。"""
+        policy = self.connection.execute("SELECT status FROM policies WHERE id=?", (policy_id,)).fetchone()
+        if not policy:
+            raise ValueError(f"policy not found: {policy_id}")
+        if policy["status"] == "retired":
+            raise InvalidStateTransitionError("retired policy cannot record outcomes")
         success_delta, failure_delta = (1, 0) if succeeded else (0, 1)
-        consecutive = 0 if succeeded else 1
-        self.connection.execute(
+        cursor = self.connection.execute(
             "UPDATE policies SET success_count=success_count+?,failure_count=failure_count+?,"
             "consecutive_failures=CASE WHEN ?=1 THEN 0 ELSE consecutive_failures+1 END,updated_at=? WHERE id=?",
             (success_delta, failure_delta, success_delta, occurred_at, policy_id),
         )
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise ValueError(f"policy not found: {policy_id}")
         self.connection.execute(
             "UPDATE policies SET reliability=CAST(success_count AS REAL)/max(1,success_count+failure_count),"
             "procedure_status=CASE WHEN consecutive_failures>=? THEN 'retired' WHEN success_count>0 THEN 'active' "

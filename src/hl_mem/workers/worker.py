@@ -38,14 +38,14 @@ class Worker:
     def __init__(self, db_path: str | Path, config: dict[str, Any] | None = None) -> None:
         self.db_path, self.config = Path(db_path), config or {}
         self.database = Database(self.db_path)
-        self.connection = self.database.open()
+        self.connection = self.database.open_worker()
         self.jobs = JobRepository(self.connection)
         self.filter = self.config.get("event_filter") or EventFilter()
         self.extractor = self.config.get("extractor") or self._make_extractor()
         self.embedder = self.config.get("embedder") or self._make_embedder()
         self.budget = self.config.get("budget") or TokenBudget(
             int(self.config.get("daily_token_limit", os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000"))),
-            self.db_path.with_suffix(".budget.json"),
+            self.db_path.with_suffix(".budget.db"),
         )
         self.audit = self.config.get("audit") or NullAuditLogger()
 
@@ -86,9 +86,7 @@ class Worker:
                     enqueue_daily_policy_induction(
                         self.connection,
                         _now(),
-                        self.config.get(
-                            "induce_policies_cron", os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00")
-                        ),
+                        self.config.get("induce_policies_cron", os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00")),
                     )
                     next_ttl = current + 600.0
                 if self.run_once()["status"] == "idle":
@@ -256,16 +254,25 @@ class Worker:
 
     def _make_embedder(self) -> Any:
         dim = int(self.config.get("embedding_dim", os.getenv("EMBEDDING_DIM", "2048")))
-        if self.config.get("embedder_name", os.getenv("HL_MEM_EMBEDDER", "fake")) == "fake":
+        production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
+        mode = self.config.get("embedder_name", os.getenv("HL_MEM_EMBEDDER", "real" if production else "fake"))
+        if production and mode != "real":
+            raise RuntimeError("HL_MEM_EMBEDDER must be 'real' in production")
+        if mode == "fake":
             return FakeEmbedder(dim)
         api_key = os.getenv("EMBEDDING_API_KEY")
         if not api_key:
+            if production:
+                raise RuntimeError("EMBEDDING_API_KEY is required in production")
             return FakeEmbedder(dim)
         return Embedder(
             api_key,
             os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
             os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
             dim,
+            float(os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")),
+            float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
+            int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
         )
 
     def _make_consolidator(self) -> ConflictConsolidator:
