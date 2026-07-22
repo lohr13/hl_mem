@@ -198,7 +198,7 @@ updated_at
 
 `source_watermark` 标记已经处理到哪个 Event/Claim，增量刷新只读取之后的新证据。
 
-### 5.5 episodes、traces、policies、procedures
+### 5.5 episodes、traces、policies
 
 > [首版不实现] Experience 通道首版不创建 `episodes`、`traces`、`policies`、`procedures` 表，也不编写对应 Repository；以下设计冻结保留，未来通过新增 migration 和 Repository 实现。
 
@@ -208,8 +208,11 @@ updated_at
 episodes: id, goal, status, started_at, ended_at, reward, outcome_summary
 traces: id, episode_id, action, observation, error_signature, value, priority
 policies: id, trigger, procedure, boundary, support, gain, status
-procedures: id, name, invocation_guide, procedure_json, reliability, status
 ```
+
+首版不创建独立 `procedures` 表。Procedure 是 Policy 经验证后的可调用形态，保存在
+`policies.procedure` JSON 字段中；其 invocation guide、steps、reliability 和
+`probationary | active | retired` 生命周期也由同一条 Policy 记录维护。
 
 Policy 状态机：
 
