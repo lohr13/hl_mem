@@ -108,7 +108,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Backup: {'existing files would be backed up' if existing else 'not required'}")
             return 0
 
+        print(f"Installing HL-Mem Hermes plugin to {target_dir}")
         backup_dir = install(target_dir)
+        print("Installation succeeded")
         print(f"Installed: {', '.join(FILES)}")
         print(f"Target: {target_dir}")
         print(f"Backup: {backup_dir if backup_dir else 'not required'}")
