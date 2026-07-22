@@ -7,11 +7,12 @@ import sqlite3
 import uuid
 from typing import Any
 
-TERMINAL_EPISODE_STATUSES = {"success", "failed", "cancelled"}
-
-
-class InvalidStateTransitionError(ValueError):
-    """表示 Episode 或 Policy 的状态转换非法。"""
+from hl_mem.lifecycle import (
+    EpisodeStatus,
+    InvalidTransitionError as InvalidStateTransitionError,
+    TERMINAL_EPISODE_STATUSES,
+    assert_episode_transition,
+)
 
 
 def _id() -> str:
@@ -62,8 +63,10 @@ class ExperienceService:
 
     def record_episode(self, episode_id: str, goal: str, status: str, reward: float, occurred_at: str) -> str:
         """记录一次独立 Episode 并返回其 ID。"""
-        if status not in TERMINAL_EPISODE_STATUSES:
-            raise ValueError("recorded episode status must be terminal")
+        try:
+            assert_episode_transition(EpisodeStatus.RUNNING.value, status)
+        except InvalidStateTransitionError as error:
+            raise ValueError("recorded episode status must be terminal") from error
         _validate_reward(reward)
         self.connection.execute(
             "INSERT OR IGNORE INTO episodes(id,goal,status,started_at,ended_at,reward,outcome_summary) "
@@ -85,7 +88,7 @@ class ExperienceService:
         scope = {key: value for key, value in {"session_id": session_id, "task_type": task_type}.items() if value}
         self.connection.execute(
             "INSERT INTO episodes(id,goal,status,started_at,scope_json) VALUES (?,?,?,?,?)",
-            (episode_id, goal, "running", started_at, json.dumps(scope, ensure_ascii=False)),
+            (episode_id, goal, EpisodeStatus.RUNNING.value, started_at, json.dumps(scope, ensure_ascii=False)),
         )
         self.connection.commit()
         return episode_id
@@ -106,17 +109,14 @@ class ExperienceService:
         if reward is not None:
             _validate_reward(reward)
         if status is not None:
-            if status not in TERMINAL_EPISODE_STATUSES:
-                raise InvalidStateTransitionError(f"illegal episode transition: {row['status']} -> {status}")
-            if row["status"] != "running":
-                raise InvalidStateTransitionError(f"illegal episode transition: {row['status']} -> {status}")
+            assert_episode_transition(row["status"], status)
         assignments: list[str] = []
         values: list[Any] = []
         for column, value in (("status", status), ("reward", reward), ("outcome_summary", outcome_summary)):
             if value is not None:
                 assignments.append(f"{column}=?")
                 values.append(value)
-        if status is not None and status != "running":
+        if status is not None and status != EpisodeStatus.RUNNING:
             assignments.append("ended_at=?")
             values.append(updated_at)
         if assignments:

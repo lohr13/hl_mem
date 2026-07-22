@@ -18,7 +18,7 @@ def induce_policies(connection: Any, now: str) -> dict[str, int]:
     cutoff = (current - timedelta(days=7)).isoformat()
     rows = connection.execute(
         "SELECT id,goal,scope_json FROM episodes "
-        "WHERE status IN ('success','completed') AND reward>=0.5 "
+        "WHERE status='success' AND reward>=0.5 "
         "AND coalesce(ended_at,started_at)>=? AND coalesce(ended_at,started_at)<=? "
         "ORDER BY started_at,id",
         (cutoff, now),

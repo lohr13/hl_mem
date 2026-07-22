@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from hl_mem.lifecycle import ClaimStatus, assert_transition
 from hl_mem.ingest.embeddings import cosine_similarity
 from hl_mem.recall.policy import RecallIntent, claim_is_visible
-from hl_mem.lifecycle import assert_transition
 
 
 @dataclass(frozen=True)
@@ -93,6 +93,10 @@ class ClaimRepository:
         return _row(self.connection.execute("SELECT * FROM claims WHERE id=?", (claim_id,)).fetchone())
 
     def update_status(self, claim_id: str, status: str, commit: bool = True) -> bool:
+        try:
+            ClaimStatus(status)
+        except ValueError as error:
+            raise ValueError(f"invalid claim status: {status}") from error
         cursor = self.connection.execute("UPDATE claims SET status=? WHERE id=?", (status, claim_id))
         if commit:
             self.connection.commit()
