@@ -5,15 +5,18 @@ import os
 import re
 import time
 import unicodedata
+from dataclasses import replace
 from typing import Any
 
 import httpx
 
 from hl_mem.domain.content import parse_content
+from hl_mem.observability.audit import current_audit
 from hl_mem.recall.attribute_map import (
     MUTUALLY_EXCLUSIVE_SLOTS,
+    infer_canonical_attribute,
     normalize_predicate,
-    validate_canonical_attribute,
+    reconcile_canonical_attribute,
 )
 
 from .extractors import ExtractedClaim
@@ -43,11 +46,60 @@ identity, convention, configuration, or explicit long-term memory). Volatility d
 change rate, not retention. importance must be a number from 0.0 to 1.0: 0.0-0.3 incidental,
 0.4-0.6 useful, 0.7-0.9 an important preference, commitment, or constraint, and 1.0 an explicit
 must-remember instruction. Do not infer importance merely from emotional wording.
+
+scope 表示事实的有效期，不表示变化频率：
+- temporal：有截止期、仅描述当前/本次/某版本/某次运行，或未来会被新状态替换；
+- permanent：身份、稳定偏好、长期约束、设计原则，以及不依赖某次运行或版本的系统能力。
+判断问题：一年后且脱离本次会话，这条事实仍应作为当前事实成立吗？是 → permanent；否 → temporal。
+正反例：
+“当前测试 180 passed” → temporal；“项目使用 pytest” → permanent。
+“已部署 v0.3.0” → temporal；“系统支持在线备份” → permanent。
+“本次修复了 FTS5 查询” → temporal；“FTS5 查询会转义用户 token” → permanent。
+“端口固定为 8200” → permanent；“服务现在监听 8200” → temporal。
 """
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
 LOW_VALUE_HEALTH_STATES = frozenset({"ok", "running", "stopped", "健康", "正常"})
 NUMERIC_OR_VERSION_RE = re.compile(r"[0-9.]+")
+_TEMPORAL_SCOPE_RE = re.compile(
+    r"(?i)(?:"
+    r"\bdeadline\b|截止|临时|本次|这次|当前运行|本轮|某次运行|"
+    r"\b(?:passed|failed)\b|测试(?:数量|数|通过|失败|结果)|构建(?:结果|成功|失败)|"
+    r"版本(?:查询|结果)|\bversion\s+(?:query|result)\b|评分|得分|行数|"
+    r"\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?\s*(?:至|到|~)\s*"
+    r"\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?|"
+    r"(?:从|自).{0,20}(?:到|至|截至).{0,20}(?:日|号|年|月)"
+    r")"
+)
+_PERMANENT_SCOPE_RE = re.compile(
+    r"(?i)(?:长期|永久|始终|固定(?:配置|为)|设计原则|长期约束|必须记住|记住这个|explicit memory)"
+)
+
+
+def normalize_scope(
+    llm_scope: str,
+    predicate: str,
+    canonical_attribute: str,
+    subject: str,
+    value: Any,
+    qualifiers: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """根据高置信语义规则规范 scope，并返回可审计的原因码。"""
+    scope = llm_scope if llm_scope in {"temporal", "permanent"} else "permanent"
+    normalized_predicate = normalize_predicate(predicate)
+    text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}")
+
+    if _TEMPORAL_SCOPE_RE.search(text):
+        return "temporal", "explicit_temporal_signal"
+    if normalized_predicate in {"身份", "偏好", "explicit_memory"}:
+        return "permanent", "durable_predicate"
+    if _PERMANENT_SCOPE_RE.search(text):
+        return "permanent", "explicit_permanent_signal"
+    if canonical_attribute.startswith("state."):
+        return "temporal", "state_default"
+    if canonical_attribute.startswith("plan."):
+        return "temporal", "plan_default"
+    return scope, "llm_preserved"
 
 
 def _is_low_value_claim(claim: ExtractedClaim) -> bool:
@@ -99,7 +151,31 @@ class LLMExtractor:
         claims = result.get("claims", [])
         if not isinstance(claims, list):
             raise ValueError("LLM response claims must be a list")
-        parsed = [self._claim(item) for item in claims if isinstance(item, dict)]
+        parsed: list[ExtractedClaim] = []
+        for item in claims:
+            if not isinstance(item, dict):
+                continue
+            claim = self._claim(item)
+            normalized_scope, reason_code = normalize_scope(
+                claim.scope,
+                claim.predicate,
+                claim.canonical_attribute,
+                claim.subject,
+                claim.value,
+                claim.qualifiers,
+            )
+            current_audit().emit(
+                "extract",
+                "scope_normalized",
+                "changed" if normalized_scope != claim.scope else "preserved",
+                detail={
+                    "llm_scope": claim.scope,
+                    "normalized_scope": normalized_scope,
+                    "reason_code": reason_code,
+                    "canonical_attribute": claim.canonical_attribute,
+                },
+            )
+            parsed.append(replace(claim, scope=normalized_scope))
         return [claim for claim in parsed if not _is_low_value_claim(claim)]
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -142,8 +218,16 @@ class LLMExtractor:
         value = ALIASES.get(value.casefold(), value)
         predicate = str(item.get("predicate", "事实")).strip()
         predicate = normalize_predicate(predicate)
-        canonical_attribute = validate_canonical_attribute(
-            predicate, str(item.get("canonical_attribute", ""))
+        subject = str(item.get("subject", "用户"))
+        qualifiers = item.get("qualifiers") or {}
+        inferred_attribute = infer_canonical_attribute(predicate, subject, value, qualifiers)
+        canonical_attribute, _attribute_reason = reconcile_canonical_attribute(
+            predicate=predicate,
+            llm_attribute=str(item.get("canonical_attribute", "")),
+            inferred_attribute=inferred_attribute,
+            subject=subject,
+            value=value,
+            qualifiers=qualifiers,
         )
         volatility = item.get("volatility", "stable")
         scope = item.get("scope", "permanent")
@@ -160,7 +244,7 @@ class LLMExtractor:
             predicate=predicate, value=value,
             confidence=confidence,
             volatility=volatility if volatility in {"stable", "ephemeral"} else "stable",
-            subject=str(item.get("subject", "用户")), qualifiers=item.get("qualifiers") or {},
+            subject=subject, qualifiers=qualifiers,
             reason=str(item.get("reason", "")), scope=scope, importance=importance,
             canonical_attribute=canonical_attribute,
         )

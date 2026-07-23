@@ -20,3 +20,13 @@ RECALL_VECTOR_SCAN_LIMIT = int(os.getenv("HL_MEM_RECALL_VECTOR_SCAN_LIMIT", "200
 
 # 数据保留
 RETENTION_DAYS = int(os.getenv("HL_MEM_RETENTION_DAYS", "30"))
+
+# canonical attribute TTL。仅显式列出的短期状态设置额外到期时间，其余 active claim 不受影响。
+STATE_TRANSIENT_TTL_DAYS = int(os.getenv("HL_MEM_STATE_TRANSIENT_TTL_DAYS", "7"))
+STATE_TEST_SUITE_TTL_DAYS = int(os.getenv("HL_MEM_STATE_TEST_SUITE_TTL_DAYS", "7"))
+ATTRIBUTE_TTL_DAYS: dict[str, int] = {
+    "state.service_health": STATE_TRANSIENT_TTL_DAYS,
+    "state.process": STATE_TRANSIENT_TTL_DAYS,
+    "state.connectivity": STATE_TRANSIENT_TTL_DAYS,
+    "state.test_suite": STATE_TEST_SUITE_TTL_DAYS,
+}
