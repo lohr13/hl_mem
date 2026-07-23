@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from hl_mem import __version__
 from hl_mem.cli import export_database, import_database, main
 from hl_mem.mcp.server import McpMemoryServer
 from hl_mem.storage.database import Database
@@ -34,4 +35,4 @@ def test_cli_version(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit, match="0"):
         main(["--version"])
 
-    assert capsys.readouterr().out == "hl_mem 0.3.0\n"
+    assert f"hl_mem {__version__}" in capsys.readouterr().out
