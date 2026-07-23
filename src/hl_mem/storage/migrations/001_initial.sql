@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE TABLE IF NOT EXISTS claims (
+    -- The following fields are reserved but not currently used by application code:
+    -- refresh_after, generated_by_model, prompt_version, refresh_policy.
+    -- They may be populated by future features (derived memory, model versioning).
+    -- Do NOT rely on their values.
     id TEXT PRIMARY KEY,
     namespace_key TEXT NOT NULL DEFAULT 'default',
     subject_entity_id TEXT,

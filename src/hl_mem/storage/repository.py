@@ -11,6 +11,7 @@ from typing import Any
 from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
+from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
 
 
@@ -99,7 +100,7 @@ class ClaimRepository:
         try:
             ClaimStatus(status)
         except ValueError as error:
-            raise ValueError(f"invalid claim status: {status}") from error
+            raise ValidationError(f"invalid claim status: {status}") from error
         cursor = self.connection.execute("UPDATE claims SET status=? WHERE id=?", (status, claim_id))
         if commit:
             self.connection.commit()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from hl_mem.errors import NotFoundError
 from hl_mem.lifecycle import assert_transition
 from hl_mem.recall.recall_pipeline import stale_observations
 from hl_mem.storage.repository import ClaimRepository
@@ -20,7 +21,7 @@ class ForgetService:
         repository = ClaimRepository(self.connection)
         claim = repository.get_claim(memory_id)
         if not claim:
-            raise ValueError(f"memory not found: {memory_id}")
+            raise NotFoundError(f"memory not found: {memory_id}")
         assert_transition(claim["status"], "retracted")
         self.connection.execute("BEGIN IMMEDIATE")
         try:
@@ -29,7 +30,7 @@ class ForgetService:
                 (memory_id,),
             )
             if cursor.rowcount != 1:
-                raise ValueError(f"memory not found: {memory_id}")
+                raise NotFoundError(f"memory not found: {memory_id}")
             stale_observations(self.connection, memory_id, commit=False)
             self.connection.commit()
         except Exception:

@@ -89,6 +89,7 @@ class FakeEmbedder:
     """Deterministic, local BLOB embedder suitable for all offline tests."""
 
     MAX_BATCH_SIZE = 10
+    model = "fake"
 
     def __init__(self, dim: int = 2048) -> None:
         self.dim = dim
