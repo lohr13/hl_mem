@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from hl_mem.config import ATTRIBUTE_TTL_DAYS
 from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
@@ -171,9 +172,15 @@ class IngestService:
         )
         value_json = json.dumps(extracted.value, ensure_ascii=False, sort_keys=True)
         scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
+        attribute_ttl_days = ATTRIBUTE_TTL_DAYS.get(canonical_attribute)
+        effective_ttl_days = (
+            attribute_ttl_days
+            if attribute_ttl_days is not None
+            else ttl_days if extracted.volatility == "ephemeral" and scope == "temporal" else None
+        )
         expires_at = (
-            (datetime.fromisoformat(now) + timedelta(days=ttl_days)).isoformat()
-            if extracted.volatility == "ephemeral" and scope == "temporal"
+            (datetime.fromisoformat(now) + timedelta(days=effective_ttl_days)).isoformat()
+            if effective_ttl_days is not None
             else None
         )
         try:
@@ -196,7 +203,7 @@ class IngestService:
             "recorded_from": now,
             "observed_at": event.get("occurred_at", now),
             "expires_at": expires_at,
-            "volatility": extracted.volatility,
+            "volatility": "ephemeral" if attribute_ttl_days is not None else extracted.volatility,
             "status": "active",
             "confidence": extracted.confidence,
             "scope": scope,

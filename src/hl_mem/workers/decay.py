@@ -52,7 +52,8 @@ def decay_claims(
         grace_until = (migration_at + timedelta(days=rollout_grace_days)
                        if migration_at else None)
         rows = connection.execute(
-            "SELECT id,scope,confidence,access_count,recorded_from,last_accessed_at,last_decayed_at,status "
+            "SELECT id,scope,confidence,access_count,recorded_from,last_accessed_at,last_decayed_at,"
+            "expires_at,status "
             "FROM claims WHERE status IN ('active','disputed')"
         ).fetchall()
         for row in rows:
@@ -63,9 +64,13 @@ def decay_claims(
                 continue
             decay_after, archive_after = policy.get(claim["scope"], policy["permanent"])
             access_count = max(0, int(claim.get("access_count") or 0))
-            bonus = min(
-                access_count // _ACCESS_BONUS_EVERY * _ACCESS_BONUS_DAYS,
-                _ACCESS_BONUS_CAP,
+            bonus = (
+                0
+                if claim.get("expires_at")
+                else min(
+                    access_count // _ACCESS_BONUS_EVERY * _ACCESS_BONUS_DAYS,
+                    _ACCESS_BONUS_CAP,
+                )
             )
             decay_after += bonus
             archive_after += bonus

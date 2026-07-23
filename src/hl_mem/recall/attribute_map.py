@@ -65,6 +65,7 @@ MUTUALLY_EXCLUSIVE_SLOTS = frozenset(
     {
         "preference.ui_theme",
         "preference.response_style",
+        "choice.model",
         "config.port",
         "config.model",
         "state.service_health",
@@ -82,16 +83,20 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     "使用": (
         (("sqlite", "postgresql", "postgres", "mysql", "数据库"), "choice.database"),
         (("windows", "linux", "macos", "操作系统"), "choice.os"),
-        (("qwen", "gpt", "模型"), "choice.model"),
-        (("api", "接口"), "choice.api"), (("fastapi", "pytorch", "框架"), "choice.framework"),
-        (("dashscope", "百炼", "provider"), "choice.provider"),
-        (("http", "grpc", "协议"), "choice.protocol"),
+        (
+            ("gpt-", "glm-", "qwen", "claude", "gemini", "deepseek", "llama", "mistral", "model", "模型"),
+            "choice.model",
+        ),
+        (("api", "sdk", "接口", "openai-compatible"), "choice.api"),
+        (("fastapi", "pytorch", "django", "flask", "pytest", "uvicorn", "框架"), "choice.framework"),
+        (("百炼", "dashscope", "智谱", "zhipu", "openai", "anthropic", "provider", "供应商"), "choice.provider"),
+        (("http", "https", "grpc", "websocket", "sse", "mcp", "协议"), "choice.protocol"),
         (("hl_mem", "memos", "memory system", "记忆系统"), "choice.memory_system"),
     ),
     "状态": (
         (("挂了", "健康", "正常", "ok"), "state.service_health"),
         (("进程", "运行中"), "state.process"), (("部署",), "state.deployment"),
-        (("测试", "tests", "pytest"), "state.test_suite"),
+        (("passed", "failed", "pytest", "测试通过", "测试数", "测试"), "state.test_suite"),
         (("超时", "不可达", "连接"), "state.connectivity"), (("任务", "job"), "state.job"),
     ),
     "身份": (
@@ -101,11 +106,26 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
         (("账号", "用户名", "account"), "identity.account"),
     ),
     "配置": (
-        (("端口", "port"), "config.port"), (("路径", "目录", "path", "\\", "/"), "config.path"),
-        (("环境变量", "no_proxy", "env"), "config.env"),
-        (("代理", "网络", "network"), "config.network"), (("路由", "直连"), "config.routing"),
-        (("provider", "供应商"), "config.provider"), (("模型", "model"), "config.model"),
-        (("timeout", "超时", "秒"), "config.timeout"), (("cron", "定时", "schedule"), "config.schedule"),
+        (
+            (
+                "环境变量", "http_proxy", "https_proxy", "no_proxy", "api_key",
+                "llm_model", "embedding_model", "reranker_model", "env",
+            ),
+            "config.env",
+        ),
+        (
+            (
+                "base_url", "endpoint", "hostname", "localhost", "127.0.0.1",
+                "ipv4", "host", "域名", "代理", "网络", "network",
+            ),
+            "config.network",
+        ),
+        (("路径", "目录", "文件", "path", ".py", ".toml", ".json", ".db"), "config.path"),
+        (("端口", "port", "listen", "监听"), "config.port"),
+        (("模型名", "model="), "config.model"),
+        (("百炼", "dashscope", "智谱", "zhipu", "openai", "anthropic", "provider", "供应商"), "config.provider"),
+        (("路由", "直连"), "config.routing"),
+        (("timeout", "超时"), "config.timeout"), (("cron", "定时", "schedule"), "config.schedule"),
         (("gpu", "显卡", "硬件"), "config.hardware"),
     ),
     "计划": (
@@ -115,12 +135,78 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     ),
     "事实": (
         (("当前采用", "当前使用", "选择了", "codex"), "fact.tool_choice"),
-        (("支持", "具备", "能力"), "fact.capability"), (("已实现", "实现了"), "fact.implementation"),
+        (("支持", "具备", "能力"), "fact.capability"),
+        (("已实现", "实现了", "新增", "接入", "修复实现"), "fact.implementation"),
         (("缺陷", "问题", "bug"), "fact.issue"), (("因为", "原因"), "fact.cause"),
         (("已修复", "解决"), "fact.resolution"), (("只允许", "必须", "约束"), "fact.constraint"),
         (("项目", "成员"), "fact.project_membership"),
     ),
 }
+
+_HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], str], ...]] = {
+    "使用": (
+        (
+            re.compile(r"(?i)(?:gpt-|glm-|qwen|claude|gemini|deepseek|llama|mistral|embedding|rerank)"),
+            "choice.model",
+        ),
+        (
+            re.compile(r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"),
+            "choice.provider",
+        ),
+        (re.compile(r"(?i)(?:openai-compatible|\b(?:http|https|grpc|websocket|sse|mcp)\b|协议)"), "choice.protocol"),
+    ),
+    "配置": (
+        (
+            re.compile(
+                r"(?i)(?:\b[A-Z][A-Z0-9_]*(?:_URL|_HOST|_PORT)\b|"
+                r"\b(?:HTTP_PROXY|HTTPS_PROXY|NO_PROXY|API_KEY|LLM_MODEL|EMBEDDING_MODEL|RERANKER_MODEL)\b)"
+            ),
+            "config.env",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:https?://|(?:\b(?:\d{1,3}\.){3}\d{1,3}\b)|"
+                r"\blocalhost\b|\b(?:host|hostname|endpoint|base_url)\b)"
+            ),
+            "config.network",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:\b[A-Z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+|"
+                r"(?:^|[\s'\"=])(?:\.{1,2}[\\/]|src[\\/])[\w./\\-]+|"
+                r"[\w./\\-]+\.(?:py|toml|json|db)\b)"
+            ),
+            "config.path",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:端口|\bport\b|\blisten(?:ing)?\b|监听)\D{0,12}"
+                r"(?:[1-9]\d{0,3}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])\b"
+            ),
+            "config.port",
+        ),
+        (re.compile(r"(?i)(?:\b(?:LLM_MODEL|EMBEDDING_MODEL|RERANKER_MODEL)\b|模型名|\bmodel\s*=)"), "config.model"),
+        (
+            re.compile(r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"),
+            "config.provider",
+        ),
+    ),
+    "状态": (
+        (re.compile(r"(?i)(?:\bpassed\b|\bfailed\b|pytest|测试通过|测试数)"), "state.test_suite"),
+        (re.compile(r"(?i)(?:部署|deployed|上线|发布)"), "state.deployment"),
+    ),
+    "事实": (
+        (re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),
+    ),
+}
+
+
+def _high_confidence_attribute(predicate: str, text: str) -> str | None:
+    """按从精确到宽泛的命名模式推断高置信 canonical attribute。"""
+    for pattern, attribute in _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS.get(predicate, ()):
+        if pattern.search(text):
+            return attribute
+    return None
 
 
 def normalize_predicate(predicate: str) -> str:
@@ -163,10 +249,40 @@ def infer_canonical_attribute(
     if mapping is None:
         return "custom.unknown"
     text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}").casefold()
+    precise = _high_confidence_attribute(normalized_predicate, text)
+    if precise is not None:
+        return precise
     for hints, attribute in ATTRIBUTE_HINTS.get(normalized_predicate, ()):
         if any(hint in text for hint in hints):
             return attribute
     return mapping[1]
+
+
+def reconcile_canonical_attribute(
+    predicate: str,
+    llm_attribute: str | None,
+    inferred_attribute: str,
+    subject: str,
+    value: Any,
+    qualifiers: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """仅在 LLM 回退或高置信规则命中时协调 canonical attribute。"""
+    normalized_predicate = normalize_predicate(predicate)
+    mapping = PREDICATE_ATTRIBUTE_MAP.get(normalized_predicate)
+    validated = validate_canonical_attribute(normalized_predicate, llm_attribute)
+    if mapping is None:
+        return validated, "unknown_predicate"
+
+    allowed, fallback = mapping
+    text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}").casefold()
+    precise = _high_confidence_attribute(normalized_predicate, text)
+    if precise is not None and precise in allowed:
+        return precise, "high_confidence_rule"
+
+    normalized_inferred = validate_canonical_attribute(normalized_predicate, inferred_attribute)
+    if validated in {fallback, "custom.unknown"} and normalized_inferred in allowed:
+        return normalized_inferred, "fallback_reconciled"
+    return validated, "llm_preserved"
 
 
 def canonical_conflict_slot(attribute: str) -> str:
