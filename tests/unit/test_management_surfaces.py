@@ -34,4 +34,4 @@ def test_cli_version(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit, match="0"):
         main(["--version"])
 
-    assert capsys.readouterr().out == "hl_mem 0.2.0\n"
+    assert capsys.readouterr().out == "hl_mem 0.3.0\n"
