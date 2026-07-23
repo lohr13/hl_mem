@@ -192,6 +192,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                 token_budget=payload.token_budget,
                 context_mode=payload.context_mode,
                 namespace=payload.namespace,
+                debug=payload.debug,
             )
 
     @app.post("/v1/episodes")

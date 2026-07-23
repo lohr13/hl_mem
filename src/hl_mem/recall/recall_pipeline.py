@@ -14,6 +14,7 @@ from hl_mem.observability.audit import current_audit
 from hl_mem.recall.policy import RecallIntent, claim_is_visible, route_recall_intent
 from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
 from hl_mem.recall.reranker import RerankResult
+from hl_mem.recall.trace import SearchTracer
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository
 
 
@@ -60,6 +61,23 @@ def _is_preference_claim(claim: dict[str, Any]) -> bool:
     return "preference" in attribute
 
 
+def _visibility_filter_reason(
+    claim: dict[str, Any],
+    reference: str,
+    known_as_of: str | None,
+    selected_intent: RecallIntent,
+) -> str:
+    """通过唯一可见性判定函数的反事实调用解释排除阶段。"""
+    if known_as_of and claim_is_visible(claim, reference, None, selected_intent):
+        return "not_visible_recorded_time"
+    active_claim = {**claim, "status": "active"}
+    if claim.get("status", "active") != "active" and claim_is_visible(
+        active_claim, reference, known_as_of, selected_intent
+    ):
+        return "status_filtered"
+    return "not_visible_valid_time"
+
+
 def _preference_first(
     claims: list[dict[str, Any]],
     limit: int,
@@ -85,6 +103,7 @@ def hybrid_claims(
     intent: RecallIntent | str | None = None,
     known_as_of: str | None = None,
     namespace: str = "default",
+    tracer: SearchTracer | None = None,
 ) -> list[dict[str, Any]]:
     """融合全文、向量、多因子先验及 reranker 结果召回 claim。"""
     audit = current_audit()
@@ -101,6 +120,10 @@ def hybrid_claims(
     except TypeError:
         fts = repo.search_claims_fts(query, candidate_limit, as_of)
     fts_us = (time.perf_counter_ns() - started) // 1000
+    if tracer is not None:
+        tracer.trace.candidate_limit = candidate_limit
+        tracer.trace.phases.fts_us = fts_us
+        tracer.record_channel("fts", fts)
     started = time.perf_counter_ns()
     if hasattr(repo, "search_claims_vector"):
         try:
@@ -120,8 +143,20 @@ def hybrid_claims(
             reverse=True,
         )[:candidate_limit]
     dense_us = (time.perf_counter_ns() - started) // 1000
+    if tracer is not None:
+        tracer.trace.phases.dense_us = dense_us
+        tracer.record_channel("dense", dense)
+    fusion_started = time.perf_counter_ns()
     scores: dict[str, float] = {}
-    visible = [claim for claim in fts + dense if claim_is_visible(claim, reference, known_as_of, selected_intent)]
+    visible: list[dict[str, Any]] = []
+    for claim in fts + dense:
+        if claim_is_visible(claim, reference, known_as_of, selected_intent):
+            visible.append(claim)
+        elif tracer is not None:
+            tracer.record_filter(
+                str(claim["id"]),
+                _visibility_filter_reason(claim, reference, known_as_of, selected_intent),
+            )
     by_id = {claim["id"]: claim for claim in visible}
     helpful_rates = repo.helpful_rates(list(by_id)) if hasattr(repo, "helpful_rates") else {}
     for claim_id, helpful_rate in helpful_rates.items():
@@ -152,6 +187,9 @@ def hybrid_claims(
             str(claim["id"]),
         ),
     )
+    if tracer is not None:
+        tracer.trace.phases.fusion_us = (time.perf_counter_ns() - fusion_started) // 1000
+        tracer.record_pre_rank(ranked_claims, pre_scores)
     rerank_us = 0
     reranked: list[tuple[int, float]] = []
     rerank_scores: dict[str, float] = {}
@@ -164,6 +202,8 @@ def hybrid_claims(
         started = time.perf_counter_ns()
         returned = reranker.rerank(query, [_claim_text(claim) for claim in candidates], top_n=candidate_limit)
         rerank_us = (time.perf_counter_ns() - started) // 1000
+        if tracer is not None:
+            tracer.trace.phases.reranker_us = rerank_us
         if isinstance(returned, RerankResult):
             reranked, result_status = returned.results, returned.outcome
         else:
@@ -173,6 +213,8 @@ def hybrid_claims(
         if reranked:
             valid = [(candidates[index], score) for index, score in reranked if 0 <= index < len(candidates)]
             raw_rerank_scores = {claim["id"]: float(score) for claim, score in valid}
+            if tracer is not None:
+                tracer.record_rerank([(str(claim["id"]), float(score)) for claim, score in valid])
             rerank_scores = {
                 claim["id"]: blend_reranker_score(score, feature_by_id[claim["id"]]) for claim, score in valid
             }
@@ -198,6 +240,20 @@ def hybrid_claims(
         else:
             outcome = "error_fallback" if result_status == "error" else "empty_fallback"
             final = _preference_first(ranked_claims, limit, selected_intent)
+    if tracer is not None:
+        final_ids = {str(claim["id"]) for claim in final}
+        if reranked:
+            reranked_ids = {str(claim["id"]) for claim, _ in valid}
+            for claim in ranked_claims:
+                if str(claim["id"]) not in reranked_ids:
+                    tracer.record_filter(str(claim["id"]), "reranker_omitted")
+        for claim in ranked_claims:
+            claim_id = str(claim["id"])
+            if claim_id not in final_ids and claim_id in tracer.trace.candidates:
+                tracer.record_filter(claim_id, "final_limit")
+        tracer.record_final(final)
+        tracer.trace.outcome = outcome
+        tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
     audit.emit(
         "recall",
         "ranked",
