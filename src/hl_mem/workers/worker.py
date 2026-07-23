@@ -28,10 +28,12 @@ from hl_mem.storage.repository import EventRepository, JobRepository
 from hl_mem.workers.consolidate import (
     ConflictConsolidator,
     LLMConflictJudge,
+    auto_resolve_conflicts,
     enqueue_daily_consolidation,
 )
 from hl_mem.workers.decay import decay_claims
 from hl_mem.workers.induce_policies import enqueue_daily_policy_induction, induce_policies
+from hl_mem.workers.mental_models import DerivedMemoryMaintainer
 from hl_mem.workers.ttl import expire_claims
 
 
@@ -108,6 +110,11 @@ class Worker:
                 if current >= next_ttl:
                     expire_claims(self.connection)
                     decay_claims(self.connection)
+                    maintenance_now = _now()
+                    maintainer = DerivedMemoryMaintainer(self.connection)
+                    maintainer.mark_stale_dependencies()
+                    maintainer.scan_and_build(maintenance_now)
+                    auto_resolve_conflicts(self.connection, maintenance_now)
                     from hl_mem.security.retention import purge_retained_events
 
                     cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()

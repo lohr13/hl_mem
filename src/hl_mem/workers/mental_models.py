@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import uuid
 from typing import Any
+
+from hl_mem.recall.observation import ObservationBuilder
 
 
 class DerivedMemoryMaintainer:
@@ -22,6 +25,7 @@ class DerivedMemoryMaintainer:
         body: str,
         evidence_ids: list[str],
         updated_at: str,
+        confidence: float | None = None,
     ) -> dict[str, Any]:
         """使用有效且互不重复的 Claim 证据重建一条派生记忆。"""
         if kind not in self._KINDS:
@@ -40,11 +44,19 @@ class DerivedMemoryMaintainer:
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             self.connection.execute(
-                "INSERT INTO derivations(id,kind,body,status,source_watermark,proof_count,updated_at) "
-                "VALUES (?,?,?,'active',?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,"
+                "INSERT INTO derivations(id,kind,body,status,confidence,source_watermark,proof_count,updated_at) "
+                "VALUES (?,?,?,'active',?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,"
                 "body=excluded.body,status='active',source_watermark=excluded.source_watermark,"
-                "proof_count=excluded.proof_count,updated_at=excluded.updated_at",
-                (derivation_id, kind, body, watermark, len(unique_ids), updated_at),
+                "confidence=excluded.confidence,proof_count=excluded.proof_count,updated_at=excluded.updated_at",
+                (
+                    derivation_id,
+                    kind,
+                    body,
+                    confidence if confidence is not None else 0.5,
+                    watermark,
+                    len(unique_ids),
+                    updated_at,
+                ),
             )
             self.connection.execute(
                 "DELETE FROM evidence_links WHERE derived_type=? AND derived_id=? AND relation='supports'",
@@ -72,6 +84,46 @@ class DerivedMemoryMaintainer:
         )
         self.connection.commit()
         return cursor.rowcount
+
+    def scan_and_build(self, updated_at: str) -> int:
+        """扫描同一冲突槽的活跃 Claim，并幂等构建 Observation。"""
+        keys = self.connection.execute(
+            "SELECT conflict_key FROM claims WHERE status='active' AND conflict_key IS NOT NULL "
+            "GROUP BY conflict_key HAVING count(*)>=2"
+        ).fetchall()
+        builder = ObservationBuilder()
+        built = 0
+        for key_row in keys:
+            claims = [
+                dict(row)
+                for row in self.connection.execute(
+                    "SELECT * FROM claims WHERE conflict_key=? AND status='active' ORDER BY recorded_from,id",
+                    (key_row["conflict_key"],),
+                ).fetchall()
+            ]
+            for claim in claims:
+                claim["event_ids"] = [
+                    row["evidence_id"]
+                    for row in self.connection.execute(
+                        "SELECT evidence_id FROM evidence_links WHERE derived_type='claim' AND derived_id=? "
+                        "AND evidence_type='event'",
+                        (claim["id"],),
+                    ).fetchall()
+                ]
+            observation = builder.try_build(claims)
+            if not observation:
+                continue
+            digest = hashlib.sha256(str(key_row["conflict_key"]).encode("utf-8")).hexdigest()[:24]
+            self.rebuild(
+                f"observation-{digest}",
+                "observation",
+                observation["body"],
+                observation["claim_ids"],
+                updated_at,
+                confidence=float(observation["confidence"]),
+            )
+            built += 1
+        return built
 
     def get(self, derivation_id: str) -> dict[str, Any]:
         """返回指定派生记忆。"""

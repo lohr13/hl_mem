@@ -167,6 +167,8 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                 intent=payload.intent,
                 known_as_of=payload.known_as_of,
                 query_id=query_id,
+                token_budget=payload.token_budget,
+                context_mode=payload.context_mode,
             )
 
     @app.post("/v1/episodes")

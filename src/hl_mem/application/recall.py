@@ -41,6 +41,8 @@ class RecallService:
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
         query_id: str | None = None,
+        token_budget: int | None = None,
+        context_mode: str | None = None,
     ) -> dict[str, Any]:
         """执行混合召回并返回 claim、策略、证据及查询标识。"""
         query_id = query_id or new_id()
@@ -58,14 +60,63 @@ class RecallService:
         self._record_access(claims)
         self._record_feedback(claims, query_id)
         results = self._assemble_results(claims)
+        observations = self._assemble_observations([claim["id"] for claim in claims])
         policies = matching_policies(ExperienceService(self.connection).list_policies("active"), query)
-        return {
+        response = {
             "results": results,
-            "observations": [],
+            "observations": observations,
             "policies": policies,
             "total": len(results),
             "query_id": query_id,
         }
+        if context_mode == "packed":
+            response["context"] = self._assemble_context(results, observations, policies, token_budget or 2000)
+        return response
+
+    def _assemble_observations(self, claim_ids: list[str]) -> list[dict[str, Any]]:
+        """查询与召回 Claim 相关的活跃派生记忆。"""
+        if not claim_ids:
+            return []
+        placeholders = ",".join("?" for _ in claim_ids)
+        rows = self.connection.execute(
+            "SELECT d.id,d.kind,d.body,d.confidence,d.updated_at FROM derivations d "
+            "JOIN evidence_links e ON e.derived_id=d.id AND e.derived_type=d.kind "
+            f"WHERE d.status='active' AND e.evidence_type='claim' AND e.evidence_id IN ({placeholders}) "
+            "GROUP BY d.id ORDER BY d.updated_at DESC LIMIT 10",
+            claim_ids,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _assemble_context(
+        claims: list[dict[str, Any]],
+        observations: list[dict[str, Any]],
+        policies: list[dict[str, Any]],
+        token_budget: int,
+    ) -> dict[str, Any]:
+        """按优先级跨类型组装受 token 预算约束的上下文。"""
+        all_items = (
+            [{"type": "claim", "data": item, "priority": 2} for item in claims]
+            + [{"type": "observation", "data": item, "priority": 1} for item in observations]
+            + [{"type": "policy", "data": item, "priority": 0} for item in policies]
+        )
+        all_items.sort(key=lambda item: -item["priority"])
+        packed: list[dict[str, Any]] = []
+        used = 0
+        truncated = False
+        for item in all_items:
+            data = item["data"]
+            text = str(data.get("text") or data.get("body") or data.get("procedure") or "")
+            cost = max(1, (len(text) + 1) // 2)
+            if packed and used + cost > token_budget:
+                truncated = True
+                continue
+            packed.append(item)
+            used += cost
+            if used >= token_budget:
+                truncated = len(packed) < len(all_items)
+                break
+        return {"context_items": packed, "used_tokens_estimate": used, "truncated": truncated}
 
     def _record_access(self, claims: list[dict[str, Any]]) -> None:
         try:
@@ -124,16 +175,21 @@ class RecallService:
                         "text": json.loads(replacement_claim["value_json"]),
                         "valid_from": replacement_claim["valid_from"],
                     }
-            results.append(
-                {
-                    "type": "claim",
-                    "id": claim["id"],
-                    "text": text,
-                    "status": claim["status"],
-                    "confidence": claim["confidence"],
-                    "valid_from": claim["valid_from"],
-                    "replacement": replacement,
-                    "evidence": evidence,
-                }
-            )
+            result = {
+                "type": "claim",
+                "id": claim["id"],
+                "text": text,
+                "status": claim["status"],
+                "confidence": claim["confidence"],
+                "valid_from": claim["valid_from"],
+                "replacement": replacement,
+                "evidence": evidence,
+            }
+            if claim["status"] == "disputed" and claim.get("conflict_key"):
+                rivals = self.connection.execute(
+                    "SELECT id,value_json FROM claims WHERE conflict_key=? AND status='disputed' AND id!=?",
+                    (claim["conflict_key"], claim["id"]),
+                ).fetchall()
+                result["conflicts"] = [dict(row) for row in rivals]
+            results.append(result)
         return results
