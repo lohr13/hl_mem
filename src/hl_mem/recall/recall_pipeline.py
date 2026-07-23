@@ -54,6 +54,26 @@ def _access_count(claim: dict[str, Any]) -> int:
         return 0
 
 
+def _is_preference_claim(claim: dict[str, Any]) -> bool:
+    """判断 claim 是否属于偏好属性。"""
+    attribute = str(claim.get("canonical_attribute") or "").casefold()
+    return "preference" in attribute
+
+
+def _preference_first(
+    claims: list[dict[str, Any]],
+    limit: int,
+    selected_intent: RecallIntent,
+) -> list[dict[str, Any]]:
+    """偏好召回时优先保留至多三条可用偏好 claim。"""
+    if selected_intent is not RecallIntent.PREFERENCE:
+        return claims[:limit]
+    preferences = [claim for claim in claims if _is_preference_claim(claim)]
+    others = [claim for claim in claims if not _is_preference_claim(claim)]
+    reserved = min(3, limit, len(preferences))
+    return (preferences[:reserved] + preferences[reserved:] + others)[:limit]
+
+
 def hybrid_claims(
     repo: ClaimRepository,
     query: str,
@@ -105,7 +125,15 @@ def hybrid_claims(
         claim_id: memory_features(claim, scores[claim_id] / (2 / 61), max_access, ranking_now)
         for claim_id, claim in by_id.items()
     }
-    pre_scores = {claim_id: memory_score(features) for claim_id, features in feature_by_id.items()}
+    pre_scores = {
+        claim_id: memory_score(features)
+        + (
+            0.12 * features["recency"]
+            if selected_intent is RecallIntent.PREFERENCE and _is_preference_claim(by_id[claim_id])
+            else 0.0
+        )
+        for claim_id, features in feature_by_id.items()
+    }
     ranked_claims = sorted(
         by_id.values(),
         key=lambda claim: (
@@ -119,9 +147,9 @@ def hybrid_claims(
     reranked: list[tuple[int, float]] = []
     rerank_scores: dict[str, float] = {}
     if reranker is None:
-        outcome, final = "disabled", ranked_claims[:limit]
+        outcome, final = "disabled", _preference_first(ranked_claims, limit, selected_intent)
     elif len(ranked_claims) <= 1:
-        outcome, final = "skipped", ranked_claims[:limit]
+        outcome, final = "skipped", _preference_first(ranked_claims, limit, selected_intent)
     else:
         candidates = ranked_claims[:candidate_limit]
         started = time.perf_counter_ns()
@@ -139,7 +167,7 @@ def hybrid_claims(
             rerank_scores = {
                 claim["id"]: blend_reranker_score(score, feature_by_id[claim["id"]]) for claim, score in valid
             }
-            final = sorted(
+            reranked_claims = sorted(
                 (claim for claim, _ in valid),
                 key=lambda claim: (
                     -rerank_scores[claim["id"]],
@@ -148,11 +176,19 @@ def hybrid_claims(
                     -_recorded_epoch(claim),
                     str(claim["id"]),
                 ),
-            )[:limit]
+            )
+            if selected_intent is RecallIntent.PREFERENCE:
+                reranked_ids = {claim["id"] for claim in reranked_claims}
+                reranked_claims.extend(
+                    claim
+                    for claim in ranked_claims
+                    if _is_preference_claim(claim) and claim["id"] not in reranked_ids
+                )
+            final = _preference_first(reranked_claims, limit, selected_intent)
             outcome = "applied"
         else:
             outcome = "error_fallback" if result_status == "error" else "empty_fallback"
-            final = ranked_claims[:limit]
+            final = _preference_first(ranked_claims, limit, selected_intent)
     audit.emit(
         "recall",
         "ranked",

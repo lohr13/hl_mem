@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from hl_mem.domain.content import parse_content
 from hl_mem.recall.attribute_map import normalize_predicate, validate_canonical_attribute
 
 from .extractors import ExtractedClaim
@@ -51,7 +52,7 @@ class LLMExtractor:
         self, content: dict[str, Any] | str, event_context: dict[str, Any] | None = None
     ) -> list[ExtractedClaim]:
         self.last_usage_tokens = 0
-        body = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        body = "\n\n".join(part.to_text() for part in parse_content(content))
         event_context = event_context or {}
         context = json.dumps(event_context, ensure_ascii=False)
         occurred_at = event_context.get("occurred_at", "未知")

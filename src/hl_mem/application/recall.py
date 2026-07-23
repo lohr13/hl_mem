@@ -8,6 +8,7 @@ from typing import Any
 
 from hl_mem.application.ingest import new_id
 from hl_mem.config import RECALL_DEFAULT_LIMIT
+from hl_mem.domain.relations import get_relations
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
@@ -184,6 +185,7 @@ class RecallService:
                 "valid_from": claim["valid_from"],
                 "replacement": replacement,
                 "evidence": evidence,
+                "relations": get_relations(self.connection, claim["id"]),
             }
             if claim["status"] == "disputed" and claim.get("conflict_key"):
                 rivals = self.connection.execute(
