@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 # 去重 / 冲突阈值
-DEDUP_SEMANTIC_THRESHOLD = float(os.getenv("HL_MEM_DEDUP_THRESHOLD", "0.85"))
+DEDUP_SEMANTIC_THRESHOLD = float(os.getenv("HL_MEM_DEDUP_THRESHOLD", "0.82"))
 CONSOLIDATE_GRAY_ZONE_MIN = float(os.getenv("HL_MEM_CONSOLIDATE_GRAY_MIN", "0.72"))
 CONSOLIDATE_GRAY_ZONE_MAX = float(os.getenv("HL_MEM_CONSOLIDATE_GRAY_MAX", "0.95"))
 
