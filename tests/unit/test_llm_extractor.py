@@ -105,5 +105,7 @@ def test_claim_validates_canonical_attribute_against_predicate() -> None:
         {"predicate": "偏好", "value": "深色", "canonical_attribute": "config.port"}
     )
     assert valid.canonical_attribute == "preference.tool_choice"
-    assert invalid.canonical_attribute == "custom.unknown"
-    assert wrong_domain.canonical_attribute == "preference.other"
+    # reconcile infers a valid attribute from "深色" content instead of returning custom.unknown
+    assert invalid.canonical_attribute == "preference.ui_theme"
+    # reconcile overrides wrong-domain attribute with content-inferred preference.ui_theme
+    assert wrong_domain.canonical_attribute == "preference.ui_theme"
