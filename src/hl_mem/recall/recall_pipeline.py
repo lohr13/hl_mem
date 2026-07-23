@@ -84,6 +84,7 @@ def hybrid_claims(
     now: str | None = None,
     intent: RecallIntent | str | None = None,
     known_as_of: str | None = None,
+    namespace: str = "default",
 ) -> list[dict[str, Any]]:
     """融合全文、向量、多因子先验及 reranker 结果召回 claim。"""
     audit = current_audit()
@@ -94,19 +95,27 @@ def hybrid_claims(
     reference = as_of or ranking_now
     started = time.perf_counter_ns()
     try:
-        fts = repo.search_claims_fts(query, candidate_limit, reference, selected_intent, known_as_of)
+        fts = repo.search_claims_fts(
+            query, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
+        )
     except TypeError:
         fts = repo.search_claims_fts(query, candidate_limit, as_of)
     fts_us = (time.perf_counter_ns() - started) // 1000
     started = time.perf_counter_ns()
     if hasattr(repo, "search_claims_vector"):
         try:
-            dense = repo.search_claims_vector(query_blob, candidate_limit, reference, selected_intent, known_as_of)
+            dense = repo.search_claims_vector(
+                query_blob, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
+            )
         except TypeError:
             dense = repo.search_claims_vector(query_blob, candidate_limit, as_of)
     else:
+        try:
+            embedded = repo.list_embedded(as_of, namespace=namespace)
+        except TypeError:
+            embedded = repo.list_embedded(as_of)
         dense = sorted(
-            repo.list_embedded(as_of),
+            embedded,
             key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]),
             reverse=True,
         )[:candidate_limit]

@@ -8,7 +8,6 @@ from typing import Any
 
 from hl_mem.application.ingest import new_id
 from hl_mem.config import RECALL_DEFAULT_LIMIT
-from hl_mem.domain.relations import get_relations
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
@@ -44,6 +43,7 @@ class RecallService:
         query_id: str | None = None,
         token_budget: int | None = None,
         context_mode: str | None = None,
+        namespace: str = "default",
     ) -> dict[str, Any]:
         """执行混合召回并返回 claim、策略、证据及查询标识。"""
         query_id = query_id or new_id()
@@ -57,12 +57,16 @@ class RecallService:
             self.reranker,
             intent=selected_intent,
             known_as_of=known_as_of,
+            namespace=namespace,
         )
         self._record_access(claims)
         self._record_feedback(claims, query_id)
-        results = self._assemble_results(claims)
+        results = self._assemble_results(claims, namespace)
         observations = self._assemble_observations([claim["id"] for claim in claims])
-        policies = matching_policies(ExperienceService(self.connection).list_policies("active"), query)
+        policies = matching_policies(
+            ExperienceService(self.connection).list_policies("active", namespace=namespace),
+            query,
+        )
         response = {
             "results": results,
             "observations": observations,
@@ -152,30 +156,35 @@ class RecallService:
         except Exception:
             pass
 
-    def _assemble_results(self, claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _assemble_results(
+        self,
+        claims: list[dict[str, Any]],
+        namespace: str = "default",
+    ) -> list[dict[str, Any]]:
+        if not claims:
+            return []
         evidence_repo = EvidenceRepository(self.connection)
         claim_repo = ClaimRepository(self.connection)
+        claim_ids = [claim["id"] for claim in claims]
+        all_evidence = self._batch_evidence(evidence_repo, claim_ids)
+        superseded_ids = [
+            claim["superseded_by_id"]
+            for claim in claims
+            if claim.get("superseded_by_id")
+        ]
+        replacement_map = self._batch_replacements(claim_repo, superseded_ids)
+        relations_map = self._batch_relations(claim_ids)
+        rivals_map = self._batch_rivals(claims, namespace)
         results: list[dict[str, Any]] = []
         for claim in claims:
-            evidence = [
-                {"type": "event", "id": link["evidence_id"]}
-                for link in evidence_repo.get_links_for_derived("claim", claim["id"])
-            ]
+            evidence = all_evidence.get(claim["id"], [])
             decoded = json.loads(claim["value_json"])
             text = (
                 decoded.get("old_value")
                 if isinstance(decoded, dict) and decoded.get("_type") == "superseded_value"
                 else decoded
             )
-            replacement = None
-            if claim.get("superseded_by_id"):
-                replacement_claim = claim_repo.get_claim(claim["superseded_by_id"])
-                if replacement_claim:
-                    replacement = {
-                        "id": replacement_claim["id"],
-                        "text": json.loads(replacement_claim["value_json"]),
-                        "valid_from": replacement_claim["valid_from"],
-                    }
+            replacement = replacement_map.get(claim.get("superseded_by_id"))
             result = {
                 "type": "claim",
                 "id": claim["id"],
@@ -185,13 +194,77 @@ class RecallService:
                 "valid_from": claim["valid_from"],
                 "replacement": replacement,
                 "evidence": evidence,
-                "relations": get_relations(self.connection, claim["id"]),
+                "relations": relations_map.get(claim["id"], []),
             }
             if claim["status"] == "disputed" and claim.get("conflict_key"):
-                rivals = self.connection.execute(
-                    "SELECT id,value_json FROM claims WHERE conflict_key=? AND status='disputed' AND id!=?",
-                    (claim["conflict_key"], claim["id"]),
-                ).fetchall()
-                result["conflicts"] = [dict(row) for row in rivals]
+                result["conflicts"] = rivals_map.get(claim["id"], [])
             results.append(result)
         return results
+
+    @staticmethod
+    def _batch_evidence(
+        evidence_repo: EvidenceRepository,
+        claim_ids: list[str],
+    ) -> dict[str, list[dict[str, str]]]:
+        """批量加载 claim 的证据链接。"""
+        return evidence_repo.batch_get_links_for_derived("claim", claim_ids)
+
+    @staticmethod
+    def _batch_replacements(
+        claim_repo: ClaimRepository,
+        superseded_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """批量加载被替代 claim 的替代项。"""
+        claims = claim_repo.batch_get_claims(superseded_ids)
+        return {
+            claim_id: {
+                "id": claim["id"],
+                "text": json.loads(claim["value_json"]),
+                "valid_from": claim["valid_from"],
+            }
+            for claim_id, claim in claims.items()
+        }
+
+    def _batch_relations(self, claim_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """批量加载 claim 的关系。"""
+        from hl_mem.domain.relations import get_relations_batch
+
+        return get_relations_batch(self.connection, claim_ids)
+
+    def _batch_rivals(
+        self,
+        claims: list[dict[str, Any]],
+        namespace: str,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """批量加载 disputed claim 的同 namespace 冲突项并精确映射。"""
+        disputed_claims = [
+            claim
+            for claim in claims
+            if claim["status"] == "disputed" and claim.get("conflict_key")
+        ]
+        if not disputed_claims:
+            return {}
+        unique_keys = list(dict.fromkeys(claim["conflict_key"] for claim in disputed_claims))
+        rivals_by_key: dict[str, list[dict[str, Any]]] = {key: [] for key in unique_keys}
+        for start in range(0, len(unique_keys), 500):
+            chunk = unique_keys[start : start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.connection.execute(
+                "SELECT id,value_json,conflict_key FROM claims "
+                f"WHERE conflict_key IN ({placeholders}) "
+                "AND status='disputed' AND namespace_key=?",
+                (*chunk, namespace),
+            ).fetchall()
+            for row in rows:
+                rival = dict(row)
+                rivals_by_key[rival["conflict_key"]].append(
+                    {"id": rival["id"], "value_json": rival["value_json"]}
+                )
+        return {
+            claim["id"]: [
+                rival
+                for rival in rivals_by_key[claim["conflict_key"]]
+                if rival["id"] != claim["id"]
+            ]
+            for claim in disputed_claims
+        }

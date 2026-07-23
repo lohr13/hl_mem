@@ -98,6 +98,24 @@ class ClaimRepository:
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:
         return _row(self.connection.execute("SELECT * FROM claims WHERE id=?", (claim_id,)).fetchone())
 
+    def batch_get_claims(self, claim_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """批量获取多个 claim，并将单次查询限制在 500 个标识以内。"""
+        unique_ids = list(dict.fromkeys(claim_ids))
+        if not unique_ids:
+            return {}
+        result: dict[str, dict[str, Any]] = {}
+        for start in range(0, len(unique_ids), 500):
+            chunk = unique_ids[start : start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.connection.execute(
+                f"SELECT * FROM claims WHERE id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                claim = dict(row)
+                result[claim["id"]] = claim
+        return result
+
     def update_status(self, claim_id: str, status: str, commit: bool = True) -> bool:
         try:
             ClaimStatus(status)
@@ -151,14 +169,16 @@ class ClaimRepository:
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
+        namespace: str = "default",
     ) -> list[dict[str, Any]]:
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
         statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
         rows = self.connection.execute(
             f"SELECT * FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
+            "AND namespace_key=? "
             "AND (valid_from IS NULL OR valid_from<=?) AND (valid_to IS NULL OR valid_to>?)",
-            (reference, reference),
+            (namespace, reference, reference),
         ).fetchall()
         return [claim for row in rows if claim_is_visible(claim := dict(row), reference, known_as_of, selected_intent)]
 
@@ -169,11 +189,12 @@ class ClaimRepository:
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
+        namespace: str = "default",
     ) -> list[dict[str, Any]]:
         # A 100k x 2048 float32 full scan is about 819 MB; indexed retrieval must
         # be reconsidered before deployments approach that scale.
         return sorted(
-            self.list_embedded(as_of, intent, known_as_of),
+            self.list_embedded(as_of, intent, known_as_of, namespace),
             key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]),
             reverse=True,
         )[:limit]
@@ -297,12 +318,13 @@ class ClaimRepository:
         intent: RecallIntent,
         valid_as_of: str,
         known_as_of: str | None = None,
+        namespace: str = "default",
     ) -> list[dict[str, Any]]:
         """使用统一策略返回 FTS 或向量候选。"""
         candidates = (
-            self.search_claims_fts(query, limit, valid_as_of)
+            self.search_claims_fts(query, limit, valid_as_of, intent, known_as_of, namespace)
             if query is not None
-            else self.search_claims_vector(query_blob or b"", limit, valid_as_of)
+            else self.search_claims_vector(query_blob or b"", limit, valid_as_of, intent, known_as_of, namespace)
         )
         return [item for item in candidates if claim_is_visible(item, valid_as_of, known_as_of, intent)]
 
@@ -321,6 +343,7 @@ class ClaimRepository:
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
+        namespace: str = "default",
     ) -> list[dict[str, Any]]:
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
@@ -329,10 +352,11 @@ class ClaimRepository:
             rows = self.connection.execute(
                 "SELECT c.* FROM claims_fts f JOIN claims c ON c.rowid=f.rowid "
                 f"WHERE claims_fts MATCH ? AND c.status IN {statuses} "
+                "AND c.namespace_key=? "
                 "AND (c.valid_from IS NULL OR c.valid_from<=?) "
                 "AND (c.valid_to IS NULL OR c.valid_to>?) "
                 "ORDER BY bm25(claims_fts) LIMIT ?",
-                (_sanitize_fts_query(query), reference, reference, limit),
+                (_sanitize_fts_query(query), namespace, reference, reference, limit),
             ).fetchall()
         except sqlite3.OperationalError as error:
             if not _is_fts_syntax_error(error):
@@ -354,6 +378,30 @@ class EvidenceRepository:
             (derived_type, derived_id),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def batch_get_links_for_derived(
+        self,
+        derived_type: str,
+        derived_ids: list[str],
+    ) -> dict[str, list[dict[str, str]]]:
+        """批量获取多个派生对象的 evidence links，并按 derived_id 分组。"""
+        unique_ids = list(dict.fromkeys(derived_ids))
+        if not unique_ids:
+            return {}
+        result: dict[str, list[dict[str, str]]] = {derived_id: [] for derived_id in unique_ids}
+        for start in range(0, len(unique_ids), 500):
+            chunk = unique_ids[start : start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.connection.execute(
+                f"SELECT * FROM evidence_links WHERE derived_type=? AND derived_id IN ({placeholders})",
+                (derived_type, *chunk),
+            ).fetchall()
+            for row in rows:
+                link = dict(row)
+                result[link["derived_id"]].append(
+                    {"type": link["evidence_type"], "id": link["evidence_id"]}
+                )
+        return result
 
     def get_links_for_evidence(self, evidence_type: str, evidence_id: str) -> list[dict[str, Any]]:
         rows = self.connection.execute(

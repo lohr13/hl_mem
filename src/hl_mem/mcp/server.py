@@ -65,6 +65,7 @@ class McpMemoryServer:
             arguments.get("intent"),
             arguments.get("known_as_of"),
             arguments.get("query_id"),
+            namespace=str(arguments.get("namespace", "default")),
         )
 
     @staticmethod
