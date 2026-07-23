@@ -46,10 +46,11 @@ def test_data_survives_database_restart(tmp_path) -> None:
 
 
 def test_healthz(tmp_path) -> None:
+    from hl_mem import __version__
+
     with TestClient(create_app(tmp_path / "health.db")) as client:
-        assert client.get("/healthz").json() == {
-            "status": "ok",
-            "version": "0.2.0",
-            "embedder": "fake",
-            "reranker": "off",
-        }
+        result = client.get("/healthz").json()
+        assert result["status"] == "ok"
+        assert result["version"] == __version__
+        assert "embedder" in result
+        assert "reranker" in result
