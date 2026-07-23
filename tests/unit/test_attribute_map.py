@@ -5,6 +5,7 @@ from hl_mem.recall.attribute_map import (
     PREDICATE_ATTRIBUTE_MAP,
     canonical_conflict_slot,
     infer_canonical_attribute,
+    is_mutually_exclusive_attribute,
     validate_canonical_attribute,
 )
 
@@ -43,15 +44,35 @@ def test_attribute_validation_rejects_unknown_or_wrong_predicate_attribute() -> 
 @pytest.mark.parametrize(
     ("attribute", "slot"),
     [
-        ("preference.tool_choice", "tool_choice"),
-        ("choice.tool", "tool_choice"),
-        ("fact.tool_choice", "tool_choice"),
-        ("choice.database", "database_choice"),
+        ("preference.tool_choice", "preference.tool_choice"),
+        ("choice.tool", "choice.tool"),
+        ("fact.tool_choice", "fact.tool_choice"),
+        ("choice.database", "choice.database"),
         ("config.port", "config.port"),
-        ("config.network", "config.port"),
+        ("config.network", "config.network"),
         ("config.path", "config.path"),
         ("config.env", "config.env"),
+        ("invented.slot", "custom.unknown"),
     ],
 )
 def test_canonical_conflict_slot_aliases(attribute, slot) -> None:
     assert canonical_conflict_slot(attribute) == slot
+
+
+@pytest.mark.parametrize(
+    ("attribute", "expected"),
+    [
+        ("preference.ui_theme", True),
+        ("preference.response_style", True),
+        ("config.port", True),
+        ("config.model", True),
+        ("state.service_health", True),
+        ("plan.deadline", False),
+        ("choice.tool", False),
+        ("config.env", False),
+        ("custom.unknown", False),
+        (None, False),
+    ],
+)
+def test_is_mutually_exclusive_attribute(attribute, expected) -> None:
+    assert is_mutually_exclusive_attribute(attribute) is expected
