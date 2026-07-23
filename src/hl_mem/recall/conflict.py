@@ -9,7 +9,7 @@ from typing import Any
 
 from hl_mem.recall.attribute_map import (
     canonical_conflict_slot,
-    is_non_exclusive_attribute,
+    is_mutually_exclusive_attribute,
     normalize_canonical_attribute,
     normalize_predicate,
 )
@@ -84,17 +84,16 @@ class ConflictResolver:
     def resolve(self, existing: dict[str, Any], new: dict[str, Any]) -> str:
         existing_attribute = existing.get("canonical_attribute")
         new_attribute = new.get("canonical_attribute")
-        if existing_attribute and new_attribute:
-            same_slot = canonical_conflict_slot(existing_attribute) == canonical_conflict_slot(new_attribute)
-        else:
-            same_slot = existing.get("predicate") == new.get("predicate")
-        if not same_slot:
+        if not (
+            is_mutually_exclusive_attribute(existing_attribute)
+            and is_mutually_exclusive_attribute(new_attribute)
+        ):
+            return "compatible"
+        if canonical_conflict_slot(existing_attribute) != canonical_conflict_slot(new_attribute):
             return "compatible"
         old_value, new_value = self._value(existing), self._value(new)
         if old_value == new_value:
             return "entails"
-        if is_non_exclusive_attribute(existing_attribute) or is_non_exclusive_attribute(new_attribute):
-            return "compatible"
         if self._before(existing.get("valid_to"), new.get("valid_from")):
             return "state_change"
         if self._signals_change(new):

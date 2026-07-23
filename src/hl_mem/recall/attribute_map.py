@@ -61,13 +61,15 @@ ATTRIBUTE_ALIASES = {
     "fact.tool": "fact.tool_choice",
 }
 
-CONFLICT_SLOT_ALIASES = {
-    "preference.tool_choice": "tool_choice",
-    "choice.tool": "tool_choice",
-    "fact.tool_choice": "tool_choice",
-    "choice.database": "database_choice",
-    "config.network": "config.port",
-}
+MUTUALLY_EXCLUSIVE_SLOTS = frozenset(
+    {
+        "preference.ui_theme",
+        "preference.response_style",
+        "config.port",
+        "config.model",
+        "state.service_health",
+    }
+)
 
 ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     "偏好": (
@@ -134,14 +136,6 @@ def normalize_canonical_attribute(attribute: str) -> str:
     return ATTRIBUTE_ALIASES.get(normalized, normalized)
 
 
-def is_non_exclusive_attribute(attribute: str | None) -> bool:
-    """判断 canonical attribute 是否为不能据此推断冲突的共享兜底槽。"""
-    if not attribute:
-        return False
-    normalized = normalize_canonical_attribute(attribute)
-    return normalized.endswith(".other") or normalized in {"memory.explicit", "custom.unknown"}
-
-
 def validate_canonical_attribute(predicate: str, attribute: str | None) -> str:
     """校验属性是否属于 predicate 的允许集合，否则确定性回退。"""
     normalized_predicate = normalize_predicate(predicate)
@@ -176,8 +170,13 @@ def infer_canonical_attribute(
 
 
 def canonical_conflict_slot(attribute: str) -> str:
-    """将细粒度 canonical attribute 归并为互斥 conflict slot。"""
+    """返回经校验的 canonical conflict slot，不跨属性合并。"""
     normalized = normalize_canonical_attribute(attribute)
-    if normalized not in ATTRIBUTE_ALLOWLIST:
-        normalized = "custom.unknown"
-    return CONFLICT_SLOT_ALIASES.get(normalized, normalized)
+    return normalized if normalized in ATTRIBUTE_ALLOWLIST else "custom.unknown"
+
+
+def is_mutually_exclusive_attribute(attribute: str | None) -> bool:
+    """判断 canonical attribute 是否可参与确定性冲突检测。"""
+    if not attribute:
+        return False
+    return canonical_conflict_slot(attribute) in MUTUALLY_EXCLUSIVE_SLOTS
