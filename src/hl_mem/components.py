@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.llm_extractor import LLMExtractor
@@ -18,7 +19,7 @@ def make_embedder(config: dict[str, Any] | None = None) -> Any:
     production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
     mode = str(settings.get("embedder_name", os.getenv("HL_MEM_EMBEDDER", "real" if production else "fake"))).lower()
     if production and mode != "real":
-        raise RuntimeError("HL_MEM_EMBEDDER must be 'real' in production")
+        raise ConfigurationError("HL_MEM_EMBEDDER must be 'real' in production")
     if mode == "fake":
         return FakeEmbedder(dim)
     if mode != "real":
@@ -26,7 +27,7 @@ def make_embedder(config: dict[str, Any] | None = None) -> Any:
     api_key = os.getenv("EMBEDDING_API_KEY")
     if not api_key:
         if production:
-            raise RuntimeError("EMBEDDING_API_KEY is required in production")
+            raise ConfigurationError("EMBEDDING_API_KEY is required in production")
         return FakeEmbedder(dim)
     return Embedder(
         api_key,
@@ -45,7 +46,7 @@ def make_reranker(config: dict[str, Any] | None = None) -> Any | None:
     production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
     mode = str(settings.get("reranker_name", os.getenv("HL_MEM_RERANKER", "real" if production else "off"))).lower()
     if production and mode not in {"on", "real"}:
-        raise RuntimeError("HL_MEM_RERANKER must be enabled in production")
+        raise ConfigurationError("HL_MEM_RERANKER must be enabled in production")
     if mode == "off":
         return None
     if mode == "fake":
@@ -55,7 +56,7 @@ def make_reranker(config: dict[str, Any] | None = None) -> Any | None:
     api_key = os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY")
     if not api_key:
         if production:
-            raise RuntimeError("RERANKER_API_KEY or EMBEDDING_API_KEY is required in production")
+            raise ConfigurationError("RERANKER_API_KEY or EMBEDDING_API_KEY is required in production")
         return None
     try:
         return Reranker(
@@ -75,13 +76,13 @@ def make_extractor(config: dict[str, Any] | None = None) -> Any:
     production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
     extractor_name = str(settings.get("extractor_name", os.getenv("HL_MEM_EXTRACTOR", "fake"))).lower()
     if production and extractor_name == "fake":
-        raise RuntimeError("HL_MEM_EXTRACTOR must not be 'fake' in production")
+        raise ConfigurationError("HL_MEM_EXTRACTOR must not be 'fake' in production")
     if extractor_name == "fake":
         return FakeExtractor()
     api_key = os.getenv("LLM_API_KEY")
     if not api_key:
         if production or settings.get("require_real"):
-            raise RuntimeError("LLM_API_KEY is required in production")
+            raise ConfigurationError("LLM_API_KEY is required in production")
         return FakeExtractor()
     return LLMExtractor(
         api_key,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from hl_mem.errors import ConflictError
+
 
 class ClaimStatus(str, Enum):
     """Claim 的生命周期状态。"""
@@ -17,7 +19,7 @@ class ClaimStatus(str, Enum):
     RETRACTED = "retracted"
 
 
-class InvalidTransitionError(ValueError):
+class InvalidTransitionError(ConflictError, ValueError):
     """Claim 状态转换不在允许矩阵中。"""
 
 

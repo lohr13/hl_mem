@@ -239,8 +239,8 @@ class ExperienceService:
 
     def submit_retrieval_feedback(
         self, query_id: str, memory_id: str, helpful: bool, task_outcome: str | None, created_at: str
-    ) -> bool:
-        """回填一次 claim 检索曝光；不存在曝光时创建独立反馈。"""
+    ) -> dict[str, bool]:
+        """回填或创建一次 claim 检索反馈，返回创建和更新状态。"""
         cursor = self.connection.execute(
             "UPDATE retrieval_feedback SET helpful=?,task_outcome=? "
             "WHERE id=(SELECT id FROM retrieval_feedback WHERE query_id=? AND memory_type='claim' "
@@ -249,9 +249,9 @@ class ExperienceService:
         )
         if cursor.rowcount == 0:
             self.record_feedback(_id(), query_id, "claim", memory_id, True, helpful, task_outcome, created_at)
-        else:
-            self.connection.commit()
-        return cursor.rowcount == 1
+            return {"created": True, "updated": False}
+        self.connection.commit()
+        return {"created": False, "updated": True}
 
     def induce_policy(
         self,

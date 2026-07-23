@@ -10,6 +10,7 @@ from hl_mem.application.ingest import new_id
 from hl_mem.config import RECALL_DEFAULT_LIMIT
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
+from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
 from hl_mem.recall.policy import RecallIntent, route_recall_intent
 from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
 from hl_mem.storage.repository import ClaimRepository, EvidenceRepository
@@ -22,7 +23,12 @@ def _now() -> str:
 class RecallService:
     """记忆召回应用服务。"""
 
-    def __init__(self, connection: Any, embedder: Any, reranker: Any = None) -> None:
+    def __init__(
+        self,
+        connection: Any,
+        embedder: EmbedderProtocol | Any,
+        reranker: RerankerProtocol | None = None,
+    ) -> None:
         self.connection = connection
         self.embedder = embedder
         self.reranker = reranker

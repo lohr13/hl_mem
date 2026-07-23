@@ -57,7 +57,7 @@ class Reranker:
             self.last_outcome, self.last_error_class = ("success" if ranked else "empty"), None
             self.last_result = RerankResult(ranked, self.last_outcome)
             return ranked
-        except Exception as error:
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
             self.last_outcome, self.last_error_class = "error", type(error).__name__
             self.last_result = RerankResult([], self.last_outcome, self.last_error_class)
             return []

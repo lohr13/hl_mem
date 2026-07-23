@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from hl_mem import __version__, components
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService
@@ -25,6 +26,7 @@ from hl_mem.api.schemas import (
     TraceInput,
 )
 from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
+from hl_mem.errors import ConfigurationError, ConflictError, NotFoundError, ValidationError
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
@@ -45,7 +47,7 @@ def _make_reranker() -> Any:
     production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
     mode = os.getenv("HL_MEM_RERANKER", "real" if production else "off").lower()
     if production and mode not in {"on", "real"}:
-        raise RuntimeError("HL_MEM_RERANKER must be enabled in production")
+        raise ConfigurationError("HL_MEM_RERANKER must be enabled in production")
     if mode == "off":
         return None
     if mode == "fake":
@@ -55,7 +57,7 @@ def _make_reranker() -> Any:
     api_key = os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY")
     if not api_key:
         if production:
-            raise RuntimeError("RERANKER_API_KEY or EMBEDDING_API_KEY is required in production")
+            raise ConfigurationError("RERANKER_API_KEY or EMBEDDING_API_KEY is required in production")
         return None
     try:
         return Reranker(
@@ -89,6 +91,21 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     app = FastAPI(title="HL-Mem", lifespan=lifespan)
     app.state.db, app.state.token_budget, app.state.reranker = database, budget, reranker
     app.state.audit = audit
+
+    @app.exception_handler(NotFoundError)
+    async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+        """将资源不存在异常映射为 HTTP 404。"""
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(ValidationError)
+    async def validation_error_handler(request: Request, exc: ValidationError) -> JSONResponse:
+        """将应用验证异常映射为 HTTP 422。"""
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @app.exception_handler(ConflictError)
+    async def conflict_handler(request: Request, exc: ConflictError) -> JSONResponse:
+        """将应用状态冲突映射为 HTTP 409。"""
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     def get_connection() -> Iterator[sqlite3.Connection]:
         with database.connect() as connection:
@@ -165,10 +182,9 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     def post_feedback(
         payload: FeedbackInput, connection: sqlite3.Connection = Depends(get_connection)
     ) -> dict[str, bool]:
-        updated = ExperienceService(connection).submit_retrieval_feedback(
+        return ExperienceService(connection).submit_retrieval_feedback(
             payload.query_id, payload.memory_id, payload.helpful, payload.task_outcome, _now()
         )
-        return {"updated": updated}
 
     @app.post("/v1/episodes/{episode_id}/traces")
     def add_episode_trace(

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from hl_mem.observability.audit import current_audit
+from hl_mem.protocols import EmbedderProtocol
 from hl_mem.recall.attribute_map import validate_canonical_attribute
 from hl_mem.recall.conflict import ConflictResolver, compute_conflict_key, compute_legacy_conflict_key
 from hl_mem.recall.dedup import Deduplicator
@@ -149,7 +150,7 @@ class IngestService:
         extracted: Any,
         event: dict[str, Any],
         now: str,
-        embedder: Any,
+        embedder: EmbedderProtocol,
         authority: str | None = None,
         ttl_days: int = 7,
     ) -> str:
