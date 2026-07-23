@@ -20,11 +20,13 @@ class Reranker:
         base_url: str = "https://dashscope.aliyuncs.com",
         model: str = "gte-rerank-v2",
         timeout: float = 10.0,
+        client: httpx.Client | None = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self._client = client
         self.last_outcome = "empty"
         self.last_error_class: str | None = None
         self.last_result = RerankResult()
@@ -36,7 +38,8 @@ class Reranker:
             self.last_result = RerankResult([], self.last_outcome)
             return []
         try:
-            response = httpx.post(
+            post = self._client.post if self._client is not None else httpx.post
+            response = post(
                 f"{self.base_url}/api/v1/services/rerank/text-rerank/text-rerank",
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 json={

@@ -31,6 +31,7 @@ def _load_env(path: Path) -> None:
             os.environ.setdefault(key.strip(), value.strip())
 
 
+@pytest.mark.real_api
 def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """使用临时目录验证真实提取、向量化、写入与全文召回链路。"""
     project_root = Path(__file__).resolve().parent.parent

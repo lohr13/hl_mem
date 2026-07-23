@@ -35,10 +35,12 @@ class Embedder:
         connect_timeout: float = 5.0,
         read_timeout: float = 30.0,
         max_attempts: int = 3,
+        client: httpx.Client | None = None,
     ) -> None:
         self.api_key, self.base_url, self.model, self.dim = api_key, base_url.rstrip("/"), model, dim
         self.timeout = httpx.Timeout(read_timeout, connect=connect_timeout)
         self.max_attempts = max_attempts
+        self._client = client
 
     def embed(self, texts: list[str]) -> list[bytes]:
         return self.embed_batch(texts)
@@ -56,7 +58,8 @@ class Embedder:
         response: httpx.Response | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
-                response = httpx.post(
+                post = self._client.post if self._client is not None else httpx.post
+                response = post(
                     f"{self.base_url}/embeddings",
                     headers={"Authorization": f"Bearer {self.api_key}"},
                     json={"model": self.model, "input": texts, "dimensions": self.dim},
