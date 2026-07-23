@@ -13,6 +13,7 @@ from hl_mem.core.vector import cosine_similarity
 from hl_mem.observability.audit import current_audit
 from hl_mem.recall.policy import RecallIntent, claim_is_visible, route_recall_intent
 from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
+from hl_mem.recall.relation_expansion import RelationExpansionConfig, expand_related_claims
 from hl_mem.recall.reranker import RerankResult
 from hl_mem.recall.trace import SearchTracer
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository
@@ -103,6 +104,9 @@ def hybrid_claims(
     intent: RecallIntent | str | None = None,
     known_as_of: str | None = None,
     namespace: str = "default",
+    *,
+    relation_connection: Any | None = None,
+    relation_config: RelationExpansionConfig | None = None,
     tracer: SearchTracer | None = None,
 ) -> list[dict[str, Any]]:
     """融合全文、向量、多因子先验及 reranker 结果召回 claim。"""
@@ -187,6 +191,64 @@ def hybrid_claims(
             str(claim["id"]),
         ),
     )
+    if relation_connection is not None and relation_config is not None and relation_config.enabled:
+        relation_started = time.perf_counter_ns()
+        seeds = [
+            {**claim, "_semantic_score": feature_by_id[claim["id"]]["semantic"]}
+            for claim in ranked_claims
+        ]
+        expanded, expansion_metadata = expand_related_claims(
+            relation_connection,
+            repo,
+            seeds,
+            reference,
+            known_as_of,
+            selected_intent,
+            namespace,
+            relation_config,
+        )
+        if expanded:
+            expanded_ids = [str(claim["id"]) for claim in expanded if str(claim["id"]) not in by_id]
+            expanded_by_id = {str(claim["id"]): claim for claim in expanded if str(claim["id"]) in expanded_ids}
+            expanded_helpful_rates = repo.helpful_rates(expanded_ids) if hasattr(repo, "helpful_rates") else {}
+            for claim_id, claim in expanded_by_id.items():
+                claim["helpful_rate"] = expanded_helpful_rates.get(claim_id, claim.get("helpful_rate", 0.5))
+                by_id[claim_id] = claim
+            max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
+            for claim_id, claim in expanded_by_id.items():
+                feature_by_id[claim_id] = memory_features(
+                    claim,
+                    claim["_semantic_score"],
+                    max_access,
+                    ranking_now,
+                )
+                pre_scores[claim_id] = memory_score(feature_by_id[claim_id])
+            ranked_claims = sorted(
+                by_id.values(),
+                key=lambda claim: (
+                    -pre_scores[claim["id"]],
+                    -feature_by_id[claim["id"]]["semantic"],
+                    -_recorded_epoch(claim),
+                    str(claim["id"]),
+                ),
+            )
+            if tracer is not None:
+                tracer.record_channel("relation", list(expanded_by_id.values()))
+                metadata_by_id = {item.claim_id: item for item in expansion_metadata}
+                for claim_id in expanded_by_id:
+                    metadata = metadata_by_id[claim_id]
+                    tracer.record_relation_path(
+                        claim_id,
+                        {
+                            "seed_id": metadata.seed_id,
+                            "relation": metadata.relation,
+                            "source": metadata.source,
+                            "edge_confidence": metadata.edge_confidence,
+                            "expansion_score": metadata.expansion_score,
+                        },
+                    )
+        if tracer is not None:
+            tracer.trace.phases.relation_us = (time.perf_counter_ns() - relation_started) // 1000
     if tracer is not None:
         tracer.trace.phases.fusion_us = (time.perf_counter_ns() - fusion_started) // 1000
         tracer.record_pre_rank(ranked_claims, pre_scores)

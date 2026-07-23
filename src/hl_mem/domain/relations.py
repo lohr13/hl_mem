@@ -74,6 +74,9 @@ def get_relations(
 def get_relations_batch(
     connection: sqlite3.Connection,
     claim_ids: list[str],
+    *,
+    include_memory_relations: bool = False,
+    include_reverse_evidence: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """批量获取多个 claim 的 evidence relations，并按 claim 标识分组。"""
     unique_ids = list(dict.fromkeys(claim_ids))
@@ -83,14 +86,68 @@ def get_relations_batch(
     for start in range(0, len(unique_ids), 500):
         chunk = unique_ids[start : start + 500]
         placeholders = ",".join("?" for _ in chunk)
+        extended = include_memory_relations or include_reverse_evidence
+        columns = "derived_id,relation,evidence_type,evidence_id,weight" if extended else (
+            "derived_id,relation,evidence_type,evidence_id"
+        )
+        allowed = "'supports','contradicts','follows','about','derived_from','supersedes'" if extended else (
+            "'supports','contradicts','follows','about'"
+        )
         rows = connection.execute(
-            "SELECT derived_id,relation,evidence_type,evidence_id "
-            "FROM evidence_links WHERE derived_type='claim' "
-            "AND relation IN ('supports','contradicts','follows','about') "
+            f"SELECT {columns} FROM evidence_links WHERE derived_type='claim' "
+            f"AND relation IN ({allowed}) "
             f"AND derived_id IN ({placeholders})",
             chunk,
         ).fetchall()
         for row in rows:
             relation = dict(row)
+            if extended:
+                relation.update(
+                    seed_id=relation["derived_id"],
+                    neighbor_id=relation["evidence_id"] if relation["evidence_type"] == "claim" else None,
+                    source="evidence_links",
+                    confidence=float(relation.get("weight") or 1.0),
+                )
             result[relation["derived_id"]].append(relation)
+        if include_reverse_evidence:
+            reverse_rows = connection.execute(
+                "SELECT derived_id,relation,evidence_id,weight "
+                "FROM evidence_links WHERE evidence_type='claim' AND derived_type='claim' "
+                "AND relation IN ('supports','contradicts','follows','about','derived_from','supersedes') "
+                f"AND evidence_id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in reverse_rows:
+                relation = dict(row)
+                result[relation["evidence_id"]].append(
+                    {
+                        **relation,
+                        "seed_id": relation["evidence_id"],
+                        "neighbor_id": relation["derived_id"],
+                        "source": "evidence_links",
+                        "confidence": float(relation.get("weight") or 1.0),
+                    }
+                )
+        if include_memory_relations:
+            memory_rows = connection.execute(
+                "SELECT from_id,to_id,relation,confidence FROM memory_relations "
+                f"WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
+                (*chunk, *chunk),
+            ).fetchall()
+            chunk_ids = set(chunk)
+            for row in memory_rows:
+                relation = dict(row)
+                for seed_id, neighbor_id in (
+                    (relation["from_id"], relation["to_id"]),
+                    (relation["to_id"], relation["from_id"]),
+                ):
+                    if seed_id in chunk_ids:
+                        result[seed_id].append(
+                            {
+                                **relation,
+                                "seed_id": seed_id,
+                                "neighbor_id": neighbor_id,
+                                "source": "memory_relations",
+                            }
+                        )
     return result

@@ -15,6 +15,7 @@ from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
 from hl_mem.recall.policy import RecallIntent, route_recall_intent
 from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
+from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.storage.repository import ClaimRepository, EvidenceRepository
 
@@ -31,10 +32,12 @@ class RecallService:
         connection: Any,
         embedder: EmbedderProtocol | Any,
         reranker: RerankerProtocol | None = None,
+        relation_config: RelationExpansionConfig | None = None,
     ) -> None:
         self.connection = connection
         self.embedder = embedder
         self.reranker = reranker
+        self.relation_config = relation_config or RelationExpansionConfig()
 
     def recall(
         self,
@@ -78,6 +81,8 @@ class RecallService:
             intent=selected_intent,
             known_as_of=known_as_of,
             namespace=namespace,
+            relation_connection=self.connection,
+            relation_config=self.relation_config,
             tracer=tracer,
         )
         self._record_access(claims)

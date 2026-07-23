@@ -32,6 +32,7 @@ from hl_mem.errors import ConfigurationError, ConflictError, NotFoundError, Vali
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
+from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.reranker import FakeReranker, Reranker
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
@@ -182,7 +183,12 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     ) -> dict[str, Any]:
         query_id = request.headers.get("X-Request-ID") or new_id()
         with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
-            return RecallService(connection, embedder, reranker).recall(
+            return RecallService(
+                connection,
+                embedder,
+                reranker,
+                RelationExpansionConfig(enabled=settings.relation_expansion_mode == "on"),
+            ).recall(
                 payload.query,
                 payload.limit,
                 payload.as_of,

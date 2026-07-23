@@ -115,6 +115,12 @@ class SearchTracer:
                 candidate.rerank_rank = rank
                 candidate.rerank_score = float(score)
 
+    def record_relation_path(self, claim_id: str, path: dict[str, Any]) -> None:
+        """记录关系扩展候选的一跳来源，不包含 claim 正文。"""
+        candidate = self._candidate(str(claim_id))
+        if candidate is not None:
+            candidate.relation_paths.append(path)
+
     def record_final(self, claims: list[dict[str, Any]]) -> None:
         """记录最终返回项，并优先保留这些候选。"""
         final_ids = {str(claim["id"]) for claim in claims}
