@@ -348,10 +348,11 @@ class ExperienceService:
             raise ValueError(f"policy not found: {policy_id}")
         return dict(row)
 
-    def list_policies(self, status: str = "active") -> list[dict[str, Any]]:
+    def list_policies(self, status: str = "active", namespace: str = "default") -> list[dict[str, Any]]:
         """按更新时间倒序列出指定状态的策略。"""
         rows = self.connection.execute(
-            "SELECT * FROM policies WHERE status=? ORDER BY updated_at DESC,id DESC", (status,)
+            "SELECT * FROM policies WHERE status=? AND namespace_key=? ORDER BY updated_at DESC,id DESC",
+            (status, namespace),
         ).fetchall()
         return [dict(row) for row in rows]
 

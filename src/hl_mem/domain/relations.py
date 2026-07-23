@@ -69,3 +69,28 @@ def get_relations(
         parameters,
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_relations_batch(
+    connection: sqlite3.Connection,
+    claim_ids: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    """批量获取多个 claim 的 evidence relations，并按 claim 标识分组。"""
+    unique_ids = list(dict.fromkeys(claim_ids))
+    if not unique_ids:
+        return {}
+    result: dict[str, list[dict[str, Any]]] = {claim_id: [] for claim_id in unique_ids}
+    for start in range(0, len(unique_ids), 500):
+        chunk = unique_ids[start : start + 500]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = connection.execute(
+            "SELECT derived_id,relation,evidence_type,evidence_id "
+            "FROM evidence_links WHERE derived_type='claim' "
+            "AND relation IN ('supports','contradicts','follows','about') "
+            f"AND derived_id IN ({placeholders})",
+            chunk,
+        ).fetchall()
+        for row in rows:
+            relation = dict(row)
+            result[relation["derived_id"]].append(relation)
+    return result
