@@ -8,6 +8,7 @@ from hl_mem.application.ingest import IngestService
 from hl_mem.ingest.embeddings import FakeEmbedder
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.storage.database import Database
+from hl_mem.storage.repository import JobRepository
 
 
 def test_concurrent_idempotent_event_write(tmp_path: Any) -> None:
@@ -104,3 +105,48 @@ def test_concurrent_claim_dedup(tmp_path: Any) -> None:
     assert count == 1
     for database in databases:
         database.close()
+
+
+def test_lease_token_prevents_old_worker_completion(tmp_path: Any) -> None:
+    """lease 过期后拒绝旧 worker 使用原令牌完成任务。"""
+    database_path = tmp_path / "lease.db"
+    first_database = Database(database_path)
+    first_connection = first_database.open_worker()
+    first_jobs = JobRepository(first_connection)
+    now = "2026-01-01T00:00:00+00:00"
+
+    first_jobs.insert_job(
+        {
+            "id": "job-1",
+            "job_type": "extract_event",
+            "payload_json": "{}",
+            "idempotency_key": "test-1",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    first_lease = first_jobs.lease_job("2999-01-01T00:00:00+00:00", now)
+    assert first_lease is not None
+    first_token = first_lease["lease_token"]
+
+    second_database = Database(database_path)
+    second_connection = second_database.open_worker()
+    second_jobs = JobRepository(second_connection)
+    assert second_jobs.lease_job("2999-01-01T00:00:00+00:00", now) is None
+
+    second_connection.execute(
+        "UPDATE jobs SET leased_until='2000-01-01T00:00:00+00:00' WHERE id='job-1'"
+    )
+    second_connection.commit()
+
+    second_lease = second_jobs.lease_job("2999-01-01T00:00:00+00:00", now)
+    assert second_lease is not None
+    second_token = second_lease["lease_token"]
+    assert second_token != first_token
+
+    assert first_jobs.complete_job("job-1", now, first_token) is False
+    assert second_jobs.complete_job("job-1", now, second_token) is True
+
+    first_database.close()
+    second_database.close()
