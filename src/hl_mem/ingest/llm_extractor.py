@@ -11,7 +11,11 @@ from typing import Any
 import httpx
 from pydantic import ValidationError as PydanticValidationError
 
-from hl_mem.domain.content import parse_content
+from hl_mem.config import (
+    EXTRACTION_CHUNK_OVERLAP_TURNS,
+    EXTRACTION_CHUNK_TARGET_CHARS,
+    EXTRACTION_MAX_SPLIT_DEPTH,
+)
 from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import DashScopeProvider
@@ -24,6 +28,12 @@ from hl_mem.recall.attribute_map import (
     reconcile_canonical_attribute,
 )
 
+from .chunking import (
+    ChunkingPolicy,
+    ExtractionChunk,
+    bisect_extraction_chunk,
+    split_extraction_content,
+)
 from .extractors import ExtractedClaim
 from .schemas import ExtractionResponseSchema, extraction_response_json_schema
 
@@ -130,6 +140,7 @@ class LLMExtractor:
         llm_client: LLMClient | None = None,
         schema_retries: int | None = None,
         structured_mode: StructuredOutputMode = StructuredOutputMode.JSON_SCHEMA,
+        chunking_policy: ChunkingPolicy | None = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -142,6 +153,11 @@ class LLMExtractor:
         if self.schema_retries < 0:
             raise ValueError("schema_retries must be non-negative")
         self.structured_mode = structured_mode
+        self.chunking_policy = chunking_policy or ChunkingPolicy(
+            target_chars=EXTRACTION_CHUNK_TARGET_CHARS,
+            overlap_turns=EXTRACTION_CHUNK_OVERLAP_TURNS,
+            max_split_depth=EXTRACTION_MAX_SPLIT_DEPTH,
+        )
         self.llm_client = llm_client or LLMClient(
             api_key=api_key,
             base_url=base_url,
@@ -156,12 +172,49 @@ class LLMExtractor:
     def extract(
         self, content: dict[str, Any] | str, event_context: dict[str, Any] | None = None
     ) -> list[ExtractedClaim]:
+        """同步分块提取事实，并在输出截断时递归二分恢复。"""
         self.last_usage_tokens = 0
-        body = "\n\n".join(part.to_text() for part in parse_content(content))
         event_context = event_context or {}
+        chunks = split_extraction_content(content, self.chunking_policy)
+        chunk_claims = [
+            self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks
+        ]
+        return self._merge_chunk_claims(chunk_claims)
+
+    def _extract_chunk_with_auto_split(
+        self,
+        chunk: ExtractionChunk,
+        event_context: dict[str, Any],
+        depth: int,
+    ) -> list[ExtractedClaim]:
+        """提取单块；仅输出截断时按策略递归二分。"""
+        try:
+            return self._extract_one_chunk(chunk, event_context)
+        except LLMOutputTruncatedError as error:
+            split = bisect_extraction_chunk(chunk)
+            if depth >= self.chunking_policy.max_split_depth or split is None:
+                raise LLMOutputTruncatedError(
+                    "LLM output remains truncated after auto split: "
+                    f"chunk={chunk.index}, start_unit={chunk.start_unit}, "
+                    f"end_unit={chunk.end_unit}, depth={depth}"
+                ) from error
+            left, right = split
+            return self._merge_chunk_claims(
+                [
+                    self._extract_chunk_with_auto_split(left, event_context, depth + 1),
+                    self._extract_chunk_with_auto_split(right, event_context, depth + 1),
+                ]
+            )
+
+    def _extract_one_chunk(
+        self,
+        chunk: ExtractionChunk,
+        event_context: dict[str, Any],
+    ) -> list[ExtractedClaim]:
+        """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
         context = json.dumps(event_context, ensure_ascii=False)
-        occurred_at = event_context.get("occurred_at", "未知")
-        result = self._extract_one_chunk(body, context, str(occurred_at))
+        occurred_at = str(event_context.get("occurred_at", "未知"))
+        result = self._request_chunk(chunk, context, occurred_at)
         if not result.should_memorize:
             return []
         parsed: list[ExtractedClaim] = []
@@ -189,9 +242,9 @@ class LLMExtractor:
             parsed.append(replace(claim, scope=normalized_scope))
         return [claim for claim in parsed if not _is_low_value_claim(claim)]
 
-    def _extract_one_chunk(
+    def _request_chunk(
         self,
-        chunk: str,
+        chunk: ExtractionChunk,
         context: str,
         occurred_at: str,
     ) -> ExtractionResponseSchema:
@@ -208,7 +261,15 @@ class LLMExtractor:
                         role="user",
                         content=(
                             f"事件发生时间 occurred_at：{occurred_at}\n"
-                            f"事件上下文：{context}\n对话内容：{chunk}{retry_instruction}"
+                            f"事件上下文：{context}\n"
+                            "<context_only>\n"
+                            f"{chunk.context_prefix}\n"
+                            "</context_only>\n"
+                            "context_only 仅用于消解主语，禁止从中提取 claim。\n"
+                            "<extract_from>\n"
+                            f"{chunk.text}\n"
+                            "</extract_from>"
+                            f"{retry_instruction}"
                         ),
                     ),
                 ],
@@ -220,7 +281,7 @@ class LLMExtractor:
             )
             response = self.llm_client.complete(request)
             self.last_usage_tokens += response.usage_total_tokens
-            if response.finish_reason == "length":
+            if response.finish_reason in {"length", "max_tokens"}:
                 raise LLMOutputTruncatedError(
                     f"LLM output truncated: provider={self.llm_client.provider.name}, model={self.model}"
                 )
@@ -229,14 +290,54 @@ class LLMExtractor:
                 compatible = self._parse_legacy_defaults(raw)
                 return ExtractionResponseSchema.model_validate(compatible)
             except (PydanticValidationError, ValueError) as error:
+                if self._looks_like_truncated_json(response.content):
+                    raise LLMOutputTruncatedError(
+                        f"LLM output appears truncated: provider={self.llm_client.provider.name}, model={self.model}"
+                    ) from error
                 schema_errors = self._schema_error_paths(error)
                 if attempt == self.schema_retries:
                     raise LLMSchemaValidationError(
                         "LLM response does not contain valid JSON or match schema: "
                         f"provider={self.llm_client.provider.name}, model={self.model}, "
-                        f"chunk_length={len(chunk)}, errors={schema_errors}"
+                        f"chunk_length={len(chunk.text)}, errors={schema_errors}"
                     ) from error
         raise RuntimeError("unreachable")
+
+    @staticmethod
+    def _looks_like_truncated_json(content: str | dict[str, Any]) -> bool:
+        """识别空响应或括号未闭合的明显 JSON 截断。"""
+        if isinstance(content, dict):
+            return False
+        text = str(content).strip()
+        if not text:
+            return True
+        return (
+            (text.startswith("{") and text.count("{") > text.count("}"))
+            or (text.startswith("[") and text.count("[") > text.count("]"))
+        )
+
+    @staticmethod
+    def _merge_chunk_claims(chunks: list[list[ExtractedClaim]]) -> list[ExtractedClaim]:
+        """按规范化事实字段稳定合并同一次分块提取的结果。"""
+        merged: list[ExtractedClaim] = []
+        seen: set[tuple[str, str, str, str, str]] = set()
+        for claims in chunks:
+            for claim in claims:
+                key = (
+                    unicodedata.normalize("NFKC", claim.subject).strip().casefold(),
+                    unicodedata.normalize("NFKC", claim.predicate).strip().casefold(),
+                    unicodedata.normalize("NFKC", claim.canonical_attribute).strip().casefold(),
+                    unicodedata.normalize("NFKC", str(claim.value)).strip().casefold(),
+                    unicodedata.normalize(
+                        "NFKC",
+                        json.dumps(claim.qualifiers, ensure_ascii=False, sort_keys=True, default=str),
+                    ),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(claim)
+        return merged
 
     @staticmethod
     def _parse_legacy_defaults(payload: dict[str, Any]) -> dict[str, Any]:
