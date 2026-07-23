@@ -88,17 +88,18 @@ class Worker:
         job = self.jobs.lease_job(lease, now)
         if not job:
             return {"status": "idle"}
+        lease_token = job["lease_token"]
         try:
             result = self._dispatch(job)
-            self.jobs.complete_job(job["id"], _now())
+            self.jobs.complete_job(job["id"], _now(), lease_token)
             return {"status": "succeeded", "job_id": job["id"], **result}
         except Exception as error:
-            self.jobs.fail_job(job["id"], str(error), _now())
+            self.jobs.fail_job(job["id"], str(error), _now(), lease_token)
             current = self.connection.execute("SELECT status,attempts FROM jobs WHERE id=?", (job["id"],)).fetchone()
             return {
-                "status": current["status"],
+                "status": current["status"] if current else "unknown",
                 "job_id": job["id"],
-                "attempts": current["attempts"],
+                "attempts": current["attempts"] if current else 0,
                 "error": str(error),
             }
 

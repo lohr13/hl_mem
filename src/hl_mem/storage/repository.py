@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -371,6 +372,7 @@ class JobRepository:
 
     def lease_job(self, leased_until: str, updated_at: str) -> dict[str, Any] | None:
         """Atomically claim the oldest runnable job across worker processes."""
+        lease_token = uuid.uuid4().hex
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             row = self.connection.execute(
@@ -383,25 +385,48 @@ class JobRepository:
                 self.connection.commit()
                 return None
             cursor = self.connection.execute(
-                "UPDATE jobs SET status='running',leased_until=?,updated_at=?,attempts=attempts+1 "
+                "UPDATE jobs SET status='running',leased_until=?,updated_at=?,attempts=attempts+1,lease_token=? "
                 "WHERE id=? AND (status='pending' OR (status='running' AND leased_until<?))",
-                (leased_until, updated_at, row["id"], updated_at),
+                (leased_until, updated_at, lease_token, row["id"], updated_at),
             )
             self.connection.commit()
             if cursor.rowcount != 1:
                 return None
-            return _row(self.connection.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
+            result = _row(self.connection.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
+            if result:
+                result["lease_token"] = lease_token
+            return result
         except Exception:
             self.connection.rollback()
             raise
 
-    def complete_job(self, job_id: str, updated_at: str) -> bool:
-        return self._finish(job_id, "succeeded", updated_at, None)
+    def complete_job(self, job_id: str, updated_at: str, lease_token: str) -> bool:
+        return self._finish(job_id, "succeeded", updated_at, None, lease_token)
 
-    def fail_job(self, job_id: str, error: str, updated_at: str) -> bool:
-        row = self.connection.execute("SELECT attempts,max_attempts FROM jobs WHERE id=?", (job_id,)).fetchone()
-        status = "dead" if row and row["attempts"] >= row["max_attempts"] else "pending"
-        return self._finish(job_id, status, updated_at, error)
+    def fail_job(self, job_id: str, error: str, updated_at: str, lease_token: str) -> bool:
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT attempts,max_attempts FROM jobs WHERE id=? AND lease_token=? AND status='running'",
+                (job_id, lease_token),
+            ).fetchone()
+            if not row:
+                self.connection.commit()
+                return False
+            status = "dead" if row["attempts"] >= row["max_attempts"] else "pending"
+            return self._finish(job_id, status, updated_at, error, lease_token)
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def force_finish_job(self, job_id: str, status: str, updated_at: str, error: str | None = None) -> bool:
+        """管理员强制结束 job，不需要 lease_token。"""
+        cursor = self.connection.execute(
+            "UPDATE jobs SET status=?,updated_at=?,last_error=?,leased_until=NULL,lease_token=NULL WHERE id=?",
+            (status, updated_at, error, job_id),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
 
     def counts(self) -> dict[str, int]:
         counts = {key: 0 for key in ("pending", "running", "failed", "dead")}
@@ -411,10 +436,18 @@ class JobRepository:
                 counts[row["status"]] = row["count"]
         return counts
 
-    def _finish(self, job_id: str, status: str, updated_at: str, error: str | None) -> bool:
+    def _finish(
+        self,
+        job_id: str,
+        status: str,
+        updated_at: str,
+        error: str | None,
+        lease_token: str,
+    ) -> bool:
         cursor = self.connection.execute(
-            "UPDATE jobs SET status=?,updated_at=?,last_error=?,leased_until=NULL WHERE id=?",
-            (status, updated_at, error, job_id),
+            "UPDATE jobs SET status=?,updated_at=?,last_error=?,leased_until=NULL,lease_token=NULL "
+            "WHERE id=? AND lease_token=? AND status='running'",
+            (status, updated_at, error, job_id, lease_token),
         )
         self.connection.commit()
         return cursor.rowcount == 1
