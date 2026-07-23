@@ -10,6 +10,7 @@ from typing import Any
 
 from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import cosine_similarity
+from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
@@ -112,6 +113,19 @@ class ClaimRepository:
             (namespace, subject_entity_id),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def find_active_for_dedup(self, namespace: str, normalized_subject: str) -> list[dict[str, Any]]:
+        """返回 namespace 内实体归一化后匹配的可去重候选。"""
+        rows = self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? "
+            "AND status IN ('active','candidate','disputed')",
+            (namespace,),
+        ).fetchall()
+        return [
+            claim
+            for row in rows
+            if normalize_entity_id((claim := dict(row)).get("subject_entity_id")) == normalized_subject
+        ]
 
     def find_by_conflict_key(self, conflict_key: str) -> list[dict[str, Any]]:
         rows = self.connection.execute(

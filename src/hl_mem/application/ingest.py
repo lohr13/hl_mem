@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
 from hl_mem.recall.attribute_map import is_mutually_exclusive_attribute, validate_canonical_attribute
@@ -162,7 +163,8 @@ class IngestService:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
         claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
-        namespace, subject = event.get("tenant_id", "default"), extracted.subject
+        namespace = event.get("tenant_id", "default")
+        subject = normalize_entity_id(extracted.subject)
         qualifiers = extracted.qualifiers or {}
         canonical_attribute = validate_canonical_attribute(
             extracted.predicate, getattr(extracted, "canonical_attribute", None)
