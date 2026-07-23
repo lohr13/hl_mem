@@ -11,6 +11,8 @@ from typing import Any, AsyncIterator, Iterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 from hl_mem import __version__, components
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService
@@ -72,6 +74,21 @@ def _make_reranker() -> Any:
         return None
 
 
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """根据 Content-Length 拒绝超过配置上限的请求体，并返回 HTTP 413。"""
+
+    def __init__(self, app: Any, max_request_body: int) -> None:
+        super().__init__(app)
+        self.max_request_body = max_request_body
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        """检查请求体声明长度，并继续处理未超限的请求。"""
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > self.max_request_body:
+            return Response(status_code=413, content="Request body too large")
+        return await call_next(request)
+
+
 def create_app(database_path: str | Path | None = None, audit: Any = None) -> FastAPI:
     settings = Settings.from_env()
     database, embedder, reranker = Database(database_path), _make_embedder(), _make_reranker()
@@ -94,6 +111,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     app.state.db, app.state.token_budget, app.state.reranker = database, budget, reranker
     app.state.settings = settings
     app.state.audit = audit
+    app.add_middleware(RequestSizeLimitMiddleware, max_request_body=settings.max_request_body)
 
     @app.exception_handler(NotFoundError)
     async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
