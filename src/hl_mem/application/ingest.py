@@ -12,7 +12,12 @@ from typing import Any
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
 from hl_mem.recall.attribute_map import validate_canonical_attribute
-from hl_mem.recall.conflict import ConflictResolver, compute_conflict_key, compute_legacy_conflict_key
+from hl_mem.recall.conflict import (
+    ConflictResolver,
+    compute_claim_pair_key,
+    compute_conflict_key,
+    compute_legacy_conflict_key,
+)
 from hl_mem.recall.dedup import Deduplicator
 from hl_mem.storage.migrations.fact_hash_v2 import compute_fact_hash_v2
 from hl_mem.storage.repository import ClaimRepository, EvidenceRepository, EventRepository, JobRepository
@@ -215,6 +220,7 @@ class IngestService:
         existing = claims.find_by_conflict_key(claim["conflict_key"])
         superseded_old_id: str | None = None
         resolution: str | None = None
+        current: dict[str, Any] | None = None
         if existing:
             started = time.perf_counter_ns()
             current = existing[0]
@@ -256,9 +262,26 @@ class IngestService:
             claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
         connection.execute("BEGIN IMMEDIATE")
         try:
-            if existing and resolution == "contradicts":
-                claims.update_status(existing[0]["id"], "disputed", commit=False)
+            if current is not None and resolution == "contradicts":
+                claims.update_status(current["id"], "disputed", commit=False)
             claims.insert_claim(claim, commit=False)
+            if current is not None and resolution in {"contradicts", "uncertain"}:
+                connection.execute(
+                    "INSERT OR IGNORE INTO conflict_cases "
+                    "(id,pair_key,left_claim_id,right_claim_id,status,decision,confidence,rationale,created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        new_id(),
+                        compute_claim_pair_key(current["id"], claim["id"]),
+                        current["id"],
+                        claim["id"],
+                        "manual_required",
+                        resolution,
+                        None,
+                        "deterministic_ingest_resolution",
+                        now,
+                    ),
+                )
             if superseded_old_id:
                 claims.supersede_with_inline(
                     superseded_old_id, claim["id"], extracted.value, claim["valid_from"], now, commit=False

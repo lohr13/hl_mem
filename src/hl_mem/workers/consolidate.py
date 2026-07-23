@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
@@ -15,8 +14,9 @@ import httpx
 
 from hl_mem.config import CONSOLIDATE_GRAY_ZONE_MAX, CONSOLIDATE_GRAY_ZONE_MIN
 from hl_mem.core.vector import cosine_similarity
-from hl_mem.storage.repository import ClaimRepository
 from hl_mem.lifecycle import assert_transition
+from hl_mem.recall.conflict import compute_claim_pair_key
+from hl_mem.storage.repository import ClaimRepository
 
 DecisionKind = Literal["contradiction", "compatible", "state_change", "unrelated"]
 
@@ -168,8 +168,7 @@ class ConflictConsolidator:
                 similarity = cosine_similarity(left["embedding_dense"], right["embedding_dense"])
                 if not CONSOLIDATE_GRAY_ZONE_MIN <= similarity < CONSOLIDATE_GRAY_ZONE_MAX:
                     continue
-                ids = sorted((left["id"], right["id"]))
-                pair_key = hashlib.sha256("\0".join(ids).encode()).hexdigest()[:24]
+                pair_key = compute_claim_pair_key(left["id"], right["id"])
                 signature = "|".join(sorted((left.get("embedding_model") or "", right.get("embedding_model") or "")))
                 reviewed = self.connection.execute(
                     "SELECT 1 FROM consolidation_pairs WHERE pair_key=? AND embedding_signature=?",
@@ -305,6 +304,7 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
     ).fetchall()
     repository = ClaimRepository(connection)
     resolved = 0
+    deferred = 0
     for row in rows:
         case = dict(row)
         left = repository.get_claim(case["left_claim_id"])
@@ -314,14 +314,26 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
         authority = {"high": 3, "medium": 2, "low": 1}
         left_score = authority.get(left.get("source_authority", "medium"), 2)
         right_score = authority.get(right.get("source_authority", "medium"), 2)
-        winner_side = "left" if left_score >= right_score else "right"
+        if left_score == right_score:
+            connection.execute(
+                "UPDATE conflict_cases SET status='manual_required' WHERE id=?",
+                (case["id"],),
+            )
+            deferred += 1
+            continue
+        winner_side = "left" if left_score > right_score else "right"
         winner_id = case[f"{winner_side}_claim_id"]
         assert_transition("disputed", "active")
-        connection.execute("UPDATE claims SET status='active' WHERE id=? AND status='disputed'", (winner_id,))
+        cursor = connection.execute(
+            "UPDATE claims SET status='active' WHERE id=? AND status='disputed'",
+            (winner_id,),
+        )
+        if cursor.rowcount != 1:
+            continue
         connection.execute(
             "UPDATE conflict_cases SET status='resolved',resolved_at=?,decision=? WHERE id=?",
             (now, f"keep_{winner_side}", case["id"]),
         )
         resolved += 1
     connection.commit()
-    return {"auto_resolved": resolved}
+    return {"auto_resolved": resolved, "manual_required": deferred}

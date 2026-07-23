@@ -134,6 +134,14 @@ def normalize_canonical_attribute(attribute: str) -> str:
     return ATTRIBUTE_ALIASES.get(normalized, normalized)
 
 
+def is_non_exclusive_attribute(attribute: str | None) -> bool:
+    """判断 canonical attribute 是否为不能据此推断冲突的共享兜底槽。"""
+    if not attribute:
+        return False
+    normalized = normalize_canonical_attribute(attribute)
+    return normalized.endswith(".other") or normalized in {"memory.explicit", "custom.unknown"}
+
+
 def validate_canonical_attribute(predicate: str, attribute: str | None) -> str:
     """校验属性是否属于 predicate 的允许集合，否则确定性回退。"""
     normalized_predicate = normalize_predicate(predicate)
