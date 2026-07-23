@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,14 +36,88 @@ def import_database(database_path: str | Path, input_path: str | Path) -> int:
     return imported
 
 
+def list_conflicts(database_path: str | Path) -> list[dict[str, Any]]:
+    """列出等待人工审核的冲突案例。"""
+    database = Database(database_path)
+    try:
+        rows = database.open().execute(
+            "SELECT * FROM conflict_cases WHERE status IN ('pending','manual_required') "
+            "ORDER BY created_at,id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        database.close()
+
+
+def resolve_conflict(database_path: str | Path, case_id: str, decision: str) -> dict[str, Any]:
+    """按人工决策收敛指定冲突案例。"""
+    database = Database(database_path)
+    connection = database.open()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT * FROM conflict_cases WHERE id=? AND status IN ('pending','manual_required')",
+            (case_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"open conflict case not found: {case_id}")
+        case = dict(row)
+        if decision in {"keep_left", "keep_right"}:
+            winner_side = decision.removeprefix("keep_")
+            winner_id = case[f"{winner_side}_claim_id"]
+            connection.execute(
+                "UPDATE claims SET status='active' WHERE id=? AND status IN ('candidate','disputed')",
+                (winner_id,),
+            )
+            status = "resolved"
+        elif decision == "coexist":
+            connection.execute(
+                "UPDATE claims SET status='active' WHERE id IN (?,?) AND status IN ('candidate','disputed')",
+                (case["left_claim_id"], case["right_claim_id"]),
+            )
+            status = "resolved"
+        else:
+            status = "rejected"
+        resolved_at = datetime.now(timezone.utc).isoformat()
+        connection.execute(
+            "UPDATE conflict_cases SET status=?,decision=?,resolved_at=? WHERE id=?",
+            (status, decision, resolved_at, case_id),
+        )
+        connection.commit()
+        return {"id": case_id, "status": status, "decision": decision, "resolved_at": resolved_at}
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        database.close()
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """运行导入或导出管理命令。"""
     parser = argparse.ArgumentParser(prog="hl-mem")
     parser.add_argument("--version", action="version", version=f"hl_mem {__version__}")
-    parser.add_argument("command", choices=("export", "import"))
-    parser.add_argument("path", type=Path)
     parser.add_argument("--db", type=Path, default=default_database_path())
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("export", "import"):
+        command = commands.add_parser(name)
+        command.add_argument("path", type=Path)
+        command.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    conflicts = commands.add_parser("conflicts")
+    conflicts.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    conflict_commands = conflicts.add_subparsers(dest="conflict_command", required=True)
+    conflict_commands.add_parser("list")
+    resolve = conflict_commands.add_parser("resolve")
+    resolve.add_argument("case_id")
+    resolve.add_argument("decision", choices=("keep_left", "keep_right", "coexist", "reject"))
     args = parser.parse_args(argv)
+    if args.command == "conflicts":
+        result: Any = (
+            list_conflicts(args.db)
+            if args.conflict_command == "list"
+            else resolve_conflict(args.db, args.case_id, args.decision)
+        )
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return
     count = export_database(args.db, args.path) if args.command == "export" else import_database(args.db, args.path)
     print(json.dumps({"processed": count}))
 

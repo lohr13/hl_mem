@@ -228,6 +228,22 @@ class ConflictConsolidator:
                         self.connection.rollback()
                         stats["cas_skipped"] += 1
                         continue
+                    self.connection.execute(
+                        "INSERT OR IGNORE INTO conflict_cases "
+                        "(id,pair_key,left_claim_id,right_claim_id,status,decision,confidence,rationale,created_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?)",
+                        (
+                            uuid.uuid4().hex,
+                            pair.pair_key,
+                            pair.left["id"],
+                            pair.right["id"],
+                            "manual_required" if decision.confidence < 0.9 else "auto_resolved",
+                            None,
+                            decision.confidence,
+                            decision.rationale,
+                            datetime.now(timezone.utc).isoformat(),
+                        ),
+                    )
                 except Exception:
                     self.connection.rollback()
                     raise
@@ -280,3 +296,32 @@ class ConflictConsolidator:
             ),
         )
         self.connection.commit()
+
+
+def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
+    """自动解决低风险冲突，恢复来源权威性更高的 Claim。"""
+    rows = connection.execute(
+        "SELECT * FROM conflict_cases WHERE status='auto_resolved' AND resolved_at IS NULL"
+    ).fetchall()
+    repository = ClaimRepository(connection)
+    resolved = 0
+    for row in rows:
+        case = dict(row)
+        left = repository.get_claim(case["left_claim_id"])
+        right = repository.get_claim(case["right_claim_id"])
+        if not left or not right or left["status"] != "disputed" or right["status"] != "disputed":
+            continue
+        authority = {"high": 3, "medium": 2, "low": 1}
+        left_score = authority.get(left.get("source_authority", "medium"), 2)
+        right_score = authority.get(right.get("source_authority", "medium"), 2)
+        winner_side = "left" if left_score >= right_score else "right"
+        winner_id = case[f"{winner_side}_claim_id"]
+        assert_transition("disputed", "active")
+        connection.execute("UPDATE claims SET status='active' WHERE id=? AND status='disputed'", (winner_id,))
+        connection.execute(
+            "UPDATE conflict_cases SET status='resolved',resolved_at=?,decision=? WHERE id=?",
+            (now, f"keep_{winner_side}", case["id"]),
+        )
+        resolved += 1
+    connection.commit()
+    return {"auto_resolved": resolved}

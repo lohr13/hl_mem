@@ -38,6 +38,8 @@ class RecallInput(BaseModel):
     session_id: str | None = None
     intent: RecallIntent | None = None
     known_as_of: str | None = None
+    token_budget: int | None = Field(default=None, ge=1)
+    context_mode: str | None = Field(default=None, pattern="^(packed)$")
 
 
 class MemoryInput(BaseModel):
