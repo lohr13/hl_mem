@@ -11,6 +11,12 @@ from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.recall.reranker import FakeReranker, Reranker
 
+_EXTRACTOR_REGISTRY: dict[str, str] = {
+    "message": "llm",
+    "explicit_memory": "explicit",
+    "tool_result": "llm",
+}
+
 
 def make_embedder(config: dict[str, Any] | None = None) -> Any:
     """从环境变量与可选配置创建向量化组件。"""
@@ -89,3 +95,11 @@ def make_extractor(config: dict[str, Any] | None = None) -> Any:
         os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
         os.getenv("LLM_MODEL", "qwen3.7-plus"),
     )
+
+
+def make_extractor_for_type(event_type: str, config: dict[str, Any] | None = None) -> Any:
+    """根据事件类型选择提取器；显式记忆返回 worker 可识别的特殊标记。"""
+    extractor_name = _EXTRACTOR_REGISTRY.get(event_type, "llm")
+    if extractor_name == "explicit":
+        return "explicit"
+    return make_extractor(config)

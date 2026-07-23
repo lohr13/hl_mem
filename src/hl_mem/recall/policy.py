@@ -33,6 +33,9 @@ def route_query(query: str, reference_time: str | None = None) -> QueryRoute:
 
 def route_recall_intent(query: str, as_of: str | None, now: str | None = None) -> RecallIntent:
     """根据显式历史措辞或过去的 as_of 推断召回意图。"""
+    lowered = query.casefold()
+    if any(marker in lowered for marker in ("偏好", "喜欢", "喜好", "习惯", "preference", "prefer", "favorite")):
+        return RecallIntent.PREFERENCE
     if any(marker in query for marker in ("当时", "以前", "历史", "曾经", "截至", "as_of")):
         return RecallIntent.HISTORICAL
     if as_of is not None:

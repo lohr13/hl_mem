@@ -31,6 +31,7 @@ from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.reranker import FakeReranker, Reranker
+from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import JobRepository
 
@@ -72,6 +73,7 @@ def _make_reranker() -> Any:
 
 
 def create_app(database_path: str | Path | None = None, audit: Any = None) -> FastAPI:
+    settings = Settings.from_env()
     database, embedder, reranker = Database(database_path), _make_embedder(), _make_reranker()
     budget = TokenBudget(
         int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")), Path(database.path).with_suffix(".budget.db")
@@ -90,6 +92,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
 
     app = FastAPI(title="HL-Mem", lifespan=lifespan)
     app.state.db, app.state.token_budget, app.state.reranker = database, budget, reranker
+    app.state.settings = settings
     app.state.audit = audit
 
     @app.exception_handler(NotFoundError)
@@ -112,13 +115,14 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             yield connection
 
     @app.get("/healthz")
-    def healthz(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, str]:
+    def healthz(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
         connection.execute("SELECT 1").fetchone()
         return {
             "status": "ok",
             "version": __version__,
             "embedder": "fake" if isinstance(embedder, FakeEmbedder) else "real",
             "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
+            "settings": settings.snapshot(),
         }
 
     @app.post("/v1/events")
