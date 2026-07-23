@@ -7,7 +7,13 @@ from typing import Any
 
 import httpx
 
+from hl_mem.config import (
+    EXTRACTION_CHUNK_OVERLAP_TURNS,
+    EXTRACTION_CHUNK_TARGET_CHARS,
+    EXTRACTION_MAX_SPLIT_DEPTH,
+)
 from hl_mem.errors import ConfigurationError
+from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.llm_extractor import LLMExtractor
@@ -143,6 +149,35 @@ def make_extractor(config: dict[str, Any] | None = None) -> Any:
         llm_client=llm_client,
         schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
         structured_mode=structured_mode,
+        chunking_policy=ChunkingPolicy(
+            target_chars=int(
+                settings.get(
+                    "extraction_chunk_target_chars",
+                    os.getenv(
+                        "HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS",
+                        str(EXTRACTION_CHUNK_TARGET_CHARS),
+                    ),
+                )
+            ),
+            overlap_turns=int(
+                settings.get(
+                    "extraction_chunk_overlap_turns",
+                    os.getenv(
+                        "HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS",
+                        str(EXTRACTION_CHUNK_OVERLAP_TURNS),
+                    ),
+                )
+            ),
+            max_split_depth=int(
+                settings.get(
+                    "extraction_max_split_depth",
+                    os.getenv(
+                        "HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH",
+                        str(EXTRACTION_MAX_SPLIT_DEPTH),
+                    ),
+                )
+            ),
+        ),
     )
 
 

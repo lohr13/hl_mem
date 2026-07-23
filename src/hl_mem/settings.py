@@ -25,6 +25,9 @@ class Settings:
     llm_structured_mode: str = "auto"
     llm_max_attempts: int = 3
     llm_schema_retries: int = 2
+    extraction_chunk_target_chars: int = 12000
+    extraction_chunk_overlap_turns: int = 2
+    extraction_max_split_depth: int = 3
     worker_poll_interval: float = 2.0
     worker_maintenance_interval: float = 600.0
     max_request_body: int = 2 * 1024 * 1024
@@ -46,6 +49,9 @@ class Settings:
             llm_structured_mode=os.getenv("HL_MEM_LLM_STRUCTURED_MODE", "auto").lower(),
             llm_max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
             llm_schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
+            extraction_chunk_target_chars=int(os.getenv("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS", "12000")),
+            extraction_chunk_overlap_turns=int(os.getenv("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS", "2")),
+            extraction_max_split_depth=int(os.getenv("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH", "3")),
             worker_poll_interval=float(os.getenv("HL_MEM_WORKER_POLL_INTERVAL", "2.0")),
             worker_maintenance_interval=float(os.getenv("HL_MEM_WORKER_MAINTENANCE_INTERVAL", "600")),
             max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
@@ -64,6 +70,12 @@ class Settings:
             raise ConfigurationError("LLM_MAX_ATTEMPTS must be at least 1")
         if self.llm_schema_retries < 0:
             raise ConfigurationError("HL_MEM_LLM_SCHEMA_RETRIES must be non-negative")
+        if self.extraction_chunk_target_chars < 1:
+            raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS must be positive")
+        if self.extraction_chunk_overlap_turns < 0:
+            raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS must be non-negative")
+        if self.extraction_max_split_depth < 0:
+            raise ConfigurationError("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH must be non-negative")
         if self.environment != "production":
             return
         if self.embedder_mode != "real":
@@ -85,4 +97,7 @@ class Settings:
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,
+            "extraction_chunk_target_chars": self.extraction_chunk_target_chars,
+            "extraction_chunk_overlap_turns": self.extraction_chunk_overlap_turns,
+            "extraction_max_split_depth": self.extraction_max_split_depth,
         }
