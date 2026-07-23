@@ -113,7 +113,7 @@ class RecallService:
             data = item["data"]
             text = str(data.get("text") or data.get("body") or data.get("procedure") or "")
             cost = max(1, (len(text) + 1) // 2)
-            if packed and used + cost > token_budget:
+            if used + cost > token_budget:
                 truncated = True
                 continue
             packed.append(item)

@@ -22,6 +22,7 @@ class Settings:
     llm_model: str = "qwen3.7-plus"
     worker_poll_interval: float = 2.0
     worker_maintenance_interval: float = 600.0
+    max_request_body: int = 2 * 1024 * 1024
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -38,6 +39,7 @@ class Settings:
             llm_model=os.getenv("LLM_MODEL", "qwen3.7-plus"),
             worker_poll_interval=float(os.getenv("HL_MEM_WORKER_POLL_INTERVAL", "2.0")),
             worker_maintenance_interval=float(os.getenv("HL_MEM_WORKER_MAINTENANCE_INTERVAL", "600")),
+            max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
         )
         settings._validate()
         return settings
