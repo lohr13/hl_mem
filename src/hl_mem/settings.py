@@ -20,6 +20,7 @@ class Settings:
     embedding_dim: int = 2048
     embedding_model: str = "text-embedding-v4"
     reranker_mode: str = "off"
+    relation_expansion_mode: str = "off"
     llm_model: str = "qwen3.7-plus"
     llm_provider: str = "dashscope"
     llm_structured_mode: str = "auto"
@@ -44,6 +45,7 @@ class Settings:
             embedding_dim=int(os.getenv("EMBEDDING_DIM", "2048")),
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
             reranker_mode=os.getenv("HL_MEM_RERANKER", "real" if production else "off").lower(),
+            relation_expansion_mode=os.getenv("HL_MEM_RELATION_EXPANSION", "off").lower(),
             llm_model=os.getenv("LLM_MODEL", "qwen3.7-plus"),
             llm_provider=os.getenv("HL_MEM_LLM_PROVIDER", "dashscope").lower(),
             llm_structured_mode=os.getenv("HL_MEM_LLM_STRUCTURED_MODE", "auto").lower(),
@@ -66,6 +68,8 @@ class Settings:
             raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
         if self.llm_structured_mode not in {"auto", "json_object", "json_schema"}:
             raise ConfigurationError("HL_MEM_LLM_STRUCTURED_MODE must be 'auto', 'json_object', or 'json_schema'")
+        if self.relation_expansion_mode not in {"off", "on"}:
+            raise ConfigurationError("HL_MEM_RELATION_EXPANSION must be 'off' or 'on'")
         if self.llm_max_attempts < 1:
             raise ConfigurationError("LLM_MAX_ATTEMPTS must be at least 1")
         if self.llm_schema_retries < 0:
@@ -94,6 +98,7 @@ class Settings:
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
             "reranker_mode": self.reranker_mode,
+            "relation_expansion_mode": self.relation_expansion_mode,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,
