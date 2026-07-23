@@ -3,14 +3,19 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
+import time  # 兼容旧测试与外部 monkeypatch 路径
 import unicodedata
 from dataclasses import replace
 from typing import Any
 
 import httpx
+from pydantic import ValidationError as PydanticValidationError
 
 from hl_mem.domain.content import parse_content
+from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
+from hl_mem.llm.client import LLMClient
+from hl_mem.llm.providers import DashScopeProvider
+from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
 from hl_mem.observability.audit import current_audit
 from hl_mem.recall.attribute_map import (
     MUTUALLY_EXCLUSIVE_SLOTS,
@@ -20,6 +25,7 @@ from hl_mem.recall.attribute_map import (
 )
 
 from .extractors import ExtractedClaim
+from .schemas import ExtractionResponseSchema, extraction_response_json_schema
 
 SYSTEM_PROMPT = """你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。只提取事实，不判断是否与已有记忆冲突。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、canonical_attribute、value、qualifiers、confidence、volatility、reason。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
 value 必须保持用户使用的原始语言：中文原文输出中文值，英文原文输出英文值，不要翻译。保留原文中的精确数字和日期，不得模糊化或改写。
@@ -107,15 +113,9 @@ def _is_low_value_claim(claim: ExtractedClaim) -> bool:
     value = unicodedata.normalize("NFKC", str(claim.value)).strip()
     if not value:
         return True
-    if (
-        NUMERIC_OR_VERSION_RE.fullmatch(value)
-        and claim.canonical_attribute not in MUTUALLY_EXCLUSIVE_SLOTS
-    ):
+    if NUMERIC_OR_VERSION_RE.fullmatch(value) and claim.canonical_attribute not in MUTUALLY_EXCLUSIVE_SLOTS:
         return True
-    return (
-        claim.canonical_attribute == "state.service_health"
-        and value.casefold() in LOW_VALUE_HEALTH_STATES
-    )
+    return claim.canonical_attribute == "state.service_health" and value.casefold() in LOW_VALUE_HEALTH_STATES
 
 
 class LLMExtractor:
@@ -126,12 +126,31 @@ class LLMExtractor:
         model: str,
         timeout: float | None = None,
         client: httpx.Client | None = None,
+        *,
+        llm_client: LLMClient | None = None,
+        schema_retries: int | None = None,
+        structured_mode: StructuredOutputMode = StructuredOutputMode.JSON_SCHEMA,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout if timeout is not None else float(os.getenv("LLM_TIMEOUT", "90"))
         self._client = client
+        self.schema_retries = (
+            schema_retries if schema_retries is not None else int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2"))
+        )
+        if self.schema_retries < 0:
+            raise ValueError("schema_retries must be non-negative")
+        self.structured_mode = structured_mode
+        self.llm_client = llm_client or LLMClient(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            provider=DashScopeProvider(),
+            timeout=self.timeout,  # type: ignore[arg-type]
+            max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
+            client=client,
+        )
         self.last_usage_tokens = 0
 
     def extract(
@@ -142,28 +161,12 @@ class LLMExtractor:
         event_context = event_context or {}
         context = json.dumps(event_context, ensure_ascii=False)
         occurred_at = event_context.get("occurred_at", "未知")
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"事件发生时间 occurred_at：{occurred_at}\n事件上下文：{context}\n对话内容：{body}"},
-            ],
-            "response_format": {"type": "json_object"},
-        }
-        response = self._post(payload)
-        self.last_usage_tokens = int(response.get("usage", {}).get("total_tokens", 0))
-        raw = response["choices"][0]["message"]["content"]
-        result = self._parse_json(raw)
-        if not result.get("should_memorize", True):
+        result = self._extract_one_chunk(body, context, str(occurred_at))
+        if not result.should_memorize:
             return []
-        claims = result.get("claims", [])
-        if not isinstance(claims, list):
-            raise ValueError("LLM response claims must be a list")
         parsed: list[ExtractedClaim] = []
-        for item in claims:
-            if not isinstance(item, dict):
-                continue
-            claim = self._claim(item)
+        for item in result.claims:
+            claim = self._claim(item.model_dump())
             normalized_scope, reason_code = normalize_scope(
                 claim.scope,
                 claim.predicate,
@@ -186,21 +189,100 @@ class LLMExtractor:
             parsed.append(replace(claim, scope=normalized_scope))
         return [claim for claim in parsed if not _is_low_value_claim(claim)]
 
-    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        for attempt in range(3):
-            try:
-                post = self._client.post if self._client is not None else httpx.post
-                response = post(
-                    f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=self.timeout
+    def _extract_one_chunk(
+        self,
+        chunk: str,
+        context: str,
+        occurred_at: str,
+    ) -> ExtractionResponseSchema:
+        """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
+        schema_errors: list[str] = []
+        for attempt in range(self.schema_retries + 1):
+            retry_instruction = ""
+            if schema_errors:
+                retry_instruction = "\n上一次输出不符合 schema。只修正这些错误路径/类型：" + ", ".join(schema_errors)
+            request = LLMRequest(
+                messages=[
+                    LLMMessage(role="system", content=SYSTEM_PROMPT),
+                    LLMMessage(
+                        role="user",
+                        content=(
+                            f"事件发生时间 occurred_at：{occurred_at}\n"
+                            f"事件上下文：{context}\n对话内容：{chunk}{retry_instruction}"
+                        ),
+                    ),
+                ],
+                structured_output=StructuredOutputSpec(
+                    name="extraction_response",
+                    schema=extraction_response_json_schema(),
+                    preferred_mode=self.structured_mode,
+                ),
+            )
+            response = self.llm_client.complete(request)
+            self.last_usage_tokens += response.usage_total_tokens
+            if response.finish_reason == "length":
+                raise LLMOutputTruncatedError(
+                    f"LLM output truncated: provider={self.llm_client.provider.name}, model={self.model}"
                 )
-                response.raise_for_status()
-                return response.json()
-            except (httpx.HTTPError, ValueError):
-                if attempt == 2:
-                    raise
-                time.sleep(2**attempt)
+            try:
+                raw = self._parse_json(response.content)
+                compatible = self._parse_legacy_defaults(raw)
+                return ExtractionResponseSchema.model_validate(compatible)
+            except (PydanticValidationError, ValueError) as error:
+                schema_errors = self._schema_error_paths(error)
+                if attempt == self.schema_retries:
+                    raise LLMSchemaValidationError(
+                        "LLM response does not contain valid JSON or match schema: "
+                        f"provider={self.llm_client.provider.name}, model={self.model}, "
+                        f"chunk_length={len(chunk)}, errors={schema_errors}"
+                    ) from error
         raise RuntimeError("unreachable")
+
+    @staticmethod
+    def _parse_legacy_defaults(payload: dict[str, Any]) -> dict[str, Any]:
+        """迁移期仅补齐旧模型响应中与历史领域默认值一致的字段。"""
+        compatible = dict(payload)
+        claims = compatible.get("claims")
+        if not isinstance(claims, list):
+            return compatible
+        normalized_claims: list[Any] = []
+        for item in claims:
+            if not isinstance(item, dict):
+                normalized_claims.append(item)
+                continue
+            claim = dict(item)
+            defaults: dict[str, Any] = {
+                "subject": "用户",
+                "predicate": "事实",
+                "canonical_attribute": "fact.other",
+                "value": "",
+                "qualifiers": {},
+                "confidence": 0.5,
+                "volatility": "stable",
+                "reason": "",
+                "scope": "permanent",
+                "importance": 0.5,
+            }
+            missing = [key for key in defaults if key not in claim]
+            for key in missing:
+                claim[key] = defaults[key]
+            if missing:
+                current_audit().emit(
+                    "extract",
+                    "legacy_schema_defaults",
+                    "applied",
+                    detail={"fields": missing},
+                )
+            normalized_claims.append(claim)
+        compatible["claims"] = normalized_claims
+        return compatible
+
+    @staticmethod
+    def _schema_error_paths(error: Exception) -> list[str]:
+        """提取可安全回传给模型的 schema 错误路径与类型。"""
+        if isinstance(error, PydanticValidationError):
+            return [f"{'.'.join(str(part) for part in item['loc'])}:{item['type']}" for item in error.errors()]
+        return [f"response:{type(error).__name__}"]
 
     @staticmethod
     def _parse_json(raw: Any) -> dict[str, Any]:
@@ -250,10 +332,14 @@ class LLMExtractor:
         except (TypeError, ValueError):
             importance = 0.5
         return ExtractedClaim(
-            predicate=predicate, value=value,
+            predicate=predicate,
+            value=value,
             confidence=confidence,
             volatility=volatility if volatility in {"stable", "ephemeral"} else "stable",
-            subject=subject, qualifiers=qualifiers,
-            reason=str(item.get("reason", "")), scope=scope, importance=importance,
+            subject=subject,
+            qualifiers=qualifiers,
+            reason=str(item.get("reason", "")),
+            scope=scope,
+            importance=importance,
             canonical_attribute=canonical_attribute,
         )

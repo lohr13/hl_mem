@@ -21,6 +21,10 @@ class Settings:
     embedding_model: str = "text-embedding-v4"
     reranker_mode: str = "off"
     llm_model: str = "qwen3.7-plus"
+    llm_provider: str = "dashscope"
+    llm_structured_mode: str = "auto"
+    llm_max_attempts: int = 3
+    llm_schema_retries: int = 2
     worker_poll_interval: float = 2.0
     worker_maintenance_interval: float = 600.0
     max_request_body: int = 2 * 1024 * 1024
@@ -38,6 +42,10 @@ class Settings:
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
             reranker_mode=os.getenv("HL_MEM_RERANKER", "real" if production else "off").lower(),
             llm_model=os.getenv("LLM_MODEL", "qwen3.7-plus"),
+            llm_provider=os.getenv("HL_MEM_LLM_PROVIDER", "dashscope").lower(),
+            llm_structured_mode=os.getenv("HL_MEM_LLM_STRUCTURED_MODE", "auto").lower(),
+            llm_max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
+            llm_schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
             worker_poll_interval=float(os.getenv("HL_MEM_WORKER_POLL_INTERVAL", "2.0")),
             worker_maintenance_interval=float(os.getenv("HL_MEM_WORKER_MAINTENANCE_INTERVAL", "600")),
             max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
@@ -48,6 +56,14 @@ class Settings:
 
     def _validate(self) -> None:
         """校验生产环境所需的安全配置组合。"""
+        if self.llm_provider not in {"dashscope", "zhipu", "openai_compatible"}:
+            raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
+        if self.llm_structured_mode not in {"auto", "json_object", "json_schema"}:
+            raise ConfigurationError("HL_MEM_LLM_STRUCTURED_MODE must be 'auto', 'json_object', or 'json_schema'")
+        if self.llm_max_attempts < 1:
+            raise ConfigurationError("LLM_MAX_ATTEMPTS must be at least 1")
+        if self.llm_schema_retries < 0:
+            raise ConfigurationError("HL_MEM_LLM_SCHEMA_RETRIES must be non-negative")
         if self.environment != "production":
             return
         if self.embedder_mode != "real":
@@ -67,4 +83,6 @@ class Settings:
             "embedding_dim": self.embedding_dim,
             "reranker_mode": self.reranker_mode,
             "llm_model": self.llm_model,
+            "llm_provider": self.llm_provider,
+            "llm_structured_mode": self.llm_structured_mode,
         }
