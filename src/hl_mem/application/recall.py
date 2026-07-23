@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.application.ingest import new_id
-from hl_mem.config import RECALL_DEFAULT_LIMIT
+from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
 from hl_mem.recall.policy import RecallIntent, route_recall_intent
 from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
+from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.storage.repository import ClaimRepository, EvidenceRepository
 
 
@@ -44,10 +47,27 @@ class RecallService:
         token_budget: int | None = None,
         context_mode: str | None = None,
         namespace: str = "default",
+        debug: bool = False,
     ) -> dict[str, Any]:
         """执行混合召回并返回 claim、策略、证据及查询标识。"""
+        total_started = time.perf_counter_ns()
         query_id = query_id or new_id()
-        selected_intent = intent or route_recall_intent(query, as_of)
+        selected_intent = RecallIntent(intent or route_recall_intent(query, as_of))
+        tracer = (
+            SearchTracer(
+                SearchTrace(
+                    query_id=query_id,
+                    query_hash=hashlib.sha256(query.encode()).hexdigest(),
+                    intent=selected_intent.value,
+                    limit=limit,
+                    candidate_limit=min(RECALL_VECTOR_SCAN_LIMIT, max(limit * 5, 50)),
+                    candidates={},
+                    phases=SearchPhaseMetrics(),
+                )
+            )
+            if debug
+            else None
+        )
         claims = hybrid_claims(
             ClaimRepository(self.connection),
             query,
@@ -58,10 +78,14 @@ class RecallService:
             intent=selected_intent,
             known_as_of=known_as_of,
             namespace=namespace,
+            tracer=tracer,
         )
         self._record_access(claims)
         self._record_feedback(claims, query_id)
+        assembly_started = time.perf_counter_ns()
         results = self._assemble_results(claims, namespace)
+        if tracer is not None:
+            tracer.trace.phases.assembly_us = (time.perf_counter_ns() - assembly_started) // 1000
         observations = self._assemble_observations([claim["id"] for claim in claims])
         policies = matching_policies(
             ExperienceService(self.connection).list_policies("active", namespace=namespace),
@@ -76,6 +100,9 @@ class RecallService:
         }
         if context_mode == "packed":
             response["context"] = self._assemble_context(results, observations, policies, token_budget or 2000)
+        if tracer is not None:
+            tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
+            response["search_trace"] = tracer.to_dict()
         return response
 
     def _assemble_observations(self, claim_ids: list[str]) -> list[dict[str, Any]]:

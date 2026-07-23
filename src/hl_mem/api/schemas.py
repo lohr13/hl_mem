@@ -41,6 +41,7 @@ class RecallInput(BaseModel):
     token_budget: int | None = Field(default=None, ge=1)
     context_mode: str | None = Field(default=None, pattern="^(packed)$")
     namespace: str = Field(default="default", max_length=100)
+    debug: bool = False
 
 
 class MemoryInput(BaseModel):

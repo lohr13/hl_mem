@@ -66,6 +66,7 @@ class McpMemoryServer:
             arguments.get("known_as_of"),
             arguments.get("query_id"),
             namespace=str(arguments.get("namespace", "default")),
+            debug=bool(arguments.get("debug", False)),
         )
 
     @staticmethod
