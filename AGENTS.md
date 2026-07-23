@@ -89,12 +89,12 @@ src/hl_mem/
 .venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short
 ```
 
-当前：180 测试通过。
+当前：220 测试通过。
 
 ## 关键设计决策
 
 ### 写入管线
-- fact_hash v2（JSON 数组有边界哈希）→ conflict_key（canonical attribute slot）→ semantic dedup（cosine > 0.85）
+- fact_hash v2（JSON 数组有边界哈希）→ conflict_key（canonical attribute slot）→ semantic dedup（cosine > 0.82, best-match）
 - 冲突判定：确定性规则优先（ConflictResolver），灰区走 LLM 四分类（ConflictConsolidator）
 - **事务原子化**：整个写入流程（update_status + insert_claim + supersede + evidence_link）在单一 BEGIN IMMEDIATE 中
 
