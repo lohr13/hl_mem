@@ -51,11 +51,19 @@ class ConflictJudge(Protocol):
 class LLMConflictJudge:
     """使用兼容 OpenAI 的 JSON 接口判定语义冲突。"""
 
-    def __init__(self, api_key: str, base_url: str, model: str, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        timeout: float | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout if timeout is not None else float(os.getenv("LLM_TIMEOUT", "90"))
+        self._client = client
 
     def judge(self, left: dict[str, Any], right: dict[str, Any]) -> ConsolidationDecision:
         """以严格 JSON 四分类判定 claim 对，失败最多重试三次。"""
@@ -85,7 +93,8 @@ class LLMConflictJudge:
         }
         for attempt in range(3):
             try:
-                response = httpx.post(
+                post = self._client.post if self._client is not None else httpx.post
+                response = post(
                     f"{self.base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}"},
                     json=payload,

@@ -18,11 +18,17 @@ _EXTRACTOR_REGISTRY: dict[str, str] = {
 }
 
 
+def _allow_fake_fallback() -> bool:
+    """返回是否允许显式真实组件在缺少密钥时降级。"""
+    return os.getenv("HL_MEM_ALLOW_FAKE_FALLBACK", "").lower() == "true"
+
+
 def make_embedder(config: dict[str, Any] | None = None) -> Any:
     """从环境变量与可选配置创建向量化组件。"""
     settings = config or {}
     dim = int(settings.get("embedding_dim", os.getenv("EMBEDDING_DIM", "2048")))
     production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
+    explicit = os.getenv("HL_MEM_EMBEDDER") is not None
     mode = str(settings.get("embedder_name", os.getenv("HL_MEM_EMBEDDER", "real" if production else "fake"))).lower()
     if production and mode != "real":
         raise ConfigurationError("HL_MEM_EMBEDDER must be 'real' in production")
@@ -34,6 +40,8 @@ def make_embedder(config: dict[str, Any] | None = None) -> Any:
     if not api_key:
         if production:
             raise ConfigurationError("EMBEDDING_API_KEY is required in production")
+        if explicit and not _allow_fake_fallback():
+            raise ConfigurationError("HL_MEM_EMBEDDER=real but EMBEDDING_API_KEY is missing")
         return FakeEmbedder(dim)
     return Embedder(
         api_key,
@@ -50,6 +58,7 @@ def make_reranker(config: dict[str, Any] | None = None) -> Any | None:
     """从环境变量与可选配置创建重排组件。"""
     settings = config or {}
     production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
+    explicit = os.getenv("HL_MEM_RERANKER") is not None
     mode = str(settings.get("reranker_name", os.getenv("HL_MEM_RERANKER", "real" if production else "off"))).lower()
     if production and mode not in {"on", "real"}:
         raise ConfigurationError("HL_MEM_RERANKER must be enabled in production")
@@ -63,6 +72,10 @@ def make_reranker(config: dict[str, Any] | None = None) -> Any | None:
     if not api_key:
         if production:
             raise ConfigurationError("RERANKER_API_KEY or EMBEDDING_API_KEY is required in production")
+        if explicit and not _allow_fake_fallback():
+            raise ConfigurationError(
+                f"HL_MEM_RERANKER={mode} but RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
+            )
         return None
     try:
         return Reranker(
@@ -80,6 +93,7 @@ def make_extractor(config: dict[str, Any] | None = None) -> Any:
     """从环境变量与可选配置创建 LLM 提取组件。"""
     settings = config or {}
     production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
+    explicit = os.getenv("HL_MEM_EXTRACTOR") is not None
     extractor_name = str(settings.get("extractor_name", os.getenv("HL_MEM_EXTRACTOR", "fake"))).lower()
     if production and extractor_name == "fake":
         raise ConfigurationError("HL_MEM_EXTRACTOR must not be 'fake' in production")
@@ -89,6 +103,8 @@ def make_extractor(config: dict[str, Any] | None = None) -> Any:
     if not api_key:
         if production or settings.get("require_real"):
             raise ConfigurationError("LLM_API_KEY is required in production")
+        if explicit and not _allow_fake_fallback():
+            raise ConfigurationError(f"HL_MEM_EXTRACTOR={extractor_name} but LLM_API_KEY is missing")
         return FakeExtractor()
     return LLMExtractor(
         api_key,

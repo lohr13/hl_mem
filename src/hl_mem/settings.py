@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
 from hl_mem.errors import ConfigurationError
 
 
@@ -42,6 +43,7 @@ class Settings:
             max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
         )
         settings._validate()
+        set_active_aliases(load_entity_aliases())
         return settings
 
     def _validate(self) -> None:

@@ -6,7 +6,6 @@ import json
 import os
 import re
 import unicodedata
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -23,23 +22,15 @@ DEFAULT_ENTITY_ALIASES: dict[str, str] = {
     "cleanup_data.py": "scripts/cleanup_data.py",
 }
 
+_active_aliases: dict[str, str] | None = None
+
 
 def _normalize_text(value: Any, *, casefold: bool) -> str:
     normalized = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(value)).strip())
     return normalized.casefold() if casefold else normalized
 
 
-@lru_cache(maxsize=None)
-def _load_aliases(path_value: str | None) -> dict[str, str]:
-    if path_value is None:
-        raw_aliases: Any = DEFAULT_ENTITY_ALIASES
-    else:
-        path = Path(path_value)
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                raw_aliases = json.load(handle)
-        except (OSError, json.JSONDecodeError) as error:
-            raise ValueError(f"failed to load entity aliases from {path}: {error}") from error
+def _normalize_aliases(raw_aliases: Any) -> dict[str, str]:
     if not isinstance(raw_aliases, dict):
         raise ValueError("entity aliases must be a JSON object")
 
@@ -57,12 +48,42 @@ def _load_aliases(path_value: str | None) -> dict[str, str]:
     return aliases
 
 
-def normalize_entity_id(subject: str | None) -> str:
-    """归一化实体标识，并应用环境变量指定的精确 alias 表。"""
+def _normalize_default_aliases() -> dict[str, str]:
+    """从内置别名构建规范化映射。"""
+    return _normalize_aliases(DEFAULT_ENTITY_ALIASES)
+
+
+def _load_aliases(path_value: str | Path) -> dict[str, str]:
+    """从指定 JSON 文件加载并规范化实体别名。"""
+    path = Path(path_value)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw_aliases = json.load(handle)
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"failed to load entity aliases from {path}: {error}") from error
+    return _normalize_aliases(raw_aliases)
+
+
+def load_entity_aliases(path: str | Path | None = None) -> dict[str, str]:
+    """供基础设施层调用：从路径加载实体别名映射。"""
+    configured_path = path if path is not None else os.getenv("HL_MEM_ENTITY_ALIASES_PATH")
+    if configured_path:
+        return _load_aliases(configured_path)
+    return _normalize_default_aliases()
+
+
+def set_active_aliases(aliases: dict[str, str]) -> None:
+    """供启动时注入进程级实体别名映射。"""
+    global _active_aliases
+    _active_aliases = aliases
+
+
+def normalize_entity_id(subject: str | None, aliases: dict[str, str] | None = None) -> str:
+    """归一化实体标识，并应用显式或进程级别名映射。"""
     if subject is None:
         return "unknown"
     normalized = _normalize_text(subject, casefold=True)
     if not normalized:
         return "unknown"
-    aliases = _load_aliases(os.getenv("HL_MEM_ENTITY_ALIASES_PATH"))
-    return aliases.get(normalized, normalized)
+    alias_map = aliases or _active_aliases or _normalize_default_aliases()
+    return alias_map.get(normalized, normalized)
