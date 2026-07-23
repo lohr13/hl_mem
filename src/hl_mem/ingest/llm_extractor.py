@@ -4,12 +4,17 @@ import json
 import os
 import re
 import time
+import unicodedata
 from typing import Any
 
 import httpx
 
 from hl_mem.domain.content import parse_content
-from hl_mem.recall.attribute_map import normalize_predicate, validate_canonical_attribute
+from hl_mem.recall.attribute_map import (
+    MUTUALLY_EXCLUSIVE_SLOTS,
+    normalize_predicate,
+    validate_canonical_attribute,
+)
 
 from .extractors import ExtractedClaim
 
@@ -40,6 +45,26 @@ must-remember instruction. Do not infer importance merely from emotional wording
 """
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
+LOW_VALUE_HEALTH_STATES = frozenset({"ok", "running", "stopped", "健康", "正常"})
+NUMERIC_OR_VERSION_RE = re.compile(r"[0-9.]+")
+
+
+def _is_low_value_claim(claim: ExtractedClaim) -> bool:
+    """判断 LLM 提取结果是否属于应在输出边界丢弃的低价值 claim。"""
+    value = unicodedata.normalize("NFKC", str(claim.value)).strip()
+    if not value:
+        return True
+    if (
+        NUMERIC_OR_VERSION_RE.fullmatch(value)
+        and claim.canonical_attribute not in MUTUALLY_EXCLUSIVE_SLOTS
+    ):
+        return True
+    return (
+        claim.canonical_attribute == "state.service_health"
+        and value.casefold() in LOW_VALUE_HEALTH_STATES
+    )
+
+
 class LLMExtractor:
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float | None = None) -> None:
         self.api_key = api_key
@@ -73,7 +98,8 @@ class LLMExtractor:
         claims = result.get("claims", [])
         if not isinstance(claims, list):
             raise ValueError("LLM response claims must be a list")
-        return [self._claim(item) for item in claims if isinstance(item, dict)]
+        parsed = [self._claim(item) for item in claims if isinstance(item, dict)]
+        return [claim for claim in parsed if not _is_low_value_claim(claim)]
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}

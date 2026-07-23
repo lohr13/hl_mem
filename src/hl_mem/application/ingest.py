@@ -11,7 +11,7 @@ from typing import Any
 
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
-from hl_mem.recall.attribute_map import validate_canonical_attribute
+from hl_mem.recall.attribute_map import is_mutually_exclusive_attribute, validate_canonical_attribute
 from hl_mem.recall.conflict import (
     ConflictResolver,
     compute_claim_pair_key,
@@ -217,7 +217,8 @@ class IngestService:
         if exact:
             _link_event_atomically(connection, evidence, exact["id"], event["id"])
             return exact["id"]
-        existing = claims.find_by_conflict_key(claim["conflict_key"])
+        exclusive = is_mutually_exclusive_attribute(canonical_attribute)
+        existing = claims.find_by_conflict_key(claim["conflict_key"]) if exclusive else []
         superseded_old_id: str | None = None
         resolution: str | None = None
         current: dict[str, Any] | None = None
