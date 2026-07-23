@@ -69,14 +69,6 @@ class IngestService:
     ) -> dict[str, Any]:
         """写入事件并创建提取任务，返回事件标识及是否新建。"""
         key = idempotency_key or event.get("idempotency_key")
-        existing = (
-            self.connection.execute("SELECT id FROM events WHERE idempotency_key=?", (key,)).fetchone()
-            if key
-            else None
-        )
-        if existing:
-            return {"id": existing["id"], "created": False}
-
         event_id = event.get("id") or new_id()
         timestamp = _now()
         content = event.get("content", {})
@@ -93,6 +85,14 @@ class IngestService:
         )
         self.connection.execute("BEGIN IMMEDIATE")
         try:
+            if key:
+                existing = self.connection.execute(
+                    "SELECT id FROM events WHERE idempotency_key=?",
+                    (key,),
+                ).fetchone()
+                if existing:
+                    self.connection.commit()
+                    return {"id": existing["id"], "created": False}
             created = EventRepository(self.connection).insert_event(stored_event, commit=False)
             if created:
                 self._queue_event(event_id, timestamp, commit=False)
@@ -215,66 +215,120 @@ class IngestService:
             "embedding_model": getattr(embedder, "model", "fake"),
             "embedding_dim": embedder.dim,
         }
-        started = time.perf_counter_ns()
-        exact = claims.find_by_fact_hash(namespace, claim["fact_hash"])
-        audit.emit(
-            "dedup", "fact_hash_checked", "match" if exact else "new", event_id=event["id"],
-            claim_id=claim["id"], related_claim_id=exact["id"] if exact else None,
-            duration_us=(time.perf_counter_ns() - started) // 1000,
-            detail={"fact_hash": claim["fact_hash"], "predicate": claim["predicate"]},
-        )
-        if exact:
-            _link_event_atomically(connection, evidence, exact["id"], event["id"])
-            return exact["id"]
-        exclusive = is_mutually_exclusive_attribute(canonical_attribute)
-        existing = claims.find_by_conflict_key(claim["conflict_key"]) if exclusive else []
+        claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
+        audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+        def emit_audit_events() -> None:
+            for args, kwargs in audit_events:
+                audit.emit(*args, **kwargs)
+
         superseded_old_id: str | None = None
         resolution: str | None = None
         current: dict[str, Any] | None = None
-        if existing:
-            started = time.perf_counter_ns()
-            current = existing[0]
-            resolution = ConflictResolver().resolve(current, {**claim, "qualifiers": qualifiers})
-            audit.emit(
-                "conflict", "resolved", resolution, event_id=event["id"], claim_id=claim["id"],
-                related_claim_id=current["id"], duration_us=(time.perf_counter_ns() - started) // 1000,
-                detail={"conflict_key": claim["conflict_key"], "candidate_count": len(existing),
-                        "old": _summary(current), "new": _summary(claim)},
-            )
-            if resolution == "entails":
-                _link_event_atomically(connection, evidence, current["id"], event["id"])
-                return current["id"]
-            if resolution == "state_change":
-                claim["supersedes_id"] = current["id"]
-                superseded_old_id = current["id"]
-            elif resolution == "contradicts":
-                claim["status"] = "disputed"
-            elif resolution == "uncertain":
-                claim["status"] = "candidate"
-        else:
-            audit.emit(
-                "conflict", "not_applicable", "no_existing", event_id=event["id"], claim_id=claim["id"],
-                detail={"conflict_key": claim["conflict_key"]},
-            )
-            claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
-            started = time.perf_counter_ns()
-            duplicate_id, _ = Deduplicator(claims, embedder).find_duplicate(claim)
-            audit.emit(
-                "dedup", "semantic_checked", "match" if duplicate_id else "new", event_id=event["id"],
-                claim_id=claim["id"], related_claim_id=duplicate_id,
-                duration_us=(time.perf_counter_ns() - started) // 1000,
-                detail={"matched": duplicate_id is not None},
-            )
-            if duplicate_id:
-                _link_event_atomically(connection, evidence, duplicate_id, event["id"])
-                return duplicate_id
-        if "embedding_dense" not in claim:
-            claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
+        result_id = claim["id"]
         connection.execute("BEGIN IMMEDIATE")
         try:
+            started = time.perf_counter_ns()
+            exact = claims.find_by_fact_hash(namespace, claim["fact_hash"])
+            audit_events.append(
+                (
+                    ("dedup", "fact_hash_checked", "match" if exact else "new"),
+                    {
+                        "event_id": event["id"],
+                        "claim_id": claim["id"],
+                        "related_claim_id": exact["id"] if exact else None,
+                        "duration_us": (time.perf_counter_ns() - started) // 1000,
+                        "detail": {"fact_hash": claim["fact_hash"], "predicate": claim["predicate"]},
+                    },
+                )
+            )
+            if exact:
+                _link_event(evidence, exact["id"], event["id"], commit=False)
+                result_id = exact["id"]
+                connection.commit()
+                emit_audit_events()
+                return result_id
+
+            exclusive = is_mutually_exclusive_attribute(canonical_attribute)
+            existing = claims.find_by_conflict_key(claim["conflict_key"]) if exclusive else []
+            if existing:
+                started = time.perf_counter_ns()
+                current = existing[0]
+                resolution = ConflictResolver().resolve(current, {**claim, "qualifiers": qualifiers})
+                audit_events.append(
+                    (
+                        ("conflict", "resolved", resolution),
+                        {
+                            "event_id": event["id"],
+                            "claim_id": claim["id"],
+                            "related_claim_id": current["id"],
+                            "duration_us": (time.perf_counter_ns() - started) // 1000,
+                            "detail": {
+                                "conflict_key": claim["conflict_key"],
+                                "candidate_count": len(existing),
+                                "old": _summary(current),
+                                "new": _summary(claim),
+                            },
+                        },
+                    )
+                )
+                if resolution == "entails":
+                    _link_event(evidence, current["id"], event["id"], commit=False)
+                    result_id = current["id"]
+                    connection.commit()
+                    emit_audit_events()
+                    return result_id
+                if resolution == "state_change":
+                    claim["supersedes_id"] = current["id"]
+                    superseded_old_id = current["id"]
+                elif resolution == "contradicts":
+                    claim["status"] = "disputed"
+                elif resolution == "uncertain":
+                    claim["status"] = "candidate"
+            else:
+                audit_events.append(
+                    (
+                        ("conflict", "not_applicable", "no_existing"),
+                        {
+                            "event_id": event["id"],
+                            "claim_id": claim["id"],
+                            "detail": {"conflict_key": claim["conflict_key"]},
+                        },
+                    )
+                )
+                started = time.perf_counter_ns()
+                duplicate_id, _ = Deduplicator(claims, embedder).find_duplicate(claim)
+                audit_events.append(
+                    (
+                        ("dedup", "semantic_checked", "match" if duplicate_id else "new"),
+                        {
+                            "event_id": event["id"],
+                            "claim_id": claim["id"],
+                            "related_claim_id": duplicate_id,
+                            "duration_us": (time.perf_counter_ns() - started) // 1000,
+                            "detail": {"matched": duplicate_id is not None},
+                        },
+                    )
+                )
+                if duplicate_id:
+                    _link_event(evidence, duplicate_id, event["id"], commit=False)
+                    result_id = duplicate_id
+                    connection.commit()
+                    emit_audit_events()
+                    return result_id
+
+            inserted = claims.insert_claim(claim, commit=False)
+            if not inserted:
+                winner = claims.find_by_fact_hash(namespace, claim["fact_hash"])
+                if winner:
+                    _link_event(evidence, winner["id"], event["id"], commit=False)
+                    result_id = winner["id"]
+                connection.commit()
+                emit_audit_events()
+                return result_id
+
             if current is not None and resolution == "contradicts":
                 claims.update_status(current["id"], "disputed", commit=False)
-            claims.insert_claim(claim, commit=False)
             if current is not None and resolution in {"contradicts", "uncertain"}:
                 connection.execute(
                     "INSERT OR IGNORE INTO conflict_cases "
@@ -301,7 +355,8 @@ class IngestService:
         except Exception:
             connection.rollback()
             raise
-        return claim["id"]
+        emit_audit_events()
+        return result_id
 
 
 def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = True) -> None:
@@ -313,6 +368,7 @@ def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: 
 
 
 def _link_event_atomically(connection: Any, repo: EvidenceRepository, claim_id: str, event_id: str) -> None:
+    """已弃用：在独立事务中关联事件证据。"""
     connection.execute("BEGIN IMMEDIATE")
     try:
         _link_event(repo, claim_id, event_id, commit=False)
