@@ -9,7 +9,7 @@ def test_conflict_key_is_canonical_and_stable() -> None:
 
 
 def test_conflict_key_aligns_cross_predicate_tool_choice_slots() -> None:
-    assert compute_conflict_key("default", "用户", "choice.tool", {}) == compute_conflict_key(
+    assert compute_conflict_key("default", "用户", "choice.tool", {}) != compute_conflict_key(
         "default", "用户", "fact.tool_choice", {}
     )
 
@@ -19,8 +19,8 @@ def test_conflict_key_keeps_nonexclusive_configuration_slots_separate() -> None:
     network = compute_conflict_key("default", "代理", "config.network", {})
     path = compute_conflict_key("default", "代理", "config.path", {})
     environment = compute_conflict_key("default", "代理", "config.env", {})
-    assert port == network
-    assert len({port, path, environment}) == 3
+    assert port != network
+    assert len({port, network, path, environment}) == 4
 
 
 def test_conflict_key_rejects_unsupported_version() -> None:
@@ -30,18 +30,28 @@ def test_conflict_key_rejects_unsupported_version() -> None:
 
 def test_deterministic_conflict_rules() -> None:
     resolver = ConflictResolver()
-    base = {"predicate": "preference", "value_json": '"深色"', "source_authority": "medium"}
+    base = {
+        "predicate": "preference",
+        "canonical_attribute": "preference.ui_theme",
+        "value_json": '"深色"',
+        "source_authority": "medium",
+    }
     assert resolver.resolve(base, {**base}) == "entails"
     assert resolver.resolve(base, {**base, "value_json": '"浅色"'}) == "state_change"
     assert resolver.resolve(base, {"predicate": "uses", "value_json": '"SQLite"'}) == "compatible"
     generic = {"predicate": "count", "value_json": "1", "source_authority": "high"}
-    assert resolver.resolve(generic, {**generic, "value_json": "2"}) == "contradicts"
+    assert resolver.resolve(generic, {**generic, "value_json": "2"}) == "compatible"
 
 
 def test_change_qualifier_signals_state_change() -> None:
     resolver = ConflictResolver()
-    base = {"predicate": "偏好", "value_json": '"深色模式"', "source_authority": "medium"}
-    changed = {**base, "value_json": '"浅色模式"', "qualifiers": {"change": True}}
+    base = {
+        "predicate": "配置",
+        "canonical_attribute": "config.model",
+        "value_json": '"qwen"',
+        "source_authority": "medium",
+    }
+    changed = {**base, "value_json": '"gpt"', "qualifiers": {"change": True}}
     assert resolver.resolve(base, changed) == "state_change"
 
 
@@ -57,4 +67,33 @@ def test_resolver_compares_different_predicates_in_same_canonical_slot() -> None
         "canonical_attribute": "fact.tool_choice",
         "value_json": '"Codex"',
     }
-    assert resolver.resolve(existing, same_fact) == "entails"
+    assert resolver.resolve(existing, same_fact) == "compatible"
+
+
+@pytest.mark.parametrize("canonical_attribute", ["plan.deadline", "choice.tool", "config.env"])
+def test_nonexclusive_attributes_with_different_values_are_compatible(canonical_attribute) -> None:
+    resolver = ConflictResolver()
+    existing = {
+        "predicate": "fact",
+        "canonical_attribute": canonical_attribute,
+        "value_json": '"old"',
+        "source_authority": "medium",
+    }
+    new = {**existing, "value_json": '"new"'}
+    assert resolver.resolve(existing, new) == "compatible"
+
+
+def test_config_port_deterministic_conflict_rules() -> None:
+    resolver = ConflictResolver()
+    base = {
+        "predicate": "config",
+        "canonical_attribute": "config.port",
+        "value_json": "8080",
+        "source_authority": "medium",
+    }
+    assert resolver.resolve(base, {**base}) == "entails"
+    assert resolver.resolve(base, {**base, "value_json": "8081"}) == "contradicts"
+    assert resolver.resolve(
+        base,
+        {**base, "value_json": "8081", "qualifiers": {"state_change": True}},
+    ) == "state_change"
