@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import os
 
+LLM_PROVIDER = os.getenv("HL_MEM_LLM_PROVIDER", "dashscope")
+LLM_STRUCTURED_MODE = os.getenv("HL_MEM_LLM_STRUCTURED_MODE", "auto")
+LLM_MAX_ATTEMPTS = int(os.getenv("LLM_MAX_ATTEMPTS", "3"))
+LLM_SCHEMA_RETRIES = int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2"))
+
 # 去重 / 冲突阈值
 DEDUP_SEMANTIC_THRESHOLD = float(os.getenv("HL_MEM_DEDUP_THRESHOLD", "0.82"))
 CONSOLIDATE_GRAY_ZONE_MIN = float(os.getenv("HL_MEM_CONSOLIDATE_GRAY_MIN", "0.72"))

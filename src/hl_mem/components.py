@@ -5,10 +5,15 @@ from __future__ import annotations
 import os
 from typing import Any
 
+import httpx
+
 from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.llm_extractor import LLMExtractor
+from hl_mem.llm.client import LLMClient
+from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
+from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.recall.reranker import FakeReranker, Reranker
 
 _EXTRACTOR_REGISTRY: dict[str, str] = {
@@ -73,9 +78,7 @@ def make_reranker(config: dict[str, Any] | None = None) -> Any | None:
         if production:
             raise ConfigurationError("RERANKER_API_KEY or EMBEDDING_API_KEY is required in production")
         if explicit and not _allow_fake_fallback():
-            raise ConfigurationError(
-                f"HL_MEM_RERANKER={mode} but RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
-            )
+            raise ConfigurationError(f"HL_MEM_RERANKER={mode} but RERANKER_API_KEY or EMBEDDING_API_KEY is missing")
         return None
     try:
         return Reranker(
@@ -106,10 +109,40 @@ def make_extractor(config: dict[str, Any] | None = None) -> Any:
         if explicit and not _allow_fake_fallback():
             raise ConfigurationError(f"HL_MEM_EXTRACTOR={extractor_name} but LLM_API_KEY is missing")
         return FakeExtractor()
+    provider_name = str(settings.get("llm_provider", os.getenv("HL_MEM_LLM_PROVIDER", "dashscope"))).lower()
+    provider_types = {
+        "dashscope": DashScopeProvider,
+        "zhipu": ZhipuProvider,
+        "openai_compatible": OpenAICompatibleProvider,
+    }
+    provider_type = provider_types.get(provider_name)
+    if provider_type is None:
+        raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
+    base_url = os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1")
+    model = os.getenv("LLM_MODEL", "qwen3.7-plus")
+    timeout_seconds = float(os.getenv("LLM_TIMEOUT", "90"))
+    structured_mode_name = os.getenv("HL_MEM_LLM_STRUCTURED_MODE", "auto").lower()
+    if structured_mode_name not in {"auto", "json_object", "json_schema"}:
+        raise ConfigurationError("HL_MEM_LLM_STRUCTURED_MODE must be 'auto', 'json_object', or 'json_schema'")
+    structured_mode = (
+        StructuredOutputMode.JSON_OBJECT if structured_mode_name == "json_object" else StructuredOutputMode.JSON_SCHEMA
+    )
+    llm_client = LLMClient(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        provider=provider_type(),
+        timeout=httpx.Timeout(timeout_seconds),
+        max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
+    )
     return LLMExtractor(
         api_key,
-        os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
-        os.getenv("LLM_MODEL", "qwen3.7-plus"),
+        base_url,
+        model,
+        timeout=timeout_seconds,
+        llm_client=llm_client,
+        schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
+        structured_mode=structured_mode,
     )
 
 

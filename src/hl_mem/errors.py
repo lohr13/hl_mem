@@ -23,3 +23,15 @@ class ConfigurationError(HlMemError, RuntimeError):
 
 class ExternalServiceError(HlMemError, RuntimeError):
     """外部服务调用失败。"""
+
+
+class LLMOutputTruncatedError(ExternalServiceError):
+    """LLM 响应因 token 限制而截断。"""
+
+
+class LLMSchemaValidationError(ExternalServiceError, ValueError):
+    """LLM 输出在内容级重试后仍不符合 schema。"""
+
+
+class LLMStructuredOutputUnsupportedError(ExternalServiceError):
+    """LLM provider 不支持请求的结构化输出模式。"""

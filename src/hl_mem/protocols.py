@@ -19,7 +19,11 @@ class EmbedderProtocol(Protocol):
 class ExtractorProtocol(Protocol):
     """记忆提取组件协议。"""
 
-    def extract(self, content: dict[str, Any], context: dict[str, Any] | None = None) -> list[Any]: ...
+    def extract(
+        self,
+        content: dict[str, Any] | str,
+        context: dict[str, Any] | None = None,
+    ) -> list[Any]: ...
 
 
 class RerankerProtocol(Protocol):
