@@ -25,6 +25,9 @@ from hl_mem.recall.relation_expansion import (
 from hl_mem.recall.reranker import RerankResult
 from hl_mem.recall.trace import SearchTracer
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository
+from hl_mem.settings import Settings
+
+RRF_K = 60
 
 
 def matching_policies(
@@ -122,6 +125,8 @@ def hybrid_claims(
     relation_connection: Any | None = None,
     relation_config: RelationExpansionConfig | None = None,
     tracer: SearchTracer | None = None,
+    candidate_floor: int | None = None,
+    preference_recency_boost: float | None = None,
 ) -> list[dict[str, Any]]:
     """协调候选收集、过滤评分、关系扩展、重排和结果收尾。"""
     candidates = _collect_candidates(
@@ -138,6 +143,8 @@ def hybrid_claims(
         relation_connection=relation_connection,
         relation_config=relation_config,
         tracer=tracer,
+        candidate_floor=candidate_floor,
+        preference_recency_boost=preference_recency_boost,
     )
     scored = _filter_and_score(candidates)
     expanded = _expand_related(scored)
@@ -160,11 +167,20 @@ def _collect_candidates(
     relation_connection: Any | None = None,
     relation_config: RelationExpansionConfig | None = None,
     tracer: SearchTracer | None = None,
+    candidate_floor: int | None = None,
+    preference_recency_boost: float | None = None,
 ) -> list[dict[str, Any]]:
     """融合全文、向量、多因子先验及 reranker 结果召回 claim。"""
     audit = current_audit()
     total_started = time.perf_counter_ns()
-    candidate_limit = min(RECALL_VECTOR_SCAN_LIMIT, max(limit * 5, 50))
+    defaults = Settings()
+    effective_candidate_floor = candidate_floor or defaults.recall_candidate_floor
+    effective_preference_boost = (
+        defaults.preference_recency_boost
+        if preference_recency_boost is None
+        else preference_recency_boost
+    )
+    candidate_limit = min(RECALL_VECTOR_SCAN_LIMIT, max(limit * 5, effective_candidate_floor))
     ranking_now = now or datetime.now(timezone.utc).isoformat()
     selected_intent = (
         RecallIntent(intent)
@@ -237,18 +253,18 @@ def _collect_candidates(
         by_id[claim_id]["helpful_rate"] = helpful_rate
     for ranked in (fts, dense):
         for rank, claim in enumerate(ranked, 1):
-            scores[claim["id"]] = scores.get(claim["id"], 0) + 1 / (60 + rank)
+            scores[claim["id"]] = scores.get(claim["id"], 0) + 1 / (RRF_K + rank)
     max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
     feature_by_id = {
         claim_id: memory_features(
-            claim, scores[claim_id] / (2 / 61), max_access, ranking_now
+            claim, scores[claim_id] / (2 / (RRF_K + 1)), max_access, ranking_now
         )
         for claim_id, claim in by_id.items()
     }
     pre_scores = {
         claim_id: memory_score(features)
         + (
-            0.12 * features["recency"]
+            effective_preference_boost * features["recency"]
             if selected_intent is RecallIntent.PREFERENCE
             and _is_preference_claim(by_id[claim_id])
             else 0.0
@@ -332,9 +348,17 @@ def _collect_candidates(
                         claim_id,
                         {
                             "seed_id": metadata.seed_id,
-                            "relation": metadata.relation,
-                            "source": metadata.source,
-                            "edge_confidence": metadata.edge_confidence,
+                            "path": [
+                                {
+                                    "from_id": hop.from_id,
+                                    "to_id": hop.to_id,
+                                    "relation": hop.relation,
+                                    "source": hop.source,
+                                    "edge_confidence": hop.edge_confidence,
+                                }
+                                for hop in metadata.path
+                            ],
+                            "cumulative_weight": metadata.cumulative_weight,
                             "expansion_score": metadata.expansion_score,
                         },
                     )

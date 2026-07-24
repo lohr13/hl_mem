@@ -9,13 +9,22 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from hl_mem.experience.service import ExperienceService
+from hl_mem.settings import Settings
 from hl_mem.storage.repository import JobRepository
 
 
-def induce_policies(connection: Any, now: str) -> dict[str, int]:
+def induce_policies(
+    connection: Any,
+    now: str,
+    lookback_days: int | None = None,
+    min_episodes: int | None = None,
+) -> dict[str, int]:
     """按任务类型和工具序列聚类最近七天的高奖励 Episode。"""
     current = datetime.fromisoformat(now.replace("Z", "+00:00"))
-    cutoff = (current - timedelta(days=7)).isoformat()
+    defaults = Settings()
+    effective_lookback = lookback_days or defaults.policy_induction_lookback_days
+    effective_min_episodes = min_episodes or defaults.policy_induction_min_episodes
+    cutoff = (current - timedelta(days=effective_lookback)).isoformat()
     rows = connection.execute(
         "SELECT id,goal,scope_json FROM episodes "
         "WHERE status='success' AND reward>=0.5 "
@@ -42,7 +51,7 @@ def induce_policies(connection: Any, now: str) -> dict[str, int]:
     induced = 0
     eligible = 0
     for (task_type, actions), episodes in clusters.items():
-        if len(episodes) < 3:
+        if len(episodes) < effective_min_episodes:
             continue
         eligible += 1
         trigger = f"{task_type} {' '.join(actions)}"

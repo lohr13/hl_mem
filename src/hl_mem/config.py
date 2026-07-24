@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+# 可运行时调优的策略值属于 Settings；本模块只保留领域与纯算法常量。
+
 # 去重 / 冲突阈值
 DEDUP_SEMANTIC_THRESHOLD = 0.82
 CONSOLIDATE_GRAY_ZONE_MIN = 0.72

@@ -353,7 +353,7 @@ class LLMExtractor:
 
     @staticmethod
     def _parse_legacy_defaults(payload: dict[str, Any]) -> dict[str, Any]:
-        """迁移期仅补齐旧模型响应中与历史领域默认值一致的字段。"""
+        """仅对带有旧版核心字段签名的响应补齐后来新增的字段。"""
         compatible = dict(payload)
         claims = compatible.get("claims")
         if not isinstance(claims, list):
@@ -364,11 +364,14 @@ class LLMExtractor:
                 normalized_claims.append(item)
                 continue
             claim = dict(item)
+            legacy_core = {"predicate", "value"}
+            versioned_fields = {"canonical_attribute", "scope", "importance"}
+            if not legacy_core.issubset(claim) or not versioned_fields.isdisjoint(claim):
+                normalized_claims.append(claim)
+                continue
             defaults: dict[str, Any] = {
                 "subject": "用户",
-                "predicate": "事实",
                 "canonical_attribute": "fact.other",
-                "value": "",
                 "qualifiers": {},
                 "confidence": 0.5,
                 "volatility": "stable",
