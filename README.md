@@ -1,8 +1,8 @@
 # HL-Mem
 
-> v0.3.0 · 220 tests · [CHANGELOG](docs/CHANGELOG.md)
+> v0.9.0 · 250 tests · 17 migrations · [CHANGELOG](docs/CHANGELOG.md)
 
-面向 AI Agent 的本地优先、跨会话记忆系统。证据驱动、双时间模型、双通道设计、可解释召回。
+面向 AI Agent 的本地优先、跨会话记忆系统。证据驱动、双时间模型、双通道设计、可解释召回、slot+tags 分类体系、importance 联动 TTL。
 
 ## 为什么自建
 
@@ -34,7 +34,8 @@ HL-Mem 将两者合并为统一的**事件溯源双通道**设计：事实通道
               │  Ingest     │  │ Recall  │  │  Workers    │
               │  Extractor  │  │ FTS+Vec │  │  TTL/Decay  │
               │  Embedder   │  │ Rerank  │  │  Consolidate│
-              │  Filter     │  │ RRF     │  │  Induce     │
+              │  Retention  │  │ RRF     │  │  Deduplicate│
+              │  Filter     │  │ Slot    │  │  Induce     │
               └──────┬──────┘  └────┬────┘  └──────┬──────┘
                      │              │              │
                      └──────────────┼──────────────┘
@@ -42,8 +43,9 @@ HL-Mem 将两者合并为统一的**事件溯源双通道**设计：事实通道
                     ┌───────────────▼───────────────┐
                     │       Storage Layer           │
                     │  SQLite WAL + FTS5 + Vector   │
-                    │  14 Migrations · 5 Tables     │
+                    │  17 Migrations · 7 Tables     │
                     │  + Audit · Backup · Retention │
+                    │  + Dedup Pairs · Slot Tags    │
                     └───────────────────────────────┘
 ```
 
