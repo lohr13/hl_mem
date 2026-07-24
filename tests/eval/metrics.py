@@ -143,6 +143,8 @@ def aggregate_metrics(scores: list[QueryScore]) -> dict[str, float]:
     evidence_scores = [score.evidence_correct for score in scores if score.evidence_correct is not None]
     return {
         "recall_at_5": _average([float(score.recall_at_5) for score in answered]),
+        "mrr": _average([float(score.mrr) for score in answered]),
+        "ndcg_at_10": _average([float(score.ndcg_at_10) for score in answered]),
         "micro_recall": sum(score.relevant_hits for score in answered) / max(1, sum(score.relevant_count for score in answered)),
         "top_1_correctness": _average([float(score.top_1_correct) for score in answered]),
         "no_answer_precision": len(correct_empty) / max(1, len(predicted_empty)),
