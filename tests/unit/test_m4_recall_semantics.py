@@ -43,7 +43,7 @@ def test_supersede_with_inline_preserves_bitemporal_values_and_is_idempotent(tmp
         "2026-02-02T00:00:00Z",
         "new",
     )
-    assert json.loads(old["value_json"])["old_value"] == "深色模式"
+    assert old["value"]["old_value"] == "深色模式"
     assert (
         connection.execute(
             "SELECT count(*) FROM evidence_links WHERE derived_id='new' AND evidence_id='old' "
