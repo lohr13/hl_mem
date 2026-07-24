@@ -87,7 +87,7 @@ def test_concurrent_claim_dedup(tmp_path: Any) -> None:
             event,
             "2026-01-01T00:00:00+00:00",
             FakeEmbedder(2048),
-        )
+        ).claim_id
 
     threads = [
         threading.Thread(target=store, args=(index, database))

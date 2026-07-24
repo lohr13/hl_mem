@@ -20,11 +20,11 @@ def test_fact_hash_exact_duplicate_merges_evidence(tmp_path) -> None:
     first_id = store_extracted(
         connection, claim, {**base_event, "id": "event-1"},
         "2026-07-21T10:01:00+00:00", FakeEmbedder(8),
-    )
+    ).claim_id
     second_id = store_extracted(
         connection, claim, {**base_event, "id": "event-2"},
         "2026-07-21T10:02:00+00:00", FakeEmbedder(8),
-    )
+    ).claim_id
     assert second_id == first_id
     assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
     assert connection.execute(
@@ -59,7 +59,7 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
         {"id": "event-v2", "actor_type": "user", "tenant_id": "default"},
         "2026-07-21T10:01:00+00:00",
         FakeEmbedder(8),
-    )
+    ).claim_id
 
     row = connection.execute(
         "SELECT canonical_attribute,conflict_key_version,conflict_key,legacy_conflict_key "

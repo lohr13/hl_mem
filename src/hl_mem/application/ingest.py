@@ -44,20 +44,13 @@ class _ClaimDraft:
     qualifiers: dict[str, Any]
 
 
-class StoreClaimResult(str):
-    """兼容 claim ID 字符串并暴露写入或拒绝原因。"""
+@dataclass(frozen=True)
+class StoreClaimResult:
+    """记录 claim 写入结果及写入或拒绝原因。"""
 
     claim_id: str | None
     status: str
     reason: str
-
-    def __new__(cls, claim_id: str | None, status: str, reason: str) -> "StoreClaimResult":
-        value = claim_id or f"skipped:{reason}"
-        result = super().__new__(cls, value)
-        result.claim_id = claim_id
-        result.status = status
-        result.reason = reason
-        return result
 
 
 def new_id() -> str:
