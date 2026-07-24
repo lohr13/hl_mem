@@ -233,7 +233,7 @@ def test_embedding_retries_retryable_status_with_configured_timeout(monkeypatch)
         return next(responses)
 
     monkeypatch.setattr(httpx, "post", post)
-    monkeypatch.setattr("hl_mem.ingest.embeddings.time.sleep", lambda _: None)
+    monkeypatch.setattr("hl_mem.http_utils.time.sleep", lambda _: None)
     assert len(Embedder("key", "https://example.test", "model", 2).embed_one("文本")) == 8
     assert len(attempts) == 2
     assert attempts[0].connect == 5.0

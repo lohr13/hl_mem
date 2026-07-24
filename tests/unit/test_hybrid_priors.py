@@ -175,6 +175,8 @@ def test_hybrid_priors_break_semantic_tie():
     class Repo:
         claims = [{"id": "low", "confidence": 0, "importance": 0},
                   {"id": "high", "confidence": 1, "importance": 1}]
-        def search_claims_fts(self, query, limit, as_of): return self.claims
-        def list_embedded(self, as_of): return []
+        def search_claims_fts(self, *args, **kwargs): return self.claims
+        def list_embedded(self, *args, **kwargs): return []
+        def search_claims_vector(self, *args, **kwargs): return self.claims
+        def helpful_rates(self, *args, **kwargs): return {}
     assert hybrid_claims(Repo(), "q", pack_vector([1]), 2, None, now=NOW)[0]["id"] == "high"
