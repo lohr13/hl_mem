@@ -503,7 +503,16 @@ def _rerank(ctx: RecallContext) -> RecallContext:
 
     candidates = ranked_claims[: ctx.candidate_limit]
     started = time.perf_counter_ns()
-    returned = reranker.rerank(ctx.query, [_claim_text(claim) for claim in candidates], top_n=ctx.candidate_limit)
+    try:
+        returned = reranker.rerank(
+            ctx.query,
+            [_claim_text(claim) for claim in candidates],
+            top_n=ctx.candidate_limit,
+        )
+    except Exception:
+        ctx.rerank_us = (time.perf_counter_ns() - started) // 1000
+        ctx.outcome = "error_fallback"
+        return ctx
     ctx.rerank_us = (time.perf_counter_ns() - started) // 1000
     if ctx.tracer is not None:
         ctx.tracer.trace.phases.reranker_us = ctx.rerank_us

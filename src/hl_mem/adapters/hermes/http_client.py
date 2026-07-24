@@ -118,8 +118,3 @@ class HLMemHttpClient:
         self._circuit_open_until = time.monotonic() + self._circuit_open_seconds
         self._failure_count = 0
         self._probe_owner = None
-
-    @staticmethod
-    def error_name(error: Exception) -> str:
-        """将 HTTP 异常映射为稳定的降级错误名。"""
-        return "timeout" if isinstance(error, httpx.TimeoutException) else "unavailable"

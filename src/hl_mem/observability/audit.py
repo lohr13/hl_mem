@@ -21,7 +21,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _safe_error(error: BaseException) -> str:
+def _safe_error(error: Exception) -> str:
     return str(error).replace("\n", " ")[:256]
 
 
@@ -120,14 +120,17 @@ class AuditLogger:
             self.written_count += 1
             self.last_error = None
             return True
-        except BaseException as error:
+        except Exception as error:
             self.dropped_count += 1
             self.last_error = f"{type(error).__name__}: {_safe_error(error)}"
             try:
                 if self._connection is not None:
                     self._connection.rollback()
-            except BaseException:
-                pass
+            except Exception as rollback_error:
+                self.last_error += (
+                    f"; rollback {type(rollback_error).__name__}: "
+                    f"{_safe_error(rollback_error)}"
+                )
             return False
 
     @contextmanager
@@ -136,7 +139,7 @@ class AuditLogger:
         started = time.perf_counter_ns()
         try:
             yield detail
-        except BaseException as error:
+        except Exception as error:
             detail.update(error_class=type(error).__name__, error=_safe_error(error))
             self.emit(phase, action, "error", duration_us=(time.perf_counter_ns() - started) // 1000,
                       detail=detail, **dimensions)
@@ -162,13 +165,16 @@ class AuditLogger:
                 connection.execute("PRAGMA incremental_vacuum")
             self._last_cleanup_date = today
             return True
-        except BaseException as error:
+        except Exception as error:
             self.last_error = f"{type(error).__name__}: {_safe_error(error)}"
             try:
                 if self._connection is not None:
                     self._connection.rollback()
-            except BaseException:
-                pass
+            except Exception as rollback_error:
+                self.last_error += (
+                    f"; rollback {type(rollback_error).__name__}: "
+                    f"{_safe_error(rollback_error)}"
+                )
             return False
 
     def health(self) -> dict[str, int | bool | str | None]:
@@ -184,7 +190,7 @@ class AuditLogger:
                     self._connection.close()
                     self._connection = None
             return True
-        except BaseException as error:
+        except Exception as error:
             self.last_error = f"{type(error).__name__}: {_safe_error(error)}"
             return False
 

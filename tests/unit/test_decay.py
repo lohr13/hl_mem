@@ -10,7 +10,7 @@ from hl_mem.ingest.embedder import pack_vector
 from hl_mem.storage.database import Database
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.decay import decay_claims
-from hl_mem.workers.worker import Worker
+from hl_mem.workers.worker import Worker, dispatch_job
 
 NOW = "2026-07-21T00:00:00+00:00"
 
@@ -112,5 +112,5 @@ def test_decay_rollout_grace_exempts_preexisting_unaccessed(tmp_path):
 
 def test_worker_decay_dispatch(tmp_path):
     worker = Worker(tmp_path / "worker.db", {"embedding_dim": 2})
-    assert worker._dispatch({"job_type": "decay_access"}) == {"decayed": 0, "archived": 0}
+    assert dispatch_job(worker, {"job_type": "decay_access"}) == {"decayed": 0, "archived": 0}
     worker.database.close()

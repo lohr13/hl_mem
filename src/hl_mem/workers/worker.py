@@ -150,10 +150,6 @@ class Worker:
             self.audit.close()
             self.database.close()
 
-    def _dispatch(self, job: dict[str, Any]) -> dict[str, Any]:
-        """兼容旧调用；新代码应直接调用模块级 dispatch_job。"""
-        return dispatch_job(self, job)
-
     def _run_maintenance(self) -> None:
         """执行一轮 TTL、衰减、派生记忆、保留策略和定时任务维护。"""
         expire_claims(self.connection)

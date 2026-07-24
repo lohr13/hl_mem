@@ -19,7 +19,6 @@ from hl_mem.observability.llm_spans import LLMSpanRecorder
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol, RerankerProtocol
 from hl_mem.recall.reranker import (
     DashScopeReranker,
-    FakeReranker,
     make_reranker as make_registered_reranker,
 )
 from hl_mem.settings import Settings
@@ -124,23 +123,3 @@ def make_extractor_for_type(event_type: str, settings: Settings) -> ExtractorPro
     if extractor_name == "explicit":
         return "explicit"
     return make_extractor(settings)
-
-
-def make_embedder_for_test(embedder: EmbedderProtocol) -> EmbedderProtocol:
-    """返回测试显式注入的向量器，不读取 Settings。"""
-    return embedder
-
-
-def make_reranker_for_test(reranker: RerankerProtocol | None) -> RerankerProtocol | None:
-    """返回测试显式注入的重排器，不读取 Settings。"""
-    return reranker
-
-
-def make_extractor_for_test(extractor: ExtractorProtocol) -> ExtractorProtocol:
-    """返回测试显式注入的提取器，不读取 Settings。"""
-    return extractor
-
-
-create_embedder_for_test = make_embedder_for_test
-create_reranker_for_test = make_reranker_for_test
-create_extractor_for_test = make_extractor_for_test
