@@ -14,6 +14,7 @@ from hl_mem.domain.claims.attributes import (
     normalize_predicate,
     validate_slot_instance,
 )
+from hl_mem.domain.constants import PREDICATE_PREFERENCE, PREDICATE_STATE
 
 EXCLUSIVE_QUALIFIERS = {"scope", "context", "environment", "project", "channel"}
 
@@ -109,7 +110,7 @@ class ConflictResolver:
         if self._signals_change(new):
             return "state_change"
         new_predicate = normalize_predicate(str(new.get("predicate", "")))
-        if new_predicate in {"偏好", "状态"}:
+        if new_predicate in {PREDICATE_PREFERENCE, PREDICATE_STATE}:
             return "state_change"
         if existing.get("source_authority", "medium") == new.get("source_authority", "medium"):
             return "contradicts"

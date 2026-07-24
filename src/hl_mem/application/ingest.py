@@ -25,6 +25,7 @@ from hl_mem.domain.claims.conflicts import (
 )
 from hl_mem.domain.claims.dedup import Deduplicator
 from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration, normalize_utc_iso
+from hl_mem.domain.constants import DEFAULT_SUBJECT
 from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
@@ -127,7 +128,7 @@ class IngestService:
     def save_explicit_memory(
         self,
         text: str,
-        subject: str = "用户",
+        subject: str = DEFAULT_SUBJECT,
         predicate: str = "explicit_memory",
         qualifiers: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
