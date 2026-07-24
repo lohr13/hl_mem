@@ -1,6 +1,6 @@
 # HL-Mem
 
-> v0.10.0 · 284 tests · 21 migrations · [CHANGELOG](docs/CHANGELOG.md)
+> v0.10.1 · 292 passed · 1 skipped · 21 migrations · [CHANGELOG](docs/CHANGELOG.md)
 
 面向 AI Agent 的本地优先、跨会话记忆系统。证据驱动、双时间模型、双通道设计、可解释召回、slot+tags 分类体系、importance 联动 TTL。
 
