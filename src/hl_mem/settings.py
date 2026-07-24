@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
 from hl_mem.errors import ConfigurationError
 
@@ -68,6 +69,15 @@ class Settings:
     induce_policies_cron: str = "04:00"
     reclassify_cron: str = "04:30"
     memory_temporal_ttl_days: int = 7
+    temporal_ttl_days_low: int = 3
+    temporal_ttl_days_normal: int = 7
+    temporal_ttl_days_high: int = 14
+    importance_low_threshold: float = 0.4
+    importance_high_threshold: float = 0.7
+    importance_write_floor: float = 0.2
+    slot_short_ttl_seconds: int = 86400
+    ttl_backfill_batch_size: int = 100
+    ttl_backfill_grace_hours: int = 0
     max_request_body: int = 2 * 1024 * 1024
 
     @classmethod
@@ -134,6 +144,15 @@ class Settings:
             induce_policies_cron=os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00"),
             reclassify_cron=os.getenv("HL_MEM_RECLASSIFY_CRON", "04:30"),
             memory_temporal_ttl_days=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS", "7")),
+            temporal_ttl_days_low=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_LOW", "3")),
+            temporal_ttl_days_normal=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_NORMAL", "7")),
+            temporal_ttl_days_high=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_HIGH", "14")),
+            importance_low_threshold=float(os.getenv("HL_MEM_IMPORTANCE_LOW_THRESHOLD", "0.4")),
+            importance_high_threshold=float(os.getenv("HL_MEM_IMPORTANCE_HIGH_THRESHOLD", "0.7")),
+            importance_write_floor=float(os.getenv("HL_MEM_IMPORTANCE_WRITE_FLOOR", "0.2")),
+            slot_short_ttl_seconds=int(os.getenv("HL_MEM_SLOT_SHORT_TTL_SECONDS", "86400")),
+            ttl_backfill_batch_size=int(os.getenv("HL_MEM_TTL_BACKFILL_BATCH_SIZE", "100")),
+            ttl_backfill_grace_hours=int(os.getenv("HL_MEM_TTL_BACKFILL_GRACE_HOURS", "0")),
             max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
         )
         settings._validate()
@@ -176,6 +195,23 @@ class Settings:
             raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS must be non-negative")
         if self.extraction_max_split_depth < 0:
             raise ConfigurationError("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH must be non-negative")
+        if min(
+            self.temporal_ttl_days_low,
+            self.temporal_ttl_days_normal,
+            self.temporal_ttl_days_high,
+            self.slot_short_ttl_seconds,
+        ) < 1:
+            raise ConfigurationError("TTL durations must be positive")
+        if self.ttl_backfill_batch_size < 1 or self.ttl_backfill_grace_hours < 0:
+            raise ConfigurationError("TTL backfill batch size must be positive and grace hours non-negative")
+        if not (
+            0.0
+            <= self.importance_write_floor
+            <= self.importance_low_threshold
+            <= self.importance_high_threshold
+            <= 1.0
+        ):
+            raise ConfigurationError("importance thresholds must be ordered between 0 and 1")
         if self.embedder_mode not in {"fake", "real"}:
             raise ConfigurationError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
         if self.reranker_mode not in {"off", "fake", "on", "real"}:
@@ -211,3 +247,15 @@ class Settings:
             "extraction_chunk_overlap_turns": self.extraction_chunk_overlap_turns,
             "extraction_max_split_depth": self.extraction_max_split_depth,
         }
+
+    def retention_policy(self) -> TTLPolicy:
+        """构造不依赖基础设施的 Claim TTL 策略。"""
+        return TTLPolicy(
+            temporal_ttl_days_low=self.temporal_ttl_days_low,
+            temporal_ttl_days_normal=self.temporal_ttl_days_normal,
+            temporal_ttl_days_high=self.temporal_ttl_days_high,
+            importance_low_threshold=self.importance_low_threshold,
+            importance_high_threshold=self.importance_high_threshold,
+            importance_write_floor=self.importance_write_floor,
+            slot_short_ttl_seconds=self.slot_short_ttl_seconds,
+        )
