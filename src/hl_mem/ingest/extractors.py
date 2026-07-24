@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from hl_mem.recall.attribute_map import infer_canonical_attribute
+from hl_mem.domain.claims.attributes import infer_canonical_attribute
 
 
 @dataclass(frozen=True)

@@ -1,13 +1,17 @@
-"""向后兼容 re-export；实现已迁移到 :mod:`hl_mem.application.ingest`。"""
+"""已弃用的写入管线兼容入口。"""
+
+import warnings
+
+warnings.warn(
+    "hl_mem.api.pipeline is deprecated and will be removed in v0.6.0; "
+    "use hl_mem.application.ingest instead",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from hl_mem.application.ingest import IngestService, claim_text, compute_fact_hash, new_id
 
 store_extracted = IngestService.store_extracted
-
-
-def _build_observation(*_args, **_kwargs) -> None:
-    """已废弃 — 观察构建逻辑已移除。保留为 no-op 以兼容 monkeypatch。"""
-    return None
 
 
 __all__ = ["IngestService", "claim_text", "compute_fact_hash", "new_id", "store_extracted"]

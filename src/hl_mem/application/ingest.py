@@ -10,17 +10,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from hl_mem.config import ATTRIBUTE_TTL_DAYS
-from hl_mem.domain.entity import normalize_entity_id
-from hl_mem.observability.audit import current_audit
-from hl_mem.protocols import EmbedderProtocol
-from hl_mem.recall.attribute_map import is_mutually_exclusive_attribute, validate_canonical_attribute
-from hl_mem.recall.conflict import (
+from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute, validate_canonical_attribute
+from hl_mem.domain.claims.conflicts import (
     ConflictResolver,
     compute_claim_pair_key,
     compute_conflict_key,
     compute_legacy_conflict_key,
 )
-from hl_mem.recall.dedup import Deduplicator
+from hl_mem.domain.claims.dedup import Deduplicator
+from hl_mem.domain.entity import normalize_entity_id
+from hl_mem.observability.audit import current_audit
+from hl_mem.protocols import EmbedderProtocol
 from hl_mem.storage.migrations.fact_hash_v2 import compute_fact_hash_v2
 from hl_mem.storage.repository import ClaimRepository, EvidenceRepository, EventRepository, JobRepository
 

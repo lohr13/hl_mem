@@ -8,7 +8,7 @@ import httpx
 
 from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.chunking import ChunkingPolicy
-from hl_mem.ingest.embeddings import Embedder, FakeEmbedder
+from hl_mem.ingest.embedder import Embedder, FakeEmbedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.client import LLMClient

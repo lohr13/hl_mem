@@ -1,8 +1,4 @@
-"""⚠️ 冻结模块：此 migration 脚本导入的函数已被快照。
-
-不要修改此文件中使用的算法。如果 recall.conflict 或 recall.attribute_map
-的算法改变，此 migration 应保持使用旧版本逻辑。
-"""
+"""使用 v006 不可变快照回填 canonical attribute 与 conflict key。"""
 
 from __future__ import annotations
 
@@ -10,8 +6,11 @@ import json
 import sqlite3
 from typing import Any
 
-from hl_mem.recall.attribute_map import infer_canonical_attribute
-from hl_mem.recall.conflict import compute_conflict_key, compute_legacy_conflict_key
+from hl_mem.storage.migrations.snapshots.v006_snapshot import (
+    compute_conflict_key,
+    compute_legacy_conflict_key,
+    infer_canonical_attribute,
+)
 
 
 DATA_MIGRATION_VERSION = "006_data_conflict_key_v2"

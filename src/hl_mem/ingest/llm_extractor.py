@@ -15,7 +15,7 @@ from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
 from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
 from hl_mem.observability.audit import current_audit
-from hl_mem.recall.attribute_map import (
+from hl_mem.domain.claims.attributes import (
     MUTUALLY_EXCLUSIVE_SLOTS,
     infer_canonical_attribute,
     normalize_predicate,

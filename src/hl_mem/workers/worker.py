@@ -15,7 +15,7 @@ from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
-from hl_mem.recall.attribute_map import infer_canonical_attribute
+from hl_mem.domain.claims.attributes import infer_canonical_attribute
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import EventRepository, JobRepository

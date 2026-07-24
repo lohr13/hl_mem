@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from hl_mem.config import RECALL_DEFAULT_LIMIT
-from hl_mem.recall.policy import RecallIntent
+from hl_mem.domain.recall import RecallIntent
 
 
 class EventInput(BaseModel):

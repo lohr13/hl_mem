@@ -13,7 +13,7 @@ from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
-from hl_mem.recall.policy import RecallIntent, route_recall_intent
+from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
