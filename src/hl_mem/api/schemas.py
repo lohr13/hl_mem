@@ -13,6 +13,7 @@ from hl_mem.domain.recall import RecallIntent
 class EventInput(BaseModel):
     """事件写入请求。"""
 
+    # tenant_id 当前仅为单租户部署中的软标签，并非授权或数据隔离边界。
     id: str | None = None
     idempotency_key: str | None = Field(default=None, max_length=200)
     tenant_id: str = Field(default="default", max_length=100)
@@ -32,6 +33,7 @@ class EventInput(BaseModel):
 class RecallInput(BaseModel):
     """记忆召回请求。"""
 
+    # namespace 当前仅为软标签；后台维护、策略归纳和归档仍使用 default。
     query: str = Field(max_length=2000)
     limit: int = Field(default=RECALL_DEFAULT_LIMIT, ge=1, le=100)
     as_of: str | None = None

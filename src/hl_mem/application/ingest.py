@@ -338,6 +338,8 @@ def _build_claim_drafts(
     ttl_days: int,
 ) -> _ClaimDraft:
     """阶段 1：规范化提取结果、计算 TTL 并生成 claim 草稿。"""
+    # NOTE: tenant_id/namespace 当前是单租户部署中的软标签，不是隔离边界。
+    # 多租户需要未来引入统一 NamespaceContext 并贯穿后台任务与存储访问。
     namespace = event.get("tenant_id", "default")
     subject = normalize_entity_id(extracted.subject)
     qualifiers = extracted.qualifiers or {}

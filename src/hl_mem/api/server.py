@@ -155,7 +155,11 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                 connection,
                 embedder,
                 reranker,
-                RelationExpansionConfig(enabled=settings.relation_expansion_mode == "on"),
+                RelationExpansionConfig(
+                    enabled=settings.relation_expansion_mode == "on",
+                    max_depth=settings.relation_expansion_max_depth,
+                ),
+                settings,
             ).recall(
                 payload.query,
                 payload.limit,

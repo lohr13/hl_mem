@@ -100,7 +100,7 @@ class Worker:
             return {"status": "idle"}
         lease_token = job["lease_token"]
         try:
-            result = self._dispatch(job)
+            result = dispatch_job(self, job)
             self.jobs.complete_job(job["id"], _now(), lease_token)
             return {"status": "succeeded", "job_id": job["id"], **result}
         except Exception as error:
@@ -136,10 +136,8 @@ class Worker:
             self.database.close()
 
     def _dispatch(self, job: dict[str, Any]) -> dict[str, Any]:
-        handler = JOB_HANDLERS.get(job["job_type"])
-        if handler is None:
-            raise ValueError(f"unknown job type: {job['job_type']}")
-        return handler(self, job)
+        """兼容旧调用；新代码应直接调用模块级 dispatch_job。"""
+        return dispatch_job(self, job)
 
     def _run_maintenance(self) -> None:
         """执行一轮 TTL、衰减、派生记忆、保留策略和定时任务维护。"""
@@ -376,7 +374,12 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_induce_policies(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理策略归纳任务。"""
-    return induce_policies(worker.connection, _now())
+    return induce_policies(
+        worker.connection,
+        _now(),
+        worker.settings.policy_induction_lookback_days,
+        worker.settings.policy_induction_min_episodes,
+    )
 
 
 def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
@@ -417,6 +420,14 @@ JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {
     "purge_retention": _handle_purge_retention,
     "retry_failed": _handle_retry_failed,
 }
+
+
+def dispatch_job(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
+    """通过公开模块级入口独立分派单个后台任务。"""
+    handler = JOB_HANDLERS.get(job["job_type"])
+    if handler is None:
+        raise ValueError(f"unknown job type: {job['job_type']}")
+    return handler(worker, job)
 
 
 def main() -> None:

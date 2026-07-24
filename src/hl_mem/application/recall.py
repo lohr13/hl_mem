@@ -17,6 +17,7 @@ from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository, EvidenceRepository
+from hl_mem.settings import Settings
 
 
 def _now() -> str:
@@ -32,11 +33,13 @@ class RecallService:
         embedder: EmbedderProtocol | Any,
         reranker: RerankerProtocol | None = None,
         relation_config: RelationExpansionConfig | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self.connection = connection
         self.embedder = embedder
         self.reranker = reranker
         self.relation_config = relation_config or RelationExpansionConfig()
+        self.settings = settings or Settings()
 
     def recall(
         self,
@@ -62,7 +65,10 @@ class RecallService:
                     query_hash=hashlib.sha256(query.encode()).hexdigest(),
                     intent=selected_intent.value,
                     limit=limit,
-                    candidate_limit=min(RECALL_VECTOR_SCAN_LIMIT, max(limit * 5, 50)),
+                    candidate_limit=min(
+                        RECALL_VECTOR_SCAN_LIMIT,
+                        max(limit * 5, self.settings.recall_candidate_floor),
+                    ),
                     candidates={},
                     phases=SearchPhaseMetrics(),
                 )
@@ -83,6 +89,8 @@ class RecallService:
             relation_connection=self.connection,
             relation_config=self.relation_config,
             tracer=tracer,
+            candidate_floor=self.settings.recall_candidate_floor,
+            preference_recency_boost=self.settings.preference_recency_boost,
         )
         self._record_access(claims)
         self._record_feedback(claims, query_id)
@@ -103,7 +111,12 @@ class RecallService:
             "query_id": query_id,
         }
         if context_mode == "packed":
-            response["context"] = self._assemble_context(results, observations, policies, token_budget or 2000)
+            response["context"] = self._assemble_context(
+                results,
+                observations,
+                policies,
+                token_budget or self.settings.packed_context_token_budget,
+            )
         if tracer is not None:
             tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
             response["search_trace"] = tracer.to_dict()

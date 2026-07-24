@@ -30,6 +30,14 @@ class Settings:
     reranker_base_url: str = "https://dashscope.aliyuncs.com"
     reranker_model: str = "gte-rerank-v2"
     relation_expansion_mode: str = "off"
+    relation_expansion_max_depth: int = 1
+    packed_context_token_budget: int = 2000
+    recall_candidate_floor: int = 50
+    preference_recency_boost: float = 0.12
+    hermes_circuit_failure_threshold: int = 5
+    hermes_circuit_open_seconds: float = 60.0
+    policy_induction_lookback_days: int = 7
+    policy_induction_min_episodes: int = 3
     extractor_mode: str = "fake"
     llm_api_key: str | None = None
     llm_base_url: str = "https://coding.dashscope.aliyuncs.com/v1"
@@ -80,6 +88,14 @@ class Settings:
             reranker_base_url=os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
             reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
             relation_expansion_mode=os.getenv("HL_MEM_RELATION_EXPANSION", "off").lower(),
+            relation_expansion_max_depth=int(os.getenv("HL_MEM_RELATION_EXPANSION_MAX_DEPTH", "1")),
+            packed_context_token_budget=int(os.getenv("HL_MEM_PACKED_CONTEXT_TOKEN_BUDGET", "2000")),
+            recall_candidate_floor=int(os.getenv("HL_MEM_RECALL_CANDIDATE_FLOOR", "50")),
+            preference_recency_boost=float(os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")),
+            hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
+            hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
+            policy_induction_lookback_days=int(os.getenv("HL_MEM_POLICY_INDUCTION_LOOKBACK_DAYS", "7")),
+            policy_induction_min_episodes=int(os.getenv("HL_MEM_POLICY_INDUCTION_MIN_EPISODES", "3")),
             extractor_mode=os.getenv("HL_MEM_EXTRACTOR", "fake").lower(),
             llm_api_key=os.getenv("LLM_API_KEY"),
             llm_base_url=os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
@@ -120,6 +136,16 @@ class Settings:
             raise ConfigurationError("HL_MEM_LLM_STRUCTURED_MODE must be 'auto', 'json_object', or 'json_schema'")
         if self.relation_expansion_mode not in {"off", "on"}:
             raise ConfigurationError("HL_MEM_RELATION_EXPANSION must be 'off' or 'on'")
+        if self.relation_expansion_max_depth < 1:
+            raise ConfigurationError("HL_MEM_RELATION_EXPANSION_MAX_DEPTH must be at least 1")
+        if self.packed_context_token_budget < 1 or self.recall_candidate_floor < 1:
+            raise ConfigurationError("recall budgets must be positive")
+        if not 0.0 <= self.preference_recency_boost <= 1.0:
+            raise ConfigurationError("HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1")
+        if self.hermes_circuit_failure_threshold < 1 or self.hermes_circuit_open_seconds <= 0:
+            raise ConfigurationError("Hermes circuit breaker values must be positive")
+        if self.policy_induction_lookback_days < 1 or self.policy_induction_min_episodes < 1:
+            raise ConfigurationError("policy induction values must be positive")
         if self.llm_max_attempts < 1:
             raise ConfigurationError("LLM_MAX_ATTEMPTS must be at least 1")
         if self.llm_schema_retries < 0:
@@ -157,6 +183,7 @@ class Settings:
             "embedding_dim": self.embedding_dim,
             "reranker_mode": self.reranker_mode,
             "relation_expansion_mode": self.relation_expansion_mode,
+            "relation_expansion_max_depth": self.relation_expansion_max_depth,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,
