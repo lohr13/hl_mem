@@ -289,6 +289,7 @@ class Settings:
             "tag_channel_weight": self.tag_channel_weight,
             "tag_candidate_limit": self.tag_candidate_limit,
             "vector_backend": self.vector_backend,
+            "fts_tokenizer": self.fts_tokenizer,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,

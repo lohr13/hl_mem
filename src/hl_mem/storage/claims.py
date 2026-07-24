@@ -503,7 +503,7 @@ class ClaimRepository:
                 "AND (c.valid_from IS NULL OR c.valid_from<=?) "
                 "AND (c.valid_to IS NULL OR c.valid_to>?) "
                 "ORDER BY bm25(claims_fts) LIMIT ?",
-                (sanitize_fts_query(query), namespace, reference, reference, limit),
+                (sanitize_fts_query(query, tokenizer="trigram"), namespace, reference, reference, limit),
             ).fetchall()
         except sqlite3.OperationalError as error:
             if not is_fts_syntax_error(error):
