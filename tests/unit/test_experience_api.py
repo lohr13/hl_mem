@@ -59,7 +59,7 @@ def test_policy_api_and_recall_attach_active_policies_for_task_queries(tmp_path)
 
         policies = client.get("/v1/policies").json()["policies"]
         assert [policy["id"] for policy in policies] == [policy_id]
-        assert json.loads(policies[0]["procedure"]) == {"steps": ["inspect logs"]}
+        assert policies[0]["procedure"] == {"steps": ["inspect logs"]}
         assert client.get("/v1/policies", params={"status": "retired"}).json() == {"policies": []}
 
         assert client.post("/v1/recall", json={"query": "investigate service"}).json()["policies"][0]["id"] == policy_id

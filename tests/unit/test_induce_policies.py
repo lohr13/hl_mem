@@ -27,7 +27,7 @@ def test_induce_policies_clusters_recent_successes_by_task_and_tool_sequence(tmp
     assert result == {"clusters": 1, "policies_induced": 1}
     policy = service.list_policies("active")[0]
     assert "coding" in policy["trigger"]
-    assert json.loads(policy["procedure"]) == {"steps": ["inspect_logs", "deploy"]}
+    assert policy["procedure"] == {"steps": ["inspect_logs", "deploy"]}
     assert policy["support"] == 3
 
 
