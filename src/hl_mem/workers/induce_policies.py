@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any
 
 from hl_mem.experience.service import ExperienceService
 from hl_mem.settings import Settings
-from hl_mem.storage.jobs import JobRepository
+from hl_mem.workers.scheduling import enqueue_daily_job
 
 
 def induce_policies(
@@ -66,25 +65,14 @@ def induce_policies(
 
 def enqueue_daily_policy_induction(connection: Any, now: str, cron: str) -> bool:
     """到达每日计划时间后幂等创建策略归纳任务。"""
-    try:
-        hour_text, minute_text = cron.split(":", 1)
-        scheduled_minutes = int(hour_text) * 60 + int(minute_text)
-    except (AttributeError, TypeError, ValueError) as error:
-        raise ValueError("HL_MEM_INDUCE_POLICIES_CRON must use HH:MM format") from error
-    current = datetime.fromisoformat(now.replace("Z", "+00:00"))
-    if not 0 <= scheduled_minutes < 24 * 60:
-        raise ValueError("HL_MEM_INDUCE_POLICIES_CRON must use HH:MM format")
-    if current.hour * 60 + current.minute < scheduled_minutes:
-        return False
-    created = JobRepository(connection).insert_job(
-        {
-            "id": uuid.uuid4().hex,
-            "job_type": "induce_policies",
-            "payload_json": "{}",
-            "idempotency_key": f"induce_policies:{current.date().isoformat()}",
-            "created_at": now,
-            "updated_at": now,
-        }
+    return (
+        enqueue_daily_job(
+            connection,
+            now,
+            {"cron": cron},
+            "induce_policies",
+            {},
+            "HL_MEM_INDUCE_POLICIES_CRON",
+        )
+        is not None
     )
-    connection.commit()
-    return created

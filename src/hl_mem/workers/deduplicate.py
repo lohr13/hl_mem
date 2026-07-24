@@ -12,6 +12,7 @@ from hl_mem.domain.claims.dedup import DedupJudge
 from hl_mem.llm.client import LLMClient
 from hl_mem.protocols import EmbedderProtocol
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.workers.scheduling import enqueue_daily_job
 
 EMBEDDING_TEXT_VERSION = "v1: predicate+value"
 POLICY_VERSION = "v1"
@@ -28,25 +29,20 @@ def _pair_key(left_id: str, right_id: str) -> str:
 
 def enqueue_daily_deduplication(connection: sqlite3.Connection, now: str, scheduled_minutes: int) -> bool:
     """到达计划时间后幂等创建当天的跨主体去重任务。"""
-    current = datetime.fromisoformat(now.replace("Z", "+00:00"))
-    if not 0 <= scheduled_minutes < 24 * 60:
-        raise ValueError("scheduled_minutes must be between 0 and 1439")
-    if current.hour * 60 + current.minute < scheduled_minutes:
-        return False
-    from hl_mem.storage.jobs import JobRepository
-
-    created = JobRepository(connection).insert_job(
-        {
-            "id": uuid.uuid4().hex,
-            "job_type": "deduplicate_claims",
-            "payload_json": "{}",
-            "idempotency_key": f"deduplicate:{current.date().isoformat()}",
-            "created_at": now,
-            "updated_at": now,
-        }
+    return (
+        enqueue_daily_job(
+            connection,
+            now,
+            {
+                "scheduled_minutes": scheduled_minutes,
+                "idempotency_prefix": "deduplicate",
+            },
+            "deduplicate_claims",
+            {},
+            "scheduled_minutes",
+        )
+        is not None
     )
-    connection.commit()
-    return created
 
 
 def deduplicate_claims(
