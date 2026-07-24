@@ -4,6 +4,37 @@
 
 ---
 
+## v0.11.0 — 2026-07-24
+
+### Hindsight 对标：控制面 + 协议边界
+
+基于 Hindsight .pyc 逆向分析，引入 10 维度架构对标后的 P0-P2 改进。
+
+#### P0：可观测性 + 评测闭环
+- **LLM 调用账本** (migration 019): 每次 LLM 调用持久化 span（operation/provider/model/status/tokens/latency），healthz 暴露 24h 聚合统计，token 拆分为 input/output/cached
+- **Job 进度系统** (migration 020): jobs 表增加 stage/processed/total/heartbeat_at，consolidation/dedup worker 逐条上报进度，lease token CAS 保护
+- **中文 FTS 评测集**: 30 条中文查询评测 case，实测 FTS5 unicode61 tokenizer 对中文 0% recall——证实了换 tokenizer 的必要性
+- **TextSearchBackend 协议**: 定义全文检索后端协议边界 + fts_tokenizer 配置占位
+
+#### P1：扩展点 + 提取增强
+- **Dry-run extraction**: POST /v1/extract/dry-run，提取不落库，支持自定义 instructions
+- **Reranker provider registry**: DashScopeReranker + make_reranker 工厂 + reranker_provider 配置
+- **ConsolidationScope**: 显式 scope 控制（namespace/slot/tag 过滤 + max_pairs 限制），POST /v1/consolidate
+- **提取模型增强** (migration 021): claims 表增加 occurred_start/occurred_end/entities_json，ExtractedClaim 增加对应字段
+
+#### P2：协议边界
+- **VectorSearchBackend 协议**: 向量检索后端协议定义 + vector_backend 配置占位 + healthz vector_search metrics
+
+#### 关键发现
+- FTS5 默认 tokenizer 对纯中文查询 0% recall（之前被 dense channel 掩盖）
+- hl_mem 已有 DashScope/Zhipu/OpenAI-compatible 三 provider，真正缺的是调用级可观测性
+
+### 数字
+- 测试: 292 → 327 (+35)
+- Migrations: 018 → 021 (+3)
+- 新增协议: TextSearchBackend, VectorSearchBackend
+- 新增 API: /v1/extract/dry-run, /v1/consolidate
+
 ## v0.10.1 — 2026-07-24
 
 ### 代码质量重构（基于 Hermes × Codex 双分析师共识评估）
