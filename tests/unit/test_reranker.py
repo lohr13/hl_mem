@@ -8,23 +8,25 @@ from hl_mem.recall.reranker import FakeReranker, Reranker
 
 
 def test_server_reranker_on_without_key_falls_back_to_disabled(monkeypatch) -> None:
-    from hl_mem.api.server import _make_reranker
+    from hl_mem.components import make_reranker
+    from hl_mem.settings import Settings
 
     monkeypatch.setenv("HL_MEM_RERANKER", "on")
     monkeypatch.delenv("RERANKER_API_KEY", raising=False)
     monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
 
-    assert _make_reranker() is None
+    assert make_reranker(Settings.from_env()) is None
 
 
 def test_server_reranker_initialization_failure_falls_back(monkeypatch) -> None:
-    import hl_mem.api.server as server
+    import hl_mem.components as components
+    from hl_mem.settings import Settings
 
     monkeypatch.setenv("HL_MEM_RERANKER", "on")
     monkeypatch.setenv("RERANKER_API_KEY", "test-key")
-    monkeypatch.setattr(server, "Reranker", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")))
+    monkeypatch.setattr(components, "Reranker", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")))
 
-    assert server._make_reranker() is None
+    assert components.make_reranker(Settings.from_env()) is None
 
 
 def _claims() -> list[dict]:

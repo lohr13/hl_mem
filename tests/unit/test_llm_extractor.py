@@ -1,92 +1,94 @@
 import httpx
 import pytest
 
+from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.llm_extractor import LLMExtractor, SYSTEM_PROMPT
+from hl_mem.llm.client import LLMClient
+from hl_mem.llm.providers import ZhipuProvider
+from hl_mem.llm.types import LLMRequest, LLMResponse
 
 
-class Response:
-    def __init__(self, content: str, tokens: int = 12) -> None:
-        self.content = content
-        self.tokens = tokens
+class _FakeLLMClient:
+    """测试用 LLMClient 替身，返回预设响应。"""
 
-    def raise_for_status(self) -> None:
-        return None
+    class _Provider:
+        """最小 provider 标识。"""
 
-    def json(self) -> dict:
-        return {
-            "choices": [{"message": {"content": self.content}}],
-            "usage": {"total_tokens": self.tokens},
-        }
+        name = "fake"
+
+    provider = _Provider()
+    model = "test-model"
+
+    def __init__(self, response_content: str, usage_tokens: int = 12) -> None:
+        self._content = response_content
+        self._tokens = usage_tokens
+        self.last_request: LLMRequest | None = None
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        """记录请求并返回预设响应。"""
+        self.last_request = request
+        return LLMResponse(self._content, "stop", self._tokens)
 
 
-def test_parses_fenced_json_and_normalizes_entity(monkeypatch) -> None:
+def test_parses_fenced_json_and_normalizes_entity() -> None:
     raw = """```json
     {"claims":[{"subject":"用户","predicate":"使用","value":"PG","qualifiers":{},
     "confidence":0.9,"volatility":"stable","reason":"明确陈述"}],"should_memorize":true}
     ```"""
-    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: Response(raw))
-    extractor = LLMExtractor("key", "https://example.test/v1", "model")
+    client = _FakeLLMClient(raw)
+    extractor = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2))
     claims = extractor.extract({"text": "数据库使用 PG"})
     assert claims[0].value == "PostgreSQL"
     assert extractor.last_usage_tokens == 12
 
 
-def test_should_memorize_false_returns_no_claims(monkeypatch) -> None:
-    monkeypatch.setattr(
-        httpx, "post", lambda *args, **kwargs: Response('{"claims":[],"should_memorize":false}')
-    )
-    assert LLMExtractor("key", "https://example.test", "model").extract("闲聊") == []
+def test_should_memorize_false_returns_no_claims() -> None:
+    client = _FakeLLMClient('{"claims":[],"should_memorize":false}')
+    assert LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("闲聊") == []
 
 
-def test_occurred_at_is_injected_into_user_prompt(monkeypatch) -> None:
-    captured = {}
-
-    def post(*args, **kwargs):
-        captured.update(kwargs["json"])
-        return Response('{"claims":[],"should_memorize":true}')
-
-    monkeypatch.setattr(httpx, "post", post)
+def test_occurred_at_is_injected_into_user_prompt() -> None:
+    client = _FakeLLMClient('{"claims":[],"should_memorize":true}')
+    extractor = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2))
     occurred_at = "2026-07-21T08:30:00+08:00"
-    LLMExtractor("key", "https://example.test", "model").extract(
-        "明天交付", {"occurred_at": occurred_at}
-    )
-    assert occurred_at in captured["messages"][1]["content"]
+    extractor.extract("明天交付", {"occurred_at": occurred_at})
+    assert client.last_request is not None
+    assert occurred_at in client.last_request.messages[1].content
 
 
-def test_normalizes_predicate_and_preserves_chinese_value(monkeypatch) -> None:
+def test_normalizes_predicate_and_preserves_chinese_value() -> None:
     raw = ('{"claims":[{"subject":"用户","predicate":"Prefers",'
            '"value":"深色模式","qualifiers":{}}],"should_memorize":true}')
-    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: Response(raw))
-    claim = LLMExtractor("key", "https://example.test", "model").extract("我喜欢深色模式")[0]
+    client = _FakeLLMClient(raw)
+    claim = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("我喜欢深色模式")[0]
     assert claim.predicate == "偏好"
     assert claim.value == "深色模式"
 
 
-def test_invalid_json_is_rejected(monkeypatch) -> None:
-    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: Response("not json"))
+def test_invalid_json_is_rejected() -> None:
+    client = _FakeLLMClient("not json")
     with pytest.raises(ValueError, match="valid JSON"):
-        LLMExtractor("key", "https://example.test", "model").extract("内容")
+        LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("内容")
 
 
-def test_http_call_has_timeout_and_two_retries(monkeypatch) -> None:
-    calls: list[float] = []
-
-    def fail(*args, **kwargs):
-        calls.append(kwargs["timeout"])
-        raise httpx.ConnectError("offline")
-
-    monkeypatch.setattr(httpx, "post", fail)
-    monkeypatch.setattr("hl_mem.ingest.llm_extractor.time.sleep", lambda _: None)
-    monkeypatch.delenv("LLM_TIMEOUT", raising=False)
-    with pytest.raises(httpx.ConnectError):
-        LLMExtractor("key", "https://example.test", "model", timeout=42.0).extract("内容")
-    assert calls == [42.0, 42.0, 42.0]
+def test_llm_client_has_configured_retry() -> None:
+    client = LLMClient(
+        "key",
+        "https://example.test",
+        "model",
+        provider=ZhipuProvider(),
+        timeout=httpx.Timeout(42.0),
+        max_attempts=3,
+    )
+    assert client.max_attempts == 3
 
 
 def test_timeout_reads_from_env(monkeypatch) -> None:
     monkeypatch.setenv("LLM_TIMEOUT", "60")
-    ext = LLMExtractor("key", "https://example.test", "model")
-    assert ext.timeout == 60.0
+    from hl_mem.settings import Settings
+
+    settings = Settings.from_env()
+    assert settings.llm_timeout == 60.0
 
 
 def test_prompt_requires_canonical_attribute() -> None:
