@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 import uuid
 from dataclasses import dataclass
@@ -12,7 +13,9 @@ from typing import Any
 from hl_mem.config import ATTRIBUTE_TTL_DAYS
 from hl_mem.domain.claims.attributes import (
     is_mutually_exclusive_attribute,
+    normalize_topic_tags,
     validate_canonical_attribute,
+    validate_canonical_slot,
 )
 from hl_mem.domain.claims.conflicts import (
     ConflictResolver,
@@ -24,11 +27,11 @@ from hl_mem.domain.claims.dedup import Deduplicator
 from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
-from hl_mem.storage.migrations.fact_hash_v2 import compute_fact_hash_v2
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import EvidenceRepository
 from hl_mem.storage.jobs import JobRepository
+from hl_mem.storage.migrations.fact_hash_v2 import compute_fact_hash_v2
 
 
 @dataclass
@@ -344,6 +347,8 @@ def _build_claim_drafts(
     canonical_attribute = validate_canonical_attribute(
         extracted.predicate, getattr(extracted, "canonical_attribute", None)
     )
+    canonical_slot = validate_canonical_slot(getattr(extracted, "canonical_slot", None))
+    topic_tags = normalize_topic_tags(getattr(extracted, "topic_tags", None))
     scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
     attribute_ttl_days = ATTRIBUTE_TTL_DAYS.get(canonical_attribute)
     effective_ttl_days = (
@@ -367,6 +372,8 @@ def _build_claim_drafts(
         "predicate": extracted.predicate,
         "value": extracted.value,
         "canonical_attribute": canonical_attribute,
+        "canonical_slot": canonical_slot,
+        "topic_tags_json": json.dumps(topic_tags, ensure_ascii=False, separators=(",", ":")),
         "fact_hash": compute_fact_hash(subject, extracted.predicate, extracted.value),
         "qualifiers": qualifiers,
         "conflict_key": compute_conflict_key(namespace, subject, canonical_attribute, qualifiers),

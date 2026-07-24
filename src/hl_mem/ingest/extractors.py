@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from hl_mem.domain.claims.attributes import infer_canonical_attribute
+from hl_mem.domain.claims.attributes import (
+    infer_canonical_attribute,
+    validate_canonical_slot,
+)
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,8 @@ class ExtractedClaim:
     scope: str = "permanent"
     importance: float = 0.5
     canonical_attribute: str = "custom.unknown"
+    canonical_slot: str | None = None
+    topic_tags: list[str] = field(default_factory=list)
 
 
 class FakeExtractor:
@@ -48,6 +53,7 @@ class FakeExtractor:
         for pattern, predicate in self.patterns:
             if match := pattern.search(text):
                 value = match.group(1).strip()
+                canonical_attribute = infer_canonical_attribute(predicate, "用户", value)
                 results.append(
                     ExtractedClaim(
                         predicate=predicate,
@@ -55,7 +61,8 @@ class FakeExtractor:
                         volatility="ephemeral" if predicate == "service_status" else "stable",
                         qualifiers={"state_change": True} if text.startswith("现在") else {},
                         scope="temporal" if predicate == "service_status" else "permanent",
-                        canonical_attribute=infer_canonical_attribute(predicate, "用户", value),
+                        canonical_attribute=canonical_attribute,
+                        canonical_slot=validate_canonical_slot(canonical_attribute),
                     )
                 )
                 break

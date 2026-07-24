@@ -9,14 +9,24 @@ from typing import Any
 from pydantic import ValidationError as PydanticValidationError
 
 from hl_mem.domain.claims.attributes import (
+    ALLOWED_TOPIC_TAGS,
     MUTUALLY_EXCLUSIVE_SLOTS,
+    OPERATIONAL_SLOT_NAMES,
+    SLOT_REGISTRY,
     infer_canonical_attribute,
     normalize_predicate,
+    normalize_topic_tags,
     reconcile_canonical_attribute,
+    validate_canonical_slot,
 )
 from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
+from hl_mem.llm.types import (
+    LLMMessage,
+    LLMRequest,
+    StructuredOutputMode,
+    StructuredOutputSpec,
+)
 from hl_mem.observability.audit import current_audit
 
 from .chunking import (
@@ -28,11 +38,30 @@ from .chunking import (
 from .extractors import ExtractedClaim
 from .schemas import ExtractionResponseSchema, extraction_response_json_schema
 
-SYSTEM_PROMPT = """你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。只提取事实，不判断是否与已有记忆冲突。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、canonical_attribute、value、qualifiers、confidence、volatility、reason。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
+
+def _operational_slot_prompt() -> str:
+    """从 registry 渲染允许 LLM 选择的 operational slot。"""
+    lines: list[str] = []
+    for name in OPERATIONAL_SLOT_NAMES:
+        definition = SLOT_REGISTRY[name]
+        qualifiers = "、".join(definition.required_qualifiers) or "无"
+        examples = "；".join(definition.examples) or "无"
+        lines.append(f"- {name}：{definition.description}；必需 qualifiers：{qualifiers}；示例：{examples}")
+    return "\n".join(lines)
+
+
+_OPERATIONAL_SLOT_PROMPT = _operational_slot_prompt()
+_TOPIC_TAG_PROMPT = "、".join(sorted(ALLOWED_TOPIC_TAGS))
+
+SYSTEM_PROMPT = f"""你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。只提取事实，不判断是否与已有记忆冲突。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、canonical_attribute、canonical_slot、topic_tags、value、qualifiers、confidence、volatility、reason。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
 value 必须保持用户使用的原始语言：中文原文输出中文值，英文原文输出英文值，不要翻译。保留原文中的精确数字和日期，不得模糊化或改写。
 结合事件上下文中的 occurred_at 解析“今天”“明天”“下周”等相对时间，并在事实中输出对应的绝对日期。
 predicate 只能是以下标准值之一：偏好（喜欢或不喜欢的事物）、使用（工具、数据库、操作系统等技术选择）、状态（当前服务或运行状态）、身份（用户名、角色、联系方式）、配置（端口、路径、参数）、计划（计划事项、截止日期）、事实（其他客观事实）。
-canonical_attribute 必须使用受控的小写 ASCII domain.slot，例如 preference.ui_theme、preference.tool_choice、choice.tool、choice.database、state.service_health、identity.role、config.port、config.path、config.env、plan.deadline、fact.tool_choice、fact.other；必须选择与 predicate 和事实内容匹配的最细粒度属性，不得创造新值。
+canonical_attribute 是兼容字段：对能确定 operational slot 的事实填写同名值；否则按 predicate 填写兼容属性，系统会保持旧逻辑校验。
+canonical_slot 只表示参与业务规则的 operational slot，只能从以下 15 个值选择；无法唯一确定时必须返回 null，不得创造新值：
+{_OPERATIONAL_SLOT_PROMPT}
+topic_tags 是用于检索的多值标签，只能从以下集合选择，可返回空数组：
+{_TOPIC_TAG_PROMPT}
 subject 默认为“用户”；明确提到项目名或服务名时使用该名称。代词（他、她、它、那个）必须结合上下文替换为具体名称；不要在事实中保留代词。
 subject 必须复用标准实体名。同一实体不得因大小写、空格、连字符、产品后缀或“插件/memory/CLI”等描述产生新名称。若事件上下文提供 canonical_entities，必须从其中选择；组件级事实仍归组件，项目级事实归项目。示例：hlmem/HL_MEM → hl_mem；Codex CLI → Codex；LLMExtractor → llm_extractor。
 文本包含“改用”“换成”“现在用”“不用了”“改为”等变更信号时，在 qualifiers 中加入 \"change\": true。
@@ -325,6 +354,8 @@ class LLMExtractor:
             defaults: dict[str, Any] = {
                 "subject": "用户",
                 "canonical_attribute": "fact.other",
+                "canonical_slot": None,
+                "topic_tags": [],
                 "qualifiers": {},
                 "confidence": 0.5,
                 "volatility": "stable",
@@ -411,4 +442,6 @@ class LLMExtractor:
             scope=scope,
             importance=importance,
             canonical_attribute=canonical_attribute,
+            canonical_slot=validate_canonical_slot(item.get("canonical_slot")),
+            topic_tags=normalize_topic_tags(item.get("topic_tags")),
         )
