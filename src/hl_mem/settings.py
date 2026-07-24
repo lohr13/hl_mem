@@ -60,6 +60,11 @@ class Settings:
     consolidate_cron: str = "03:30"
     consolidate_batch_size: int = 100
     consolidate_confidence: float = 0.8
+    dedup_enabled: bool = True
+    dedup_threshold: float = 0.92
+    dedup_audit_only: bool = True
+    dedup_scan_limit: int = 200
+    dedup_cron: str = "03:00"
     induce_policies_cron: str = "04:00"
     reclassify_cron: str = "04:30"
     memory_temporal_ttl_days: int = 7
@@ -121,6 +126,11 @@ class Settings:
             consolidate_cron=os.getenv("HL_MEM_CONSOLIDATE_CRON", "03:30"),
             consolidate_batch_size=int(os.getenv("HL_MEM_CONSOLIDATE_BATCH_SIZE", "100")),
             consolidate_confidence=float(os.getenv("HL_MEM_CONSOLIDATE_CONFIDENCE", "0.8")),
+            dedup_enabled=os.getenv("HL_MEM_DEDUP_ENABLED", "true").lower() == "true",
+            dedup_threshold=float(os.getenv("HL_MEM_DEDUP_THRESHOLD", "0.92")),
+            dedup_audit_only=os.getenv("HL_MEM_DEDUP_AUDIT_ONLY", "true").lower() == "true",
+            dedup_scan_limit=int(os.getenv("HL_MEM_DEDUP_SCAN_LIMIT", "200")),
+            dedup_cron=os.getenv("HL_MEM_DEDUP_CRON", "03:00"),
             induce_policies_cron=os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00"),
             reclassify_cron=os.getenv("HL_MEM_RECLASSIFY_CRON", "04:30"),
             memory_temporal_ttl_days=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS", "7")),
@@ -156,6 +166,10 @@ class Settings:
             raise ConfigurationError("LLM_MAX_ATTEMPTS must be at least 1")
         if self.llm_schema_retries < 0:
             raise ConfigurationError("HL_MEM_LLM_SCHEMA_RETRIES must be non-negative")
+        if not 0.0 <= self.dedup_threshold <= 1.0:
+            raise ConfigurationError("HL_MEM_DEDUP_THRESHOLD must be between 0 and 1")
+        if self.dedup_scan_limit < 1:
+            raise ConfigurationError("HL_MEM_DEDUP_SCAN_LIMIT must be positive")
         if self.extraction_chunk_target_chars < 1:
             raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS must be positive")
         if self.extraction_chunk_overlap_turns < 0:
