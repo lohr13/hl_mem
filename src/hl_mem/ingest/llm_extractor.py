@@ -83,6 +83,14 @@ change rate, not retention. importance must be a number from 0.0 to 1.0: 0.0-0.3
 0.4-0.6 useful, 0.7-0.9 an important preference, commitment, or constraint, and 1.0 an explicit
 must-remember instruction. Do not infer importance merely from emotional wording.
 
+importance 打分指南：
+- 0.9-1.0：核心身份、永久偏好、关键约束
+- 0.7-0.8：重要架构决策、工具选择、配置
+- 0.5-0.6：项目状态、计划、一般事实
+- 0.3-0.4：一次性操作记录、临时状态
+- < 0.2：不写入（噪声）
+保护类型（即使低分也写入）：explicit_memory、identity.name。
+
 scope 表示事实的有效期，不表示变化频率：
 - temporal：有截止期、仅描述当前/本次/某版本/某次运行，或未来会被新状态替换；
 - permanent：身份、稳定偏好、长期约束、设计原则，以及不依赖某次运行或版本的系统能力。

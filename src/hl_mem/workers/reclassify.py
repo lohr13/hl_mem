@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timedelta
 from typing import Any, Iterable
 
 from hl_mem import components
 from hl_mem.domain.claims.attributes import validate_canonical_slot
 from hl_mem.domain.claims.conflicts import compute_conflict_key
+from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
 from hl_mem.errors import ConfigurationError
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
@@ -81,17 +81,30 @@ def classify_batch(llm_client: LLMClient, claims: list[dict[str, Any]]) -> list[
     return values if isinstance(values, list) else []
 
 
-def _classification_expiration(claim: dict[str, Any], scope: str, ttl_days: int) -> str | None:
-    """按原始观察时间为 temporal 分类重算绝对过期时间。"""
-    if scope != "temporal":
-        return None
-    anchor = claim.get("observed_at") or claim.get("recorded_from")
-    if not anchor:
+def _classification_expiration(
+    claim: dict[str, Any],
+    scope: str,
+    importance: float,
+    policy: TTLPolicy,
+) -> str | None:
+    """按原始观察时间重算绝对过期时间，且不改写已过期 claim。"""
+    if claim.get("status") == "expired":
         return claim.get("expires_at")
-    try:
-        return (datetime.fromisoformat(str(anchor)) + timedelta(days=ttl_days)).isoformat()
-    except ValueError:
+    observed_at = str(claim.get("observed_at") or "")
+    recorded_from = str(claim.get("recorded_from") or "")
+    if not observed_at and not recorded_from:
         return claim.get("expires_at")
+    expires_at, _reason = compute_expiration(
+        scope=scope,
+        importance=importance,
+        volatility=str(claim.get("volatility") or "stable"),
+        canonical_slot=validate_canonical_slot(claim.get("canonical_slot")),
+        valid_to=claim.get("valid_to"),
+        observed_at=observed_at,
+        recorded_from=recorded_from,
+        policy=policy,
+    )
+    return expires_at
 
 
 def reclassify_claims(
@@ -99,18 +112,34 @@ def reclassify_claims(
     llm_client: LLMClient,
     batch_size: int = 8,
     temporal_ttl_days: int | None = None,
+    policy: TTLPolicy | None = None,
 ) -> dict[str, int]:
     """重分类仍处于默认 scope/importance 的记忆。"""
     if not 5 <= batch_size <= 10:
         raise ValueError("batch_size must be between 5 and 10")
-    ttl_days = Settings().memory_temporal_ttl_days if temporal_ttl_days is None else temporal_ttl_days
-    if ttl_days < 1:
+    effective_policy = policy or Settings().retention_policy()
+    if temporal_ttl_days is not None:
+        effective_policy = TTLPolicy(
+            temporal_ttl_days_low=effective_policy.temporal_ttl_days_low,
+            temporal_ttl_days_normal=temporal_ttl_days,
+            temporal_ttl_days_high=effective_policy.temporal_ttl_days_high,
+            importance_low_threshold=effective_policy.importance_low_threshold,
+            importance_high_threshold=effective_policy.importance_high_threshold,
+            importance_write_floor=effective_policy.importance_write_floor,
+            slot_short_ttl_seconds=effective_policy.slot_short_ttl_seconds,
+            short_ttl_slots=effective_policy.short_ttl_slots,
+        )
+    if effective_policy.temporal_ttl_days_normal < 1:
         raise ValueError("temporal_ttl_days must be positive")
     repository = ClaimRepository(connection)
     rows = repository.list_all()
-    pending = [row for row in rows
-               if row.get("scope", "permanent") == "permanent"
-               and float(row.get("importance", 0.5)) == 0.5]
+    pending = [
+        row
+        for row in rows
+        if row.get("status") != "expired"
+        and row.get("scope", "permanent") == "permanent"
+        and float(row.get("importance", 0.5)) == 0.5
+    ]
     updated = 0
     for batch in _chunks(pending, batch_size):
         allowed_ids = {claim["id"] for claim in batch}
@@ -133,7 +162,7 @@ def reclassify_claims(
                 canonical_slot,
                 claim.get("qualifiers"),
             )
-            expires_at = _classification_expiration(claim, scope, ttl_days)
+            expires_at = _classification_expiration(claim, scope, importance, effective_policy)
             updated += int(
                 repository.update_classification(
                     claim_id,
@@ -167,7 +196,7 @@ def main() -> None:
                     database.open(),
                     llm_client,
                     args.batch_size,
-                    settings.memory_temporal_ttl_days,
+                    policy=settings.retention_policy(),
                 ),
                 ensure_ascii=False,
                 sort_keys=True,

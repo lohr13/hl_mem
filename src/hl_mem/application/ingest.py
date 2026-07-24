@@ -7,11 +7,10 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.domain.claims.attributes import (
-    SLOT_REGISTRY,
     is_mutually_exclusive_attribute,
     normalize_topic_tags,
     validate_canonical_attribute,
@@ -24,9 +23,11 @@ from hl_mem.domain.claims.conflicts import (
     compute_legacy_conflict_key,
 )
 from hl_mem.domain.claims.dedup import Deduplicator
+from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
 from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
+from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import EvidenceRepository
@@ -40,6 +41,22 @@ class _ClaimDraft:
 
     claim: dict[str, Any]
     qualifiers: dict[str, Any]
+
+
+class StoreClaimResult(str):
+    """兼容 claim ID 字符串并暴露写入或拒绝原因。"""
+
+    claim_id: str | None
+    status: str
+    reason: str
+
+    def __new__(cls, claim_id: str | None, status: str, reason: str) -> "StoreClaimResult":
+        value = claim_id or f"skipped:{reason}"
+        result = super().__new__(cls, value)
+        result.claim_id = claim_id
+        result.status = status
+        result.reason = reason
+        return result
 
 
 def new_id() -> str:
@@ -170,12 +187,34 @@ class IngestService:
         now: str,
         embedder: EmbedderProtocol,
         authority: str | None = None,
-        ttl_days: int = 7,
-    ) -> str:
+        ttl_days: int | None = None,
+        policy: TTLPolicy | None = None,
+    ) -> StoreClaimResult:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
         claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
-        draft = _build_claim_drafts(extracted, event, now, embedder, authority, ttl_days)
+        effective_policy = policy or Settings().retention_policy()
+        if ttl_days is not None:
+            effective_policy = TTLPolicy(
+                temporal_ttl_days_low=effective_policy.temporal_ttl_days_low,
+                temporal_ttl_days_normal=ttl_days,
+                temporal_ttl_days_high=effective_policy.temporal_ttl_days_high,
+                importance_low_threshold=effective_policy.importance_low_threshold,
+                importance_high_threshold=effective_policy.importance_high_threshold,
+                importance_write_floor=effective_policy.importance_write_floor,
+                slot_short_ttl_seconds=effective_policy.slot_short_ttl_seconds,
+                short_ttl_slots=effective_policy.short_ttl_slots,
+            )
+        draft = _build_claim_drafts(extracted, event, now, embedder, authority, effective_policy)
+        if isinstance(draft, StoreClaimResult):
+            audit.emit(
+                "ingest",
+                "claim_write",
+                draft.status,
+                event_id=event["id"],
+                detail={"reason": draft.reason, "importance": getattr(extracted, "importance", None)},
+            )
+            return draft
         claim, qualifiers = draft.claim, draft.qualifiers
         namespace = claim["namespace_key"]
         audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
@@ -212,7 +251,7 @@ class IngestService:
                 result_id = exact["id"]
                 connection.commit()
                 emit_audit_events()
-                return result_id
+                return StoreClaimResult(result_id, "stored", "exact_duplicate")
 
             if existing:
                 started = time.perf_counter_ns()
@@ -240,7 +279,7 @@ class IngestService:
                     result_id = current["id"]
                     connection.commit()
                     emit_audit_events()
-                    return result_id
+                    return StoreClaimResult(result_id, "stored", "entailed")
                 if resolution == "state_change":
                     claim["supersedes_id"] = current["id"]
                     superseded_old_id = current["id"]
@@ -282,7 +321,7 @@ class IngestService:
                     result_id = duplicate_id
                     connection.commit()
                     emit_audit_events()
-                    return result_id
+                    return StoreClaimResult(result_id, "stored", "semantic_duplicate")
 
             inserted = _persist_resolution(claims, claim)
             if not inserted:
@@ -292,7 +331,7 @@ class IngestService:
                     result_id = winner["id"]
                 connection.commit()
                 emit_audit_events()
-                return result_id
+                return StoreClaimResult(result_id, "stored", "concurrent_duplicate")
 
             if current is not None and resolution == "contradicts":
                 claims.update_status(current["id"], "disputed", commit=False)
@@ -326,7 +365,7 @@ class IngestService:
             connection.rollback()
             raise
         emit_audit_events()
-        return result_id
+        return StoreClaimResult(result_id, "stored", "inserted")
 
 
 def _build_claim_drafts(
@@ -335,8 +374,8 @@ def _build_claim_drafts(
     now: str,
     embedder: EmbedderProtocol,
     authority: str | None,
-    ttl_days: int,
-) -> _ClaimDraft:
+    policy: TTLPolicy,
+) -> _ClaimDraft | StoreClaimResult:
     """阶段 1：规范化提取结果、计算 TTL 并生成 claim 草稿。"""
     # NOTE: tenant_id/namespace 当前是单租户部署中的软标签，不是隔离边界。
     # 多租户需要未来引入统一 NamespaceContext 并贯穿后台任务与存储访问。
@@ -349,22 +388,27 @@ def _build_claim_drafts(
     canonical_slot = validate_canonical_slot(getattr(extracted, "canonical_slot", None))
     topic_tags = normalize_topic_tags(getattr(extracted, "topic_tags", None))
     scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
-    slot_definition = SLOT_REGISTRY.get(canonical_slot) if canonical_slot else None
-    slot_ttl_days = ttl_days if slot_definition is not None and slot_definition.ttl_class == "short" else None
-    effective_ttl_days = (
-        slot_ttl_days
-        if slot_ttl_days is not None
-        else ttl_days if extracted.volatility == "ephemeral" and scope == "temporal" else None
-    )
-    expires_at = (
-        (datetime.fromisoformat(now) + timedelta(days=effective_ttl_days)).isoformat()
-        if effective_ttl_days is not None
-        else None
-    )
     try:
         importance = min(1.0, max(0.0, float(extracted.importance)))
     except (TypeError, ValueError):
         importance = 0.5
+    protected = extracted.predicate == "explicit_memory" or canonical_attribute in {
+        "memory.explicit",
+        "identity.name",
+    }
+    if importance < policy.importance_write_floor and not protected:
+        return StoreClaimResult(None, "skipped", "importance_below_write_floor")
+    observed_at = event.get("occurred_at", now)
+    expires_at, _expiration_reason = compute_expiration(
+        scope=scope,
+        importance=importance,
+        volatility=extracted.volatility,
+        canonical_slot=canonical_slot,
+        valid_to=None,
+        observed_at=observed_at,
+        recorded_from=now,
+        policy=policy,
+    )
     claim = {
         "id": new_id(),
         "namespace_key": namespace,
@@ -387,9 +431,9 @@ def _build_claim_drafts(
         "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, extracted.predicate, qualifiers),
         "valid_from": event.get("occurred_at", now),
         "recorded_from": now,
-        "observed_at": event.get("occurred_at", now),
+        "observed_at": observed_at,
         "expires_at": expires_at,
-        "volatility": "ephemeral" if slot_ttl_days is not None else extracted.volatility,
+        "volatility": extracted.volatility,
         "status": "active",
         "confidence": extracted.confidence,
         "scope": scope,

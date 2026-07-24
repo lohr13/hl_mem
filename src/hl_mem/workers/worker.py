@@ -309,24 +309,29 @@ class Worker:
                     },
                 )
                 event["extractor"] = "llm"
+            stored = 0
+            rejections: list[dict[str, Any]] = []
             for claim in extracted:
                 authority = "high" if event["event_type"] == "explicit_memory" else None
-                ttl_days = int(
-                    self.config.get(
-                        "memory_temporal_ttl_days",
-                        self.settings.memory_temporal_ttl_days,
-                    )
-                )
-                IngestService.store_extracted(
+                result = IngestService.store_extracted(
                     self.connection,
                     claim,
                     event,
                     _now(),
                     self.embedder,
                     authority,
-                    ttl_days,
+                    policy=self.settings.retention_policy(),
                 )
-            return {"claims": len(extracted)}
+                if result.status == "skipped":
+                    rejections.append({"reason": result.reason, "predicate": claim.predicate})
+                else:
+                    stored += 1
+            return {
+                "claims": len(extracted),
+                "stored": stored,
+                "skipped": len(rejections),
+                "rejections": rejections,
+            }
 
     def _make_extractor(self) -> Any:
         return components.make_extractor(self.settings)
@@ -413,7 +418,7 @@ def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     return reclassify_claims(
         worker.connection,
         components.make_llm_client(worker.settings),
-        temporal_ttl_days=worker.settings.memory_temporal_ttl_days,
+        policy=worker.settings.retention_policy(),
     )
 
 
