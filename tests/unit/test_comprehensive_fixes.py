@@ -10,10 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from hl_mem.api import server
+from hl_mem.components import make_embedder, make_reranker
+from hl_mem.errors import ConfigurationError
 from hl_mem.experience.service import ExperienceService, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import Embedder
 from hl_mem.ingest.extractors import FakeExtractor
+from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import EventRepository, JobRepository
 from hl_mem.workers.worker import Worker
@@ -101,41 +104,38 @@ def test_event_api_rolls_back_event_when_job_enqueue_fails(tmp_path, monkeypatch
         connection.close()
 
 
-def test_production_requires_real_embedder_and_reranker(monkeypatch) -> None:
+def test_production_requires_real_embedder_and_reranker() -> None:
     """生产环境缺少外部模型密钥时必须启动失败。"""
-    monkeypatch.setenv("HL_MEM_ENV", "production")
-    monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
-    monkeypatch.delenv("RERANKER_API_KEY", raising=False)
-    monkeypatch.delenv("HL_MEM_EMBEDDER", raising=False)
-    monkeypatch.delenv("HL_MEM_RERANKER", raising=False)
-    with pytest.raises(RuntimeError, match="EMBEDDING_API_KEY"):
-        server._make_embedder()
-    monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="RERANKER_API_KEY|EMBEDDING_API_KEY"):
-        server._make_reranker()
+    settings = Settings(
+        environment="production",
+        embedder_mode="real",
+        reranker_mode="real",
+        extractor_mode="real",
+    )
+    with pytest.raises(ConfigurationError, match="EMBEDDING_API_KEY"):
+        make_embedder(settings)
+    with pytest.raises(ConfigurationError, match="RERANKER_API_KEY|EMBEDDING_API_KEY"):
+        make_reranker(settings)
 
 
-def test_worker_extractor_fail_fast_in_production(monkeypatch) -> None:
+def test_worker_extractor_fail_fast_in_production() -> None:
     """生产环境不得将 Worker 提取器静默降级为 FakeExtractor。"""
-    monkeypatch.setenv("HL_MEM_ENV", "production")
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
     worker = Worker.__new__(Worker)
-
-    worker.config = {"extractor_name": "real"}
-    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+    worker.settings = Settings(environment="production", extractor_mode="real")
+    worker.config = {}
+    with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
         worker._make_extractor()
 
-    worker.config = {"extractor_name": "fake"}
-    with pytest.raises(RuntimeError, match="HL_MEM_EXTRACTOR"):
+    worker.settings = Settings(environment="production", extractor_mode="fake")
+    with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
         worker._make_extractor()
 
 
-def test_worker_extractor_fake_allowed_in_dev(monkeypatch) -> None:
+def test_worker_extractor_fake_allowed_in_dev() -> None:
     """开发环境仍允许 Worker 使用 FakeExtractor。"""
-    monkeypatch.setenv("HL_MEM_ENV", "dev")
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
     worker = Worker.__new__(Worker)
-    worker.config = {"extractor_name": "fake"}
+    worker.settings = Settings(environment="dev", extractor_mode="fake")
+    worker.config = {}
 
     assert isinstance(worker._make_extractor(), FakeExtractor)
 

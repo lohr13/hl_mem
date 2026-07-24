@@ -25,6 +25,7 @@ class _SequenceClient:
         name = "fake"
 
     provider = _Provider()
+    model = "test-model"
 
     def __init__(self, responses: list[LLMResponse]) -> None:
         self.responses = responses
@@ -127,11 +128,8 @@ def test_truncated_output_is_bisected_and_usage_is_accumulated() -> None:
         ]
     )
     extractor = LLMExtractor(
-        "key",
-        "https://example.test",
-        "model",
-        llm_client=client,
-        chunking_policy=ChunkingPolicy(1_000, 0, 2),
+        client,
+        ChunkingPolicy(1_000, 0, 2),
     )
 
     claims = extractor.extract("第一段内容。\n\n第二段内容。")
@@ -145,11 +143,8 @@ def test_truncation_at_max_depth_reports_chunk_location() -> None:
     """达到递归上限时错误包含 chunk 范围与深度。"""
     client = _SequenceClient([LLMResponse("", "max_tokens", 7)])
     extractor = LLMExtractor(
-        "key",
-        "https://example.test",
-        "model",
-        llm_client=client,
-        chunking_policy=ChunkingPolicy(1_000, 0, 0),
+        client,
+        ChunkingPolicy(1_000, 0, 0),
     )
 
     try:
