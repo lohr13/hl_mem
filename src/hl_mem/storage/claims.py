@@ -259,6 +259,8 @@ class ClaimRepository:
             claim["value"] = decode_json(claim.pop("value_json"))
         if "qualifiers_json" in claim:
             claim["qualifiers"] = decode_json(claim.pop("qualifiers_json"))
+        if "topic_tags_json" in claim:
+            claim["topic_tags"] = decode_json(claim.pop("topic_tags_json") or "[]")
         return claim
 
     @classmethod

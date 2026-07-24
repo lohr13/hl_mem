@@ -4,56 +4,311 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 from typing import Any
 
 
+@dataclass(frozen=True)
+class SlotDefinition:
+    """描述一个兼容 canonical attribute 及其 operational slot 元数据。"""
+
+    name: str
+    predicate: str
+    description: str
+    participates_in_conflict: bool = False
+    ttl_class: str = "none"
+    required_qualifiers: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
+    examples: tuple[str, ...] = ()
+    is_operational: bool = False
+    is_fallback: bool = False
+
+
+def _slot(
+    name: str,
+    predicate: str,
+    description: str,
+    *,
+    participates_in_conflict: bool = False,
+    ttl_class: str = "none",
+    required_qualifiers: tuple[str, ...] = (),
+    aliases: tuple[str, ...] = (),
+    examples: tuple[str, ...] = (),
+    is_operational: bool = False,
+    is_fallback: bool = False,
+) -> SlotDefinition:
+    """用紧凑声明构造不可变 slot 定义。"""
+    return SlotDefinition(
+        name=name,
+        predicate=predicate,
+        description=description,
+        participates_in_conflict=participates_in_conflict,
+        ttl_class=ttl_class,
+        required_qualifiers=required_qualifiers,
+        aliases=aliases,
+        examples=examples,
+        is_operational=is_operational,
+        is_fallback=is_fallback,
+    )
+
+
+_SLOT_DEFINITIONS = (
+    _slot(
+        "preference.ui_theme",
+        "偏好",
+        "UI 主题偏好",
+        participates_in_conflict=True,
+        aliases=("theme", "主题"),
+        examples=("深色模式",),
+        is_operational=True,
+    ),
+    _slot(
+        "preference.response_style",
+        "偏好",
+        "回复风格偏好",
+        participates_in_conflict=True,
+        aliases=("style",),
+        examples=("简洁",),
+        is_operational=True,
+    ),
+    _slot("preference.workflow", "偏好", "工作流偏好"),
+    _slot("preference.architecture", "偏好", "架构偏好"),
+    _slot(
+        "preference.tool_choice",
+        "偏好",
+        "工具选择偏好",
+        required_qualifiers=("task",),
+        examples=("Codex CLI 修改代码",),
+        is_operational=True,
+    ),
+    _slot("preference.other", "偏好", "其他偏好", is_fallback=True),
+    _slot(
+        "choice.tool",
+        "使用",
+        "使用的工具",
+        required_qualifiers=("role",),
+        examples=("Hermes Agent",),
+        is_operational=True,
+        is_fallback=True,
+    ),
+    _slot(
+        "choice.database",
+        "使用",
+        "使用的数据库",
+        required_qualifiers=("project",),
+        examples=("PostgreSQL",),
+        is_operational=True,
+    ),
+    _slot("choice.os", "使用", "使用的操作系统"),
+    _slot(
+        "choice.model",
+        "使用",
+        "使用的模型",
+        participates_in_conflict=True,
+        required_qualifiers=("task",),
+        examples=("qwen3.7-plus",),
+        is_operational=True,
+    ),
+    _slot("choice.api", "使用", "使用的 API"),
+    _slot("choice.framework", "使用", "使用的框架"),
+    _slot(
+        "choice.provider",
+        "使用",
+        "使用的服务商",
+        required_qualifiers=("service",),
+        examples=("百炼",),
+        is_operational=True,
+    ),
+    _slot("choice.protocol", "使用", "使用的协议"),
+    _slot(
+        "choice.memory_system",
+        "使用",
+        "使用的记忆系统",
+        required_qualifiers=("project",),
+        examples=("hl_mem",),
+        is_operational=True,
+    ),
+    _slot(
+        "state.service_health",
+        "状态",
+        "服务健康状态",
+        participates_in_conflict=True,
+        ttl_class="short",
+        required_qualifiers=("service",),
+        examples=("running",),
+        is_operational=True,
+    ),
+    _slot("state.process", "状态", "进程状态"),
+    _slot("state.deployment", "状态", "部署状态"),
+    _slot("state.test_suite", "状态", "测试套件状态"),
+    _slot("state.connectivity", "状态", "连接状态"),
+    _slot("state.job", "状态", "任务状态"),
+    _slot("state.other", "状态", "其他状态", is_fallback=True),
+    _slot("identity.name", "身份", "用户名称", aliases=("name",), examples=("本地小马",), is_operational=True),
+    _slot("identity.role", "身份", "用户角色"),
+    _slot("identity.contact", "身份", "联系方式"),
+    _slot("identity.account", "身份", "账号"),
+    _slot("identity.other", "身份", "其他身份信息", is_fallback=True),
+    _slot(
+        "config.port",
+        "配置",
+        "服务端口",
+        participates_in_conflict=True,
+        required_qualifiers=("service",),
+        aliases=("port",),
+        examples=("8200",),
+        is_operational=True,
+    ),
+    _slot(
+        "config.path",
+        "配置",
+        "文件路径",
+        required_qualifiers=("purpose",),
+        aliases=("path",),
+        examples=("D:/workspace/hl_agent/hl_mem",),
+        is_operational=True,
+    ),
+    _slot(
+        "config.env",
+        "配置",
+        "环境变量",
+        required_qualifiers=("key",),
+        aliases=("env",),
+        examples=("HL_MEM_PORT=8200",),
+        is_operational=True,
+    ),
+    _slot(
+        "config.network",
+        "配置",
+        "网络配置",
+        required_qualifiers=("target",),
+        aliases=("network",),
+        examples=("VLESS proxy on 10808",),
+        is_operational=True,
+    ),
+    _slot("config.routing", "配置", "路由配置"),
+    _slot("config.provider", "配置", "服务商配置"),
+    _slot("config.model", "配置", "模型配置", participates_in_conflict=True),
+    _slot("config.timeout", "配置", "超时配置"),
+    _slot("config.schedule", "配置", "调度配置"),
+    _slot("config.hardware", "配置", "硬件配置"),
+    _slot("config.other", "配置", "其他配置", is_fallback=True),
+    _slot("plan.goal", "计划", "计划目标"),
+    _slot(
+        "plan.deadline",
+        "计划",
+        "截止日期",
+        required_qualifiers=("plan",),
+        aliases=("deadline",),
+        examples=("Phase 17 完成时间",),
+        is_operational=True,
+    ),
+    _slot("plan.decision", "计划", "计划决策"),
+    _slot("plan.migration", "计划", "迁移计划"),
+    _slot("plan.evaluation", "计划", "评测计划"),
+    _slot("plan.other", "计划", "其他计划", is_fallback=True),
+    _slot("fact.capability", "事实", "能力事实"),
+    _slot("fact.implementation", "事实", "实现事实"),
+    _slot("fact.issue", "事实", "问题事实"),
+    _slot("fact.cause", "事实", "原因事实"),
+    _slot("fact.resolution", "事实", "解决方案事实"),
+    _slot("fact.constraint", "事实", "约束事实"),
+    _slot("fact.project_membership", "事实", "项目成员事实"),
+    _slot("fact.tool_choice", "事实", "工具选择事实"),
+    _slot("fact.other", "事实", "其他事实", is_fallback=True),
+    _slot("memory.explicit", "explicit_memory", "显式长期记忆", is_fallback=True),
+    _slot("custom.unknown", "", "未知自定义属性", is_fallback=True),
+)
+
+SLOT_REGISTRY: dict[str, SlotDefinition] = {definition.name: definition for definition in _SLOT_DEFINITIONS}
+OPERATIONAL_SLOT_NAMES = tuple(definition.name for definition in _SLOT_DEFINITIONS if definition.is_operational)
+
+ALLOWED_TOPIC_TAGS = frozenset(
+    {
+        "fact",
+        "preference",
+        "config",
+        "state",
+        "identity",
+        "plan",
+        "choice",
+        "memory",
+        "implementation",
+        "issue",
+        "cause",
+        "resolution",
+        "constraint",
+        "capability",
+        "membership",
+        "tool_choice",
+        "behavior",
+        "architecture",
+        "decision",
+        "requirement",
+        "bugfix",
+        "dependency",
+        "version",
+        "migration",
+        "evaluation",
+        "workflow",
+        "test",
+        "deployment",
+        "process",
+        "job",
+        "connectivity",
+        "hardware",
+        "timeout",
+        "schedule",
+        "routing",
+        "protocol",
+        "framework",
+        "api",
+        "os",
+        "role",
+        "contact",
+        "account",
+        "goal",
+        "other",
+    }
+)
+
+
 PREDICATE_NORMALIZE = {
-    "prefers": "偏好", "preference": "偏好", "偏好": "偏好", "喜欢": "偏好",
-    "uses": "使用", "use": "使用", "使用": "使用", "用": "使用",
-    "status": "状态", "service_status": "状态", "状态": "状态",
-    "identity": "身份", "身份": "身份", "config": "配置", "配置": "配置",
-    "plan": "计划", "计划": "计划", "fact": "事实", "事实": "事实",
+    "prefers": "偏好",
+    "preference": "偏好",
+    "偏好": "偏好",
+    "喜欢": "偏好",
+    "uses": "使用",
+    "use": "使用",
+    "使用": "使用",
+    "用": "使用",
+    "status": "状态",
+    "service_status": "状态",
+    "状态": "状态",
+    "identity": "身份",
+    "身份": "身份",
+    "config": "配置",
+    "配置": "配置",
+    "plan": "计划",
+    "计划": "计划",
+    "fact": "事实",
+    "事实": "事实",
     "explicit_memory": "explicit_memory",
 }
 
 PREDICATE_ATTRIBUTE_MAP: dict[str, tuple[tuple[str, ...], str]] = {
-    "偏好": ((
-        "preference.ui_theme", "preference.response_style", "preference.workflow",
-        "preference.architecture", "preference.tool_choice", "preference.other",
-    ), "preference.other"),
-    "使用": ((
-        "choice.tool", "choice.database", "choice.os", "choice.model", "choice.api",
-        "choice.framework", "choice.provider", "choice.protocol", "choice.memory_system",
-    ), "choice.tool"),
-    "状态": ((
-        "state.service_health", "state.process", "state.deployment", "state.test_suite",
-        "state.connectivity", "state.job", "state.other",
-    ), "state.other"),
-    "身份": ((
-        "identity.name", "identity.role", "identity.contact", "identity.account", "identity.other",
-    ), "identity.other"),
-    "配置": ((
-        "config.port", "config.path", "config.env", "config.network", "config.routing",
-        "config.provider", "config.model", "config.timeout", "config.schedule",
-        "config.hardware", "config.other",
-    ), "config.other"),
-    "计划": ((
-        "plan.goal", "plan.deadline", "plan.decision", "plan.migration",
-        "plan.evaluation", "plan.other",
-    ), "plan.other"),
-    "事实": ((
-        "fact.capability", "fact.implementation", "fact.issue", "fact.cause",
-        "fact.resolution", "fact.constraint", "fact.project_membership",
-        "fact.tool_choice", "fact.other",
-    ), "fact.other"),
-    "explicit_memory": (("memory.explicit",), "memory.explicit"),
+    predicate: (
+        tuple(definition.name for definition in _SLOT_DEFINITIONS if definition.predicate == predicate),
+        next(
+            definition.name
+            for definition in _SLOT_DEFINITIONS
+            if definition.predicate == predicate and definition.is_fallback
+        ),
+    )
+    for predicate in ("偏好", "使用", "状态", "身份", "配置", "计划", "事实", "explicit_memory")
 }
 
-ATTRIBUTE_ALLOWLIST = frozenset(
-    attribute
-    for attributes, _fallback in PREDICATE_ATTRIBUTE_MAP.values()
-    for attribute in attributes
-) | {"custom.unknown"}
+ATTRIBUTE_ALLOWLIST = frozenset(SLOT_REGISTRY)
 
 ATTRIBUTE_ALIASES = {
     "preference.tool": "preference.tool_choice",
@@ -62,14 +317,7 @@ ATTRIBUTE_ALIASES = {
 }
 
 MUTUALLY_EXCLUSIVE_SLOTS = frozenset(
-    {
-        "preference.ui_theme",
-        "preference.response_style",
-        "choice.model",
-        "config.port",
-        "config.model",
-        "state.service_health",
-    }
+    definition.name for definition in _SLOT_DEFINITIONS if definition.participates_in_conflict
 )
 
 ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
@@ -95,9 +343,11 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     ),
     "状态": (
         (("挂了", "健康", "正常", "ok"), "state.service_health"),
-        (("进程", "运行中"), "state.process"), (("部署",), "state.deployment"),
+        (("进程", "运行中"), "state.process"),
+        (("部署",), "state.deployment"),
         (("passed", "failed", "pytest", "测试通过", "测试数", "测试"), "state.test_suite"),
-        (("超时", "不可达", "连接"), "state.connectivity"), (("任务", "job"), "state.job"),
+        (("超时", "不可达", "连接"), "state.connectivity"),
+        (("任务", "job"), "state.job"),
     ),
     "身份": (
         (("姓名", "名字", "昵称"), "identity.name"),
@@ -108,15 +358,31 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     "配置": (
         (
             (
-                "环境变量", "http_proxy", "https_proxy", "no_proxy", "api_key",
-                "llm_model", "embedding_model", "reranker_model", "env",
+                "环境变量",
+                "http_proxy",
+                "https_proxy",
+                "no_proxy",
+                "api_key",
+                "llm_model",
+                "embedding_model",
+                "reranker_model",
+                "env",
             ),
             "config.env",
         ),
         (
             (
-                "base_url", "endpoint", "hostname", "localhost", "127.0.0.1",
-                "ipv4", "host", "域名", "代理", "网络", "network",
+                "base_url",
+                "endpoint",
+                "hostname",
+                "localhost",
+                "127.0.0.1",
+                "ipv4",
+                "host",
+                "域名",
+                "代理",
+                "网络",
+                "network",
             ),
             "config.network",
         ),
@@ -125,20 +391,25 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
         (("模型名", "model="), "config.model"),
         (("百炼", "dashscope", "智谱", "zhipu", "openai", "anthropic", "provider", "供应商"), "config.provider"),
         (("路由", "直连"), "config.routing"),
-        (("timeout", "超时"), "config.timeout"), (("cron", "定时", "schedule"), "config.schedule"),
+        (("timeout", "超时"), "config.timeout"),
+        (("cron", "定时", "schedule"), "config.schedule"),
         (("gpu", "显卡", "硬件"), "config.hardware"),
     ),
     "计划": (
-        (("截止", "deadline", "之前"), "plan.deadline"), (("决定", "选择", "不切换"), "plan.decision"),
-        (("迁移",), "plan.migration"), (("评测", "evaluation"), "plan.evaluation"),
+        (("截止", "deadline", "之前"), "plan.deadline"),
+        (("决定", "选择", "不切换"), "plan.decision"),
+        (("迁移",), "plan.migration"),
+        (("评测", "evaluation"), "plan.evaluation"),
         (("计划", "打算", "目标"), "plan.goal"),
     ),
     "事实": (
         (("当前采用", "当前使用", "选择了", "codex"), "fact.tool_choice"),
         (("支持", "具备", "能力"), "fact.capability"),
         (("已实现", "实现了", "新增", "接入", "修复实现"), "fact.implementation"),
-        (("缺陷", "问题", "bug"), "fact.issue"), (("因为", "原因"), "fact.cause"),
-        (("已修复", "解决"), "fact.resolution"), (("只允许", "必须", "约束"), "fact.constraint"),
+        (("缺陷", "问题", "bug"), "fact.issue"),
+        (("因为", "原因"), "fact.cause"),
+        (("已修复", "解决"), "fact.resolution"),
+        (("只允许", "必须", "约束"), "fact.constraint"),
         (("项目", "成员"), "fact.project_membership"),
     ),
 }
@@ -195,9 +466,7 @@ _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], str]
         (re.compile(r"(?i)(?:\bpassed\b|\bfailed\b|pytest|测试通过|测试数)"), "state.test_suite"),
         (re.compile(r"(?i)(?:部署|deployed|上线|发布)"), "state.deployment"),
     ),
-    "事实": (
-        (re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),
-    ),
+    "事实": ((re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),),
 }
 
 
@@ -235,6 +504,23 @@ def validate_canonical_attribute(predicate: str, attribute: str | None) -> str:
     if normalized_attribute not in ATTRIBUTE_ALLOWLIST:
         return "custom.unknown"
     return normalized_attribute if normalized_attribute in allowed else fallback
+
+
+def validate_canonical_slot(slot: str | None) -> str | None:
+    """仅接受 operational slot；开放事实统一返回 None。"""
+    if not slot:
+        return None
+    normalized = normalize_canonical_attribute(slot)
+    definition = SLOT_REGISTRY.get(normalized)
+    return normalized if definition is not None and definition.is_operational else None
+
+
+def normalize_topic_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
+    """规范化、去重并过滤开放检索标签。"""
+    if not tags:
+        return []
+    normalized = (unicodedata.normalize("NFKC", str(tag)).strip().casefold().replace("-", "_") for tag in tags)
+    return list(dict.fromkeys(tag for tag in normalized if tag in ALLOWED_TOPIC_TAGS))
 
 
 def infer_canonical_attribute(
