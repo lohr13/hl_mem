@@ -63,6 +63,12 @@ def print_report_summary(report: dict[str, Any]) -> None:
         f"Test layer: passed={test_layer['passed']}, "
         f"failed={test_layer['failed']}, skipped={test_layer['skipped']}"
     )
+    scenarios = report.get("scenarios")
+    if scenarios is not None:
+        print(
+            f"Scenarios: passed={scenarios['passed']}, "
+            f"failed={scenarios['failed']}, skipped={scenarios['skipped']}"
+        )
     print(
         f"Retrieval: recall@5={metrics['recall_at_5']:.3f}, "
         f"MRR={metrics['mrr']:.3f}, nDCG@10={metrics['ndcg_at_10']:.3f}"

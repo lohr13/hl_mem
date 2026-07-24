@@ -32,3 +32,15 @@ CHINESE_TEST_CASES = [
     {"input": "记住日志默认做脱敏", "expected": "日志默认做脱敏", "status": "active"},
     {"input": "生产环境现在禁止部署", "expected": "禁止部署", "status": "expired"},
 ]
+
+
+def test_chinese_memory_scenarios_have_complete_expectations() -> None:
+    """每条中文记忆场景都应包含完整且有效的行为预期。"""
+    assert len(CHINESE_TEST_CASES) == 30
+    assert all(set(case) == {"input", "expected", "status"} for case in CHINESE_TEST_CASES)
+    assert {case["status"] for case in CHINESE_TEST_CASES} == {
+        "active",
+        "disputed",
+        "expired",
+        "superseded",
+    }
