@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, Protocol
 
-from hl_mem.config import CONSOLIDATE_GRAY_ZONE_MAX, CONSOLIDATE_GRAY_ZONE_MIN
 from hl_mem.core.vector import cosine_similarity
+from hl_mem.domain.consolidation_scope import ConsolidationScope
 from hl_mem.lifecycle import assert_transition
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
@@ -146,10 +146,21 @@ class ConflictConsolidator:
         self.confidence_threshold = confidence_threshold
 
     def scan_candidates(
-        self, namespace: str = "default", watermark: str | None = None, batch_size: int = 100
+        self,
+        namespace: str = "default",
+        watermark: str | None = None,
+        batch_size: int = 100,
+        *,
+        scope: ConsolidationScope | None = None,
     ) -> list[CandidatePair]:
         """生成同命名空间、同主题或事实槽的灰区候选。"""
-        rows = ClaimRepository(self.connection).list_active_for_consolidation(namespace, watermark)
+        selected_scope = scope or ConsolidationScope(namespace=namespace, max_pairs=batch_size)
+        rows = ClaimRepository(self.connection).list_active_for_consolidation(
+            selected_scope.namespace,
+            watermark,
+            selected_scope.slot_filter,
+            selected_scope.tag_filter,
+        )
         pairs: list[CandidatePair] = []
         for index, left in enumerate(rows):
             for right in rows[index + 1 :]:
@@ -157,7 +168,7 @@ class ConflictConsolidator:
                 if not same_slot and left.get("subject_entity_id") != right.get("subject_entity_id"):
                     continue
                 similarity = cosine_similarity(left["embedding_dense"], right["embedding_dense"])
-                if not CONSOLIDATE_GRAY_ZONE_MIN <= similarity < CONSOLIDATE_GRAY_ZONE_MAX:
+                if not selected_scope.similarity_threshold <= similarity < selected_scope.similarity_ceiling:
                     continue
                 pair_key = compute_claim_pair_key(left["id"], right["id"])
                 signature = "|".join(sorted((left.get("embedding_model") or "", right.get("embedding_model") or "")))
@@ -167,7 +178,7 @@ class ConflictConsolidator:
                 ).fetchone()
                 if not reviewed:
                     pairs.append(CandidatePair(left, right, similarity, pair_key, signature))
-                if len(pairs) >= batch_size:
+                if len(pairs) >= selected_scope.max_pairs:
                     return pairs
         return pairs
 
@@ -178,6 +189,7 @@ class ConflictConsolidator:
         watermark: str | None = None,
         dry_run: bool = False,
         progress_callback: Callable[[str, int, int], None] | None = None,
+        scope: ConsolidationScope | None = None,
     ) -> dict[str, int]:
         """判定并处理一个候选批次。"""
         stats = {
@@ -190,7 +202,7 @@ class ConflictConsolidator:
             "cas_skipped": 0,
         }
         run_id = uuid.uuid4().hex
-        candidates = self.scan_candidates(namespace, watermark, limit)
+        candidates = self.scan_candidates(namespace, watermark, limit, scope=scope)
         total = len(candidates)
         for processed, pair in enumerate(candidates, start=1):
             if progress_callback is not None:

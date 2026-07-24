@@ -96,13 +96,31 @@ class ClaimRepository:
         self,
         namespace: str,
         watermark: str | None,
+        slot_filter: str | None = None,
+        tag_filter: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """返回待归并的活跃声明，并在仓储边界完成 JSON 解码。"""
+        conditions = [
+            "namespace_key=?",
+            "status='active'",
+            "embedding_dense IS NOT NULL",
+            "(? IS NULL OR recorded_from>?)",
+        ]
+        parameters: list[Any] = [namespace, watermark, watermark]
+        if slot_filter is not None:
+            conditions.append("canonical_slot=?")
+            parameters.append(slot_filter)
+        if tag_filter is not None:
+            if not tag_filter:
+                return []
+            placeholders = ",".join("?" for _ in tag_filter)
+            conditions.append(
+                f"EXISTS (SELECT 1 FROM json_each(COALESCE(topic_tags_json, '[]')) WHERE value IN ({placeholders}))"
+            )
+            parameters.extend(tag_filter)
         rows = self.connection.execute(
-            "SELECT * FROM claims WHERE namespace_key=? AND status='active' "
-            "AND embedding_dense IS NOT NULL AND (? IS NULL OR recorded_from>?) "
-            "ORDER BY recorded_from,id",
-            (namespace, watermark, watermark),
+            f"SELECT * FROM claims WHERE {' AND '.join(conditions)} ORDER BY recorded_from,id",
+            parameters,
         ).fetchall()
         return self._decode_rows(rows)
 

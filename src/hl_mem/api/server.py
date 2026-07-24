@@ -16,6 +16,7 @@ from starlette.responses import Response
 
 from hl_mem import __version__, components
 from hl_mem.api.schemas import (
+    ConsolidationScopeInput,
     DryRunExtractionInput,
     EpisodeInput,
     EpisodeUpdate,
@@ -164,6 +165,25 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             payload.context,
             payload.custom_instructions,
         )
+
+    @app.post("/v1/consolidate")
+    def consolidate(
+        payload: ConsolidationScopeInput,
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, str]:
+        """创建带显式作用域的冲突归并任务。"""
+        job_id = new_id()
+        now = _now()
+        JobRepository(connection).insert_job(
+            {
+                "id": job_id,
+                "job_type": "consolidate_conflicts",
+                "payload": payload.model_dump(),
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        return {"id": job_id}
 
     @app.post("/v1/recall", response_model=RecallOutput, response_model_exclude_none=True)
     def recall(
