@@ -2,28 +2,32 @@
 
 ## 项目概述
 
-HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + 多因子召回 + 完整生命周期管理。
+HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
+
+**当前版本：v0.9.0（2026-07-24）**
 
 ## 技术栈
 
 - **运行时**：Python 3.11+，FastAPI + uvicorn
 - **存储**：SQLite WAL + FTS5（全文检索）+ 向量 BLOB（暴力余弦，首版）
-- **LLM 提取**：qwen3.7-plus（百炼 Coding Plan），JSON mode
+- **LLM 提取**：glm-5.2（智谱 Coding Plan），JSON mode
 - **Embedding**：text-embedding-v4（百炼通用 AK），2048 维
 - **Reranker**：gte-rerank-v2（百炼通用 AK）
+- **分类体系**：SLOT_REGISTRY（15 operational slot + 40 topic tags）
+- **TTL**：retention 纯函数（scope × importance 三档）
+- **跨 subject 去重**：DedupJudge（audit-only 默认开启）
 - **包管理**：uv（lockfile: uv.lock）
-- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）
+- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）250+ tests
 
 ## 代码结构
 
 ```
 src/hl_mem/
 ├── api/                    # FastAPI 适配层
-│   ├── server.py              # REST API（305行，Pydantic 模型已拆出）
-│   ├── schemas.py             # Pydantic DTO（EventInput, RecallInput, MemoryInput 等）
-│   └── pipeline.py            # 向后兼容 re-export（实现已迁移到 application.ingest）
+│   ├── server.py              # REST API
+│   └── schemas.py             # Pydantic DTO（EventInput, RecallInput, MemoryInput 等）
 ├── application/            # 共享应用服务层（REST + MCP + Worker 统一入口）
-│   ├── ingest.py              # IngestService：事件写入 + 记忆保存 + 提取管线
+│   ├── ingest.py              # IngestService：事件写入 + 记忆保存 + retention 调用
 │   ├── recall.py              # RecallService：混合召回 + 上下文组装 + 冲突包
 │   └── forget.py              # ForgetService：撤回 + 清除向量 + stale 传播
 ├── domain/                 # 纯领域逻辑（不依赖基础设施）

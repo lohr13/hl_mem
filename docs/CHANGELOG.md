@@ -66,7 +66,82 @@
 
 ---
 
-## 2026-07-20 — MVP
+## 2026-07-24 — v0.9.0 · Phase 17 数据质量治理
+
+### Stage 1-2: canonical_slot + topic_tags 分类体系（方案 E）
+- 新增 SLOT_REGISTRY（55 attribute，15 operational slot）
+- 新增 migration 016：canonical_slot + topic_tags_json 字段
+- conflict_key 改用 canonical_slot（无 slot 返回 NULL，不参与冲突）
+- dedup 适配：有 slot 按 slot 隔离，无 slot 按 predicate+embedding
+- LLM prompt 展示完整 slot 定义 + abstain 规则
+- 回填工具 backfill_claim_slots_v1.py（dry-run + apply）
+- 解决 fact.other 占 46% 的分类粗糙问题
+
+### Stage 3: 跨 subject 语义去重
+- 新增 migration 017：dedup_pairs 审计表
+- DedupJudge（LLM 判断 equivalent/distinct/uncertain）
+- 后台 worker workers/deduplicate.py（audit-only 默认开启）
+- 安全护栏：threshold 0.92 + LLM 二次确认 + supersede 语义
+- 解决同一事实因 subject 不同被重复存储的问题
+
+### Stage 4: TTL 三因子 + importance 治理
+- 新建 domain/claims/retention.py 纯函数模块
+- TTL = f(scope, importance)：temporal 低→3天/中→7天/高→14天
+- 写入门槛：importance < 0.2 不写入（保护类型例外）
+- reclassify 从原始锚点重算 expires_at（不增量更新）
+- 存量回填脚本 workers/backfill_expires_at.py
+
+---
+
+## 2026-07-24 — v0.7.0 · Phase 16 代码收敛
+
+### Batch 1: 消除重复实现
+- 向量编解码统一到 pack_vector/unpack_vector
+- RRF + budget_pack 统一
+- HTTP retry 统一到 http_utils.retry_http()
+- 召回管线假阶段改为真实分阶段
+- TypeError 兼容猜测删除
+
+### Batch 2: 统一契约
+- 事务所有权统一（repository 不 commit，application/worker 拥有）
+- API monkeypatch 删除
+- value_json 双轨消除（统一为 value Python 值）
+
+### Batch 3: Hermes 收敛 + 兼容层清理
+- Hermes 同步/异步双契约收敛为同步一代
+- 熔断器线程安全（Lock + half-open 单探测）
+- prefetch TTL + session-end 清理
+- 过期兼容层全部删除（-7 文件 -333 行）
+
+---
+
+## 2026-07-23/24 — v0.4.3 → v0.6.0 · Phase 13-15 复杂度治理
+
+### Phase 13: 架构修复
+- 幂等竞态修复 + 去重 TOCTOU + lease token + 预算硬限 + N+1 批量 + domain 纯化
+
+### Phase 14: Hindsight 对标
+- LLMClient/Provider 解耦 + Pydantic schema 约束
+- 长输入结构感知分块 + 输出超限递归二分
+- 统一 SearchTrace（候选/分数/过滤原因/耗时可回放）
+- 一跳关系扩展召回（默认关闭）
+
+### Phase 15: 品质审查修复
+- Settings 统一入口 + LLM 全部走 LLMClient
+- 写入逻辑迁 domain/claims/ + 上帝函数拆阶段
+- repository 拆 5 文件 + domain/types.py dataclass
+- Hermes provider 拆 3 子对象 + 多跳 BFS 预备 + magic number 集中
+
+---
+
+## 2026-07-22 — v0.3.5 · Phase 8-12 核心功能
+
+- 冲突检测互斥白名单模型（5 真正单值槽位）
+- TTL 矩阵（scope × volatility）
+- 多因子召回排序（semantic + recency + access）
+- canonical_attribute v2 + conflict_key v2
+- access_count + last_accessed_at + 软衰减
+- 记忆关系图 + 派生记忆维护
 
 - 建立文档入口、交接状态、MemOS/Hindsight 选型分析、核心 ADR、系统架构和分阶段实施计划
 - 完成 Hermes × Codex 三轮 review 并形成一致接受的首版共识
