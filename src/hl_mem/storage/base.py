@@ -1,15 +1,4 @@
-"""存储后端的最小连接契约。"""
+"""实验性存储后端的命名空间。
 
-from __future__ import annotations
-
-from typing import Any, Protocol
-
-
-class StorageDatabase(Protocol):
-    """SQLite 与可选生产后端共同遵循的连接协议。"""
-
-    def open(self) -> Any:
-        """打开并返回数据库连接。"""
-
-    def close(self) -> None:
-        """关闭数据库连接。"""
+当前应用直接依赖 SQLite 语义，尚无可被实际消费的通用数据库 Protocol。
+"""

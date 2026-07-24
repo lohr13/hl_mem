@@ -13,11 +13,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+
 from hl_mem import __version__, components
-from hl_mem.application.forget import ForgetService
-from hl_mem.application.ingest import IngestService
-from hl_mem.application.recall import RecallService
-from hl_mem.application.ingest import new_id
 from hl_mem.api.schemas import (
     EpisodeInput,
     EpisodeUpdate,
@@ -27,8 +24,11 @@ from hl_mem.api.schemas import (
     RecallInput,
     TraceInput,
 )
-from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
+from hl_mem.application.forget import ForgetService
+from hl_mem.application.ingest import IngestService, new_id
+from hl_mem.application.recall import RecallService
 from hl_mem.errors import ConflictError, NotFoundError, ValidationError
+from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
@@ -259,8 +259,15 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         result = service.save_explicit_memory(text, payload.subject, payload.predicate, payload.qualifiers)
         event_id = result["id"]
         content_json = json.dumps(
-            {"text": text, "memory": {"text": text, "subject": payload.subject, "predicate": payload.predicate,
-             "qualifiers": payload.qualifiers}},
+            {
+                "text": text,
+                "memory": {
+                    "text": text,
+                    "subject": payload.subject,
+                    "predicate": payload.predicate,
+                    "qualifiers": payload.qualifiers,
+                },
+            },
             ensure_ascii=False,
         )
         audit.emit(
@@ -309,7 +316,7 @@ def _queue_event(connection: Any, event_id: str, now: str, commit: bool = True) 
         {
             "id": new_id(),
             "job_type": "extract_event",
-            "payload_json": json.dumps({"event_id": event_id}),
+            "payload": {"event_id": event_id},
             "idempotency_key": f"extract:{event_id}",
             "created_at": now,
             "updated_at": now,

@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.application.ingest import new_id
 from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
+from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
-from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
-from hl_mem.storage.repository import ClaimRepository, EvidenceRepository
+from hl_mem.storage.repository import ClaimRepository, DerivationRepository, EvidenceRepository
 
 
 def _now() -> str:
@@ -112,17 +111,7 @@ class RecallService:
 
     def _assemble_observations(self, claim_ids: list[str]) -> list[dict[str, Any]]:
         """查询与召回 Claim 相关的活跃派生记忆。"""
-        if not claim_ids:
-            return []
-        placeholders = ",".join("?" for _ in claim_ids)
-        rows = self.connection.execute(
-            "SELECT d.id,d.kind,d.body,d.confidence,d.updated_at FROM derivations d "
-            "JOIN evidence_links e ON e.derived_id=d.id AND e.derived_type=d.kind "
-            f"WHERE d.status='active' AND e.evidence_type='claim' AND e.evidence_id IN ({placeholders}) "
-            "GROUP BY d.id ORDER BY d.updated_at DESC LIMIT 10",
-            claim_ids,
-        ).fetchall()
-        return [dict(row) for row in rows]
+        return DerivationRepository(self.connection).list_active_for_claims(claim_ids)
 
     @staticmethod
     def _assemble_context(
@@ -167,8 +156,16 @@ class RecallService:
             ExperienceService(self.connection).record_feedback_batch(
                 [
                     (
-                        new_id(), query_id, "claim", claim["id"], rank,
-                        float(claim.get("_score", 0.0)), 0, None, None, recorded_at,
+                        new_id(),
+                        query_id,
+                        "claim",
+                        claim["id"],
+                        rank,
+                        float(claim.get("_score", 0.0)),
+                        0,
+                        None,
+                        None,
+                        recorded_at,
                     )
                     for rank, claim in enumerate(claims, 1)
                 ]
@@ -199,18 +196,14 @@ class RecallService:
         claim_repo = ClaimRepository(self.connection)
         claim_ids = [claim["id"] for claim in claims]
         all_evidence = self._batch_evidence(evidence_repo, claim_ids)
-        superseded_ids = [
-            claim["superseded_by_id"]
-            for claim in claims
-            if claim.get("superseded_by_id")
-        ]
+        superseded_ids = [claim["superseded_by_id"] for claim in claims if claim.get("superseded_by_id")]
         replacement_map = self._batch_replacements(claim_repo, superseded_ids)
         relations_map = self._batch_relations(claim_ids)
         rivals_map = self._batch_rivals(claims, namespace)
         results: list[dict[str, Any]] = []
         for claim in claims:
             evidence = all_evidence.get(claim["id"], [])
-            decoded = json.loads(claim["value_json"])
+            decoded = claim.get("value")
             text = (
                 decoded.get("old_value")
                 if isinstance(decoded, dict) and decoded.get("_type") == "superseded_value"
@@ -251,7 +244,7 @@ class RecallService:
         return {
             claim_id: {
                 "id": claim["id"],
-                "text": json.loads(claim["value_json"]),
+                "text": claim["value"],
                 "valid_from": claim["valid_from"],
             }
             for claim_id, claim in claims.items()
@@ -269,34 +262,12 @@ class RecallService:
         namespace: str,
     ) -> dict[str, list[dict[str, Any]]]:
         """批量加载 disputed claim 的同 namespace 冲突项并精确映射。"""
-        disputed_claims = [
-            claim
-            for claim in claims
-            if claim["status"] == "disputed" and claim.get("conflict_key")
-        ]
+        disputed_claims = [claim for claim in claims if claim["status"] == "disputed" and claim.get("conflict_key")]
         if not disputed_claims:
             return {}
         unique_keys = list(dict.fromkeys(claim["conflict_key"] for claim in disputed_claims))
-        rivals_by_key: dict[str, list[dict[str, Any]]] = {key: [] for key in unique_keys}
-        for start in range(0, len(unique_keys), 500):
-            chunk = unique_keys[start : start + 500]
-            placeholders = ",".join("?" for _ in chunk)
-            rows = self.connection.execute(
-                "SELECT id,value_json,conflict_key FROM claims "
-                f"WHERE conflict_key IN ({placeholders}) "
-                "AND status='disputed' AND namespace_key=?",
-                (*chunk, namespace),
-            ).fetchall()
-            for row in rows:
-                rival = dict(row)
-                rivals_by_key[rival["conflict_key"]].append(
-                    {"id": rival["id"], "value_json": rival["value_json"]}
-                )
+        rivals_by_key = ClaimRepository(self.connection).find_disputed_rivals(unique_keys, namespace)
         return {
-            claim["id"]: [
-                rival
-                for rival in rivals_by_key[claim["conflict_key"]]
-                if rival["id"] != claim["id"]
-            ]
+            claim["id"]: [rival for rival in rivals_by_key[claim["conflict_key"]] if rival["id"] != claim["id"]]
             for claim in disputed_claims
         }

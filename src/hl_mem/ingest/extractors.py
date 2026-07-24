@@ -35,8 +35,14 @@ class FakeExtractor:
         (re.compile(r"(.+?现在挂了)(?:[。！!]|$)"), "service_status"),
     )
 
-    def extract(self, content_json: str | dict[str, Any]) -> list[ExtractedClaim]:
-        content = json.loads(content_json) if isinstance(content_json, str) else content_json
+    def extract(
+        self,
+        content: str | dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> list[ExtractedClaim]:
+        """从内容中确定性提取声明；context 保留用于统一提取器协议。"""
+        del context
+        content = json.loads(content) if isinstance(content, str) else content
         text = str(content.get("text", ""))
         results: list[ExtractedClaim] = []
         for pattern, predicate in self.patterns:

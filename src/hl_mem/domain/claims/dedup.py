@@ -5,12 +5,12 @@ from typing import Any, Protocol
 
 from hl_mem.config import DEDUP_SEMANTIC_THRESHOLD
 from hl_mem.core.vector import cosine_similarity
-from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.domain.claims.attributes import (
     canonical_conflict_slot,
     is_mutually_exclusive_attribute,
     normalize_canonical_attribute,
 )
+from hl_mem.domain.entity import normalize_entity_id
 
 
 class ClaimRepositoryProtocol(Protocol):
@@ -20,9 +20,7 @@ class ClaimRepositoryProtocol(Protocol):
         """返回指定命名空间和主体的活跃 Claim。"""
 
 
-DEDUP_COMPATIBLE_ATTRIBUTE_GROUPS = (
-    frozenset({"choice.model", "config.model"}),
-)
+DEDUP_COMPATIBLE_ATTRIBUTE_GROUPS = (frozenset({"choice.model", "config.model"}),)
 
 
 def _attributes_are_compatible(left: str | None, right: str | None) -> bool:
@@ -45,12 +43,12 @@ class Deduplicator:
         candidates = self.claim_repo.find_active_for_dedup(
             new_claim.get("namespace_key", "default"), normalized_subject
         )
-        value = self._canonical(new_claim.get("value_json"))
+        value = self._canonical_claim(new_claim)
         for claim in candidates:
             same_conflict_key = new_claim.get("conflict_key") and claim.get("conflict_key") == new_claim.get(
                 "conflict_key"
             )
-            if same_conflict_key and self._canonical(claim.get("value_json")) == value:
+            if same_conflict_key and self._canonical_claim(claim) == value:
                 return claim["id"], "exact"
         blob = new_claim.get("embedding_dense")
         if blob is None:
@@ -59,9 +57,7 @@ class Deduplicator:
         best_claim: dict[str, Any] | None = None
         best_score = float("-inf")
         for claim in candidates:
-            if not _attributes_are_compatible(
-                claim.get("canonical_attribute"), new_claim.get("canonical_attribute")
-            ):
+            if not _attributes_are_compatible(claim.get("canonical_attribute"), new_claim.get("canonical_attribute")):
                 continue
             if self._values_are_mutually_exclusive(claim, new_claim):
                 continue
@@ -78,16 +74,16 @@ class Deduplicator:
     def _values_are_mutually_exclusive(cls, existing: dict[str, Any], new: dict[str, Any]) -> bool:
         existing_attribute = existing.get("canonical_attribute")
         new_attribute = new.get("canonical_attribute")
-        values_differ = cls._canonical(existing.get("value_json")) != cls._canonical(new.get("value_json"))
+        values_differ = cls._canonical_claim(existing) != cls._canonical_claim(new)
         same_exclusive_slot = bool(
             is_mutually_exclusive_attribute(existing_attribute)
             and is_mutually_exclusive_attribute(new_attribute)
             and canonical_conflict_slot(existing_attribute) == canonical_conflict_slot(new_attribute)
         )
-        cross_attribute_compatible = (
-            normalize_canonical_attribute(existing_attribute or "")
-            != normalize_canonical_attribute(new_attribute or "")
-            and _attributes_are_compatible(existing_attribute, new_attribute)
+        cross_attribute_compatible = normalize_canonical_attribute(
+            existing_attribute or ""
+        ) != normalize_canonical_attribute(new_attribute or "") and _attributes_are_compatible(
+            existing_attribute, new_attribute
         )
         return values_differ and (same_exclusive_slot or cross_attribute_compatible)
 
@@ -100,6 +96,16 @@ class Deduplicator:
                 pass
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
+    @classmethod
+    def _canonical_claim(cls, claim: dict[str, Any]) -> str:
+        """规范化声明值，避免对仓储已解码的字符串再次 JSON 解码。"""
+        if "value" in claim:
+            return json.dumps(claim["value"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return cls._canonical(claim.get("value_json"))
+
     @staticmethod
     def _text(claim: dict[str, Any]) -> str:
-        return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} {claim.get('value_json', '')}"
+        return (
+            f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} "
+            f"{claim.get('value', claim.get('value_json', ''))}"
+        )

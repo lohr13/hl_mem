@@ -10,17 +10,17 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
-from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
-from hl_mem.llm.client import LLMClient
-from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
-from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
-from hl_mem.observability.audit import current_audit
 from hl_mem.domain.claims.attributes import (
     MUTUALLY_EXCLUSIVE_SLOTS,
     infer_canonical_attribute,
     normalize_predicate,
     reconcile_canonical_attribute,
 )
+from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
+from hl_mem.llm.client import LLMClient
+from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
+from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
+from hl_mem.observability.audit import current_audit
 
 from .chunking import (
     ChunkingPolicy,
@@ -186,16 +186,12 @@ class LLMExtractor:
             structured_mode=structured_mode,
         )
 
-    def extract(
-        self, content: dict[str, Any] | str, event_context: dict[str, Any] | None = None
-    ) -> list[ExtractedClaim]:
+    def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
         """同步分块提取事实，并在输出截断时递归二分恢复。"""
         self.last_usage_tokens = 0
-        event_context = event_context or {}
+        event_context = context or {}
         chunks = split_extraction_content(content, self.chunking_policy)
-        chunk_claims = [
-            self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks
-        ]
+        chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
         return self._merge_chunk_claims(chunk_claims)
 
     def _extract_chunk_with_auto_split(
@@ -328,9 +324,8 @@ class LLMExtractor:
         text = str(content).strip()
         if not text:
             return True
-        return (
-            (text.startswith("{") and text.count("{") > text.count("}"))
-            or (text.startswith("[") and text.count("[") > text.count("]"))
+        return (text.startswith("{") and text.count("{") > text.count("}")) or (
+            text.startswith("[") and text.count("[") > text.count("]")
         )
 
     @staticmethod
