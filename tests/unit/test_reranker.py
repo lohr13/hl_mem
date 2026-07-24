@@ -36,13 +36,13 @@ def _claims() -> list[dict]:
             "id": claim_id,
             "subject_entity_id": "用户",
             "predicate": "偏好",
-            "value_json": value,
+            "value": value,
             "embedding_dense": pack_vector([score]),
         }
         for claim_id, value, score in (
-            ("first", '"中文一"', 1.0),
-            ("second", '"中文二"', 0.8),
-            ("third", '"中文三"', 0.6),
+            ("first", "中文一", 1.0),
+            ("second", "中文二", 0.8),
+            ("third", "中文三", 0.6),
         )
     ]
 

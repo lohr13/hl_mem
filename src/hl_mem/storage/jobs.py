@@ -15,7 +15,7 @@ class JobRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_job(self, job: dict[str, Any], commit: bool = False) -> bool:
+    def insert_job(self, job: dict[str, Any], commit: bool = True) -> bool:
         """写入后台任务。"""
         stored = dict(job)
         if "payload" in stored:

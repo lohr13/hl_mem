@@ -36,7 +36,7 @@ class ClaimRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_claim(self, claim: dict[str, Any], commit: bool = False) -> bool:
+    def insert_claim(self, claim: dict[str, Any], commit: bool = True) -> bool:
         stored = dict(claim)
         if "value" in stored:
             stored["value_json"] = encode_json(stored.pop("value"), sort_keys=True)
@@ -68,7 +68,7 @@ class ClaimRepository:
                 result[claim["id"]] = claim
         return result
 
-    def update_status(self, claim_id: str, status: str, commit: bool = False) -> bool:
+    def update_status(self, claim_id: str, status: str, commit: bool = True) -> bool:
         try:
             ClaimStatus(status)
         except ValueError as error:
@@ -228,7 +228,7 @@ class ClaimRepository:
         ).fetchall()
         return {row["memory_id"]: float(row["helpful_rate"]) for row in rows}
 
-    def insert_conflict_case(self, conflict_case: dict[str, Any], commit: bool = False) -> bool:
+    def insert_conflict_case(self, conflict_case: dict[str, Any], commit: bool = True) -> bool:
         """写入幂等冲突审核记录。"""
         return insert_row(self.connection, "conflict_cases", conflict_case, commit)
 
@@ -271,7 +271,7 @@ class ClaimRepository:
                 decoded.append(claim)
         return decoded
 
-    def supersede(self, old_id: str, new_valid_from: str, commit: bool = False) -> None:
+    def supersede(self, old_id: str, new_valid_from: str, commit: bool = True) -> None:
         self.connection.execute(
             "UPDATE claims SET status='superseded',valid_to=?,recorded_to=? WHERE id=?",
             (new_valid_from, new_valid_from, old_id),
@@ -286,7 +286,7 @@ class ClaimRepository:
         new_value: Any,
         changed_at: str,
         recorded_at: str,
-        commit: bool = False,
+        commit: bool = True,
     ) -> SupersedeResult:
         """以 compare-and-set 方式内联旧值并建立替代证据。"""
         if old_id == new_claim_id:
