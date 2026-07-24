@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ from hl_mem.domain.recall import RecallIntent, claim_is_visible, route_recall_in
 from hl_mem.observability.audit import current_audit
 from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
 from hl_mem.recall.relation_expansion import RelationExpansionConfig, expand_related_claims
-from hl_mem.recall.reranker import RerankResult
+from hl_mem.recall.reranker import DashScopeReranker, RerankResult
 from hl_mem.recall.trace import SearchTracer
 from hl_mem.storage.claims import ClaimRepository
 
@@ -49,17 +50,17 @@ class RecallConfig:
 class RecallContext:
     """召回管线各阶段的共享上下文。"""
 
-    repo: Any
+    repo: ClaimRepository
     query: str = ""
     query_blob: bytes = b""
     limit: int = 5
     as_of: str | None = None
-    reranker: Any = None
+    reranker: DashScopeReranker | None = None
     known_as_of: str | None = None
     namespace: str = "default"
-    relation_connection: Any = None
-    relation_config: Any = None
-    tracer: Any = None
+    relation_connection: sqlite3.Connection | None = None
+    relation_config: RelationExpansionConfig | None = None
+    tracer: SearchTracer | None = None
 
     candidate_limit: int = 50
     ranking_now: str = ""
@@ -184,14 +185,14 @@ def hybrid_claims(
     query_blob: bytes,
     limit: int,
     as_of: str | None,
-    reranker: Any = None,
+    reranker: DashScopeReranker | None = None,
     now: str | None = None,
     intent: RecallIntent | str | None = None,
     known_as_of: str | None = None,
     namespace: str = "default",
     *,
     recall_config: RecallConfig | None = None,
-    relation_connection: Any | None = None,
+    relation_connection: sqlite3.Connection | None = None,
     relation_config: RelationExpansionConfig | None = None,
     tracer: SearchTracer | None = None,
     candidate_floor: int | None = None,
@@ -235,14 +236,14 @@ def _collect_candidates(
     query_blob: bytes,
     limit: int,
     as_of: str | None,
-    reranker: Any = None,
+    reranker: DashScopeReranker | None = None,
     now: str | None = None,
     intent: RecallIntent | str | None = None,
     known_as_of: str | None = None,
     namespace: str = "default",
     *,
     recall_config: RecallConfig | None = None,
-    relation_connection: Any | None = None,
+    relation_connection: sqlite3.Connection | None = None,
     relation_config: RelationExpansionConfig | None = None,
     tracer: SearchTracer | None = None,
     candidate_floor: int | None = None,
