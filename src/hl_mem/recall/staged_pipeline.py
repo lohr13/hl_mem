@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -43,6 +43,55 @@ class RecallConfig:
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
     preference_recency_boost: float = 1.0
+
+
+@dataclass
+class RecallContext:
+    """召回管线各阶段的共享上下文。"""
+
+    repo: Any
+    query: str = ""
+    query_blob: bytes = b""
+    limit: int = 5
+    as_of: str | None = None
+    reranker: Any = None
+    known_as_of: str | None = None
+    namespace: str = "default"
+    relation_connection: Any = None
+    relation_config: Any = None
+    tracer: Any = None
+
+    candidate_limit: int = 50
+    ranking_now: str = ""
+    selected_intent: RecallIntent | None = None
+    reference: str = ""
+    preference_boost: float = 1.0
+    query_tags: list[str] = field(default_factory=list)
+    tag_boost_enabled: bool = True
+    tag_boost_weight: float = 0.05
+    tag_channel_enabled: bool = False
+    tag_channel_weight: float = 0.15
+    tag_candidate_limit: int = 20
+    fts: list[dict[str, Any]] = field(default_factory=list)
+    dense: list[dict[str, Any]] = field(default_factory=list)
+    tags: list[dict[str, Any]] = field(default_factory=list)
+    fts_us: int = 0
+    dense_us: int = 0
+    tag_us: int = 0
+    total_started: int = 0
+
+    by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    feature_by_id: dict[str, dict[str, float]] = field(default_factory=dict)
+    pre_scores: dict[str, float] = field(default_factory=dict)
+    tag_boosts: dict[str, float] = field(default_factory=dict)
+    ranked_claims: list[dict[str, Any]] = field(default_factory=list)
+
+    rerank_us: int = 0
+    reranked: list = field(default_factory=list)
+    valid_reranked: list = field(default_factory=list)
+    rerank_scores: dict[str, float] = field(default_factory=dict)
+    ranked_result: list[dict[str, Any]] = field(default_factory=list)
+    outcome: str = ""
 
 
 def _claim_text(claim: dict[str, Any]) -> str:
@@ -203,7 +252,7 @@ def _collect_candidates(
     tag_channel_enabled: bool | None = None,
     tag_channel_weight: float | None = None,
     tag_candidate_limit: int | None = None,
-) -> dict[str, Any]:
+) -> RecallContext:
     """仅执行 FTS 与向量检索，并建立统一时间快照。"""
     config = recall_config or RecallConfig()
     effective_floor = candidate_floor or config.candidate_floor
@@ -259,69 +308,70 @@ def _collect_candidates(
         tracer.trace.tag_boost_applied = bool(effective_tag_boost_enabled and query_tags)
         tracer.trace.tag_channel_applied = bool(effective_tag_channel_enabled and query_tags and tag_results)
 
-    return {
-        "repo": repo,
-        "query": query,
-        "limit": limit,
-        "as_of": as_of,
-        "reranker": reranker,
-        "known_as_of": known_as_of,
-        "namespace": namespace,
-        "relation_connection": relation_connection,
-        "relation_config": relation_config,
-        "tracer": tracer,
-        "candidate_limit": candidate_limit,
-        "ranking_now": ranking_now,
-        "selected_intent": selected_intent,
-        "reference": reference,
-        "preference_boost": (
+    return RecallContext(
+        repo=repo,
+        query=query,
+        query_blob=query_blob,
+        limit=limit,
+        as_of=as_of,
+        reranker=reranker,
+        known_as_of=known_as_of,
+        namespace=namespace,
+        relation_connection=relation_connection,
+        relation_config=relation_config,
+        tracer=tracer,
+        candidate_limit=candidate_limit,
+        ranking_now=ranking_now,
+        selected_intent=selected_intent,
+        reference=reference,
+        preference_boost=(
             config.preference_recency_boost if preference_recency_boost is None else preference_recency_boost
         ),
-        "query_tags": query_tags,
-        "tag_boost_enabled": effective_tag_boost_enabled,
-        "tag_boost_weight": config.tag_boost_weight if tag_boost_weight is None else tag_boost_weight,
-        "tag_channel_enabled": effective_tag_channel_enabled,
-        "tag_channel_weight": config.tag_channel_weight if tag_channel_weight is None else tag_channel_weight,
-        "tag_candidate_limit": effective_tag_candidate_limit,
-        "fts": fts,
-        "dense": dense,
-        "tags": tag_results,
-        "fts_us": fts_us,
-        "dense_us": dense_us,
-        "tag_us": tag_us,
-        "total_started": total_started,
-    }
+        query_tags=query_tags,
+        tag_boost_enabled=effective_tag_boost_enabled,
+        tag_boost_weight=config.tag_boost_weight if tag_boost_weight is None else tag_boost_weight,
+        tag_channel_enabled=effective_tag_channel_enabled,
+        tag_channel_weight=config.tag_channel_weight if tag_channel_weight is None else tag_channel_weight,
+        tag_candidate_limit=effective_tag_candidate_limit,
+        fts=fts,
+        dense=dense,
+        tags=tag_results,
+        fts_us=fts_us,
+        dense_us=dense_us,
+        tag_us=tag_us,
+        total_started=total_started,
+    )
 
 
-def _filter_and_score(state: dict[str, Any]) -> dict[str, Any]:
+def _filter_and_score(ctx: RecallContext) -> RecallContext:
     """应用可见性、去重、RRF、反馈率和多因子先验评分。"""
     started = time.perf_counter_ns()
-    tracer = state["tracer"]
+    tracer = ctx.tracer
     visible: list[dict[str, Any]] = []
-    for claim in state["fts"] + state["dense"] + state["tags"]:
-        if claim_is_visible(claim, state["reference"], state["known_as_of"], state["selected_intent"]):
+    for claim in ctx.fts + ctx.dense + ctx.tags:
+        if claim_is_visible(claim, ctx.reference, ctx.known_as_of, ctx.selected_intent):
             visible.append(claim)
         elif tracer is not None:
             tracer.record_filter(
                 str(claim["id"]),
-                _visibility_filter_reason(claim, state["reference"], state["known_as_of"], state["selected_intent"]),
+                _visibility_filter_reason(claim, ctx.reference, ctx.known_as_of, ctx.selected_intent),
             )
     by_id = {claim["id"]: claim for claim in visible}
-    for claim_id, helpful_rate in state["repo"].helpful_rates(list(by_id)).items():
+    for claim_id, helpful_rate in ctx.repo.helpful_rates(list(by_id)).items():
         by_id[claim_id]["helpful_rate"] = helpful_rate
-    channels = [(state["fts"], 1.0), (state["dense"], 1.0)]
-    if state["tag_channel_enabled"] and state["tags"]:
-        channels.append((state["tags"], state["tag_channel_weight"]))
+    channels = [(ctx.fts, 1.0), (ctx.dense, 1.0)]
+    if ctx.tag_channel_enabled and ctx.tags:
+        channels.append((ctx.tags, ctx.tag_channel_weight))
     scores = _weighted_rrf_scores(channels, RRF_K)
-    normalization = (2.0 + (state["tag_channel_weight"] if state["tags"] else 0.0)) / (RRF_K + 1)
+    normalization = (2.0 + (ctx.tag_channel_weight if ctx.tags else 0.0)) / (RRF_K + 1)
     max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
     feature_by_id = {
-        claim_id: memory_features(claim, scores[claim_id] / normalization, max_access, state["ranking_now"])
+        claim_id: memory_features(claim, scores[claim_id] / normalization, max_access, ctx.ranking_now)
         for claim_id, claim in by_id.items()
     }
     tag_boosts: dict[str, float] = {}
-    if state["tag_boost_enabled"] and state["query_tags"]:
-        query_tag_set = set(state["query_tags"])
+    if ctx.tag_boost_enabled and ctx.query_tags:
+        query_tag_set = set(ctx.query_tags)
         for claim_id, claim in by_id.items():
             overlap = query_tag_set.intersection(claim.get("topic_tags") or [])
             weighted = sum(
@@ -331,7 +381,7 @@ def _filter_and_score(state: dict[str, Any]) -> dict[str, Any]:
             )
             if weighted <= 0.0:
                 continue
-            boost = min(weighted / len(query_tag_set), 1.0) * state["tag_boost_weight"]
+            boost = min(weighted / len(query_tag_set), 1.0) * ctx.tag_boost_weight
             tag_boosts[claim_id] = boost
             feature_by_id[claim_id]["tag_boost"] = boost
             claim["_tag_boost"] = boost
@@ -339,25 +389,23 @@ def _filter_and_score(state: dict[str, Any]) -> dict[str, Any]:
         claim_id: memory_score(features)
         + tag_boosts.get(claim_id, 0.0)
         + (
-            state["preference_boost"] * features["recency"]
-            if state["selected_intent"] is RecallIntent.PREFERENCE and _is_preference_claim(by_id[claim_id])
+            ctx.preference_boost * features["recency"]
+            if ctx.selected_intent is RecallIntent.PREFERENCE and _is_preference_claim(by_id[claim_id])
             else 0.0
         )
         for claim_id, features in feature_by_id.items()
     }
-    state.update(
-        by_id=by_id,
-        feature_by_id=feature_by_id,
-        pre_scores=pre_scores,
-        tag_boosts=tag_boosts,
-        ranked_claims=_sort_pre_rank(by_id, feature_by_id, pre_scores),
-    )
+    ctx.by_id = by_id
+    ctx.feature_by_id = feature_by_id
+    ctx.pre_scores = pre_scores
+    ctx.tag_boosts = tag_boosts
+    ctx.ranked_claims = _sort_pre_rank(by_id, feature_by_id, pre_scores)
     if tracer is not None:
         tracer.trace.tag_boost_applied = bool(tag_boosts)
         tracer.record_tag_boosts(tag_boosts)
         tracer.trace.phases.fusion_us = (time.perf_counter_ns() - started) // 1000
-        tracer.record_pre_rank(state["ranked_claims"], pre_scores)
-    return state
+        tracer.record_pre_rank(ctx.ranked_claims, pre_scores)
+    return ctx
 
 
 def _sort_pre_rank(
@@ -376,41 +424,39 @@ def _sort_pre_rank(
     )
 
 
-def _expand_related(state: dict[str, Any]) -> dict[str, Any]:
+def _expand_related(ctx: RecallContext) -> RecallContext:
     """执行可选关系扩展，默认关闭时保持候选不变。"""
-    config = state["relation_config"]
-    if state["relation_connection"] is None or config is None or not config.enabled:
-        return state
+    config = ctx.relation_config
+    if ctx.relation_connection is None or config is None or not config.enabled:
+        return ctx
     started = time.perf_counter_ns()
     seeds = [
-        {**claim, "_semantic_score": state["feature_by_id"][claim["id"]]["semantic"]}
-        for claim in state["ranked_claims"]
+        {**claim, "_semantic_score": ctx.feature_by_id[claim["id"]]["semantic"]}
+        for claim in ctx.ranked_claims
     ]
     expanded, metadata_items = expand_related_claims(
-        state["relation_connection"],
-        state["repo"],
+        ctx.relation_connection,
+        ctx.repo,
         seeds,
-        state["reference"],
-        state["known_as_of"],
-        state["selected_intent"],
-        state["namespace"],
+        ctx.reference,
+        ctx.known_as_of,
+        ctx.selected_intent,
+        ctx.namespace,
         config,
     )
-    expanded_ids = [str(claim["id"]) for claim in expanded if str(claim["id"]) not in state["by_id"]]
+    expanded_ids = [str(claim["id"]) for claim in expanded if str(claim["id"]) not in ctx.by_id]
     expanded_by_id = {str(claim["id"]): claim for claim in expanded if str(claim["id"]) in expanded_ids}
-    helpful_rates = state["repo"].helpful_rates(expanded_ids)
+    helpful_rates = ctx.repo.helpful_rates(expanded_ids)
     for claim_id, claim in expanded_by_id.items():
         claim["helpful_rate"] = helpful_rates.get(claim_id, claim.get("helpful_rate", 0.5))
-        state["by_id"][claim_id] = claim
-    max_access = max((_access_count(claim) for claim in state["by_id"].values()), default=0)
+        ctx.by_id[claim_id] = claim
+    max_access = max((_access_count(claim) for claim in ctx.by_id.values()), default=0)
     for claim_id, claim in expanded_by_id.items():
-        state["feature_by_id"][claim_id] = memory_features(
-            claim, claim["_semantic_score"], max_access, state["ranking_now"]
-        )
-        state["pre_scores"][claim_id] = memory_score(state["feature_by_id"][claim_id])
+        ctx.feature_by_id[claim_id] = memory_features(claim, claim["_semantic_score"], max_access, ctx.ranking_now)
+        ctx.pre_scores[claim_id] = memory_score(ctx.feature_by_id[claim_id])
     if expanded_by_id:
-        state["ranked_claims"] = _sort_pre_rank(state["by_id"], state["feature_by_id"], state["pre_scores"])
-        tracer = state["tracer"]
+        ctx.ranked_claims = _sort_pre_rank(ctx.by_id, ctx.feature_by_id, ctx.pre_scores)
+        tracer = ctx.tracer
         if tracer is not None:
             tracer.record_channel("relation", list(expanded_by_id.values()))
             metadata_by_id = {item.claim_id: item for item in metadata_items}
@@ -434,131 +480,133 @@ def _expand_related(state: dict[str, Any]) -> dict[str, Any]:
                         "expansion_score": metadata.expansion_score,
                     },
                 )
-    if state["tracer"] is not None:
-        state["tracer"].trace.phases.relation_us = (time.perf_counter_ns() - started) // 1000
-    return state
+    if ctx.tracer is not None:
+        ctx.tracer.trace.phases.relation_us = (time.perf_counter_ns() - started) // 1000
+    return ctx
 
 
-def _rerank(state: dict[str, Any]) -> dict[str, Any]:
+def _rerank(ctx: RecallContext) -> RecallContext:
     """调用 reranker，并在空结果或错误时降级到先验排序。"""
-    ranked_claims = state["ranked_claims"]
-    reranker = state["reranker"]
-    state.update(rerank_us=0, reranked=[], valid_reranked=[], rerank_scores={}, ranked_result=ranked_claims)
+    ranked_claims = ctx.ranked_claims
+    reranker = ctx.reranker
+    ctx.rerank_us = 0
+    ctx.reranked = []
+    ctx.valid_reranked = []
+    ctx.rerank_scores = {}
+    ctx.ranked_result = ranked_claims
     if reranker is None:
-        state["outcome"] = "disabled"
-        return state
+        ctx.outcome = "disabled"
+        return ctx
     if len(ranked_claims) <= 1:
-        state["outcome"] = "skipped"
-        return state
+        ctx.outcome = "skipped"
+        return ctx
 
-    candidates = ranked_claims[: state["candidate_limit"]]
+    candidates = ranked_claims[: ctx.candidate_limit]
     started = time.perf_counter_ns()
-    returned = reranker.rerank(
-        state["query"], [_claim_text(claim) for claim in candidates], top_n=state["candidate_limit"]
-    )
-    state["rerank_us"] = (time.perf_counter_ns() - started) // 1000
-    if state["tracer"] is not None:
-        state["tracer"].trace.phases.reranker_us = state["rerank_us"]
+    returned = reranker.rerank(ctx.query, [_claim_text(claim) for claim in candidates], top_n=ctx.candidate_limit)
+    ctx.rerank_us = (time.perf_counter_ns() - started) // 1000
+    if ctx.tracer is not None:
+        ctx.tracer.trace.phases.reranker_us = ctx.rerank_us
     if isinstance(returned, RerankResult):
         reranked, result_status = returned.results, returned.outcome
     else:
         reranked = returned
         last = getattr(reranker, "last_outcome", None)
         result_status = getattr(last, "outcome", None) or last or ("empty" if not reranked else "success")
-    state["reranked"] = reranked
+    ctx.reranked = reranked
     if not reranked:
-        state["outcome"] = "error_fallback" if result_status == "error" else "empty_fallback"
-        return state
+        ctx.outcome = "error_fallback" if result_status == "error" else "empty_fallback"
+        return ctx
 
     valid = [(candidates[index], score) for index, score in reranked if 0 <= index < len(candidates)]
-    state["valid_reranked"] = valid
+    ctx.valid_reranked = valid
     raw_scores = {claim["id"]: float(score) for claim, score in valid}
-    if state["tracer"] is not None:
-        state["tracer"].record_rerank([(str(claim["id"]), float(score)) for claim, score in valid])
+    if ctx.tracer is not None:
+        ctx.tracer.record_rerank([(str(claim["id"]), float(score)) for claim, score in valid])
     rerank_scores = {
-        claim["id"]: blend_reranker_score(score, state["feature_by_id"][claim["id"]]) for claim, score in valid
+        claim["id"]: blend_reranker_score(score, ctx.feature_by_id[claim["id"]]) for claim, score in valid
     }
-    state["rerank_scores"] = rerank_scores
+    ctx.rerank_scores = rerank_scores
     reranked_claims = sorted(
         (claim for claim, _ in valid),
         key=lambda claim: (
             -rerank_scores[claim["id"]],
             -raw_scores[claim["id"]],
-            -state["feature_by_id"][claim["id"]]["semantic"],
+            -ctx.feature_by_id[claim["id"]]["semantic"],
             -_recorded_epoch(claim),
             str(claim["id"]),
         ),
     )
-    if state["selected_intent"] is RecallIntent.PREFERENCE:
+    if ctx.selected_intent is RecallIntent.PREFERENCE:
         reranked_ids = {claim["id"] for claim in reranked_claims}
         reranked_claims.extend(
             claim for claim in ranked_claims if _is_preference_claim(claim) and claim["id"] not in reranked_ids
         )
-    state["ranked_result"] = reranked_claims
-    state["outcome"] = "applied"
-    return state
+    ctx.ranked_result = reranked_claims
+    ctx.outcome = "applied"
+    return ctx
 
 
-def _finalize(state: dict[str, Any]) -> list[dict[str, Any]]:
+def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
     """执行截断、偏好保留、trace、审计和最终分数装配。"""
-    final = _preference_first(state["ranked_result"], state["limit"], state["selected_intent"])
-    tracer = state["tracer"]
+    final = _preference_first(ctx.ranked_result, ctx.limit, ctx.selected_intent)
+    tracer = ctx.tracer
     if tracer is not None:
         final_ids = {str(claim["id"]) for claim in final}
-        if state["reranked"]:
-            reranked_ids = {str(claim["id"]) for claim, _ in state["valid_reranked"]}
-            for claim in state["ranked_claims"]:
+        if ctx.reranked:
+            reranked_ids = {str(claim["id"]) for claim, _ in ctx.valid_reranked}
+            for claim in ctx.ranked_claims:
                 if str(claim["id"]) not in reranked_ids:
                     tracer.record_filter(str(claim["id"]), "reranker_omitted")
-        for claim in state["ranked_claims"]:
+        for claim in ctx.ranked_claims:
             claim_id = str(claim["id"])
             if claim_id not in final_ids and claim_id in tracer.trace.candidates:
                 tracer.record_filter(claim_id, "final_limit")
         tracer.record_final(final)
-        tracer.trace.outcome = state["outcome"]
-        tracer.trace.phases.total_us = (time.perf_counter_ns() - state["total_started"]) // 1000
+        tracer.trace.outcome = ctx.outcome
+        tracer.trace.phases.total_us = (time.perf_counter_ns() - ctx.total_started) // 1000
     current_audit().emit(
         "recall",
         "ranked",
-        state["outcome"],
-        duration_us=(time.perf_counter_ns() - state["total_started"]) // 1000,
+        ctx.outcome,
+        duration_us=(time.perf_counter_ns() - ctx.total_started) // 1000,
         detail={
-            "query_hash": hashlib.sha256(state["query"].encode()).hexdigest(),
-            "limit": state["limit"],
-            "as_of": state["as_of"],
-            "intent": state["selected_intent"].value,
-            "known_as_of": state["known_as_of"],
-            "candidate_limit": state["candidate_limit"],
-            "fts_ids": [item["id"] for item in state["fts"]],
-            "dense_ids": [item["id"] for item in state["dense"]],
-            "tag_ids": [item["id"] for item in state["tags"]],
-            "query_tags": state["query_tags"],
-            "tag_boost_applied": bool(state["tag_boosts"]),
-            "tag_boost": state["tag_boosts"],
-            "tag_channel_applied": bool(state["tag_channel_enabled"] and state["query_tags"] and state["tags"]),
-            "rrf_ids": [item["id"] for item in state["ranked_claims"]],
+            "query_hash": hashlib.sha256(ctx.query.encode()).hexdigest(),
+            "limit": ctx.limit,
+            "as_of": ctx.as_of,
+            "intent": ctx.selected_intent.value,
+            "known_as_of": ctx.known_as_of,
+            "candidate_limit": ctx.candidate_limit,
+            "fts_ids": [item["id"] for item in ctx.fts],
+            "dense_ids": [item["id"] for item in ctx.dense],
+            "tag_ids": [item["id"] for item in ctx.tags],
+            "query_tags": ctx.query_tags,
+            "tag_boost_applied": bool(ctx.tag_boosts),
+            "tag_boost": ctx.tag_boosts,
+            "tag_channel_applied": bool(ctx.tag_channel_enabled and ctx.query_tags and ctx.tags),
+            "rrf_ids": [item["id"] for item in ctx.ranked_claims],
             "returned_ids": [item["id"] for item in final],
             "weights": DEFAULT_WEIGHTS,
             "scores": {
                 item["id"]: {
-                    **state["feature_by_id"][item["id"]],
-                    "pre_rank": state["pre_scores"][item["id"]],
+                    **ctx.feature_by_id[item["id"]],
+                    "pre_rank": ctx.pre_scores[item["id"]],
                     "final": (
-                        state["rerank_scores"].get(item["id"], state["pre_scores"][item["id"]])
-                        if state["reranked"]
-                        else state["pre_scores"][item["id"]]
+                        ctx.rerank_scores.get(item["id"], ctx.pre_scores[item["id"]])
+                        if ctx.reranked
+                        else ctx.pre_scores[item["id"]]
                     ),
                 }
                 for item in final
             },
             "timing_us": {
-                "fts": state["fts_us"],
-                "dense": state["dense_us"],
-                "tag": state["tag_us"],
-                "reranker": state["rerank_us"],
+                "fts": ctx.fts_us,
+                "dense": ctx.dense_us,
+                "tag": ctx.tag_us,
+                "reranker": ctx.rerank_us,
             },
         },
     )
     for claim in final:
-        claim["_score"] = state["rerank_scores"].get(claim["id"], state["pre_scores"][claim["id"]])
+        claim["_score"] = ctx.rerank_scores.get(claim["id"], ctx.pre_scores[claim["id"]])
     return final
