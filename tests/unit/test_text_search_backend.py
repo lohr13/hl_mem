@@ -43,11 +43,11 @@ def test_text_search_backend_accepts_structural_implementation() -> None:
     assert _search(StubTextSearchBackend())[0]["query"] == "中文查询"
 
 
-def test_fts_tokenizer_defaults_to_unicode61(monkeypatch: Any) -> None:
-    """未配置环境变量时使用 SQLite unicode61 tokenizer。"""
+def test_fts_tokenizer_defaults_to_trigram(monkeypatch: Any) -> None:
+    """未配置环境变量时使用 SQLite trigram tokenizer。"""
     monkeypatch.delenv("HL_MEM_FTS_TOKENIZER", raising=False)
 
-    assert Settings.from_env().fts_tokenizer == "unicode61"
+    assert Settings.from_env().fts_tokenizer == "trigram"
 
 
 def test_fts_tokenizer_reads_environment_override(monkeypatch: Any) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import Any
 
@@ -36,12 +37,21 @@ def insert_row(connection: sqlite3.Connection, table: str, data: dict[str, Any],
     return connection.total_changes > before
 
 
+_FTS5_OPERATORS = re.compile(r'[()":]|(?<=\s)(AND|OR|NOT|NEAR)(?=\s)', re.IGNORECASE)
+
+
 def sanitize_fts_query(query: str) -> str:
-    """引用用户提供的 token，使 FTS5 将其视为字面量。"""
-    tokens = query.strip().split()
-    if not tokens:
+    """清洗 FTS5 查询字符串。
+
+    trigram tokenizer 直接接受原始文本（包括中文），
+    只需移除 FTS5 语法操作符以避免注入。
+    trigram 需要至少 3 个字符才能匹配，短查询返回空匹配。
+    """
+    cleaned = _FTS5_OPERATORS.sub(" ", query.strip())
+    cleaned = " ".join(cleaned.split())  # collapse whitespace
+    if not cleaned or len(cleaned) < 3:
         return '""'
-    return " ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+    return cleaned
 
 
 def is_fts_syntax_error(error: sqlite3.OperationalError) -> bool:
