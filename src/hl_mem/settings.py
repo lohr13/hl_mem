@@ -16,14 +16,27 @@ class Settings:
 
     environment: str = "dev"
     database_path: str = "var/hl_mem.db"
+    allow_fake_fallback: bool = False
     embedder_mode: str = "fake"
     embedding_dim: int = 2048
+    embedding_api_key: str | None = None
+    embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     embedding_model: str = "text-embedding-v4"
+    embedding_connect_timeout: float = 5.0
+    embedding_read_timeout: float = 30.0
+    embedding_max_attempts: int = 3
     reranker_mode: str = "off"
+    reranker_api_key: str | None = None
+    reranker_base_url: str = "https://dashscope.aliyuncs.com"
+    reranker_model: str = "gte-rerank-v2"
     relation_expansion_mode: str = "off"
+    extractor_mode: str = "fake"
+    llm_api_key: str | None = None
+    llm_base_url: str = "https://coding.dashscope.aliyuncs.com/v1"
     llm_model: str = "qwen3.7-plus"
     llm_provider: str = "dashscope"
     llm_structured_mode: str = "auto"
+    llm_timeout: float = 90.0
     llm_max_attempts: int = 3
     llm_schema_retries: int = 2
     extraction_chunk_target_chars: int = 12000
@@ -31,6 +44,16 @@ class Settings:
     extraction_max_split_depth: int = 3
     worker_poll_interval: float = 2.0
     worker_maintenance_interval: float = 600.0
+    worker_job_lease_minutes: int = 5
+    daily_token_limit: int = 500000
+    audit_retention_days: int = 30
+    retention_days: int = 30
+    consolidate_cron: str = "03:30"
+    consolidate_batch_size: int = 100
+    consolidate_confidence: float = 0.8
+    induce_policies_cron: str = "04:00"
+    reclassify_cron: str = "04:30"
+    memory_temporal_ttl_days: int = 7
     max_request_body: int = 2 * 1024 * 1024
 
     @classmethod
@@ -41,14 +64,29 @@ class Settings:
         settings = cls(
             environment=environment,
             database_path=os.getenv("HL_MEM_DB_PATH", "var/hl_mem.db"),
+            allow_fake_fallback=os.getenv("HL_MEM_ALLOW_FAKE_FALLBACK", "").lower() == "true",
             embedder_mode=os.getenv("HL_MEM_EMBEDDER", "real" if production else "fake").lower(),
             embedding_dim=int(os.getenv("EMBEDDING_DIM", "2048")),
+            embedding_api_key=os.getenv("EMBEDDING_API_KEY"),
+            embedding_base_url=os.getenv(
+                "EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            ),
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
+            embedding_connect_timeout=float(os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")),
+            embedding_read_timeout=float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
+            embedding_max_attempts=int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
             reranker_mode=os.getenv("HL_MEM_RERANKER", "real" if production else "off").lower(),
+            reranker_api_key=os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY"),
+            reranker_base_url=os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
+            reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
             relation_expansion_mode=os.getenv("HL_MEM_RELATION_EXPANSION", "off").lower(),
+            extractor_mode=os.getenv("HL_MEM_EXTRACTOR", "fake").lower(),
+            llm_api_key=os.getenv("LLM_API_KEY"),
+            llm_base_url=os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
             llm_model=os.getenv("LLM_MODEL", "qwen3.7-plus"),
             llm_provider=os.getenv("HL_MEM_LLM_PROVIDER", "dashscope").lower(),
             llm_structured_mode=os.getenv("HL_MEM_LLM_STRUCTURED_MODE", "auto").lower(),
+            llm_timeout=float(os.getenv("LLM_TIMEOUT", "90")),
             llm_max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
             llm_schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
             extraction_chunk_target_chars=int(os.getenv("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS", "12000")),
@@ -56,6 +94,18 @@ class Settings:
             extraction_max_split_depth=int(os.getenv("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH", "3")),
             worker_poll_interval=float(os.getenv("HL_MEM_WORKER_POLL_INTERVAL", "2.0")),
             worker_maintenance_interval=float(os.getenv("HL_MEM_WORKER_MAINTENANCE_INTERVAL", "600")),
+            worker_job_lease_minutes=int(os.getenv("HL_MEM_WORKER_LEASE_MINUTES", "5")),
+            daily_token_limit=int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")),
+            audit_retention_days=int(
+                os.getenv("HL_MEM_AUDIT_RETENTION_DAYS", os.getenv("HL_MEM_RETENTION_DAYS", "30"))
+            ),
+            retention_days=int(os.getenv("HL_MEM_RETENTION_DAYS", "30")),
+            consolidate_cron=os.getenv("HL_MEM_CONSOLIDATE_CRON", "03:30"),
+            consolidate_batch_size=int(os.getenv("HL_MEM_CONSOLIDATE_BATCH_SIZE", "100")),
+            consolidate_confidence=float(os.getenv("HL_MEM_CONSOLIDATE_CONFIDENCE", "0.8")),
+            induce_policies_cron=os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00"),
+            reclassify_cron=os.getenv("HL_MEM_RECLASSIFY_CRON", "04:30"),
+            memory_temporal_ttl_days=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS", "7")),
             max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
         )
         settings._validate()
@@ -80,15 +130,23 @@ class Settings:
             raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS must be non-negative")
         if self.extraction_max_split_depth < 0:
             raise ConfigurationError("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH must be non-negative")
+        if self.embedder_mode not in {"fake", "real"}:
+            raise ConfigurationError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
+        if self.reranker_mode not in {"off", "fake", "on", "real"}:
+            raise ConfigurationError("HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'")
+        if self.extractor_mode not in {"fake", "real", "llm"}:
+            raise ConfigurationError("HL_MEM_EXTRACTOR must be 'fake', 'real', or 'llm'")
         if self.environment != "production":
             return
         if self.embedder_mode != "real":
             raise ConfigurationError("HL_MEM_EMBEDDER must be 'real' in production")
         if self.reranker_mode not in {"on", "real"}:
             raise ConfigurationError("HL_MEM_RERANKER must be enabled in production")
-        if not os.getenv("LLM_API_KEY"):
+        if self.extractor_mode == "fake":
+            raise ConfigurationError("HL_MEM_EXTRACTOR must not be 'fake' in production")
+        if not self.llm_api_key:
             raise ConfigurationError("LLM_API_KEY is required in production")
-        if not os.getenv("EMBEDDING_API_KEY"):
+        if not self.embedding_api_key:
             raise ConfigurationError("EMBEDDING_API_KEY is required in production")
 
     def snapshot(self) -> dict[str, Any]:

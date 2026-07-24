@@ -28,12 +28,12 @@ from hl_mem.api.schemas import (
     TraceInput,
 )
 from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
-from hl_mem.errors import ConfigurationError, ConflictError, NotFoundError, ValidationError
+from hl_mem.errors import ConflictError, NotFoundError, ValidationError
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embeddings import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
-from hl_mem.recall.reranker import FakeReranker, Reranker
+from hl_mem.recall.reranker import FakeReranker
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import JobRepository
@@ -41,38 +41,6 @@ from hl_mem.storage.repository import JobRepository
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _make_embedder() -> Any:
-    return components.make_embedder()
-
-
-def _make_reranker() -> Any:
-    production = os.getenv("HL_MEM_ENV", "dev").lower() == "production"
-    mode = os.getenv("HL_MEM_RERANKER", "real" if production else "off").lower()
-    if production and mode not in {"on", "real"}:
-        raise ConfigurationError("HL_MEM_RERANKER must be enabled in production")
-    if mode == "off":
-        return None
-    if mode == "fake":
-        return FakeReranker()
-    if mode not in {"on", "real"}:
-        raise ValueError("HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'")
-    api_key = os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY")
-    if not api_key:
-        if production:
-            raise ConfigurationError("RERANKER_API_KEY or EMBEDDING_API_KEY is required in production")
-        return None
-    try:
-        return Reranker(
-            api_key,
-            os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
-            os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
-        )
-    except Exception:
-        if production:
-            raise
-        return None
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
@@ -92,10 +60,10 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 def create_app(database_path: str | Path | None = None, audit: Any = None) -> FastAPI:
     settings = Settings.from_env()
-    database, embedder, reranker = Database(database_path), _make_embedder(), _make_reranker()
-    budget = TokenBudget(
-        int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")), Path(database.path).with_suffix(".budget.db")
-    )
+    database = Database(database_path or settings.database_path)
+    embedder = components.make_embedder(settings)
+    reranker = components.make_reranker(settings)
+    budget = TokenBudget(settings.daily_token_limit, Path(database.path).with_suffix(".budget.db"))
     audit = audit or NullAuditLogger()
 
     @asynccontextmanager

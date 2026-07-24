@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import json
-import os
-import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, Protocol
 
-import httpx
-
 from hl_mem.config import CONSOLIDATE_GRAY_ZONE_MAX, CONSOLIDATE_GRAY_ZONE_MIN
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.lifecycle import assert_transition
+from hl_mem.llm.client import LLMClient
+from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
 from hl_mem.recall.conflict import compute_claim_pair_key
 from hl_mem.storage.repository import ClaimRepository
 
@@ -49,21 +47,10 @@ class ConflictJudge(Protocol):
 
 
 class LLMConflictJudge:
-    """使用兼容 OpenAI 的 JSON 接口判定语义冲突。"""
+    """通过统一 LLMClient 判定语义冲突。"""
 
-    def __init__(
-        self,
-        api_key: str,
-        base_url: str,
-        model: str,
-        timeout: float | None = None,
-        client: httpx.Client | None = None,
-    ) -> None:
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.timeout = timeout if timeout is not None else float(os.getenv("LLM_TIMEOUT", "90"))
-        self._client = client
+    def __init__(self, llm_client: LLMClient) -> None:
+        self.llm_client = llm_client
 
     def judge(self, left: dict[str, Any], right: dict[str, Any]) -> ConsolidationDecision:
         """以严格 JSON 四分类判定 claim 对，失败最多重试三次。"""
@@ -79,44 +66,46 @@ class LLMConflictJudge:
             "source_authority",
         )
         facts = {"left": {key: left.get(key) for key in fields}, "right": {key: right.get(key) for key in fields}}
-        payload = {
-            "model": self.model,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "将两条事实分类为 contradiction、compatible、state_change 或 unrelated。"
-                    "仅输出 JSON：kind, confidence, rationale, current_claim_id。",
-                },
-                {"role": "user", "content": json.dumps(facts, ensure_ascii=False)},
-            ],
-        }
-        for attempt in range(3):
-            try:
-                post = self._client.post if self._client is not None else httpx.post
-                response = post(
-                    f"{self.base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json=payload,
-                    timeout=self.timeout,
-                )
-                response.raise_for_status()
-                raw = response.json()["choices"][0]["message"]["content"]
-                data = raw if isinstance(raw, dict) else json.loads(raw)
-                kind = data["kind"]
-                if kind not in {"contradiction", "compatible", "state_change", "unrelated"}:
-                    raise ValueError(f"invalid consolidation decision: {kind}")
-                return ConsolidationDecision(
-                    kind,
-                    min(1.0, max(0.0, float(data["confidence"]))),
-                    str(data.get("rationale", ""))[:512],
-                    data.get("current_claim_id"),
-                )
-            except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-                if attempt == 2:
-                    raise
-                time.sleep(2**attempt)
-        raise RuntimeError("unreachable")
+        response = self.llm_client.complete(
+            LLMRequest(
+                messages=[
+                    LLMMessage(
+                        role="system",
+                        content="将两条事实分类为 contradiction、compatible、state_change 或 unrelated。"
+                        "仅输出 JSON：kind, confidence, rationale, current_claim_id。",
+                    ),
+                    LLMMessage(role="user", content=json.dumps(facts, ensure_ascii=False)),
+                ],
+                structured_output=StructuredOutputSpec(
+                    name="consolidation_decision",
+                    schema={
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": ["contradiction", "compatible", "state_change", "unrelated"],
+                            },
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "rationale": {"type": "string"},
+                            "current_claim_id": {"type": ["string", "null"]},
+                        },
+                        "required": ["kind", "confidence", "rationale", "current_claim_id"],
+                        "additionalProperties": False,
+                    },
+                    preferred_mode=StructuredOutputMode.JSON_SCHEMA,
+                ),
+            )
+        )
+        data = response.content if isinstance(response.content, dict) else json.loads(response.content)
+        kind = data["kind"]
+        if kind not in {"contradiction", "compatible", "state_change", "unrelated"}:
+            raise ValueError(f"invalid consolidation decision: {kind}")
+        return ConsolidationDecision(
+            kind,
+            min(1.0, max(0.0, float(data["confidence"]))),
+            str(data.get("rationale", ""))[:512],
+            data.get("current_claim_id"),
+        )
 
 
 def enqueue_daily_consolidation(connection: Any, now: str, cron: str) -> bool:
