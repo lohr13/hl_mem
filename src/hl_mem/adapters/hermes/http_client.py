@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import threading
 from typing import Any
 
 import httpx
@@ -23,24 +24,27 @@ class HLMemHttpClient:
         self._failure_count = 0
         self._failure_threshold = failure_threshold
         self._circuit_open_until = 0.0
-        self._half_open = False
         self._circuit_open_seconds = circuit_open_seconds
+        self._lock = threading.Lock()
+        self._probe_owner: int | None = None
 
     @property
     def state(self) -> str:
         """返回只读熔断状态：open、closed 或 half_open。"""
-        if self._circuit_open_until <= 0:
-            return "closed"
-        if time.monotonic() < self._circuit_open_until:
-            return "open"
-        return "half_open"
+        with self._lock:
+            return self._state_locked()
 
     def can_call(self) -> bool:
-        """判断当前是否允许请求，并标记半开探测。"""
-        if self.state == "open":
-            return False
-        self._half_open = self.state == "half_open"
-        return True
+        """原子判断是否允许请求，半开时只授予一个线程探测权。"""
+        with self._lock:
+            state = self._state_locked()
+            if state == "open":
+                return False
+            if state == "half_open":
+                if self._probe_owner is not None:
+                    return False
+                self._probe_owner = threading.get_ident()
+            return True
 
     def get(self, path: str) -> httpx.Response:
         """执行同步 GET 请求。"""
@@ -78,22 +82,42 @@ class HLMemHttpClient:
 
     def on_success(self) -> None:
         """关闭熔断器并清零连续失败计数。"""
-        self._failure_count = 0
-        self._circuit_open_until = 0.0
-        self._half_open = False
+        with self._lock:
+            state = self._state_locked()
+            if state == "open":
+                return
+            if self._probe_owner is not None and self._probe_owner != threading.get_ident():
+                return
+            self._failure_count = 0
+            self._circuit_open_until = 0.0
+            self._probe_owner = None
 
     def on_failure(self) -> None:
         """记录失败，并在达到阈值时打开熔断器。"""
-        if self._half_open:
-            self._circuit_open_until = time.monotonic() + self._circuit_open_seconds
-            self._failure_count = 0
-            self._half_open = False
-            return
-        self._failure_count += 1
-        if self._failure_count >= self._failure_threshold:
-            self._circuit_open_until = time.monotonic() + self._circuit_open_seconds
-            self._failure_count = 0
-            self._half_open = False
+        with self._lock:
+            state = self._state_locked()
+            if state == "open":
+                return
+            if self._probe_owner is not None:
+                if self._probe_owner != threading.get_ident():
+                    return
+                self._open_locked()
+                return
+            self._failure_count += 1
+            if self._failure_count >= self._failure_threshold:
+                self._open_locked()
+
+    def _state_locked(self) -> str:
+        if self._circuit_open_until <= 0:
+            return "closed"
+        if time.monotonic() < self._circuit_open_until:
+            return "open"
+        return "half_open"
+
+    def _open_locked(self) -> None:
+        self._circuit_open_until = time.monotonic() + self._circuit_open_seconds
+        self._failure_count = 0
+        self._probe_owner = None
 
     @staticmethod
     def error_name(error: Exception) -> str:

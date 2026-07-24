@@ -10,7 +10,7 @@ from typing import Any
 
 from hl_mem.experience.service import ExperienceService
 from hl_mem.settings import Settings
-from hl_mem.storage.repository import JobRepository
+from hl_mem.storage.jobs import JobRepository
 
 
 def induce_policies(

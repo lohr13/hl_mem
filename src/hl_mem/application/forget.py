@@ -7,7 +7,7 @@ from typing import Any
 from hl_mem.errors import NotFoundError
 from hl_mem.lifecycle import assert_transition
 from hl_mem.recall.recall_pipeline import stale_observations
-from hl_mem.storage.repository import ClaimRepository
+from hl_mem.storage.claims import ClaimRepository
 
 
 class ForgetService:

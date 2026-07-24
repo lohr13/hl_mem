@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-import time  # 兼容旧测试与外部 monkeypatch 路径
 import unicodedata
-import warnings
 from dataclasses import replace
 from typing import Any
 
@@ -18,7 +16,6 @@ from hl_mem.domain.claims.attributes import (
 )
 from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
 from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
 from hl_mem.observability.audit import current_audit
 
@@ -141,50 +138,6 @@ class LLMExtractor:
         self.structured_mode = structured_mode
         self.chunking_policy = chunking_policy
         self.last_usage_tokens = 0
-
-    @classmethod
-    def from_env(cls) -> "LLMExtractor":
-        """从环境创建 legacy 提取器；新代码应通过 components.make_extractor 注入。"""
-        import httpx
-
-        from hl_mem.settings import Settings
-
-        warnings.warn(
-            "LLMExtractor.from_env() is deprecated; inject LLMClient explicitly",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        settings = Settings.from_env()
-        if not settings.llm_api_key:
-            raise ValueError("LLM_API_KEY is required")
-        provider_types = {
-            "dashscope": DashScopeProvider,
-            "zhipu": ZhipuProvider,
-            "openai_compatible": OpenAICompatibleProvider,
-        }
-        llm_client = LLMClient(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
-            model=settings.llm_model,
-            provider=provider_types[settings.llm_provider](),
-            timeout=httpx.Timeout(settings.llm_timeout),
-            max_attempts=settings.llm_max_attempts,
-        )
-        structured_mode = (
-            StructuredOutputMode.JSON_OBJECT
-            if settings.llm_structured_mode == "json_object"
-            else StructuredOutputMode.JSON_SCHEMA
-        )
-        return cls(
-            llm_client,
-            ChunkingPolicy(
-                target_chars=settings.extraction_chunk_target_chars,
-                overlap_turns=settings.extraction_chunk_overlap_turns,
-                max_split_depth=settings.extraction_max_split_depth,
-            ),
-            schema_retries=settings.llm_schema_retries,
-            structured_mode=structured_mode,
-        )
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
         """同步分块提取事实，并在输出截断时递归二分恢复。"""

@@ -36,7 +36,7 @@ from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.reranker import FakeReranker
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import JobRepository
+from hl_mem.storage.jobs import JobRepository
 
 
 def _now() -> str:
