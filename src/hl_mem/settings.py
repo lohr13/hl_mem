@@ -51,6 +51,7 @@ class Settings:
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
     fts_tokenizer: str = "unicode61"
+    vector_backend: str = "sqlite_scan"
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
     hermes_prefetch_cache_ttl_seconds: float = 300.0
@@ -132,6 +133,7 @@ class Settings:
             tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
             tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
             fts_tokenizer=os.getenv("HL_MEM_FTS_TOKENIZER", "unicode61"),
+            vector_backend=os.getenv("HL_MEM_VECTOR_BACKEND", "sqlite_scan"),
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
             hermes_prefetch_cache_ttl_seconds=float(os.getenv("HL_MEM_HERMES_PREFETCH_CACHE_TTL_SECONDS", "300")),
@@ -286,6 +288,7 @@ class Settings:
             "tag_channel_enabled": self.tag_channel_enabled,
             "tag_channel_weight": self.tag_channel_weight,
             "tag_candidate_limit": self.tag_candidate_limit,
+            "vector_backend": self.vector_backend,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,

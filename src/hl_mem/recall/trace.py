@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from threading import Lock
+from typing import Any, ClassVar
 
 
 @dataclass
@@ -59,6 +60,9 @@ class SearchTrace:
 class SearchTracer:
     """以候选数量上限记录搜索过程，不保留查询或记忆正文。"""
 
+    _metrics_lock: ClassVar[Lock] = Lock()
+    _embedded_candidate_count: ClassVar[int] = 0
+
     def __init__(self, trace: SearchTrace, max_candidates: int = 200) -> None:
         self.trace = trace
         self.max_candidates = max(1, max_candidates)
@@ -88,6 +92,9 @@ class SearchTracer:
 
     def record_channel(self, channel: str, claims: list[dict[str, Any]]) -> None:
         """记录通道返回的 1-based 排名及可用通道分数。"""
+        if channel == "dense":
+            with self._metrics_lock:
+                type(self)._embedded_candidate_count = len(claims)
         for rank, claim in enumerate(claims, 1):
             candidate = self._candidate(str(claim["id"]))
             if candidate is None:
@@ -147,3 +154,9 @@ class SearchTracer:
     def to_dict(self) -> dict[str, Any]:
         """返回不含查询明文、claim value 或密钥的 JSON 兼容字典。"""
         return asdict(self.trace)
+
+    @classmethod
+    def vector_search_metrics(cls) -> dict[str, int]:
+        """返回最近一次召回记录的向量候选指标。"""
+        with cls._metrics_lock:
+            return {"embedded_candidate_count": cls._embedded_candidate_count}

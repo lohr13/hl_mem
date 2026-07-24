@@ -38,6 +38,7 @@ from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.observability.llm_spans import llm_span_stats
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.reranker import FakeReranker
+from hl_mem.recall.trace import SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.jobs import JobRepository
@@ -120,6 +121,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                 "calls": sum(item["count"] for item in operations),
                 "total_tokens": sum(item["total_tokens"] for item in operations),
             },
+            "vector_search": SearchTracer.vector_search_metrics(),
         }
 
     @app.post("/v1/events")

@@ -44,3 +44,17 @@ class TextSearchBackend(Protocol):
         known_as_of: str | None,
         namespace: str,
     ) -> list[dict]: ...
+
+
+class VectorSearchBackend(Protocol):
+    """向量检索后端协议。"""
+
+    def search(
+        self,
+        query_blob: bytes,
+        limit: int,
+        reference_time: str,
+        intent: Any,
+        known_as_of: str | None,
+        namespace: str,
+    ) -> list[dict]: ...
