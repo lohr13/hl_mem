@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import EventRepository
+from hl_mem.storage.events import EventRepository
 
 
 def test_event_repository_is_idempotent(tmp_path) -> None:

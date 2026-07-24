@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 
 import hl_mem.workers.worker as worker_module
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import EventRepository, JobRepository
+from hl_mem.storage.events import EventRepository
+from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.worker import Worker
 
 

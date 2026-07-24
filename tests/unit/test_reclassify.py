@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from hl_mem.ingest.embeddings import pack_vector
+from hl_mem.ingest.embedder import pack_vector
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import ClaimRepository
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.reclassify import reclassify_claims
 
 NOW = "2026-07-21T00:00:00+00:00"

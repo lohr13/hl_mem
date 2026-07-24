@@ -14,11 +14,12 @@ from hl_mem.components import make_embedder, make_reranker
 from hl_mem.errors import ConfigurationError
 from hl_mem.experience.service import ExperienceService, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
-from hl_mem.ingest.embeddings import Embedder
+from hl_mem.ingest.embedder import Embedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import EventRepository, JobRepository
+from hl_mem.storage.events import EventRepository
+from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.worker import Worker
 
 

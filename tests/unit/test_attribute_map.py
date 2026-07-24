@@ -1,6 +1,6 @@
 import pytest
 
-from hl_mem.recall.attribute_map import (
+from hl_mem.domain.claims.attributes import (
     ATTRIBUTE_ALLOWLIST,
     PREDICATE_ATTRIBUTE_MAP,
     canonical_conflict_slot,

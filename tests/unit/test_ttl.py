@@ -1,5 +1,5 @@
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import ClaimRepository
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.ttl import expire_claims
 
 

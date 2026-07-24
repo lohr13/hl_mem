@@ -5,14 +5,17 @@ import sqlite3
 
 import pytest
 
-from hl_mem.api.pipeline import store_extracted
+from hl_mem.application.ingest import IngestService
+
+def store_extracted(conn, claim, event, now, embedder, **kw):
+    return IngestService.store_extracted(conn, claim, event, now, embedder, **kw)
 from hl_mem.recall.recall_pipeline import hybrid_claims
-from hl_mem.ingest.embeddings import FakeEmbedder, pack_vector
+from hl_mem.ingest.embedder import FakeEmbedder, pack_vector
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor, SYSTEM_PROMPT
 from hl_mem.recall.ranking import blend_reranker_score, memory_features, memory_score
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import ClaimRepository
+from hl_mem.storage.claims import ClaimRepository
 
 
 NOW = "2026-07-21T00:00:00+00:00"
