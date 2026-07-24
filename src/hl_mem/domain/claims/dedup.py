@@ -99,13 +99,11 @@ class Deduplicator:
     @classmethod
     def _canonical_claim(cls, claim: dict[str, Any]) -> str:
         """规范化声明值，避免对仓储已解码的字符串再次 JSON 解码。"""
-        if "value" in claim:
-            return json.dumps(claim["value"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        return cls._canonical(claim.get("value_json"))
+        return json.dumps(claim.get("value"), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @staticmethod
     def _text(claim: dict[str, Any]) -> str:
         return (
             f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} "
-            f"{claim.get('value', claim.get('value_json', ''))}"
+            f"{claim.get('value', '')}"
         )

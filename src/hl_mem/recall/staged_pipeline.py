@@ -21,7 +21,7 @@ RRF_K = 60
 
 
 def _claim_text(claim: dict[str, Any]) -> str:
-    return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} {claim.get('value_json', '')}"
+    return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} {claim.get('value', '')}"
 
 
 def _recorded_epoch(claim: dict[str, Any]) -> float:

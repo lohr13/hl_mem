@@ -32,7 +32,7 @@ def import_database(database_path: str | Path, input_path: str | Path) -> int:
             record: dict[str, Any] = json.loads(line)
             if record.get("type") != "event" or not isinstance(record.get("data"), dict):
                 raise ValueError("archive contains unsupported record")
-            imported += int(repository.insert_event(record["data"]))
+            imported += int(repository.insert_event(record["data"], commit=True))
     return imported
 
 

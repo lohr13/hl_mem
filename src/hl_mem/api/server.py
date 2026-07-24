@@ -123,7 +123,6 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
         event = payload.model_dump()
         service = IngestService(connection, embedder)
-        service._queue_event = lambda event_id, now, commit=True: _queue_event(connection, event_id, now, commit)
         result = service.ingest_event(event, key)
         event_id, created = result["id"], result["created"]
         audit.emit(
@@ -259,7 +258,6 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         if not text:
             raise HTTPException(422, "text or content is required")
         service = IngestService(connection, embedder)
-        service._queue_event = lambda event_id, now, commit=True: _queue_event(connection, event_id, now, commit)
         result = service.save_explicit_memory(text, payload.subject, payload.predicate, payload.qualifiers)
         event_id = result["id"]
         content_json = json.dumps(
@@ -313,20 +311,6 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         return JobRepository(connection).counts()
 
     return app
-
-
-def _queue_event(connection: Any, event_id: str, now: str, commit: bool = True) -> None:
-    JobRepository(connection).insert_job(
-        {
-            "id": new_id(),
-            "job_type": "extract_event",
-            "payload": {"event_id": event_id},
-            "idempotency_key": f"extract:{event_id}",
-            "created_at": now,
-            "updated_at": now,
-        },
-        commit=commit,
-    )
 
 
 app = create_app()

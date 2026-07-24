@@ -61,7 +61,7 @@ def _now() -> str:
 
 
 def _summary(claim: Any) -> dict[str, Any]:
-    value = claim.get("value", claim.get("value_json", getattr(claim, "value", None)))
+    value = claim.get("value", getattr(claim, "value", None))
     return {
         "subject": claim.get("subject_entity_id", getattr(claim, "subject", None)),
         "predicate": claim.get("predicate", getattr(claim, "predicate", None)),
@@ -148,7 +148,7 @@ class IngestService:
             raise
         return {"id": event_id}
 
-    def _queue_event(self, event_id: str, now: str, commit: bool = True) -> None:
+    def _queue_event(self, event_id: str, now: str, commit: bool = False) -> None:
         JobRepository(self.connection).insert_job(
             {
                 "id": new_id(),
@@ -411,7 +411,7 @@ def _persist_resolution(claims: ClaimRepository, claim: dict[str, Any]) -> bool:
     return claims.insert_claim(claim, commit=False)
 
 
-def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = True) -> None:
+def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = False) -> None:
     repo.add_link(
         {
             "id": new_id(),

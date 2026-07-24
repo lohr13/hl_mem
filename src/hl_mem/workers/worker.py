@@ -50,7 +50,7 @@ def enqueue_daily_reclassify(connection: Any, now: str, cron: str) -> bool:
         raise ValueError("HL_MEM_RECLASSIFY_CRON must use HH:MM format")
     if current.hour * 60 + current.minute < scheduled_minutes:
         return False
-    return JobRepository(connection).insert_job(
+    created = JobRepository(connection).insert_job(
         {
             "id": uuid.uuid4().hex,
             "job_type": "reclassify_claims",
@@ -60,6 +60,8 @@ def enqueue_daily_reclassify(connection: Any, now: str, cron: str) -> bool:
             "updated_at": now,
         }
     )
+    connection.commit()
+    return created
 
 
 class Worker:
@@ -403,11 +405,9 @@ def _handle_purge_retention(worker: Worker, job: dict[str, Any]) -> dict[str, An
 
 def _handle_retry_failed(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """将失败任务重新置为待处理。"""
-    cursor = worker.connection.execute(
-        "UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'"
-    )
+    retried = worker.jobs.retry_failed()
     worker.connection.commit()
-    return {"retried": cursor.rowcount}
+    return {"retried": retried}
 
 
 JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {

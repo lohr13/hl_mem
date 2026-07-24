@@ -59,8 +59,8 @@ class LLMConflictJudge:
             "subject_entity_id",
             "canonical_attribute",
             "predicate",
-            "value_json",
-            "qualifiers_json",
+            "value",
+            "qualifiers",
             "valid_from",
             "valid_to",
             "source_authority",
@@ -122,7 +122,7 @@ def enqueue_daily_consolidation(connection: Any, now: str, cron: str) -> bool:
         return False
     from hl_mem.storage.repository import JobRepository
 
-    return JobRepository(connection).insert_job(
+    created = JobRepository(connection).insert_job(
         {
             "id": uuid.uuid4().hex,
             "job_type": "consolidate_conflicts",
@@ -132,6 +132,8 @@ def enqueue_daily_consolidation(connection: Any, now: str, cron: str) -> bool:
             "updated_at": now,
         }
     )
+    connection.commit()
+    return created
 
 
 class ConflictConsolidator:
@@ -146,15 +148,7 @@ class ConflictConsolidator:
         self, namespace: str = "default", watermark: str | None = None, batch_size: int = 100
     ) -> list[CandidatePair]:
         """生成同命名空间、同主题或事实槽的灰区候选。"""
-        rows = [
-            dict(row)
-            for row in self.connection.execute(
-                "SELECT * FROM claims WHERE namespace_key=? AND status='active' "
-                "AND embedding_dense IS NOT NULL AND (? IS NULL OR recorded_from>?) "
-                "ORDER BY recorded_from,id",
-                (namespace, watermark, watermark),
-            ).fetchall()
-        ]
+        rows = ClaimRepository(self.connection).list_active_for_consolidation(namespace, watermark)
         pairs: list[CandidatePair] = []
         for index, left in enumerate(rows):
             for right in rows[index + 1 :]:
@@ -255,7 +249,7 @@ class ConflictConsolidator:
                 ClaimRepository(self.connection).supersede_with_inline(
                     old["id"],
                     current["id"],
-                    json.loads(current["value_json"]),
+                    current["value"],
                     current.get("valid_from") or current["recorded_from"],
                     datetime.now(timezone.utc).isoformat(),
                 )
@@ -266,13 +260,8 @@ class ConflictConsolidator:
         return stats
 
     def _unchanged(self, pair: CandidatePair) -> bool:
-        for original in (pair.left, pair.right):
-            current = self.connection.execute(
-                "SELECT status,value_json FROM claims WHERE id=?", (original["id"],)
-            ).fetchone()
-            if not current or current["status"] != "active" or current["value_json"] != original["value_json"]:
-                return False
-        return True
+        repository = ClaimRepository(self.connection)
+        return all(repository.is_unchanged(original) for original in (pair.left, pair.right))
 
     def _record(self, pair: CandidatePair, decision: ConsolidationDecision, run_id: str, stored_decision: str) -> None:
         self.connection.execute(

@@ -22,7 +22,7 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def insert_row(connection: sqlite3.Connection, table: str, data: dict[str, Any], commit: bool = True) -> bool:
+def insert_row(connection: sqlite3.Connection, table: str, data: dict[str, Any], commit: bool = False) -> bool:
     """使用 INSERT OR IGNORE 写入一行并返回是否实际插入。"""
     columns = ", ".join(data)
     placeholders = ", ".join("?" for _ in data)

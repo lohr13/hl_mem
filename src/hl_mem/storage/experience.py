@@ -27,7 +27,7 @@ def _validate_reward(reward: float) -> None:
 
 
 def backprop_episode_reward(
-    connection: sqlite3.Connection, episode_id: str, reward: float, commit: bool = True
+    connection: sqlite3.Connection, episode_id: str, reward: float, commit: bool = False
 ) -> None:
     """将 Episode 奖励回传到其全部 Trace 的价值和优先级。"""
     _validate_reward(reward)
@@ -102,7 +102,7 @@ class ExperienceRepository:
         status: str | None = None,
         reward: float | None = None,
         outcome_summary: str | None = None,
-        commit: bool = True,
+        commit: bool = False,
     ) -> dict[str, Any]:
         """更新 Episode 的完成状态和结果。"""
         row = self.connection.execute("SELECT status FROM episodes WHERE id=?", (episode_id,)).fetchone()
@@ -202,7 +202,7 @@ class ExperienceRepository:
         created_at: str,
         rank: int | None = None,
         score: float | None = None,
-        commit: bool = True,
+        commit: bool = False,
     ) -> bool:
         """幂等记录检索反馈，并将 Episode 任务结果归因为 reward。"""
         cursor = self.connection.execute(

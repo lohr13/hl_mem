@@ -6,7 +6,6 @@ import hashlib
 import sqlite3
 from typing import Any
 
-from hl_mem.domain.types import StoredEvent
 from hl_mem.storage._shared import (
     decode_json,
     encode_json,
@@ -23,7 +22,7 @@ class EventRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_event(self, event: dict[str, Any], commit: bool = True) -> bool:
+    def insert_event(self, event: dict[str, Any], commit: bool = False) -> bool:
         """写入事件，并在需要时提交事务。"""
         stored = dict(event)
         if "content" in stored:
@@ -47,25 +46,6 @@ class EventRepository:
         """按幂等键返回已存在的事件标识。"""
         row = self.connection.execute("SELECT id FROM events WHERE idempotency_key=?", (idempotency_key,)).fetchone()
         return str(row["id"]) if row else None
-
-    def get_stored_event(self, event_id: str) -> StoredEvent | None:
-        """按稳定领域类型返回事件；旧 get_event 字典接口继续兼容。"""
-        event = self.get_event(event_id)
-        if event is None:
-            return None
-        content = event.get("content", {})
-        content_text = content.get("text", "") if isinstance(content, dict) else str(content)
-        return StoredEvent(
-            id=event["id"],
-            source=event.get("source_uri") or event.get("event_type", ""),
-            content=str(content_text),
-            metadata={
-                key: value
-                for key, value in event.items()
-                if key not in {"id", "source_uri", "event_type", "content", "content_json", "recorded_at"}
-            },
-            created_at=event["recorded_at"],
-        )
 
     def get_recent_events(self, session_id: str, before: dict[str, Any], limit: int) -> list[dict[str, Any]]:
         """返回游标之前的最近事件。"""

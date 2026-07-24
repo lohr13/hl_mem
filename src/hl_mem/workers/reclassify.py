@@ -11,6 +11,7 @@ from hl_mem.errors import ConfigurationError
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
 from hl_mem.settings import Settings
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 
 
@@ -28,11 +29,7 @@ def _chunks(values: list[dict[str, Any]], size: int) -> Iterable[list[dict[str, 
 
 
 def _text(claim: dict[str, Any]) -> str:
-    value = claim.get("value_json")
-    try:
-        value = json.loads(value) if isinstance(value, str) else value
-    except json.JSONDecodeError:
-        pass
+    value = claim.get("value")
     return f"{claim.get('subject_entity_id') or ''} {claim.get('predicate') or ''} {value or ''}".strip()
 
 
@@ -85,7 +82,8 @@ def reclassify_claims(connection: Any, llm_client: LLMClient, batch_size: int = 
     """重分类仍处于默认 scope/importance 的记忆。"""
     if not 5 <= batch_size <= 10:
         raise ValueError("batch_size must be between 5 and 10")
-    rows = [dict(row) for row in connection.execute("SELECT * FROM claims ORDER BY id").fetchall()]
+    repository = ClaimRepository(connection)
+    rows = repository.list_all()
     pending = [row for row in rows
                if row.get("scope", "permanent") == "permanent"
                and float(row.get("importance", 0.5)) == 0.5]
@@ -102,10 +100,7 @@ def reclassify_claims(connection: Any, llm_client: LLMClient, batch_size: int = 
                 importance = min(1.0, max(0.0, float(item.get("importance", 0.5))))
             except (TypeError, ValueError):
                 importance = 0.5
-            updated += connection.execute(
-                "UPDATE claims SET scope=?,importance=? WHERE id=?",
-                (scope, importance, claim_id),
-            ).rowcount
+            updated += int(repository.update_classification(claim_id, scope, importance))
         connection.commit()
     return {"scanned": len(rows), "eligible": len(pending), "updated": updated}
 

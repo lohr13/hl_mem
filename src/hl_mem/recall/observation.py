@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 
@@ -42,10 +41,4 @@ class ObservationBuilder:
 
     @staticmethod
     def _value(claim: dict[str, Any]) -> Any:
-        value = claim.get("value", claim.get("value_json", ""))
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                return value
-        return value
+        return claim.get("value", "")

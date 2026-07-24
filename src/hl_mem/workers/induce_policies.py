@@ -76,7 +76,7 @@ def enqueue_daily_policy_induction(connection: Any, now: str, cron: str) -> bool
         raise ValueError("HL_MEM_INDUCE_POLICIES_CRON must use HH:MM format")
     if current.hour * 60 + current.minute < scheduled_minutes:
         return False
-    return JobRepository(connection).insert_job(
+    created = JobRepository(connection).insert_job(
         {
             "id": uuid.uuid4().hex,
             "job_type": "induce_policies",
@@ -86,3 +86,5 @@ def enqueue_daily_policy_induction(connection: Any, now: str, cron: str) -> bool
             "updated_at": now,
         }
     )
+    connection.commit()
+    return created
