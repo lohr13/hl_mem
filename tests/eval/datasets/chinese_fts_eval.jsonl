@@ -1,0 +1,30 @@
+{"case_id":"cfts_001","query":"唇形同步","expected_keywords":["唇形","同步"],"expected_type":"claim","relevant_subjects":["dhlive","MuseTalk","LatentSync"]}
+{"case_id":"cfts_002","query":"代理配置","expected_keywords":["代理","配置"],"expected_type":"claim","relevant_subjects":["V2RayN","Codex CLI","网络代理"]}
+{"case_id":"cfts_003","query":"记忆系统架构","expected_keywords":["记忆","架构"],"expected_type":"claim","relevant_subjects":["HL-Mem","记忆系统"]}
+{"case_id":"cfts_004","query":"Codex CLI","expected_keywords":["Codex","CLI"],"expected_type":"claim","relevant_subjects":["Codex CLI","Codex"]}
+{"case_id":"cfts_005","query":"embedding维度","expected_keywords":["embedding","维度"],"expected_type":"claim","relevant_subjects":["embedding","text-embedding-v4","HL-Mem"]}
+{"case_id":"cfts_006","query":"Hermes重启","expected_keywords":["Hermes","重启"],"expected_type":"claim","relevant_subjects":["Hermes"]}
+{"case_id":"cfts_007","query":"PostgreSQL迁移","expected_keywords":["PostgreSQL","迁移"],"expected_type":"claim","relevant_subjects":["PostgreSQL","HL-Mem"]}
+{"case_id":"cfts_008","query":"冲突检测","expected_keywords":["冲突","检测"],"expected_type":"claim","relevant_subjects":["HL-Mem","ConflictResolver","ConflictConsolidator"]}
+{"case_id":"cfts_009","query":"GPU显存","expected_keywords":["GPU","显存"],"expected_type":"claim","relevant_subjects":["RTX 5070 Ti","GPU"]}
+{"case_id":"cfts_010","query":"比特沃登密码管理","expected_keywords":["比特沃登","密码"],"expected_type":"claim","relevant_subjects":["Bitwarden","比特沃登"]}
+{"case_id":"cfts_011","query":"Tailscale内网","expected_keywords":["Tailscale","内网"],"expected_type":"claim","relevant_subjects":["Tailscale"]}
+{"case_id":"cfts_012","query":"TTL过期","expected_keywords":["TTL","过期"],"expected_type":"claim","relevant_subjects":["HL-Mem","TTL"]}
+{"case_id":"cfts_013","query":"去重逻辑","expected_keywords":["去重","逻辑"],"expected_type":"claim","relevant_subjects":["HL-Mem","DedupJudge"]}
+{"case_id":"cfts_014","query":"FTS5分词","expected_keywords":["FTS5","分词"],"expected_type":"claim","relevant_subjects":["FTS5","HL-Mem"]}
+{"case_id":"cfts_015","query":"召回管线","expected_keywords":["召回","管线"],"expected_type":"claim","relevant_subjects":["HL-Mem","RecallService"]}
+{"case_id":"cfts_016","query":"配置项单一来源","expected_keywords":["配置","单一来源"],"expected_type":"claim","relevant_subjects":["HL-Mem","Settings"]}
+{"case_id":"cfts_017","query":"worker心跳","expected_keywords":["worker","心跳"],"expected_type":"claim","relevant_subjects":["worker","HL-Mem"]}
+{"case_id":"cfts_018","query":"熔断器","expected_keywords":["熔断器"],"expected_type":"claim","relevant_subjects":["Hermes","circuit breaker"]}
+{"case_id":"cfts_019","query":"SSH密钥","expected_keywords":["SSH","密钥"],"expected_type":"claim","relevant_subjects":["SSH","GitHub"]}
+{"case_id":"cfts_020","query":"虚拟内存","expected_keywords":["虚拟内存"],"expected_type":"claim","relevant_subjects":["Windows","虚拟内存"]}
+{"case_id":"cfts_021","query":"量化交易","expected_keywords":[],"expected_type":"empty","relevant_subjects":[]}
+{"case_id":"cfts_022","query":"烘焙食谱","expected_keywords":[],"expected_type":"empty","relevant_subjects":[]}
+{"case_id":"cfts_023","query":"旅游攻略","expected_keywords":[],"expected_type":"empty","relevant_subjects":[]}
+{"case_id":"cfts_024","query":"游戏开发","expected_keywords":[],"expected_type":"empty","relevant_subjects":[]}
+{"case_id":"cfts_025","query":"Docker容器","expected_keywords":["Docker","容器"],"expected_type":"claim","relevant_subjects":["Docker"]}
+{"case_id":"cfts_026","query":"V2RayN代理","expected_keywords":["V2RayN","代理"],"expected_type":"claim","relevant_subjects":["V2RayN"]}
+{"case_id":"cfts_027","query":"CI/CD流水线","expected_keywords":["CI/CD","流水线"],"expected_type":"claim","relevant_subjects":["CI/CD","GitHub Actions"]}
+{"case_id":"cfts_028","query":"Slot和Tags","expected_keywords":["Slot","Tags"],"expected_type":"claim","relevant_subjects":["HL-Mem","SLOT_REGISTRY"]}
+{"case_id":"cfts_029","query":"RRF融合","expected_keywords":["RRF","融合"],"expected_type":"claim","relevant_subjects":["HL-Mem","RRF"]}
+{"case_id":"cfts_030","query":"healthz版本","expected_keywords":["healthz","版本"],"expected_type":"claim","relevant_subjects":["HL-Mem","healthz"]}

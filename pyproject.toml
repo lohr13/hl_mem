@@ -41,6 +41,7 @@ pythonpath = ["src"]
 asyncio_mode = "auto"
 markers = [
     "benchmark: performance benchmarks excluded from default test discovery by file naming",
+    "eval: offline evaluation tests that report metrics without enforcing quality thresholds",
 ]
 
 [tool.coverage.run]
