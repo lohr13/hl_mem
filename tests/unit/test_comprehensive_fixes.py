@@ -127,7 +127,7 @@ def test_worker_extractor_fail_fast_in_production() -> None:
         worker._make_extractor()
 
     worker.settings = Settings(environment="production", extractor_mode="fake")
-    with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
+    with pytest.raises(ConfigurationError, match="HL_MEM_EXTRACTOR"):
         worker._make_extractor()
 
 

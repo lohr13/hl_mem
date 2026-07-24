@@ -11,6 +11,7 @@ def test_server_reranker_on_without_key_falls_back_to_disabled(monkeypatch) -> N
     from hl_mem.components import make_reranker
     from hl_mem.settings import Settings
 
+    monkeypatch.setenv("HL_MEM_ALLOW_FAKE_FALLBACK", "true")
     monkeypatch.setenv("HL_MEM_RERANKER", "on")
     monkeypatch.delenv("RERANKER_API_KEY", raising=False)
     monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
