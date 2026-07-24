@@ -5,6 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from hl_mem.domain.constants import (
+    INTENT_KEYWORDS_ANALOGICAL,
+    INTENT_KEYWORDS_AS_OF,
+    INTENT_KEYWORDS_HISTORICAL,
+    INTENT_KEYWORDS_PREFERENCE,
+    INTENT_KEYWORDS_PROCEDURAL,
+    INTENT_KEYWORDS_RELATIONAL,
+)
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible, parse_utc
 
 
@@ -20,13 +28,13 @@ class QueryRoute:
 def route_query(query: str, reference_time: str | None = None) -> QueryRoute:
     """根据中文查询线索选择召回通道。"""
     lowered = query.lower()
-    if any(word in lowered for word in ("如何", "怎么", "步骤", "流程", "部署")):
+    if any(word in lowered for word in INTENT_KEYWORDS_PROCEDURAL):
         return QueryRoute("procedure", ("procedure", "fts", "dense"), reference_time)
-    if any(word in lowered for word in ("去年", "以前", "历史", "当时", "曾经")) or reference_time:
+    if any(word in lowered for word in INTENT_KEYWORDS_HISTORICAL) or reference_time:
         return QueryRoute("historical", ("temporal", "fact", "fts", "dense"), reference_time)
-    if any(word in lowered for word in ("关系", "关联", "依赖", "属于")):
+    if any(word in lowered for word in INTENT_KEYWORDS_RELATIONAL):
         return QueryRoute("relation", ("relation", "fact", "fts", "dense"), reference_time)
-    if any(word in lowered for word in ("类似", "经验", "上次")):
+    if any(word in lowered for word in INTENT_KEYWORDS_ANALOGICAL):
         return QueryRoute("similar_experience", ("episode", "fts", "dense"), reference_time)
     return QueryRoute("current_state", ("fact", "fts", "dense"), reference_time)
 
@@ -34,9 +42,9 @@ def route_query(query: str, reference_time: str | None = None) -> QueryRoute:
 def route_recall_intent(query: str, as_of: str | None, now: str | None = None) -> RecallIntent:
     """根据显式历史措辞或过去的 as_of 推断召回意图。"""
     lowered = query.casefold()
-    if any(marker in lowered for marker in ("偏好", "喜欢", "喜好", "习惯", "preference", "prefer", "favorite")):
+    if any(marker in lowered for marker in (*INTENT_KEYWORDS_PREFERENCE, "preference", "prefer", "favorite")):
         return RecallIntent.PREFERENCE
-    if any(marker in query for marker in ("当时", "以前", "历史", "曾经", "截至", "as_of")):
+    if any(marker in query for marker in (*INTENT_KEYWORDS_AS_OF, "as_of")):
         return RecallIntent.HISTORICAL
     if as_of is not None:
         reference = parse_utc(now) if now else datetime.now(timezone.utc)
