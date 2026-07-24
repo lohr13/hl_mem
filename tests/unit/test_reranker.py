@@ -51,11 +51,17 @@ class Repo:
     def __init__(self) -> None:
         self.claims = _claims()
 
-    def search_claims_fts(self, query, limit, as_of):
-        return self.claims[:limit]
+    def search_claims_fts(self, *args, **kwargs):
+        return self.claims[:kwargs.get("limit", len(self.claims))]
 
-    def list_embedded(self, as_of):
+    def list_embedded(self, *args, **kwargs):
         return self.claims
+
+    def search_claims_vector(self, *args, **kwargs):
+        return self.claims
+
+    def helpful_rates(self, *args, **kwargs):
+        return {}
 
 
 def test_fake_reranker_returns_input_order() -> None:
