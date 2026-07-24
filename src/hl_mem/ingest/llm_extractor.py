@@ -1,24 +1,18 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import time  # 兼容旧测试与外部 monkeypatch 路径
 import unicodedata
+import warnings
 from dataclasses import replace
 from typing import Any
 
-import httpx
 from pydantic import ValidationError as PydanticValidationError
 
-from hl_mem.config import (
-    EXTRACTION_CHUNK_OVERLAP_TURNS,
-    EXTRACTION_CHUNK_TARGET_CHARS,
-    EXTRACTION_MAX_SPLIT_DEPTH,
-)
 from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.providers import DashScopeProvider
+from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
 from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
 from hl_mem.observability.audit import current_audit
 from hl_mem.recall.attribute_map import (
@@ -129,45 +123,68 @@ def _is_low_value_claim(claim: ExtractedClaim) -> bool:
 
 
 class LLMExtractor:
+    """通过统一 LLMClient 执行结构化事实提取。"""
+
     def __init__(
         self,
-        api_key: str,
-        base_url: str,
-        model: str,
-        timeout: float | None = None,
-        client: httpx.Client | None = None,
+        llm_client: LLMClient,
+        chunking_policy: ChunkingPolicy,
         *,
-        llm_client: LLMClient | None = None,
-        schema_retries: int | None = None,
+        schema_retries: int = 2,
         structured_mode: StructuredOutputMode = StructuredOutputMode.JSON_SCHEMA,
-        chunking_policy: ChunkingPolicy | None = None,
     ) -> None:
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.timeout = timeout if timeout is not None else float(os.getenv("LLM_TIMEOUT", "90"))
-        self._client = client
-        self.schema_retries = (
-            schema_retries if schema_retries is not None else int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2"))
-        )
+        self.llm_client = llm_client
+        self.model = llm_client.model
+        self.schema_retries = schema_retries
         if self.schema_retries < 0:
             raise ValueError("schema_retries must be non-negative")
         self.structured_mode = structured_mode
-        self.chunking_policy = chunking_policy or ChunkingPolicy(
-            target_chars=EXTRACTION_CHUNK_TARGET_CHARS,
-            overlap_turns=EXTRACTION_CHUNK_OVERLAP_TURNS,
-            max_split_depth=EXTRACTION_MAX_SPLIT_DEPTH,
-        )
-        self.llm_client = llm_client or LLMClient(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            provider=DashScopeProvider(),
-            timeout=self.timeout,  # type: ignore[arg-type]
-            max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
-            client=client,
-        )
+        self.chunking_policy = chunking_policy
         self.last_usage_tokens = 0
+
+    @classmethod
+    def from_env(cls) -> "LLMExtractor":
+        """从环境创建 legacy 提取器；新代码应通过 components.make_extractor 注入。"""
+        import httpx
+
+        from hl_mem.settings import Settings
+
+        warnings.warn(
+            "LLMExtractor.from_env() is deprecated; inject LLMClient explicitly",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        settings = Settings.from_env()
+        if not settings.llm_api_key:
+            raise ValueError("LLM_API_KEY is required")
+        provider_types = {
+            "dashscope": DashScopeProvider,
+            "zhipu": ZhipuProvider,
+            "openai_compatible": OpenAICompatibleProvider,
+        }
+        llm_client = LLMClient(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            provider=provider_types[settings.llm_provider](),
+            timeout=httpx.Timeout(settings.llm_timeout),
+            max_attempts=settings.llm_max_attempts,
+        )
+        structured_mode = (
+            StructuredOutputMode.JSON_OBJECT
+            if settings.llm_structured_mode == "json_object"
+            else StructuredOutputMode.JSON_SCHEMA
+        )
+        return cls(
+            llm_client,
+            ChunkingPolicy(
+                target_chars=settings.extraction_chunk_target_chars,
+                overlap_turns=settings.extraction_chunk_overlap_turns,
+                max_split_depth=settings.extraction_max_split_depth,
+            ),
+            schema_retries=settings.llm_schema_retries,
+            structured_mode=structured_mode,
+        )
 
     def extract(
         self, content: dict[str, Any] | str, event_context: dict[str, Any] | None = None

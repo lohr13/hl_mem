@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -11,19 +10,14 @@ from typing import Any
 
 from hl_mem import components
 from hl_mem.application.ingest import IngestService
-from hl_mem.config import (
-    RETENTION_DAYS,
-    WORKER_JOB_LEASE_MINUTES,
-    WORKER_MAINTENANCE_INTERVAL,
-    WORKER_POLL_INTERVAL,
-)
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.attribute_map import infer_canonical_attribute
-from hl_mem.storage.database import Database, default_database_path
+from hl_mem.settings import Settings
+from hl_mem.storage.database import Database
 from hl_mem.storage.repository import EventRepository, JobRepository
 from hl_mem.workers.consolidate import (
     ConflictConsolidator,
@@ -68,8 +62,18 @@ def enqueue_daily_reclassify(connection: Any, now: str, cron: str) -> bool:
 class Worker:
     """Single-job worker intended to run in its own process."""
 
-    def __init__(self, db_path: str | Path, config: dict[str, Any] | None = None) -> None:
-        self.db_path, self.config = Path(db_path), config or {}
+    def __init__(
+        self,
+        settings: Settings | str | Path,
+        config: dict[str, Any] | None = None,
+    ) -> None:
+        if isinstance(settings, Settings):
+            self.settings = settings
+            self.db_path = Path(settings.database_path)
+        else:
+            self.settings = Settings.from_env()
+            self.db_path = Path(settings)
+        self.config = config or {}
         self.database = Database(self.db_path)
         self.connection = self.database.open_worker()
         self.jobs = JobRepository(self.connection)
@@ -77,14 +81,16 @@ class Worker:
         self.extractor = self.config.get("extractor") or self._make_extractor()
         self.embedder = self.config.get("embedder") or self._make_embedder()
         self.budget = self.config.get("budget") or TokenBudget(
-            int(self.config.get("daily_token_limit", os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000"))),
+            int(self.config.get("daily_token_limit", self.settings.daily_token_limit)),
             self.db_path.with_suffix(".budget.db"),
         )
         self.audit = self.config.get("audit") or NullAuditLogger()
 
     def run_once(self) -> dict[str, Any]:
         now = _now()
-        lease = (datetime.now(timezone.utc) + timedelta(minutes=WORKER_JOB_LEASE_MINUTES)).isoformat()
+        lease = (
+            datetime.now(timezone.utc) + timedelta(minutes=self.settings.worker_job_lease_minutes)
+        ).isoformat()
         job = self.jobs.lease_job(lease, now)
         if not job:
             return {"status": "idle"}
@@ -103,7 +109,9 @@ class Worker:
                 "error": str(error),
             }
 
-    def run_forever(self, poll_interval: float = WORKER_POLL_INTERVAL) -> None:
+    def run_forever(self, poll_interval: float | None = None) -> None:
+        """持续处理任务并按统一配置执行维护调度。"""
+        effective_poll_interval = poll_interval if poll_interval is not None else self.settings.worker_poll_interval
         next_ttl = 0.0
         try:
             while True:
@@ -118,27 +126,29 @@ class Worker:
                     auto_resolve_conflicts(self.connection, maintenance_now)
                     from hl_mem.security.retention import purge_retained_events
 
-                    cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
+                    cutoff = (
+                        datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)
+                    ).isoformat()
                     purge_retained_events(self.connection, "default", cutoff)
-                    self.audit.cleanup(int(self.config.get("audit_retention_days", RETENTION_DAYS)))
+                    self.audit.cleanup(int(self.config.get("audit_retention_days", self.settings.audit_retention_days)))
                     enqueue_daily_consolidation(
                         self.connection,
                         _now(),
-                        self.config.get("consolidate_cron", os.getenv("HL_MEM_CONSOLIDATE_CRON", "03:30")),
+                        self.config.get("consolidate_cron", self.settings.consolidate_cron),
                     )
                     enqueue_daily_policy_induction(
                         self.connection,
                         _now(),
-                        self.config.get("induce_policies_cron", os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00")),
+                        self.config.get("induce_policies_cron", self.settings.induce_policies_cron),
                     )
                     enqueue_daily_reclassify(
                         self.connection,
                         _now(),
-                        self.config.get("reclassify_cron", os.getenv("HL_MEM_RECLASSIFY_CRON", "04:30")),
+                        self.config.get("reclassify_cron", self.settings.reclassify_cron),
                     )
-                    next_ttl = current + WORKER_MAINTENANCE_INTERVAL
+                    next_ttl = current + self.settings.worker_maintenance_interval
                 if self.run_once()["status"] == "idle":
-                    time.sleep(poll_interval)
+                    time.sleep(effective_poll_interval)
         finally:
             self.audit.close()
             self.database.close()
@@ -157,7 +167,7 @@ class Worker:
                 int(
                     payload.get(
                         "limit",
-                        self.config.get("consolidate_batch_size", os.getenv("HL_MEM_CONSOLIDATE_BATCH_SIZE", "100")),
+                        self.config.get("consolidate_batch_size", self.settings.consolidate_batch_size),
                     )
                 ),
                 payload.get("namespace", "default"),
@@ -169,11 +179,11 @@ class Worker:
         if job["job_type"] == "reclassify_claims":
             from hl_mem.workers.reclassify import reclassify_claims
 
-            return reclassify_claims(self.connection, self._make_extractor())
+            return reclassify_claims(self.connection, components.make_llm_client(self.settings))
         if job["job_type"] == "purge_retention":
             from hl_mem.security.retention import purge_retained_events
 
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)).isoformat()
             return {"purged": purge_retained_events(self.connection, "default", cutoff)}
         if job["job_type"] == "retry_failed":
             cursor = self.connection.execute("UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'")
@@ -293,41 +303,37 @@ class Worker:
                 event["extractor"] = "llm"
             for claim in extracted:
                 authority = "high" if event["event_type"] == "explicit_memory" else None
-                ttl_days = int(self.config.get("memory_temporal_ttl_days", os.getenv("HL_MEM_TEMPORAL_TTL_DAYS", "7")))
+                ttl_days = int(
+                    self.config.get("memory_temporal_ttl_days", self.settings.memory_temporal_ttl_days)
+                )
                 IngestService.store_extracted(
                     self.connection, claim, event, _now(), self.embedder, authority, ttl_days
                 )
             return {"claims": len(extracted)}
 
     def _make_extractor(self) -> Any:
-        return components.make_extractor(self.config)
+        return components.make_extractor(self.settings)
 
     def _make_embedder(self) -> Any:
-        return components.make_embedder(self.config)
+        return components.make_embedder(self.settings)
 
     def _make_consolidator(self) -> ConflictConsolidator:
         """从环境配置构建冲突归并器。"""
-        api_key = os.getenv("LLM_API_KEY")
-        if not api_key:
-            raise RuntimeError("LLM_API_KEY is required for consolidate_conflicts")
-        judge = LLMConflictJudge(
-            api_key,
-            os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
-            os.getenv("LLM_MODEL", "qwen3.7-plus"),
-        )
+        judge = LLMConflictJudge(components.make_llm_client(self.settings))
         return ConflictConsolidator(
             self.connection,
             judge,
-            float(self.config.get("consolidate_confidence", os.getenv("HL_MEM_CONSOLIDATE_CONFIDENCE", "0.8"))),
+            float(self.config.get("consolidate_confidence", self.settings.consolidate_confidence)),
         )
 
 
 def main() -> None:
     """运行 worker、处理单个任务或查看任务队列状态。"""
+    settings = Settings.from_env()
     parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.worker")
     parser.add_argument("command", choices=("run", "run-once", "status"))
-    parser.add_argument("--db", default=str(default_database_path()))
-    parser.add_argument("--poll-interval", type=float, default=WORKER_POLL_INTERVAL)
+    parser.add_argument("--db", default=settings.database_path)
+    parser.add_argument("--poll-interval", type=float, default=settings.worker_poll_interval)
     args = parser.parse_args()
     if args.command == "status":
         database = Database(args.db)
@@ -336,7 +342,11 @@ def main() -> None:
         finally:
             database.close()
         return
-    worker = Worker(args.db)
+    if args.db != settings.database_path:
+        from dataclasses import replace
+
+        settings = replace(settings, database_path=args.db)
+    worker = Worker(settings)
     if args.command == "run-once":
         try:
             print(json.dumps(worker.run_once(), ensure_ascii=False, sort_keys=True))

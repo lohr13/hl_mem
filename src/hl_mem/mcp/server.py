@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService
 from hl_mem.application.recall import RecallService
-from hl_mem.ingest.embeddings import FakeEmbedder
+from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.repository import ClaimRepository, EvidenceRepository, EventRepository
 
@@ -19,10 +18,22 @@ class McpMemoryServer:
 
     _TOOLS = ("memory_recall", "memory_save", "memory_forget", "memory_explain")
 
-    def __init__(self, database_path: str | Path, embedder: Any = None, reranker: Any = None) -> None:
-        self.database = Database(database_path)
-        self.embedder = embedder or FakeEmbedder(int(os.getenv("EMBEDDING_DIM", "2048")))
-        self.reranker = reranker
+    def __init__(
+        self,
+        settings: Settings | str | Path,
+        embedder: Any = None,
+        reranker: Any = None,
+    ) -> None:
+        """使用统一配置创建 MCP 服务，并兼容旧的数据库路径入口。"""
+        if isinstance(settings, Settings):
+            resolved_settings = settings
+        else:
+            from dataclasses import replace
+
+            resolved_settings = replace(Settings.from_env(), database_path=str(settings))
+        self.database = Database(resolved_settings.database_path)
+        self.embedder = embedder or components.make_embedder(resolved_settings)
+        self.reranker = reranker if reranker is not None else components.make_reranker(resolved_settings)
 
     def list_tools(self) -> tuple[str, ...]:
         """返回稳定的 MCP 工具名称。"""
@@ -100,3 +111,4 @@ class McpMemoryServer:
             for link in links
         ]
         return {"type": "claim", "id": memory_id, "evidence": evidence}
+from hl_mem import components
