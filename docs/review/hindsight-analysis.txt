@@ -1,0 +1,283 @@
+============================================================
+Hindsight .pyc analysis — extracting signatures & constants
+============================================================
+
+--- __pycache__\__init__.cpython-313.pyc ---
+  Docstrings/constants:
+    Memory System for AI Agents.
+
+Temporal + Semantic Memory Architecture using PostgreSQL with pgvector.
+  Names: __doc__, _thread_limits, apply_default_thread_limits, config, HindsightConfig, get_config, engine.cross_encoder, CrossEncoderModel, LocalSTCrossEncoder, RemoteTEICrossEncoder, engine.embeddings, Embeddings, LocalSTEmbeddings, RemoteTEIEmbeddings, engine.llm_wrapper, LLMConfig, engine.memory_engine, MemoryEngine, engine.search.trace, EntryPoint
+
+--- __pycache__\_pg_search.cpython-313.pyc ---
+  Docstrings/constants:
+    Helpers for ParadeDB pg_search index configuration.
+    HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER
+    lindera(chinese)
+    lindera(japanese)
+    lindera(korean)
+  Names: __doc__, __future__, annotations, re, collections.abc, Sequence, PG_SEARCH_TOKENIZER_ENV, _SIMPLE_TOKENIZERS, _TOKENIZER_ALIASES, normalize_pg_search_tokenizer, pg_search_bm25_columns
+  Function: normalize_pg_search_tokenizer(value)
+    doc: Validate and normalize a ParadeDB pg_search tokenizer setting.
+
+Returns an empty string when unset. The returned value is safe to embed after
+``pdb.``
+  Function: pg_search_bm25_columns(key_field, text_fields, tokenizer)
+    doc: Build a ParadeDB BM25 column list for CREATE INDEX.
+
+--- __pycache__\_thread_limits.cpython-313.pyc ---
+  Docstrings/constants:
+    Process-level caps for native ML thread pools.
+
+OpenBLAS, OpenMP, and MKL each spawn a worker pool sized to the host CPU count
+the first time they are loaded (numpy pulls in OpenBLAS eagerly; torch an
+  Names: __doc__, __future__, annotations, os, _NATIVE_THREAD_VARS, _MAX_NATIVE_THREADS, _quota_to_cpus, _parse_cgroup_v2_cpu_max, _cgroup_cpu_quota, _available_cpu_count, default_native_thread_count, apply_default_thread_limits
+  Function: _quota_to_cpus(quota, period)
+    doc: Whole CPUs from a CFS quota/period pair, or None if unlimited.
+  Function: _parse_cgroup_v2_cpu_max(text)
+    doc: Parse cgroup v2 ``cpu.max`` ("<quota> <period>", or "max <period>").
+  Function: _cgroup_cpu_quota()
+    doc: Effective CPUs from the cgroup CPU quota, or None if unlimited/unknown.
+  Function: _available_cpu_count()
+    doc: CPUs actually available to this process.
+
+The smallest of the CPU-affinity set (cpuset / ``--cpuset-cpus``), the
+cgroup CPU quota (``--cpus``), and ``
+  Function: default_native_thread_count()
+    doc: Per-pool cap: ``_MAX_NATIVE_THREADS``, or available CPUs if fewer.
+  Function: apply_default_thread_limits()
+    doc: Cap native ML thread pools unless the operator has set the var already.
+
+--- __pycache__\_vector_index.cpython-313.pyc ---
+  Docstrings/constants:
+    Shared PostgreSQL vector-extension dispatch helpers.
+    vectorscale
+    alloydb_scann
+    USING hnsw (embedding vector_cosine_ops)
+    USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)
+  Names: __doc__, __future__, annotations, logging, os, sqlalchemy, text, sqlalchemy.engine, Connection, getLogger, __name__, logger, CONFIGURABLE_EXTENSIONS, RESOLVED_EXTENSIONS, VALID_EXTENSIONS, SCANN_MIN_ROWS_FOR_AUTO_INDEX, _EXTENSION_NAMES, _INDEX_USING_CLAUSES, _INDEX_TYPE_KEYWORDS, _ANN_TUNING_LOW_LATENCY
+  Function: configured_vector_extension()
+    doc: Return the user-configured vector backend extension.
+
+Reads ``HINDSIGHT_API_VECTOR_EXTENSION`` (default ``"pgvector"``) and
+validates it via :func:`va
+  Function: validate_extension(name)
+    doc: Return a normalized configurable vector extension name or raise.
+
+Used at the user-facing config boundary; pg_diskann is rejected here because
+it is a
+  Function: _normalize_resolved(name)
+    doc: Normalize either a user-configurable or detect-time extension name.
+  Function: pg_extension_name(ext)
+    doc: Return the PostgreSQL extension name for a configured vector backend.
+  Function: index_using_clause(ext)
+    doc: Return the CREATE INDEX USING clause for the vector backend.
+  Function: index_type_keyword(ext)
+    doc: Return the keyword that identifies this index type in pg_indexes.indexdef.
+  Function: minimum_rows_for_index(ext)
+    doc: Return the minimum populated embedding rows before creating this index type.
+  Function: should_defer_index_creation(ext, row_count)
+    doc: Return True when index creation should wait for more embeddings.
+  Function: ann_search_tuning_settings(ext)
+    doc: Return per-backend (guc_name, value) pairs for ANN search-time tuning.
+
+``kind`` is ``"low_latency"`` for retain-side link probing (smaller probe
+coun
+  Function: uses_per_bank_vector_indexes(ext)
+    doc: Return whether the backend should create per-bank partial vector indexes.
+  Function: bootstrap_extension(conn, ext)
+    doc: Install the configured vector extension and any prerequisites if possible.
+  Function: detect_vector_extension(conn, vector_extension)
+    doc: Validate the configured vector extension exists and return the index backend.
+
+--- __pycache__\config.cpython-313.pyc ---
+  Docstrings/constants:
+    Centralized configuration for Hindsight API.
+
+All environment variables and their defaults are defined here.
+    ConfigFieldAccessError
+    StaticConfigProxy
+    HINDSIGHT_API_DATABASE_BACKEND
+    HINDSIGHT_API_DATABASE_URL
+  Names: __doc__, json, logging, os, re, sys, dataclasses, dataclass, field, fields, datetime, timezone, typing, Any, Literal, dotenv, find_dotenv, load_dotenv, _pg_search, normalize_pg_search_tokenizer
+  Function: ConfigFieldAccessError()
+    doc: ConfigFieldAccessError
+  Function: StaticConfigProxy()
+    doc: StaticConfigProxy
+  Function: hierarchical(default_value)
+    doc: Mark a config field as hierarchical (can be overridden per-tenant/bank).
+
+Hierarchical fields can be customized at the tenant or bank level via databa
+  Function: static(default_value)
+    doc: Mark a config field as static (server-level only, cannot be overridden).
+
+Static fields are infrastructure-level settings that affect the entire serve
+  Function: normalize_config_key(key)
+    doc: Convert environment variable format to Python field name format.
+
+Examples:
+    HINDSIGHT_API_LLM_PROVIDER -> llm_provider
+    LLM_MODEL -> llm_model
+
+  Function: normalize_config_dict(config)
+    doc: Normalize all keys in a config dict to Python field names.
+
+Allows users to provide config overrides in either format:
+- Python field format: {"llm_pr
+  Function: parse_gemini_service_tier(value)
+    doc: Normalize and validate the Gemini service tier.
+  Function: _parse_strategy_boosts(raw)
+    doc: Parse a "strategy:level,strategy:level" string into a boost map.
+
+A strategy listed without a level (``"graph"`` or ``"graph:"``) defaults to
+``medium
+  Function: JsonFormatter()
+    doc: JsonFormatter
+  Function: _parse_str_list(value)
+    doc: Parse a comma-separated string into a non-empty list of stripped tokens.
+  Function: _parse_positive_int(name, raw, default)
+    doc: Parse an env var that must be a positive integer (>= 1).
+
+Falls back to ``default`` when unset/empty. Raises ValueError on non-integer
+or non-positive
+  Function: _parse_optional_positive_int(name, raw)
+    doc: Parse an optional env var that must be a positive integer when set.
+  Function: _validate_retain_chunking_int(name, value)
+  Function: validate_retain_chunking_config(retain_chunk_size, retain_structured_chunk_size)
+    doc: Validate retain chunking size fields.
+
+Defaults emit field-style names ("retain_chunk_size") so API/PATCH callers
+don't have to override them. The sta
+  Function: validate_retain_completion_token_budget()
+    doc: Validate that retain LLM output capacity exceeds the configured chunk size.
+  Function: _parse_optional_choice(name, raw, allowed)
+    doc: Parse an optional string env var constrained to a small allowlist.
+  Function: _validate_extraction_mode(mode)
+    doc: Validate and normalize extraction mode.
+  Function: _validate_recall_budget_function(function)
+    doc: Validate and normalize recall budget function.
+  Function: _parse_bank_priority(raw)
+    doc: Parse ``bank-pattern:priority,...`` into ``{pattern: priority}``.
+
+``*`` in a pattern is kept as-is here; the SQL layer converts it to ``%``
+for LIKE 
+  Function: _get_default_model_for_provider(provider)
+    doc: Get the default model for a given provider.
+  Function: _parse_llm_router_config(env_var)
+    doc: Parse a LiteLLM Router configuration from a JSON env var.
+
+The value is forwarded verbatim to ``litellm.Router(**config)``. We only
+check that it pars
+  Function: _parse_default_bank_template(raw)
+    doc: Parse HINDSIGHT_API_DEFAULT_BANK_TEMPLATE as JSON.
+
+The env var holds a BankTemplateManifest (JSON object) applied verbatim to
+every newly-created ban
+  Function: HindsightConfig()
+    doc: HindsightConfig
+  Function: get_config()
+    doc: Get global configuration with ONLY static (non-configurable) fields accessible.
+
+This returns a proxy that prevents access to bank-configurable fields
+  Function: _get_raw_config()
+    doc: Get raw config (internal use only).
+
+INTERNAL USE ONLY. Do not use this directly in application code.
+Use get_config() for static fields or ConfigReso
+  Function: clear_config_cache()
+    doc: Clear the config cache. Useful for testing or reloading config.
+
+--- __pycache__\utils.cpython-313.pyc ---
+  Names: urllib.parse, urlparse, urlunparse, mask_network_location
+  Function: mask_network_location(url)
+
+============================================================
+Hindsight Client API — Data Models
+============================================================
+  bank_llm_health_response.py: class BankLlmHealthResponse(BaseModel):
+  bank_llm_health_response.py: __properties: ClassVar[List[str]] = ["bank_id", "operations"]
+  bank_llm_health_response.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  bank_llm_health_response.py: excluded_fields: Set[str] = set([
+  bank_llm_health_response.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  consolidation_request.py: class ConsolidationRequest(BaseModel):
+  consolidation_request.py: __properties: ClassVar[List[str]] = ["observation_scopes"]
+  consolidation_request.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  consolidation_request.py: excluded_fields: Set[str] = set([
+  consolidation_request.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  document_import_submit_response.py: class DocumentImportSubmitResponse(BaseModel):
+  document_import_submit_response.py: __properties: ClassVar[List[str]] = ["operation_id", "status"]
+  document_import_submit_response.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  document_import_submit_response.py: excluded_fields: Set[str] = set([
+  document_import_submit_response.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  dry_run_extract_request.py: class DryRunExtractRequest(BaseModel):
+  dry_run_extract_request.py: retain_custom_instructions: Optional[StrictStr] = None
+  dry_run_extract_request.py: __properties: ClassVar[List[str]] = ["content", "context", "timestamp", "agent_name", "retain_mission", "retain_extracti
+  dry_run_extract_request.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  dry_run_extract_request.py: excluded_fields: Set[str] = set([
+  dry_run_extract_request.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  dry_run_extract_request.py: "retain_custom_instructions": obj.get("retain_custom_instructions"),
+  dry_run_extraction_result.py: class DryRunExtractionResult(BaseModel):
+  dry_run_extraction_result.py: __properties: ClassVar[List[str]] = ["facts", "usage"]
+  dry_run_extraction_result.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  dry_run_extraction_result.py: excluded_fields: Set[str] = set([
+  dry_run_extraction_result.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  extracted_fact.py: class ExtractedFact(BaseModel):
+  extracted_fact.py: __properties: ClassVar[List[str]] = ["text", "fact_type", "occurred_start", "occurred_end", "entities"]
+  extracted_fact.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  extracted_fact.py: excluded_fields: Set[str] = set([
+  extracted_fact.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  llm_operation_health.py: class LlmOperationHealth(BaseModel):
+  llm_operation_health.py: __properties: ClassVar[List[str]] = ["operation", "ok", "status", "latency_ms"]
+  llm_operation_health.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  llm_operation_health.py: excluded_fields: Set[str] = set([
+  llm_operation_health.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  llm_request_entry.py: class LLMRequestEntry(BaseModel):
+  llm_request_entry.py: llm_info: Dict[str, Any]
+  llm_request_entry.py: metadata: Dict[str, Any]
+  llm_request_entry.py: __properties: ClassVar[List[str]] = ["id", "bank_id", "operation", "scope", "trace_id", "span_id", "parent_span_id", "pr
+  llm_request_entry.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  llm_request_entry.py: excluded_fields: Set[str] = set([
+  llm_request_entry.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  llm_request_list_response.py: class LLMRequestListResponse(BaseModel):
+  llm_request_list_response.py: __properties: ClassVar[List[str]] = ["bank_id", "total", "limit", "offset", "items"]
+  llm_request_list_response.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  llm_request_list_response.py: excluded_fields: Set[str] = set([
+  llm_request_list_response.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  llm_request_stats_bucket.py: class LLMRequestStatsBucket(BaseModel):
+  llm_request_stats_bucket.py: statuses: Dict[str, StrictInt]
+  llm_request_stats_bucket.py: __properties: ClassVar[List[str]] = ["time", "statuses", "total", "tokens"]
+  llm_request_stats_bucket.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  llm_request_stats_bucket.py: excluded_fields: Set[str] = set([
+  llm_request_stats_bucket.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  llm_request_stats_response.py: class LLMRequestStatsResponse(BaseModel):
+  llm_request_stats_response.py: __properties: ClassVar[List[str]] = ["bank_id", "period", "trunc", "start", "buckets"]
+  llm_request_stats_response.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  llm_request_stats_response.py: excluded_fields: Set[str] = set([
+  llm_request_stats_response.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  llm_request_token_sums.py: class LLMRequestTokenSums(BaseModel):
+  llm_request_token_sums.py: __properties: ClassVar[List[str]] = ["input", "output", "cached", "total"]
+  llm_request_token_sums.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  llm_request_token_sums.py: excluded_fields: Set[str] = set([
+  llm_request_token_sums.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  observation_scope.py: class ObservationScope(BaseModel):
+  observation_scope.py: tags: List[StrictStr] = Field(description="The exact tag set defining this scope (normalized order). Empty list is the g
+  observation_scope.py: __properties: ClassVar[List[str]] = ["tags", "count"]
+  observation_scope.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  observation_scope.py: excluded_fields: Set[str] = set([
+  observation_scope.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  observation_scopes_response.py: class ObservationScopesResponse(BaseModel):
+  observation_scopes_response.py: __properties: ClassVar[List[str]] = ["scopes"]
+  observation_scopes_response.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  observation_scopes_response.py: excluded_fields: Set[str] = set([
+  observation_scopes_response.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  operation_progress.py: class OperationProgress(BaseModel):
+  operation_progress.py: detail: Optional[Dict[str, StrictInt]] = None
+  operation_progress.py: __properties: ClassVar[List[str]] = ["stage", "at", "processed", "total", "detail"]
+  operation_progress.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  operation_progress.py: excluded_fields: Set[str] = set([
+  operation_progress.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
+  update_memory_request.py: class UpdateMemoryRequest(BaseModel):
+  update_memory_request.py: __properties: ClassVar[List[str]] = ["text", "context", "occurred_start", "occurred_end", "fact_type", "entities", "stat
+  update_memory_request.py: def from_json(cls, json_str: str) -> Optional[Self]:
+  update_memory_request.py: excluded_fields: Set[str] = set([
+  update_memory_request.py: def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:

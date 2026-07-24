@@ -50,7 +50,7 @@ class Settings:
     tag_channel_enabled: bool = False
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
-    fts_tokenizer: str = "unicode61"
+    fts_tokenizer: str = "trigram"
     vector_backend: str = "sqlite_scan"
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
@@ -132,7 +132,7 @@ class Settings:
             tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower() == "true",
             tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
             tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
-            fts_tokenizer=os.getenv("HL_MEM_FTS_TOKENIZER", "unicode61"),
+            fts_tokenizer=os.getenv("HL_MEM_FTS_TOKENIZER", "trigram"),
             vector_backend=os.getenv("HL_MEM_VECTOR_BACKEND", "sqlite_scan"),
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
