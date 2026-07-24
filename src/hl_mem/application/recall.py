@@ -13,7 +13,7 @@ from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
-from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
+from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
@@ -106,16 +106,18 @@ class RecallService:
             intent=selected_intent,
             known_as_of=known_as_of,
             namespace=namespace,
+            recall_config=RecallConfig(
+                candidate_floor=self.settings.recall_candidate_floor,
+                tag_boost_enabled=self.settings.tag_boost_enabled,
+                tag_boost_weight=self.settings.tag_boost_weight,
+                tag_channel_enabled=self.settings.tag_channel_enabled,
+                tag_channel_weight=self.settings.tag_channel_weight,
+                tag_candidate_limit=self.settings.tag_candidate_limit,
+                preference_recency_boost=self.settings.preference_recency_boost,
+            ),
             relation_connection=self.connection,
             relation_config=self.relation_config,
             tracer=tracer,
-            candidate_floor=self.settings.recall_candidate_floor,
-            preference_recency_boost=self.settings.preference_recency_boost,
-            tag_boost_enabled=self.settings.tag_boost_enabled,
-            tag_boost_weight=self.settings.tag_boost_weight,
-            tag_channel_enabled=self.settings.tag_channel_enabled,
-            tag_channel_weight=self.settings.tag_channel_weight,
-            tag_candidate_limit=self.settings.tag_candidate_limit,
         )
         self._record_access(claims)
         self._record_feedback(claims, query_id)

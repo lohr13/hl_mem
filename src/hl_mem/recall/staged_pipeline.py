@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,7 +21,6 @@ from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_
 from hl_mem.recall.relation_expansion import RelationExpansionConfig, expand_related_claims
 from hl_mem.recall.reranker import RerankResult
 from hl_mem.recall.trace import SearchTracer
-from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 
 # ── 排序因子冻结 ──────────────────────────────────────────────
@@ -30,6 +30,19 @@ from hl_mem.storage.claims import ClaimRepository
 # ──────────────────────────────────────────────────────────────
 
 RRF_K = 60
+
+
+@dataclass(frozen=True)
+class RecallConfig:
+    """召回管线使用的完整排序配置。"""
+
+    candidate_floor: int = 50
+    tag_boost_enabled: bool = True
+    tag_boost_weight: float = 0.05
+    tag_channel_enabled: bool = False
+    tag_channel_weight: float = 0.15
+    tag_candidate_limit: int = 20
+    preference_recency_boost: float = 1.0
 
 
 def _claim_text(claim: dict[str, Any]) -> str:
@@ -128,6 +141,7 @@ def hybrid_claims(
     known_as_of: str | None = None,
     namespace: str = "default",
     *,
+    recall_config: RecallConfig | None = None,
     relation_connection: Any | None = None,
     relation_config: RelationExpansionConfig | None = None,
     tracer: SearchTracer | None = None,
@@ -151,6 +165,7 @@ def hybrid_claims(
         intent,
         known_as_of,
         namespace,
+        recall_config=recall_config,
         relation_connection=relation_connection,
         relation_config=relation_config,
         tracer=tracer,
@@ -177,6 +192,7 @@ def _collect_candidates(
     known_as_of: str | None = None,
     namespace: str = "default",
     *,
+    recall_config: RecallConfig | None = None,
     relation_connection: Any | None = None,
     relation_config: RelationExpansionConfig | None = None,
     tracer: SearchTracer | None = None,
@@ -189,15 +205,15 @@ def _collect_candidates(
     tag_candidate_limit: int | None = None,
 ) -> dict[str, Any]:
     """仅执行 FTS 与向量检索，并建立统一时间快照。"""
-    defaults = Settings()
-    effective_floor = candidate_floor or defaults.recall_candidate_floor
+    config = recall_config or RecallConfig()
+    effective_floor = candidate_floor or config.candidate_floor
     candidate_limit = min(RECALL_VECTOR_SCAN_LIMIT, max(limit * 5, effective_floor))
     ranking_now = now or datetime.now(timezone.utc).isoformat()
     selected_intent = RecallIntent(intent) if intent else route_recall_intent(query, as_of, ranking_now)
     reference = as_of or ranking_now
     total_started = time.perf_counter_ns()
-    effective_tag_boost_enabled = defaults.tag_boost_enabled if tag_boost_enabled is None else tag_boost_enabled
-    effective_tag_channel_enabled = defaults.tag_channel_enabled if tag_channel_enabled is None else tag_channel_enabled
+    effective_tag_boost_enabled = config.tag_boost_enabled if tag_boost_enabled is None else tag_boost_enabled
+    effective_tag_channel_enabled = config.tag_channel_enabled if tag_channel_enabled is None else tag_channel_enabled
     query_tags = (
         extract_query_tags(query)
         if effective_tag_boost_enabled or effective_tag_channel_enabled
@@ -221,7 +237,7 @@ def _collect_candidates(
         tracer.trace.phases.dense_us = dense_us
         tracer.record_channel("dense", dense)
 
-    effective_tag_candidate_limit = tag_candidate_limit or defaults.tag_candidate_limit
+    effective_tag_candidate_limit = tag_candidate_limit or config.tag_candidate_limit
     tag_results: list[dict[str, Any]] = []
     tag_us = 0
     if effective_tag_channel_enabled and query_tags:
@@ -259,13 +275,13 @@ def _collect_candidates(
         "selected_intent": selected_intent,
         "reference": reference,
         "preference_boost": (
-            defaults.preference_recency_boost if preference_recency_boost is None else preference_recency_boost
+            config.preference_recency_boost if preference_recency_boost is None else preference_recency_boost
         ),
         "query_tags": query_tags,
         "tag_boost_enabled": effective_tag_boost_enabled,
-        "tag_boost_weight": defaults.tag_boost_weight if tag_boost_weight is None else tag_boost_weight,
+        "tag_boost_weight": config.tag_boost_weight if tag_boost_weight is None else tag_boost_weight,
         "tag_channel_enabled": effective_tag_channel_enabled,
-        "tag_channel_weight": defaults.tag_channel_weight if tag_channel_weight is None else tag_channel_weight,
+        "tag_channel_weight": config.tag_channel_weight if tag_channel_weight is None else tag_channel_weight,
         "tag_candidate_limit": effective_tag_candidate_limit,
         "fts": fts,
         "dense": dense,

@@ -5,10 +5,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from hl_mem.recall.staged_pipeline import hybrid_claims, reciprocal_rank_fusion
+from hl_mem.recall.staged_pipeline import RecallConfig, hybrid_claims, reciprocal_rank_fusion
 from hl_mem.storage.evidence import DerivationRepository
 
 __all__ = [
+    "RecallConfig",
     "hybrid_claims",
     "matching_policies",
     "reciprocal_rank_fusion",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from hl_mem.ingest.embedder import pack_vector
-from hl_mem.recall.recall_pipeline import hybrid_claims
+from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims
 
 NOW = "2026-07-24T00:00:00+00:00"
 
@@ -53,6 +53,30 @@ class _Repo:
 
     def helpful_rates(self, _claim_ids: list[str]) -> dict[str, float]:
         return {}
+
+
+def test_recall_config_supplies_pipeline_defaults() -> None:
+    first = _claim("first", ["architecture"])
+    second = _claim("second")
+    repo = _Repo([first, second], [first, second])
+
+    result = hybrid_claims(
+        repo,
+        "架构",
+        pack_vector([1.0]),
+        2,
+        None,
+        now=NOW,
+        recall_config=RecallConfig(
+            candidate_floor=7,
+            tag_boost_enabled=False,
+            tag_channel_enabled=False,
+            preference_recency_boost=0.12,
+        ),
+    )
+
+    assert [claim["id"] for claim in result] == ["first", "second"]
+    assert repo.tag_queries == []
 
 
 def test_tag_boost_promotes_matching_candidate() -> None:
