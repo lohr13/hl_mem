@@ -17,7 +17,11 @@ from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, Zh
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.observability.llm_spans import LLMSpanRecorder
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol, RerankerProtocol
-from hl_mem.recall.reranker import FakeReranker, Reranker
+from hl_mem.recall.reranker import (
+    DashScopeReranker,
+    FakeReranker,
+    make_reranker as make_registered_reranker,
+)
 from hl_mem.settings import Settings
 
 _EXTRACTOR_REGISTRY: dict[str, str] = {
@@ -25,6 +29,8 @@ _EXTRACTOR_REGISTRY: dict[str, str] = {
     "explicit_memory": "explicit",
     "tool_result": "llm",
 }
+
+Reranker = DashScopeReranker
 
 
 def make_llm_client(
@@ -77,26 +83,7 @@ def make_embedder(settings: Settings) -> EmbedderProtocol:
 
 def make_reranker(settings: Settings) -> RerankerProtocol | None:
     """依据统一配置创建重排组件。"""
-    if settings.reranker_mode == "off":
-        return None
-    if settings.reranker_mode == "fake":
-        return FakeReranker()
-    if not settings.reranker_api_key:
-        if settings.environment == "production" or not settings.allow_fake_fallback:
-            raise ConfigurationError(
-                f"HL_MEM_RERANKER={settings.reranker_mode} but " "RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
-            )
-        return None
-    try:
-        return Reranker(
-            settings.reranker_api_key,
-            settings.reranker_base_url,
-            settings.reranker_model,
-        )
-    except Exception:
-        if settings.environment == "production":
-            raise
-        return None
+    return make_registered_reranker(settings, {"dashscope": Reranker})
 
 
 def make_extractor(
