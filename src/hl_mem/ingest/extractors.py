@@ -27,6 +27,9 @@ class ExtractedClaim:
     canonical_attribute: str = "custom.unknown"
     canonical_slot: str | None = None
     topic_tags: list[str] = field(default_factory=list)
+    occurred_start: str | None = None
+    occurred_end: str | None = None
+    entities: list[str] | None = None
 
 
 class FakeExtractor:

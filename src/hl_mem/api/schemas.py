@@ -81,6 +81,9 @@ class ClaimOutput(BaseModel):
     canonical_slot: str | None = None
     topic_tags: list[str] = Field(default_factory=list)
     valid_from: str | None = None
+    occurred_start: str | None = None
+    occurred_end: str | None = None
+    entities: list[str] | None = None
     replacement: dict[str, Any] | None = None
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     relations: list[dict[str, Any]] = Field(default_factory=list)

@@ -443,6 +443,13 @@ def _build_claim_drafts(
         "canonical_attribute": canonical_attribute,
         "canonical_slot": canonical_slot,
         "topic_tags_json": json.dumps(topic_tags, ensure_ascii=False, separators=(",", ":")),
+        "occurred_start": getattr(extracted, "occurred_start", None) or None,
+        "occurred_end": getattr(extracted, "occurred_end", None) or None,
+        "entities_json": (
+            json.dumps(getattr(extracted, "entities"), ensure_ascii=False, separators=(",", ":"))
+            if getattr(extracted, "entities", None)
+            else None
+        ),
         "fact_hash": compute_fact_hash(subject, extracted.predicate, extracted.value),
         "qualifiers": qualifiers,
         "conflict_key": compute_conflict_key(

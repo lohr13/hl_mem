@@ -259,6 +259,9 @@ class RecallService:
                 "evidence": evidence,
                 "relations": relations_map.get(claim["id"], []),
             }
+            for field in ("occurred_start", "occurred_end", "entities"):
+                if claim.get(field):
+                    result[field] = claim[field]
             if claim["status"] == "disputed" and claim.get("conflict_key"):
                 result["conflicts"] = rivals_map.get(claim["id"], [])
             results.append(result)
