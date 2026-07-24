@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from hl_mem.lifecycle import DerivationStatus
 from hl_mem.storage._shared import insert_row, row_to_dict
 
 
@@ -74,9 +75,9 @@ class DerivationRepository:
         rows = self.connection.execute(
             "SELECT d.id,d.kind,d.body,d.confidence,d.updated_at FROM derivations d "
             "JOIN evidence_links e ON e.derived_id=d.id AND e.derived_type=d.kind "
-            f"WHERE d.status='active' AND e.evidence_type='claim' AND e.evidence_id IN ({placeholders}) "
+            f"WHERE d.status=? AND e.evidence_type='claim' AND e.evidence_id IN ({placeholders}) "
             "GROUP BY d.id ORDER BY d.updated_at DESC LIMIT ?",
-            (*claim_ids, limit),
+            (DerivationStatus.ACTIVE, *claim_ids, limit),
         ).fetchall()
         return [dict(row) for row in rows]
 

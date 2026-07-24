@@ -1,3 +1,5 @@
+"""DashScope 重排客户端、测试替身与配置工厂。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

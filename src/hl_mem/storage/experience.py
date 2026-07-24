@@ -9,6 +9,7 @@ from typing import Any
 from hl_mem.lifecycle import (
     TERMINAL_EPISODE_STATUSES,
     EpisodeStatus,
+    PolicyStatus,
 )
 from hl_mem.lifecycle import InvalidTransitionError as InvalidStateTransitionError
 from hl_mem.lifecycle import (
@@ -281,7 +282,7 @@ class ExperienceRepository:
         if len(valid_ids) != len(unique_ids):
             raise ValueError("all supporting episodes must be independent successes")
         policy_id = _id()
-        status = "active" if len(valid_ids) >= self.min_support else "candidate"
+        status = PolicyStatus.ACTIVE if len(valid_ids) >= self.min_support else PolicyStatus.CANDIDATE
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             self.connection.execute(
@@ -311,7 +312,7 @@ class ExperienceRepository:
         policy = self.connection.execute("SELECT status FROM policies WHERE id=?", (policy_id,)).fetchone()
         if not policy:
             raise ValueError(f"policy not found: {policy_id}")
-        if policy["status"] == "retired":
+        if policy["status"] == PolicyStatus.RETIRED:
             raise InvalidStateTransitionError("retired policy cannot accept support")
         episode = self.connection.execute("SELECT status,reward FROM episodes WHERE id=?", (episode_id,)).fetchone()
         if not episode or episode["status"] != "success" or episode["reward"] <= 0:
@@ -320,8 +321,8 @@ class ExperienceRepository:
         self._link_episode(policy_id, episode_id)
         if self.connection.total_changes > before:
             self.connection.execute(
-                "UPDATE policies SET support=support+1,status=CASE WHEN support+1>=? THEN 'active' ELSE status END WHERE id=?",
-                (self.min_support, policy_id),
+                "UPDATE policies SET support=support+1,status=CASE WHEN support+1>=? THEN ? ELSE status END WHERE id=?",
+                (self.min_support, PolicyStatus.ACTIVE, policy_id),
             )
         self.connection.commit()
 
@@ -330,7 +331,7 @@ class ExperienceRepository:
         policy = self.connection.execute("SELECT status FROM policies WHERE id=?", (policy_id,)).fetchone()
         if not policy:
             raise ValueError(f"policy not found: {policy_id}")
-        if policy["status"] == "retired":
+        if policy["status"] == PolicyStatus.RETIRED:
             raise InvalidStateTransitionError("retired policy cannot record outcomes")
         success_delta, failure_delta = (1, 0) if succeeded else (0, 1)
         cursor = self.connection.execute(
@@ -343,9 +344,16 @@ class ExperienceRepository:
             raise ValueError(f"policy not found: {policy_id}")
         self.connection.execute(
             "UPDATE policies SET reliability=CAST(success_count AS REAL)/max(1,success_count+failure_count),"
-            "procedure_status=CASE WHEN consecutive_failures>=? THEN 'retired' WHEN success_count>0 THEN 'active' "
-            "ELSE procedure_status END,status=CASE WHEN consecutive_failures>=? THEN 'retired' ELSE status END WHERE id=?",
-            (self.retire_after_failures, self.retire_after_failures, policy_id),
+            "procedure_status=CASE WHEN consecutive_failures>=? THEN ? WHEN success_count>0 THEN ? "
+            "ELSE procedure_status END,status=CASE WHEN consecutive_failures>=? THEN ? ELSE status END WHERE id=?",
+            (
+                self.retire_after_failures,
+                PolicyStatus.RETIRED,
+                PolicyStatus.ACTIVE,
+                self.retire_after_failures,
+                PolicyStatus.RETIRED,
+                policy_id,
+            ),
         )
         self.connection.commit()
 
@@ -358,7 +366,11 @@ class ExperienceRepository:
         result["procedure"] = decode_json(result["procedure"])
         return result
 
-    def list_policies(self, status: str = "active", namespace: str = "default") -> list[dict[str, Any]]:
+    def list_policies(
+        self,
+        status: PolicyStatus | str = PolicyStatus.ACTIVE,
+        namespace: str = "default",
+    ) -> list[dict[str, Any]]:
         """按更新时间倒序列出指定状态的策略。"""
         rows = self.connection.execute(
             "SELECT * FROM policies WHERE status=? AND namespace_key=? ORDER BY updated_at DESC,id DESC",

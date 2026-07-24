@@ -1,3 +1,5 @@
+"""到期 Claim 的 TTL 关闭与历史可见性维护。"""
+
 from __future__ import annotations
 
 import sqlite3

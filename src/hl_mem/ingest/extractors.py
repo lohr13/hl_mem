@@ -1,3 +1,5 @@
+"""统一提取结果模型与离线规则提取器。"""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,5 @@
+"""远程与本地测试用文本向量化组件。"""
+
 from __future__ import annotations
 
 import hashlib

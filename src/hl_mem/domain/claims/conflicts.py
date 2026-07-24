@@ -1,3 +1,5 @@
+"""Claim 冲突键、qualifier 规范化与确定性冲突判定。"""
+
 from __future__ import annotations
 
 import hashlib

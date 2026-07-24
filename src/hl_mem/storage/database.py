@@ -1,3 +1,5 @@
+"""SQLite WAL 数据库、迁移执行与连接生命周期管理。"""
+
 from __future__ import annotations
 
 import os

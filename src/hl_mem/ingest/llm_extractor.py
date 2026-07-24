@@ -1,3 +1,5 @@
+"""基于统一 LLM 客户端的结构化 Claim 提取管线。"""
+
 from __future__ import annotations
 
 import json

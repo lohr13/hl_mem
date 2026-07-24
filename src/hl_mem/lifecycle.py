@@ -52,6 +52,21 @@ class EpisodeStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class PolicyStatus(str, Enum):
+    """归纳策略的生命周期状态。"""
+
+    CANDIDATE = "candidate"
+    ACTIVE = "active"
+    RETIRED = "retired"
+
+
+class DerivationStatus(str, Enum):
+    """派生记忆的生命周期状态。"""
+
+    ACTIVE = "active"
+    STALE = "stale"
+
+
 TERMINAL_EPISODE_STATUSES: frozenset[EpisodeStatus] = frozenset(
     {
         EpisodeStatus.SUCCESS,

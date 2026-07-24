@@ -1,3 +1,5 @@
+"""Claim 置信度衰减与低活跃记忆归档任务。"""
+
 from __future__ import annotations
 
 import os

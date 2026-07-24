@@ -1,3 +1,5 @@
+"""HL-Mem FastAPI 应用工厂与 REST 路由适配层。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -63,6 +65,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 def create_app(database_path: str | Path | None = None, audit: Any = None) -> FastAPI:
+    """按环境配置组装数据库、应用服务、审计和全部 REST 路由。"""
     settings = Settings.from_env()
     database = Database(database_path or settings.database_path)
     embedder = components.make_embedder(settings)

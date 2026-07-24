@@ -1,3 +1,5 @@
+"""Claim 精确、语义及跨主体去重领域逻辑。"""
+
 from __future__ import annotations
 
 import json
