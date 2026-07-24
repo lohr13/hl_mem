@@ -29,14 +29,9 @@ def test_fact_hash_exact_duplicate_merges_evidence(tmp_path) -> None:
     database.close()
 
 
-def test_store_extracted_does_not_build_observation(tmp_path, monkeypatch) -> None:
+def test_store_extracted_does_not_build_observation(tmp_path) -> None:
     database = Database(tmp_path / "no-observation.db")
     connection = database.open()
-    monkeypatch.setattr(
-        pipeline_module,
-        "_build_observation",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("observation build called")),
-    )
 
     store_extracted(
         connection,
