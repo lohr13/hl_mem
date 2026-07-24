@@ -29,10 +29,18 @@
 - FTS5 默认 tokenizer 对纯中文查询 0% recall（之前被 dense channel 掩盖）
 - hl_mem 已有 DashScope/Zhipu/OpenAI-compatible 三 provider，真正缺的是调用级可观测性
 
+#### 中文 FTS 修复与 migration 022
+- claims_fts 与 claims_tags_fts 从 unicode61 重建为 trigram tokenizer，存量数据回填
+- 中文连续子串恢复可检索；trigram 全文查询至少需要 3 个 Unicode 字符
+- query sanitizer 按 tokenizer 分流（claims=trigram, events=unicode61），统一双引号 phrase quoting
+- 删除无效的 fts_tokenizer Settings 环境变量；tokenizer 由 schema migration 决定
+- tokenizer 变化影响 BM25 统计和候选顺序，不承诺与 unicode61 排序相同
+- 514 claims 微基准：trigram FTS 索引约为 unicode61 的 4.4 倍，查询仍低于 1ms
+- migration 022 单事务 drop/recreate/backfill 两个 FTS 表
+
 ### 数字
-- 测试: 292 → 327 (+35)
-- Migrations: 018 → 021 (+3)
-- 新增协议: TextSearchBackend, VectorSearchBackend
+- 测试: 292 → 325 (+33)
+- Migrations: 021 → 022 (+1)
 - 新增 API: /v1/extract/dry-run, /v1/consolidate
 
 ## v0.10.1 — 2026-07-24
