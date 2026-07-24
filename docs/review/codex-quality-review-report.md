@@ -290,3 +290,165 @@ worker 用例拥有事务；需要独立原子操作时再明确提供 transacti
 
 本轮读完了 `src/hl_mem/` 下全部 Python 源码、SQL migration、v006 不可变快照及 Hermes 插件清单；品质判断直接
 采用第一轮报告给出的数据库行数和实际调用方事实，没有重复采集运行数据。按任务约束，未修改 `src/`，未运行 pytest。
+
+## Hermes 评审回应（第三轮收敛）
+
+### 对 10 条反馈的逐条回应
+
+1. **AGREE：假阶段函数。** Hermes 的验证与报告结论一致。当前
+   `_filter_and_score()`、`_expand_related()`、`_rerank()`、`_finalize()` 没有独立契约，也没有承担任何工作；
+   它们不是可替换阶段，只是对 `_collect_candidates()` 已完成工作的重复命名。具体修复建议见下文“假阶段函数的
+   修复建议”。
+
+2. **AGREE：运行时 monkeypatch 私有方法。** 这不是测试注入，而是两个生产 REST 路由在构造
+   `IngestService` 后，用 lambda 把服务的 `_queue_event` 替换为 `api.server._queue_event()`。两者当前行为近似，
+   推测动机是迁移期间复用旧 API helper，或让路由持有的 connection 继续参与同一事务；但这种动机没有形成显式
+   契约。正确做法是由 `IngestService` 唯一拥有入队行为及事务参数，路由只调用公开用例。若测试需要观察或替换
+   入队，应向服务构造器注入一个有类型的 `EventQueue`/callback fake，或 mock 公开依赖，而不是在生产路由中改写
+   私有方法。
+
+3. **AGREE：过期兼容层未清理。** “will be removed in v0.6.0”与当前版本直接矛盾，必须修正文档化的删除版本或
+   实际删除。这里需要区分“版本承诺失信”和“运行时存在两套实现”：纯 re-export 本身未必产生行为分叉，但失期的
+   弃用计划仍应在明确的兼容窗口内兑现。
+
+4. **AGREE：同一功能重复实现。** `core.vector` 与 `ingest.embedder` 的向量编解码、正式召回与
+   `extended_pipeline` 的 RRF/预算装箱、`http_utils.retry_http()` 与 embedding 内联 retry 都会让修复、参数和
+   错误语义发生漂移。这些不是单纯多入口，而是独立实现，属于必须收敛项。
+
+5. **AGREE：事务边界不一致。** repository 自动提交、application 传 `commit=False`、domain 自行提交以及
+   worker 直接写 SQL，使事务所有权无法由层次推断。目标契约应是：repository 只执行数据操作，application/worker
+   用例拥有事务；独立原子操作通过明确命名的 transaction helper 提供，不再由 `commit` 布尔值和
+   `connection.in_transaction` 猜测所有权。
+
+6. **AGREE：熔断器非线程安全。** prefetch 线程和同步/异步 hook 会共享同一状态，half-open 缺少原子单探测门，
+   因而可能并发放行并发生成功/失败互相覆盖。需要用锁保护状态转换，并为 half-open probe 设置唯一占用标记；
+   只有占用探测权的调用可以关闭或重新打开电路。
+
+7. **ADJUST：接受优先级调整，并进一步拆开“收敛”与“契约”。** 我同意先在稳定实现上建立评测基线。原排序把
+   “可量化核心价值”误当成了“实施前置依赖”。修订后先消除活跃的双实现和假边界，再统一事务/状态/错误契约，
+   然后建立召回评测闭环。需要补充一点：不是等所有 polish 完成后才评测；收敛主链后应立即固定最小 gold set，
+   避免后续收敛继续无回归门槛。
+
+8. **AGREE：接受“两代代码”精确界定要求。** 原报告把活跃双实现、旧签名兼容和纯 re-export 混在同一个措辞里，
+   不够精确。下文按“是否有两条活跃行为路径、是否可能产生不同结果”重新分类。
+
+9. **AGREE：docstring 与风格降级为次要 polish。** 事实判断不撤回，但同意它们不应与事务、并发、假阶段等结构性
+   风险处于同一层级。后续审查应将原品味问题 #9、#10 移到“次要 polish 清单”，只在主链收敛后批量处理，且不占
+   top-5。
+
+10. **AGREE：缺失功能需要实施时序。** 七项并非同优先级。前三项应在主链代码收敛后进入最近里程碑，其余四项按
+    发布风险和依赖关系分期，具体排序见下文“缺失功能 top-3”。
+
+### 修订后的“最值得改进的 5 个品质问题”
+
+1. **先收敛活跃的两代实现与假边界。** 删除召回 no-op 阶段或赋予其真实契约；统一 RRF、预算装箱、向量编解码和
+   HTTP retry；移除旧签名的 `TypeError` 猜测、生产 monkeypatch 以及 Hermes 动态双契约。完成标准是每项核心
+   行为只有一个事实来源，而不是仅减少文件数量。
+2. **统一事务、状态机与错误契约。** repository 默认不提交，application/worker 拥有事务；Claim、Episode、
+   Conflict 的状态变更统一经过 guard；NotFound、Validation、ExternalService 使用明确异常族。此项紧随代码
+   收敛，因为它决定写入正确性，也决定后续 worker 和反馈功能能否安全落地。
+3. **建立召回质量评测与回归门槛。** 在收敛后的唯一召回实现上固定版本化 gold set，至少覆盖 Recall@K、MRR、
+   时间切片正确率和冲突召回正确率，并记录配置/模型版本。以后修改 RRF、权重、reranker 或属性规则必须与同一基线
+   比较。
+4. **让 worker 在长任务与局部故障下可靠。** 增加 lease heartbeat；把 maintenance 子任务变成可单独记录、
+   失败隔离和重试的工作单元；提供 dead job 查看/重放，并删除状态机永远不会产生的 handler 路径。
+5. **收敛 Hermes 并完成真实反馈闭环。** 只保留一代 hook 契约；为熔断 half-open 加单探测并发保护；prefetch
+   使用 session+query/version key、TTL 和 session-end 失效；把实际注入/引用的 Claim 与 Episode outcome/reward
+   关联。这样 helpful ranking 才有可信数据来源。
+
+排序原则是“先修复会让后续工作建立在不稳定基础上的问题”。因此评测从原 #1 调整到 #3；它仍应在结构收敛后立即
+开始，而不等待 worker、Hermes 和全部 polish 完成。
+
+### “两代代码”的精确清单
+
+#### 必须现在收敛
+
+以下项目存在两条活跃行为路径，或兼容逻辑会改变运行结果/掩盖真实错误：
+
+1. **召回管线的真实实现与假阶段。** `_collect_candidates()` 已完成检索、可见性、RRF、评分、关系扩展、
+   rerank、trace 和 audit，四个命名阶段同时处于调用链但为 no-op。应选择真实分阶段或单函数，不应继续维持两套
+   架构叙述。
+2. **两套 RRF 与上下文预算装箱。** `recall/recall_pipeline.py` 的正式融合、`recall/extended_pipeline.py`
+   的 `reciprocal_rank_fusion()`，以及 `application/recall.py` 与 `extended_pipeline.budget_pack()` 的装箱
+   逻辑具有不同入口和语义；应各自确定唯一生产实现，实验实现移到测试/实验命名空间或删除。
+3. **两套向量 BLOB 编解码。** `core/vector.py` 的 `encode_vector()/decode_vector()` 与
+   `ingest/embedder.py` 的 `pack_vector()/unpack_vector()` 都在表达 float32 存储协议，返回类型和校验又不同。
+   存储格式必须只有一个事实来源。
+4. **两套 HTTP retry。** LLM 使用 `http_utils.retry_http()`，embedding 在 `_request()` 内自行退避；重试异常
+   集合、连接错误处理、延迟和未来的 `Retry-After` 支持会分叉。应统一策略，并允许各 provider 只配置参数。
+5. **两种召回仓储签名。** `recall_pipeline.py` 用 `except TypeError` 回退旧参数，并以 `hasattr` 选择旧检索路径。
+   新旧调用均可在生产执行，而且真实 TypeError 会被误判，必须迁移调用方后删除运行时猜测。
+6. **Hermes 同步/异步两代 hook 契约。** `prefetch()` 依据 `session_id` 改变返回类型，`sync_turn()` 依据
+   `content` 类型在旧异步消息同步和新同步 hook 间分派；这是同一公开方法的双重运行语义，必须选择当前 Hermes
+   清单要求的一代契约，旧契约若仍需过渡应使用不同方法名和明确 adapter。
+7. **四种事务所有权。** repository 自动提交、application 的 `commit=False`、`domain/relations.py` 自提交、
+   worker 直接 SQL 都是活跃写路径。它们可能造成局部提交和状态 guard 绕过，必须按应用用例拥有事务的规则收敛。
+8. **API 入队双实现。** `IngestService._queue_event()` 与 `api.server._queue_event()` 同时存在，REST 路由通过
+   monkeypatch 选择后者。当前代码近似不代表契约一致；应保留服务层唯一实现并删除生产期替换。
+9. **内部数据形态的双轨兼容。** 生产主链同时接受 `value/value_json`、`qualifiers/qualifiers_json` 和
+   dict/dataclass 风格访问。应先选定稳定内部类型，在 API/数据库边界一次转换；否则字段演进会继续依赖
+   `getattr/get` 猜测。
+
+#### 可按计划清理
+
+以下项目的旧入口主要是 re-export/alias，并带弃用告警；只要确认没有隐藏实现和外部兼容窗口，它们不会自行产生
+不同业务结果：
+
+1. `storage/repository.py` 对具体 `storage.claims/events/evidence/experience/jobs` 仓储的 re-export。
+   项目内部仍有大量旧入口导入，应先机械迁到具体模块，再在下一个明确的破坏性版本删除兼容入口。
+2. `api/pipeline.py`、`ingest/embeddings.py`、`recall/router.py`、`recall/policy.py`、
+   `recall/dedup.py`、`recall/conflict.py`、`recall/attribute_map.py` 等带 `DeprecationWarning` 的兼容
+   re-export。它们应统一修正已经失期的“v0.6.0 删除”声明，并设置实际截止版本。
+3. `LLMExtractor.from_env()`。它是旧构造便利入口，已经提示改为显式注入 `LLMClient`；若生产主链不依赖它，可按
+   兼容窗口删除，不应与 HTTP 双 retry 视为同等级风险。
+4. `HermesMemoryProvider = HLMemProvider`、插件层 `HlMemProvider` 等静态类名别名。别名本身指向同一实现，
+   可配合 Hermes 插件清单和外部调用方版本计划删除；真正必须先修的是同一实例内部的同步/异步双契约。
+
+“可按计划清理”不等于无限期保留。最低要求是：项目内新代码停止使用旧入口、弃用截止版本真实可执行、到期有删除
+检查；否则正常演进痕迹会重新变成维护债务。
+
+### 假阶段函数的具体修复建议
+
+建议采用**真实分阶段**，而不是把全部逻辑永久留在 `_collect_candidates()`。理由不是追求流水线外观，而是当前
+召回确实已经存在五种可独立验证的责任：通道检索、可见性与融合评分、关系扩展、rerank、trace/audit 收尾；同时
+reranker、关系扩展和时间可见性都有独立失败与降级语义，值得有稳定边界。
+
+建议的最小阶段契约如下：
+
+1. `_collect_candidates(request) -> CandidateSet`：只执行 FTS/dense 检索，返回两个有序通道、统一时间快照、
+   intent、candidate limit 和各通道耗时；不做 RRF、关系扩展、rerank 或 audit。
+2. `_filter_and_score(candidate_set) -> ScoredCandidates`：应用 `claim_is_visible()`、去重、helpful rate、RRF 与
+   多因子先验，返回稳定排序及按 claim ID 索引的 feature/pre-score；这里是排序前唯一事实来源。
+3. `_expand_related(scored, config) -> ScoredCandidates`：可选地加入关系候选，并对新增集合重新计算受
+   `max_access` 影响的 feature；禁用时可以显式返回原值，但阶段本身仍拥有明确的可选功能，不是伪装工作已完成。
+4. `_rerank(expanded, reranker) -> RankedCandidates`：只处理 provider 调用、结果校验、部分结果补尾和 fallback，
+   显式返回 outcome、rerank score 与耗时，不读取可变 `last_outcome` 之外的隐式状态。
+5. `_finalize(ranked, trace_context) -> list[Claim]`：执行 limit/preference 保留、trace/audit 和最终 `_score`
+   装配；audit 失败策略在这里显式定义。
+
+这些中间结果应使用小型 dataclass，而不是继续传入可变 `list[dict[str, Any]]`。第一步重构必须保持排序结果不变：
+先为现有输出建立 characterization tests，再逐段移动逻辑，每次只移动一个阶段。若团队不愿维护这些中间契约，
+则次优但诚实的修复是立即删除四个 no-op 和管线式 docstring，把函数改名为单一 `_recall_claims()`；继续保留假阶段
+是最差选择。
+
+### 缺失功能 top-3 与其余时序
+
+在上述代码与事务主链收敛之后，最关键的三项是：
+
+1. **离线召回质量评估与回归门槛。** 它回答记忆系统是否“记得准”，是后续排序、reranker、冲突与时间语义改动的
+   工程判据；应作为收敛完成后的第一个功能里程碑。
+2. **真实结果反馈闭环。** 记录实际注入/引用的 Claim，并与 Episode outcome/reward 关联；它回答哪些记忆真正帮助
+   任务，是 helpful ranking、个性化和策略学习可信化的前提。
+3. **可恢复、可观测的 worker 运维面。** heartbeat、维护任务隔离、dead-letter 重放和成功/失败指标直接保护
+   提取、衰减、归档与反馈异步链；没有它，精致的算法仍可能静默停摆或重复产生副作用。
+
+其余四项安排如下：
+
+- **备份/恢复入口与演练**：紧随 top-3，在首次宣称“可长期保存个人记忆”或稳定版发布前完成；本地优先意味着它是
+  发布门槛，不是远期增强。
+- **数据完整性巡检**：与 worker 运维面同一阶段设计，在 heartbeat/dead-letter 稳定后接入定时任务；至少先提供
+  只读检查和明确告警，再考虑自动修复。
+- **隐私/敏感度实际执行**：在允许敏感数据、导出或多用户使用前完成；当前单机受控试用期可排在运维与备份之后，
+  但若产品边界提前扩展，此项立即提升为发布阻断项。
+- **派生记忆的真正总结与重建策略**：放在评测、反馈和 worker 可靠性之后。它依赖可信证据水位、重建任务与质量
+  判据；在这些基础缺失时扩展 `mental_model/session_summary` 只会增加另一组半成品接口。
