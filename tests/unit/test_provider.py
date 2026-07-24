@@ -85,12 +85,13 @@ def test_sync_hooks_open_circuit_after_repeated_http_failures(monkeypatch) -> No
         raise httpx.ConnectError("unavailable")
 
     monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setattr("hl_mem.http_utils.time.sleep", lambda _delay: None)
     provider = HLMemProvider()
 
     for _ in range(6):
         provider.on_memory_write("key", "value")
 
-    assert calls == 5
+    assert calls == 15
     assert provider._circuit_open_until > 0
 
 
@@ -110,6 +111,7 @@ def test_prefetch_success_timeout_and_circuit(monkeypatch) -> None:
         return PrefetchResponse()
 
     monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setattr("hl_mem.http_utils.time.sleep", lambda _delay: None)
     provider = HLMemProvider(timeout=2.0)
     provider.queue_prefetch("query")
     provider.shutdown()

@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from hl_mem.http_utils import retry_http
+
 
 class HLMemHttpClient:
     """封装同步/异步 HTTP 调用、错误降级和熔断状态。"""
@@ -48,15 +50,21 @@ class HLMemHttpClient:
 
     def get(self, path: str) -> httpx.Response:
         """执行同步 GET 请求。"""
-        response = httpx.get(f"{self.daemon_url}{path}", timeout=self.timeout)
-        response.raise_for_status()
-        return response
+        def send_request() -> httpx.Response:
+            response = httpx.get(f"{self.daemon_url}{path}", timeout=self.timeout)
+            response.raise_for_status()
+            return response
+
+        return retry_http(send_request)
 
     def post(self, path: str, payload: dict[str, Any]) -> httpx.Response:
         """执行同步 POST 请求。"""
-        response = httpx.post(f"{self.daemon_url}{path}", json=payload, timeout=self.timeout)
-        response.raise_for_status()
-        return response
+        def send_request() -> httpx.Response:
+            response = httpx.post(f"{self.daemon_url}{path}", json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            return response
+
+        return retry_http(send_request)
 
     async def async_post(
         self,

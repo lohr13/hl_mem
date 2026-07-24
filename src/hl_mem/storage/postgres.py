@@ -1,8 +1,10 @@
-"""可选 PostgreSQL 存储适配边界。"""
+"""实验性 PostgreSQL 连接探针；不提供 HL-Mem 仓储语义。"""
 
 from __future__ import annotations
 
 from typing import Any
+
+EXPERIMENTAL = True
 
 
 class PostgresDatabase:
