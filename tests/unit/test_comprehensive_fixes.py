@@ -94,7 +94,7 @@ def test_event_api_rolls_back_event_when_job_enqueue_fails(tmp_path, monkeypatch
     """任务入队异常时 API 不得留下孤立 Event。"""
     monkeypatch.setenv("HL_MEM_ENV", "test")
     app = server.create_app(tmp_path / "event-rollback.db")
-    monkeypatch.setattr(server, "_queue_event", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("queue")))
+    monkeypatch.setattr("hl_mem.application.ingest.IngestService._queue_event", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("queue")))
     with pytest.raises(RuntimeError, match="queue"), TestClient(app) as client:
         client.post("/v1/events", json={"content": "测试"})
     connection = app.state.db.open()
