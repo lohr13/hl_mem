@@ -1,9 +1,9 @@
 import sqlite3
 
-from hl_mem.ingest.embeddings import FakeEmbedder
-from hl_mem.recall.dedup import Deduplicator
+from hl_mem.ingest.embedder import FakeEmbedder
+from hl_mem.domain.claims.dedup import Deduplicator
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import ClaimRepository
+from hl_mem.storage.claims import ClaimRepository
 
 
 def test_exact_semantic_and_new_dedup(tmp_path) -> None:

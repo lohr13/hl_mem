@@ -1,5 +1,5 @@
 from hl_mem.recall.extended_pipeline import budget_pack, reciprocal_rank_fusion
-from hl_mem.recall.router import QueryRoute, route_query
+from hl_mem.domain.recall import QueryRoute, route_query
 
 
 def test_router_selects_temporal_relation_and_procedure_channels() -> None:

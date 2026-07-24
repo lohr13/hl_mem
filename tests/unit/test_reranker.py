@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 
 from hl_mem.recall.recall_pipeline import hybrid_claims
-from hl_mem.ingest.embeddings import pack_vector
+from hl_mem.ingest.embedder import pack_vector
 from hl_mem.recall.reranker import FakeReranker, Reranker
 
 

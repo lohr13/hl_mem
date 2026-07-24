@@ -3,12 +3,15 @@
 import threading
 from typing import Any
 
-from hl_mem.api.pipeline import store_extracted
 from hl_mem.application.ingest import IngestService
-from hl_mem.ingest.embeddings import FakeEmbedder
+
+def store_extracted(conn, claim, event, now, embedder, **kw):
+    return IngestService.store_extracted(conn, claim, event, now, embedder, **kw)
+from hl_mem.application.ingest import IngestService
+from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import JobRepository
+from hl_mem.storage.jobs import JobRepository
 
 
 def test_concurrent_idempotent_event_write(tmp_path: Any) -> None:

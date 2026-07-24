@@ -1,5 +1,5 @@
 import hl_mem.ingest as ingest
-from hl_mem.ingest.embeddings import FakeEmbedder, unpack_vector
+from hl_mem.ingest.embedder import FakeEmbedder, unpack_vector
 from hl_mem.ingest.extractors import FakeExtractor
 from tests.scenarios.chinese_test_cases import CHINESE_TEST_CASES
 

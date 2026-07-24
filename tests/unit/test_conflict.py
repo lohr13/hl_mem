@@ -1,6 +1,6 @@
 import pytest
 
-from hl_mem.recall.conflict import ConflictResolver, compute_conflict_key
+from hl_mem.domain.claims.conflicts import ConflictResolver, compute_conflict_key
 
 
 def test_conflict_key_is_canonical_and_stable() -> None:

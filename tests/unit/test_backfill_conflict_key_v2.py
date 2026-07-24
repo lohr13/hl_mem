@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from hl_mem.recall.conflict import compute_legacy_conflict_key
+from hl_mem.domain.claims.conflicts import compute_legacy_conflict_key
 from hl_mem.storage.database import Database
 from hl_mem.storage.migrations.backfill_conflict_key_v2 import (
     DATA_MIGRATION_VERSION,

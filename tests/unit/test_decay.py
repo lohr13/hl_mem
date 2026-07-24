@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from hl_mem.ingest.embeddings import pack_vector
+from hl_mem.ingest.embedder import pack_vector
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import ClaimRepository
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.decay import decay_claims
 from hl_mem.workers.worker import Worker
 

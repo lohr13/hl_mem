@@ -1,5 +1,4 @@
 import httpx
-import pytest
 
 from hl_mem.adapters.hermes.provider import HLMemProvider
 
@@ -95,48 +94,74 @@ def test_sync_hooks_open_circuit_after_repeated_http_failures(monkeypatch) -> No
     assert provider._circuit_open_until > 0
 
 
-@pytest.mark.asyncio
-async def test_prefetch_success_timeout_and_circuit(monkeypatch) -> None:
-    AsyncClient.calls = 0
-    AsyncClient.requests = []
-    AsyncClient.error = None
-    monkeypatch.setattr(httpx, "AsyncClient", AsyncClient)
+def test_prefetch_success_timeout_and_circuit(monkeypatch) -> None:
+    calls = 0
+    error = None
+
+    class PrefetchResponse(Response):
+        def json(self):
+            return {"results": [{"text": "cached memory"}]}
+
+    def post(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if error:
+            raise error
+        return PrefetchResponse()
+
+    monkeypatch.setattr(httpx, "post", post)
     provider = HLMemProvider(timeout=2.0)
-    assert (await provider.prefetch("query"))["results"][0]["id"] == "one"
-    AsyncClient.error = httpx.ReadTimeout("slow")
-    for _ in range(5):
-        assert await provider.prefetch("query") == {"results": [], "error": "timeout"}
-    calls = AsyncClient.calls
-    assert await provider.prefetch("query") == {"results": [], "error": "circuit_open"}
-    assert AsyncClient.calls == calls
+    provider.queue_prefetch("query")
+    provider.shutdown()
+    assert provider.prefetch("query") == "cached memory"
+
+    error = httpx.ReadTimeout("slow")
+    for index in range(5):
+        query = f"timeout-{index}"
+        provider.queue_prefetch(query)
+        provider.shutdown()
+        assert provider.prefetch(query) == ""
+
+    request_count = calls
+    provider.queue_prefetch("circuit-open")
+    provider.shutdown()
+    assert provider.prefetch("circuit-open") == ""
+    assert calls == request_count
+
     provider._circuit_open_until = 0
-    AsyncClient.error = None
-    assert (await provider.prefetch("query"))["results"]
+    error = None
+    provider.queue_prefetch("recovered")
+    provider.shutdown()
+    assert provider.prefetch("recovered") == "cached memory"
 
 
-@pytest.mark.asyncio
-async def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
+def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
     AsyncClient.calls = 0
     AsyncClient.requests = []
     AsyncClient.error = None
     monkeypatch.setattr(httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: Response())
     provider = HLMemProvider(timeout=2.0)
 
-    await provider.sync_turn(
-        [
-            {"role": "user", "content": "修复项目并部署", "session_id": "session-1"},
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {"id": "call-1", "function": {"name": "read_file", "arguments": '{"path":"a.py"}'}},
-                    {"id": "call-2", "function": {"name": "patch", "arguments": '{"path":"a.py"}'}},
-                ],
-            },
-            {"role": "tool", "tool_call_id": "call-1", "content": "file contents"},
-            {"role": "tool", "tool_call_id": "call-2", "content": "patched"},
-            {"role": "assistant", "content": "修复完成"},
-        ]
+    messages = [
+        {"role": "user", "content": "修复项目并部署", "session_id": "session-1"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call-1", "function": {"name": "read_file", "arguments": '{"path":"a.py"}'}},
+                {"id": "call-2", "function": {"name": "patch", "arguments": '{"path":"a.py"}'}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call-1", "content": "file contents"},
+        {"role": "tool", "tool_call_id": "call-2", "content": "patched"},
+        {"role": "assistant", "content": "修复完成"},
+    ]
+    provider.sync_turn(
+        "修复项目并部署",
+        "修复完成",
+        session_id="session-1",
+        messages=messages,
     )
 
     episode_requests = [(url, payload) for url, payload in AsyncClient.requests if "/v1/episodes" in url]
@@ -153,25 +178,36 @@ async def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
     assert episode_requests[-1][1]["reward"] == 0.8
 
 
-@pytest.mark.asyncio
-async def test_sync_turn_episode_failure_does_not_fail_event_sync(monkeypatch) -> None:
+def test_sync_turn_episode_failure_does_not_fail_event_sync(monkeypatch) -> None:
     class EpisodeFailingClient(AsyncClient):
+        episode_attempts = 0
+
         async def post(self, url, **kwargs):
             if url.endswith("/v1/episodes"):
+                type(self).episode_attempts += 1
                 raise httpx.ConnectError("episode unavailable")
             return await super().post(url, **kwargs)
+
+    event_requests = []
+
+    def post(url, **kwargs):
+        event_requests.append((url, kwargs["json"]))
+        return Response()
 
     EpisodeFailingClient.calls = 0
     EpisodeFailingClient.requests = []
     EpisodeFailingClient.error = None
+    EpisodeFailingClient.episode_attempts = 0
     monkeypatch.setattr(httpx, "AsyncClient", EpisodeFailingClient)
+    monkeypatch.setattr(httpx, "post", post)
     provider = HLMemProvider(timeout=2.0)
     messages = [
         {"role": "assistant", "tool_calls": [{"id": "1", "function": {"name": "web_search"}}]},
         {"role": "assistant", "tool_calls": [{"id": "2", "function": {"name": "web_search"}}]},
     ]
 
-    await provider.sync_turn(messages)
+    provider.sync_turn("user request", "assistant response", messages=messages)
 
     assert provider._failure_count == 0
-    assert EpisodeFailingClient.calls == 2
+    assert [payload["actor_type"] for _, payload in event_requests] == ["user", "assistant"]
+    assert EpisodeFailingClient.episode_attempts == 1

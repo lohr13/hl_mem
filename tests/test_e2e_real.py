@@ -12,11 +12,13 @@ from pathlib import Path
 import pytest
 
 from hl_mem.ingest.budget import TokenBudget
-from hl_mem.ingest.embeddings import Embedder
+from hl_mem.ingest.embedder import Embedder
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import ClaimRepository, EventRepository, JobRepository
+from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.events import EventRepository
+from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.worker import Worker
 
 

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from hl_mem.application.recall import RecallService
-from hl_mem.ingest.embeddings import FakeEmbedder, pack_vector
+from hl_mem.ingest.embedder import FakeEmbedder, pack_vector
 from hl_mem.recall.recall_pipeline import hybrid_claims
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.storage.database import Database

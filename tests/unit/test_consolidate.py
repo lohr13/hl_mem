@@ -1,8 +1,8 @@
 """M5 冲突归并 worker 测试。"""
 
-from hl_mem.ingest.embeddings import pack_vector
+from hl_mem.ingest.embedder import pack_vector
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import ClaimRepository
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.consolidate import ConflictConsolidator, ConsolidationDecision, enqueue_daily_consolidation
 
 
