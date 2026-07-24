@@ -30,3 +30,17 @@ class RerankerProtocol(Protocol):
     """召回重排组件协议。"""
 
     def rerank(self, query: str, documents: list[str], top_n: int = 20) -> list[tuple[int, float]]: ...
+
+
+class TextSearchBackend(Protocol):
+    """文本检索后端协议。"""
+
+    def search(
+        self,
+        query: str,
+        limit: int,
+        reference_time: str,
+        intent: Any,
+        known_as_of: str | None,
+        namespace: str,
+    ) -> list[dict]: ...
