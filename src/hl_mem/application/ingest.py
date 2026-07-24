@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from hl_mem.config import ATTRIBUTE_TTL_DAYS
 from hl_mem.domain.claims.attributes import (
+    SLOT_REGISTRY,
     is_mutually_exclusive_attribute,
     normalize_topic_tags,
     validate_canonical_attribute,
@@ -178,7 +178,6 @@ class IngestService:
         draft = _build_claim_drafts(extracted, event, now, embedder, authority, ttl_days)
         claim, qualifiers = draft.claim, draft.qualifiers
         namespace = claim["namespace_key"]
-        canonical_attribute = claim["canonical_attribute"]
         audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
         def emit_audit_events() -> None:
@@ -192,7 +191,7 @@ class IngestService:
         connection.execute("BEGIN IMMEDIATE")
         try:
             started = time.perf_counter_ns()
-            exact, existing = _find_resolution(claims, claim, canonical_attribute)
+            exact, existing = _find_resolution(claims, claim)
             audit_events.append(
                 (
                     ("dedup", "fact_hash_checked", "match" if exact else "new"),
@@ -350,10 +349,11 @@ def _build_claim_drafts(
     canonical_slot = validate_canonical_slot(getattr(extracted, "canonical_slot", None))
     topic_tags = normalize_topic_tags(getattr(extracted, "topic_tags", None))
     scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
-    attribute_ttl_days = ATTRIBUTE_TTL_DAYS.get(canonical_attribute)
+    slot_definition = SLOT_REGISTRY.get(canonical_slot) if canonical_slot else None
+    slot_ttl_days = ttl_days if slot_definition is not None and slot_definition.ttl_class == "short" else None
     effective_ttl_days = (
-        attribute_ttl_days
-        if attribute_ttl_days is not None
+        slot_ttl_days
+        if slot_ttl_days is not None
         else ttl_days if extracted.volatility == "ephemeral" and scope == "temporal" else None
     )
     expires_at = (
@@ -376,14 +376,20 @@ def _build_claim_drafts(
         "topic_tags_json": json.dumps(topic_tags, ensure_ascii=False, separators=(",", ":")),
         "fact_hash": compute_fact_hash(subject, extracted.predicate, extracted.value),
         "qualifiers": qualifiers,
-        "conflict_key": compute_conflict_key(namespace, subject, canonical_attribute, qualifiers),
+        "conflict_key": compute_conflict_key(
+            namespace,
+            subject,
+            extracted.predicate,
+            canonical_slot,
+            qualifiers,
+        ),
         "conflict_key_version": 2,
         "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, extracted.predicate, qualifiers),
         "valid_from": event.get("occurred_at", now),
         "recorded_from": now,
         "observed_at": event.get("occurred_at", now),
         "expires_at": expires_at,
-        "volatility": "ephemeral" if attribute_ttl_days is not None else extracted.volatility,
+        "volatility": "ephemeral" if slot_ttl_days is not None else extracted.volatility,
         "status": "active",
         "confidence": extracted.confidence,
         "scope": scope,
@@ -402,12 +408,12 @@ def _build_claim_drafts(
 def _find_resolution(
     claims: ClaimRepository,
     claim: dict[str, Any],
-    canonical_attribute: str,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    """阶段 2：查找精确重复项和互斥属性的待解析候选。"""
+    """阶段 2：查找精确重复项和具有新冲突键的待解析候选。"""
     exact = claims.find_by_fact_hash(claim["namespace_key"], claim["fact_hash"])
-    exclusive = is_mutually_exclusive_attribute(canonical_attribute)
-    existing = claims.find_by_conflict_key(claim["conflict_key"]) if exclusive and exact is None else []
+    conflict_key = claim.get("conflict_key")
+    exclusive = is_mutually_exclusive_attribute(claim.get("canonical_slot"))
+    existing = claims.find_by_conflict_key(conflict_key) if conflict_key and exclusive and exact is None else []
     return exact, existing
 
 
