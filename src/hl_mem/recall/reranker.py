@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-import httpx
 from dataclasses import dataclass, field
+from typing import Callable
+
+import httpx
+
+from hl_mem.errors import ConfigurationError
+from hl_mem.protocols import RerankerProtocol
+from hl_mem.settings import Settings
 
 
 @dataclass
@@ -11,7 +17,7 @@ class RerankResult:
     error_class: str | None = None
 
 
-class Reranker:
+class DashScopeReranker:
     """DashScope gte-rerank-v2 client, HTTP only, graceful degradation."""
 
     def __init__(
@@ -75,3 +81,42 @@ class FakeReranker:
         self.last_error_class = None
         self.last_result = RerankResult(results, self.last_outcome)
         return results
+
+
+Reranker = DashScopeReranker
+
+RERANKER_PROVIDERS: dict[str, Callable[..., RerankerProtocol]] = {
+    "dashscope": DashScopeReranker,
+}
+
+
+def make_reranker(
+    settings: Settings,
+    provider_types: dict[str, Callable[..., RerankerProtocol]] | None = None,
+) -> RerankerProtocol | None:
+    """根据模式与 provider registry 创建重排器，并保留开发环境降级策略。"""
+    if settings.reranker_mode == "off":
+        return None
+    if settings.reranker_mode == "fake":
+        return FakeReranker()
+    if not settings.reranker_api_key:
+        if settings.environment == "production" or not settings.allow_fake_fallback:
+            raise ConfigurationError(
+                f"HL_MEM_RERANKER={settings.reranker_mode} but "
+                "RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
+            )
+        return None
+    registry = provider_types or RERANKER_PROVIDERS
+    provider_type = registry.get(settings.reranker_provider)
+    if provider_type is None:
+        raise ConfigurationError(f"unsupported reranker provider: {settings.reranker_provider}")
+    try:
+        return provider_type(
+            settings.reranker_api_key,
+            settings.reranker_base_url,
+            settings.reranker_model,
+        )
+    except Exception:
+        if settings.environment == "production":
+            raise
+        return None

@@ -36,6 +36,7 @@ class Settings:
     embedding_read_timeout: float = 30.0
     embedding_max_attempts: int = 3
     reranker_mode: str = "off"
+    reranker_provider: str = "dashscope"
     reranker_api_key: str | None = None
     reranker_base_url: str = "https://dashscope.aliyuncs.com"
     reranker_model: str = "gte-rerank-v2"
@@ -116,6 +117,7 @@ class Settings:
             embedding_read_timeout=float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
             embedding_max_attempts=int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
             reranker_mode=os.getenv("HL_MEM_RERANKER", "real" if production else "off").lower(),
+            reranker_provider=os.getenv("HL_MEM_RERANKER_PROVIDER", "dashscope").lower(),
             reranker_api_key=os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY"),
             reranker_base_url=os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
             reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
@@ -252,6 +254,8 @@ class Settings:
             raise ConfigurationError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
         if self.reranker_mode not in {"off", "fake", "on", "real"}:
             raise ConfigurationError("HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'")
+        if self.reranker_provider != "dashscope":
+            raise ConfigurationError("HL_MEM_RERANKER_PROVIDER must be 'dashscope'")
         if self.extractor_mode not in {"fake", "real", "llm"}:
             raise ConfigurationError("HL_MEM_EXTRACTOR must be 'fake', 'real', or 'llm'")
         if self.environment != "production":
@@ -274,6 +278,7 @@ class Settings:
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
             "reranker_mode": self.reranker_mode,
+            "reranker_provider": self.reranker_provider,
             "relation_expansion_mode": self.relation_expansion_mode,
             "relation_expansion_max_depth": self.relation_expansion_max_depth,
             "tag_boost_enabled": self.tag_boost_enabled,
