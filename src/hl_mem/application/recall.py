@@ -111,6 +111,11 @@ class RecallService:
             tracer=tracer,
             candidate_floor=self.settings.recall_candidate_floor,
             preference_recency_boost=self.settings.preference_recency_boost,
+            tag_boost_enabled=self.settings.tag_boost_enabled,
+            tag_boost_weight=self.settings.tag_boost_weight,
+            tag_channel_enabled=self.settings.tag_channel_enabled,
+            tag_channel_weight=self.settings.tag_channel_weight,
+            tag_candidate_limit=self.settings.tag_candidate_limit,
         )
         self._record_access(claims)
         self._record_feedback(claims, query_id)

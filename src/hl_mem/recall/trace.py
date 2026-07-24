@@ -15,6 +15,7 @@ class CandidateTrace:
     channel_scores: dict[str, float] = field(default_factory=dict)
     pre_rank: int | None = None
     pre_score: float | None = None
+    tag_boost: float = 0.0
     rerank_rank: int | None = None
     rerank_score: float | None = None
     final_rank: int | None = None
@@ -29,6 +30,7 @@ class SearchPhaseMetrics:
 
     fts_us: int = 0
     dense_us: int = 0
+    tag_us: int = 0
     relation_us: int = 0
     fusion_us: int = 0
     reranker_us: int = 0
@@ -49,6 +51,9 @@ class SearchTrace:
     phases: SearchPhaseMetrics
     outcome: str = "success"
     truncated: bool = False
+    query_tags: list[str] = field(default_factory=list)
+    tag_boost_applied: bool = False
+    tag_channel_applied: bool = False
 
 
 class SearchTracer:
@@ -106,6 +111,13 @@ class SearchTracer:
             if candidate is not None:
                 candidate.pre_rank = rank
                 candidate.pre_score = float(scores[claim_id])
+
+    def record_tag_boosts(self, boosts: dict[str, float]) -> None:
+        """记录候选的标签加分，不包含查询或 claim 正文。"""
+        for claim_id, boost in boosts.items():
+            candidate = self._candidate(str(claim_id))
+            if candidate is not None:
+                candidate.tag_boost = float(boost)
 
     def record_rerank(self, results: list[tuple[str, float]]) -> None:
         """记录 reranker 返回的候选顺序与分数。"""
