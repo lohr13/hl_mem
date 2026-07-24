@@ -280,6 +280,25 @@ class ClaimRepository:
             reverse=True,
         )[:limit]
 
+    def search(
+        self,
+        query_blob: bytes,
+        limit: int,
+        reference_time: str,
+        intent: Any,
+        known_as_of: str | None,
+        namespace: str,
+    ) -> list[dict]:
+        """以统一后端协议委托 SQLite 向量扫描。"""
+        return self.search_claims_vector(
+            query_blob,
+            limit,
+            reference_time,
+            intent,
+            known_as_of,
+            namespace,
+        )
+
     def record_access(self, claim_ids: list[str], accessed_at: str) -> int:
         unique_ids = list(dict.fromkeys(claim_ids))
         total = 0

@@ -78,23 +78,19 @@ class RecallService:
         total_started = time.perf_counter_ns()
         query_id = query_id or new_id()
         selected_intent = RecallIntent(intent or route_recall_intent(query, as_of))
-        tracer = (
-            SearchTracer(
-                SearchTrace(
-                    query_id=query_id,
-                    query_hash=hashlib.sha256(query.encode()).hexdigest(),
-                    intent=selected_intent.value,
-                    limit=limit,
-                    candidate_limit=min(
-                        RECALL_VECTOR_SCAN_LIMIT,
-                        max(limit * 5, self.settings.recall_candidate_floor),
-                    ),
-                    candidates={},
-                    phases=SearchPhaseMetrics(),
-                )
+        tracer = SearchTracer(
+            SearchTrace(
+                query_id=query_id,
+                query_hash=hashlib.sha256(query.encode()).hexdigest(),
+                intent=selected_intent.value,
+                limit=limit,
+                candidate_limit=min(
+                    RECALL_VECTOR_SCAN_LIMIT,
+                    max(limit * 5, self.settings.recall_candidate_floor),
+                ),
+                candidates={},
+                phases=SearchPhaseMetrics(),
             )
-            if debug
-            else None
         )
         claims = hybrid_claims(
             ClaimRepository(self.connection),
@@ -123,8 +119,7 @@ class RecallService:
         self._record_feedback(claims, query_id)
         assembly_started = time.perf_counter_ns()
         results = self._assemble_results(claims, namespace)
-        if tracer is not None:
-            tracer.trace.phases.assembly_us = (time.perf_counter_ns() - assembly_started) // 1000
+        tracer.trace.phases.assembly_us = (time.perf_counter_ns() - assembly_started) // 1000
         observations = self._assemble_observations([claim["id"] for claim in claims])
         policies = matching_policies(
             ExperienceService(self.connection).list_policies("active", namespace=namespace),
@@ -144,7 +139,7 @@ class RecallService:
                 policies,
                 token_budget or self.settings.packed_context_token_budget,
             )
-        if tracer is not None:
+        if debug:
             tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
             response["search_trace"] = tracer.to_dict()
         return response
