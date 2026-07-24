@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from typing import Any
 
@@ -37,21 +36,24 @@ def insert_row(connection: sqlite3.Connection, table: str, data: dict[str, Any],
     return connection.total_changes > before
 
 
-_FTS5_OPERATORS = re.compile(r'[()":]|(?<=\s)(AND|OR|NOT|NEAR)(?=\s)', re.IGNORECASE)
+def sanitize_fts_query(query: str, *, tokenizer: str = "unicode61") -> str:
+    """清洗 FTS5 查询字符串，安全引用用户文本为字面量 phrase。
 
+    对两种 tokenizer 统一使用双引号包裹——这能安全转义所有
+    FTS5 特殊字符（AND/OR/NOT/* /^/+/: 等），对 unicode61 和
+    trigram 都有效。
 
-def sanitize_fts_query(query: str) -> str:
-    """清洗 FTS5 查询字符串。
-
-    trigram tokenizer 直接接受原始文本（包括中文），
-    只需移除 FTS5 语法操作符以避免注入。
-    trigram 需要至少 3 个字符才能匹配，短查询返回空匹配。
+    trigram 模式下，少于 3 个字符的 token 无法生成 trigram，
+    需要在引用前过滤掉以避免空 phrase 报错。
     """
-    cleaned = _FTS5_OPERATORS.sub(" ", query.strip())
-    cleaned = " ".join(cleaned.split())  # collapse whitespace
-    if not cleaned or len(cleaned) < 3:
+    tokens = query.strip().split()
+    if not tokens:
         return '""'
-    return cleaned
+    if tokenizer == "trigram":
+        tokens = [t for t in tokens if len(t) >= 3]
+        if not tokens:
+            return '""'
+    return " ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
 
 
 def is_fts_syntax_error(error: sqlite3.OperationalError) -> bool:
