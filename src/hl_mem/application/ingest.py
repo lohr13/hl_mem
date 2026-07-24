@@ -6,11 +6,15 @@ import hashlib
 import json
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from hl_mem.config import ATTRIBUTE_TTL_DAYS
-from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute, validate_canonical_attribute
+from hl_mem.domain.claims.attributes import (
+    is_mutually_exclusive_attribute,
+    validate_canonical_attribute,
+)
 from hl_mem.domain.claims.conflicts import (
     ConflictResolver,
     compute_claim_pair_key,
@@ -22,7 +26,20 @@ from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
 from hl_mem.storage.migrations.fact_hash_v2 import compute_fact_hash_v2
-from hl_mem.storage.repository import ClaimRepository, EvidenceRepository, EventRepository, JobRepository
+from hl_mem.storage.repository import (
+    ClaimRepository,
+    EventRepository,
+    EvidenceRepository,
+    JobRepository,
+)
+
+
+@dataclass
+class _ClaimDraft:
+    """保存 claim 草稿及规范化阶段产生的元数据。"""
+
+    claim: dict[str, Any]
+    qualifiers: dict[str, Any]
 
 
 def new_id() -> str:
@@ -74,7 +91,9 @@ class IngestService:
         content = event.get("content", {})
         content = content if isinstance(content, dict) else {"text": content}
         content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
-        stored_event = {key: value for key, value in event.items() if key not in {"content", "id"}}
+        stored_event = {
+            key: value for key, value in event.items() if key not in {"content", "id"}
+        }
         stored_event.update(
             id=event_id,
             idempotency_key=key,
@@ -93,7 +112,9 @@ class IngestService:
                 if existing:
                     self.connection.commit()
                     return {"id": existing["id"], "created": False}
-            created = EventRepository(self.connection).insert_event(stored_event, commit=False)
+            created = EventRepository(self.connection).insert_event(
+                stored_event, commit=False
+            )
             if created:
                 self._queue_event(event_id, timestamp, commit=False)
             self.connection.commit()
@@ -164,58 +185,12 @@ class IngestService:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
         claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
-        namespace = event.get("tenant_id", "default")
-        subject = normalize_entity_id(extracted.subject)
-        qualifiers = extracted.qualifiers or {}
-        canonical_attribute = validate_canonical_attribute(
-            extracted.predicate, getattr(extracted, "canonical_attribute", None)
+        draft = _build_claim_drafts(
+            extracted, event, now, embedder, authority, ttl_days
         )
-        value_json = json.dumps(extracted.value, ensure_ascii=False, sort_keys=True)
-        scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
-        attribute_ttl_days = ATTRIBUTE_TTL_DAYS.get(canonical_attribute)
-        effective_ttl_days = (
-            attribute_ttl_days
-            if attribute_ttl_days is not None
-            else ttl_days if extracted.volatility == "ephemeral" and scope == "temporal" else None
-        )
-        expires_at = (
-            (datetime.fromisoformat(now) + timedelta(days=effective_ttl_days)).isoformat()
-            if effective_ttl_days is not None
-            else None
-        )
-        try:
-            importance = min(1.0, max(0.0, float(extracted.importance)))
-        except (TypeError, ValueError):
-            importance = 0.5
-        claim = {
-            "id": new_id(),
-            "namespace_key": namespace,
-            "subject_entity_id": subject,
-            "predicate": extracted.predicate,
-            "value_json": value_json,
-            "canonical_attribute": canonical_attribute,
-            "fact_hash": compute_fact_hash(subject, extracted.predicate, extracted.value),
-            "qualifiers_json": json.dumps(qualifiers, ensure_ascii=False, sort_keys=True),
-            "conflict_key": compute_conflict_key(namespace, subject, canonical_attribute, qualifiers),
-            "conflict_key_version": 2,
-            "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, extracted.predicate, qualifiers),
-            "valid_from": event.get("occurred_at", now),
-            "recorded_from": now,
-            "observed_at": event.get("occurred_at", now),
-            "expires_at": expires_at,
-            "volatility": "ephemeral" if attribute_ttl_days is not None else extracted.volatility,
-            "status": "active",
-            "confidence": extracted.confidence,
-            "scope": scope,
-            "importance": importance,
-            "access_count": 0,
-            "last_accessed_at": None,
-            "source_authority": authority or ("low" if event.get("actor_type") == "assistant" else "medium"),
-            "extractor_version": "llm-v1" if event.get("extractor") == "llm" else "fake-v1",
-            "embedding_model": getattr(embedder, "model", "fake"),
-            "embedding_dim": embedder.dim,
-        }
-        claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
+        claim, qualifiers = draft.claim, draft.qualifiers
+        namespace = claim["namespace_key"]
+        canonical_attribute = claim["canonical_attribute"]
         audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
         def emit_audit_events() -> None:
@@ -229,7 +204,7 @@ class IngestService:
         connection.execute("BEGIN IMMEDIATE")
         try:
             started = time.perf_counter_ns()
-            exact = claims.find_by_fact_hash(namespace, claim["fact_hash"])
+            exact, existing = _find_resolution(claims, claim, canonical_attribute)
             audit_events.append(
                 (
                     ("dedup", "fact_hash_checked", "match" if exact else "new"),
@@ -238,7 +213,10 @@ class IngestService:
                         "claim_id": claim["id"],
                         "related_claim_id": exact["id"] if exact else None,
                         "duration_us": (time.perf_counter_ns() - started) // 1000,
-                        "detail": {"fact_hash": claim["fact_hash"], "predicate": claim["predicate"]},
+                        "detail": {
+                            "fact_hash": claim["fact_hash"],
+                            "predicate": claim["predicate"],
+                        },
                     },
                 )
             )
@@ -249,12 +227,12 @@ class IngestService:
                 emit_audit_events()
                 return result_id
 
-            exclusive = is_mutually_exclusive_attribute(canonical_attribute)
-            existing = claims.find_by_conflict_key(claim["conflict_key"]) if exclusive else []
             if existing:
                 started = time.perf_counter_ns()
                 current = existing[0]
-                resolution = ConflictResolver().resolve(current, {**claim, "qualifiers": qualifiers})
+                resolution = ConflictResolver().resolve(
+                    current, {**claim, "qualifiers": qualifiers}
+                )
                 audit_events.append(
                     (
                         ("conflict", "resolved", resolution),
@@ -300,7 +278,11 @@ class IngestService:
                 duplicate_id, _ = Deduplicator(claims, embedder).find_duplicate(claim)
                 audit_events.append(
                     (
-                        ("dedup", "semantic_checked", "match" if duplicate_id else "new"),
+                        (
+                            "dedup",
+                            "semantic_checked",
+                            "match" if duplicate_id else "new",
+                        ),
                         {
                             "event_id": event["id"],
                             "claim_id": claim["id"],
@@ -317,7 +299,7 @@ class IngestService:
                     emit_audit_events()
                     return result_id
 
-            inserted = claims.insert_claim(claim, commit=False)
+            inserted = _persist_resolution(claims, claim)
             if not inserted:
                 winner = claims.find_by_fact_hash(namespace, claim["fact_hash"])
                 if winner:
@@ -348,7 +330,12 @@ class IngestService:
                 )
             if superseded_old_id:
                 claims.supersede_with_inline(
-                    superseded_old_id, claim["id"], extracted.value, claim["valid_from"], now, commit=False
+                    superseded_old_id,
+                    claim["id"],
+                    extracted.value,
+                    claim["valid_from"],
+                    now,
+                    commit=False,
                 )
             _link_event(evidence, claim["id"], event["id"], commit=False)
             connection.commit()
@@ -359,15 +346,121 @@ class IngestService:
         return result_id
 
 
-def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = True) -> None:
+def _build_claim_drafts(
+    extracted: Any,
+    event: dict[str, Any],
+    now: str,
+    embedder: EmbedderProtocol,
+    authority: str | None,
+    ttl_days: int,
+) -> _ClaimDraft:
+    """阶段 1：规范化提取结果、计算 TTL 并生成 claim 草稿。"""
+    namespace = event.get("tenant_id", "default")
+    subject = normalize_entity_id(extracted.subject)
+    qualifiers = extracted.qualifiers or {}
+    canonical_attribute = validate_canonical_attribute(
+        extracted.predicate, getattr(extracted, "canonical_attribute", None)
+    )
+    scope = (
+        extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
+    )
+    attribute_ttl_days = ATTRIBUTE_TTL_DAYS.get(canonical_attribute)
+    effective_ttl_days = (
+        attribute_ttl_days
+        if attribute_ttl_days is not None
+        else ttl_days
+        if extracted.volatility == "ephemeral" and scope == "temporal"
+        else None
+    )
+    expires_at = (
+        (datetime.fromisoformat(now) + timedelta(days=effective_ttl_days)).isoformat()
+        if effective_ttl_days is not None
+        else None
+    )
+    try:
+        importance = min(1.0, max(0.0, float(extracted.importance)))
+    except (TypeError, ValueError):
+        importance = 0.5
+    claim = {
+        "id": new_id(),
+        "namespace_key": namespace,
+        "subject_entity_id": subject,
+        "predicate": extracted.predicate,
+        "value_json": json.dumps(extracted.value, ensure_ascii=False, sort_keys=True),
+        "canonical_attribute": canonical_attribute,
+        "fact_hash": compute_fact_hash(subject, extracted.predicate, extracted.value),
+        "qualifiers_json": json.dumps(qualifiers, ensure_ascii=False, sort_keys=True),
+        "conflict_key": compute_conflict_key(
+            namespace, subject, canonical_attribute, qualifiers
+        ),
+        "conflict_key_version": 2,
+        "legacy_conflict_key": compute_legacy_conflict_key(
+            namespace, subject, extracted.predicate, qualifiers
+        ),
+        "valid_from": event.get("occurred_at", now),
+        "recorded_from": now,
+        "observed_at": event.get("occurred_at", now),
+        "expires_at": expires_at,
+        "volatility": "ephemeral"
+        if attribute_ttl_days is not None
+        else extracted.volatility,
+        "status": "active",
+        "confidence": extracted.confidence,
+        "scope": scope,
+        "importance": importance,
+        "access_count": 0,
+        "last_accessed_at": None,
+        "source_authority": authority
+        or ("low" if event.get("actor_type") == "assistant" else "medium"),
+        "extractor_version": "llm-v1" if event.get("extractor") == "llm" else "fake-v1",
+        "embedding_model": getattr(embedder, "model", "fake"),
+        "embedding_dim": embedder.dim,
+    }
+    claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
+    return _ClaimDraft(claim, qualifiers)
+
+
+def _find_resolution(
+    claims: ClaimRepository,
+    claim: dict[str, Any],
+    canonical_attribute: str,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """阶段 2：查找精确重复项和互斥属性的待解析候选。"""
+    exact = claims.find_by_fact_hash(claim["namespace_key"], claim["fact_hash"])
+    exclusive = is_mutually_exclusive_attribute(canonical_attribute)
+    existing = (
+        claims.find_by_conflict_key(claim["conflict_key"])
+        if exclusive and exact is None
+        else []
+    )
+    return exact, existing
+
+
+def _persist_resolution(claims: ClaimRepository, claim: dict[str, Any]) -> bool:
+    """阶段 3：在调用方已开启的事务中写入解析后的 claim。"""
+    return claims.insert_claim(claim, commit=False)
+
+
+def _link_event(
+    repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = True
+) -> None:
     repo.add_link(
-        {"id": new_id(), "derived_type": "claim", "derived_id": claim_id, "evidence_type": "event",
-         "evidence_id": event_id, "relation": "derived_from", "weight": 1.0},
+        {
+            "id": new_id(),
+            "derived_type": "claim",
+            "derived_id": claim_id,
+            "evidence_type": "event",
+            "evidence_id": event_id,
+            "relation": "derived_from",
+            "weight": 1.0,
+        },
         commit=commit,
     )
 
 
-def _link_event_atomically(connection: Any, repo: EvidenceRepository, claim_id: str, event_id: str) -> None:
+def _link_event_atomically(
+    connection: Any, repo: EvidenceRepository, claim_id: str, event_id: str
+) -> None:
     """已弃用：在独立事务中关联事件证据。"""
     connection.execute("BEGIN IMMEDIATE")
     try:

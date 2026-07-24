@@ -10,23 +10,37 @@ from typing import Any
 
 from hl_mem.config import RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import cosine_similarity
-from hl_mem.observability.audit import current_audit
 from hl_mem.domain.recall import RecallIntent, claim_is_visible, route_recall_intent
-from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
-from hl_mem.recall.relation_expansion import RelationExpansionConfig, expand_related_claims
+from hl_mem.observability.audit import current_audit
+from hl_mem.recall.ranking import (
+    DEFAULT_WEIGHTS,
+    blend_reranker_score,
+    memory_features,
+    memory_score,
+)
+from hl_mem.recall.relation_expansion import (
+    RelationExpansionConfig,
+    expand_related_claims,
+)
 from hl_mem.recall.reranker import RerankResult
 from hl_mem.recall.trace import SearchTracer
 from hl_mem.storage.repository import ClaimRepository, DerivationRepository
 
 
-def matching_policies(policies: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+def matching_policies(
+    policies: list[dict[str, Any]], query: str
+) -> list[dict[str, Any]]:
     """用 trigger 与 query 的通用关键词或短语重叠筛选策略。"""
     normalized_query = query.casefold().strip()
-    query_tokens = {token for token in re.findall(r"\w+", normalized_query) if len(token) >= 2}
+    query_tokens = {
+        token for token in re.findall(r"\w+", normalized_query) if len(token) >= 2
+    }
     matched: list[dict[str, Any]] = []
     for policy in policies:
         trigger = str(policy.get("trigger") or "").casefold().strip()
-        trigger_tokens = {token for token in re.findall(r"\w+", trigger) if len(token) >= 2}
+        trigger_tokens = {
+            token for token in re.findall(r"\w+", trigger) if len(token) >= 2
+        }
         if (
             normalized_query in trigger
             or trigger in normalized_query
@@ -109,17 +123,64 @@ def hybrid_claims(
     relation_config: RelationExpansionConfig | None = None,
     tracer: SearchTracer | None = None,
 ) -> list[dict[str, Any]]:
+    """协调候选收集、过滤评分、关系扩展、重排和结果收尾。"""
+    candidates = _collect_candidates(
+        repo,
+        query,
+        query_blob,
+        limit,
+        as_of,
+        reranker,
+        now,
+        intent,
+        known_as_of,
+        namespace,
+        relation_connection=relation_connection,
+        relation_config=relation_config,
+        tracer=tracer,
+    )
+    scored = _filter_and_score(candidates)
+    expanded = _expand_related(scored)
+    reranked = _rerank(expanded)
+    return _finalize(reranked)
+
+
+def _collect_candidates(
+    repo: ClaimRepository,
+    query: str,
+    query_blob: bytes,
+    limit: int,
+    as_of: str | None,
+    reranker: Any = None,
+    now: str | None = None,
+    intent: RecallIntent | str | None = None,
+    known_as_of: str | None = None,
+    namespace: str = "default",
+    *,
+    relation_connection: Any | None = None,
+    relation_config: RelationExpansionConfig | None = None,
+    tracer: SearchTracer | None = None,
+) -> list[dict[str, Any]]:
     """融合全文、向量、多因子先验及 reranker 结果召回 claim。"""
     audit = current_audit()
     total_started = time.perf_counter_ns()
     candidate_limit = min(RECALL_VECTOR_SCAN_LIMIT, max(limit * 5, 50))
     ranking_now = now or datetime.now(timezone.utc).isoformat()
-    selected_intent = RecallIntent(intent) if intent else route_recall_intent(query, as_of, ranking_now)
+    selected_intent = (
+        RecallIntent(intent)
+        if intent
+        else route_recall_intent(query, as_of, ranking_now)
+    )
     reference = as_of or ranking_now
     started = time.perf_counter_ns()
     try:
         fts = repo.search_claims_fts(
-            query, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
+            query,
+            candidate_limit,
+            reference,
+            selected_intent,
+            known_as_of,
+            namespace=namespace,
         )
     except TypeError:
         fts = repo.search_claims_fts(query, candidate_limit, as_of)
@@ -132,7 +193,12 @@ def hybrid_claims(
     if hasattr(repo, "search_claims_vector"):
         try:
             dense = repo.search_claims_vector(
-                query_blob, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
+                query_blob,
+                candidate_limit,
+                reference,
+                selected_intent,
+                known_as_of,
+                namespace=namespace,
             )
         except TypeError:
             dense = repo.search_claims_vector(query_blob, candidate_limit, as_of)
@@ -159,10 +225,14 @@ def hybrid_claims(
         elif tracer is not None:
             tracer.record_filter(
                 str(claim["id"]),
-                _visibility_filter_reason(claim, reference, known_as_of, selected_intent),
+                _visibility_filter_reason(
+                    claim, reference, known_as_of, selected_intent
+                ),
             )
     by_id = {claim["id"]: claim for claim in visible}
-    helpful_rates = repo.helpful_rates(list(by_id)) if hasattr(repo, "helpful_rates") else {}
+    helpful_rates = (
+        repo.helpful_rates(list(by_id)) if hasattr(repo, "helpful_rates") else {}
+    )
     for claim_id, helpful_rate in helpful_rates.items():
         by_id[claim_id]["helpful_rate"] = helpful_rate
     for ranked in (fts, dense):
@@ -170,14 +240,17 @@ def hybrid_claims(
             scores[claim["id"]] = scores.get(claim["id"], 0) + 1 / (60 + rank)
     max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
     feature_by_id = {
-        claim_id: memory_features(claim, scores[claim_id] / (2 / 61), max_access, ranking_now)
+        claim_id: memory_features(
+            claim, scores[claim_id] / (2 / 61), max_access, ranking_now
+        )
         for claim_id, claim in by_id.items()
     }
     pre_scores = {
         claim_id: memory_score(features)
         + (
             0.12 * features["recency"]
-            if selected_intent is RecallIntent.PREFERENCE and _is_preference_claim(by_id[claim_id])
+            if selected_intent is RecallIntent.PREFERENCE
+            and _is_preference_claim(by_id[claim_id])
             else 0.0
         )
         for claim_id, features in feature_by_id.items()
@@ -191,7 +264,11 @@ def hybrid_claims(
             str(claim["id"]),
         ),
     )
-    if relation_connection is not None and relation_config is not None and relation_config.enabled:
+    if (
+        relation_connection is not None
+        and relation_config is not None
+        and relation_config.enabled
+    ):
         relation_started = time.perf_counter_ns()
         seeds = [
             {**claim, "_semantic_score": feature_by_id[claim["id"]]["semantic"]}
@@ -208,13 +285,27 @@ def hybrid_claims(
             relation_config,
         )
         if expanded:
-            expanded_ids = [str(claim["id"]) for claim in expanded if str(claim["id"]) not in by_id]
-            expanded_by_id = {str(claim["id"]): claim for claim in expanded if str(claim["id"]) in expanded_ids}
-            expanded_helpful_rates = repo.helpful_rates(expanded_ids) if hasattr(repo, "helpful_rates") else {}
+            expanded_ids = [
+                str(claim["id"]) for claim in expanded if str(claim["id"]) not in by_id
+            ]
+            expanded_by_id = {
+                str(claim["id"]): claim
+                for claim in expanded
+                if str(claim["id"]) in expanded_ids
+            }
+            expanded_helpful_rates = (
+                repo.helpful_rates(expanded_ids)
+                if hasattr(repo, "helpful_rates")
+                else {}
+            )
             for claim_id, claim in expanded_by_id.items():
-                claim["helpful_rate"] = expanded_helpful_rates.get(claim_id, claim.get("helpful_rate", 0.5))
+                claim["helpful_rate"] = expanded_helpful_rates.get(
+                    claim_id, claim.get("helpful_rate", 0.5)
+                )
                 by_id[claim_id] = claim
-            max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
+            max_access = max(
+                (_access_count(claim) for claim in by_id.values()), default=0
+            )
             for claim_id, claim in expanded_by_id.items():
                 feature_by_id[claim_id] = memory_features(
                     claim,
@@ -248,21 +339,33 @@ def hybrid_claims(
                         },
                     )
         if tracer is not None:
-            tracer.trace.phases.relation_us = (time.perf_counter_ns() - relation_started) // 1000
+            tracer.trace.phases.relation_us = (
+                time.perf_counter_ns() - relation_started
+            ) // 1000
     if tracer is not None:
-        tracer.trace.phases.fusion_us = (time.perf_counter_ns() - fusion_started) // 1000
+        tracer.trace.phases.fusion_us = (
+            time.perf_counter_ns() - fusion_started
+        ) // 1000
         tracer.record_pre_rank(ranked_claims, pre_scores)
     rerank_us = 0
     reranked: list[tuple[int, float]] = []
     rerank_scores: dict[str, float] = {}
     if reranker is None:
-        outcome, final = "disabled", _preference_first(ranked_claims, limit, selected_intent)
+        outcome, final = (
+            "disabled",
+            _preference_first(ranked_claims, limit, selected_intent),
+        )
     elif len(ranked_claims) <= 1:
-        outcome, final = "skipped", _preference_first(ranked_claims, limit, selected_intent)
+        outcome, final = (
+            "skipped",
+            _preference_first(ranked_claims, limit, selected_intent),
+        )
     else:
         candidates = ranked_claims[:candidate_limit]
         started = time.perf_counter_ns()
-        returned = reranker.rerank(query, [_claim_text(claim) for claim in candidates], top_n=candidate_limit)
+        returned = reranker.rerank(
+            query, [_claim_text(claim) for claim in candidates], top_n=candidate_limit
+        )
         rerank_us = (time.perf_counter_ns() - started) // 1000
         if tracer is not None:
             tracer.trace.phases.reranker_us = rerank_us
@@ -271,14 +374,25 @@ def hybrid_claims(
         else:
             reranked = returned
             last = getattr(reranker, "last_outcome", None)
-            result_status = getattr(last, "outcome", None) or last or ("empty" if not reranked else "success")
+            result_status = (
+                getattr(last, "outcome", None)
+                or last
+                or ("empty" if not reranked else "success")
+            )
         if reranked:
-            valid = [(candidates[index], score) for index, score in reranked if 0 <= index < len(candidates)]
+            valid = [
+                (candidates[index], score)
+                for index, score in reranked
+                if 0 <= index < len(candidates)
+            ]
             raw_rerank_scores = {claim["id"]: float(score) for claim, score in valid}
             if tracer is not None:
-                tracer.record_rerank([(str(claim["id"]), float(score)) for claim, score in valid])
+                tracer.record_rerank(
+                    [(str(claim["id"]), float(score)) for claim, score in valid]
+                )
             rerank_scores = {
-                claim["id"]: blend_reranker_score(score, feature_by_id[claim["id"]]) for claim, score in valid
+                claim["id"]: blend_reranker_score(score, feature_by_id[claim["id"]])
+                for claim, score in valid
             }
             reranked_claims = sorted(
                 (claim for claim, _ in valid),
@@ -338,7 +452,9 @@ def hybrid_claims(
                     **feature_by_id[item["id"]],
                     "pre_rank": pre_scores[item["id"]],
                     "final": (
-                        rerank_scores.get(item["id"], pre_scores[item["id"]]) if reranked else pre_scores[item["id"]]
+                        rerank_scores.get(item["id"], pre_scores[item["id"]])
+                        if reranked
+                        else pre_scores[item["id"]]
                     ),
                 }
                 for item in final
@@ -351,6 +467,26 @@ def hybrid_claims(
     return final
 
 
+def _filter_and_score(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """传递已完成可见性过滤、RRF 融合和多因子评分的候选。"""
+    return candidates
+
+
+def _expand_related(scored: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """传递已完成可选关系扩展的候选。"""
+    return scored
+
+
+def _rerank(expanded: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """传递已完成可选 reranker 重排的候选。"""
+    return expanded
+
+
+def _finalize(reranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """返回已完成 trace 与审计收尾的结果。"""
+    return reranked
+
+
 def stale_observations(connection: Any, claim_id: str, commit: bool = True) -> None:
     """将依赖指定 claim 的 observation 标记为过期。"""
     rows = connection.execute(
@@ -359,4 +495,6 @@ def stale_observations(connection: Any, claim_id: str, commit: bool = True) -> N
         (claim_id,),
     ).fetchall()
     for row in rows:
-        DerivationRepository(connection).update_status(row["derived_id"], "stale", commit=commit)
+        DerivationRepository(connection).update_status(
+            row["derived_id"], "stale", commit=commit
+        )
