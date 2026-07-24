@@ -474,3 +474,39 @@ class ClaimRepository:
             for claim in self._decode_rows(rows)
             if claim_is_visible(claim, reference, known_as_of, selected_intent)
         ]
+
+    def search_claims_tags(
+        self,
+        query_tags: list[str],
+        namespace: str = "default",
+        limit: int = RECALL_DEFAULT_LIMIT,
+        as_of: str | None = None,
+        intent: RecallIntent | str | None = None,
+        known_as_of: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """按规范化标签执行 OR 查询，并返回时间可见的 claim。"""
+        if not query_tags:
+            return []
+        reference = as_of or datetime.now(timezone.utc).isoformat()
+        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
+        match_query = " OR ".join(f'"{tag.replace(chr(34), chr(34) * 2)}"' for tag in dict.fromkeys(query_tags))
+        try:
+            rows = self.connection.execute(
+                "SELECT c.* FROM claims_tags_fts f JOIN claims c ON c.rowid=f.rowid "
+                f"WHERE claims_tags_fts MATCH ? AND c.status IN {statuses} "
+                "AND c.namespace_key=? "
+                "AND (c.valid_from IS NULL OR c.valid_from<=?) "
+                "AND (c.valid_to IS NULL OR c.valid_to>?) "
+                "ORDER BY bm25(claims_tags_fts) LIMIT ?",
+                (match_query, namespace, reference, reference, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as error:
+            if not is_fts_syntax_error(error):
+                raise
+            return []
+        return [
+            claim
+            for claim in self._decode_rows(rows)
+            if claim_is_visible(claim, reference, known_as_of, selected_intent)
+        ]

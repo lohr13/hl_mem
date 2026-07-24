@@ -9,6 +9,11 @@ from typing import Any
 
 from hl_mem.config import RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.domain.claims.attributes import SLOT_REGISTRY, normalize_predicate
+from hl_mem.domain.claims.query_tags import (
+    LOW_INFORMATION_TAGS,
+    TAG_INFO_WEIGHT,
+    extract_query_tags,
+)
 from hl_mem.domain.recall import RecallIntent, claim_is_visible, route_recall_intent
 from hl_mem.observability.audit import current_audit
 from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
@@ -85,6 +90,19 @@ def _rrf_scores(channels: list[list[dict[str, Any]]], rank_constant: int) -> dic
     return scores
 
 
+def _weighted_rrf_scores(
+    channels: list[tuple[list[dict[str, Any]], float]],
+    rank_constant: int,
+) -> dict[str, float]:
+    """按通道权重计算 RRF，空通道不产生分数。"""
+    scores: dict[str, float] = {}
+    for channel, weight in channels:
+        for rank, item in enumerate(channel, 1):
+            item_id = str(item["id"])
+            scores[item_id] = scores.get(item_id, 0.0) + weight / (rank_constant + rank)
+    return scores
+
+
 def reciprocal_rank_fusion(channels: list[list[dict[str, Any]]], rank_constant: int = RRF_K) -> list[dict[str, Any]]:
     """使用唯一的 RRF 实现合并多个有序候选通道。"""
     scores = _rrf_scores(channels, rank_constant)
@@ -109,6 +127,11 @@ def hybrid_claims(
     tracer: SearchTracer | None = None,
     candidate_floor: int | None = None,
     preference_recency_boost: float | None = None,
+    tag_boost_enabled: bool | None = None,
+    tag_boost_weight: float | None = None,
+    tag_channel_enabled: bool | None = None,
+    tag_channel_weight: float | None = None,
+    tag_candidate_limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """协调候选收集、过滤评分、关系扩展、重排和结果收尾。"""
     state = _collect_candidates(
@@ -127,6 +150,11 @@ def hybrid_claims(
         tracer=tracer,
         candidate_floor=candidate_floor,
         preference_recency_boost=preference_recency_boost,
+        tag_boost_enabled=tag_boost_enabled,
+        tag_boost_weight=tag_boost_weight,
+        tag_channel_enabled=tag_channel_enabled,
+        tag_channel_weight=tag_channel_weight,
+        tag_candidate_limit=tag_candidate_limit,
     )
     return _finalize(_rerank(_expand_related(_filter_and_score(state))))
 
@@ -148,6 +176,11 @@ def _collect_candidates(
     tracer: SearchTracer | None = None,
     candidate_floor: int | None = None,
     preference_recency_boost: float | None = None,
+    tag_boost_enabled: bool | None = None,
+    tag_boost_weight: float | None = None,
+    tag_channel_enabled: bool | None = None,
+    tag_channel_weight: float | None = None,
+    tag_candidate_limit: int | None = None,
 ) -> dict[str, Any]:
     """仅执行 FTS 与向量检索，并建立统一时间快照。"""
     defaults = Settings()
@@ -157,6 +190,13 @@ def _collect_candidates(
     selected_intent = RecallIntent(intent) if intent else route_recall_intent(query, as_of, ranking_now)
     reference = as_of or ranking_now
     total_started = time.perf_counter_ns()
+    effective_tag_boost_enabled = defaults.tag_boost_enabled if tag_boost_enabled is None else tag_boost_enabled
+    effective_tag_channel_enabled = defaults.tag_channel_enabled if tag_channel_enabled is None else tag_channel_enabled
+    query_tags = (
+        extract_query_tags(query)
+        if effective_tag_boost_enabled or effective_tag_channel_enabled
+        else []
+    )
 
     started = time.perf_counter_ns()
     fts = repo.search_claims_fts(query, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace)
@@ -174,6 +214,28 @@ def _collect_candidates(
     if tracer is not None:
         tracer.trace.phases.dense_us = dense_us
         tracer.record_channel("dense", dense)
+
+    effective_tag_candidate_limit = tag_candidate_limit or defaults.tag_candidate_limit
+    tag_results: list[dict[str, Any]] = []
+    tag_us = 0
+    if effective_tag_channel_enabled and query_tags:
+        started = time.perf_counter_ns()
+        tag_results = repo.search_claims_tags(
+            query_tags,
+            namespace,
+            effective_tag_candidate_limit,
+            reference,
+            selected_intent,
+            known_as_of,
+        )
+        tag_us = (time.perf_counter_ns() - started) // 1000
+        if tracer is not None:
+            tracer.trace.phases.tag_us = tag_us
+            tracer.record_channel("tag", tag_results)
+    if tracer is not None:
+        tracer.trace.query_tags = query_tags
+        tracer.trace.tag_boost_applied = bool(effective_tag_boost_enabled and query_tags)
+        tracer.trace.tag_channel_applied = bool(effective_tag_channel_enabled and query_tags and tag_results)
 
     return {
         "repo": repo,
@@ -193,10 +255,18 @@ def _collect_candidates(
         "preference_boost": (
             defaults.preference_recency_boost if preference_recency_boost is None else preference_recency_boost
         ),
+        "query_tags": query_tags,
+        "tag_boost_enabled": effective_tag_boost_enabled,
+        "tag_boost_weight": defaults.tag_boost_weight if tag_boost_weight is None else tag_boost_weight,
+        "tag_channel_enabled": effective_tag_channel_enabled,
+        "tag_channel_weight": defaults.tag_channel_weight if tag_channel_weight is None else tag_channel_weight,
+        "tag_candidate_limit": effective_tag_candidate_limit,
         "fts": fts,
         "dense": dense,
+        "tags": tag_results,
         "fts_us": fts_us,
         "dense_us": dense_us,
+        "tag_us": tag_us,
         "total_started": total_started,
     }
 
@@ -206,7 +276,7 @@ def _filter_and_score(state: dict[str, Any]) -> dict[str, Any]:
     started = time.perf_counter_ns()
     tracer = state["tracer"]
     visible: list[dict[str, Any]] = []
-    for claim in state["fts"] + state["dense"]:
+    for claim in state["fts"] + state["dense"] + state["tags"]:
         if claim_is_visible(claim, state["reference"], state["known_as_of"], state["selected_intent"]):
             visible.append(claim)
         elif tracer is not None:
@@ -217,14 +287,35 @@ def _filter_and_score(state: dict[str, Any]) -> dict[str, Any]:
     by_id = {claim["id"]: claim for claim in visible}
     for claim_id, helpful_rate in state["repo"].helpful_rates(list(by_id)).items():
         by_id[claim_id]["helpful_rate"] = helpful_rate
-    scores = _rrf_scores([state["fts"], state["dense"]], RRF_K)
+    channels = [(state["fts"], 1.0), (state["dense"], 1.0)]
+    if state["tag_channel_enabled"] and state["tags"]:
+        channels.append((state["tags"], state["tag_channel_weight"]))
+    scores = _weighted_rrf_scores(channels, RRF_K)
+    normalization = (2.0 + (state["tag_channel_weight"] if state["tags"] else 0.0)) / (RRF_K + 1)
     max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
     feature_by_id = {
-        claim_id: memory_features(claim, scores[claim_id] / (2 / (RRF_K + 1)), max_access, state["ranking_now"])
+        claim_id: memory_features(claim, scores[claim_id] / normalization, max_access, state["ranking_now"])
         for claim_id, claim in by_id.items()
     }
+    tag_boosts: dict[str, float] = {}
+    if state["tag_boost_enabled"] and state["query_tags"]:
+        query_tag_set = set(state["query_tags"])
+        for claim_id, claim in by_id.items():
+            overlap = query_tag_set.intersection(claim.get("topic_tags") or [])
+            weighted = sum(
+                TAG_INFO_WEIGHT.get(tag, 0.5)
+                for tag in overlap
+                if tag not in LOW_INFORMATION_TAGS
+            )
+            if weighted <= 0.0:
+                continue
+            boost = min(weighted / len(query_tag_set), 1.0) * state["tag_boost_weight"]
+            tag_boosts[claim_id] = boost
+            feature_by_id[claim_id]["tag_boost"] = boost
+            claim["_tag_boost"] = boost
     pre_scores = {
         claim_id: memory_score(features)
+        + tag_boosts.get(claim_id, 0.0)
         + (
             state["preference_boost"] * features["recency"]
             if state["selected_intent"] is RecallIntent.PREFERENCE and _is_preference_claim(by_id[claim_id])
@@ -236,9 +327,12 @@ def _filter_and_score(state: dict[str, Any]) -> dict[str, Any]:
         by_id=by_id,
         feature_by_id=feature_by_id,
         pre_scores=pre_scores,
+        tag_boosts=tag_boosts,
         ranked_claims=_sort_pre_rank(by_id, feature_by_id, pre_scores),
     )
     if tracer is not None:
+        tracer.trace.tag_boost_applied = bool(tag_boosts)
+        tracer.record_tag_boosts(tag_boosts)
         tracer.trace.phases.fusion_us = (time.perf_counter_ns() - started) // 1000
         tracer.record_pre_rank(state["ranked_claims"], pre_scores)
     return state
@@ -415,6 +509,11 @@ def _finalize(state: dict[str, Any]) -> list[dict[str, Any]]:
             "candidate_limit": state["candidate_limit"],
             "fts_ids": [item["id"] for item in state["fts"]],
             "dense_ids": [item["id"] for item in state["dense"]],
+            "tag_ids": [item["id"] for item in state["tags"]],
+            "query_tags": state["query_tags"],
+            "tag_boost_applied": bool(state["tag_boosts"]),
+            "tag_boost": state["tag_boosts"],
+            "tag_channel_applied": bool(state["tag_channel_enabled"] and state["query_tags"] and state["tags"]),
             "rrf_ids": [item["id"] for item in state["ranked_claims"]],
             "returned_ids": [item["id"] for item in final],
             "weights": DEFAULT_WEIGHTS,
@@ -433,6 +532,7 @@ def _finalize(state: dict[str, Any]) -> list[dict[str, Any]]:
             "timing_us": {
                 "fts": state["fts_us"],
                 "dense": state["dense_us"],
+                "tag": state["tag_us"],
                 "reranker": state["rerank_us"],
             },
         },

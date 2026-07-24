@@ -44,6 +44,11 @@ class Settings:
     packed_context_token_budget: int = 2000
     recall_candidate_floor: int = 50
     preference_recency_boost: float = 0.12
+    tag_boost_enabled: bool = True
+    tag_boost_weight: float = 0.05
+    tag_channel_enabled: bool = False
+    tag_channel_weight: float = 0.15
+    tag_candidate_limit: int = 20
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
     hermes_prefetch_cache_ttl_seconds: float = 300.0
@@ -118,6 +123,11 @@ class Settings:
             packed_context_token_budget=int(os.getenv("HL_MEM_PACKED_CONTEXT_TOKEN_BUDGET", "2000")),
             recall_candidate_floor=int(os.getenv("HL_MEM_RECALL_CANDIDATE_FLOOR", "50")),
             preference_recency_boost=float(os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")),
+            tag_boost_enabled=os.getenv("HL_MEM_TAG_BOOST_ENABLED", "true").lower() == "true",
+            tag_boost_weight=float(os.getenv("HL_MEM_TAG_BOOST_WEIGHT", "0.05")),
+            tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower() == "true",
+            tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
+            tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
             hermes_prefetch_cache_ttl_seconds=float(os.getenv("HL_MEM_HERMES_PREFETCH_CACHE_TTL_SECONDS", "300")),
@@ -186,6 +196,12 @@ class Settings:
             raise ConfigurationError("recall budgets must be positive")
         if not 0.0 <= self.preference_recency_boost <= 1.0:
             raise ConfigurationError("HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1")
+        if not 0.0 <= self.tag_boost_weight <= 1.0:
+            raise ConfigurationError("HL_MEM_TAG_BOOST_WEIGHT must be between 0 and 1")
+        if not 0.0 <= self.tag_channel_weight <= 1.0:
+            raise ConfigurationError("HL_MEM_TAG_CHANNEL_WEIGHT must be between 0 and 1")
+        if self.tag_candidate_limit < 1:
+            raise ConfigurationError("HL_MEM_TAG_CANDIDATE_LIMIT must be positive")
         if (
             self.hermes_circuit_failure_threshold < 1
             or self.hermes_circuit_open_seconds <= 0
@@ -258,6 +274,11 @@ class Settings:
             "reranker_mode": self.reranker_mode,
             "relation_expansion_mode": self.relation_expansion_mode,
             "relation_expansion_max_depth": self.relation_expansion_max_depth,
+            "tag_boost_enabled": self.tag_boost_enabled,
+            "tag_boost_weight": self.tag_boost_weight,
+            "tag_channel_enabled": self.tag_channel_enabled,
+            "tag_channel_weight": self.tag_channel_weight,
+            "tag_candidate_limit": self.tag_candidate_limit,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,
