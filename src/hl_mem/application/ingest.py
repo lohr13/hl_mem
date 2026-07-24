@@ -7,7 +7,7 @@ import json
 import sqlite3
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,7 +28,7 @@ from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration, normal
 from hl_mem.domain.constants import DEFAULT_SUBJECT
 from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.observability.audit import current_audit
-from hl_mem.protocols import EmbedderProtocol
+from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.events import EventRepository
@@ -89,6 +89,28 @@ class IngestService:
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
+
+    @staticmethod
+    def dry_run_extract(
+        extractor: ExtractorProtocol,
+        text: str,
+        context: dict[str, Any] | None = None,
+        custom_instructions: str | None = None,
+    ) -> dict[str, Any]:
+        """仅执行 claim 提取并返回结果与 token 用量，不写入任何记忆数据。"""
+        extraction_context = dict(context or {})
+        if custom_instructions is not None:
+            extraction_context["custom_instructions"] = custom_instructions
+        claims = extractor.extract({"text": text}, extraction_context)
+        serialized_claims = [asdict(claim) if is_dataclass(claim) else dict(claim) for claim in claims]
+        return {
+            "claims": serialized_claims,
+            "usage": {
+                "total_tokens": int(getattr(extractor, "last_usage_tokens", 0)),
+                "input_tokens": int(getattr(extractor, "last_input_tokens", 0)),
+                "output_tokens": int(getattr(extractor, "last_output_tokens", 0)),
+            },
+        }
 
     def ingest_event(
         self,

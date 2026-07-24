@@ -16,6 +16,7 @@ from starlette.responses import Response
 
 from hl_mem import __version__, components
 from hl_mem.api.schemas import (
+    DryRunExtractionInput,
     EpisodeInput,
     EpisodeUpdate,
     EventInput,
@@ -149,6 +150,20 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             },
         )
         return result
+
+    @app.post("/v1/extract/dry-run")
+    def dry_run_extract(
+        payload: DryRunExtractionInput,
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
+        """提取候选 claims 与 token 用量，但不持久化记忆数据。"""
+        extractor = components.make_extractor(settings, require_real=True, connection=connection)
+        return IngestService.dry_run_extract(
+            extractor,
+            payload.text,
+            payload.context,
+            payload.custom_instructions,
+        )
 
     @app.post("/v1/recall", response_model=RecallOutput, response_model_exclude_none=True)
     def recall(
