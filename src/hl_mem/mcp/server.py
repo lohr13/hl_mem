@@ -59,7 +59,7 @@ class McpMemoryServer:
         text = str(arguments.get("text") or arguments.get("content") or "")
         if not text:
             raise ValueError("text or content is required")
-        result = IngestService(connection, self.embedder).save_explicit_memory(
+        result = IngestService(connection).save_explicit_memory(
             text,
             str(arguments.get("subject", "用户")),
             str(arguments.get("predicate", "explicit_memory")),

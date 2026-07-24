@@ -23,7 +23,7 @@ def test_concurrent_idempotent_event_write(tmp_path: Any) -> None:
 
     def write(index: int, database: Database) -> None:
         connection = database.open()
-        service = IngestService(connection, FakeEmbedder(2048))
+        service = IngestService(connection)
         barrier.wait()
         results[index] = service.ingest_event(
             {"event_type": "message", "actor_type": "user", "content": {"text": "test"}},
