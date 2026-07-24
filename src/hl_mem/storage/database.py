@@ -140,9 +140,3 @@ class Database:
                 break
         for connection in connections:
             connection.close()
-
-    def __enter__(self) -> sqlite3.Connection:
-        return self.open_worker()
-
-    def __exit__(self, *_: object) -> None:
-        self.close()
