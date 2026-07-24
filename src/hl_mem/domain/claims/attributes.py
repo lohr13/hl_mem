@@ -515,8 +515,23 @@ def validate_canonical_slot(slot: str | None) -> str | None:
     return normalized if definition is not None and definition.is_operational else None
 
 
+def validate_slot_instance(slot: str | None, qualifiers: dict[str, Any] | None) -> str | None:
+    """校验 operational slot 及其实例必需 qualifier，失败时降级为空 slot。"""
+    normalized = validate_canonical_slot(slot)
+    if normalized is None:
+        return None
+    values = qualifiers if isinstance(qualifiers, dict) else {}
+    for key in SLOT_REGISTRY[normalized].required_qualifiers:
+        value = values.get(key)
+        if value is None:
+            return None
+        if isinstance(value, str) and not unicodedata.normalize("NFKC", value).strip():
+            return None
+    return normalized
+
+
 def normalize_topic_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
-    """规范化、去重并过滤开放检索标签。"""
+    """规范化、去重并过滤存储、统计与分类标签。"""
     if not tags:
         return []
     normalized = (unicodedata.normalize("NFKC", str(tag)).strip().casefold().replace("-", "_") for tag in tags)

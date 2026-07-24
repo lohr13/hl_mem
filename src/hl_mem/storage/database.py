@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
+from hl_mem.storage.migrations.backfill_conflict_key_v3 import backfill_conflict_keys_v3
 from hl_mem.storage.migrations.fact_hash_v2 import backfill_fact_hash_v2
 
 
@@ -123,6 +124,8 @@ class Database:
             backfill_conflict_keys_v2(connection)
         if connection.execute("SELECT 1 FROM schema_migrations WHERE version='011_fact_hash_v2'").fetchone():
             backfill_fact_hash_v2(connection)
+        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='016_claim_slots_and_tags'").fetchone():
+            backfill_conflict_keys_v3(connection)
 
     def close(self) -> None:
         """关闭本实例创建的全部连接。"""

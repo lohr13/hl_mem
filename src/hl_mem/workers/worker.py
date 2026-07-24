@@ -16,7 +16,7 @@ from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
-from hl_mem.settings import Settings
+from hl_mem.settings import Settings, parse_daily_cron
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
@@ -81,6 +81,10 @@ class Worker:
             self.settings = Settings.from_env()
             self.db_path = Path(settings)
         self.config = config or {}
+        self.dedup_scheduled_minutes = parse_daily_cron(
+            str(self.config.get("dedup_cron", self.settings.dedup_cron)),
+            "HL_MEM_DEDUP_CRON",
+        )
         self.database = Database(self.db_path)
         self.connection = self.database.open_worker()
         self.jobs = JobRepository(self.connection)
@@ -174,7 +178,7 @@ class Worker:
             enqueue_daily_deduplication(
                 self.connection,
                 _now(),
-                self.config.get("dedup_cron", self.settings.dedup_cron),
+                self.dedup_scheduled_minutes,
             )
         enqueue_daily_policy_induction(
             self.connection,
@@ -407,6 +411,12 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
         namespace=str(payload.get("namespace", "default")),
         threshold=float(payload.get("threshold", worker.settings.dedup_threshold)),
         audit_only=bool(payload.get("audit_only", worker.settings.dedup_audit_only)),
+        auto_merge_min_confidence=float(
+            payload.get(
+                "auto_merge_min_confidence",
+                worker.settings.dedup_auto_merge_min_confidence,
+            )
+        ),
         limit=int(payload.get("limit", worker.settings.dedup_scan_limit)),
     )
 

@@ -12,7 +12,7 @@ from hl_mem.domain.claims.attributes import (
     canonical_conflict_slot,
     is_mutually_exclusive_attribute,
     normalize_predicate,
-    validate_canonical_slot,
+    validate_slot_instance,
 )
 
 EXCLUSIVE_QUALIFIERS = {"scope", "context", "environment", "project", "channel"}
@@ -31,19 +31,19 @@ def compute_conflict_key(
     canonical_slot: str | None,
     qualifiers: dict[str, Any] | None,
     *,
-    version: int = 2,
+    version: int = 3,
 ) -> str | None:
-    """按 operational slot 计算 v2 冲突键；无 slot 时不生成键。"""
-    if version != 2:
-        raise ValueError("compute_conflict_key only supports version 2")
-    slot = validate_canonical_slot(canonical_slot)
+    """按 operational slot instance 计算 v3 冲突键；无有效 slot 时不生成键。"""
+    if version != 3:
+        raise ValueError("compute_conflict_key only supports version 3")
+    slot = validate_slot_instance(canonical_slot, qualifiers)
     if slot is None:
         return None
     canonical_namespace = unicodedata.normalize("NFKC", namespace).strip().casefold()
     canonical_subject = re.sub(r"\s+", "", unicodedata.normalize("NFKC", subject)).casefold()
-    canonical_predicate = normalize_predicate(predicate).casefold()
+    del predicate  # v3 由 slot 唯一决定冲突语义，predicate 不再隔离同一事实。
     raw = json.dumps(
-        ["v2", canonical_namespace, canonical_subject, canonical_predicate, slot, slot_qualifier_key(slot, qualifiers)],
+        ["v3", canonical_namespace, canonical_subject, slot, slot_qualifier_key(slot, qualifiers)],
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -81,7 +81,7 @@ def _canonicalize_json(value: Any) -> Any:
 
 def slot_qualifier_key(canonical_slot: str | None, qualifiers: dict[str, Any] | None) -> dict[str, Any]:
     """提取并规范化 slot 声明要求的 qualifier，供冲突与去重共享。"""
-    slot = validate_canonical_slot(canonical_slot)
+    slot = validate_slot_instance(canonical_slot, qualifiers)
     if slot is None:
         return {}
     values = qualifiers or {}

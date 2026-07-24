@@ -46,6 +46,40 @@ class RecallInput(BaseModel):
     debug: bool = False
 
 
+class ClaimOutput(BaseModel):
+    """公开召回 Claim 的兼容输出契约。"""
+
+    type: Literal["claim"] = "claim"
+    id: str
+    text: Any
+    status: str
+    confidence: float | None = None
+    canonical_attribute: str | None = Field(
+        default=None,
+        deprecated=True,
+        description="兼容字段；新客户端应使用 canonical_slot 与 topic_tags。",
+    )
+    canonical_slot: str | None = None
+    topic_tags: list[str] = Field(default_factory=list)
+    valid_from: str | None = None
+    replacement: dict[str, Any] | None = None
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    relations: list[dict[str, Any]] = Field(default_factory=list)
+    conflicts: list[dict[str, Any]] | None = None
+
+
+class RecallOutput(BaseModel):
+    """REST 与 MCP 共享应用服务返回的召回契约。"""
+
+    results: list[ClaimOutput]
+    observations: list[dict[str, Any]]
+    policies: list[dict[str, Any]]
+    total: int
+    query_id: str | None = None
+    context: dict[str, Any] | None = None
+    search_trace: dict[str, Any] | None = None
+
+
 class MemoryInput(BaseModel):
     """显式记忆写入请求。"""
 

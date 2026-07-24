@@ -9,27 +9,33 @@ def test_conflict_key_is_canonical_and_stable() -> None:
 
 
 def test_conflict_key_aligns_cross_predicate_tool_choice_slots() -> None:
-    assert compute_conflict_key("default", "用户", "使用", "choice.tool", {}) is not None
+    assert compute_conflict_key("default", "用户", "使用", "choice.tool", {"role": "coding"}) is not None
     # fact.tool_choice is not an operational slot → returns None
     assert compute_conflict_key("default", "用户", "事实", None, {}) is None
 
 
 def test_conflict_key_keeps_nonexclusive_configuration_slots_separate() -> None:
-    port = compute_conflict_key("default", "代理", "配置", "config.port", {})
-    network = compute_conflict_key("default", "代理", "配置", "config.network", {})
-    path = compute_conflict_key("default", "代理", "配置", "config.path", {})
-    environment = compute_conflict_key("default", "代理", "配置", "config.env", {})
+    port = compute_conflict_key("default", "代理", "配置", "config.port", {"service": "api"})
+    network = compute_conflict_key("default", "代理", "配置", "config.network", {"target": "api"})
+    path = compute_conflict_key("default", "代理", "配置", "config.path", {"purpose": "workspace"})
+    environment = compute_conflict_key("default", "代理", "配置", "config.env", {"key": "API_KEY"})
     assert port != network
     assert len({port, network, path, environment}) == 4
 
 
 def test_conflict_key_rejects_unsupported_version() -> None:
-    with pytest.raises(ValueError, match="version 2"):
-        compute_conflict_key("default", "用户", "偏好", "preference.ui_theme", {}, version=1)
+    with pytest.raises(ValueError, match="version 3"):
+        compute_conflict_key("default", "用户", "偏好", "preference.ui_theme", {}, version=2)
 
 
 def test_conflict_key_returns_none_for_null_slot() -> None:
     assert compute_conflict_key("default", "用户", "事实", None, {}) is None
+
+
+def test_conflict_key_v3_ignores_predicate_for_same_slot_instance() -> None:
+    left = compute_conflict_key("default", "服务", "配置", "config.port", {"service": "API"})
+    right = compute_conflict_key("default", "服务", "使用", "config.port", {"service": "ａｐｉ"})
+    assert left == right
 
 
 def test_deterministic_conflict_rules() -> None:

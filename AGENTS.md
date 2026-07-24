@@ -4,7 +4,7 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v0.9.0（2026-07-24）**
+**当前版本：v0.9.1（2026-07-24）**
 
 ## 技术栈
 
@@ -13,7 +13,7 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 - **LLM 提取**：glm-5.2（智谱 Coding Plan），JSON mode
 - **Embedding**：text-embedding-v4（百炼通用 AK），2048 维
 - **Reranker**：gte-rerank-v2（百炼通用 AK）
-- **分类体系**：SLOT_REGISTRY（15 operational slot + 40 topic tags）
+- **分类体系**：SLOT_REGISTRY（15 operational slot + 40 topic tags；topic_tags 当前用于存储、统计和分类，尚未接入检索）
 - **TTL**：retention 纯函数（scope × importance 三档）
 - **跨 subject 去重**：DedupJudge（audit-only 默认开启）
 - **包管理**：uv（lockfile: uv.lock）
