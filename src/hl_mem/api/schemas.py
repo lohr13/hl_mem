@@ -53,7 +53,7 @@ class RecallInput(BaseModel):
     """记忆召回请求。"""
 
     # namespace 当前仅为软标签；后台维护、策略归纳和归档仍使用 default。
-    query: str = Field(max_length=2000)
+    query: str = Field(min_length=1, max_length=2000)
     limit: int = Field(default=RECALL_DEFAULT_LIMIT, ge=1, le=100)
     as_of: str | None = None
     session_id: str | None = Field(default=None, max_length=200)

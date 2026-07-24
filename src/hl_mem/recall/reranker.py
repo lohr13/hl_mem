@@ -6,6 +6,7 @@ from typing import Callable
 import httpx
 
 from hl_mem.errors import ConfigurationError
+from hl_mem.http_utils import retry_http
 from hl_mem.protocols import RerankerProtocol
 from hl_mem.settings import Settings
 
@@ -43,7 +44,7 @@ class DashScopeReranker:
             self.last_outcome, self.last_error_class = "empty", None
             self.last_result = RerankResult([], self.last_outcome)
             return []
-        try:
+        def send_request() -> httpx.Response:
             post = self._client.post if self._client is not None else httpx.post
             response = post(
                 f"{self.base_url}/api/v1/services/rerank/text-rerank/text-rerank",
@@ -56,20 +57,19 @@ class DashScopeReranker:
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            results = response.json()["output"]["results"]
-            ranked = [(int(item["index"]), float(item["relevance_score"])) for item in results]
-            if any(index < 0 or index >= len(documents) for index, _ in ranked):
-                self.last_outcome, self.last_error_class = "error", "InvalidResultIndex"
-                self.last_result = RerankResult([], self.last_outcome, self.last_error_class)
-                return []
-            ranked = sorted(ranked, key=lambda item: item[1], reverse=True)
-            self.last_outcome, self.last_error_class = ("success" if ranked else "empty"), None
-            self.last_result = RerankResult(ranked, self.last_outcome)
-            return ranked
-        except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
-            self.last_outcome, self.last_error_class = "error", type(error).__name__
+            return response
+
+        response = retry_http(send_request)
+        results = response.json()["output"]["results"]
+        ranked = [(int(item["index"]), float(item["relevance_score"])) for item in results]
+        if any(index < 0 or index >= len(documents) for index, _ in ranked):
+            self.last_outcome, self.last_error_class = "error", "InvalidResultIndex"
             self.last_result = RerankResult([], self.last_outcome, self.last_error_class)
             return []
+        ranked = sorted(ranked, key=lambda item: item[1], reverse=True)
+        self.last_outcome, self.last_error_class = ("success" if ranked else "empty"), None
+        self.last_result = RerankResult(ranked, self.last_outcome)
+        return ranked
 
 
 class FakeReranker:

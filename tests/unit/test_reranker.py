@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
+from hl_mem.api.schemas import RecallInput
 from hl_mem.recall.recall_pipeline import hybrid_claims
+from hl_mem.recall.recall_pipeline import matching_policies
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.recall.reranker import FakeReranker, Reranker
 
@@ -90,6 +93,60 @@ def test_pipeline_with_fake_reranker_reorders() -> None:
 
 def test_pipeline_without_reranker_unchanged() -> None:
     result = hybrid_claims(Repo(), "查询", pack_vector([1.0]), 2, None)
+    assert [claim["id"] for claim in result] == ["first", "second"]
+
+
+def test_matching_policies_rejects_empty_query_and_trigger() -> None:
+    policies = [{"id": "empty", "trigger": ""}, {"id": "real", "trigger": "python"}]
+
+    assert matching_policies(policies, "") == []
+    assert matching_policies(policies, "unrelated") == []
+
+
+def test_recall_input_rejects_empty_query() -> None:
+    with pytest.raises(ValueError):
+        RecallInput(query="")
+
+
+def test_reranker_retries_retryable_transport_errors(monkeypatch) -> None:
+    attempts = 0
+
+    def post(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise httpx.ConnectError("temporary failure")
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", "https://example.invalid"),
+            json={"output": {"results": [{"index": 0, "relevance_score": 0.9}]}},
+        )
+
+    client = type("Client", (), {"post": staticmethod(post)})()
+    monkeypatch.setattr("hl_mem.http_utils.time.sleep", lambda _delay: None)
+
+    assert Reranker("key", client=client).rerank("q", ["doc"]) == [(0, 0.9)]
+    assert attempts == 3
+
+
+def test_reranker_propagates_transport_failure() -> None:
+    request = httpx.Request("POST", "https://example.invalid")
+    response = httpx.Response(400, request=request)
+
+    def post(*args, **kwargs):
+        raise httpx.HTTPStatusError("bad request", request=request, response=response)
+
+    client = type("Client", (), {"post": staticmethod(post)})()
+    with pytest.raises(httpx.HTTPStatusError):
+        Reranker("key", client=client).rerank("q", ["doc"])
+
+
+def test_pipeline_reranker_exception_falls_back_to_rrf() -> None:
+    class FailedReranker:
+        def rerank(self, query, documents, top_n=20):
+            raise httpx.ConnectError("unavailable")
+
+    result = hybrid_claims(Repo(), "query", pack_vector([1.0]), 2, None, FailedReranker())
     assert [claim["id"] for claim in result] == ["first", "second"]
 
 

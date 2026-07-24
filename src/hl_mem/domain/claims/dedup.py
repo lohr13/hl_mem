@@ -148,15 +148,6 @@ class Deduplicator:
         )
         return values_differ and same_exclusive_slot
 
-    @staticmethod
-    def _canonical(value: Any) -> str:
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except json.JSONDecodeError:
-                pass
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
     @classmethod
     def _canonical_claim(cls, claim: dict[str, Any]) -> str:
         """规范化声明值，避免对仓储已解码的字符串再次 JSON 解码。"""

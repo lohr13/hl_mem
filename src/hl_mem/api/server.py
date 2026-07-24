@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone

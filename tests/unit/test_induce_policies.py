@@ -3,7 +3,7 @@ import json
 from hl_mem.experience.service import ExperienceService
 from hl_mem.storage.database import Database
 from hl_mem.workers.induce_policies import enqueue_daily_policy_induction, induce_policies
-from hl_mem.workers.worker import Worker
+from hl_mem.workers.worker import Worker, dispatch_job
 
 
 def test_induce_policies_clusters_recent_successes_by_task_and_tool_sequence(tmp_path) -> None:
@@ -39,4 +39,4 @@ def test_daily_policy_induction_is_idempotent_and_worker_dispatches(tmp_path) ->
     assert not enqueue_daily_policy_induction(connection, "2026-07-22T05:00:00+00:00", "03:30")
 
     worker = Worker(path, {"embedding_dim": 2})
-    assert worker._dispatch({"job_type": "induce_policies"}) == {"clusters": 0, "policies_induced": 0}
+    assert dispatch_job(worker, {"job_type": "induce_policies"}) == {"clusters": 0, "policies_induced": 0}
