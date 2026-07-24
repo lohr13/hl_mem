@@ -70,3 +70,18 @@ def test_report_summary_separates_test_and_retrieval_metrics(capsys: pytest.Capt
     assert "Test layer: passed=2, failed=1, skipped=3" in output
     assert "Retrieval: recall@5=0.500, MRR=0.250, nDCG@10=0.375" in output
     assert "Latency: p50=12.3ms, p95=56.8ms" in output
+
+
+def test_report_summary_prints_optional_scenarios_layer(capsys: pytest.CaptureFixture[str]) -> None:
+    """报告包含 scenarios 统计时应单独输出行为场景层。"""
+    report = {
+        "test_layer": {"passed": 2, "failed": 0, "skipped": 0},
+        "scenarios": {"passed": 29, "failed": 1, "skipped": 0},
+        "metrics": {"recall_at_5": 1.0, "mrr": 1.0, "ndcg_at_10": 1.0},
+        "latency": {"p50": 10.0, "p95": 20.0},
+    }
+
+    print_report_summary(report)
+
+    output = capsys.readouterr().out
+    assert "Scenarios: passed=29, failed=1, skipped=0" in output
