@@ -6,7 +6,7 @@ import hashlib
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from hl_mem.domain.claims.dedup import DedupJudge
 from hl_mem.llm.client import LLMClient
@@ -59,6 +59,7 @@ def deduplicate_claims(
     audit_only: bool = True,
     auto_merge_min_confidence: float = 0.98,
     limit: int = 200,
+    progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> dict[str, int]:
     """发现、审计并可选合并跨主体重复 Claim。"""
     if not threshold <= auto_merge_min_confidence <= 1.0:
@@ -102,7 +103,10 @@ def deduplicate_claims(
         "ORDER BY similarity DESC,created_at,id LIMIT ?",
         (namespace, limit),
     ).fetchall()
-    for pending_row in pending_rows:
+    pending_total = len(pending_rows)
+    for processed, pending_row in enumerate(pending_rows, start=1):
+        if progress_callback is not None:
+            progress_callback("review", processed, pending_total)
         pair = dict(pending_row)
         left = repository.get_claim(pair["left_claim_id"])
         right = repository.get_claim(pair["right_claim_id"])
@@ -135,7 +139,10 @@ def deduplicate_claims(
             "AND judge_confidence>=? AND applied_at IS NULL ORDER BY reviewed_at,created_at,id LIMIT ?",
             (auto_merge_min_confidence, limit),
         ).fetchall()
-        for equivalent_row in equivalent_rows:
+        equivalent_total = len(equivalent_rows)
+        for processed, equivalent_row in enumerate(equivalent_rows, start=1):
+            if progress_callback is not None:
+                progress_callback("apply", processed, equivalent_total)
             pair = dict(equivalent_row)
             left = repository.get_claim(pair["left_claim_id"])
             right = repository.get_claim(pair["right_claim_id"])

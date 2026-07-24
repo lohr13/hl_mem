@@ -107,6 +107,12 @@ class Worker:
         if not job:
             return {"status": "idle"}
         lease_token = job["lease_token"]
+        self.jobs.update_progress(
+            job["id"],
+            lease_token,
+            stage="leased",
+            heartbeat_at=now,
+        )
         try:
             result = dispatch_job(self, job)
             self.jobs.complete_job(job["id"], _now(), lease_token)
@@ -378,6 +384,7 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理冲突归并任务。"""
     consolidator = worker.config.get("consolidator") or worker._make_consolidator()
     payload = json.loads(job["payload_json"] or "{}")
+    progress_callback = _job_progress_callback(worker, job)
     return consolidator.run_batch(
         int(
             payload.get(
@@ -390,6 +397,7 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
         payload.get("namespace", "default"),
         payload.get("watermark"),
         bool(payload.get("dry_run", False)),
+        progress_callback,
     )
 
 
@@ -420,7 +428,24 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
             )
         ),
         limit=int(payload.get("limit", worker.settings.dedup_scan_limit)),
+        progress_callback=_job_progress_callback(worker, job),
     )
+
+
+def _job_progress_callback(worker: Worker, job: dict[str, Any]) -> Callable[[str, int, int], None]:
+    """创建受 lease token 保护的任务进度回调。"""
+
+    def update(stage: str, processed: int, total: int) -> None:
+        worker.jobs.update_progress(
+            job["id"],
+            job["lease_token"],
+            stage=stage,
+            processed=processed,
+            total=total,
+            heartbeat_at=_now(),
+        )
+
+    return update
 
 
 def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:

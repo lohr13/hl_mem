@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.storage.database import Database
+from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.worker import Worker
 
 
@@ -55,3 +57,32 @@ def test_healthz(tmp_path) -> None:
         assert "embedder" in result
         assert "reranker" in result
         assert result["llm_stats"] == {"calls": 0, "total_tokens": 0}
+
+
+def test_jobs_api_includes_progress_fields(tmp_path) -> None:
+    """任务列表 API 应保留状态计数并返回进度明细。"""
+    path = tmp_path / "jobs-api.db"
+    database = Database(path)
+    connection = database.open()
+    JobRepository(connection).insert_job(
+        {
+            "id": "job-api",
+            "job_type": "deduplicate_claims",
+            "payload_json": "{}",
+            "stage": "queued",
+            "processed": 0,
+            "total": 5,
+            "created_at": "2026-07-24T00:00:00+00:00",
+            "updated_at": "2026-07-24T00:00:00+00:00",
+        }
+    )
+    database.close()
+
+    with TestClient(create_app(path)) as client:
+        result = client.get("/v1/jobs").json()
+
+    assert result["pending"] == 1
+    assert result["jobs"][0]["stage"] == "queued"
+    assert result["jobs"][0]["processed"] == 0
+    assert result["jobs"][0]["total"] == 5
+    assert result["jobs"][0]["heartbeat_at"] is None
