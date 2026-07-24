@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
 from hl_mem.errors import ConfigurationError
+
+
+def parse_daily_cron(value: str, variable_name: str) -> int:
+    """严格解析每日 HH:MM 配置并返回自午夜起的分钟数。"""
+    if re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value) is None:
+        raise ConfigurationError(f"{variable_name} must use strict HH:MM format")
+    hour, minute = value.split(":")
+    return int(hour) * 60 + int(minute)
 
 
 @dataclass(frozen=True)
@@ -64,6 +73,7 @@ class Settings:
     dedup_enabled: bool = True
     dedup_threshold: float = 0.92
     dedup_audit_only: bool = True
+    dedup_auto_merge_min_confidence: float = 0.98
     dedup_scan_limit: int = 200
     dedup_cron: str = "03:00"
     induce_policies_cron: str = "04:00"
@@ -139,6 +149,9 @@ class Settings:
             dedup_enabled=os.getenv("HL_MEM_DEDUP_ENABLED", "true").lower() == "true",
             dedup_threshold=float(os.getenv("HL_MEM_DEDUP_THRESHOLD", "0.92")),
             dedup_audit_only=os.getenv("HL_MEM_DEDUP_AUDIT_ONLY", "true").lower() == "true",
+            dedup_auto_merge_min_confidence=float(
+                os.getenv("HL_MEM_DEDUP_AUTO_MERGE_MIN_CONFIDENCE", "0.98")
+            ),
             dedup_scan_limit=int(os.getenv("HL_MEM_DEDUP_SCAN_LIMIT", "200")),
             dedup_cron=os.getenv("HL_MEM_DEDUP_CRON", "03:00"),
             induce_policies_cron=os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00"),
@@ -187,8 +200,13 @@ class Settings:
             raise ConfigurationError("HL_MEM_LLM_SCHEMA_RETRIES must be non-negative")
         if not 0.0 <= self.dedup_threshold <= 1.0:
             raise ConfigurationError("HL_MEM_DEDUP_THRESHOLD must be between 0 and 1")
+        if not self.dedup_threshold <= self.dedup_auto_merge_min_confidence <= 1.0:
+            raise ConfigurationError(
+                "HL_MEM_DEDUP_AUTO_MERGE_MIN_CONFIDENCE must be between dedup threshold and 1"
+            )
         if self.dedup_scan_limit < 1:
             raise ConfigurationError("HL_MEM_DEDUP_SCAN_LIMIT must be positive")
+        parse_daily_cron(self.dedup_cron, "HL_MEM_DEDUP_CRON")
         if self.extraction_chunk_target_chars < 1:
             raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS must be positive")
         if self.extraction_chunk_overlap_turns < 0:

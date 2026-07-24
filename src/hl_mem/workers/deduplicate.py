@@ -26,16 +26,11 @@ def _pair_key(left_id: str, right_id: str) -> str:
     return hashlib.sha256(ordered.encode("utf-8")).hexdigest()
 
 
-def enqueue_daily_deduplication(connection: sqlite3.Connection, now: str, cron: str) -> bool:
+def enqueue_daily_deduplication(connection: sqlite3.Connection, now: str, scheduled_minutes: int) -> bool:
     """到达计划时间后幂等创建当天的跨主体去重任务。"""
-    try:
-        hour_text, minute_text = cron.split(":", 1)
-        scheduled_minutes = int(hour_text) * 60 + int(minute_text)
-    except (AttributeError, TypeError, ValueError) as error:
-        raise ValueError("HL_MEM_DEDUP_CRON must use HH:MM format") from error
     current = datetime.fromisoformat(now.replace("Z", "+00:00"))
     if not 0 <= scheduled_minutes < 24 * 60:
-        raise ValueError("HL_MEM_DEDUP_CRON must use HH:MM format")
+        raise ValueError("scheduled_minutes must be between 0 and 1439")
     if current.hour * 60 + current.minute < scheduled_minutes:
         return False
     from hl_mem.storage.jobs import JobRepository
@@ -62,9 +57,12 @@ def deduplicate_claims(
     namespace: str = "default",
     threshold: float = 0.92,
     audit_only: bool = True,
+    auto_merge_min_confidence: float = 0.98,
     limit: int = 200,
 ) -> dict[str, int]:
     """发现、审计并可选合并跨主体重复 Claim。"""
+    if not threshold <= auto_merge_min_confidence <= 1.0:
+        raise ValueError("auto merge confidence must be between threshold and 1")
     repository = ClaimRepository(connection)
     candidates = repository.find_cross_subject_dedup_candidates(
         namespace,
@@ -134,8 +132,8 @@ def deduplicate_claims(
     if not audit_only:
         equivalent_rows = connection.execute(
             "SELECT * FROM dedup_pairs WHERE namespace_key=? AND decision='equivalent' "
-            "AND applied_at IS NULL ORDER BY reviewed_at,created_at,id LIMIT ?",
-            (namespace, limit),
+            "AND judge_confidence>=? AND applied_at IS NULL ORDER BY reviewed_at,created_at,id LIMIT ?",
+            (auto_merge_min_confidence, limit),
         ).fetchall()
         for equivalent_row in equivalent_rows:
             pair = dict(equivalent_row)
@@ -144,7 +142,14 @@ def deduplicate_claims(
             if not left or not right:
                 skipped += 1
                 continue
-            if _apply_equivalent_pair(connection, pair["id"], left, right, _now()):
+            if _apply_equivalent_pair(
+                connection,
+                pair["id"],
+                left,
+                right,
+                _now(),
+                auto_merge_min_confidence,
+            ):
                 applied += 1
             else:
                 skipped += 1
@@ -166,15 +171,40 @@ def _apply_equivalent_pair(
     left: dict[str, Any],
     right: dict[str, Any],
     applied_at: str,
+    min_confidence: float = 0.98,
 ) -> bool:
     """在短写事务中把右侧 Claim 安全替换为左侧 Claim。"""
     connection.execute("BEGIN IMMEDIATE")
     try:
-        statuses = connection.execute(
-            "SELECT id,status FROM claims WHERE id IN (?,?)",
+        pair = connection.execute(
+            "SELECT decision,judge_confidence,applied_at FROM dedup_pairs WHERE id=?",
+            (pair_id,),
+        ).fetchone()
+        current_rows = connection.execute(
+            "SELECT * FROM claims WHERE id IN (?,?)",
             (left["id"], right["id"]),
         ).fetchall()
-        if len(statuses) != 2 or any(row["status"] != "active" for row in statuses):
+        current = {row["id"]: dict(row) for row in current_rows}
+        current_left = current.get(left["id"])
+        current_right = current.get(right["id"])
+        stale = (
+            pair is None
+            or pair["decision"] != "equivalent"
+            or float(pair["judge_confidence"] or 0.0) < min_confidence
+            or pair["applied_at"] is not None
+            or current_left is None
+            or current_right is None
+            or current_left["status"] != "active"
+            or current_right["status"] != "active"
+            or current_left["recorded_from"] != left.get("recorded_from")
+            or current_right["recorded_from"] != right.get("recorded_from")
+            or current_left["predicate"] != current_right["predicate"]
+            or current_left["canonical_slot"] is not None
+            or current_right["canonical_slot"] is not None
+            or current_left["canonical_attribute"] in {"memory.explicit", "identity.name"}
+            or current_right["canonical_attribute"] in {"memory.explicit", "identity.name"}
+        )
+        if stale:
             connection.rollback()
             return False
         connection.execute(
@@ -188,7 +218,7 @@ def _apply_equivalent_pair(
             right["id"],
             left["id"],
             left["value"],
-            left.get("valid_from") or left["recorded_from"],
+            current_left.get("valid_from") or current_left["recorded_from"],
             applied_at,
             commit=False,
         )

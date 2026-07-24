@@ -14,7 +14,7 @@ from hl_mem.domain.claims.attributes import (
     is_mutually_exclusive_attribute,
     normalize_topic_tags,
     validate_canonical_attribute,
-    validate_canonical_slot,
+    validate_slot_instance,
 )
 from hl_mem.domain.claims.conflicts import (
     ConflictResolver,
@@ -23,7 +23,7 @@ from hl_mem.domain.claims.conflicts import (
     compute_legacy_conflict_key,
 )
 from hl_mem.domain.claims.dedup import Deduplicator
-from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
+from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration, normalize_utc_iso
 from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
@@ -385,7 +385,15 @@ def _build_claim_drafts(
     canonical_attribute = validate_canonical_attribute(
         extracted.predicate, getattr(extracted, "canonical_attribute", None)
     )
-    canonical_slot = validate_canonical_slot(getattr(extracted, "canonical_slot", None))
+    requested_slot = getattr(extracted, "canonical_slot", None)
+    canonical_slot = validate_slot_instance(requested_slot, qualifiers)
+    if requested_slot and canonical_slot is None:
+        current_audit().emit(
+            "ingest",
+            "slot_instance_validation",
+            "downgraded",
+            detail={"requested_slot": requested_slot, "reason": "missing_required_qualifier"},
+        )
     topic_tags = normalize_topic_tags(getattr(extracted, "topic_tags", None))
     scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
     try:
@@ -398,7 +406,8 @@ def _build_claim_drafts(
     }
     if importance < policy.importance_write_floor and not protected:
         return StoreClaimResult(None, "skipped", "importance_below_write_floor")
-    observed_at = event.get("occurred_at", now)
+    observed_at = normalize_utc_iso(str(event.get("occurred_at", now)), "observed_at")
+    recorded_from = normalize_utc_iso(now, "recorded_from")
     expires_at, _expiration_reason = compute_expiration(
         scope=scope,
         importance=importance,
@@ -406,7 +415,7 @@ def _build_claim_drafts(
         canonical_slot=canonical_slot,
         valid_to=None,
         observed_at=observed_at,
-        recorded_from=now,
+        recorded_from=recorded_from,
         policy=policy,
     )
     claim = {
@@ -427,10 +436,10 @@ def _build_claim_drafts(
             canonical_slot,
             qualifiers,
         ),
-        "conflict_key_version": 2,
+        "conflict_key_version": 3,
         "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, extracted.predicate, qualifiers),
-        "valid_from": event.get("occurred_at", now),
-        "recorded_from": now,
+        "valid_from": observed_at,
+        "recorded_from": recorded_from,
         "observed_at": observed_at,
         "expires_at": expires_at,
         "volatility": extracted.volatility,

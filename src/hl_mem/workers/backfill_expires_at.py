@@ -37,7 +37,7 @@ def backfill_expires_at(
         raise ValueError("grace_period must be non-negative")
     current_time = _as_utc(now or datetime.now(timezone.utc))
     expiration_cutoff = current_time - grace_period
-    scanned = updated = expired = skipped_protected = 0
+    scanned = updated = applied = expired = cas_skipped = skipped_protected = 0
     last_id = ""
 
     while True:
@@ -67,16 +67,18 @@ def backfill_expires_at(
                 recorded_from=str(claim["recorded_from"]),
                 policy=policy,
             )
-            updated += int(expires_at != claim.get("expires_at"))
+            changed = expires_at != claim.get("expires_at")
+            updated += int(changed)
             expires_at_dt = _as_utc(datetime.fromisoformat(str(expires_at).replace("Z", "+00:00")))
             should_expire = expires_at_dt <= expiration_cutoff
-            expired += int(should_expire)
             if dry_run:
+                expired += int(should_expire)
                 continue
-            connection.execute(
+            cursor = connection.execute(
                 "UPDATE claims SET expires_at=?,status=CASE WHEN ? THEN 'expired' ELSE status END,"
                 "valid_to=CASE WHEN ? AND (valid_to IS NULL OR ?<valid_to) THEN ? "
-                "ELSE valid_to END WHERE id=? AND status='active'",
+                "ELSE valid_to END WHERE id=? AND status='active' AND scope='temporal' "
+                "AND recorded_from=? AND importance=? AND canonical_slot IS ? AND expires_at IS ?",
                 (
                     expires_at,
                     should_expire,
@@ -84,15 +86,26 @@ def backfill_expires_at(
                     expires_at,
                     expires_at,
                     claim["id"],
+                    claim["recorded_from"],
+                    claim.get("importance"),
+                    claim.get("canonical_slot"),
+                    claim.get("expires_at"),
                 ),
             )
+            if cursor.rowcount == 1:
+                applied += 1
+                expired += int(should_expire)
+            else:
+                cas_skipped += 1
         if not dry_run:
             connection.commit()
 
     return {
         "scanned": scanned,
         "updated": updated,
+        "applied": applied,
         "expired": expired,
+        "cas_skipped": cas_skipped,
         "skipped_protected": skipped_protected,
         "dry_run": int(dry_run),
     }

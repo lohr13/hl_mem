@@ -179,30 +179,27 @@ class ClaimRepository:
             raise ValueError("dedup scan limit must be positive")
         rows = self.connection.execute(
             "SELECT * FROM claims WHERE namespace_key=? AND status='active' "
-            "AND canonical_slot IS NULL AND predicate IS NOT NULL ORDER BY recorded_from,id",
-            (namespace,),
+            "AND canonical_slot IS NULL AND predicate IS NOT NULL "
+            "AND embedding_dense IS NOT NULL ORDER BY recorded_from DESC,id DESC LIMIT ?",
+            (namespace, limit),
         ).fetchall()
-        claims = self._decode_rows(rows)
-        texts = [
-            f"{claim.get('predicate', '')} "
-            f"{json.dumps(claim.get('value'), ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
-            for claim in claims
-        ]
-        embeddings = embedder.embed_batch(texts) if texts else []
+        del embedder  # 候选发现只使用已存向量，禁止日常扫描触发远程 embedding。
+        claims = list(reversed(self._decode_rows(rows)))
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for claim in claims:
+            groups.setdefault(str(claim["predicate"]), []).append(claim)
         candidates: list[dict[str, Any]] = []
-        for left_index, left in enumerate(claims):
-            for right_index in range(left_index + 1, len(claims)):
-                right = claims[right_index]
-                if left.get("predicate") != right.get("predicate"):
-                    continue
-                if left.get("subject_entity_id") == right.get("subject_entity_id"):
-                    continue
-                similarity = cosine_similarity(embeddings[left_index], embeddings[right_index])
-                if similarity < threshold:
-                    continue
-                candidates.append({"left": left, "right": right, "similarity": similarity})
+        for predicate_claims in groups.values():
+            for left_index, left in enumerate(predicate_claims):
+                for right in predicate_claims[left_index + 1 :]:
+                    if left.get("subject_entity_id") == right.get("subject_entity_id"):
+                        continue
+                    similarity = cosine_similarity(left["embedding_dense"], right["embedding_dense"])
+                    if similarity < threshold:
+                        continue
+                    candidates.append({"left": left, "right": right, "similarity": similarity})
         candidates.sort(key=lambda pair: (-pair["similarity"], pair["left"]["id"], pair["right"]["id"]))
-        return candidates[:limit]
+        return candidates
 
     def find_by_conflict_key(self, conflict_key: str | None) -> list[dict[str, Any]]:
         if conflict_key is None:

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS, validate_canonical_slot
+from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS, validate_slot_instance
 from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.storage.database import default_database_path
 
@@ -20,11 +20,13 @@ from hl_mem.storage.database import default_database_path
 class ClaimSlotBackfillStats:
     """记录 claim slot 回填的确定性统计。"""
 
-    total: int
+    attempted: int
+    applied: int
+    cas_skipped: int
     operational: int
     null_slot: int
     tag_counts: dict[str, int]
-    applied: bool
+    dry_run: bool
 
 
 def _tags_for_attribute(attribute: str) -> list[str]:
@@ -51,8 +53,12 @@ def backfill_claim_slots_v1(
     connection: sqlite3.Connection,
     *,
     apply: bool = False,
+    force: bool = False,
+    batch_size: int = 100,
 ) -> ClaimSlotBackfillStats:
     """计算或应用 slot、tags 和新 conflict_key 回填，默认不写数据库。"""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
     columns = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in connection.execute("PRAGMA table_info(claims)").fetchall()
@@ -70,74 +76,75 @@ def backfill_claim_slots_v1(
     if missing := required - columns:
         raise sqlite3.OperationalError(f"claims table is missing Phase 17 columns: {sorted(missing)}")
 
-    rows = connection.execute(
-        "SELECT id,namespace_key,subject_entity_id,predicate,canonical_attribute,qualifiers_json "
-        "FROM claims ORDER BY id"
-    ).fetchall()
-    operational = 0
-    null_slot = 0
+    attempted = applied_count = cas_skipped = operational = null_slot = 0
     tag_counts: Counter[str] = Counter()
-    updates: list[tuple[str | None, str, str | None, str]] = []
-    for row in rows:
-        claim = (
-            dict(row)
-            if isinstance(row, sqlite3.Row)
-            else dict(
-                zip(
-                    (
-                        "id",
-                        "namespace_key",
-                        "subject_entity_id",
-                        "predicate",
-                        "canonical_attribute",
-                        "qualifiers_json",
-                    ),
-                    row,
-                    strict=True,
-                )
-            )
-        )
-        attribute = str(claim["canonical_attribute"] or "custom.unknown")
-        slot = validate_canonical_slot(attribute)
-        tags = _tags_for_attribute(attribute)
-        qualifiers = _decode_qualifiers(str(claim["id"]), claim["qualifiers_json"])
-        conflict_key = compute_conflict_key(
-            str(claim["namespace_key"] or "default"),
-            str(claim["subject_entity_id"] or ""),
-            str(claim["predicate"] or ""),
-            slot,
-            qualifiers,
-        )
-        operational += slot is not None
-        null_slot += slot is None
-        tag_counts.update(tags)
-        updates.append(
-            (
-                slot,
-                json.dumps(tags, ensure_ascii=False, separators=(",", ":")),
-                conflict_key,
-                claim["id"],
-            )
-        )
-
-    if apply:
+    last_id = ""
+    while True:
         try:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.executemany(
-                "UPDATE claims SET canonical_slot=?,topic_tags_json=?,conflict_key=? WHERE id=?",
-                updates,
-            )
-            connection.commit()
+            if apply:
+                connection.execute("BEGIN IMMEDIATE")
+            condition = "" if force else "AND canonical_slot IS NULL AND topic_tags_json IS NULL "
+            rows = connection.execute(
+                "SELECT id,namespace_key,subject_entity_id,predicate,canonical_attribute,"
+                "canonical_slot,topic_tags_json,qualifiers_json,conflict_key "
+                f"FROM claims WHERE id>? {condition}ORDER BY id LIMIT ?",
+                (last_id, batch_size),
+            ).fetchall()
+            if not rows:
+                if apply:
+                    connection.commit()
+                break
+            for row in rows:
+                claim = dict(row)
+                last_id = str(claim["id"])
+                attempted += 1
+                attribute = str(claim["canonical_attribute"] or "custom.unknown")
+                qualifiers = _decode_qualifiers(last_id, claim["qualifiers_json"])
+                slot = validate_slot_instance(attribute, qualifiers)
+                tags = _tags_for_attribute(attribute)
+                conflict_key = compute_conflict_key(
+                    str(claim["namespace_key"] or "default"),
+                    str(claim["subject_entity_id"] or ""),
+                    str(claim["predicate"] or ""),
+                    slot,
+                    qualifiers,
+                )
+                operational += slot is not None
+                null_slot += slot is None
+                tag_counts.update(tags)
+                if not apply:
+                    continue
+                cursor = connection.execute(
+                    "UPDATE claims SET canonical_slot=?,topic_tags_json=?,conflict_key=?,"
+                    "conflict_key_version=3 WHERE id=? AND canonical_slot IS ? "
+                    "AND topic_tags_json IS ? AND conflict_key IS ?",
+                    (
+                        slot,
+                        json.dumps(tags, ensure_ascii=False, separators=(",", ":")),
+                        conflict_key,
+                        claim["id"],
+                        claim["canonical_slot"],
+                        claim["topic_tags_json"],
+                        claim["conflict_key"],
+                    ),
+                )
+                applied_count += cursor.rowcount
+                cas_skipped += int(cursor.rowcount == 0)
+            if apply:
+                connection.commit()
         except Exception:
-            connection.rollback()
+            if connection.in_transaction:
+                connection.rollback()
             raise
 
     return ClaimSlotBackfillStats(
-        total=len(rows),
+        attempted=attempted,
+        applied=applied_count,
+        cas_skipped=cas_skipped,
         operational=operational,
         null_slot=null_slot,
         tag_counts=dict(sorted(tag_counts.items())),
-        applied=apply,
+        dry_run=not apply,
     )
 
 
@@ -146,11 +153,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=default_database_path(), help="SQLite database path")
     parser.add_argument("--apply", action="store_true", help="apply updates; default is dry-run")
+    parser.add_argument("--force", action="store_true", help="explicitly overwrite rows that already have slot/tag values")
+    parser.add_argument("--batch-size", type=int, default=100)
     args = parser.parse_args(argv)
     connection = sqlite3.connect(args.db)
     connection.row_factory = sqlite3.Row
     try:
-        stats = backfill_claim_slots_v1(connection, apply=args.apply)
+        stats = backfill_claim_slots_v1(
+            connection,
+            apply=args.apply,
+            force=args.force,
+            batch_size=args.batch_size,
+        )
     finally:
         connection.close()
     print(json.dumps(stats.__dict__, ensure_ascii=False, sort_keys=True))

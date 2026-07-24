@@ -7,7 +7,7 @@ import json
 from typing import Any, Iterable
 
 from hl_mem import components
-from hl_mem.domain.claims.attributes import validate_canonical_slot
+from hl_mem.domain.claims.attributes import validate_slot_instance
 from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
 from hl_mem.errors import ConfigurationError
@@ -98,7 +98,7 @@ def _classification_expiration(
         scope=scope,
         importance=importance,
         volatility=str(claim.get("volatility") or "stable"),
-        canonical_slot=validate_canonical_slot(claim.get("canonical_slot")),
+        canonical_slot=validate_slot_instance(claim.get("canonical_slot"), claim.get("qualifiers")),
         valid_to=claim.get("valid_to"),
         observed_at=observed_at,
         recorded_from=recorded_from,
@@ -154,7 +154,7 @@ def reclassify_claims(
             except (TypeError, ValueError):
                 importance = 0.5
             claim = next(candidate for candidate in batch if candidate["id"] == claim_id)
-            canonical_slot = validate_canonical_slot(claim.get("canonical_slot"))
+            canonical_slot = validate_slot_instance(claim.get("canonical_slot"), claim.get("qualifiers"))
             conflict_key = compute_conflict_key(
                 str(claim.get("namespace_key") or "default"),
                 str(claim.get("subject_entity_id") or ""),

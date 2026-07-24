@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 @dataclass(frozen=True)
@@ -21,11 +21,19 @@ class TTLPolicy:
 
 
 def _parse_iso(value: str, field_name: str) -> datetime:
-    """解析 ISO 时间，并为无效输入提供明确错误。"""
+    """解析 ISO 时间并统一为 UTC；无时区输入按 UTC 解释。"""
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (TypeError, ValueError) as error:
         raise ValueError(f"{field_name} must be a valid ISO datetime") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def normalize_utc_iso(value: str, field_name: str) -> str:
+    """把 ISO 时间规范化为秒精度的 UTC 固定格式。"""
+    return _parse_iso(value, field_name).isoformat(timespec="seconds")
 
 
 def compute_expiration(
@@ -75,4 +83,7 @@ def compute_expiration(
             expires_at = valid_to_at
             reason = "valid_to_override"
 
-    return (expires_at.isoformat() if expires_at is not None else None, reason)
+    normalized_expiration = (
+        expires_at.astimezone(timezone.utc).isoformat(timespec="seconds") if expires_at is not None else None
+    )
+    return normalized_expiration, reason

@@ -4,14 +4,15 @@ import sqlite3
 from datetime import datetime, timezone
 
 from hl_mem.lifecycle import assert_transition
+from hl_mem.domain.claims.retention import normalize_utc_iso
 
 
 def expire_claims(connection: sqlite3.Connection, now: str | None = None) -> dict[str, int]:
     """过期 expires_at 已到达且仍处于 active 的 claim。"""
-    reference = now or datetime.now(timezone.utc).isoformat()
+    reference = normalize_utc_iso(now or datetime.now(timezone.utc).isoformat(), "now")
     rows = connection.execute(
         "SELECT status FROM claims WHERE status='active' "
-        "AND expires_at IS NOT NULL AND expires_at<=?",
+        "AND expires_at IS NOT NULL AND datetime(expires_at)<=datetime(?)",
         (reference,),
     ).fetchall()
     for row in rows:
@@ -20,7 +21,7 @@ def expire_claims(connection: sqlite3.Connection, now: str | None = None) -> dic
         "UPDATE claims SET status='expired',valid_to=CASE "
         "WHEN valid_to IS NULL OR expires_at<valid_to THEN expires_at ELSE valid_to END "
         "WHERE status='active' "
-        "AND expires_at IS NOT NULL AND expires_at<=?",
+        "AND expires_at IS NOT NULL AND datetime(expires_at)<=datetime(?)",
         (reference,),
     )
     connection.commit()

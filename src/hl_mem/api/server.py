@@ -22,6 +22,7 @@ from hl_mem.api.schemas import (
     FeedbackInput,
     MemoryInput,
     RecallInput,
+    RecallOutput,
     TraceInput,
 )
 from hl_mem.application.forget import ForgetService
@@ -142,7 +143,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         )
         return result
 
-    @app.post("/v1/recall")
+    @app.post("/v1/recall", response_model=RecallOutput, response_model_exclude_none=True)
     def recall(
         payload: RecallInput,
         request: Request,
