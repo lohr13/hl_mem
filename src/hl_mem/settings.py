@@ -36,6 +36,7 @@ class Settings:
     preference_recency_boost: float = 0.12
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
+    hermes_prefetch_cache_ttl_seconds: float = 300.0
     policy_induction_lookback_days: int = 7
     policy_induction_min_episodes: int = 3
     extractor_mode: str = "fake"
@@ -94,6 +95,7 @@ class Settings:
             preference_recency_boost=float(os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")),
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
+            hermes_prefetch_cache_ttl_seconds=float(os.getenv("HL_MEM_HERMES_PREFETCH_CACHE_TTL_SECONDS", "300")),
             policy_induction_lookback_days=int(os.getenv("HL_MEM_POLICY_INDUCTION_LOOKBACK_DAYS", "7")),
             policy_induction_min_episodes=int(os.getenv("HL_MEM_POLICY_INDUCTION_MIN_EPISODES", "3")),
             extractor_mode=os.getenv("HL_MEM_EXTRACTOR", "fake").lower(),
@@ -142,8 +144,12 @@ class Settings:
             raise ConfigurationError("recall budgets must be positive")
         if not 0.0 <= self.preference_recency_boost <= 1.0:
             raise ConfigurationError("HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1")
-        if self.hermes_circuit_failure_threshold < 1 or self.hermes_circuit_open_seconds <= 0:
-            raise ConfigurationError("Hermes circuit breaker values must be positive")
+        if (
+            self.hermes_circuit_failure_threshold < 1
+            or self.hermes_circuit_open_seconds <= 0
+            or self.hermes_prefetch_cache_ttl_seconds <= 0
+        ):
+            raise ConfigurationError("Hermes circuit breaker and prefetch cache values must be positive")
         if self.policy_induction_lookback_days < 1 or self.policy_induction_min_episodes < 1:
             raise ConfigurationError("policy induction values must be positive")
         if self.llm_max_attempts < 1:

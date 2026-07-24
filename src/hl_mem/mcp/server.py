@@ -10,7 +10,9 @@ from hl_mem.application.ingest import IngestService
 from hl_mem.application.recall import RecallService
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
-from hl_mem.storage.repository import ClaimRepository, EvidenceRepository, EventRepository
+from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.events import EventRepository
+from hl_mem.storage.evidence import EvidenceRepository
 
 
 class McpMemoryServer:

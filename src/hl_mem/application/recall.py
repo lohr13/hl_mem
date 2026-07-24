@@ -17,7 +17,8 @@ from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
-from hl_mem.storage.repository import ClaimRepository, DerivationRepository, EvidenceRepository
+from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.evidence import DerivationRepository, EvidenceRepository
 
 
 def budget_pack(items: list[dict[str, Any]], token_budget: int) -> list[dict[str, Any]]:

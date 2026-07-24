@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from typing import Any
 
@@ -28,7 +27,7 @@ class HLMemProvider:
             settings.hermes_circuit_failure_threshold,
             settings.hermes_circuit_open_seconds,
         )
-        self._prefetch_cache = PrefetchCache(self._client)
+        self._prefetch_cache = PrefetchCache(self._client, settings.hermes_prefetch_cache_ttl_seconds)
         self._mapper = EpisodeMapper()
         self._session_id = ""
         self._hermes_home = ""
@@ -93,31 +92,10 @@ class HLMemProvider:
         as_of: str | None = None,
         *,
         session_id: str | None = None,
-    ) -> Any:
-        """预取记忆；Hermes 会话调用读取缓存，旧异步调用返回协程。"""
-        if session_id is not None:
-            del query, limit, intent, as_of
-            return self.prefetched(session_id=session_id)
-        return self._prefetch(query, limit, intent, as_of)
-
-    async def _prefetch(
-        self, query: str, limit: int, intent: str | None, as_of: str | None
-    ) -> dict[str, Any]:
-        if not self._can_call():
-            return {"results": [], "error": "circuit_open"}
-        payload: dict[str, Any] = {"query": query, "limit": limit}
-        if intent is not None:
-            payload["intent"] = intent
-        if as_of is not None:
-            payload["as_of"] = as_of
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await self._client.async_post(client, "/v1/recall", payload)
-            self._on_success()
-            return response.json()
-        except Exception as error:
-            self._on_failure()
-            return {"results": [], "error": self._client.error_name(error)}
+    ) -> str:
+        """返回当前会话和查询对应的同步预取结果。"""
+        del limit, intent, as_of
+        return self._prefetch_cache.get(session_id or self._session_id, query)
 
     def sync_turn(
         self,
@@ -126,10 +104,10 @@ class HLMemProvider:
         *,
         session_id: str = "",
         **kwargs: Any,
-    ) -> Any:
-        """同步一轮对话；兼容旧异步消息列表与 Hermes 同步 hook。"""
+    ) -> None:
+        """通过 Hermes 同步 hook 写入一轮对话。"""
         if isinstance(content, list):
-            return self._sync_messages(content)
+            raise TypeError("sync_turn expects user content as str")
         active_session = session_id or self._session_id
         previous_session = self._session_id
         self._session_id = active_session
@@ -142,21 +120,6 @@ class HLMemProvider:
             self._sync_episode_sync(kwargs["messages"], active_session)
         return None
 
-    async def _sync_messages(self, messages: list[dict[str, Any]]) -> None:
-        if not self._can_call():
-            return
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                for message in messages:
-                    await self._client.async_post(client, "/v1/events", self._event_payload(message))
-                try:
-                    await self._sync_episode(client, messages)
-                except Exception:
-                    pass
-            self._on_success()
-        except Exception:
-            self._on_failure()
-
     def _sync_episode_sync(self, messages: list[dict[str, Any]], session_id: str) -> None:
         async def sync() -> None:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -164,6 +127,8 @@ class HLMemProvider:
                 await self._sync_episode(client, enriched)
 
         try:
+            import asyncio
+
             asyncio.run(sync())
         except (RuntimeError, httpx.HTTPError):
             return
@@ -184,9 +149,9 @@ class HLMemProvider:
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         self._prefetch_cache.queue(query, session_id or self._session_id)
 
-    def prefetched(self, *, session_id: str = "") -> str:
+    def prefetched(self, query: str = "", *, session_id: str = "") -> str:
         """返回 Hermes 会话已经缓存的预取文本。"""
-        return self._prefetch_cache.get(session_id or self._session_id)
+        return self._prefetch_cache.get(session_id or self._session_id, query)
 
     def on_delegation(
         self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any
@@ -199,7 +164,8 @@ class HLMemProvider:
 
     def on_session_end(self, **kwargs: Any) -> None:
         """处理 Hermes 会话结束钩子。"""
-        del kwargs
+        session_id = str(kwargs.get("session_id") or self._session_id)
+        self._prefetch_cache.invalidate_session(session_id)
 
     def _sync_post(self, path: str, payload: dict[str, Any]) -> bool:
         if not self._can_call():
@@ -291,6 +257,3 @@ class HLMemProvider:
         if qualifiers:
             payload["content"]["qualifiers"] = qualifiers
         return payload
-
-
-HermesMemoryProvider = HLMemProvider

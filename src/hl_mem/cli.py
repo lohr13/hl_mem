@@ -11,7 +11,7 @@ from typing import Any
 
 from hl_mem import __version__
 from hl_mem.storage.database import Database, default_database_path
-from hl_mem.storage.repository import EventRepository
+from hl_mem.storage.events import EventRepository
 
 
 def export_database(database_path: str | Path, output_path: str | Path) -> int:

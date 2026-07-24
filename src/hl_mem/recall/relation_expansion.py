@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from hl_mem.domain.relations import get_relations_batch
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
-from hl_mem.storage.repository import ClaimRepository
+from hl_mem.storage.claims import ClaimRepository
 
 
 @dataclass(frozen=True)

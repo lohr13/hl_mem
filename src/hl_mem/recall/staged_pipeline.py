@@ -15,7 +15,7 @@ from hl_mem.recall.relation_expansion import RelationExpansionConfig, expand_rel
 from hl_mem.recall.reranker import RerankResult
 from hl_mem.recall.trace import SearchTracer
 from hl_mem.settings import Settings
-from hl_mem.storage.repository import ClaimRepository
+from hl_mem.storage.claims import ClaimRepository
 
 RRF_K = 60
 

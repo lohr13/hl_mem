@@ -25,12 +25,10 @@ from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol
 from hl_mem.storage.migrations.fact_hash_v2 import compute_fact_hash_v2
-from hl_mem.storage.repository import (
-    ClaimRepository,
-    EventRepository,
-    EvidenceRepository,
-    JobRepository,
-)
+from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.events import EventRepository
+from hl_mem.storage.evidence import EvidenceRepository
+from hl_mem.storage.jobs import JobRepository
 
 
 @dataclass

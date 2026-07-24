@@ -7,14 +7,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from hl_mem.adapters.hermes.provider import HermesMemoryProvider
-
-HlMemProvider = HermesMemoryProvider
+from hl_mem.adapters.hermes.provider import HLMemProvider
 
 
-def create_provider(*args: Any, **kwargs: Any) -> HermesMemoryProvider:
+def create_provider(*args: Any, **kwargs: Any) -> HLMemProvider:
     """创建统一的 Hermes 记忆提供器。"""
-    return HermesMemoryProvider(*args, **kwargs)
+    return HLMemProvider(*args, **kwargs)
 
 
 def register(ctx: Any) -> None:
@@ -22,4 +20,4 @@ def register(ctx: Any) -> None:
     ctx.register_memory_provider(create_provider())
 
 
-__all__ = ["HermesMemoryProvider", "HlMemProvider", "create_provider", "register"]
+__all__ = ["HLMemProvider", "create_provider", "register"]
