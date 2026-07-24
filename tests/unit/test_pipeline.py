@@ -55,7 +55,7 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
     claim_id = store_extracted(
         connection,
         ExtractedClaim("使用", "PostgreSQL", canonical_attribute="choice.database",
-                       canonical_slot="choice.database"),
+                       canonical_slot="choice.database", qualifiers={"project": "hl_mem"}),
         {"id": "event-v2", "actor_type": "user", "tenant_id": "default"},
         "2026-07-21T10:01:00+00:00",
         FakeEmbedder(8),
@@ -67,7 +67,7 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
         (claim_id,),
     ).fetchone()
     assert row["canonical_attribute"] == "choice.database"
-    assert row["conflict_key_version"] == 2
+    assert row["conflict_key_version"] == 3
     assert row["conflict_key"]
     assert row["legacy_conflict_key"]
     assert row["conflict_key"] != row["legacy_conflict_key"]

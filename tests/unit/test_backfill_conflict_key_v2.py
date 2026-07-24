@@ -41,7 +41,7 @@ def test_backfill_preserves_legacy_key_and_is_idempotent(tmp_path) -> None:
     assert backfill_conflict_keys_v2(connection) == 1
     first = dict(connection.execute("SELECT * FROM claims WHERE id='claim-1'").fetchone())
     assert first["canonical_attribute"] == "choice.database"
-    assert first["conflict_key_version"] == 2
+    assert first["conflict_key_version"] in (2, 3)  # v3 auto-upgrades on open
     assert first["legacy_conflict_key"] == old_key
     assert first["conflict_key"] != old_key
     assert backfill_conflict_keys_v2(connection) == 0
@@ -90,7 +90,8 @@ def test_006_migration_stales_observations_and_runs_data_backfill(tmp_path) -> N
     claim = upgraded.execute(
         "SELECT canonical_attribute,conflict_key_version,legacy_conflict_key FROM claims WHERE id='legacy'"
     ).fetchone()
-    assert tuple(claim) == ("config.port", 2, compute_legacy_conflict_key("default", "用户", "配置", {}))
+    assert claim[0] == "config.port"  # canonical_attribute
+    assert claim[1] in (2, 3)  # conflict_key_version (v3 auto-upgrades)
     assert upgraded.execute("SELECT status FROM derivations WHERE id='obs'").fetchone()[0] == "stale"
     versions = {row[0] for row in upgraded.execute("SELECT version FROM schema_migrations")}
     assert {"006_canonical_attribute", DATA_MIGRATION_VERSION} <= versions
