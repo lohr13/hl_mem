@@ -105,7 +105,7 @@ def test_ttl_matrix(tmp_path, volatility, scope, expires):
     connection = Database(tmp_path / f"{volatility}-{scope}.db").open()
     extracted = ExtractedClaim("p", "v", volatility=volatility, scope=scope)
     claim_id = store_extracted(connection, extracted, {"id": "e", "actor_type": "user"},
-                               NOW, FakeEmbedder(2))
+                               NOW, FakeEmbedder(2)).claim_id
     row = connection.execute("SELECT expires_at,scope,importance FROM claims WHERE id=?",
                              (claim_id,)).fetchone()
     assert tuple(row) == (expires, scope, .5)
