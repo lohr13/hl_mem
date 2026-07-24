@@ -1,6 +1,6 @@
 # HL-Mem
 
-> v0.10.1 · 292 passed · 1 skipped · 21 migrations · [CHANGELOG](docs/CHANGELOG.md)
+> v0.11.0 · 325 passed · 1 skipped · 22 migrations · [CHANGELOG](docs/CHANGELOG.md)
 
 面向 AI Agent 的本地优先、跨会话记忆系统。证据驱动、双时间模型、双通道设计、可解释召回、slot+tags 分类体系、importance 联动 TTL。
 
@@ -14,6 +14,15 @@
 | Letta/ADEPT | 长期记忆与自主 Agent | 聚焦记忆基础设施，通过 Hermes Provider 解耦 Agent |
 
 HL-Mem 将这些理念统一为**事件溯源双通道**设计：事实通道处理结构化知识提取、TTL、冲突、去重与证据链，经验通道记录工具调用轨迹（Episode + Trace + Reward），并提供可解释召回与完整遗忘治理。
+
+### v0.11.0 新能力
+
+- LLM call spans 持久化记录 operation/provider/model/status/tokens/latency，`healthz` 提供 24h 聚合
+- Job 支持 stage、processed/total 进度和 heartbeat，worker 逐条上报
+- `ConsolidationScope` 支持 namespace/slot/tag 过滤和 max_pairs 限制
+- Claim 提取支持 occurred range（occurred_start/occurred_end）与 entities
+- Reranker provider registry 统一 provider 选择与构造
+- claims/tags FTS 使用 trigram tokenizer，恢复中文连续子串检索
 
 ## 核心架构
 
@@ -42,7 +51,7 @@ HL-Mem 将这些理念统一为**事件溯源双通道**设计：事实通道处
                     ┌───────────────▼───────────────┐
                     │       Storage Layer           │
                     │  SQLite WAL + FTS5 + Vector   │
-                    │  21 Migrations · 7 Tables     │
+                    │  22 Migrations · 7 Tables     │
                     │  + Audit · Backup · Retention │
                     │  + Dedup Pairs · Slot Tags    │
                     └───────────────────────────────┘
@@ -102,7 +111,7 @@ POST /v1/recall
 ```
 src/hl_mem/
 ├── api/                    # FastAPI 适配层
-│   ├── server.py              # REST API (14 routes)
+│   ├── server.py              # REST API (16 routes)
 │   └── schemas.py             # Pydantic DTO
 ├── application/            # 共享应用服务
 │   ├── ingest.py              # IngestService
@@ -143,7 +152,7 @@ src/hl_mem/
 │   ├── experience.py          # ExperienceRepository
 │   ├── jobs.py                # JobRepository
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 21 SQL migrations (001-021)
+│   └── migrations/            # 22 SQL migrations (001-022)
 ├── workers/                # 后台任务
 │   ├── worker.py              # Job 调度器
 │   ├── ttl.py                 # TTL 过期
@@ -173,6 +182,8 @@ src/hl_mem/
 | 方法 | 路径 | 功能 |
 |------|------|------|
 | POST | `/v1/events` | 写入事件（幂等），创建提取 Job |
+| POST | `/v1/extract/dry-run` | 仅执行 LLM 提取，不写入数据库 |
+| POST | `/v1/consolidate` | 按 ConsolidationScope 创建归并任务 |
 | POST | `/v1/recall` | 混合检索（FTS + Dense + RRF + Rerank） |
 | POST | `/v1/memories` | 显式保存（pinned claim） |
 | DELETE | `/v1/memories/{id}` | 显式遗忘（级联撤回） |
@@ -237,6 +248,8 @@ HL_MEM_ENV=dev                     # dev | production
 ```
 
 > **百炼双 Key 架构**：Coding Plan AK 只能打 `coding.dashscope` 端点，通用 AK 只能打 `compatible-mode` 端点，两把 key 互不通用。
+>
+> **FTS tokenizer**：由 schema migration 决定，不通过 Settings 环境变量配置。`claims_fts`/`claims_tags_fts` 使用 trigram，`events_fts` 保持 unicode61。
 
 </details>
 
@@ -278,7 +291,7 @@ python install_to_hermes.py --hermes-home ~/.hermes
 
 | 组件 | 状态 |
 |------|------|
-| SQLite Schema（21 migrations） | ✅ |
+| SQLite Schema（22 migrations） | ✅ |
 | 幂等事件写入 + 事务原子化 | ✅ |
 | LLM 提取（前序上下文 + 时间锚定 + ADD-only） | ✅ |
 | Event Filter + Token Budget | ✅ |
@@ -295,8 +308,9 @@ python install_to_hermes.py --hermes-home ~/.hermes
 | MCP Server（4 工具契约） | ✅ |
 | 审计日志 | ✅ |
 | 在线备份 + CLI 导入导出 | ✅ |
-| 可选 PostgreSQL 后端 | ✅ |
-| 284 tests passed | ✅ |
+| SQLite 向量存储（BLOB 全量余弦扫描） | ✅ |
+| PostgreSQL 后端 | 📋 未来规模触发项 |
+| 325 tests passed，1 skipped | ✅ |
 | Mental Model 深化 | 📋 基础已实现，推理增强延后 |
 | 多租户 | 📋 设计保留 |
 
