@@ -22,7 +22,7 @@ class EventRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_event(self, event: dict[str, Any], commit: bool = False) -> bool:
+    def insert_event(self, event: dict[str, Any], commit: bool = True) -> bool:
         """写入事件，并在需要时提交事务。"""
         stored = dict(event)
         if "content" in stored:
