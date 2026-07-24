@@ -54,7 +54,8 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
     connection = database.open()
     claim_id = store_extracted(
         connection,
-        ExtractedClaim("使用", "PostgreSQL", canonical_attribute="choice.database"),
+        ExtractedClaim("使用", "PostgreSQL", canonical_attribute="choice.database",
+                       canonical_slot="choice.database"),
         {"id": "event-v2", "actor_type": "user", "tenant_id": "default"},
         "2026-07-21T10:01:00+00:00",
         FakeEmbedder(8),
