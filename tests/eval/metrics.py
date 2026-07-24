@@ -31,10 +31,33 @@ class QueryScore:
     temporal_violations: int
     is_empty_prediction: bool
     latency_ms: float
+    mrr: float | None = None
+    ndcg_at_10: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """返回 JSON 可序列化字典。"""
         return asdict(self)
+
+
+def compute_mrr(relevant_ids: set[str], results: list[dict]) -> float:
+    """计算 MRR：第一个相关结果的倒数排名。"""
+    for rank, item in enumerate(results, 1):
+        if str(item.get("id")) in relevant_ids:
+            return 1.0 / rank
+    return 0.0
+
+
+def compute_binary_ndcg_at_10(relevant_ids: set[str], results: list[dict]) -> float:
+    """计算 binary nDCG@10。"""
+    import math
+
+    dcg = 0.0
+    for rank, item in enumerate(results[:10], 1):
+        if str(item.get("id")) in relevant_ids:
+            dcg += 1.0 / math.log2(rank + 1)
+    ideal_hits = min(len(relevant_ids), 10)
+    idcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, ideal_hits + 1))
+    return dcg / idcg if idcg > 0 else 0.0
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -82,6 +105,8 @@ def evaluate_results(case: EvalCase, response: dict[str, Any], latency_ms: float
     evidence_hits = len(expected_evidence.intersection(returned_evidence))
     evidence_score = evidence_hits / len(returned_evidence) if returned_evidence else (0.0 if expected_evidence else None)
     is_empty = not results
+    mrr = compute_mrr(relevant, results) if case.expected_type == "claim" else None
+    ndcg = compute_binary_ndcg_at_10(relevant, results) if case.expected_type == "claim" else None
     return QueryScore(
         case_id=case.case_id,
         expected_type=case.expected_type,
@@ -99,6 +124,8 @@ def evaluate_results(case: EvalCase, response: dict[str, Any], latency_ms: float
         temporal_violations=temporal,
         is_empty_prediction=is_empty,
         latency_ms=latency_ms,
+        mrr=mrr,
+        ndcg_at_10=ndcg,
     )
 
 
