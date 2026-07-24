@@ -29,6 +29,9 @@ class ExtractedClaimSchema(BaseModel):
     reason: str = ""
     scope: Literal["temporal", "permanent"]
     importance: float = Field(ge=0.0, le=1.0)
+    occurred_start: str | None = None
+    occurred_end: str | None = None
+    entities: list[str] | None = None
 
 
 class ExtractionResponseSchema(BaseModel):

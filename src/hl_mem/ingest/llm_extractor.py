@@ -53,9 +53,10 @@ def _operational_slot_prompt() -> str:
 _OPERATIONAL_SLOT_PROMPT = _operational_slot_prompt()
 _TOPIC_TAG_PROMPT = "、".join(sorted(ALLOWED_TOPIC_TAGS))
 
-SYSTEM_PROMPT = f"""你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。只提取事实，不判断是否与已有记忆冲突。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、canonical_attribute、canonical_slot、topic_tags、value、qualifiers、confidence、volatility、reason。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
+SYSTEM_PROMPT = f"""你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。只提取事实，不判断是否与已有记忆冲突。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、canonical_attribute、canonical_slot、topic_tags、value、qualifiers、confidence、volatility、reason、occurred_start、occurred_end、entities。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
 value 必须保持用户使用的原始语言：中文原文输出中文值，英文原文输出英文值，不要翻译。保留原文中的精确数字和日期，不得模糊化或改写。
 结合事件上下文中的 occurred_at 解析“今天”“明天”“下周”等相对时间，并在事实中输出对应的绝对日期。
+事实明确描述时间区间时，将起止时间分别写入 occurred_start 和 occurred_end；无法确定时返回 null。entities 列出该事实明确涉及的实体名，无法确定时返回 null。
 predicate 只能是以下标准值之一：偏好（喜欢或不喜欢的事物）、使用（工具、数据库、操作系统等技术选择）、状态（当前服务或运行状态）、身份（用户名、角色、联系方式）、配置（端口、路径、参数）、计划（计划事项、截止日期）、事实（其他客观事实）。
 canonical_attribute 是兼容字段：对能确定 operational slot 的事实填写同名值；否则按 predicate 填写兼容属性，系统会保持旧逻辑校验。
 canonical_slot 只表示参与业务规则的 operational slot，只能从以下 15 个值选择；无法唯一确定时必须返回 null，不得创造新值：
@@ -460,4 +461,7 @@ class LLMExtractor:
             canonical_attribute=canonical_attribute,
             canonical_slot=validate_slot_instance(item.get("canonical_slot"), qualifiers),
             topic_tags=normalize_topic_tags(item.get("topic_tags")),
+            occurred_start=item.get("occurred_start"),
+            occurred_end=item.get("occurred_end"),
+            entities=item.get("entities"),
         )
