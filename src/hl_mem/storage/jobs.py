@@ -15,7 +15,7 @@ class JobRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_job(self, job: dict[str, Any], commit: bool = True) -> bool:
+    def insert_job(self, job: dict[str, Any], commit: bool = False) -> bool:
         """写入后台任务。"""
         stored = dict(job)
         if "payload" in stored:
@@ -90,6 +90,13 @@ class JobRepository:
             if row["status"] in counts:
                 counts[row["status"]] = row["count"]
         return counts
+
+    def retry_failed(self) -> int:
+        """将失败任务重置为待处理状态，由调用方提交事务。"""
+        cursor = self.connection.execute(
+            "UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'"
+        )
+        return cursor.rowcount
 
     def _finish(self, job_id: str, status: str, updated_at: str, error: str | None, lease_token: str) -> bool:
         cursor = self.connection.execute(

@@ -43,7 +43,6 @@ def add_relation(
             datetime.now(timezone.utc).isoformat(),
         ),
     )
-    connection.commit()
     return relation_id
 
 

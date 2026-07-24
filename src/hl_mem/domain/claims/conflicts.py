@@ -103,15 +103,7 @@ class ConflictResolver:
 
     @staticmethod
     def _value(claim: dict[str, Any]) -> Any:
-        if "value" in claim:
-            return claim["value"]
-        value = claim.get("value_json")
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                return value
-        return value
+        return claim.get("value")
 
     @staticmethod
     def _before(old_to: str | None, new_from: str | None) -> bool:
@@ -124,7 +116,7 @@ class ConflictResolver:
 
     @staticmethod
     def _signals_change(claim: dict[str, Any]) -> bool:
-        qualifiers = claim["qualifiers"] if "qualifiers" in claim else claim.get("qualifiers_json") or {}
+        qualifiers = claim.get("qualifiers") or {}
         if isinstance(qualifiers, str):
             try:
                 qualifiers = json.loads(qualifiers)

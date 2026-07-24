@@ -14,7 +14,7 @@ class EvidenceRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def add_link(self, link: dict[str, Any], commit: bool = True) -> bool:
+    def add_link(self, link: dict[str, Any], commit: bool = False) -> bool:
         """写入证据链接。"""
         return insert_row(self.connection, "evidence_links", link, commit)
 
@@ -80,7 +80,7 @@ class DerivationRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def update_status(self, observation_id: str, status: str, commit: bool = True) -> bool:
+    def update_status(self, observation_id: str, status: str, commit: bool = False) -> bool:
         """更新派生记忆状态。"""
         cursor = self.connection.execute("UPDATE derivations SET status=? WHERE id=?", (status, observation_id))
         if commit:

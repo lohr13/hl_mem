@@ -11,7 +11,6 @@ from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
-from hl_mem.domain.types import StoredClaim
 from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
 
@@ -37,7 +36,7 @@ class ClaimRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_claim(self, claim: dict[str, Any], commit: bool = True) -> bool:
+    def insert_claim(self, claim: dict[str, Any], commit: bool = False) -> bool:
         stored = dict(claim)
         if "value" in stored:
             stored["value_json"] = encode_json(stored.pop("value"), sort_keys=True)
@@ -48,26 +47,6 @@ class ClaimRepository:
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:
         return self._decode_claim(
             row_to_dict(self.connection.execute("SELECT * FROM claims WHERE id=?", (claim_id,)).fetchone())
-        )
-
-    def get_stored_claim(self, claim_id: str) -> StoredClaim | None:
-        """按稳定领域类型返回声明；旧 get_claim 字典接口继续兼容。"""
-        claim = self.get_claim(claim_id)
-        if claim is None:
-            return None
-        return StoredClaim(
-            id=claim["id"],
-            entity_id=claim.get("subject_entity_id") or "",
-            predicate=claim["predicate"],
-            canonical_attribute=claim["canonical_attribute"],
-            value=str(claim.get("value", "")),
-            scope=claim["scope"],
-            importance=float(claim["importance"]),
-            status=claim["status"],
-            qualifiers=claim.get("qualifiers") or {},
-            created_at=claim["recorded_from"],
-            valid_from=claim["valid_from"],
-            valid_until=claim.get("valid_to"),
         )
 
     def batch_get_claims(self, claim_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -89,7 +68,7 @@ class ClaimRepository:
                 result[claim["id"]] = claim
         return result
 
-    def update_status(self, claim_id: str, status: str, commit: bool = True) -> bool:
+    def update_status(self, claim_id: str, status: str, commit: bool = False) -> bool:
         try:
             ClaimStatus(status)
         except ValueError as error:
@@ -105,6 +84,42 @@ class ClaimRepository:
             (namespace, subject_entity_id),
         ).fetchall()
         return self._decode_rows(rows)
+
+    def list_all(self) -> list[dict[str, Any]]:
+        """返回全部声明，并在仓储边界完成 JSON 解码。"""
+        rows = self.connection.execute("SELECT * FROM claims ORDER BY id").fetchall()
+        return self._decode_rows(rows)
+
+    def list_active_for_consolidation(
+        self,
+        namespace: str,
+        watermark: str | None,
+    ) -> list[dict[str, Any]]:
+        """返回待归并的活跃声明，并在仓储边界完成 JSON 解码。"""
+        rows = self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? AND status='active' "
+            "AND embedding_dense IS NOT NULL AND (? IS NULL OR recorded_from>?) "
+            "ORDER BY recorded_from,id",
+            (namespace, watermark, watermark),
+        ).fetchall()
+        return self._decode_rows(rows)
+
+    def is_unchanged(self, original: dict[str, Any]) -> bool:
+        """检查声明仍活跃且 Python 值未发生变化。"""
+        current = self.get_claim(original["id"])
+        return bool(
+            current
+            and current["status"] == "active"
+            and current.get("value") == original.get("value")
+        )
+
+    def update_classification(self, claim_id: str, scope: str, importance: float) -> bool:
+        """更新声明分类，由调用方提交事务。"""
+        cursor = self.connection.execute(
+            "UPDATE claims SET scope=?,importance=? WHERE id=?",
+            (scope, importance, claim_id),
+        )
+        return cursor.rowcount == 1
 
     def find_active_for_dedup(self, namespace: str, normalized_subject: str) -> list[dict[str, Any]]:
         """返回 namespace 内实体归一化后匹配的可去重候选。"""
@@ -213,7 +228,7 @@ class ClaimRepository:
         ).fetchall()
         return {row["memory_id"]: float(row["helpful_rate"]) for row in rows}
 
-    def insert_conflict_case(self, conflict_case: dict[str, Any], commit: bool = True) -> bool:
+    def insert_conflict_case(self, conflict_case: dict[str, Any], commit: bool = False) -> bool:
         """写入幂等冲突审核记录。"""
         return insert_row(self.connection, "conflict_cases", conflict_case, commit)
 
@@ -241,9 +256,9 @@ class ClaimRepository:
         if claim is None:
             return None
         if "value_json" in claim:
-            claim["value"] = decode_json(claim["value_json"])
+            claim["value"] = decode_json(claim.pop("value_json"))
         if "qualifiers_json" in claim:
-            claim["qualifiers"] = decode_json(claim["qualifiers_json"])
+            claim["qualifiers"] = decode_json(claim.pop("qualifiers_json"))
         return claim
 
     @classmethod
@@ -256,7 +271,7 @@ class ClaimRepository:
                 decoded.append(claim)
         return decoded
 
-    def supersede(self, old_id: str, new_valid_from: str, commit: bool = True) -> None:
+    def supersede(self, old_id: str, new_valid_from: str, commit: bool = False) -> None:
         self.connection.execute(
             "UPDATE claims SET status='superseded',valid_to=?,recorded_to=? WHERE id=?",
             (new_valid_from, new_valid_from, old_id),
@@ -271,7 +286,7 @@ class ClaimRepository:
         new_value: Any,
         changed_at: str,
         recorded_at: str,
-        commit: bool = True,
+        commit: bool = False,
     ) -> SupersedeResult:
         """以 compare-and-set 方式内联旧值并建立替代证据。"""
         if old_id == new_claim_id:
