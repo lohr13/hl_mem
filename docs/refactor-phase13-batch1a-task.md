@@ -180,10 +180,10 @@ def test_concurrent_idempotent_event_write(tmp_path):
     """两个线程写相同 idempotency_key，断言只创建一个 event。"""
     db_path = tmp_path / "concurrent.db"
     db1, db2 = Database(db_path), Database(db_path)
-    
+
     barrier = threading.Barrier(2)
     results = [None, None]
-    
+
     def write(idx, db):
         conn = db.open()
         service = IngestService(conn, FakeEmbedder(2048))
@@ -192,12 +192,12 @@ def test_concurrent_idempotent_event_write(tmp_path):
             {"event_type": "message", "actor_type": "user", "content": {"text": "test"}},
             idempotency_key="same-key"
         )
-    
+
     t1 = threading.Thread(target=write, args=(0, db1))
     t2 = threading.Thread(target=write, args=(1, db2))
     t1.start(); t2.start()
     t1.join(); t2.join()
-    
+
     # 断言：两个线程返回相同的 event_id
     assert results[0]["id"] == results[1]["id"]
     # 断言：只有一个 created=True
@@ -215,14 +215,14 @@ def test_concurrent_claim_dedup(tmp_path):
     from hl_mem.storage.database import Database
     from hl_mem.ingest.embeddings import FakeEmbedder
     from hl_mem.ingest.extractors import ExtractedClaim
-    
+
     db_path = tmp_path / "dedup.db"
     db1, db2 = Database(db_path), Database(db_path)
     db1.open_worker(); db2.open_worker()
-    
+
     barrier = threading.Barrier(2)
     results = [None, None]
-    
+
     def store(idx, db):
         conn = db.open_worker()
         extracted = ExtractedClaim(
@@ -234,12 +234,12 @@ def test_concurrent_claim_dedup(tmp_path):
         event = {"id": f"event-{idx}", "actor_type": "user", "occurred_at": "2026-01-01T00:00:00+00:00"}
         barrier.wait()
         results[idx] = store_extracted(conn, extracted, event, "2026-01-01T00:00:00+00:00", FakeEmbedder(2048))
-    
+
     t1 = threading.Thread(target=store, args=(0, db1))
     t2 = threading.Thread(target=store, args=(1, db2))
     t1.start(); t2.start()
     t1.join(); t2.join()
-    
+
     # 两个结果应该指向同一个 claim
     assert results[0] == results[1]
     # DB 中只有一个 active claim

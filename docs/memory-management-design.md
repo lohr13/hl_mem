@@ -1,7 +1,7 @@
 # Memory management enhancement
 
-Status: proposed (design only)  
-Target migration: `005_memory_management.sql`  
+Status: proposed (design only)
+Target migration: `005_memory_management.sql`
 Date: 2026-07-21
 
 ## 1. Summary and decisions

@@ -24,12 +24,12 @@ class _FakeLLMClient:
         name = "fake"
     provider = _Provider()
     model = "test-model"
-    
+
     def __init__(self, response_content: str, usage_tokens: int = 12):
         self._content = response_content
         self._tokens = usage_tokens
         self.last_request = None
-    
+
     def complete(self, request: LLMRequest) -> LLMResponse:
         self.last_request = request
         return LLMResponse(self._content, "stop", self._tokens)
@@ -37,7 +37,7 @@ class _FakeLLMClient:
 
 然后逐个修复：
 
-- **test_parses_fenced_json_and_normalizes_entity**: 
+- **test_parses_fenced_json_and_normalizes_entity**:
   ```python
   client = _FakeLLMClient(raw)  # raw is the JSON response
   extractor = LLMExtractor(client, ChunkingPolicy(10000, 0, 2))
@@ -46,7 +46,7 @@ class _FakeLLMClient:
 
 - **test_should_memorize_false_returns_no_claims**: 同上模式
 
-- **test_occurred_at_is_injected_into_user_prompt**: 
+- **test_occurred_at_is_injected_into_user_prompt**:
   ```python
   client = _FakeLLMClient('{"claims":[],"should_memorize":true}')
   extractor = LLMExtractor(client, ChunkingPolicy(10000, 0, 2))
@@ -56,7 +56,7 @@ class _FakeLLMClient:
 
 - **test_normalizes_predicate_and_preserves_chinese_value**: 同上模式
 
-- **test_invalid_json_is_rejected**: 
+- **test_invalid_json_is_rejected**:
   ```python
   client = _FakeLLMClient("not json")
   extractor = LLMExtractor(client, ChunkingPolicy(10000, 0, 2))
@@ -70,7 +70,7 @@ class _FakeLLMClient:
   def test_llm_client_has_configured_retry():
       from hl_mem.llm.client import LLMClient
       from hl_mem.llm.providers import ZhipuProvider
-      client = LLMClient("key", "https://example.test", "model", 
+      client = LLMClient("key", "https://example.test", "model",
                          provider=ZhipuProvider(), max_attempts=3)
       assert client.max_attempts == 3
   ```
@@ -111,7 +111,7 @@ extractor = LLMExtractor(client, ChunkingPolicy(1_000, 0, 2))
   ```python
   from hl_mem.components import make_reranker
   from hl_mem.settings import Settings
-  
+
   def test_reranker_on_without_key_falls_back_to_disabled(monkeypatch):
       monkeypatch.setenv("HL_MEM_RERANKER", "on")
       monkeypatch.delenv("RERANKER_API_KEY", raising=False)
@@ -143,7 +143,7 @@ extractor = LLMExtractor(client, ChunkingPolicy(1_000, 0, 2))
   ```python
   from hl_mem.components import make_embedder, make_reranker
   from hl_mem.settings import Settings
-  
+
   def test_production_requires_real_embedder_and_reranker(monkeypatch):
       monkeypatch.setenv("HL_MEM_ENV", "production")
       monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
@@ -186,18 +186,18 @@ def test_reclassify_batches_updates_and_is_idempotent(tmp_path, monkeypatch):
     connection = Database(tmp_path / "reclass.db").open()
     for index in range(6):
         _claim(connection, str(index))
-    
+
     # 创建一个假的 llm_client（不需要真实 API 调用，因为 classify_batch 被 mock 了）
     from hl_mem.llm.types import LLMResponse
     class FakeClient:
         model = "test"
     fake_client = FakeClient()
-    
+
     calls = []
     def fake_batch(_client, claims):
         calls.append(len(claims))
         return [{"id": claim["id"], "scope": "temporal", "importance": 0.8} for claim in claims]
-    
+
     monkeypatch.setattr("hl_mem.workers.reclassify.classify_batch", fake_batch)
     assert reclassify_claims(connection, fake_client, 5)["updated"] == 6
     assert calls == [5, 1]
