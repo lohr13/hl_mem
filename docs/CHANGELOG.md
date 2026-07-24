@@ -4,6 +4,28 @@
 
 ---
 
+## v0.10.1 — 2026-07-24
+
+### 代码质量重构（基于 Hermes × Codex 双分析师共识评估）
+
+#### P0：评测闭环 + 配置单一来源
+- **冻结排序因子**：排序链已稳定，不再增加新 boost/channel/weight
+- **新增 MRR + binary nDCG@10**：扩充离线评测指标
+- **报告口径分离**：分别报告测试层（passed/failed/skipped）与 retrieval 指标（recall@5/MRR/nDCG@10/p50/p95）
+- **移除管线内部 Settings()**：引入 RecallConfig dataclass，配置由应用入口提供，消除第二配置入口
+
+#### P1：类型化重构 + 行为测试
+- **state dict → RecallContext dataclass**：召回管线从 35 字段的 dict[str, Any] 迁移到显式类型标注的 dataclass，消除字段名拼写错误风险
+- **behavioral scenarios 独立**：tests/scenarios/ 现可独立执行和报告
+
+#### P2：清理 + benchmark
+- **删除死代码**：_link_event_atomically、Database.__enter__/__exit__
+- **IngestService 幽灵依赖**：删除未使用的 embedder 参数，收紧 connection 类型
+- **StoreClaimResult → dataclass**：从 str 子类改为 @dataclass(frozen=True)
+- **中文常量收敛**：新建 domain/constants.py，替换散落的硬编码中文
+- **加 CI**：.github/workflows/test.yml（push/PR 自动跑单测）
+- **向量检索 benchmark**：522/2k/10k 三档延迟与内存基准
+
 ## v0.10.0 — 2026-07-24
 
 ### Phase 18: Topic Tags 检索接入
