@@ -1,3 +1,5 @@
+"""后台任务租约、分派、维护调度与 CLI 入口。"""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,5 @@
+"""进入 LLM 提取管线前的低价值事件过滤规则。"""
+
 from __future__ import annotations
 
 import json

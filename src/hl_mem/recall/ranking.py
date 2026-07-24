@@ -1,3 +1,5 @@
+"""召回候选的多因子特征、先验评分与重排融合。"""
+
 from __future__ import annotations
 
 import math
@@ -27,6 +29,7 @@ def _parse_datetime(value: Any) -> datetime | None:
 
 def memory_features(claim: Mapping[str, Any], semantic_score: float,
                     max_access_count: int, now: str) -> dict[str, float]:
+    """把 Claim 转换为归一化的语义、时效、访问和质量特征。"""
     current = _parse_datetime(now) or datetime.now(timezone.utc)
     observed = _parse_datetime(claim.get("observed_at")) or _parse_datetime(
         claim.get("recorded_from"))
@@ -49,11 +52,13 @@ def memory_features(claim: Mapping[str, Any], semantic_score: float,
 
 def memory_score(features: Mapping[str, float],
                  weights: Mapping[str, float] = DEFAULT_WEIGHTS) -> float:
+    """按冻结权重计算候选的多因子先验分数。"""
     return sum(float(weight) * _clamp(features.get(name, 0.0))
                for name, weight in weights.items())
 
 
 def blend_reranker_score(reranker_score: float, features: Mapping[str, float]) -> float:
+    """融合远程重排相关度与非语义先验，生成最终排序分数。"""
     prior = sum(DEFAULT_WEIGHTS[name] * _clamp(features.get(name, 0.0))
                 for name in ("recency", "access_frequency", "confidence", "importance", "utility")) / 0.35
     return 0.80 * _clamp(reranker_score) + 0.20 * prior

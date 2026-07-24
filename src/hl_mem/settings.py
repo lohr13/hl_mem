@@ -5,11 +5,34 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Any
+from enum import StrEnum
+from typing import Any, Literal
 
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
 from hl_mem.errors import ConfigurationError
+
+EmbedderMode = Literal["fake", "real"]
+RerankerMode = Literal["off", "fake", "on", "real"]
+RerankerProvider = Literal["dashscope"]
+RelationExpansionMode = Literal["off", "on"]
+ExtractorMode = Literal["fake", "real", "llm"]
+LLMProvider = Literal["dashscope", "zhipu", "openai_compatible"]
+StructuredOutputModeName = Literal["auto", "json_object", "json_schema"]
+
+
+class Environment(StrEnum):
+    """支持的部署环境。"""
+
+    DEV = "dev"
+    TEST = "test"
+    PRODUCTION = "production"
+
+
+class VectorBackend(StrEnum):
+    """支持的向量检索后端。"""
+
+    SQLITE_SCAN = "sqlite_scan"
 
 
 def parse_daily_cron(value: str, variable_name: str) -> int:
@@ -24,10 +47,10 @@ def parse_daily_cron(value: str, variable_name: str) -> int:
 class Settings:
     """全局非敏感配置快照。"""
 
-    environment: str = "dev"
+    environment: Environment = Environment.DEV
     database_path: str = "var/hl_mem.db"
     allow_fake_fallback: bool = False
-    embedder_mode: str = "fake"
+    embedder_mode: EmbedderMode = "fake"
     embedding_dim: int = 2048
     embedding_api_key: str | None = None
     embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -35,12 +58,12 @@ class Settings:
     embedding_connect_timeout: float = 5.0
     embedding_read_timeout: float = 30.0
     embedding_max_attempts: int = 3
-    reranker_mode: str = "off"
-    reranker_provider: str = "dashscope"
+    reranker_mode: RerankerMode = "off"
+    reranker_provider: RerankerProvider = "dashscope"
     reranker_api_key: str | None = None
     reranker_base_url: str = "https://dashscope.aliyuncs.com"
     reranker_model: str = "gte-rerank-v2"
-    relation_expansion_mode: str = "off"
+    relation_expansion_mode: RelationExpansionMode = "off"
     relation_expansion_max_depth: int = 1
     packed_context_token_budget: int = 2000
     recall_candidate_floor: int = 50
@@ -50,18 +73,18 @@ class Settings:
     tag_channel_enabled: bool = False
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
-    vector_backend: str = "sqlite_scan"
+    vector_backend: VectorBackend = VectorBackend.SQLITE_SCAN
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
     hermes_prefetch_cache_ttl_seconds: float = 300.0
     policy_induction_lookback_days: int = 7
     policy_induction_min_episodes: int = 3
-    extractor_mode: str = "fake"
+    extractor_mode: ExtractorMode = "fake"
     llm_api_key: str | None = None
     llm_base_url: str = "https://coding.dashscope.aliyuncs.com/v1"
     llm_model: str = "qwen3.7-plus"
-    llm_provider: str = "dashscope"
-    llm_structured_mode: str = "auto"
+    llm_provider: LLMProvider = "dashscope"
+    llm_structured_mode: StructuredOutputModeName = "auto"
     llm_timeout: float = 90.0
     llm_max_attempts: int = 3
     llm_schema_retries: int = 2
@@ -100,8 +123,12 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         """从环境变量创建并校验不可变配置快照。"""
-        environment = os.getenv("HL_MEM_ENV", "dev").lower()
-        production = environment == "production"
+        try:
+            environment = Environment(os.getenv("HL_MEM_ENV", "dev").lower())
+            vector_backend = VectorBackend(os.getenv("HL_MEM_VECTOR_BACKEND", "sqlite_scan"))
+        except ValueError as error:
+            raise ConfigurationError(f"invalid enum configuration: {error}") from error
+        production = environment is Environment.PRODUCTION
         settings = cls(
             environment=environment,
             database_path=os.getenv("HL_MEM_DB_PATH", "var/hl_mem.db"),
@@ -131,7 +158,7 @@ class Settings:
             tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower() == "true",
             tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
             tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
-            vector_backend=os.getenv("HL_MEM_VECTOR_BACKEND", "sqlite_scan"),
+            vector_backend=vector_backend,
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
             hermes_prefetch_cache_ttl_seconds=float(os.getenv("HL_MEM_HERMES_PREFETCH_CACHE_TTL_SECONDS", "300")),
@@ -258,7 +285,7 @@ class Settings:
             raise ConfigurationError("HL_MEM_RERANKER_PROVIDER must be 'dashscope'")
         if self.extractor_mode not in {"fake", "real", "llm"}:
             raise ConfigurationError("HL_MEM_EXTRACTOR must be 'fake', 'real', or 'llm'")
-        if self.environment != "production":
+        if self.environment != Environment.PRODUCTION:
             return
         if self.embedder_mode != "real":
             raise ConfigurationError("HL_MEM_EMBEDDER must be 'real' in production")

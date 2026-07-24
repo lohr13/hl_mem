@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from datetime import datetime
-from typing import Any
 
 from hl_mem.storage.jobs import JobRepository
 
@@ -15,7 +14,7 @@ def enqueue_daily_job(
     now: str,
     schedule: dict[str, str | int],
     job_type: str,
-    payload: dict[str, Any],
+    payload: dict[str, object],
     env_name: str,
 ) -> str | None:
     """检查日调度配置，构造幂等 job。命中返回 job_id，未命中返回 None。"""

@@ -34,10 +34,13 @@ from hl_mem.storage._shared import (
 
 
 class ClaimRepository:
+    """封装 Claim 持久化、时间可见检索、状态更新与去重查询。"""
+
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
     def insert_claim(self, claim: dict[str, Any], commit: bool = True) -> bool:
+        """编码结构化字段并幂等写入一条 Claim。"""
         stored = dict(claim)
         if "value" in stored:
             stored["value_json"] = encode_json(stored.pop("value"), sort_keys=True)
@@ -46,6 +49,7 @@ class ClaimRepository:
         return insert_row(self.connection, "claims", stored, commit)
 
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:
+        """按标识获取并解码 Claim，不存在时返回 None。"""
         return self._decode_claim(
             row_to_dict(self.connection.execute("SELECT * FROM claims WHERE id=?", (claim_id,)).fetchone())
         )
@@ -70,6 +74,7 @@ class ClaimRepository:
         return result
 
     def update_status(self, claim_id: str, status: str, commit: bool = True) -> bool:
+        """校验目标状态后更新 Claim 生命周期状态。"""
         try:
             ClaimStatus(status)
         except ValueError as error:
@@ -80,6 +85,7 @@ class ClaimRepository:
         return cursor.rowcount == 1
 
     def find_active(self, namespace: str, subject_entity_id: str | None) -> list[dict[str, Any]]:
+        """返回命名空间内指定主体的活跃 Claim。"""
         rows = self.connection.execute(
             "SELECT * FROM claims WHERE namespace_key=? AND subject_entity_id IS ? " "AND status='active'",
             (namespace, subject_entity_id),
@@ -219,6 +225,7 @@ class ClaimRepository:
         return candidates
 
     def find_by_conflict_key(self, conflict_key: str | None) -> list[dict[str, Any]]:
+        """按冲突键返回仍参与解析的候选 Claim。"""
         if conflict_key is None:
             return []
         rows = self.connection.execute(
@@ -230,6 +237,7 @@ class ClaimRepository:
         return self._decode_rows(rows)
 
     def find_by_fact_hash(self, namespace: str, fact_hash: str) -> dict[str, Any] | None:
+        """按命名空间与事实哈希查找最新未终结 Claim。"""
         return self._decode_claim(
             row_to_dict(
                 self.connection.execute(
@@ -247,6 +255,7 @@ class ClaimRepository:
         known_as_of: str | None = None,
         namespace: str = "default",
     ) -> list[dict[str, Any]]:
+        """返回指定双时间视图下仍携带向量的可见 Claim。"""
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
         statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
@@ -271,6 +280,7 @@ class ClaimRepository:
         known_as_of: str | None = None,
         namespace: str = "default",
     ) -> list[dict[str, Any]]:
+        """对可见 Claim 执行本地余弦全量扫描并截断。"""
         # A 100k x 2048 float32 full scan is about 819 MB; indexed retrieval must
         # be reconsidered before deployments approach that scale.
         return sorted(
@@ -299,6 +309,7 @@ class ClaimRepository:
         )
 
     def record_access(self, claim_ids: list[str], accessed_at: str) -> int:
+        """批量累计召回访问次数并记录最近访问时间。"""
         unique_ids = list(dict.fromkeys(claim_ids))
         total = 0
         try:
@@ -491,6 +502,7 @@ class ClaimRepository:
         known_as_of: str | None = None,
         namespace: str = "default",
     ) -> list[ClaimRow]:
+        """使用 FTS5 查询并应用双时间可见性过滤。"""
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
         statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"

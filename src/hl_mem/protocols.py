@@ -17,7 +17,7 @@ class ClaimRow(TypedDict, total=False):
     namespace_key: str
     subject_entity_id: str
     predicate: str
-    value: Any
+    value: object
     status: str
     confidence: float
     canonical_attribute: str | None

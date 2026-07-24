@@ -1,3 +1,5 @@
+"""尽力写入的 SQLite 审计日志与上下文绑定工具。"""
+
 from __future__ import annotations
 
 import json
@@ -182,8 +184,7 @@ class AuditLogger:
                 "written": self.written_count, "dropped_count": self.dropped_count,
                 "last_error": self.last_error}
 
-    def close(self, timeout_ms: int = 500) -> bool:
-        del timeout_ms
+    def close(self) -> bool:
         try:
             with self._lock:
                 if self._connection is not None:
@@ -214,7 +215,7 @@ class NullAuditLogger:
         return {"enabled": False, "emitted": 0, "written": 0,
                 "dropped_count": 0, "last_error": None}
 
-    def close(self, timeout_ms: int = 500) -> bool:
+    def close(self) -> bool:
         return True
 
 

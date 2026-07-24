@@ -1,3 +1,5 @@
+"""进程安全的每日 LLM token 预算控制。"""
+
 from __future__ import annotations
 
 import sqlite3
@@ -31,11 +33,13 @@ class TokenBudget:
         return connection
 
     def can_spend(self, estimated_tokens: int) -> bool:
+        """检查今日剩余预算是否足以覆盖预计 token。"""
         if estimated_tokens < 0:
             raise ValueError("estimated_tokens must be non-negative")
         return int(self.get_stats()["used_tokens"]) + estimated_tokens <= self.daily_limit
 
     def record_usage(self, actual_tokens: int) -> None:
+        """在即时事务中原子累计今日实际 token 用量。"""
         if actual_tokens < 0:
             raise ValueError("actual_tokens must be non-negative")
         current = self._today().isoformat()
@@ -55,6 +59,7 @@ class TokenBudget:
             connection.close()
 
     def get_stats(self) -> dict[str, int | str]:
+        """返回今日预算上限、已用量和剩余额度。"""
         current = self._today().isoformat()
         with self._connect() as connection:
             row = connection.execute("SELECT used_tokens FROM token_budget WHERE budget_date=?", (current,)).fetchone()
