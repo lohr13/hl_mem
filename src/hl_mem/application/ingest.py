@@ -27,6 +27,7 @@ from hl_mem.domain.claims.dedup import Deduplicator
 from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration, normalize_utc_iso
 from hl_mem.domain.constants import DEFAULT_SUBJECT
 from hl_mem.domain.entity import normalize_entity_id
+from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol
 from hl_mem.settings import Settings
@@ -73,7 +74,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _summary(claim: Any) -> dict[str, Any]:
+def _summary(claim: ExtractedClaim | dict[str, Any]) -> dict[str, Any]:
     value = claim.get("value", getattr(claim, "value", None))
     return {
         "subject": claim.get("subject_entity_id", getattr(claim, "subject", None)),
@@ -197,8 +198,8 @@ class IngestService:
 
     @staticmethod
     def store_extracted(
-        connection: Any,
-        extracted: Any,
+        connection: sqlite3.Connection,
+        extracted: ExtractedClaim,
         event: dict[str, Any],
         now: str,
         embedder: EmbedderProtocol,
@@ -385,7 +386,7 @@ class IngestService:
 
 
 def _build_claim_drafts(
-    extracted: Any,
+    extracted: ExtractedClaim,
     event: dict[str, Any],
     now: str,
     embedder: EmbedderProtocol,

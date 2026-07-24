@@ -13,7 +13,7 @@ from hl_mem.domain.claims.conflicts import slot_qualifier_key
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
-from hl_mem.protocols import EmbedderProtocol
+from hl_mem.protocols import ClaimRow, EmbedderProtocol
 
 
 @dataclass(frozen=True)
@@ -284,10 +284,10 @@ class ClaimRepository:
         query_blob: bytes,
         limit: int,
         reference_time: str,
-        intent: Any,
+        intent: RecallIntent,
         known_as_of: str | None,
         namespace: str,
-    ) -> list[dict]:
+    ) -> list[ClaimRow]:
         """以统一后端协议委托 SQLite 向量扫描。"""
         return self.search_claims_vector(
             query_blob,
@@ -490,7 +490,7 @@ class ClaimRepository:
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
         namespace: str = "default",
-    ) -> list[dict[str, Any]]:
+    ) -> list[ClaimRow]:
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
         statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"

@@ -2,7 +2,34 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+
+from hl_mem.domain.recall import RecallIntent
+
+if TYPE_CHECKING:
+    from hl_mem.ingest.extractors import ExtractedClaim
+
+
+class ClaimRow(TypedDict, total=False):
+    """检索链路使用的已解码 Claim 行。"""
+
+    id: str
+    namespace_key: str
+    subject_entity_id: str
+    predicate: str
+    value: Any
+    status: str
+    confidence: float
+    canonical_attribute: str | None
+    canonical_slot: str | None
+    topic_tags: list[str]
+    embedding_dense: bytes
+    valid_from: str | None
+    valid_to: str | None
+    recorded_from: str | None
+    recorded_to: str | None
+    access_count: int
+    helpful_rate: float
 
 
 class EmbedderProtocol(Protocol):
@@ -23,7 +50,7 @@ class ExtractorProtocol(Protocol):
         self,
         content: dict[str, Any] | str,
         context: dict[str, Any] | None = None,
-    ) -> list[Any]: ...
+    ) -> list[ExtractedClaim]: ...
 
 
 class RerankerProtocol(Protocol):
@@ -40,10 +67,10 @@ class TextSearchBackend(Protocol):
         query: str,
         limit: int,
         reference_time: str,
-        intent: Any,
+        intent: RecallIntent,
         known_as_of: str | None,
         namespace: str,
-    ) -> list[dict]: ...
+    ) -> list[ClaimRow]: ...
 
 
 class VectorSearchBackend(Protocol):
@@ -54,7 +81,7 @@ class VectorSearchBackend(Protocol):
         query_blob: bytes,
         limit: int,
         reference_time: str,
-        intent: Any,
+        intent: RecallIntent,
         known_as_of: str | None,
         namespace: str,
-    ) -> list[dict]: ...
+    ) -> list[ClaimRow]: ...

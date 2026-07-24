@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -49,8 +50,8 @@ class RecallService:
 
     def __init__(
         self,
-        connection: Any,
-        embedder: EmbedderProtocol | Any,
+        connection: sqlite3.Connection,
+        embedder: EmbedderProtocol,
         reranker: RerankerProtocol | None = None,
         relation_config: RelationExpansionConfig | None = None,
         settings: Settings | None = None,
