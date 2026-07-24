@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Literal
 
 import httpx
@@ -14,6 +15,7 @@ from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
 from hl_mem.llm.types import StructuredOutputMode
+from hl_mem.observability.llm_spans import LLMSpanRecorder
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol, RerankerProtocol
 from hl_mem.recall.reranker import FakeReranker, Reranker
 from hl_mem.settings import Settings
@@ -25,7 +27,12 @@ _EXTRACTOR_REGISTRY: dict[str, str] = {
 }
 
 
-def make_llm_client(settings: Settings) -> LLMClient:
+def make_llm_client(
+    settings: Settings,
+    connection: sqlite3.Connection | None = None,
+    *,
+    operation: str = "other",
+) -> LLMClient:
     """依据统一配置创建 provider 无关的 LLM 客户端。"""
     if not settings.llm_api_key:
         raise ConfigurationError("LLM_API_KEY is required")
@@ -44,6 +51,8 @@ def make_llm_client(settings: Settings) -> LLMClient:
         provider=provider_type(),
         timeout=httpx.Timeout(settings.llm_timeout),
         max_attempts=settings.llm_max_attempts,
+        span_recorder=LLMSpanRecorder(connection) if connection is not None else None,
+        operation=operation,
     )
 
 
@@ -90,7 +99,12 @@ def make_reranker(settings: Settings) -> RerankerProtocol | None:
         return None
 
 
-def make_extractor(settings: Settings, *, require_real: bool = False) -> ExtractorProtocol:
+def make_extractor(
+    settings: Settings,
+    *,
+    require_real: bool = False,
+    connection: sqlite3.Connection | None = None,
+) -> ExtractorProtocol:
     """依据统一配置创建 LLM 提取组件。"""
     if settings.extractor_mode == "fake" and not require_real:
         if settings.environment == "production":
@@ -106,7 +120,7 @@ def make_extractor(settings: Settings, *, require_real: bool = False) -> Extract
         else StructuredOutputMode.JSON_SCHEMA
     )
     return LLMExtractor(
-        make_llm_client(settings),
+        make_llm_client(settings, connection, operation="extract"),
         ChunkingPolicy(
             target_chars=settings.extraction_chunk_target_chars,
             overlap_turns=settings.extraction_chunk_overlap_turns,

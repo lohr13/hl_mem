@@ -57,6 +57,9 @@ class LLMResponse:
     finish_reason: str | None
     usage_total_tokens: int
     raw_request_id: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_tokens: int | None = None
 
 
 class LLMProviderProtocol(Protocol):

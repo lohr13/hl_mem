@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
@@ -33,6 +33,7 @@ from hl_mem.experience.service import ExperienceService, InvalidStateTransitionE
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
+from hl_mem.observability.llm_spans import llm_span_stats
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.reranker import FakeReranker
 from hl_mem.settings import Settings
@@ -105,12 +106,18 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     @app.get("/healthz")
     def healthz(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
         connection.execute("SELECT 1").fetchone()
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        operations = llm_span_stats(connection, since)["operations"]
         return {
             "status": "ok",
             "version": __version__,
             "embedder": "fake" if isinstance(embedder, FakeEmbedder) else "real",
             "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
             "settings": settings.snapshot(),
+            "llm_stats": {
+                "calls": sum(item["count"] for item in operations),
+                "total_tokens": sum(item["total_tokens"] for item in operations),
+            },
         }
 
     @app.post("/v1/events")

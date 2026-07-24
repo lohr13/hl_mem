@@ -44,6 +44,22 @@ def test_provider_parses_response_metadata() -> None:
     )
 
 
+def test_provider_parses_token_breakdown() -> None:
+    """Provider 应从 usage 中提取输入、输出和缓存 token。"""
+    response = OpenAICompatibleProvider().parse_response(
+        {
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": 3,
+                "total_tokens": 8,
+                "prompt_tokens_details": {"cached_tokens": 2},
+            },
+        }
+    )
+    assert (response.input_tokens, response.output_tokens, response.cached_tokens) == (5, 3, 2)
+
+
 def test_only_explicit_structured_format_errors_are_unsupported() -> None:
     provider = OpenAICompatibleProvider()
     request = httpx.Request("POST", "https://example.test/chat/completions")

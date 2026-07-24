@@ -51,11 +51,15 @@ class OpenAICompatibleProvider:
         """解析 OpenAI-compatible 响应外壳。"""
         choice = payload["choices"][0]
         usage = payload.get("usage") or {}
+        prompt_details = usage.get("prompt_tokens_details") or {}
         return LLMResponse(
             content=choice["message"]["content"],
             finish_reason=choice.get("finish_reason"),
             usage_total_tokens=int(usage.get("total_tokens", 0)),
             raw_request_id=payload.get("id") or payload.get("request_id"),
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+            cached_tokens=prompt_details.get("cached_tokens"),
         )
 
     def is_structured_mode_unsupported(self, error: httpx.HTTPStatusError) -> bool:
