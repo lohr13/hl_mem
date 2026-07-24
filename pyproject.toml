@@ -39,6 +39,9 @@ build-backend = "hatchling.build"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+markers = [
+    "benchmark: performance benchmarks excluded from default test discovery by file naming",
+]
 
 [tool.coverage.run]
 source = ["src/hl_mem"]
