@@ -95,7 +95,9 @@ def test_llm_claim_invalid_defaults_and_prompt():
 
 @pytest.mark.parametrize(("volatility", "scope", "expires"), [
     ("ephemeral", "temporal", "2026-07-28T00:00:00+00:00"),
-    ("ephemeral", "permanent", None), ("stable", "temporal", None),
+    ("ephemeral", "permanent", None),
+    # Stage 4: temporal now gets TTL regardless of volatility (importance 0.5 → 7 days)
+    ("stable", "temporal", "2026-07-28T00:00:00+00:00"),
     ("stable", "permanent", None),
 ])
 def test_ttl_matrix(tmp_path, volatility, scope, expires):
