@@ -177,10 +177,14 @@ class LLMExtractor:
         self.structured_mode = structured_mode
         self.chunking_policy = chunking_policy
         self.last_usage_tokens = 0
+        self.last_input_tokens = 0
+        self.last_output_tokens = 0
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
         """同步分块提取事实，并在输出截断时递归二分恢复。"""
         self.last_usage_tokens = 0
+        self.last_input_tokens = 0
+        self.last_output_tokens = 0
         event_context = context or {}
         chunks = split_extraction_content(content, self.chunking_policy)
         chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
@@ -286,6 +290,8 @@ class LLMExtractor:
             )
             response = self.llm_client.complete(request)
             self.last_usage_tokens += response.usage_total_tokens
+            self.last_input_tokens += response.input_tokens or 0
+            self.last_output_tokens += response.output_tokens or 0
             if response.finish_reason in {"length", "max_tokens"}:
                 raise LLMOutputTruncatedError(
                     f"LLM output truncated: provider={self.llm_client.provider.name}, model={self.model}"

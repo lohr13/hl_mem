@@ -30,6 +30,14 @@ class EventInput(BaseModel):
     sensitivity: str = Field(default="normal", max_length=20)
 
 
+class DryRunExtractionInput(BaseModel):
+    """Dry-run 提取请求，不触发任何记忆持久化。"""
+
+    text: str = Field(min_length=1, max_length=50000)
+    context: dict[str, Any] = Field(default_factory=dict)
+    custom_instructions: str | None = Field(default=None, max_length=10000)
+
+
 class RecallInput(BaseModel):
     """记忆召回请求。"""
 
