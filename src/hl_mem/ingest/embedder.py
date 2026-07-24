@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import struct
-import time
 from typing import Iterable
 
 import httpx
 
-from hl_mem.core.vector import cosine_similarity
+from hl_mem.http_utils import retry_http
 
 
 def pack_vector(values: Iterable[float]) -> bytes:
@@ -55,30 +54,23 @@ class Embedder:
         return self.embed_batch([text])[0]
 
     def _request(self, texts: list[str]) -> list[bytes]:
-        response: httpx.Response | None = None
-        for attempt in range(1, self.max_attempts + 1):
-            try:
-                post = self._client.post if self._client is not None else httpx.post
-                response = post(
-                    f"{self.base_url}/embeddings",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"model": self.model, "input": texts, "dimensions": self.dim},
-                    timeout=self.timeout,
-                )
-                response.raise_for_status()
-                break
-            except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
-                retryable = isinstance(error, httpx.TimeoutException) or (
-                    error.response is not None
-                    and (error.response.status_code == 429 or error.response.status_code >= 500)
-                )
-                if not retryable or attempt == self.max_attempts:
-                    raise RuntimeError(
-                        f"embedding request failed after {attempt} attempt(s): {type(error).__name__}: {error}"
-                    ) from error
-                time.sleep(0.5 * (2 ** (attempt - 1)))
-        if response is None:
-            raise RuntimeError("embedding request failed without a response")
+        def send_request() -> httpx.Response:
+            post = self._client.post if self._client is not None else httpx.post
+            response = post(
+                f"{self.base_url}/embeddings",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={"model": self.model, "input": texts, "dimensions": self.dim},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response
+
+        try:
+            response = retry_http(send_request, max_attempts=self.max_attempts)
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as error:
+            raise RuntimeError(
+                f"embedding request failed after {self.max_attempts} attempt(s): {type(error).__name__}: {error}"
+            ) from error
         data = sorted(response.json()["data"], key=lambda item: item.get("index", 0))
         if len(data) != len(texts):
             raise ValueError("embedding response count does not match input count")

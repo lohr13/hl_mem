@@ -16,8 +16,27 @@ from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
 from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
-from hl_mem.storage.repository import ClaimRepository, DerivationRepository, EvidenceRepository
 from hl_mem.settings import Settings
+from hl_mem.storage.repository import ClaimRepository, DerivationRepository, EvidenceRepository
+
+
+def budget_pack(items: list[dict[str, Any]], token_budget: int) -> list[dict[str, Any]]:
+    """按粗略中文 token 估算将候选顺序装入预算。"""
+    if token_budget < 1:
+        return []
+    packed: list[dict[str, Any]] = []
+    used = 0
+    for item in items:
+        data = item.get("data", item)
+        text = str(data.get("text") or data.get("body") or data.get("procedure") or "")
+        cost = max(1, (len(text) + 1) // 2)
+        if used + cost > token_budget:
+            continue
+        packed.append(item)
+        used += cost
+        if used >= token_budget:
+            break
+    return packed
 
 
 def _now() -> str:
@@ -140,22 +159,17 @@ class RecallService:
             + [{"type": "policy", "data": item, "priority": 0} for item in policies]
         )
         all_items.sort(key=lambda item: -item["priority"])
-        packed: list[dict[str, Any]] = []
+        packed = budget_pack(all_items, token_budget)
         used = 0
-        truncated = False
-        for item in all_items:
-            data = item["data"]
+        for item in packed:
+            data = item.get("data", item)
             text = str(data.get("text") or data.get("body") or data.get("procedure") or "")
-            cost = max(1, (len(text) + 1) // 2)
-            if used + cost > token_budget:
-                truncated = True
-                continue
-            packed.append(item)
-            used += cost
-            if used >= token_budget:
-                truncated = len(packed) < len(all_items)
-                break
-        return {"context_items": packed, "used_tokens_estimate": used, "truncated": truncated}
+            used += max(1, (len(text) + 1) // 2)
+        return {
+            "context_items": packed,
+            "used_tokens_estimate": used,
+            "truncated": len(packed) < len(all_items),
+        }
 
     def _record_access(self, claims: list[dict[str, Any]]) -> None:
         try:
