@@ -6,7 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 from hl_mem.config import CONSOLIDATE_GRAY_ZONE_MAX, CONSOLIDATE_GRAY_ZONE_MIN
 from hl_mem.core.vector import cosine_similarity
@@ -172,7 +172,12 @@ class ConflictConsolidator:
         return pairs
 
     def run_batch(
-        self, limit: int = 100, namespace: str = "default", watermark: str | None = None, dry_run: bool = False
+        self,
+        limit: int = 100,
+        namespace: str = "default",
+        watermark: str | None = None,
+        dry_run: bool = False,
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> dict[str, int]:
         """判定并处理一个候选批次。"""
         stats = {
@@ -185,7 +190,11 @@ class ConflictConsolidator:
             "cas_skipped": 0,
         }
         run_id = uuid.uuid4().hex
-        for pair in self.scan_candidates(namespace, watermark, limit):
+        candidates = self.scan_candidates(namespace, watermark, limit)
+        total = len(candidates)
+        for processed, pair in enumerate(candidates, start=1):
+            if progress_callback is not None:
+                progress_callback("review", processed, total)
             decision = self.judge.judge(pair.left, pair.right)
             if decision.confidence < self.confidence_threshold:
                 stats["manual_review"] += 1

@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.storage._shared import decode_json, encode_json, insert_row, row_to_dict
+
+
+def _now_iso() -> str:
+    """返回 UTC ISO 8601 时间。"""
+    return datetime.now(timezone.utc).isoformat()
 
 
 class JobRepository:
@@ -90,6 +96,60 @@ class JobRepository:
             if row["status"] in counts:
                 counts[row["status"]] = row["count"]
         return counts
+
+    def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
+        """按更新时间倒序返回任务及其进度。"""
+        rows = self.connection.execute(
+            "SELECT id,job_type,status,stage,processed,total,progress_detail_json,"
+            "heartbeat_at,last_error,created_at,updated_at "
+            "FROM jobs ORDER BY updated_at DESC,id LIMIT ?",
+            (limit,),
+        ).fetchall()
+        jobs = [dict(row) for row in rows]
+        for job in jobs:
+            job["progress_detail"] = decode_json(job.pop("progress_detail_json"))
+        return jobs
+
+    def update_progress(
+        self,
+        job_id: str,
+        lease_token: str,
+        *,
+        stage: str | None = None,
+        processed: int | None = None,
+        total: int | None = None,
+        detail: dict[str, Any] | None = None,
+        heartbeat_at: str | None = None,
+    ) -> bool:
+        """更新运行中任务的进度（需持有 lease token）。"""
+        updates: list[str] = []
+        params: list[Any] = []
+        if stage is not None:
+            updates.append("stage=?")
+            params.append(stage)
+        if processed is not None:
+            updates.append("processed=?")
+            params.append(processed)
+        if total is not None:
+            updates.append("total=?")
+            params.append(total)
+        if detail is not None:
+            updates.append("progress_detail_json=?")
+            params.append(encode_json(detail, sort_keys=True))
+        if heartbeat_at is not None:
+            updates.append("heartbeat_at=?")
+            params.append(heartbeat_at)
+        if not updates:
+            return True
+        updates.append("updated_at=?")
+        params.append(heartbeat_at or _now_iso())
+        params.extend([job_id, lease_token])
+        cursor = self.connection.execute(
+            f"UPDATE jobs SET {','.join(updates)} WHERE id=? AND lease_token=? AND status='running'",
+            params,
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
 
     def retry_failed(self) -> int:
         """将失败任务重置为待处理状态，由调用方提交事务。"""

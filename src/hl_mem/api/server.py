@@ -315,8 +315,9 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         }
 
     @app.get("/v1/jobs")
-    def jobs(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, int]:
-        return JobRepository(connection).counts()
+    def jobs(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
+        repository = JobRepository(connection)
+        return {**repository.counts(), "jobs": repository.list_jobs()}
 
     return app
 
