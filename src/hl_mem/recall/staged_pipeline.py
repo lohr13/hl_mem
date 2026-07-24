@@ -23,6 +23,12 @@ from hl_mem.recall.trace import SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 
+# ── 排序因子冻结 ──────────────────────────────────────────────
+# 排序链已稳定，不再增加新 boost/channel/weight。
+# 新增召回能力应通过已有通道（FTS/Dense/Tag）的参数调优实现，
+# 而非引入新的排序因子。如需新增，必须先建立离线评测集并证明不退化。
+# ──────────────────────────────────────────────────────────────
+
 RRF_K = 60
 
 
