@@ -6,7 +6,7 @@ from typing import Any
 
 
 class PostgresDatabase:
-    """惰性加载 psycopg 的 PostgreSQL 连接管理器。"""
+    """实验性的 PostgreSQL 连接探针，尚未实现 HL-Mem 仓储语义。"""
 
     def __init__(self, dsn: str, connect_timeout: float = 5.0) -> None:
         if not dsn:

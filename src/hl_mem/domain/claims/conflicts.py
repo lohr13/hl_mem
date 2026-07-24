@@ -14,7 +14,6 @@ from hl_mem.domain.claims.attributes import (
     normalize_predicate,
 )
 
-
 EXCLUSIVE_QUALIFIERS = {"scope", "context", "environment", "project", "channel"}
 
 
@@ -38,14 +37,14 @@ def compute_conflict_key(
     canonical_namespace = unicodedata.normalize("NFKC", namespace).strip().casefold()
     canonical_subject = re.sub(r"\s+", "", unicodedata.normalize("NFKC", subject)).casefold()
     exclusive = {
-        key: _canonicalize_json(value)
-        for key, value in (qualifiers or {}).items()
-        if key in EXCLUSIVE_QUALIFIERS
+        key: _canonicalize_json(value) for key, value in (qualifiers or {}).items() if key in EXCLUSIVE_QUALIFIERS
     }
     slot = canonical_conflict_slot(normalize_canonical_attribute(canonical_attribute))
     raw = json.dumps(
         ["v2", canonical_namespace, canonical_subject, slot, exclusive],
-        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
@@ -84,10 +83,7 @@ class ConflictResolver:
     def resolve(self, existing: dict[str, Any], new: dict[str, Any]) -> str:
         existing_attribute = existing.get("canonical_attribute")
         new_attribute = new.get("canonical_attribute")
-        if not (
-            is_mutually_exclusive_attribute(existing_attribute)
-            and is_mutually_exclusive_attribute(new_attribute)
-        ):
+        if not (is_mutually_exclusive_attribute(existing_attribute) and is_mutually_exclusive_attribute(new_attribute)):
             return "compatible"
         if canonical_conflict_slot(existing_attribute) != canonical_conflict_slot(new_attribute):
             return "compatible"
@@ -107,7 +103,9 @@ class ConflictResolver:
 
     @staticmethod
     def _value(claim: dict[str, Any]) -> Any:
-        value = claim.get("value", claim.get("value_json"))
+        if "value" in claim:
+            return claim["value"]
+        value = claim.get("value_json")
         if isinstance(value, str):
             try:
                 return json.loads(value)
@@ -126,12 +124,10 @@ class ConflictResolver:
 
     @staticmethod
     def _signals_change(claim: dict[str, Any]) -> bool:
-        qualifiers = claim.get("qualifiers") or claim.get("qualifiers_json") or {}
+        qualifiers = claim["qualifiers"] if "qualifiers" in claim else claim.get("qualifiers_json") or {}
         if isinstance(qualifiers, str):
             try:
                 qualifiers = json.loads(qualifiers)
             except json.JSONDecodeError:
                 qualifiers = {}
-        return bool(
-            qualifiers.get("state_change") or qualifiers.get("current") or qualifiers.get("change")
-        )
+        return bool(qualifiers.get("state_change") or qualifiers.get("current") or qualifiers.get("change"))

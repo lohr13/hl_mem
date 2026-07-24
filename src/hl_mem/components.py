@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Literal
 
 import httpx
 
@@ -14,6 +14,7 @@ from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
 from hl_mem.llm.types import StructuredOutputMode
+from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol, RerankerProtocol
 from hl_mem.recall.reranker import FakeReranker, Reranker
 from hl_mem.settings import Settings
 
@@ -46,7 +47,7 @@ def make_llm_client(settings: Settings) -> LLMClient:
     )
 
 
-def make_embedder(settings: Settings) -> Any:
+def make_embedder(settings: Settings) -> EmbedderProtocol:
     """依据统一配置创建向量化组件。"""
     if settings.embedder_mode == "fake":
         return FakeEmbedder(settings.embedding_dim)
@@ -65,7 +66,7 @@ def make_embedder(settings: Settings) -> Any:
     )
 
 
-def make_reranker(settings: Settings) -> Any | None:
+def make_reranker(settings: Settings) -> RerankerProtocol | None:
     """依据统一配置创建重排组件。"""
     if settings.reranker_mode == "off":
         return None
@@ -74,8 +75,7 @@ def make_reranker(settings: Settings) -> Any | None:
     if not settings.reranker_api_key:
         if settings.environment == "production" or not settings.allow_fake_fallback:
             raise ConfigurationError(
-                f"HL_MEM_RERANKER={settings.reranker_mode} but "
-                "RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
+                f"HL_MEM_RERANKER={settings.reranker_mode} but " "RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
             )
         return None
     try:
@@ -90,7 +90,7 @@ def make_reranker(settings: Settings) -> Any | None:
         return None
 
 
-def make_extractor(settings: Settings, *, require_real: bool = False) -> Any:
+def make_extractor(settings: Settings, *, require_real: bool = False) -> ExtractorProtocol:
     """依据统一配置创建 LLM 提取组件。"""
     if settings.extractor_mode == "fake" and not require_real:
         if settings.environment == "production":
@@ -117,7 +117,7 @@ def make_extractor(settings: Settings, *, require_real: bool = False) -> Any:
     )
 
 
-def make_extractor_for_type(event_type: str, settings: Settings) -> Any:
+def make_extractor_for_type(event_type: str, settings: Settings) -> ExtractorProtocol | Literal["explicit"]:
     """根据事件类型选择提取器；显式记忆返回 worker 可识别的特殊标记。"""
     extractor_name = _EXTRACTOR_REGISTRY.get(event_type, "llm")
     if extractor_name == "explicit":
