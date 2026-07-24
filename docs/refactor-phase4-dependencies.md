@@ -32,18 +32,18 @@ ingest → recall   (2 条)  ❌ 写入依赖召回
    ```python
    """纯向量数学函数，不依赖任何业务包。"""
    from __future__ import annotations
-   
+
    import struct
-   
+
    def cosine_similarity(query_blob: bytes, target_blob: bytes) -> float:
        """计算两个序列化 float32 向量的余弦相似度。"""
        # 从 ingest/embeddings.py 复制实现
        ...
-   
+
    def encode_vector(vec: list[float]) -> bytes:
        """将 float 列表序列化为 bytes。"""
        return struct.pack(f"{len(vec)}f", *vec)
-   
+
    def decode_vector(blob: bytes) -> list[float]:
        """将 bytes 反序列化为 float 列表。"""
        n = len(blob) // 4
@@ -119,7 +119,7 @@ ingest → recall   (2 条)  ❌ 写入依赖召回
 1. 在 `backfill_conflict_key_v2.py` 顶部加注释标记：
    ```python
    """⚠️ 冻结模块：此 migration 脚本导入的函数已被快照。
-   
+
    不要修改此文件中使用的算法。如果 recall.conflict 或 recall.attribute_map
    的算法改变，此 migration 应保持使用旧版本逻辑。
    """

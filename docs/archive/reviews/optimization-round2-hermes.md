@@ -46,8 +46,8 @@ Worker._extract() 实现：
 ```python
 # 查同一 session 最近 3 条 event（不含当前这条）
 recent = EventRepository(conn).get_recent_events(
-    session_id=event['session_id'], 
-    before=event['occurred_at'], 
+    session_id=event['session_id'],
+    before=event['occurred_at'],
     limit=3
 )
 context = {"recent_texts": [json.loads(e['content_json']).get('text','') for e in recent]}

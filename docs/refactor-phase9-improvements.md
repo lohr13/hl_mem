@@ -156,18 +156,18 @@ class Settings:
     """全局配置快照。"""
     environment: str = "dev"
     database_path: str = "var/hl_mem.db"
-    
+
     # Embedder
     embedder_mode: str = "fake"
     embedding_dim: int = 2048
     embedding_model: str = "text-embedding-v4"
-    
+
     # Reranker
     reranker_mode: str = "off"
-    
+
     # LLM
     llm_model: str = "qwen3.7-plus"
-    
+
     # Worker
     worker_poll_interval: float = 2.0
     worker_maintenance_interval: float = 600.0

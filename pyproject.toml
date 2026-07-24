@@ -3,13 +3,22 @@ name = "hl-mem"
 version = "0.10.0"
 description = "Evidence-aware local memory service"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11"
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+]
 dependencies = [
     "fastapi>=0.115",
     "httpx>=0.27",
     "pydantic>=2",
     "uvicorn>=0.30",
 ]
+
+[project.urls]
+Homepage = "https://github.com/lohr13/hl_mem"
+Repository = "https://github.com/lohr13/hl_mem"
+Changelog = "https://github.com/lohr13/hl_mem/blob/main/docs/CHANGELOG.md"
 
 [project.scripts]
 hl-mem = "hl_mem.cli:main"

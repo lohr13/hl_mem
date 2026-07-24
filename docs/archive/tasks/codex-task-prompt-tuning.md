@@ -11,7 +11,7 @@ Week 5 端到端测试发现两个问题：
 
 ### 问题 2: 偏好变更的冲突检测没触发
 - Event 1："我喜欢深色模式" → LLM 提取 subject="用户" predicate="偏好" value="dark mode"
-- Event 2："现在改用浅色模式了" → LLM 提取 subject="用户" predicate="prefers" value="light mode"  
+- Event 2："现在改用浅色模式了" → LLM 提取 subject="用户" predicate="prefers" value="light mode"
 - conflict_key = hash(namespace + subject + predicate + qualifiers)
 - predicate "偏好" ≠ "prefers" → conflict_key 不同 → 不会触发 state_change → 旧的不会被 superseded
 - 后果：两个 claim 都是 active，recall 时返回矛盾结果
@@ -87,9 +87,9 @@ return bool(qualifiers.get("state_change") or qualifiers.get("current") or quali
 ```sql
 CREATE TRIGGER IF NOT EXISTS claims_ai AFTER INSERT ON claims BEGIN
   INSERT INTO claims_fts(rowid, search_text)
-  VALUES (new.rowid, 
-    coalesce(new.subject_entity_id, '') || ' ' || 
-    coalesce(new.predicate, '') || ' ' || 
+  VALUES (new.rowid,
+    coalesce(new.subject_entity_id, '') || ' ' ||
+    coalesce(new.predicate, '') || ' ' ||
     coalesce(new.value_json, ''));
 END;
 ```

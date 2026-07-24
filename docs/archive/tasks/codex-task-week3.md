@@ -32,7 +32,7 @@ EMBEDDING_DIM=2048
 class Embedder:
     def __init__(self, api_key, base_url, model, dim=2048):
         ...
-    
+
     def embed(self, texts: list[str]) -> list[bytes]:
         """批量 embed，返回 float32 BLOB 列表（每条 2048维×4字节=8192字节）"""
         # text-embedding-v4 每批最多10条
@@ -40,7 +40,7 @@ class Embedder:
         # body: {"model": model, "input": texts, "dimensions": dim}
         # 返回的 float list → struct.pack 成 bytes 存 BLOB
         ...
-    
+
     def embed_one(self, text: str) -> bytes:
         """单条 embed"""
         ...
@@ -75,7 +75,7 @@ def embed_batch(self, texts: list[str]) -> list[bytes]:
 class Deduplicator:
     def __init__(self, claim_repo: ClaimRepository, embedder: Embedder, threshold: float = 0.95):
         ...
-    
+
     def find_duplicate(self, new_claim: dict) -> tuple[str | None, str]:
         """返回 (existing_claim_id, match_type) 或 (None, 'new')"""
         # L1: 精确 conflict_key + value_json 匹配
@@ -137,7 +137,7 @@ class ConflictResolver:
 class ObservationBuilder:
     MIN_PROOFS = 2       # 最少2个独立证据
     MIN_SOURCES = 1      # 最少1个不同 source（首版宽松）
-    
+
     def try_build(self, claims: list[dict]) -> dict | None:
         """检查是否有足够证据生成 Observation"""
         # 条件：同一 conflict_key 或同一 subject+predicate 下

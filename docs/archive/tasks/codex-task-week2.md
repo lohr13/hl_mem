@@ -61,7 +61,7 @@ prompt 要点：
 class LLMExtractor:
     def __init__(self, api_key, base_url, model):
         ...
-    
+
     def extract(self, content: dict | str, event_context: dict | None = None) -> list[ExtractedClaim]:
         """调用 LLM 提取 claim，返回结构化结果"""
         ...
@@ -105,15 +105,15 @@ class EventFilter:
 class TokenBudget:
     def __init__(self, daily_limit: int = 500000):
         ...
-    
+
     def can_spend(self, estimated_tokens: int) -> bool:
         """检查今日预算是否足够"""
         ...
-    
+
     def record_usage(self, actual_tokens: int):
         """记录实际消耗"""
         ...
-    
+
     def get_stats(self) -> dict:
         """返回今日消耗统计"""
         ...

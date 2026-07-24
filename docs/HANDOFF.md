@@ -1,14 +1,14 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-07-23 · v0.3.0
+> 最后更新：2026-07-24 · v0.10.0
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.3.0
-- **阶段**：架构重构完成（Phase 0-12），220 测试全绿
+- **版本**：v0.10.0
+- **阶段**：Phase 18 Topic Tags 检索接入完成，284 tests passed
 - **服务**：FastAPI on port 8200，LLM=glm-5.2，Embedding=text-embedding-v4 (2048d)，Reranker=gte-rerank-v2
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），14 migrations
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），21 migrations
 
 ## 已完成
 
@@ -28,7 +28,7 @@
 - 审计日志 + 在线备份 + CLI 导入导出
 - 可选 PostgreSQL 后端
 
-### 架构重构（v0.3.0）
+### 架构重构（v0.10.0）
 
 - P0 数据正确性：事务原子化 + fact_hash v2 + MCP pipeline 修复
 - 分层架构：api/ → application/ → domain/core/ → storage/

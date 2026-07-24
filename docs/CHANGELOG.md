@@ -4,6 +4,60 @@
 
 ---
 
+## v0.10.0 — 2026-07-24
+
+### Phase 18: Topic Tags 检索接入
+- **Soft boost（方案 D）**：FTS/Dense RRF 融合后，命中的 query tags 给予 0.05 微小权重作为 tie-breaker，默认开启
+- **独立 Tag channel（方案 B）**：第三召回通道（独立 tags FTS），weight=0.15，默认关闭待评测
+- **中英文 query→tag 解析**：确定性词典匹配（"架构决策" → [architecture, decision]）
+- **migration 018**：claims_tags_fts 独立 FTS 表 + 3 triggers
+- 影响：`recall/staged_pipeline.py`、`domain/claims/query_tags.py`、`application/recall.py`、migration `018_claims_tags_fts.sql`
+
+### v0.9.1 — 2026-07-24
+
+### 审查修复（11 个 P0/P1）
+- **conflict_key v3**：移除 predicate，减少假冲突
+- **去重 min_confidence**：跨 subject 去重必须满足最小置信度阈值
+- **qualifier 降级**：slot 无匹配时 canonical_slot=NULL 而非填默认
+- **TTL UTC 统一**：retention 计算全部使用 UTC
+- **回填 CAS**：TTL/slot 回填使用 compare-and-swap 防并发
+- 影响：26 文件，测试 277 passed
+
+### v0.9.0 — 2026-07-24
+
+### Phase 17: 数据质量治理（4 Stages）
+- **Stage 1 — slot+tags 双层分类**：migration 016 引入 canonical_slot（15 operational）+ topic_tags_json（开放多值）
+- **Stage 2 — 行为切换**：claim 写入/冲突/去重/TTL 全面切换到 slot 模型
+- **Stage 3 — 跨 subject 去重**：DedupJudge worker（audit-only 默认），dedup_pairs 审计表
+- **Stage 4 — TTL + importance 联动**：retention 纯函数（scope × importance 三档矩阵），migration 017
+- 影响：`domain/claims/`（新建）、`workers/deduplicate.py`（新建）、`workers/backfill_expires_at.py`（新建）、`recall/staged_pipeline.py`（新）
+
+### v0.7.0 — 2026-07-24
+
+### Phase 16: 代码收敛
+- 统一 RRF/vector/retry/stage 实现（删除 9 个重复实现 + 4 个兼容层）
+- Hermes provider 同步契约收敛 + circuit breaker 修复
+- 事务所有权统一到 application 层
+- 净减 333 行
+
+### v0.6.0 — 2026-07-24
+
+### Phase 15: 复杂度治理（14 个 P1/P2）
+- Settings 统一注入（消除 config.py 双轨）
+- LLM 调用全部走 LLMClient（消除散落的 httpx.post）
+- 上帝函数拆阶段函数
+- repository 按职责拆分 5 文件
+- Hermes provider 拆三子对象
+- 多跳 BFS 预备（默认 max_depth=1）
+
+### v0.4.3 — 2026-07-23
+
+### Phase 14: Hindsight 对标
+- LLMClient + Provider 解耦（百炼/智谱/OpenAI-compatible）
+- 长输入结构感知分块 + 输出超限递归二分恢复
+- 统一 SearchTrace（候选/分数/过滤原因/耗时可回放）
+- 一跳关系扩展召回（默认关闭，灰度开关）
+
 ## v0.3.0 — 2026-07-23
 
 ### Phase 12: 数据质量提升

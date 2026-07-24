@@ -1,20 +1,19 @@
 # HL-Mem
 
-> v0.9.1 · 250+ tests · 17 migrations · [CHANGELOG](docs/CHANGELOG.md)
+> v0.10.0 · 284 tests · 21 migrations · [CHANGELOG](docs/CHANGELOG.md)
 
 面向 AI Agent 的本地优先、跨会话记忆系统。证据驱动、双时间模型、双通道设计、可解释召回、slot+tags 分类体系、importance 联动 TTL。
 
-## 为什么自建
+## 设计理念
 
-现有记忆方案各有侧重但都不完整：
+| 现有方案 | 优势 | 我们的改进 |
+|---------|------|-----------|
+| Mem0 | 轻量、LLM 驱动提取 | 增加双时间模型、证据链与 slot+tags 分类 |
+| Zep | 时间感知知识图 | 用 SQLite + FTS5 实现本地优先，无需外部服务 |
+| LangMem | Profiles/Collections 双轨分类 | slot 管理冲突、TTL、去重，tags 支持开放多值检索 |
+| Letta/ADEPT | 长期记忆与自主 Agent | 聚焦记忆基础设施，通过 Hermes Provider 解耦 Agent |
 
-| 方案 | 优势 | 缺失 |
-|------|------|------|
-| Hindsight | 事实提取、时间演化、Observation 归纳 | 缺 TTL、Procedure、严格 scope |
-| MemOS | Episode/Trace/Reward/Skill 经验通道 | 事实有效期和双时间历史非核心抽象 |
-| 向量库 / 聊天摘要 | 相似搜索或压缩 | 无法处理"何时写入、怎样失效、如何遗忘" |
-
-HL-Mem 将两者合并为统一的**事件溯源双通道**设计：事实通道参考 Hindsight，经验通道参考 MemOS，自己实现时间、作用域、遗忘和删除治理。
+HL-Mem 将这些理念统一为**事件溯源双通道**设计：事实通道处理结构化知识提取、TTL、冲突、去重与证据链，经验通道记录工具调用轨迹（Episode + Trace + Reward），并提供可解释召回与完整遗忘治理。
 
 ## 核心架构
 
@@ -43,7 +42,7 @@ HL-Mem 将两者合并为统一的**事件溯源双通道**设计：事实通道
                     ┌───────────────▼───────────────┐
                     │       Storage Layer           │
                     │  SQLite WAL + FTS5 + Vector   │
-                    │  17 Migrations · 7 Tables     │
+                    │  21 Migrations · 7 Tables     │
                     │  + Audit · Backup · Retention │
                     │  + Dedup Pairs · Slot Tags    │
                     └───────────────────────────────┘
@@ -104,58 +103,63 @@ POST /v1/recall
 src/hl_mem/
 ├── api/                    # FastAPI 适配层
 │   ├── server.py              # REST API (14 routes)
-│   ├── schemas.py             # Pydantic DTO
-│   └── pipeline.py            # 向后兼容 re-export
-├── application/            # 共享应用服务（REST + MCP + Worker 统一入口）
+│   └── schemas.py             # Pydantic DTO
+├── application/            # 共享应用服务
 │   ├── ingest.py              # IngestService
 │   ├── recall.py              # RecallService
 │   └── forget.py              # ForgetService
 ├── domain/                 # 纯领域逻辑（不依赖基础设施）
+│   ├── claims/                # claim 写入/冲突/去重/retention/query_tags
 │   ├── temporal.py            # 双时间可见性
 │   ├── relations.py           # 记忆关系
 │   ├── entity.py              # 实体归一化
+│   ├── recall.py              # 召回领域逻辑
 │   └── content.py             # 多模态内容协议
 ├── core/                   # 纯数学
 │   └── vector.py              # cosine similarity
 ├── ingest/                 # 数据摄入
 │   ├── llm_extractor.py       # LLM 提取器
-│   ├── embeddings.py          # text-embedding-v4 向量化
+│   ├── extractors.py          # FakeExtractor / LLMExtractor
+│   ├── chunking.py            # 结构感知分块
+│   ├── embedder.py            # text-embedding-v4 向量化
 │   ├── event_filter.py        # 事件预过滤
 │   └── budget.py              # Token 预算控制
+├── llm/                    # LLM 客户端（Provider 解耦）
+│   ├── client.py              # LLMClient
+│   ├── providers.py           # 百炼/智谱/OpenAI-compatible
+│   └── types.py               # LLMRequest/LLMResponse
 ├── recall/                 # 召回层
-│   ├── recall_pipeline.py     # FTS + Vector + RRF + 多因子排序
-│   ├── extended_pipeline.py   # RRF + 上下文预算打包
-│   ├── dedup.py               # L1 精确 + L2 语义去重 (0.82)
-│   ├── conflict.py            # 确定性冲突判定（白名单互斥模型）
-│   ├── attribute_map.py       # canonical_attribute 规范化
+│   ├── staged_pipeline.py     # 三通道 RRF (FTS + Dense + Tag)
+│   ├── trace.py               # SearchTrace 可观测性
+│   ├── ranking.py             # 多因子排序
 │   ├── reranker.py            # gte-rerank-v2 重排器
+│   ├── relation_expansion.py  # 一跳关系扩展
 │   └── observation.py         # 派生记忆构建
-├── storage/                # 存储层
+├── storage/                # 存储层（按职责拆分）
 │   ├── database.py            # SQLite WAL + migration runner
-│   ├── repository.py          # CRUD (5 Repositories)
+│   ├── claims.py              # ClaimRepository
+│   ├── events.py              # EventRepository
+│   ├── evidence.py            # EvidenceRepository
+│   ├── experience.py          # ExperienceRepository
+│   ├── jobs.py                # JobRepository
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 14 SQL migrations (001-014)
+│   └── migrations/            # 21 SQL migrations (001-021)
 ├── workers/                # 后台任务
-│   ├── worker.py              # 7 种 job_type + maintenance 调度
-│   ├── ttl.py                 # ephemeral TTL 过期
+│   ├── worker.py              # Job 调度器
+│   ├── ttl.py                 # TTL 过期
 │   ├── decay.py               # 置信度线性衰减
 │   ├── consolidate.py         # LLM 语义冲突归并
-│   ├── reclassify.py          # LLM 重分类
-│   ├── mental_models.py       # 派生记忆维护
+│   ├── deduplicate.py         # 跨 subject 语义去重
+│   ├── backfill_expires_at.py # TTL 回填工具
 │   └── induce_policies.py     # 策略归纳
 ├── experience/             # Experience 通道
-│   └── service.py             # Episode/Trace/Policy + 状态机
-├── security/
-│   └── retention.py           # 事件保留清理
-├── observability/
-│   └── audit.py               # 审计日志
+│   └── service.py             # Episode/Trace/Policy
 ├── adapters/hermes/        # Hermes 集成
-│   ├── provider.py            # HermesMemoryProvider (httpx)
+│   ├── provider.py            # HermesMemoryProvider
 │   └── plugin/                # 薄委托层
 ├── mcp/
 │   └── server.py              # MCP 工具契约
 ├── components.py           # 统一组件工厂
-├── config.py               # 集中配置常量
 ├── settings.py             # Settings dataclass + 校验
 ├── protocols.py            # 接口协议
 ├── errors.py               # 异常族
@@ -274,7 +278,7 @@ python install_to_hermes.py --hermes-home ~/.hermes
 
 | 组件 | 状态 |
 |------|------|
-| SQLite Schema（14 migrations） | ✅ |
+| SQLite Schema（21 migrations） | ✅ |
 | 幂等事件写入 + 事务原子化 | ✅ |
 | LLM 提取（前序上下文 + 时间锚定 + ADD-only） | ✅ |
 | Event Filter + Token Budget | ✅ |
@@ -292,7 +296,7 @@ python install_to_hermes.py --hermes-home ~/.hermes
 | 审计日志 | ✅ |
 | 在线备份 + CLI 导入导出 | ✅ |
 | 可选 PostgreSQL 后端 | ✅ |
-| 220 测试全绿 | ✅ |
+| 284 tests passed | ✅ |
 | Mental Model 深化 | 📋 基础已实现，推理增强延后 |
 | 多租户 | 📋 设计保留 |
 
@@ -311,4 +315,4 @@ python install_to_hermes.py --hermes-home ~/.hermes
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE) (`Apache-2.0`)

@@ -4,7 +4,7 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v0.9.1（2026-07-24）**
+**当前版本：v0.10.0（2026-07-24）**
 
 ## 技术栈
 
@@ -13,78 +13,81 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 - **LLM 提取**：glm-5.2（智谱 Coding Plan），JSON mode
 - **Embedding**：text-embedding-v4（百炼通用 AK），2048 维
 - **Reranker**：gte-rerank-v2（百炼通用 AK）
-- **分类体系**：SLOT_REGISTRY（15 operational slot + 40 topic tags；topic_tags 当前用于存储、统计和分类，尚未接入检索）
+- **分类体系**：SLOT_REGISTRY（15 operational slot + 40 topic tags；Phase 18 已接入检索，soft boost 默认开启，独立 tag channel 默认关闭待评测）
 - **TTL**：retention 纯函数（scope × importance 三档）
 - **跨 subject 去重**：DedupJudge（audit-only 默认开启）
 - **包管理**：uv（lockfile: uv.lock）
-- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）250+ tests
+- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）284 tests
 
 ## 代码结构
 
 ```
 src/hl_mem/
 ├── api/                    # FastAPI 适配层
-│   ├── server.py              # REST API
-│   └── schemas.py             # Pydantic DTO（EventInput, RecallInput, MemoryInput 等）
-├── application/            # 共享应用服务层（REST + MCP + Worker 统一入口）
-│   ├── ingest.py              # IngestService：事件写入 + 记忆保存 + retention 调用
-│   ├── recall.py              # RecallService：混合召回 + 上下文组装 + 冲突包
-│   └── forget.py              # ForgetService：撤回 + 清除向量 + stale 传播
+│   ├── server.py              # REST API (14 routes)
+│   └── schemas.py             # Pydantic DTO
+├── application/            # 共享应用服务
+│   ├── ingest.py              # IngestService
+│   ├── recall.py              # RecallService
+│   └── forget.py              # ForgetService
 ├── domain/                 # 纯领域逻辑（不依赖基础设施）
-│   ├── temporal.py            # RecallIntent + claim_is_visible（双时间可见性）
-│   ├── relations.py           # 记忆关系管理（summarizes/supports/follows/about）
-│   └── content.py             # 多模态内容协议（ContentPart/TextPart/FileTextPart）
-├── core/                   # 纯数学函数
-│   └── vector.py              # cosine_similarity + encode/decode
-├── ingest/                 # 数据摄入层
-│   ├── extractors.py          # FakeExtractor + ExtractedClaim
-│   ├── llm_extractor.py       # LLM 提取器（qwen3.7-plus）
-│   ├── embeddings.py          # text-embedding-v4 向量化（内联 retry）
-│   ├── event_filter.py        # 事件过滤
-│   └── budget.py              # 预算控制
+│   ├── claims/                # claim 写入/冲突/去重/retention/query_tags
+│   ├── temporal.py            # 双时间可见性
+│   ├── relations.py           # 记忆关系
+│   ├── entity.py              # 实体归一化
+│   ├── recall.py              # 召回领域逻辑
+│   └── content.py             # 多模态内容协议
+├── core/                   # 纯数学
+│   └── vector.py              # cosine similarity
+├── ingest/                 # 数据摄入
+│   ├── llm_extractor.py       # LLM 提取器
+│   ├── extractors.py          # FakeExtractor / LLMExtractor
+│   ├── chunking.py            # 结构感知分块
+│   ├── embedder.py            # text-embedding-v4 向量化
+│   ├── event_filter.py        # 事件预过滤
+│   └── budget.py              # Token 预算控制
+├── llm/                    # LLM 客户端（Provider 解耦）
+│   ├── client.py              # LLMClient
+│   ├── providers.py           # 百炼/智谱/OpenAI-compatible
+│   └── types.py               # LLMRequest/LLMResponse
 ├── recall/                 # 召回层
-│   ├── recall_pipeline.py     # FTS + 向量 + RRF + 多因子排序 + reranker
-│   ├── extended_pipeline.py   # RRF + budget_pack（上下文预算打包）
-│   ├── dedup.py               # L1 精确去重 + L2 语义去重
-│   ├── conflict.py            # 确定性冲突判定（不调 LLM）
-│   ├── attribute_map.py       # canonical_attribute 规范化
+│   ├── staged_pipeline.py     # 三通道 RRF (FTS + Dense + Tag)
+│   ├── trace.py               # SearchTrace 可观测性
 │   ├── ranking.py             # 多因子排序
-│   ├── reranker.py            # LLM reranker（gte-rerank-v2）
-│   ├── observation.py         # ObservationBuilder（派生记忆构建）
-│   ├── policy.py              # RecallIntent 路由 + 可见性规则（router.py 已合并）
-│   └── router.py              # 向后兼容 re-export
-├── storage/                # 存储层
-│   ├── database.py            # SQLite 连接池 + migration 执行
-│   ├── repository.py          # CRUD（Claim/Event/Job/Evidence/Derivation）
+│   ├── reranker.py            # gte-rerank-v2 重排器
+│   ├── relation_expansion.py  # 一跳关系扩展
+│   └── observation.py         # 派生记忆构建
+├── storage/                # 存储层（按职责拆分）
+│   ├── database.py            # SQLite WAL + migration runner
+│   ├── claims.py              # ClaimRepository
+│   ├── events.py              # EventRepository
+│   ├── evidence.py            # EvidenceRepository
+│   ├── experience.py          # ExperienceRepository
+│   ├── jobs.py                # JobRepository
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 14 个 SQL migration
+│   └── migrations/            # 21 SQL migrations (001-021)
 ├── workers/                # 后台任务
-│   ├── worker.py              # Worker（调度 + 7 种 job_type + maintenance）
-│   ├── consolidate.py         # LLM 语义冲突归并 + auto_resolve_conflicts
-│   ├── decay.py               # 置信度线性衰减（可配置）
-│   ├── ttl.py                 # ephemeral TTL 过期
-│   ├── reclassify.py          # LLM 重分类 scope/importance
-│   ├── mental_models.py       # DerivedMemoryMaintainer（派生记忆构建 + stale 传播）
+│   ├── worker.py              # Job 调度器
+│   ├── ttl.py                 # TTL 过期
+│   ├── decay.py               # 置信度衰减
+│   ├── consolidate.py         # LLM 语义归并
+│   ├── deduplicate.py         # 跨 subject 语义去重
+│   ├── backfill_expires_at.py # TTL 回填工具
 │   └── induce_policies.py     # 策略归纳
 ├── experience/             # Experience 通道
-│   └── service.py             # Episode/Trace/Policy CRUD + 状态机
-├── security/
-│   └── retention.py           # 事件保留清理
-├── observability/
-│   └── audit.py               # 审计日志
+│   └── service.py             # Episode/Trace/Policy
 ├── adapters/hermes/        # Hermes 集成
-│   ├── provider.py            # HermesMemoryProvider（唯一实现，httpx）
-│   └── plugin/__init__.py     # 薄委托层
+│   ├── provider.py            # HermesMemoryProvider
+│   └── plugin/                # 薄委托层
 ├── mcp/
-│   └── server.py              # MCP 工具契约（委托 application 服务）
-├── lifecycle.py            # ClaimStatus + EpisodeStatus 枚举 + 转换守卫
-├── components.py           # 统一组件工厂（embedder/reranker/extractor）
-├── config.py               # 集中配置常量（threshold/interval/limit）
-├── settings.py             # Settings dataclass + from_env() + 配置校验
-├── protocols.py            # EmbedderProtocol/ExtractorProtocol/RerankerProtocol
-├── errors.py               # HlMemError 异常族
-├── http_utils.py           # retry_http() 统一重试工具
-└── cli.py                  # CLI 入口（status + conflicts 审核）
+│   └── server.py              # MCP 工具契约
+├── components.py           # 统一组件工厂
+├── settings.py             # Settings dataclass + 校验
+├── protocols.py            # 接口协议
+├── errors.py               # 异常族
+├── http_utils.py           # 统一重试工具
+├── lifecycle.py            # 状态机守卫
+└── cli.py                  # CLI 入口
 ```
 
 ## 测试
@@ -93,7 +96,7 @@ src/hl_mem/
 .venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short
 ```
 
-当前：220 测试通过。
+当前：284 tests passed。
 
 ## 关键设计决策
 
@@ -141,4 +144,4 @@ src/hl_mem/
 
 ## Migration
 
-14 个 SQL migration（001-014），按版本号顺序执行。不可变。
+21 个 SQL migration（001-021），按版本号顺序执行。不可变。

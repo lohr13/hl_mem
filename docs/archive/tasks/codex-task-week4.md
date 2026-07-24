@@ -18,13 +18,13 @@
 class Worker:
     def __init__(self, db_path, config):
         """初始化 Database、Repositories、Extractor、Embedder"""
-    
+
     def run_once(self) -> dict:
         """拉取一个 pending job，执行，返回执行结果"""
         # 1. lease 一个 pending job (UPDATE ... SET status='running', leased_until=now+5min WHERE id=(SELECT id FROM jobs WHERE status='pending' ORDER BY created_at LIMIT 1))
         # 2. 按 job_type 分发
         # 3. 成功 → status='succeeded'，失败 → attempts++ 且 attempts < max_attempts → 'pending'，否则 'dead'
-    
+
     def run_forever(self, poll_interval=2.0):
         """无限循环，每 poll_interval 秒检查一次"""
 ```
@@ -68,7 +68,7 @@ from collections.abc import AsyncIterator
 
 class HLMemProvider:
     """Hermes MemoryProvider adapter with timeout and circuit breaker."""
-    
+
     def __init__(self, db_path=None, daemon_url=None, timeout=2.0):
         self.timeout = timeout
         self.daemon_url = daemon_url
@@ -77,24 +77,24 @@ class HLMemProvider:
         self._circuit_open_until = 0.0  # 熔断恢复时间戳
         self._last_check = 0.0
         self._health_check_interval = 30.0  # 每30秒检查一次健康
-    
+
     # --- Hermes MemoryProvider interface ---
-    
+
     def initialize(self) -> None:
         """连接检查"""
-    
+
     async def prefetch(self, query: str, limit: int = 10) -> dict:
         """召回，带 timeout 和 circuit breaker"""
-    
+
     async def sync_turn(self, messages: list[dict]) -> None:
         """异步写入 events"""
-    
+
     def on_memory_write(self, key: str, content: str, target: str = "memory") -> None:
         """显式记忆写入 → POST /v1/memories"""
-    
+
     def on_pre_compress(self, messages: list[dict]) -> None:
         """压缩前 flush 未持久化的 events"""
-    
+
     def shutdown(self) -> None:
         """清理资源"""
 ```
