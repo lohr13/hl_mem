@@ -93,6 +93,8 @@ def make_reranker(settings: Settings) -> Any | None:
 def make_extractor(settings: Settings, *, require_real: bool = False) -> Any:
     """依据统一配置创建 LLM 提取组件。"""
     if settings.extractor_mode == "fake" and not require_real:
+        if settings.environment == "production":
+            raise ConfigurationError("HL_MEM_EXTRACTOR=fake is not allowed in production")
         return FakeExtractor()
     if not settings.llm_api_key:
         if settings.environment == "production" or require_real or not settings.allow_fake_fallback:
