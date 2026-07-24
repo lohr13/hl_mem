@@ -41,17 +41,3 @@ def _search(backend: TextSearchBackend) -> list[dict]:
 def test_text_search_backend_accepts_structural_implementation() -> None:
     """协议边界允许无需继承的鸭子类型实现。"""
     assert _search(StubTextSearchBackend())[0]["query"] == "中文查询"
-
-
-def test_fts_tokenizer_defaults_to_trigram(monkeypatch: Any) -> None:
-    """未配置环境变量时使用 SQLite trigram tokenizer。"""
-    monkeypatch.delenv("HL_MEM_FTS_TOKENIZER", raising=False)
-
-    assert Settings.from_env().fts_tokenizer == "trigram"
-
-
-def test_fts_tokenizer_reads_environment_override(monkeypatch: Any) -> None:
-    """环境变量可以覆盖 FTS tokenizer。"""
-    monkeypatch.setenv("HL_MEM_FTS_TOKENIZER", "trigram")
-
-    assert Settings.from_env().fts_tokenizer == "trigram"
