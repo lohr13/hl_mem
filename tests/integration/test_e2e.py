@@ -54,3 +54,4 @@ def test_healthz(tmp_path) -> None:
         assert result["version"] == __version__
         assert "embedder" in result
         assert "reranker" in result
+        assert result["llm_stats"] == {"calls": 0, "total_tokens": 0}

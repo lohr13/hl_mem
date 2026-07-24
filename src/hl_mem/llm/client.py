@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -9,6 +11,7 @@ import httpx
 from hl_mem.errors import LLMStructuredOutputUnsupportedError
 from hl_mem.http_utils import retry_http
 from hl_mem.observability.audit import current_audit
+from hl_mem.observability.llm_spans import LLMSpanRecorder
 
 from .types import (
     LLMProviderProtocol,
@@ -30,6 +33,8 @@ class LLMClient:
         timeout: httpx.Timeout,
         max_attempts: int,
         client: httpx.Client | None = None,
+        span_recorder: LLMSpanRecorder | None = None,
+        operation: str = "other",
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -38,13 +43,17 @@ class LLMClient:
         self.timeout = timeout
         self.max_attempts = max_attempts
         self._client = client
+        self._span_recorder = span_recorder
+        self._operation = operation
         self._strict_unsupported = False
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         """完成一次 LLM 调用，并按 provider 能力选择或降级结构化模式。"""
         mode = self._select_structured_mode(request)
+        started_at = datetime.now(timezone.utc).isoformat()
+        started = time.perf_counter()
         try:
-            return self._complete_with_mode(request, mode)
+            response = self._complete_with_mode(request, mode)
         except httpx.HTTPStatusError as error:
             should_fallback = (
                 request.structured_output is not None
@@ -52,8 +61,10 @@ class LLMClient:
                 and self.provider.is_structured_mode_unsupported(error)
             )
             if not should_fallback:
+                self._record_span(mode, "error", started_at, started, error=error)
                 raise
             if not self.provider.capabilities.json_object:
+                self._record_span(mode, "error", started_at, started, error=error)
                 raise LLMStructuredOutputUnsupportedError(
                     f"Provider {self.provider.name} does not support requested structured output"
                 ) from error
@@ -64,7 +75,52 @@ class LLMClient:
                 "structured_fallback",
                 detail={"provider": self.provider.name, "model": self.model},
             )
-            return self._complete_with_mode(request, StructuredOutputMode.JSON_OBJECT)
+            try:
+                response = self._complete_with_mode(request, StructuredOutputMode.JSON_OBJECT)
+            except Exception as fallback_error:
+                self._record_span(
+                    StructuredOutputMode.JSON_OBJECT,
+                    "error",
+                    started_at,
+                    started,
+                    error=fallback_error,
+                )
+                raise
+            mode = StructuredOutputMode.JSON_OBJECT
+        except Exception as error:
+            self._record_span(mode, "error", started_at, started, error=error)
+            raise
+        self._record_span(mode, "success", started_at, started, response=response)
+        return response
+
+    def _record_span(
+        self,
+        mode: StructuredOutputMode,
+        status: str,
+        started_at: str,
+        started: float,
+        *,
+        response: LLMResponse | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        """在启用记录器时持久化一次完整调用。"""
+        if self._span_recorder is None:
+            return
+        self._span_recorder.record(
+            operation=self._operation,
+            provider=self.provider.name,
+            model=self.model,
+            structured_mode=mode.value,
+            status=status,
+            error_class=type(error).__name__ if error is not None else None,
+            raw_request_id=response.raw_request_id if response is not None else None,
+            input_tokens=response.input_tokens if response is not None else None,
+            output_tokens=response.output_tokens if response is not None else None,
+            cached_tokens=response.cached_tokens if response is not None else None,
+            total_tokens=response.usage_total_tokens if response is not None else None,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            started_at=started_at,
+        )
 
     def _complete_with_mode(
         self,

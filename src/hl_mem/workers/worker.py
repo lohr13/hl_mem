@@ -338,14 +338,16 @@ class Worker:
             }
 
     def _make_extractor(self) -> Any:
-        return components.make_extractor(self.settings)
+        return components.make_extractor(self.settings, connection=getattr(self, "connection", None))
 
     def _make_embedder(self) -> Any:
         return components.make_embedder(self.settings)
 
     def _make_consolidator(self) -> ConflictConsolidator:
         """从环境配置构建冲突归并器。"""
-        judge = LLMConflictJudge(components.make_llm_client(self.settings))
+        judge = LLMConflictJudge(
+            components.make_llm_client(self.settings, self.connection, operation="conflict")
+        )
         return ConflictConsolidator(
             self.connection,
             judge,
@@ -406,7 +408,7 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     payload = json.loads(job["payload_json"] or "{}")
     return deduplicate_claims(
         worker.connection,
-        components.make_llm_client(worker.settings),
+        components.make_llm_client(worker.settings, worker.connection, operation="dedup"),
         worker.embedder,
         namespace=str(payload.get("namespace", "default")),
         threshold=float(payload.get("threshold", worker.settings.dedup_threshold)),
@@ -427,7 +429,7 @@ def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 
     return reclassify_claims(
         worker.connection,
-        components.make_llm_client(worker.settings),
+        components.make_llm_client(worker.settings, worker.connection, operation="other"),
         policy=worker.settings.retention_policy(),
     )
 
