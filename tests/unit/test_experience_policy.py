@@ -30,7 +30,7 @@ def test_policy_requires_independent_successes_then_retires_after_failures(tmp_p
     policy = service.get_policy(policy_id)
     assert policy["status"] == "active"
     assert policy["procedure_status"] == "probationary"
-    assert json.loads(policy["procedure"])["steps"] == ["运行测试", "发布"]
+    assert policy["procedure"]["steps"] == ["运行测试", "发布"]
 
     service.record_policy_outcome(policy_id, True, "2026-01-03T00:00:00Z")
     assert service.get_policy(policy_id)["procedure_status"] == "active"
