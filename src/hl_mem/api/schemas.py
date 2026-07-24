@@ -38,6 +38,17 @@ class DryRunExtractionInput(BaseModel):
     custom_instructions: str | None = Field(default=None, max_length=10000)
 
 
+class ConsolidationScopeInput(BaseModel):
+    """手动归并任务的显式作用域。"""
+
+    namespace: str = Field(default="default", min_length=1, max_length=100)
+    slot_filter: str | None = Field(default=None, max_length=200)
+    tag_filter: list[str] | None = None
+    max_pairs: int = Field(default=500, ge=1)
+    similarity_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
+    similarity_ceiling: float = Field(default=0.95, ge=0.0, le=1.0)
+
+
 class RecallInput(BaseModel):
     """记忆召回请求。"""
 

@@ -11,6 +11,7 @@ from typing import Any, Callable
 from hl_mem import components
 from hl_mem.application.ingest import IngestService
 from hl_mem.domain.claims.attributes import infer_canonical_attribute
+from hl_mem.domain.consolidation_scope import ConsolidationScope
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
@@ -384,6 +385,22 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理冲突归并任务。"""
     consolidator = worker.config.get("consolidator") or worker._make_consolidator()
     payload = json.loads(job["payload_json"] or "{}")
+    scope = ConsolidationScope(
+        namespace=payload.get("namespace", "default"),
+        slot_filter=payload.get("slot_filter"),
+        tag_filter=payload.get("tag_filter"),
+        max_pairs=int(
+            payload.get(
+                "max_pairs",
+                payload.get(
+                    "limit",
+                    worker.config.get("consolidate_batch_size", worker.settings.consolidate_batch_size),
+                ),
+            )
+        ),
+        similarity_threshold=float(payload.get("similarity_threshold", 0.72)),
+        similarity_ceiling=float(payload.get("similarity_ceiling", 0.95)),
+    )
     progress_callback = _job_progress_callback(worker, job)
     return consolidator.run_batch(
         int(
@@ -398,6 +415,7 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
         payload.get("watermark"),
         bool(payload.get("dry_run", False)),
         progress_callback,
+        scope,
     )
 
 
