@@ -15,6 +15,7 @@ from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
 from hl_mem.domain.claims.conflicts import compute_claim_pair_key
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.workers.scheduling import enqueue_daily_job
 
 DecisionKind = Literal["contradiction", "compatible", "state_change", "unrelated"]
 
@@ -111,30 +112,17 @@ class LLMConflictJudge:
 
 def enqueue_daily_consolidation(connection: Any, now: str, cron: str) -> bool:
     """到达本地计划时间后幂等创建当天的归并任务。"""
-    try:
-        hour_text, minute_text = cron.split(":", 1)
-        scheduled_minutes = int(hour_text) * 60 + int(minute_text)
-    except (AttributeError, TypeError, ValueError) as error:
-        raise ValueError("HL_MEM_CONSOLIDATE_CRON must use HH:MM format") from error
-    current = datetime.fromisoformat(now.replace("Z", "+00:00"))
-    if not 0 <= scheduled_minutes < 24 * 60:
-        raise ValueError("HL_MEM_CONSOLIDATE_CRON must use HH:MM format")
-    if current.hour * 60 + current.minute < scheduled_minutes:
-        return False
-    from hl_mem.storage.jobs import JobRepository
-
-    created = JobRepository(connection).insert_job(
-        {
-            "id": uuid.uuid4().hex,
-            "job_type": "consolidate_conflicts",
-            "payload_json": "{}",
-            "idempotency_key": f"consolidate:{current.date().isoformat()}",
-            "created_at": now,
-            "updated_at": now,
-        }
+    return (
+        enqueue_daily_job(
+            connection,
+            now,
+            {"cron": cron, "idempotency_prefix": "consolidate"},
+            "consolidate_conflicts",
+            {},
+            "HL_MEM_CONSOLIDATE_CRON",
+        )
+        is not None
     )
-    connection.commit()
-    return created
 
 
 class ConflictConsolidator:

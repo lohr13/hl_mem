@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import time
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -34,6 +33,7 @@ from hl_mem.workers.induce_policies import (
     induce_policies,
 )
 from hl_mem.workers.mental_models import DerivedMemoryMaintainer
+from hl_mem.workers.scheduling import enqueue_daily_job
 from hl_mem.workers.ttl import expire_claims
 
 
@@ -43,28 +43,17 @@ def _now() -> str:
 
 def enqueue_daily_reclassify(connection: Any, now: str, cron: str) -> bool:
     """到达计划时间后幂等创建当天的重分类任务。"""
-    try:
-        hour_text, minute_text = cron.split(":", 1)
-        scheduled_minutes = int(hour_text) * 60 + int(minute_text)
-    except (AttributeError, TypeError, ValueError) as error:
-        raise ValueError("HL_MEM_RECLASSIFY_CRON must use HH:MM format") from error
-    current = datetime.fromisoformat(now.replace("Z", "+00:00"))
-    if not 0 <= scheduled_minutes < 24 * 60:
-        raise ValueError("HL_MEM_RECLASSIFY_CRON must use HH:MM format")
-    if current.hour * 60 + current.minute < scheduled_minutes:
-        return False
-    created = JobRepository(connection).insert_job(
-        {
-            "id": uuid.uuid4().hex,
-            "job_type": "reclassify_claims",
-            "payload_json": "{}",
-            "idempotency_key": f"reclassify:{current.date().isoformat()}",
-            "created_at": now,
-            "updated_at": now,
-        }
+    return (
+        enqueue_daily_job(
+            connection,
+            now,
+            {"cron": cron, "idempotency_prefix": "reclassify"},
+            "reclassify_claims",
+            {},
+            "HL_MEM_RECLASSIFY_CRON",
+        )
+        is not None
     )
-    connection.commit()
-    return created
 
 
 class Worker:
