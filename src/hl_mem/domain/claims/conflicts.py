@@ -8,10 +8,11 @@ from datetime import datetime
 from typing import Any
 
 from hl_mem.domain.claims.attributes import (
+    SLOT_REGISTRY,
     canonical_conflict_slot,
     is_mutually_exclusive_attribute,
-    normalize_canonical_attribute,
     normalize_predicate,
+    validate_canonical_slot,
 )
 
 EXCLUSIVE_QUALIFIERS = {"scope", "context", "environment", "project", "channel"}
@@ -26,22 +27,23 @@ def compute_claim_pair_key(left_claim_id: str, right_claim_id: str) -> str:
 def compute_conflict_key(
     namespace: str,
     subject: str,
-    canonical_attribute: str,
+    predicate: str,
+    canonical_slot: str | None,
     qualifiers: dict[str, Any] | None,
     *,
     version: int = 2,
-) -> str:
-    """计算 canonical attribute v2 冲突键。"""
+) -> str | None:
+    """按 operational slot 计算 v2 冲突键；无 slot 时不生成键。"""
     if version != 2:
         raise ValueError("compute_conflict_key only supports version 2")
+    slot = validate_canonical_slot(canonical_slot)
+    if slot is None:
+        return None
     canonical_namespace = unicodedata.normalize("NFKC", namespace).strip().casefold()
     canonical_subject = re.sub(r"\s+", "", unicodedata.normalize("NFKC", subject)).casefold()
-    exclusive = {
-        key: _canonicalize_json(value) for key, value in (qualifiers or {}).items() if key in EXCLUSIVE_QUALIFIERS
-    }
-    slot = canonical_conflict_slot(normalize_canonical_attribute(canonical_attribute))
+    canonical_predicate = normalize_predicate(predicate).casefold()
     raw = json.dumps(
-        ["v2", canonical_namespace, canonical_subject, slot, exclusive],
+        ["v2", canonical_namespace, canonical_subject, canonical_predicate, slot, slot_qualifier_key(slot, qualifiers)],
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -77,15 +79,27 @@ def _canonicalize_json(value: Any) -> Any:
     return value
 
 
+def slot_qualifier_key(canonical_slot: str | None, qualifiers: dict[str, Any] | None) -> dict[str, Any]:
+    """提取并规范化 slot 声明要求的 qualifier，供冲突与去重共享。"""
+    slot = validate_canonical_slot(canonical_slot)
+    if slot is None:
+        return {}
+    values = qualifiers or {}
+    return {
+        key: _canonicalize_json(values.get(key))
+        for key in SLOT_REGISTRY[slot].required_qualifiers
+    }
+
+
 class ConflictResolver:
     """First-version deterministic conflict classifier; it never calls an LLM."""
 
     def resolve(self, existing: dict[str, Any], new: dict[str, Any]) -> str:
-        existing_attribute = existing.get("canonical_attribute")
-        new_attribute = new.get("canonical_attribute")
-        if not (is_mutually_exclusive_attribute(existing_attribute) and is_mutually_exclusive_attribute(new_attribute)):
+        existing_slot = existing.get("canonical_slot")
+        new_slot = new.get("canonical_slot")
+        if not (is_mutually_exclusive_attribute(existing_slot) and is_mutually_exclusive_attribute(new_slot)):
             return "compatible"
-        if canonical_conflict_slot(existing_attribute) != canonical_conflict_slot(new_attribute):
+        if canonical_conflict_slot(existing_slot) != canonical_conflict_slot(new_slot):
             return "compatible"
         old_value, new_value = self._value(existing), self._value(new)
         if old_value == new_value:

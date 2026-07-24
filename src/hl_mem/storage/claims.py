@@ -9,7 +9,7 @@ from typing import Any
 
 from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import cosine_similarity
-from hl_mem.domain.entity import normalize_entity_id
+from hl_mem.domain.claims.conflicts import slot_qualifier_key
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
@@ -113,27 +113,58 @@ class ClaimRepository:
             and current.get("value") == original.get("value")
         )
 
-    def update_classification(self, claim_id: str, scope: str, importance: float) -> bool:
-        """更新声明分类，由调用方提交事务。"""
+    def update_classification(
+        self,
+        claim_id: str,
+        scope: str,
+        importance: float,
+        canonical_slot: str | None,
+        expires_at: str | None,
+        conflict_key: str | None,
+    ) -> bool:
+        """原子更新声明分类、slot 生命周期及其冲突键，由调用方提交事务。"""
         cursor = self.connection.execute(
-            "UPDATE claims SET scope=?,importance=? WHERE id=?",
-            (scope, importance, claim_id),
+            "UPDATE claims SET scope=?,importance=?,canonical_slot=?,expires_at=?,conflict_key=? WHERE id=?",
+            (scope, importance, canonical_slot, expires_at, conflict_key, claim_id),
         )
         return cursor.rowcount == 1
 
-    def find_active_for_dedup(self, namespace: str, normalized_subject: str) -> list[dict[str, Any]]:
-        """返回 namespace 内实体归一化后匹配的可去重候选。"""
+    def find_active_for_dedup(
+        self,
+        namespace: str,
+        normalized_subject: str,
+        canonical_slot: str,
+        qualifier_key: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """按 namespace、slot 有界查询同主体和 qualifier 的去重候选。"""
         rows = self.connection.execute(
-            "SELECT * FROM claims WHERE namespace_key=? " "AND status IN ('active','candidate','disputed')",
-            (namespace,),
+            "SELECT * FROM claims WHERE namespace_key=? AND canonical_slot=? "
+            "AND subject_entity_id=? AND status IN ('active','candidate','disputed')",
+            (namespace, canonical_slot, normalized_subject),
         ).fetchall()
         return [
             claim
             for claim in self._decode_rows(rows)
-            if normalize_entity_id(claim.get("subject_entity_id")) == normalized_subject
+            if slot_qualifier_key(canonical_slot, claim.get("qualifiers")) == qualifier_key
         ]
 
-    def find_by_conflict_key(self, conflict_key: str) -> list[dict[str, Any]]:
+    def find_cross_predicate_candidates(
+        self,
+        namespace: str,
+        normalized_subject: str,
+        predicate: str,
+    ) -> list[dict[str, Any]]:
+        """按 namespace、predicate 查询无 slot 的同主体去重候选。"""
+        rows = self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? AND canonical_slot IS NULL "
+            "AND subject_entity_id=? AND predicate=? AND status IN ('active','candidate','disputed')",
+            (namespace, normalized_subject, predicate),
+        ).fetchall()
+        return self._decode_rows(rows)
+
+    def find_by_conflict_key(self, conflict_key: str | None) -> list[dict[str, Any]]:
+        if conflict_key is None:
+            return []
         rows = self.connection.execute(
             "SELECT * FROM claims WHERE conflict_key=? AND status IN ('active','candidate','disputed') "
             "ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'disputed' THEN 1 WHEN 'candidate' THEN 2 END, "

@@ -57,7 +57,8 @@ class LLMConflictJudge:
         fields = (
             "id",
             "subject_entity_id",
-            "canonical_attribute",
+            "canonical_slot",
+            "topic_tags",
             "predicate",
             "value",
             "qualifiers",
@@ -152,9 +153,7 @@ class ConflictConsolidator:
         pairs: list[CandidatePair] = []
         for index, left in enumerate(rows):
             for right in rows[index + 1 :]:
-                same_slot = left.get("canonical_attribute") and left.get("canonical_attribute") == right.get(
-                    "canonical_attribute"
-                )
+                same_slot = left.get("canonical_slot") and left.get("canonical_slot") == right.get("canonical_slot")
                 if not same_slot and left.get("subject_entity_id") != right.get("subject_entity_id"):
                     continue
                 similarity = cosine_similarity(left["embedding_dense"], right["embedding_dense"])

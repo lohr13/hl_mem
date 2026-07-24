@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.config import RECALL_VECTOR_SCAN_LIMIT
+from hl_mem.domain.claims.attributes import SLOT_REGISTRY
 from hl_mem.domain.recall import RecallIntent, claim_is_visible, route_recall_intent
 from hl_mem.observability.audit import current_audit
 from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
@@ -39,7 +40,8 @@ def _access_count(claim: dict[str, Any]) -> int:
 
 
 def _is_preference_claim(claim: dict[str, Any]) -> bool:
-    return "preference" in str(claim.get("canonical_attribute") or "").casefold()
+    definition = SLOT_REGISTRY.get(str(claim.get("canonical_slot") or ""))
+    return definition is not None and definition.predicate == "偏好"
 
 
 def _visibility_filter_reason(

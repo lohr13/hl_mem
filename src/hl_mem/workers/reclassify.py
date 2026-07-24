@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timedelta
 from typing import Any, Iterable
 
 from hl_mem import components
+from hl_mem.domain.claims.attributes import validate_canonical_slot
+from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.errors import ConfigurationError
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
@@ -78,10 +81,31 @@ def classify_batch(llm_client: LLMClient, claims: list[dict[str, Any]]) -> list[
     return values if isinstance(values, list) else []
 
 
-def reclassify_claims(connection: Any, llm_client: LLMClient, batch_size: int = 8) -> dict[str, int]:
+def _classification_expiration(claim: dict[str, Any], scope: str, ttl_days: int) -> str | None:
+    """按原始观察时间为 temporal 分类重算绝对过期时间。"""
+    if scope != "temporal":
+        return None
+    anchor = claim.get("observed_at") or claim.get("recorded_from")
+    if not anchor:
+        return claim.get("expires_at")
+    try:
+        return (datetime.fromisoformat(str(anchor)) + timedelta(days=ttl_days)).isoformat()
+    except ValueError:
+        return claim.get("expires_at")
+
+
+def reclassify_claims(
+    connection: Any,
+    llm_client: LLMClient,
+    batch_size: int = 8,
+    temporal_ttl_days: int | None = None,
+) -> dict[str, int]:
     """重分类仍处于默认 scope/importance 的记忆。"""
     if not 5 <= batch_size <= 10:
         raise ValueError("batch_size must be between 5 and 10")
+    ttl_days = Settings().memory_temporal_ttl_days if temporal_ttl_days is None else temporal_ttl_days
+    if ttl_days < 1:
+        raise ValueError("temporal_ttl_days must be positive")
     repository = ClaimRepository(connection)
     rows = repository.list_all()
     pending = [row for row in rows
@@ -100,7 +124,26 @@ def reclassify_claims(connection: Any, llm_client: LLMClient, batch_size: int = 
                 importance = min(1.0, max(0.0, float(item.get("importance", 0.5))))
             except (TypeError, ValueError):
                 importance = 0.5
-            updated += int(repository.update_classification(claim_id, scope, importance))
+            claim = next(candidate for candidate in batch if candidate["id"] == claim_id)
+            canonical_slot = validate_canonical_slot(claim.get("canonical_slot"))
+            conflict_key = compute_conflict_key(
+                str(claim.get("namespace_key") or "default"),
+                str(claim.get("subject_entity_id") or ""),
+                str(claim.get("predicate") or ""),
+                canonical_slot,
+                claim.get("qualifiers"),
+            )
+            expires_at = _classification_expiration(claim, scope, ttl_days)
+            updated += int(
+                repository.update_classification(
+                    claim_id,
+                    scope,
+                    importance,
+                    canonical_slot,
+                    expires_at,
+                    conflict_key,
+                )
+            )
         connection.commit()
     return {"scanned": len(rows), "eligible": len(pending), "updated": updated}
 
@@ -118,8 +161,18 @@ def main() -> None:
             llm_client = components.make_llm_client(settings)
         except ConfigurationError as error:
             raise SystemExit("LLM_API_KEY is required") from error
-        print(json.dumps(reclassify_claims(database.open(), llm_client, args.batch_size),
-                         ensure_ascii=False, sort_keys=True))
+        print(
+            json.dumps(
+                reclassify_claims(
+                    database.open(),
+                    llm_client,
+                    args.batch_size,
+                    settings.memory_temporal_ttl_days,
+                ),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
     finally:
         database.close()
 

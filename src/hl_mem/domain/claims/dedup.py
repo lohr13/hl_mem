@@ -8,27 +8,30 @@ from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import (
     canonical_conflict_slot,
     is_mutually_exclusive_attribute,
-    normalize_canonical_attribute,
 )
+from hl_mem.domain.claims.conflicts import slot_qualifier_key
 from hl_mem.domain.entity import normalize_entity_id
 
 
 class ClaimRepositoryProtocol(Protocol):
     """声明去重所需的 Claim 查询能力。"""
 
-    def find_active_for_dedup(self, namespace: str, subject_entity_id: str) -> list[dict[str, Any]]:
-        """返回指定命名空间和主体的活跃 Claim。"""
+    def find_active_for_dedup(
+        self,
+        namespace: str,
+        subject_entity_id: str,
+        canonical_slot: str,
+        qualifier_key: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """返回指定 slot、qualifier 和主体的活跃 Claim。"""
 
-
-DEDUP_COMPATIBLE_ATTRIBUTE_GROUPS = (frozenset({"choice.model", "config.model"}),)
-
-
-def _attributes_are_compatible(left: str | None, right: str | None) -> bool:
-    left_normalized = normalize_canonical_attribute(left or "")
-    right_normalized = normalize_canonical_attribute(right or "")
-    if left_normalized == right_normalized:
-        return True
-    return any({left_normalized, right_normalized} <= group for group in DEDUP_COMPATIBLE_ATTRIBUTE_GROUPS)
+    def find_cross_predicate_candidates(
+        self,
+        namespace: str,
+        subject_entity_id: str,
+        predicate: str,
+    ) -> list[dict[str, Any]]:
+        """返回无 slot 且 predicate、主体相同的活跃 Claim。"""
 
 
 class Deduplicator:
@@ -40,15 +43,24 @@ class Deduplicator:
     def find_duplicate(self, new_claim: dict[str, Any]) -> tuple[str | None, str]:
         normalized_subject = normalize_entity_id(new_claim.get("subject_entity_id"))
         new_claim["subject_entity_id"] = normalized_subject
-        candidates = self.claim_repo.find_active_for_dedup(
-            new_claim.get("namespace_key", "default"), normalized_subject
-        )
+        namespace = new_claim.get("namespace_key", "default")
+        canonical_slot = new_claim.get("canonical_slot")
+        if canonical_slot:
+            candidates = self.claim_repo.find_active_for_dedup(
+                namespace,
+                normalized_subject,
+                canonical_slot,
+                slot_qualifier_key(canonical_slot, new_claim.get("qualifiers")),
+            )
+        else:
+            candidates = self.claim_repo.find_cross_predicate_candidates(
+                namespace,
+                normalized_subject,
+                str(new_claim.get("predicate", "")),
+            )
         value = self._canonical_claim(new_claim)
         for claim in candidates:
-            same_conflict_key = new_claim.get("conflict_key") and claim.get("conflict_key") == new_claim.get(
-                "conflict_key"
-            )
-            if same_conflict_key and self._canonical_claim(claim) == value:
+            if self._canonical_claim(claim) == value:
                 return claim["id"], "exact"
         blob = new_claim.get("embedding_dense")
         if blob is None:
@@ -57,8 +69,6 @@ class Deduplicator:
         best_claim: dict[str, Any] | None = None
         best_score = float("-inf")
         for claim in candidates:
-            if not _attributes_are_compatible(claim.get("canonical_attribute"), new_claim.get("canonical_attribute")):
-                continue
             if self._values_are_mutually_exclusive(claim, new_claim):
                 continue
             existing_blob = claim.get("embedding_dense")
@@ -72,20 +82,15 @@ class Deduplicator:
 
     @classmethod
     def _values_are_mutually_exclusive(cls, existing: dict[str, Any], new: dict[str, Any]) -> bool:
-        existing_attribute = existing.get("canonical_attribute")
-        new_attribute = new.get("canonical_attribute")
+        existing_slot = existing.get("canonical_slot")
+        new_slot = new.get("canonical_slot")
         values_differ = cls._canonical_claim(existing) != cls._canonical_claim(new)
         same_exclusive_slot = bool(
-            is_mutually_exclusive_attribute(existing_attribute)
-            and is_mutually_exclusive_attribute(new_attribute)
-            and canonical_conflict_slot(existing_attribute) == canonical_conflict_slot(new_attribute)
+            is_mutually_exclusive_attribute(existing_slot)
+            and is_mutually_exclusive_attribute(new_slot)
+            and canonical_conflict_slot(existing_slot) == canonical_conflict_slot(new_slot)
         )
-        cross_attribute_compatible = normalize_canonical_attribute(
-            existing_attribute or ""
-        ) != normalize_canonical_attribute(new_attribute or "") and _attributes_are_compatible(
-            existing_attribute, new_attribute
-        )
-        return values_differ and (same_exclusive_slot or cross_attribute_compatible)
+        return values_differ and same_exclusive_slot
 
     @staticmethod
     def _canonical(value: Any) -> str:

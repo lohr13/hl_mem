@@ -390,7 +390,9 @@ def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     from hl_mem.workers.reclassify import reclassify_claims
 
     return reclassify_claims(
-        worker.connection, components.make_llm_client(worker.settings)
+        worker.connection,
+        components.make_llm_client(worker.settings),
+        temporal_ttl_days=worker.settings.memory_temporal_ttl_days,
     )
 
 

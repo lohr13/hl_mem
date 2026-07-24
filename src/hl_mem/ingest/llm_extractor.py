@@ -115,7 +115,7 @@ _PERMANENT_SCOPE_RE = re.compile(
 def normalize_scope(
     llm_scope: str,
     predicate: str,
-    canonical_attribute: str,
+    canonical_slot: str | None,
     subject: str,
     value: Any,
     qualifiers: dict[str, Any] | None = None,
@@ -127,14 +127,16 @@ def normalize_scope(
 
     if _TEMPORAL_SCOPE_RE.search(text):
         return "temporal", "explicit_temporal_signal"
-    if normalized_predicate in {"身份", "偏好", "explicit_memory"}:
-        return "permanent", "durable_predicate"
     if _PERMANENT_SCOPE_RE.search(text):
         return "permanent", "explicit_permanent_signal"
-    if canonical_attribute.startswith("state."):
-        return "temporal", "state_default"
-    if canonical_attribute.startswith("plan."):
-        return "temporal", "plan_default"
+    slot_definition = SLOT_REGISTRY.get(canonical_slot) if canonical_slot else None
+    if slot_definition is not None:
+        if slot_definition.ttl_class == "short":
+            return "temporal", "slot_short_ttl"
+        if slot_definition.ttl_class == "none":
+            return "permanent", "slot_no_ttl"
+    if normalized_predicate in {"身份", "偏好", "explicit_memory"}:
+        return "permanent", "durable_predicate"
     return scope, "llm_preserved"
 
 
@@ -143,9 +145,9 @@ def _is_low_value_claim(claim: ExtractedClaim) -> bool:
     value = unicodedata.normalize("NFKC", str(claim.value)).strip()
     if not value:
         return True
-    if NUMERIC_OR_VERSION_RE.fullmatch(value) and claim.canonical_attribute not in MUTUALLY_EXCLUSIVE_SLOTS:
+    if NUMERIC_OR_VERSION_RE.fullmatch(value) and claim.canonical_slot not in MUTUALLY_EXCLUSIVE_SLOTS:
         return True
-    return claim.canonical_attribute == "state.service_health" and value.casefold() in LOW_VALUE_HEALTH_STATES
+    return claim.canonical_slot == "state.service_health" and value.casefold() in LOW_VALUE_HEALTH_STATES
 
 
 class LLMExtractor:
@@ -218,7 +220,7 @@ class LLMExtractor:
             normalized_scope, reason_code = normalize_scope(
                 claim.scope,
                 claim.predicate,
-                claim.canonical_attribute,
+                claim.canonical_slot,
                 claim.subject,
                 claim.value,
                 claim.qualifiers,
@@ -231,7 +233,7 @@ class LLMExtractor:
                     "llm_scope": claim.scope,
                     "normalized_scope": normalized_scope,
                     "reason_code": reason_code,
-                    "canonical_attribute": claim.canonical_attribute,
+                    "canonical_slot": claim.canonical_slot,
                 },
             )
             parsed.append(replace(claim, scope=normalized_scope))
@@ -320,7 +322,7 @@ class LLMExtractor:
                 key = (
                     unicodedata.normalize("NFKC", claim.subject).strip().casefold(),
                     unicodedata.normalize("NFKC", claim.predicate).strip().casefold(),
-                    unicodedata.normalize("NFKC", claim.canonical_attribute).strip().casefold(),
+                    unicodedata.normalize("NFKC", claim.canonical_slot or "").strip().casefold(),
                     unicodedata.normalize("NFKC", str(claim.value)).strip().casefold(),
                     unicodedata.normalize(
                         "NFKC",
