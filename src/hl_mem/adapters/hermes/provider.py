@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -11,6 +12,8 @@ from hl_mem.adapters.hermes.episode_mapper import EpisodeMapper
 from hl_mem.adapters.hermes.http_client import HLMemHttpClient
 from hl_mem.adapters.hermes.prefetch import PrefetchCache
 from hl_mem.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class HLMemProvider:
@@ -82,6 +85,7 @@ class HLMemProvider:
             self._client.get("/healthz")
             self._on_success()
         except Exception:
+            logger.warning("Hermes health check failed; provider remains degraded", exc_info=True)
             self._on_failure()
 
     def prefetch(
@@ -131,6 +135,7 @@ class HLMemProvider:
 
             asyncio.run(sync())
         except (RuntimeError, httpx.HTTPError):
+            logger.warning("Hermes episode synchronization failed; turn sync continues", exc_info=True)
             return
 
     def on_memory_write(self, key: str, content: str, target: str = "memory") -> None:
@@ -175,6 +180,7 @@ class HLMemProvider:
             self._on_success()
             return True
         except Exception:
+            logger.warning("Hermes memory write failed; request degraded", exc_info=True)
             self._on_failure()
             return False
 

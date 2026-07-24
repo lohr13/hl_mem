@@ -10,7 +10,7 @@ from hl_mem.storage.experience import (
 
 
 class ExperienceService(ExperienceRepository):
-    """将 Experience 用例委托给仓储实现。"""
+    """兼容的应用层名称；当前仍被 API、worker 与外部调用方广泛使用。"""
 
 
 __all__ = ["ExperienceService", "InvalidStateTransitionError", "backprop_episode_reward"]

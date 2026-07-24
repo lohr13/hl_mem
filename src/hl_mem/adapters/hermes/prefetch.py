@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
 import time
 from dataclasses import dataclass
 
 from hl_mem.adapters.hermes.http_client import HLMemHttpClient
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -45,6 +48,7 @@ class PrefetchCache:
                 )
                 self.client.on_success()
             except Exception:
+                logger.warning("Hermes memory prefetch failed; using empty result", exc_info=True)
                 self.client.on_failure()
                 rendered = ""
             key = self._key(session_id, query)
