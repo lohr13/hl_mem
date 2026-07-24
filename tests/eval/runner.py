@@ -12,16 +12,62 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import quantiles
 from typing import Any, Callable
 
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
 from tests.eval.dataset import EvalCase, bind_cases, load_cases
-from tests.eval.metrics import aggregate_metrics, evaluate_results
+from tests.eval.metrics import QueryScore, aggregate_metrics, evaluate_results
 
 
 RecallCallable = Callable[[EvalCase], dict[str, Any]]
+
+
+def compute_latency_percentiles(scores: list[QueryScore]) -> dict[str, float]:
+    """计算有效查询延迟的 p50 与 p95。"""
+    latencies = [score.latency_ms for score in scores if score.latency_ms > 0]
+    if len(latencies) < 2:
+        latency = latencies[0] if latencies else 0.0
+        return {"p50": latency, "p95": latency}
+    percentiles = quantiles(latencies, n=100)
+    return {"p50": percentiles[49], "p95": percentiles[94]}
+
+
+def _score_passed(score: QueryScore) -> bool:
+    if score.stale_hits or score.temporal_violations:
+        return False
+    if score.expected_type == "empty":
+        return score.is_empty_prediction
+    evidence_passed = score.evidence_correct is None or score.evidence_correct == 1.0
+    return bool(
+        score.recall_at_5
+        and score.keyword_correct
+        and score.confidence_correct
+        and evidence_passed
+    )
+
+
+def _test_layer_counts(scores: list[QueryScore]) -> dict[str, int]:
+    passed = sum(_score_passed(score) for score in scores)
+    return {"passed": passed, "failed": len(scores) - passed, "skipped": 0}
+
+
+def print_report_summary(report: dict[str, Any]) -> None:
+    """分别输出测试层、检索质量与延迟指标。"""
+    test_layer = report["test_layer"]
+    metrics = report["metrics"]
+    latency = report["latency"]
+    print(
+        f"Test layer: passed={test_layer['passed']}, "
+        f"failed={test_layer['failed']}, skipped={test_layer['skipped']}"
+    )
+    print(
+        f"Retrieval: recall@5={metrics['recall_at_5']:.3f}, "
+        f"MRR={metrics['mrr']:.3f}, nDCG@10={metrics['ndcg_at_10']:.3f}"
+    )
+    print(f"Latency: p50={latency['p50']:.1f}ms, p95={latency['p95']:.1f}ms")
 
 
 def _sha256(path: Path) -> str:
@@ -52,7 +98,9 @@ def run_evaluation(cases: list[EvalCase], recall: RecallCallable, source_path: s
             "case_count": len(cases),
             "real_api": os.getenv("HL_MEM_EVAL_REAL_API") == "1",
         },
+        "test_layer": _test_layer_counts(scores),
         "metrics": aggregate_metrics(scores),
+        "latency": compute_latency_percentiles(scores),
         "queries": queries,
     }
 
@@ -97,6 +145,7 @@ def _main() -> int:
                 arguments.database,
             )
     write_report(report, arguments.report)
+    print_report_summary(report)
     return 0
 
 
