@@ -488,14 +488,3 @@ def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: 
         },
         commit=commit,
     )
-
-
-def _link_event_atomically(connection: Any, repo: EvidenceRepository, claim_id: str, event_id: str) -> None:
-    """已弃用：在独立事务中关联事件证据。"""
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        _link_event(repo, claim_id, event_id, commit=False)
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
