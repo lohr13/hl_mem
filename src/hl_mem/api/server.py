@@ -17,7 +17,7 @@ from hl_mem import __version__, components
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService
 from hl_mem.application.recall import RecallService
-from hl_mem.api.pipeline import new_id
+from hl_mem.application.ingest import new_id
 from hl_mem.api.schemas import (
     EpisodeInput,
     EpisodeUpdate,
@@ -30,7 +30,7 @@ from hl_mem.api.schemas import (
 from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
 from hl_mem.errors import ConflictError, NotFoundError, ValidationError
 from hl_mem.ingest.budget import TokenBudget
-from hl_mem.ingest.embeddings import FakeEmbedder
+from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.reranker import FakeReranker

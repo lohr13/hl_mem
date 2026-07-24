@@ -13,7 +13,7 @@ from hl_mem.core.vector import cosine_similarity
 from hl_mem.lifecycle import assert_transition
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
-from hl_mem.recall.conflict import compute_claim_pair_key
+from hl_mem.domain.claims.conflicts import compute_claim_pair_key
 from hl_mem.storage.repository import ClaimRepository
 
 DecisionKind = Literal["contradiction", "compatible", "state_change", "unrelated"]
