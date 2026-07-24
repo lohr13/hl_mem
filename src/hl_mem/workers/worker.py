@@ -27,6 +27,7 @@ from hl_mem.workers.consolidate import (
     enqueue_daily_consolidation,
 )
 from hl_mem.workers.decay import decay_claims
+from hl_mem.workers.deduplicate import deduplicate_claims, enqueue_daily_deduplication
 from hl_mem.workers.induce_policies import (
     enqueue_daily_policy_induction,
     induce_policies,
@@ -169,6 +170,12 @@ class Worker:
             _now(),
             self.config.get("consolidate_cron", self.settings.consolidate_cron),
         )
+        if self.settings.dedup_enabled:
+            enqueue_daily_deduplication(
+                self.connection,
+                _now(),
+                self.config.get("dedup_cron", self.settings.dedup_cron),
+            )
         enqueue_daily_policy_induction(
             self.connection,
             _now(),
@@ -385,6 +392,20 @@ def _handle_induce_policies(worker: Worker, job: dict[str, Any]) -> dict[str, An
     )
 
 
+def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
+    """处理跨主体语义去重任务。"""
+    payload = json.loads(job["payload_json"] or "{}")
+    return deduplicate_claims(
+        worker.connection,
+        components.make_llm_client(worker.settings),
+        worker.embedder,
+        namespace=str(payload.get("namespace", "default")),
+        threshold=float(payload.get("threshold", worker.settings.dedup_threshold)),
+        audit_only=bool(payload.get("audit_only", worker.settings.dedup_audit_only)),
+        limit=int(payload.get("limit", worker.settings.dedup_scan_limit)),
+    )
+
+
 def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理 claim 重分类任务。"""
     from hl_mem.workers.reclassify import reclassify_claims
@@ -418,6 +439,7 @@ JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {
     "expire_ttl": _handle_expire,
     "decay_access": _handle_decay,
     "consolidate_conflicts": _handle_consolidate,
+    "deduplicate_claims": _handle_deduplicate,
     "induce_policies": _handle_induce_policies,
     "reclassify_claims": _handle_reclassify,
     "purge_retention": _handle_purge_retention,

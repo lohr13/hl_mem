@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from hl_mem.domain.claims.conflicts import slot_qualifier_key
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
+from hl_mem.protocols import EmbedderProtocol
 
 
 @dataclass(frozen=True)
@@ -161,6 +163,46 @@ class ClaimRepository:
             (namespace, normalized_subject, predicate),
         ).fetchall()
         return self._decode_rows(rows)
+
+    def find_cross_subject_dedup_candidates(
+        self,
+        namespace: str,
+        embedder: EmbedderProtocol,
+        *,
+        threshold: float = 0.92,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """发现同 predicate、不同 subject 的无 slot 高相似 Claim 对。"""
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError("dedup threshold must be between 0 and 1")
+        if limit < 1:
+            raise ValueError("dedup scan limit must be positive")
+        rows = self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? AND status='active' "
+            "AND canonical_slot IS NULL AND predicate IS NOT NULL ORDER BY recorded_from,id",
+            (namespace,),
+        ).fetchall()
+        claims = self._decode_rows(rows)
+        texts = [
+            f"{claim.get('predicate', '')} "
+            f"{json.dumps(claim.get('value'), ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
+            for claim in claims
+        ]
+        embeddings = embedder.embed_batch(texts) if texts else []
+        candidates: list[dict[str, Any]] = []
+        for left_index, left in enumerate(claims):
+            for right_index in range(left_index + 1, len(claims)):
+                right = claims[right_index]
+                if left.get("predicate") != right.get("predicate"):
+                    continue
+                if left.get("subject_entity_id") == right.get("subject_entity_id"):
+                    continue
+                similarity = cosine_similarity(embeddings[left_index], embeddings[right_index])
+                if similarity < threshold:
+                    continue
+                candidates.append({"left": left, "right": right, "similarity": similarity})
+        candidates.sort(key=lambda pair: (-pair["similarity"], pair["left"]["id"], pair["right"]["id"]))
+        return candidates[:limit]
 
     def find_by_conflict_key(self, conflict_key: str | None) -> list[dict[str, Any]]:
         if conflict_key is None:
