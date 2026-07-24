@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
@@ -92,9 +93,8 @@ def _summary(claim: Any) -> dict[str, Any]:
 class IngestService:
     """记忆写入应用服务，拥有事件和任务写入的事务边界。"""
 
-    def __init__(self, connection: Any, embedder: Any) -> None:
+    def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
-        self.embedder = embedder
 
     def ingest_event(
         self,

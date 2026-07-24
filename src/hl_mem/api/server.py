@@ -123,7 +123,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         content = payload.content if isinstance(payload.content, dict) else {"text": payload.content}
         content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
         event = payload.model_dump()
-        service = IngestService(connection, embedder)
+        service = IngestService(connection)
         result = service.ingest_event(event, key)
         event_id, created = result["id"], result["created"]
         audit.emit(
@@ -258,7 +258,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         text = payload.text or payload.content
         if not text:
             raise HTTPException(422, "text or content is required")
-        service = IngestService(connection, embedder)
+        service = IngestService(connection)
         result = service.save_explicit_memory(text, payload.subject, payload.predicate, payload.qualifiers)
         event_id = result["id"]
         content_json = json.dumps(
