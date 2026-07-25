@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from hl_mem import __version__
+from hl_mem.evaluation.runner import BenchmarkRunner
 from hl_mem.storage.database import Database, default_database_path
 from hl_mem.storage.events import EventRepository
 
@@ -109,7 +110,43 @@ def main(argv: Sequence[str] | None = None) -> None:
     resolve = conflict_commands.add_parser("resolve")
     resolve.add_argument("case_id")
     resolve.add_argument("decision", choices=("keep_left", "keep_right", "coexist", "reject"))
+    evaluation = commands.add_parser("eval")
+    evaluation.add_argument("--benchmark", choices=("longmemeval",), default="longmemeval")
+    evaluation.add_argument("--subset", default="core")
+    evaluation.add_argument("--source", type=Path, required=True)
+    evaluation.add_argument("--output", type=Path, required=True)
+    evaluation.add_argument(
+        "--layers",
+        default="extraction,retrieval,lifecycle",
+        help="逗号分隔的 extraction,retrieval,lifecycle",
+    )
+    evaluation.add_argument("--limit", type=int)
+    evaluation.add_argument("--keep-db", action="store_true")
     args = parser.parse_args(argv)
+    if args.command == "eval":
+        if args.limit is not None and args.limit < 1:
+            parser.error("--limit must be positive")
+        layers = tuple(item.strip() for item in args.layers.split(",") if item.strip())
+        result = BenchmarkRunner(limit=args.limit).run(
+            source=args.source,
+            subset=args.subset,
+            layers=layers,
+            output=args.output,
+            keep_db=args.keep_db,
+        )
+        print(
+            json.dumps(
+                {
+                    "benchmark": args.benchmark,
+                    "cases": len(result["cases"]),
+                    "config_hash": result["config_hash"],
+                    "output": str(args.output),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return
     if args.command == "conflicts":
         result: Any = (
             list_conflicts(args.db)
