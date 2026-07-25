@@ -85,6 +85,12 @@ class Settings:
     query_expansion_token_ceiling: int = 256
     query_expansion_timeout_seconds: float = 2.0
     query_expansion_total_timeout_seconds: float = 3.0
+    procedure_recall_mode: str = "keyword"
+    procedure_llm_threshold: float = 0.80
+    procedure_router_timeout_seconds: float = 1.5
+    procedure_candidate_limit: int = 30
+    procedure_recent_outcome_window: int = 20
+    procedure_outcome_half_life_days: int = 30
     vector_backend: VectorBackend = VectorBackend.SQLITE_SCAN
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
@@ -196,6 +202,12 @@ class Settings:
             query_expansion_total_timeout_seconds=float(
                 os.getenv("HL_MEM_QUERY_EXPANSION_TOTAL_TIMEOUT_SECONDS", "3.0")
             ),
+            procedure_recall_mode=os.getenv("HL_MEM_PROCEDURE_RECALL_MODE", "keyword").lower(),
+            procedure_llm_threshold=float(os.getenv("HL_MEM_PROCEDURE_LLM_THRESHOLD", "0.80")),
+            procedure_router_timeout_seconds=float(os.getenv("HL_MEM_PROCEDURE_ROUTER_TIMEOUT_SECONDS", "1.5")),
+            procedure_candidate_limit=int(os.getenv("HL_MEM_PROCEDURE_CANDIDATE_LIMIT", "30")),
+            procedure_recent_outcome_window=int(os.getenv("HL_MEM_PROCEDURE_RECENT_OUTCOME_WINDOW", "20")),
+            procedure_outcome_half_life_days=int(os.getenv("HL_MEM_PROCEDURE_OUTCOME_HALF_LIFE_DAYS", "30")),
             vector_backend=vector_backend,
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
@@ -318,6 +330,17 @@ class Settings:
             <= 0
         ):
             raise ConfigurationError("query expansion budgets and timeouts must be positive")
+        if self.procedure_recall_mode not in {"off", "keyword", "auto"}:
+            raise ConfigurationError("HL_MEM_PROCEDURE_RECALL_MODE must be 'off', 'keyword', or 'auto'")
+        if not 0.0 <= self.procedure_llm_threshold <= 1.0:
+            raise ConfigurationError("HL_MEM_PROCEDURE_LLM_THRESHOLD must be between 0 and 1")
+        if min(
+            self.procedure_router_timeout_seconds,
+            self.procedure_candidate_limit,
+            self.procedure_recent_outcome_window,
+            self.procedure_outcome_half_life_days,
+        ) <= 0:
+            raise ConfigurationError("procedure recall limits and timeouts must be positive")
         if (
             self.hermes_circuit_failure_threshold < 1
             or self.hermes_circuit_open_seconds <= 0
@@ -423,6 +446,12 @@ class Settings:
             "query_expansion_token_ceiling": self.query_expansion_token_ceiling,
             "query_expansion_timeout_seconds": self.query_expansion_timeout_seconds,
             "query_expansion_total_timeout_seconds": self.query_expansion_total_timeout_seconds,
+            "procedure_recall_mode": self.procedure_recall_mode,
+            "procedure_llm_threshold": self.procedure_llm_threshold,
+            "procedure_router_timeout_seconds": self.procedure_router_timeout_seconds,
+            "procedure_candidate_limit": self.procedure_candidate_limit,
+            "procedure_recent_outcome_window": self.procedure_recent_outcome_window,
+            "procedure_outcome_half_life_days": self.procedure_outcome_half_life_days,
             "vector_backend": self.vector_backend,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,

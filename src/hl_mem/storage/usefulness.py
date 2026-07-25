@@ -9,7 +9,13 @@ from typing import Iterable, cast
 from hl_mem.domain.feedback import BayesianUsefulnessPolicy
 from hl_mem.protocols import MemoryType, UsefulnessPolicyProtocol, UsefulnessSnapshot
 
-_TABLES = {"claim": "claims", "observation": "derivations", "policy": "policies"}
+_TABLES = {
+    "claim": "claims",
+    "observation": "derivations",
+    "policy": "policies",
+    "episode": "episodes",
+    "trace": "traces",
+}
 
 
 class UsefulnessRepository:
@@ -107,7 +113,8 @@ class UsefulnessRepository:
         rows = self.connection.execute(
             "SELECT memory_type,memory_id,SUM(helpful=1),SUM(helpful=0),"
             "COALESCE(SUM(task_outcome),0),COUNT(task_outcome) FROM retrieval_feedback "
-            "WHERE memory_type IN ('claim','observation','policy') AND (helpful IS NOT NULL OR task_outcome IS NOT NULL) "
+            "WHERE memory_type IN ('claim','observation','policy','episode','trace') "
+            "AND (helpful IS NOT NULL OR task_outcome IS NOT NULL) "
             "GROUP BY memory_type,memory_id"
         ).fetchall()
         count = 0

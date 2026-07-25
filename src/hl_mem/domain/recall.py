@@ -12,6 +12,9 @@ from hl_mem.domain.constants import (
     INTENT_KEYWORDS_PREFERENCE,
     INTENT_KEYWORDS_PROCEDURAL,
     INTENT_KEYWORDS_RELATIONAL,
+    PROCEDURE_ACTION_KEYWORDS,
+    PROCEDURE_KEYWORDS,
+    TOOL_KEYWORDS,
 )
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible, parse_utc
 
@@ -42,12 +45,18 @@ def route_query(query: str, reference_time: str | None = None) -> QueryRoute:
 def route_recall_intent(query: str, as_of: str | None, now: str | None = None) -> RecallIntent:
     """根据显式历史措辞或过去的 as_of 推断召回意图。"""
     lowered = query.casefold()
-    if any(marker in lowered for marker in (*INTENT_KEYWORDS_PREFERENCE, "preference", "prefer", "favorite")):
-        return RecallIntent.PREFERENCE
     if any(marker in query for marker in (*INTENT_KEYWORDS_AS_OF, "as_of")):
         return RecallIntent.HISTORICAL
     if as_of is not None:
         reference = parse_utc(now) if now else datetime.now(timezone.utc)
         if parse_utc(as_of) < reference:
             return RecallIntent.HISTORICAL
+    if any(marker in lowered for marker in (*INTENT_KEYWORDS_PREFERENCE, "preference", "prefer", "favorite")):
+        return RecallIntent.PREFERENCE
+    if any(marker in lowered for marker in TOOL_KEYWORDS):
+        return RecallIntent.TOOL
+    if "上次" in lowered and any(marker in lowered for marker in PROCEDURE_ACTION_KEYWORDS):
+        return RecallIntent.PROCEDURE
+    if any(marker in lowered for marker in PROCEDURE_KEYWORDS):
+        return RecallIntent.PROCEDURE
     return RecallIntent.CURRENT_STATE

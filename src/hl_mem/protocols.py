@@ -11,7 +11,28 @@ if TYPE_CHECKING:
     from hl_mem.domain.content import ImagePart
     from hl_mem.ingest.extractors import ExtractedClaim
 
-MemoryType = Literal["claim", "observation", "policy"]
+MemoryType = Literal["claim", "observation", "policy", "episode", "trace"]
+
+
+@dataclass(frozen=True)
+class IntentDecision:
+    """可选意图路由器返回的受限决策。"""
+
+    intent: RecallIntent
+    confidence: float
+    rationale_code: str
+
+
+class IntentRouterProtocol(Protocol):
+    """在确定性规则无强信号时提供可选意图判定。"""
+
+    def route(
+        self,
+        query: str,
+        *,
+        allowed: tuple[RecallIntent, ...],
+        timeout_seconds: float,
+    ) -> IntentDecision: ...
 
 
 @dataclass(frozen=True)

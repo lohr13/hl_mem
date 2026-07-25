@@ -13,6 +13,8 @@ class RecallIntent(StrEnum):
     CURRENT_STATE = "current_state"
     HISTORICAL = "historical"
     PREFERENCE = "preference"
+    TOOL = "tool"
+    PROCEDURE = "procedure"
 
 
 def parse_utc(value: str) -> datetime:
@@ -43,7 +45,12 @@ def claim_is_visible(
         return False
     if known_as_of and not _contains(claim.get("recorded_from"), claim.get("recorded_to"), parse_utc(known_as_of)):
         return False
-    if selected_intent in {RecallIntent.CURRENT_STATE, RecallIntent.PREFERENCE}:
+    if selected_intent in {
+        RecallIntent.CURRENT_STATE,
+        RecallIntent.PREFERENCE,
+        RecallIntent.TOOL,
+        RecallIntent.PROCEDURE,
+    }:
         if claim.get("status", "active") != "active":
             return False
         expires_at = claim.get("expires_at")

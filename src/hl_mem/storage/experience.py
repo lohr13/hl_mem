@@ -443,6 +443,55 @@ class ExperienceRepository:
             policy["procedure"] = decode_json(policy["procedure"])
         return result
 
+    def list_active_policies(self, namespace: str, query: str, limit: int) -> list[dict[str, Any]]:
+        """按 namespace 和文本相关性有界查询可用策略。"""
+        pattern = f"%{query.strip()}%"
+        rows = self.connection.execute(
+            "SELECT p.*,COALESCE(mu.usefulness_score,0.5) AS usefulness_score "
+            "FROM policies p LEFT JOIN memory_usefulness mu "
+            "ON mu.memory_type='policy' AND mu.memory_id=p.id "
+            "WHERE p.namespace_key=? AND p.status='active' AND p.procedure_status<>'retired' "
+            "AND (?='%%' OR p.trigger LIKE ? OR p.procedure LIKE ?) "
+            "ORDER BY p.reliability DESC,p.updated_at DESC,p.id ASC LIMIT ?",
+            (namespace, pattern, pattern, pattern, limit),
+        ).fetchall()
+        result = [dict(row) for row in rows]
+        for policy in result:
+            policy["procedure"] = decode_json(policy["procedure"])
+        return result
+
+    def list_success_episodes(self, namespace: str, query: str, limit: int) -> list[dict[str, Any]]:
+        """有界查询 namespace 内与目标或结果相关的成功 Episode。"""
+        pattern = f"%{query.strip()}%"
+        rows = self.connection.execute(
+            "SELECT * FROM episodes WHERE namespace_key=? AND status='success' "
+            "AND (?='%%' OR goal LIKE ? OR COALESCE(outcome_summary,'') LIKE ?) "
+            "ORDER BY reward DESC,COALESCE(ended_at,started_at) DESC,id ASC LIMIT ?",
+            (namespace, pattern, pattern, pattern, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_traces_for_episodes(
+        self,
+        episode_ids: list[str],
+        limit: int,
+        query: str = "",
+    ) -> list[dict[str, Any]]:
+        """按父 Episode 绑定关系有界查询 Trace，并优先动作名称命中。"""
+        ids = list(dict.fromkeys(episode_ids))
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        pattern = f"%{query.strip()}%"
+        rows = self.connection.execute(
+            f"SELECT t.*,e.reward AS parent_reward,e.status AS parent_status,e.ended_at "
+            f"FROM traces t JOIN episodes e ON e.id=t.episode_id WHERE t.episode_id IN ({placeholders}) "
+            "ORDER BY CASE WHEN ?='%%' OR t.action LIKE ? THEN 0 ELSE 1 END,"
+            "e.reward DESC,t.value DESC,t.episode_id ASC,t.sequence_no ASC LIMIT ?",
+            (*ids, pattern, pattern, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def _link_episode(self, policy_id: str, episode_id: str) -> None:
         self.connection.execute(
             "INSERT OR IGNORE INTO evidence_links(id,derived_type,derived_id,evidence_type,evidence_id,relation,weight) "

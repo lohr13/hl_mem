@@ -27,6 +27,19 @@ class CandidateTrace:
 
 
 @dataclass
+class ExperienceCandidateTrace:
+    """记录 Experience 候选的类型、分数与最终去向。"""
+
+    memory_type: str
+    memory_id: str
+    source_rank: int
+    features: dict[str, float]
+    final_rank: int | None = None
+    included: bool = False
+    filter_reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SearchPhaseMetrics:
     """记录搜索阶段耗时，单位为微秒。"""
 
@@ -90,6 +103,11 @@ class SearchTrace:
     expansion_trigger: str | None = None
     expansions: list[QueryExpansionTrace] = field(default_factory=list)
     expansion_total_tokens: int = 0
+    intent_source: str = "fallback"
+    experience_candidates: list[ExperienceCandidateTrace] = field(default_factory=list)
+    candidate_counts: dict[str, int] = field(default_factory=dict)
+    quota_tokens: dict[str, int] = field(default_factory=dict)
+    reflow_tokens: int = 0
 
 
 class SearchTracer:

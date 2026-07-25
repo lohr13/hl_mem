@@ -69,6 +69,7 @@ class ClaimOutput(BaseModel):
     """公开召回 Claim 的兼容输出契约。"""
 
     type: Literal["claim"] = "claim"
+    memory_type: Literal["claim"] = "claim"
     id: str
     text: Any
     status: str
@@ -91,10 +92,23 @@ class ClaimOutput(BaseModel):
     conflicts: list[dict[str, Any]] | None = None
 
 
+class ExperienceMemoryOutput(BaseModel):
+    """Tool/Procedure 专用召回的统一 Experience 输出。"""
+
+    type: Literal["policy", "episode", "trace"]
+    memory_type: Literal["policy", "episode", "trace"]
+    id: str
+    text: str
+    score: float
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    features: dict[str, float] = Field(default_factory=dict)
+    feedback_id: str | None = None
+
+
 class RecallOutput(BaseModel):
     """REST 与 MCP 共享应用服务返回的召回契约。"""
 
-    results: list[ClaimOutput]
+    results: list[ClaimOutput | ExperienceMemoryOutput]
     observations: list[dict[str, Any]]
     policies: list[dict[str, Any]]
     total: int

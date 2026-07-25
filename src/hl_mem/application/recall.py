@@ -13,11 +13,18 @@ from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
-from hl_mem.protocols import EmbedderProtocol, RerankerProtocol, WeightedQuery
+from hl_mem.protocols import EmbedderProtocol, IntentRouterProtocol, RerankerProtocol, WeightedQuery
+from hl_mem.recall.procedure_pipeline import MemoryCandidate, recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
-from hl_mem.recall.trace import QueryExpansionTrace, SearchPhaseMetrics, SearchTrace, SearchTracer
+from hl_mem.recall.trace import (
+    ExperienceCandidateTrace,
+    QueryExpansionTrace,
+    SearchPhaseMetrics,
+    SearchTrace,
+    SearchTracer,
+)
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.evidence import DerivationRepository, EvidenceRepository
@@ -42,6 +49,51 @@ def budget_pack(items: list[dict[str, Any]], token_budget: int) -> list[dict[str
     return packed
 
 
+def budget_pack_by_type(
+    candidates: list[MemoryCandidate],
+    intent: RecallIntent,
+    token_budget: int,
+) -> tuple[list[MemoryCandidate], dict[str, int], int]:
+    """按 Tool/Procedure 类型配额装箱，并将未使用预算按固定顺序回流。"""
+    ratios = (
+        {"policy": 0.35, "episode": 0.25, "trace": 0.15, "claim": 0.25}
+        if intent is RecallIntent.TOOL
+        else {"policy": 0.40, "episode": 0.20, "trace": 0.25, "claim": 0.15}
+    )
+    quotas = {kind: int(token_budget * ratio) for kind, ratio in ratios.items()}
+    grouped = {kind: [item for item in candidates if item.memory_type == kind] for kind in ratios}
+    packed: list[MemoryCandidate] = []
+    used_by_type = {kind: 0 for kind in ratios}
+    remaining = {kind: list(items) for kind, items in grouped.items()}
+
+    def take(kind: str, allowance: int) -> int:
+        used = 0
+        retained: list[MemoryCandidate] = []
+        for item in remaining[kind]:
+            cost = max(1, (len(item.text) + 1) // 2)
+            if used + cost <= allowance:
+                packed.append(item)
+                used += cost
+            else:
+                retained.append(item)
+        remaining[kind] = retained
+        used_by_type[kind] += used
+        return used
+
+    for kind, quota in quotas.items():
+        take(kind, quota)
+    total_used = sum(used_by_type.values())
+    reflow_budget = max(0, token_budget - total_used)
+    reflow_used = 0
+    for kind in ("policy", "episode", "claim", "trace"):
+        used = take(kind, reflow_budget)
+        reflow_used += used
+        reflow_budget -= used
+    order = {id(item): index for index, item in enumerate(candidates)}
+    packed.sort(key=lambda item: order[id(item)])
+    return packed, quotas, reflow_used
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -57,6 +109,7 @@ class RecallService:
         relation_config: RelationExpansionConfig | None = None,
         settings: Settings | None = None,
         query_expander: QueryExpander | None = None,
+        intent_router: IntentRouterProtocol | None = None,
     ) -> None:
         self.connection = connection
         self.embedder = embedder
@@ -64,6 +117,7 @@ class RecallService:
         self.relation_config = relation_config or RelationExpansionConfig()
         self.settings = settings or Settings()
         self.query_expander = query_expander
+        self.intent_router = intent_router
 
     def recall(
         self,
@@ -81,7 +135,38 @@ class RecallService:
         """执行混合召回并返回 claim、策略、证据及查询标识。"""
         total_started = time.perf_counter_ns()
         query_id = query_id or new_id()
-        selected_intent = RecallIntent(intent or route_recall_intent(query, as_of))
+        intent_source = "explicit" if intent is not None else "keyword"
+        inferred_intent = route_recall_intent(query, as_of)
+        if intent is None and self.settings.procedure_recall_mode == "off" and inferred_intent in {
+            RecallIntent.TOOL,
+            RecallIntent.PROCEDURE,
+        }:
+            inferred_intent = RecallIntent.CURRENT_STATE
+            intent_source = "fallback"
+        elif (
+            intent is None
+            and inferred_intent is RecallIntent.CURRENT_STATE
+            and self.settings.procedure_recall_mode == "auto"
+            and self.intent_router is not None
+        ):
+            try:
+                decision = self.intent_router.route(
+                    query,
+                    allowed=(RecallIntent.CURRENT_STATE, RecallIntent.TOOL, RecallIntent.PROCEDURE),
+                    timeout_seconds=self.settings.procedure_router_timeout_seconds,
+                )
+                if (
+                    isinstance(decision.intent, RecallIntent)
+                    and decision.intent in {RecallIntent.CURRENT_STATE, RecallIntent.TOOL, RecallIntent.PROCEDURE}
+                    and decision.confidence >= self.settings.procedure_llm_threshold
+                ):
+                    inferred_intent = decision.intent
+                    intent_source = "llm"
+                else:
+                    intent_source = "fallback"
+            except (TimeoutError, ValueError, TypeError):
+                intent_source = "fallback"
+        selected_intent = RecallIntent(intent or inferred_intent)
         tracer = SearchTracer(
             SearchTrace(
                 query_id=query_id,
@@ -94,6 +179,7 @@ class RecallService:
                 ),
                 candidates={},
                 phases=SearchPhaseMetrics(),
+                intent_source=intent_source,
             )
         )
         expansion_deadline = time.monotonic() + self.settings.query_expansion_total_timeout_seconds
@@ -202,6 +288,21 @@ class RecallService:
         self._record_access(claims)
         assembly_started = time.perf_counter_ns()
         results = self._assemble_results(claims, namespace)
+        if selected_intent in {RecallIntent.TOOL, RecallIntent.PROCEDURE} and self.settings.procedure_recall_mode != "off":
+            return self._recall_experience(
+                query=query,
+                selected_intent=selected_intent,
+                namespace=namespace,
+                limit=limit,
+                query_id=query_id,
+                claim_results=results,
+                claim_scores={str(item["id"]): float(item.get("_score", 0.0)) for item in claims},
+                token_budget=token_budget,
+                context_mode=context_mode,
+                debug=debug,
+                tracer=tracer,
+                total_started=total_started,
+            )
         tracer.trace.phases.assembly_us = (time.perf_counter_ns() - assembly_started) // 1000
         observations = self._assemble_observations([claim["id"] for claim in claims])
         policies = matching_policies(
@@ -275,12 +376,13 @@ class RecallService:
         try:
             recorded_at = _now()
             feedback: list[tuple[Any, ...]] = []
-            for memory_type, items in (
+            for default_memory_type, items in (
                 ("claim", claims),
                 ("observation", observations),
                 ("policy", policies),
             ):
                 for rank, item in enumerate(items, 1):
+                    memory_type = str(item.get("memory_type") or default_memory_type)
                     feedback_id = new_id()
                     item["feedback_id"] = feedback_id
                     feedback.append(
@@ -342,6 +444,7 @@ class RecallService:
             replacement = replacement_map.get(claim.get("superseded_by_id"))
             result = {
                 "type": "claim",
+                "memory_type": "claim",
                 "id": claim["id"],
                 "text": text,
                 "status": claim["status"],
@@ -361,6 +464,101 @@ class RecallService:
                 result["conflicts"] = rivals_map.get(claim["id"], [])
             results.append(result)
         return results
+
+    def _recall_experience(
+        self,
+        *,
+        query: str,
+        selected_intent: RecallIntent,
+        namespace: str,
+        limit: int,
+        query_id: str,
+        claim_results: list[dict[str, Any]],
+        claim_scores: dict[str, float],
+        token_budget: int | None,
+        context_mode: str | None,
+        debug: bool,
+        tracer: SearchTracer,
+        total_started: int,
+    ) -> dict[str, Any]:
+        """执行 Experience 专用排序、统一 packing 与多类型 exposure。"""
+        claim_candidates = [
+            MemoryCandidate(
+                "claim",
+                str(item["id"]),
+                str(item.get("text") or ""),
+                claim_scores.get(str(item["id"]), 0.0),
+                tuple(item.get("evidence") or ()),
+                {"claim_score": claim_scores.get(str(item["id"]), 0.0)},
+            )
+            for item in claim_results
+        ]
+        candidates = recall_procedure(
+            ExperienceService(self.connection),
+            query,
+            selected_intent,
+            namespace,
+            limit,
+            candidate_limit=self.settings.procedure_candidate_limit,
+            recent_outcome_window=self.settings.procedure_recent_outcome_window,
+            outcome_half_life_days=self.settings.procedure_outcome_half_life_days,
+            claim_candidates=claim_candidates,
+        )
+        budget = token_budget or self.settings.packed_context_token_budget
+        packed, quotas, reflow = budget_pack_by_type(candidates, selected_intent, budget)
+        selected = packed[:limit] if context_mode == "packed" else candidates[:limit]
+        results = [
+            {
+                "type": item.memory_type,
+                "memory_type": item.memory_type,
+                "id": item.memory_id,
+                "text": item.text,
+                "score": item.score,
+                "evidence": list(item.evidence),
+                "features": item.features,
+            }
+            for item in selected
+        ]
+        self._record_feedback(results, [], [], query_id)
+        tracer.trace.candidate_counts = {
+            kind: sum(item.memory_type == kind for item in candidates)
+            for kind in ("policy", "episode", "trace", "claim")
+        }
+        tracer.trace.quota_tokens = quotas
+        tracer.trace.reflow_tokens = reflow
+        selected_keys = {(item.memory_type, item.memory_id): rank for rank, item in enumerate(selected, 1)}
+        tracer.trace.experience_candidates = [
+            ExperienceCandidateTrace(
+                memory_type=item.memory_type,
+                memory_id=item.memory_id,
+                source_rank=rank,
+                features=item.features,
+                final_rank=selected_keys.get((item.memory_type, item.memory_id)),
+                included=(item.memory_type, item.memory_id) in selected_keys,
+                filter_reasons=[] if (item.memory_type, item.memory_id) in selected_keys else ["limit_or_budget"],
+            )
+            for rank, item in enumerate(candidates, 1)
+        ]
+        response: dict[str, Any] = {
+            "results": results,
+            "observations": [],
+            "policies": [item for item in results if item["memory_type"] == "policy"],
+            "total": len(results),
+            "query_id": query_id,
+        }
+        if context_mode == "packed":
+            used = sum(max(1, (len(item.text) + 1) // 2) for item in selected)
+            response["context"] = {
+                "context_items": [{"type": item.memory_type, "data": result} for item, result in zip(selected, results)],
+                "used_tokens_estimate": used,
+                "truncated": len(selected) < len(candidates),
+                "quota_tokens": quotas,
+                "reflow_tokens": reflow,
+            }
+        if debug:
+            tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
+            response["search_trace"] = tracer.to_dict()
+        return response
 
     @staticmethod
     def _batch_evidence(
