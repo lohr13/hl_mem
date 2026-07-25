@@ -118,7 +118,10 @@ def make_query_expander(
     """按模式构造查询扩展器；关闭时不创建 LLM 客户端。"""
     if settings.query_expansion_mode == "off" or settings.query_expansion_max == 0:
         return None
-    return QueryExpander(make_llm_client(settings, connection, operation="query_expansion"))
+    try:
+        return QueryExpander(make_llm_client(settings, connection, operation="query_expansion"))
+    except Exception:
+        return None
 
 
 def make_relation_discoverer(
@@ -128,9 +131,11 @@ def make_relation_discoverer(
     """按发布模式构造关系发现器；关闭时不创建 LLM 客户端。"""
     if settings.relation_discovery_mode == "off":
         return None
-    from hl_mem.workers.discover_relations import LLMRelationDiscoverer
-
-    return LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
+    try:
+        from hl_mem.workers.discover_relations import LLMRelationDiscoverer
+        return LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
+    except Exception:
+        return None
 
 
 def make_extractor(

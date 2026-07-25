@@ -66,8 +66,9 @@ class Settings:
     reranker_model: str = "gte-rerank-v2"
     relation_expansion_mode: RelationExpansionMode = "off"
     relation_expansion_max_depth: int = 1
-    # relation_discovery: audit 只记录候选 proposal，不自动写入关系边，默认开启可安全积累评估数据
-    relation_discovery_mode: RelationDiscoveryMode = "audit"
+    # relation_discovery: audit 只记录候选 proposal，不自动写入关系边
+    # from_env 默认 audit，Settings() 默认 off（测试安全）
+    relation_discovery_mode: RelationDiscoveryMode = "off"
     relation_discovery_pool_limit: int = 40
     relation_discovery_max_proposals: int = 10
     relation_auto_apply_confidence: float = 0.90
@@ -81,8 +82,8 @@ class Settings:
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
     # query_expansion: auto 仅在短查询或指代查询时触发 LLM 改写，提升 recall
-    # Coding Plan token 充足，2s timeout 保护，失败时回退原始 query
-    query_expansion_mode: str = "auto"
+    # from_env 默认 auto，Settings() 默认 off（测试安全）
+    query_expansion_mode: str = "off"
     query_expansion_max: int = 2
     query_expansion_candidate_floor: int = 8
     query_expansion_token_ceiling: int = 256

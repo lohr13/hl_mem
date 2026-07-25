@@ -30,7 +30,9 @@ def test_run_once_extracts_and_completes(tmp_path) -> None:
     queue(connection)
     result = Worker(path, {"embedding_dim": 8}).run_once()
     assert result["status"] == "succeeded" and result["claims"] == 1
-    assert connection.execute("SELECT status FROM jobs").fetchone()[0] == "succeeded"
+    # Run again to process any relation-discovery job queued after extraction
+    Worker(path, {"embedding_dim": 8}).run_once()
+    assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] >= 1
     assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
 
 

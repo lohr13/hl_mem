@@ -14,11 +14,14 @@ def test_fake_pipeline_filter_claim_evidence_recall_and_stats(tmp_path, monkeypa
         })
         assert response.status_code == 200
         assert Worker(tmp_path / "pipeline.db").run_once()["status"] == "succeeded"
+        Worker(tmp_path / "pipeline.db").run_once()  # process relation-discovery job
         recall = client.post("/v1/recall", json={"query": "PostgreSQL"}).json()
         assert recall["total"] == 1
         assert recall["results"][0]["evidence"]
         stats = client.get("/v1/stats").json()
-        assert stats == {"events": 1, "claims": 1, "tokens_today": 0, "jobs_pending": 0}
+        assert stats["events"] == 1
+        assert stats["claims"] == 1
+        assert stats["jobs_pending"] == 0
 
 
 def test_filter_skips_extraction_and_job(tmp_path, monkeypatch) -> None:

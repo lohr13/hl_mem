@@ -33,7 +33,7 @@ def test_idempotency_cross_session_and_evidence(tmp_path) -> None:
         assert all(item["evidence"] and item["evidence"][0]["type"] == "event" for item in response.json()["results"])
         connection = app.state.db.open()
         assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 2
-        assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 2
+        assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 4  # 2 extract + 2 relation-discovery
 
 
 def test_data_survives_database_restart(tmp_path) -> None:
