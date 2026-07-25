@@ -2,8 +2,8 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Tests: 342 passed](https://img.shields.io/badge/tests-342%20passed-brightgreen.svg)](docs/CHANGELOG.md)
-[![Version: 0.11.2](https://img.shields.io/badge/version-0.11.2-blue.svg)](docs/CHANGELOG.md)
+[![Tests: 373 passed](https://img.shields.io/badge/tests-373%20passed-brightgreen.svg)](docs/CHANGELOG.md)
+[![Version: 0.12.0](https://img.shields.io/badge/version-0.12.0-blue.svg)](docs/CHANGELOG.md)
 
 **Local-first, evidence-driven memory for AI agents.** Stop your LLM from forgetting across sessions.
 
@@ -15,7 +15,7 @@ HL-Mem provides persistent, structured memory with dual-temporal modeling, evide
 
 ## 中文文档
 
-> v0.11.2 · 342 passed · 1 skipped · 22 migrations · [CHANGELOG](docs/CHANGELOG.md)
+> v0.12.0 · 373 passed · 1 skipped · 24 migrations · [CHANGELOG](docs/CHANGELOG.md)
 
 面向 AI Agent 的本地优先、跨会话记忆系统。证据驱动、双时间模型、双通道设计、可解释召回、slot+tags 分类体系、importance 联动 TTL。
 
@@ -30,14 +30,14 @@ HL-Mem provides persistent, structured memory with dual-temporal modeling, evide
 
 HL-Mem 将这些理念统一为**事件溯源双通道**设计：事实通道处理结构化知识提取、TTL、冲突、去重与证据链，经验通道记录工具调用轨迹（Episode + Trace + Reward），并提供可解释召回与完整遗忘治理。
 
-### v0.11.0 新能力
+### v0.12.0 新能力
 
-- LLM call spans 持久化记录 operation/provider/model/status/tokens/latency，`healthz` 提供 24h 聚合
-- Job 支持 stage、processed/total 进度和 heartbeat，worker 逐条上报
-- `ConsolidationScope` 支持 namespace/slot/tag 过滤和 max_pairs 限制
-- Claim 提取支持 occurred range（occurred_start/occurred_end）与 entities
-- Reranker provider registry 统一 provider 选择与构造
-- claims/tags FTS 使用 trigram tokenizer，恢复中文连续子串检索
+- **多查询召回**：短查询和指代查询按需进行 LLM 查询扩展，支持超时保护、总预算和原始 query 回退；默认 `auto`
+- **关系候选发现**：新 claim 可通过 LLM 发现候选关系，proposal 独立审计；默认 `audit`，不自动写边
+- **Benchmark suite**：LongMemEval 适配器与 extraction/retrieval/lifecycle 三层指标，通过 CLI 按需运行
+- **图片证据入口**：支持受控图片输入、视觉描述和证据落库；无默认图片源，默认关闭
+- **反馈驱动维护**：聚合记忆 usefulness，为 TTL/decay 提供反馈信号；默认 `observe`，暂不改变生命周期
+- **Tool/Procedure intent**：确定性识别工具与流程查询并接入 Experience pipeline；默认 `keyword`
 
 ### v0.11.2 新能力
 
@@ -53,6 +53,15 @@ HL-Mem 将这些理念统一为**事件溯源双通道**设计：事实通道处
 - 提取共享的日调度函数 `enqueue_daily_job`
 - 收紧类型标注，消除 `X | Any` 模式
 - 补全核心模块 docstrings
+
+### v0.11.0 新能力
+
+- LLM call spans 持久化记录 operation/provider/model/status/tokens/latency，`healthz` 提供 24h 聚合
+- Job 支持 stage、processed/total 进度和 heartbeat，worker 逐条上报
+- `ConsolidationScope` 支持 namespace/slot/tag 过滤和 max_pairs 限制
+- Claim 提取支持 occurred range（occurred_start/occurred_end）与 entities
+- Reranker provider registry 统一 provider 选择与构造
+- claims/tags FTS 使用 trigram tokenizer，恢复中文连续子串检索
 
 ## 核心架构
 
@@ -81,7 +90,7 @@ HL-Mem 将这些理念统一为**事件溯源双通道**设计：事实通道处
                     ┌───────────────▼───────────────┐
                     │       Storage Layer           │
                     │  SQLite WAL + FTS5 + Vector   │
-                    │  22 Migrations · 7 Tables     │
+                    │  24 Migrations · 7 Tables     │
                     │  + Audit · Backup · Retention │
                     │  + Dedup Pairs · Slot Tags    │
                     └───────────────────────────────┘
@@ -182,7 +191,7 @@ src/hl_mem/
 │   ├── experience.py          # ExperienceRepository
 │   ├── jobs.py                # JobRepository
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 22 SQL migrations (001-022)
+│   └── migrations/            # 24 SQL migrations (001-024)
 ├── workers/                # 后台任务
 │   ├── worker.py              # Job 调度器
 │   ├── ttl.py                 # TTL 过期
@@ -321,7 +330,7 @@ python install_to_hermes.py --hermes-home ~/.hermes
 
 | 组件 | 状态 |
 |------|------|
-| SQLite Schema（22 migrations） | ✅ |
+| SQLite Schema（24 migrations） | ✅ |
 | 幂等事件写入 + 事务原子化 | ✅ |
 | LLM 提取（前序上下文 + 时间锚定 + ADD-only） | ✅ |
 | Event Filter + Token Budget | ✅ |
@@ -340,7 +349,7 @@ python install_to_hermes.py --hermes-home ~/.hermes
 | 在线备份 + CLI 导入导出 | ✅ |
 | SQLite 向量存储（BLOB 全量余弦扫描） | ✅ |
 | PostgreSQL 后端 | 📋 未来规模触发项 |
-| 342 tests passed，1 skipped | ✅ |
+| 373 tests passed，1 skipped | ✅ |
 | Mental Model 深化 | 📋 基础已实现，推理增强延后 |
 | 多租户 | 📋 设计保留 |
 

@@ -1,14 +1,14 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-07-25 · v0.11.2
+> 最后更新：2026-07-26 · v0.12.0
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.11.2
-- **阶段**：v0.11.2 发布收口，342 passed，1 skipped
+- **版本**：v0.12.0
+- **阶段**：v0.12.0 发布收口，373 passed，1 skipped
 - **服务**：FastAPI on port 8200，LLM=glm-5.2，Embedding=text-embedding-v4 (2048d)，Reranker=gte-rerank-v2
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），22 migrations，约 441 active / 514 total claims
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），24 migrations，约 441 active / 514 total claims
 - **FTS**：trigram（claims/tags），unicode61（events）
 
 ## 已完成
@@ -31,6 +31,15 @@
 - 审计日志 + 在线备份 + CLI 导入导出
 - 可选 PostgreSQL 后端
 
+### v0.12.0 六大特性
+
+- 多查询召回：默认 `auto`，短/指代查询按需扩展，失败回退原始 query
+- 关系候选发现：默认 `audit`，只记录 proposal，不自动写边
+- Benchmark suite：LongMemEval adapter + extraction/retrieval/lifecycle 三层指标，CLI 按需运行
+- 图片证据入口：视觉描述与证据落库已实现，默认 `off`
+- 反馈驱动维护：usefulness 聚合已接入，默认 `observe`，不影响 TTL/decay
+- Tool/Procedure intent：Experience pipeline 确定性路由，默认 `keyword`
+
 ### 架构重构（v0.10.0）
 
 - P0 数据正确性：事务原子化 + fact_hash v2 + MCP pipeline 修复
@@ -43,6 +52,8 @@
 ## 下一步
 
 - 接入 Hermes MemoryProvider 正式替换试跑
+- 观察 relation proposal 准确率与 usefulness 聚合数据，再评估 `auto` / `on` 模式
+- 接入实际图片输入源后评估开启视觉描述器
 - 根据实际使用反馈调优提取 prompt 和召回质量
 - Mental Model 推理增强（基础已实现）
 - 多租户（架构设计保留）

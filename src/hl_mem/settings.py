@@ -66,7 +66,8 @@ class Settings:
     reranker_model: str = "gte-rerank-v2"
     relation_expansion_mode: RelationExpansionMode = "off"
     relation_expansion_max_depth: int = 1
-    relation_discovery_mode: RelationDiscoveryMode = "off"
+    # relation_discovery: audit 只记录候选 proposal，不自动写入关系边，默认开启可安全积累评估数据
+    relation_discovery_mode: RelationDiscoveryMode = "audit"
     relation_discovery_pool_limit: int = 40
     relation_discovery_max_proposals: int = 10
     relation_auto_apply_confidence: float = 0.90
@@ -79,12 +80,15 @@ class Settings:
     tag_channel_enabled: bool = False
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
-    query_expansion_mode: str = "off"
+    # query_expansion: auto 仅在短查询或指代查询时触发 LLM 改写，提升 recall
+    # Coding Plan token 充足，2s timeout 保护，失败时回退原始 query
+    query_expansion_mode: str = "auto"
     query_expansion_max: int = 2
     query_expansion_candidate_floor: int = 8
     query_expansion_token_ceiling: int = 256
     query_expansion_timeout_seconds: float = 2.0
     query_expansion_total_timeout_seconds: float = 3.0
+    # procedure_recall: keyword 为纯确定性路由，仅 TOOL/PROCEDURE intent 进入 Experience pipeline
     procedure_recall_mode: str = "keyword"
     procedure_llm_threshold: float = 0.80
     procedure_router_timeout_seconds: float = 1.5
@@ -106,6 +110,7 @@ class Settings:
     llm_timeout: float = 90.0
     llm_max_attempts: int = 3
     llm_schema_retries: int = 2
+    # image_describer: 当前没有图片输入源；接入视觉 API 后可通过 HL_MEM_IMAGE_DESCRIBER_MODE=on 开启
     image_describer_mode: str = "off"
     image_describer_provider: str = "dashscope"
     image_describer_api_key: str | None = None
@@ -146,6 +151,7 @@ class Settings:
     slot_short_ttl_seconds: int = 86400
     ttl_backfill_batch_size: int = 100
     ttl_backfill_grace_hours: int = 0
+    # feedback_lifecycle: observe 只聚合 usefulness，不影响 TTL/decay；观察稳定后可切换为 on
     feedback_lifecycle_mode: str = "observe"
     feedback_bonus_every: int = 3
     feedback_bonus_days: int = 14
@@ -181,7 +187,7 @@ class Settings:
             reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
             relation_expansion_mode=os.getenv("HL_MEM_RELATION_EXPANSION", "off").lower(),
             relation_expansion_max_depth=int(os.getenv("HL_MEM_RELATION_EXPANSION_MAX_DEPTH", "1")),
-            relation_discovery_mode=os.getenv("HL_MEM_RELATION_DISCOVERY_MODE", "off").lower(),
+            relation_discovery_mode=os.getenv("HL_MEM_RELATION_DISCOVERY_MODE", "audit").lower(),
             relation_discovery_pool_limit=int(os.getenv("HL_MEM_RELATION_DISCOVERY_POOL_LIMIT", "40")),
             relation_discovery_max_proposals=int(os.getenv("HL_MEM_RELATION_DISCOVERY_MAX_PROPOSALS", "10")),
             relation_auto_apply_confidence=float(os.getenv("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE", "0.90")),
@@ -194,7 +200,7 @@ class Settings:
             tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower() == "true",
             tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
             tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
-            query_expansion_mode=os.getenv("HL_MEM_QUERY_EXPANSION_MODE", "off").lower(),
+            query_expansion_mode=os.getenv("HL_MEM_QUERY_EXPANSION_MODE", "auto").lower(),
             query_expansion_max=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX", "2")),
             query_expansion_candidate_floor=int(os.getenv("HL_MEM_QUERY_EXPANSION_CANDIDATE_FLOOR", "8")),
             query_expansion_token_ceiling=int(os.getenv("HL_MEM_QUERY_EXPANSION_TOKEN_CEILING", "256")),

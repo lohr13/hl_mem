@@ -4,6 +4,36 @@
 
 ---
 
+## v0.12.0 — 2026-07-26
+
+### 六大新特性
+
+- **多查询召回**：新增受控 QueryExpander。短查询、指代查询或候选不足时可调用 LLM 生成最多 2 个扩展 query，带单次 2 秒/总计 3 秒超时、token ceiling 和原始 query 回退。
+- **关系候选发现**：新增 claim 关系发现 worker、proposal repository 与审计状态；通过 LLM 识别 supports/follows/about 等候选关系，自动写边与 proposal 审计分离。
+- **Benchmark suite**：新增 LongMemEval adapter、离线 runner、JSON/Markdown 报告，以及 extraction、retrieval、lifecycle 三层指标和 bootstrap confidence interval；通过 `hl-mem eval` 按需执行。
+- **图片证据入口**：扩展多模态内容协议，新增 DashScope 视觉描述器、图片大小/数量限制、受控 file URI 白名单，并将图片描述与原始图片定位信息纳入事件证据。
+- **反馈驱动维护**：新增 usefulness 聚合、反馈归因与重建 worker，使 helpful/unhelpful 信号可供 TTL 延长与 decay 调整使用，同时保留只观察不生效的安全模式。
+- **Tool/Procedure intent**：新增 TOOL/PROCEDURE intent、确定性 keyword router 与 Experience 专用召回 pipeline，结合最近 outcome 和时间衰减排序 procedure/policy 结果。
+
+### Migrations
+
+- `023_relation_proposals.sql`：新增关系候选 proposal 审计存储。
+- `024_memory_usefulness.sql`：新增记忆 usefulness 聚合存储。
+
+### 默认配置
+
+- `HL_MEM_QUERY_EXPANSION_MODE=auto`：仅短查询、指代查询或候选不足时触发；超时/失败回退原始 query。
+- `HL_MEM_RELATION_DISCOVERY_MODE=audit`：默认只写 proposal，不自动写关系边。
+- Benchmark suite 无常驻配置，通过 CLI 按需运行。
+- `HL_MEM_IMAGE_DESCRIBER_MODE=off`：当前无图片输入源，接入视觉 API 后显式开启。
+- `HL_MEM_FEEDBACK_LIFECYCLE_MODE=observe`：只聚合 usefulness，不影响 TTL/decay。
+- `HL_MEM_PROCEDURE_RECALL_MODE=keyword`：零 LLM 调用的确定性路由。
+
+### 数字
+
+- 测试: 342 → 373 (+31)，1 skipped
+- Migrations: 22 → 24（新增 023、024）
+
 ## v0.11.2 — 2026-07-25
 
 ### 发布收口
