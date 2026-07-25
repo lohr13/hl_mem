@@ -16,6 +16,7 @@ EmbedderMode = Literal["fake", "real"]
 RerankerMode = Literal["off", "fake", "on", "real"]
 RerankerProvider = Literal["dashscope"]
 RelationExpansionMode = Literal["off", "on"]
+RelationDiscoveryMode = Literal["off", "audit", "auto"]
 ExtractorMode = Literal["fake", "real", "llm"]
 LLMProvider = Literal["dashscope", "zhipu", "openai_compatible"]
 StructuredOutputModeName = Literal["auto", "json_object", "json_schema"]
@@ -65,6 +66,11 @@ class Settings:
     reranker_model: str = "gte-rerank-v2"
     relation_expansion_mode: RelationExpansionMode = "off"
     relation_expansion_max_depth: int = 1
+    relation_discovery_mode: RelationDiscoveryMode = "off"
+    relation_discovery_pool_limit: int = 40
+    relation_discovery_max_proposals: int = 10
+    relation_auto_apply_confidence: float = 0.90
+    relation_conflict_confidence: float = 0.80
     packed_context_token_budget: int = 2000
     recall_candidate_floor: int = 50
     preference_recency_boost: float = 0.12
@@ -156,6 +162,11 @@ class Settings:
             reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
             relation_expansion_mode=os.getenv("HL_MEM_RELATION_EXPANSION", "off").lower(),
             relation_expansion_max_depth=int(os.getenv("HL_MEM_RELATION_EXPANSION_MAX_DEPTH", "1")),
+            relation_discovery_mode=os.getenv("HL_MEM_RELATION_DISCOVERY_MODE", "off").lower(),
+            relation_discovery_pool_limit=int(os.getenv("HL_MEM_RELATION_DISCOVERY_POOL_LIMIT", "40")),
+            relation_discovery_max_proposals=int(os.getenv("HL_MEM_RELATION_DISCOVERY_MAX_PROPOSALS", "10")),
+            relation_auto_apply_confidence=float(os.getenv("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE", "0.90")),
+            relation_conflict_confidence=float(os.getenv("HL_MEM_RELATION_CONFLICT_CONFIDENCE", "0.80")),
             packed_context_token_budget=int(os.getenv("HL_MEM_PACKED_CONTEXT_TOKEN_BUDGET", "2000")),
             recall_candidate_floor=int(os.getenv("HL_MEM_RECALL_CANDIDATE_FLOOR", "50")),
             preference_recency_boost=float(os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")),
@@ -239,6 +250,14 @@ class Settings:
             raise ConfigurationError("HL_MEM_RELATION_EXPANSION must be 'off' or 'on'")
         if self.relation_expansion_max_depth < 1:
             raise ConfigurationError("HL_MEM_RELATION_EXPANSION_MAX_DEPTH must be at least 1")
+        if self.relation_discovery_mode not in {"off", "audit", "auto"}:
+            raise ConfigurationError("HL_MEM_RELATION_DISCOVERY_MODE must be 'off', 'audit', or 'auto'")
+        if self.relation_discovery_pool_limit < 1 or self.relation_discovery_max_proposals < 1:
+            raise ConfigurationError("relation discovery limits must be positive")
+        if not 0.0 <= self.relation_auto_apply_confidence <= 1.0:
+            raise ConfigurationError("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE must be between 0 and 1")
+        if not 0.0 <= self.relation_conflict_confidence <= 1.0:
+            raise ConfigurationError("HL_MEM_RELATION_CONFLICT_CONFIDENCE must be between 0 and 1")
         if self.packed_context_token_budget < 1 or self.recall_candidate_floor < 1:
             raise ConfigurationError("recall budgets must be positive")
         if not 0.0 <= self.preference_recency_boost <= 1.0:
@@ -339,6 +358,9 @@ class Settings:
             "reranker_provider": self.reranker_provider,
             "relation_expansion_mode": self.relation_expansion_mode,
             "relation_expansion_max_depth": self.relation_expansion_max_depth,
+            "relation_discovery_mode": self.relation_discovery_mode,
+            "relation_discovery_pool_limit": self.relation_discovery_pool_limit,
+            "relation_discovery_max_proposals": self.relation_discovery_max_proposals,
             "tag_boost_enabled": self.tag_boost_enabled,
             "tag_boost_weight": self.tag_boost_weight,
             "tag_channel_enabled": self.tag_channel_enabled,

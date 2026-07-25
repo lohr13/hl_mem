@@ -16,7 +16,7 @@ from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.observability.llm_spans import LLMSpanRecorder
-from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol, RerankerProtocol
+from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol, RelationDiscoveryProtocol, RerankerProtocol
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.reranker import (
     DashScopeReranker,
@@ -94,6 +94,18 @@ def make_query_expander(
     if settings.query_expansion_mode == "off" or settings.query_expansion_max == 0:
         return None
     return QueryExpander(make_llm_client(settings, connection, operation="query_expansion"))
+
+
+def make_relation_discoverer(
+    settings: Settings,
+    connection: sqlite3.Connection | None = None,
+) -> RelationDiscoveryProtocol | None:
+    """按发布模式构造关系发现器；关闭时不创建 LLM 客户端。"""
+    if settings.relation_discovery_mode == "off":
+        return None
+    from hl_mem.workers.discover_relations import LLMRelationDiscoverer
+
+    return LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
 
 
 def make_extractor(

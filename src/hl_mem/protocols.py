@@ -33,6 +33,31 @@ class ClaimRow(TypedDict, total=False):
     helpful_rate: float
 
 
+@dataclass(frozen=True)
+class RelationProposal:
+    """模型提出但尚未应用的 Claim 关系。"""
+
+    from_claim_id: str
+    to_claim_id: str
+    relation: str
+    confidence: float
+    rationale: str
+    supporting_claim_ids: tuple[str, ...]
+    model: str
+
+
+class RelationDiscoveryProtocol(Protocol):
+    """从有界 Claim 候选池中提出关系。"""
+
+    def propose(
+        self,
+        source_claim: ClaimRow,
+        candidates: list[ClaimRow],
+        *,
+        max_proposals: int,
+    ) -> list[RelationProposal]: ...
+
+
 class EmbedderProtocol(Protocol):
     """向量化组件协议。"""
 

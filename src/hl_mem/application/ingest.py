@@ -206,6 +206,7 @@ class IngestService:
         authority: str | None = None,
         ttl_days: int | None = None,
         policy: TTLPolicy | None = None,
+        relation_discovery_mode: str = "off",
     ) -> StoreClaimResult:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
@@ -382,6 +383,17 @@ class IngestService:
             connection.rollback()
             raise
         emit_audit_events()
+        if relation_discovery_mode != "off":
+            JobRepository(connection).insert_job(
+                {
+                    "id": new_id(),
+                    "job_type": "discover_relations",
+                    "payload": {"claim_id": result_id},
+                    "idempotency_key": f"relation-discovery:{result_id}",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
         return StoreClaimResult(result_id, "stored", "inserted")
 
 

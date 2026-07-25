@@ -150,3 +150,59 @@ def get_relations_batch(
                             }
                         )
     return result
+
+
+def walk_relation_graph(
+    connection: sqlite3.Connection,
+    seed_ids: list[str],
+    namespace: str,
+    max_depth: int = 1,
+    allowed_relations: list[RelationType | str] | None = None,
+    min_confidence: float = 0.0,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """使用递归 CTE 在 namespace 内双向遍历关系图。"""
+    if not 1 <= max_depth <= 3:
+        raise ValueError("max_depth must be between 1 and 3")
+    if not 0.0 <= min_confidence <= 1.0:
+        raise ValueError("min_confidence must be between 0 and 1")
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    seeds = list(dict.fromkeys(seed_ids))
+    if not seeds:
+        return []
+    relations = [RelationType(value).value for value in (allowed_relations or list(RelationType))]
+    if not relations:
+        return []
+    seed_placeholders = ",".join("?" for _ in seeds)
+    relation_placeholders = ",".join("?" for _ in relations)
+    rows = connection.execute(
+        f"""
+        WITH RECURSIVE graph(seed_id,node_id,depth,path,weight) AS (
+            SELECT c.id,c.id,0,'|' || c.id || '|',1.0
+            FROM claims AS c
+            WHERE c.id IN ({seed_placeholders}) AND c.namespace_key=?
+            UNION ALL
+            SELECT graph.seed_id,
+                   CASE WHEN mr.from_id=graph.node_id THEN mr.to_id ELSE mr.from_id END,
+                   graph.depth+1,
+                   graph.path || CASE WHEN mr.from_id=graph.node_id THEN mr.to_id ELSE mr.from_id END || '|',
+                   graph.weight*mr.confidence
+            FROM graph
+            JOIN memory_relations AS mr ON mr.from_id=graph.node_id OR mr.to_id=graph.node_id
+            JOIN claims AS next_claim
+              ON next_claim.id=CASE WHEN mr.from_id=graph.node_id THEN mr.to_id ELSE mr.from_id END
+            WHERE graph.depth<?
+              AND mr.relation IN ({relation_placeholders})
+              AND mr.confidence>=?
+              AND next_claim.namespace_key=?
+              AND instr(graph.path,'|' || next_claim.id || '|')=0
+        )
+        SELECT seed_id,node_id,depth,path,weight
+        FROM graph WHERE depth>0
+        ORDER BY weight DESC,depth ASC,node_id ASC,seed_id ASC
+        LIMIT ?
+        """,
+        (*seeds, namespace, max_depth, *relations, min_confidence, namespace, limit),
+    ).fetchall()
+    return [dict(row) for row in rows]

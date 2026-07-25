@@ -37,6 +37,7 @@ from hl_mem.workers.induce_policies import (
 from hl_mem.workers.mental_models import DerivedMemoryMaintainer
 from hl_mem.workers.scheduling import enqueue_daily_job
 from hl_mem.workers.ttl import expire_claims
+from hl_mem.workers.discover_relations import discover_relations
 
 
 def _now() -> str:
@@ -319,6 +320,7 @@ class Worker:
                     self.embedder,
                     authority,
                     policy=self.settings.retention_policy(),
+                    relation_discovery_mode=self.settings.relation_discovery_mode,
                 )
                 if result.status == "skipped":
                     rejections.append({"reason": result.reason, "predicate": claim.predicate})
@@ -437,6 +439,26 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _handle_discover_relations(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
+    """处理单个新 Claim 的关系候选发现任务。"""
+    payload = json.loads(job["payload_json"] or "{}")
+    discoverer = worker.config.get("relation_discoverer") or components.make_relation_discoverer(
+        worker.settings, worker.connection
+    )
+    if discoverer is None:
+        return {"candidates": 0, "proposals": 0, "applied": 0, "conflicts": 0, "rejected": 0}
+    return discover_relations(
+        worker.connection,
+        discoverer,
+        str(payload["claim_id"]),
+        mode=worker.settings.relation_discovery_mode,
+        pool_limit=worker.settings.relation_discovery_pool_limit,
+        max_proposals=worker.settings.relation_discovery_max_proposals,
+        auto_apply_confidence=worker.settings.relation_auto_apply_confidence,
+        conflict_confidence=worker.settings.relation_conflict_confidence,
+    )
+
+
 def _job_progress_callback(worker: Worker, job: dict[str, Any]) -> Callable[[str, int, int], None]:
     """创建受 lease token 保护的任务进度回调。"""
 
@@ -487,6 +509,7 @@ JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {
     "decay_access": _handle_decay,
     "consolidate_conflicts": _handle_consolidate,
     "deduplicate_claims": _handle_deduplicate,
+    "discover_relations": _handle_discover_relations,
     "induce_policies": _handle_induce_policies,
     "reclassify_claims": _handle_reclassify,
     "purge_retention": _handle_purge_retention,
