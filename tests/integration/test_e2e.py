@@ -1,3 +1,5 @@
+import os
+
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
@@ -16,7 +18,8 @@ def event(key: str, session: str, text: str) -> dict[str, object]:
     }
 
 
-def test_idempotency_cross_session_and_evidence(tmp_path) -> None:
+def test_idempotency_cross_session_and_evidence(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("HL_MEM_RELATION_DISCOVERY_MODE", "audit")
     app = create_app(tmp_path / "e2e.db")
     with TestClient(app) as client:
         first = client.post("/v1/events", json=event("key-1", "s1", "我喜欢 PostgreSQL"))
