@@ -4,7 +4,7 @@
 
 让 event 原生接收 image URI 或 base64，经可插拔视觉 provider 生成 caption/OCR，再沿用文本 Claim 提取管线。Claim 仍只保存结构事实；原图定位符、描述结果和模型元数据保存在 event content 中并通过既有 `evidence_links` 回指。
 
-默认关闭，不新增 Python 硬依赖，不把图片二进制复制到 Claim、SQLite 新表或 embedding 中。百炼 Coding Plan 的 `qwen3.7-plus` 是纯文本模型，不用于视觉；默认视觉配置使用百炼通用 AK 的 `qwen-vl-max`，OpenAI-compatible base URL 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`。
+默认关闭，不新增 Python 硬依赖，不把图片二进制复制到 Claim、SQLite 新表或 embedding 中。默认视觉配置使用百炼 Coding Plan 的 **qwen3.7-plus**（多模态模型，Vision Arena 全球前五），走 Coding Plan AK + `coding.dashscope.aliyuncs.com/v1` 端点；也可切换为智谱 Coding Plan 的 GLM-5T。provider 可插拔，未来换其他视觉模型只需加一个 provider 实现。
 
 ## 现状与集成点
 
@@ -107,15 +107,15 @@ model: {HL_MEM_IMAGE_DESCRIBER_MODEL}
 ```text
 HL_MEM_IMAGE_DESCRIBER_MODE=off
 HL_MEM_IMAGE_DESCRIBER_PROVIDER=dashscope
-HL_MEM_IMAGE_DESCRIBER_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-HL_MEM_IMAGE_DESCRIBER_MODEL=qwen-vl-max
-IMAGE_API_KEY=<百炼通用 AK>
+HL_MEM_IMAGE_DESCRIBER_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
+HL_MEM_IMAGE_DESCRIBER_MODEL=qwen3.7-plus
+IMAGE_API_KEY=<百炼 Coding Plan AK（复用 LLM_API_KEY）>
 HL_MEM_IMAGE_DESCRIBER_TIMEOUT_SECONDS=20
 HL_MEM_IMAGE_MAX_BYTES=10485760
 HL_MEM_IMAGE_MAX_PARTS=4
 ```
 
-模型、端点、timeout 和大小均从 Settings 注入，源码不硬编码运行时选择；上述仅是配置默认值/部署示例。也允许配置 `qwen-vl-plus`。工厂在 mode=on 时校验 API key、HTTPS base URL 和视觉 model 非空；不能复用 `LLM_API_KEY` 的 Coding Plan AK 作为隐式 fallback。
+模型、端点、timeout 和大小均从 Settings 注入，源码不硬编码运行时选择。默认使用百炼 Coding Plan 的 qwen3.7-plus（多模态），复用 `LLM_API_KEY`（Coding Plan AK）；也可配置为智谱 GLM-5T（走智谱 Coding Plan 端点）。工厂在 mode=on 时校验 API key、HTTPS base URL 和视觉 model 非空。
 
 请求 content part 使用 provider 支持的 `image_url`：`https:` URI 原样传递；base64 组装 `data:<mime>;base64,...`；允许的 `file:` URI 在完成 real-path allow-root、大小和 MIME/magic 校验后由本地读取并转换成 data URL，绝不把 `file:` 地址发给 DashScope。system prompt 要求 JSON：
 

@@ -149,7 +149,7 @@ ON retrieval_feedback(query_id, memory_type, memory_id);
 ## 跨特性一致性
 
 - Query expansion 和 procedure LLM routing 共用文本 LLM provider，但 operation、prompt、timeout 和 span 分开。
-- 图片视觉 provider 独立使用 `IMAGE_API_KEY`，默认 `qwen-vl-max`；不使用纯文本 `qwen3.7-plus` 执行视觉任务。
+- 图片视觉 provider 默认使用百炼 Coding Plan 的 `qwen3.7-plus`（多模态模型），复用 `LLM_API_KEY` 和 `coding.dashscope` 端点；也可切换为智谱 GLM-5T。
 - relation discovery 的 `contradicts` 与 explicit correction 都进入同一 conflict/lifecycle guard。
 - relation topic summary 与 observation 共用 derivations，但 usefulness 用 memory type `observation` 时应决定是否把 topic_summary 作为 observation 子类；建议 schema 层接受 `observation`，聚合查询用 derivation id，不再扩 memory_type 枚举。
 - procedure intent 的最终跨类型结果必须写 retrieval feedback，05 才能维护 observation/policy usefulness。
