@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict, dataclass, field
 from threading import Lock
 from typing import Any, ClassVar
@@ -40,6 +41,37 @@ class SearchPhaseMetrics:
 
 
 @dataclass
+class QueryExpansionTrace:
+    """记录单条查询扩展的安全文本、来源和调用成本。"""
+
+    expansion_text: str
+    text_hash: str
+    source: str
+    weight: float
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: float = 0.0
+    outcome: str = "applied"
+
+    @classmethod
+    def from_text(
+        cls,
+        text: str,
+        source: str,
+        weight: float,
+        **metrics: Any,
+    ) -> "QueryExpansionTrace":
+        """从完整规范化文本构造带截断预览和完整哈希的 trace。"""
+        return cls(
+            expansion_text=text[:256],
+            text_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            source=source,
+            weight=weight,
+            **metrics,
+        )
+
+
+@dataclass
 class SearchTrace:
     """描述一次搜索的安全、可序列化追踪信息。"""
 
@@ -55,6 +87,9 @@ class SearchTrace:
     query_tags: list[str] = field(default_factory=list)
     tag_boost_applied: bool = False
     tag_channel_applied: bool = False
+    expansion_trigger: str | None = None
+    expansions: list[QueryExpansionTrace] = field(default_factory=list)
+    expansion_total_tokens: int = 0
 
 
 class SearchTracer:

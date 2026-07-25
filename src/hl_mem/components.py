@@ -17,6 +17,7 @@ from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, Zh
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.observability.llm_spans import LLMSpanRecorder
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol, RerankerProtocol
+from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.reranker import (
     DashScopeReranker,
     make_reranker as make_registered_reranker,
@@ -83,6 +84,16 @@ def make_embedder(settings: Settings) -> EmbedderProtocol:
 def make_reranker(settings: Settings) -> RerankerProtocol | None:
     """依据统一配置创建重排组件。"""
     return make_registered_reranker(settings, {"dashscope": Reranker})
+
+
+def make_query_expander(
+    settings: Settings,
+    connection: sqlite3.Connection | None = None,
+) -> QueryExpander | None:
+    """按模式构造查询扩展器；关闭时不创建 LLM 客户端。"""
+    if settings.query_expansion_mode == "off" or settings.query_expansion_max == 0:
+        return None
+    return QueryExpander(make_llm_client(settings, connection, operation="query_expansion"))
 
 
 def make_extractor(

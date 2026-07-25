@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from hl_mem.domain.recall import RecallIntent
@@ -85,3 +86,48 @@ class VectorSearchBackend(Protocol):
         known_as_of: str | None,
         namespace: str,
     ) -> list[ClaimRow]: ...
+
+
+@dataclass(frozen=True)
+class QueryExpansion:
+    """单条查询改写及其可审计来源。"""
+
+    text: str
+    source: str
+    weight: float = 0.6
+
+
+@dataclass(frozen=True)
+class QueryExpansionResult:
+    """查询扩展结果及模型调用用量。"""
+
+    expansions: tuple[QueryExpansion, ...]
+    model: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: float
+    outcome: str = "applied"
+
+
+class QueryExpansionProtocol(Protocol):
+    """生成受限语义改写，不改变查询约束。"""
+
+    def expand(
+        self,
+        query: str,
+        *,
+        intent: RecallIntent,
+        max_expansions: int,
+        timeout_seconds: float,
+        token_ceiling: int,
+        source: str | None = None,
+    ) -> QueryExpansionResult: ...
+
+
+@dataclass(frozen=True)
+class WeightedQuery:
+    """携带来源和融合权重的召回查询。"""
+
+    text: str
+    source: str
+    weight: float

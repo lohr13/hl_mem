@@ -73,6 +73,12 @@ class Settings:
     tag_channel_enabled: bool = False
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
+    query_expansion_mode: str = "off"
+    query_expansion_max: int = 2
+    query_expansion_candidate_floor: int = 8
+    query_expansion_token_ceiling: int = 256
+    query_expansion_timeout_seconds: float = 2.0
+    query_expansion_total_timeout_seconds: float = 3.0
     vector_backend: VectorBackend = VectorBackend.SQLITE_SCAN
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
@@ -158,6 +164,16 @@ class Settings:
             tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower() == "true",
             tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
             tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
+            query_expansion_mode=os.getenv("HL_MEM_QUERY_EXPANSION_MODE", "off").lower(),
+            query_expansion_max=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX", "2")),
+            query_expansion_candidate_floor=int(os.getenv("HL_MEM_QUERY_EXPANSION_CANDIDATE_FLOOR", "8")),
+            query_expansion_token_ceiling=int(os.getenv("HL_MEM_QUERY_EXPANSION_TOKEN_CEILING", "256")),
+            query_expansion_timeout_seconds=float(
+                os.getenv("HL_MEM_QUERY_EXPANSION_TIMEOUT_SECONDS", "2.0")
+            ),
+            query_expansion_total_timeout_seconds=float(
+                os.getenv("HL_MEM_QUERY_EXPANSION_TOTAL_TIMEOUT_SECONDS", "3.0")
+            ),
             vector_backend=vector_backend,
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
@@ -209,11 +225,11 @@ class Settings:
             ttl_backfill_grace_hours=int(os.getenv("HL_MEM_TTL_BACKFILL_GRACE_HOURS", "0")),
             max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
         )
-        settings._validate()
+        settings.validate()
         set_active_aliases(load_entity_aliases())
         return settings
 
-    def _validate(self) -> None:
+    def validate(self) -> None:
         """校验生产环境所需的安全配置组合。"""
         if self.llm_provider not in {"dashscope", "zhipu", "openai_compatible"}:
             raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
@@ -233,6 +249,17 @@ class Settings:
             raise ConfigurationError("HL_MEM_TAG_CHANNEL_WEIGHT must be between 0 and 1")
         if self.tag_candidate_limit < 1:
             raise ConfigurationError("HL_MEM_TAG_CANDIDATE_LIMIT must be positive")
+        if self.query_expansion_mode not in {"off", "auto", "always"}:
+            raise ConfigurationError("HL_MEM_QUERY_EXPANSION_MODE must be 'off', 'auto', or 'always'")
+        if not 0 <= self.query_expansion_max <= 2:
+            raise ConfigurationError("HL_MEM_QUERY_EXPANSION_MAX must be between 0 and 2")
+        if min(
+            self.query_expansion_candidate_floor,
+            self.query_expansion_token_ceiling,
+            self.query_expansion_timeout_seconds,
+            self.query_expansion_total_timeout_seconds,
+        ) <= 0:
+            raise ConfigurationError("query expansion budgets and timeouts must be positive")
         if (
             self.hermes_circuit_failure_threshold < 1
             or self.hermes_circuit_open_seconds <= 0
@@ -298,6 +325,10 @@ class Settings:
         if not self.embedding_api_key:
             raise ConfigurationError("EMBEDDING_API_KEY is required in production")
 
+    def _validate(self) -> None:
+        """兼容旧调用方，委托公开配置校验入口。"""
+        self.validate()
+
     def snapshot(self) -> dict[str, Any]:
         """返回可用于健康检查和审计的非敏感配置。"""
         return {
@@ -313,6 +344,12 @@ class Settings:
             "tag_channel_enabled": self.tag_channel_enabled,
             "tag_channel_weight": self.tag_channel_weight,
             "tag_candidate_limit": self.tag_candidate_limit,
+            "query_expansion_mode": self.query_expansion_mode,
+            "query_expansion_max": self.query_expansion_max,
+            "query_expansion_candidate_floor": self.query_expansion_candidate_floor,
+            "query_expansion_token_ceiling": self.query_expansion_token_ceiling,
+            "query_expansion_timeout_seconds": self.query_expansion_timeout_seconds,
+            "query_expansion_total_timeout_seconds": self.query_expansion_total_timeout_seconds,
             "vector_backend": self.vector_backend,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,

@@ -34,6 +34,7 @@ class McpMemoryServer:
 
             resolved_settings = replace(Settings.from_env(), database_path=str(settings))
         self.database = Database(resolved_settings.database_path)
+        self.settings = resolved_settings
         self.embedder = embedder or components.make_embedder(resolved_settings)
         self.reranker = reranker if reranker is not None else components.make_reranker(resolved_settings)
 
@@ -71,7 +72,13 @@ class McpMemoryServer:
         """通过共享召回服务执行混合召回。"""
         query = str(arguments.get("query", ""))
         limit = int(arguments.get("limit", 20))
-        return RecallService(connection, self.embedder, self.reranker).recall(
+        return RecallService(
+            connection,
+            self.embedder,
+            self.reranker,
+            settings=self.settings,
+            query_expander=components.make_query_expander(self.settings, connection),
+        ).recall(
             query,
             limit,
             arguments.get("as_of"),

@@ -206,6 +206,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                     max_depth=settings.relation_expansion_max_depth,
                 ),
                 settings,
+                components.make_query_expander(settings, connection),
             ).recall(
                 payload.query,
                 payload.limit,

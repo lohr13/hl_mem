@@ -13,10 +13,11 @@ from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
-from hl_mem.protocols import EmbedderProtocol, RerankerProtocol
+from hl_mem.protocols import EmbedderProtocol, RerankerProtocol, WeightedQuery
+from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
-from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
+from hl_mem.recall.trace import QueryExpansionTrace, SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.evidence import DerivationRepository, EvidenceRepository
@@ -55,12 +56,14 @@ class RecallService:
         reranker: RerankerProtocol | None = None,
         relation_config: RelationExpansionConfig | None = None,
         settings: Settings | None = None,
+        query_expander: QueryExpander | None = None,
     ) -> None:
         self.connection = connection
         self.embedder = embedder
         self.reranker = reranker
         self.relation_config = relation_config or RelationExpansionConfig()
         self.settings = settings or Settings()
+        self.query_expander = query_expander
 
     def recall(
         self,
@@ -93,10 +96,86 @@ class RecallService:
                 phases=SearchPhaseMetrics(),
             )
         )
+        expansion_deadline = time.monotonic() + self.settings.query_expansion_total_timeout_seconds
+        weighted_queries = [WeightedQuery(query, "original", 1.0)]
+        query_blobs = [self.embedder.embed_one(query)]
+
+        def expand_for(trigger: str) -> tuple[list[WeightedQuery], list[bytes]]:
+            trace_source = {
+                "short_query": "llm_short",
+                "coreference": "llm_coreference",
+                "low_recall": "llm_low_recall",
+                "always": "llm_short",
+            }.get(trigger, "llm_short")
+            if self.query_expander is None or time.monotonic() >= expansion_deadline:
+                tracer.trace.expansion_trigger = trigger
+                tracer.trace.expansions.append(
+                    QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout")
+                )
+                return [], []
+            tracer.trace.expansion_trigger = trigger
+            remaining = max(0.001, expansion_deadline - time.monotonic())
+            result = self.query_expander.expand(
+                query,
+                intent=selected_intent,
+                max_expansions=self.settings.query_expansion_max,
+                timeout_seconds=min(self.settings.query_expansion_timeout_seconds, remaining),
+                token_ceiling=self.settings.query_expansion_token_ceiling,
+                source=trigger,
+            )
+            tracer.trace.expansion_total_tokens += result.input_tokens + result.output_tokens
+            if not result.expansions:
+                tracer.trace.expansions.append(
+                    QueryExpansionTrace.from_text(
+                        "",
+                        trace_source,
+                        0.6,
+                        input_tokens=result.input_tokens,
+                        output_tokens=result.output_tokens,
+                        latency_ms=result.latency_ms,
+                        outcome=result.outcome,
+                    )
+                )
+                return [], []
+            additions = [WeightedQuery(item.text, item.source, item.weight) for item in result.expansions]
+            for item in additions:
+                tracer.trace.expansions.append(
+                    QueryExpansionTrace.from_text(
+                        item.text,
+                        item.source,
+                        item.weight,
+                        input_tokens=result.input_tokens,
+                        output_tokens=result.output_tokens,
+                        latency_ms=result.latency_ms,
+                    )
+                )
+            return additions, [self.embedder.embed_one(item.text) for item in additions]
+
+        initial_trigger = QueryExpander.trigger_for(query, self.settings.query_expansion_mode)
+        if initial_trigger is not None and self.query_expander is not None:
+            additions, blobs = expand_for(initial_trigger)
+            weighted_queries.extend(additions)
+            query_blobs.extend(blobs)
+
+        low_recall_expander = None
+        if (
+            self.settings.query_expansion_mode == "auto"
+            and initial_trigger is None
+            and self.query_expander is not None
+        ):
+            def low_recall_expander(candidate_count: int) -> tuple[list[WeightedQuery], list[bytes]]:
+                trigger = QueryExpander.trigger_for(
+                    query,
+                    "auto",
+                    candidate_count=candidate_count,
+                    candidate_floor=self.settings.query_expansion_candidate_floor,
+                )
+                return expand_for(trigger) if trigger is not None else ([], [])
+
         claims = hybrid_claims(
             ClaimRepository(self.connection),
             query,
-            self.embedder.embed_one(query),
+            query_blobs[0],
             limit,
             as_of,
             self.reranker,
@@ -115,6 +194,17 @@ class RecallService:
             relation_connection=self.connection,
             relation_config=self.relation_config,
             tracer=tracer,
+            weighted_queries=(
+                weighted_queries
+                if self.query_expander is not None and self.settings.query_expansion_mode != "off"
+                else None
+            ),
+            query_blobs=(
+                query_blobs
+                if self.query_expander is not None and self.settings.query_expansion_mode != "off"
+                else None
+            ),
+            low_recall_expander=low_recall_expander,
         )
         self._record_access(claims)
         self._record_feedback(claims, query_id)

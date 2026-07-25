@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +19,7 @@ from hl_mem.domain.claims.query_tags import (
 )
 from hl_mem.domain.recall import RecallIntent, claim_is_visible, route_recall_intent
 from hl_mem.observability.audit import current_audit
+from hl_mem.protocols import WeightedQuery
 from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
 from hl_mem.recall.relation_expansion import RelationExpansionConfig, expand_related_claims
 from hl_mem.recall.reranker import DashScopeReranker, RerankResult
@@ -76,6 +78,7 @@ class RecallContext:
     fts: list[dict[str, Any]] = field(default_factory=list)
     dense: list[dict[str, Any]] = field(default_factory=list)
     tags: list[dict[str, Any]] = field(default_factory=list)
+    query_channels: list[tuple[str, list[dict[str, Any]], float, float]] = field(default_factory=list)
     fts_us: int = 0
     dense_us: int = 0
     tag_us: int = 0
@@ -160,15 +163,19 @@ def _rrf_scores(channels: list[list[dict[str, Any]]], rank_constant: int) -> dic
 
 
 def _weighted_rrf_scores(
-    channels: list[tuple[list[dict[str, Any]], float]],
+    channels: list[
+        tuple[list[dict[str, Any]], float]
+        | tuple[list[dict[str, Any]], float, float]
+    ],
     rank_constant: int,
 ) -> dict[str, float]:
-    """按通道权重计算 RRF，空通道不产生分数。"""
+    """按查询权重和通道权重计算 RRF，空通道不产生分数。"""
     scores: dict[str, float] = {}
-    for channel, weight in channels:
+    for entry in channels:
+        channel, query_weight, channel_weight = (*entry, 1.0) if len(entry) == 2 else entry
         for rank, item in enumerate(channel, 1):
             item_id = str(item["id"])
-            scores[item_id] = scores.get(item_id, 0.0) + weight / (rank_constant + rank)
+            scores[item_id] = scores.get(item_id, 0.0) + query_weight * channel_weight / (rank_constant + rank)
     return scores
 
 
@@ -202,6 +209,9 @@ def hybrid_claims(
     tag_channel_enabled: bool | None = None,
     tag_channel_weight: float | None = None,
     tag_candidate_limit: int | None = None,
+    weighted_queries: list[WeightedQuery] | None = None,
+    query_blobs: list[bytes] | None = None,
+    low_recall_expander: Callable[[int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
 ) -> list[dict[str, Any]]:
     """协调候选收集、过滤评分、关系扩展、重排和结果收尾。"""
     state = _collect_candidates(
@@ -226,6 +236,9 @@ def hybrid_claims(
         tag_channel_enabled=tag_channel_enabled,
         tag_channel_weight=tag_channel_weight,
         tag_candidate_limit=tag_candidate_limit,
+        weighted_queries=weighted_queries,
+        query_blobs=query_blobs,
+        low_recall_expander=low_recall_expander,
     )
     return _finalize(_rerank(_expand_related(_filter_and_score(state))))
 
@@ -253,6 +266,9 @@ def _collect_candidates(
     tag_channel_enabled: bool | None = None,
     tag_channel_weight: float | None = None,
     tag_candidate_limit: int | None = None,
+    weighted_queries: list[WeightedQuery] | None = None,
+    query_blobs: list[bytes] | None = None,
+    low_recall_expander: Callable[[int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
 ) -> RecallContext:
     """仅执行 FTS 与向量检索，并建立统一时间快照。"""
     config = recall_config or RecallConfig()
@@ -270,22 +286,56 @@ def _collect_candidates(
         else []
     )
 
-    started = time.perf_counter_ns()
-    fts = repo.search_claims_fts(query, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace)
-    fts_us = (time.perf_counter_ns() - started) // 1000
+    queries = weighted_queries or [WeightedQuery(query, "original", 1.0)]
+    blobs = query_blobs or [query_blob]
+    if len(queries) != len(blobs):
+        raise ValueError("weighted_queries and query_blobs must have equal lengths")
+    query_channels: list[tuple[str, list[dict[str, Any]], float, float]] = []
+    fts_us = 0
+    dense_us = 0
+
+    def collect_query(item: WeightedQuery, blob: bytes, index: int) -> None:
+        nonlocal fts_us, dense_us
+        label = "original" if index == 0 else f"expansion_{index}"
+        started = time.perf_counter_ns()
+        fts_results = repo.search_claims_fts(
+            item.text, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
+        )
+        fts_us += (time.perf_counter_ns() - started) // 1000
+        started = time.perf_counter_ns()
+        dense_results = repo.search_claims_vector(
+            blob, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
+        )
+        dense_us += (time.perf_counter_ns() - started) // 1000
+        query_channels.extend(
+            [(f"{label}:fts", fts_results, item.weight, 1.0), (f"{label}:dense", dense_results, item.weight, 1.0)]
+        )
+        if tracer is not None:
+            legacy = weighted_queries is None
+            tracer.record_channel("fts" if legacy and index == 0 else f"{label}:fts", fts_results)
+            tracer.record_channel("dense" if legacy and index == 0 else f"{label}:dense", dense_results)
+
+    collect_query(queries[0], blobs[0], 0)
+    original_visible_count = len(
+        {
+            str(claim["id"])
+            for _, channel, _, _ in query_channels
+            for claim in channel
+            if claim_is_visible(claim, reference, known_as_of, selected_intent)
+        }
+    )
+    if len(queries) == 1 and low_recall_expander is not None:
+        extra_queries, extra_blobs = low_recall_expander(original_visible_count)
+        queries.extend(extra_queries)
+        blobs.extend(extra_blobs)
+    for index, (item, blob) in enumerate(zip(queries[1:], blobs[1:]), 1):
+        collect_query(item, blob, index)
+    fts = query_channels[0][1]
+    dense = query_channels[1][1]
     if tracer is not None:
         tracer.trace.candidate_limit = candidate_limit
         tracer.trace.phases.fts_us = fts_us
-        tracer.record_channel("fts", fts)
-
-    started = time.perf_counter_ns()
-    dense = repo.search_claims_vector(
-        query_blob, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
-    )
-    dense_us = (time.perf_counter_ns() - started) // 1000
-    if tracer is not None:
         tracer.trace.phases.dense_us = dense_us
-        tracer.record_channel("dense", dense)
 
     effective_tag_candidate_limit = tag_candidate_limit or config.tag_candidate_limit
     tag_results: list[dict[str, Any]] = []
@@ -337,6 +387,7 @@ def _collect_candidates(
         fts=fts,
         dense=dense,
         tags=tag_results,
+        query_channels=query_channels,
         fts_us=fts_us,
         dense_us=dense_us,
         tag_us=tag_us,
@@ -349,7 +400,8 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
     started = time.perf_counter_ns()
     tracer = ctx.tracer
     visible: list[dict[str, Any]] = []
-    for claim in ctx.fts + ctx.dense + ctx.tags:
+    semantic_candidates = [claim for _, channel, _, _ in ctx.query_channels for claim in channel]
+    for claim in semantic_candidates + ctx.tags:
         if claim_is_visible(claim, ctx.reference, ctx.known_as_of, ctx.selected_intent):
             visible.append(claim)
         elif tracer is not None:
@@ -360,11 +412,14 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
     by_id = {claim["id"]: claim for claim in visible}
     for claim_id, helpful_rate in ctx.repo.helpful_rates(list(by_id)).items():
         by_id[claim_id]["helpful_rate"] = helpful_rate
-    channels = [(ctx.fts, 1.0), (ctx.dense, 1.0)]
+    channels = [(items, query_weight, channel_weight) for _, items, query_weight, channel_weight in ctx.query_channels]
     if ctx.tag_channel_enabled and ctx.tags:
-        channels.append((ctx.tags, ctx.tag_channel_weight))
+        channels.append((ctx.tags, 1.0, ctx.tag_channel_weight))
     scores = _weighted_rrf_scores(channels, RRF_K)
-    normalization = (2.0 + (ctx.tag_channel_weight if ctx.tags else 0.0)) / (RRF_K + 1)
+    enabled_weight = sum(query_weight * channel_weight for _, _, query_weight, channel_weight in ctx.query_channels)
+    if ctx.tag_channel_enabled and ctx.tags:
+        enabled_weight += ctx.tag_channel_weight
+    normalization = enabled_weight / (RRF_K + 1)
     max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
     feature_by_id = {
         claim_id: memory_features(claim, scores[claim_id] / normalization, max_access, ctx.ranking_now)

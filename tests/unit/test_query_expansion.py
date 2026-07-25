@@ -1,0 +1,116 @@
+"""受控多查询召回的单元测试。"""
+
+from __future__ import annotations
+
+import json
+import time
+
+from hl_mem.domain.recall import RecallIntent
+from hl_mem.llm.types import LLMResponse
+from hl_mem.protocols import WeightedQuery
+from hl_mem.recall.query_expansion import QueryExpander
+from hl_mem.recall.staged_pipeline import RRF_K, _weighted_rrf_scores
+from hl_mem.recall.trace import QueryExpansionTrace, SearchPhaseMetrics, SearchTrace, SearchTracer
+
+
+class _Client:
+    model = "fake-model"
+
+    def __init__(self, content: object, *, tokens: int = 10) -> None:
+        self.content = content
+        self.tokens = tokens
+        self.requests = []
+
+    def complete(self, request):
+        self.requests.append(request)
+        return LLMResponse(
+            content=self.content,
+            finish_reason="stop",
+            usage_total_tokens=self.tokens,
+            input_tokens=6,
+            output_tokens=4,
+        )
+
+
+def test_auto_trigger_boundaries_and_coreference() -> None:
+    assert QueryExpander.trigger_for("123456789", "auto") == "short_query"
+    assert QueryExpander.trigger_for("1234567890", "auto") is None
+    assert QueryExpander.trigger_for("之前讨论的那个生产环境部署方案", "auto") == "coreference"
+    assert QueryExpander.trigger_for("普通且足够具体的查询文本", "off") is None
+    assert QueryExpander.trigger_for("普通且足够具体的查询文本", "always") == "always"
+    assert QueryExpander.trigger_for("普通且足够具体的查询文本", "auto", candidate_count=7, candidate_floor=8) == "low_recall"
+
+
+def test_expander_cleans_deduplicates_and_limits_results() -> None:
+    client = _Client({"queries": [" 原查询 ", "Ａ方案", "A方案", "", "第二条", "第三条"]})
+    result = QueryExpander(client).expand(
+        "原查询",
+        intent=RecallIntent.CURRENT_STATE,
+        max_expansions=2,
+        timeout_seconds=1.0,
+        token_ceiling=256,
+        source="short_query",
+    )
+
+    assert [item.text for item in result.expansions] == ["A方案", "第二条"]
+    assert all(item.source == "llm_short" and item.weight == 0.6 for item in result.expansions)
+    prompt = json.dumps(client.requests[0].messages, default=lambda value: value.__dict__, ensure_ascii=False)
+    assert "禁止添加人物" in prompt
+    assert "namespace" in prompt
+
+
+def test_expander_invalid_json_and_token_ceiling_fall_back() -> None:
+    invalid = QueryExpander(_Client("not-json")).expand(
+        "查询", intent=RecallIntent.CURRENT_STATE, max_expansions=2, timeout_seconds=1.0, token_ceiling=256
+    )
+    over = QueryExpander(_Client({"queries": ["改写"]}, tokens=300)).expand(
+        "查询", intent=RecallIntent.CURRENT_STATE, max_expansions=2, timeout_seconds=1.0, token_ceiling=256
+    )
+
+    assert invalid.expansions == () and invalid.outcome == "error"
+    assert over.expansions == () and over.outcome == "token_ceiling"
+
+
+def test_expander_timeout_falls_back_without_waiting_for_client() -> None:
+    class SlowClient(_Client):
+        def complete(self, request):
+            time.sleep(0.2)
+            return super().complete(request)
+
+    started = time.monotonic()
+    result = QueryExpander(SlowClient({"queries": ["改写"]})).expand(
+        "查询",
+        intent=RecallIntent.CURRENT_STATE,
+        max_expansions=2,
+        timeout_seconds=0.01,
+        token_ceiling=256,
+    )
+
+    assert result.expansions == () and result.outcome == "timeout"
+    assert time.monotonic() - started < 0.15
+
+
+def test_weighted_rrf_uses_query_and_channel_weights() -> None:
+    first = {"id": "a"}
+    second = {"id": "b"}
+    scores = _weighted_rrf_scores(
+        [([first, second], 1.0, 1.0), ([second, first], 0.6, 1.0)],
+        RRF_K,
+    )
+
+    assert scores["a"] == 1.0 / 61 + 0.6 / 62
+    assert scores["b"] == 1.0 / 62 + 0.6 / 61
+
+
+def test_trace_serializes_expansion_without_changing_legacy_defaults() -> None:
+    trace = SearchTrace("q", "hash", "current_state", 5, 50, {}, SearchPhaseMetrics())
+    assert SearchTracer(trace).to_dict()["expansions"] == []
+    trace.expansions.append(QueryExpansionTrace.from_text("x" * 300, "llm_short", 0.6, input_tokens=2))
+
+    payload = SearchTracer(trace).to_dict()
+    assert len(payload["expansions"][0]["expansion_text"]) == 256
+    assert len(payload["expansions"][0]["text_hash"]) == 64
+
+
+def test_weighted_query_is_frozen_value_type() -> None:
+    assert WeightedQuery("原查询", "original", 1.0).weight == 1.0
