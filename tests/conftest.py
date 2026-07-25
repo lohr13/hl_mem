@@ -5,6 +5,13 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def disable_optional_llm_features(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认关闭非专项测试中的可选 LLM 功能。"""
+    monkeypatch.setenv("HL_MEM_QUERY_EXPANSION_MODE", "off")
+    monkeypatch.setenv("HL_MEM_RELATION_DISCOVERY_MODE", "off")
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """注册需要真实外部 API 的测试标记。"""
     config.addinivalue_line("markers", "real_api: requires real API keys")
