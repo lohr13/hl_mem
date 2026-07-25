@@ -137,10 +137,20 @@ class EpisodeUpdate(BaseModel):
     outcome_summary: str | None = None
 
 
+class ExplicitCorrectionInput(BaseModel):
+    """仅由显式授权字段触发的记忆纠正。"""
+
+    memory_type: Literal["claim"]
+    memory_id: str = Field(min_length=1, max_length=200)
+    corrected_text: str | None = Field(default=None, max_length=50000)
+    action: Literal["retract", "replace"]
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
 class FeedbackInput(BaseModel):
     """检索结果反馈请求。"""
 
-    query_id: str = Field(min_length=1, max_length=200)
-    memory_id: str = Field(min_length=1, max_length=200)
+    feedback_id: str = Field(min_length=1, max_length=200)
     helpful: bool
-    task_outcome: str | None = Field(default=None, max_length=5000)
+    task_outcome: float | None = Field(default=None, ge=0.0, le=1.0)
+    correction: ExplicitCorrectionInput | None = None

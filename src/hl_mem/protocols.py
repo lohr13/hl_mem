@@ -3,13 +3,54 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 
 from hl_mem.domain.recall import RecallIntent
 
 if TYPE_CHECKING:
     from hl_mem.domain.content import ImagePart
     from hl_mem.ingest.extractors import ExtractedClaim
+
+MemoryType = Literal["claim", "observation", "policy"]
+
+
+@dataclass(frozen=True)
+class UsefulnessSnapshot:
+    """基于检索反馈聚合的有界 usefulness 状态。"""
+
+    memory_type: MemoryType
+    memory_id: str
+    helpful_count: int
+    unhelpful_count: int
+    success_sum: float
+    outcome_count: int
+    usefulness_score: float
+    retention_bonus_days: int
+    updated_at: str
+
+
+class UsefulnessPolicyProtocol(Protocol):
+    """从反馈计数计算 usefulness 和保留奖励。"""
+
+    def evaluate(
+        self,
+        *,
+        helpful_count: int,
+        unhelpful_count: int,
+        success_sum: float,
+        outcome_count: int,
+    ) -> tuple[float, int]: ...
+
+
+@dataclass(frozen=True)
+class ExplicitCorrection:
+    """由用户显式授权的记忆纠正动作。"""
+
+    memory_type: MemoryType
+    memory_id: str
+    corrected_text: str | None
+    action: Literal["retract", "replace"]
+    idempotency_key: str
 
 
 @dataclass(frozen=True)

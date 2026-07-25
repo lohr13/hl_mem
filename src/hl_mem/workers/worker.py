@@ -39,6 +39,7 @@ from hl_mem.workers.induce_policies import (
 from hl_mem.workers.mental_models import DerivedMemoryMaintainer
 from hl_mem.workers.scheduling import enqueue_daily_job
 from hl_mem.workers.ttl import expire_claims
+from hl_mem.workers.rebuild_usefulness import rebuild_usefulness
 from hl_mem.workers.discover_relations import discover_relations
 
 
@@ -97,10 +98,7 @@ class Worker:
 
     def run_once(self) -> dict[str, Any]:
         now = _now()
-        lease = (
-            datetime.now(timezone.utc)
-            + timedelta(minutes=self.settings.worker_job_lease_minutes)
-        ).isoformat()
+        lease = (datetime.now(timezone.utc) + timedelta(minutes=self.settings.worker_job_lease_minutes)).isoformat()
         job = self.jobs.lease_job(lease, now)
         if not job:
             return {"status": "idle"}
@@ -117,9 +115,7 @@ class Worker:
             return {"status": "succeeded", "job_id": job["id"], **result}
         except Exception as error:
             self.jobs.fail_job(job["id"], str(error), _now(), lease_token)
-            current = self.connection.execute(
-                "SELECT status,attempts FROM jobs WHERE id=?", (job["id"],)
-            ).fetchone()
+            current = self.connection.execute("SELECT status,attempts FROM jobs WHERE id=?", (job["id"],)).fetchone()
             return {
                 "status": current["status"] if current else "unknown",
                 "job_id": job["id"],
@@ -129,11 +125,7 @@ class Worker:
 
     def run_forever(self, poll_interval: float | None = None) -> None:
         """持续处理任务并按统一配置执行维护调度。"""
-        effective_poll_interval = (
-            poll_interval
-            if poll_interval is not None
-            else self.settings.worker_poll_interval
-        )
+        effective_poll_interval = poll_interval if poll_interval is not None else self.settings.worker_poll_interval
         next_ttl = 0.0
         try:
             while True:
@@ -158,17 +150,9 @@ class Worker:
         auto_resolve_conflicts(self.connection, maintenance_now)
         from hl_mem.security.retention import purge_retained_events
 
-        cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)
-        ).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)).isoformat()
         purge_retained_events(self.connection, "default", cutoff)
-        self.audit.cleanup(
-            int(
-                self.config.get(
-                    "audit_retention_days", self.settings.audit_retention_days
-                )
-            )
-        )
+        self.audit.cleanup(int(self.config.get("audit_retention_days", self.settings.audit_retention_days)))
         enqueue_daily_consolidation(
             self.connection,
             _now(),
@@ -191,9 +175,7 @@ class Worker:
             self.config.get("reclassify_cron", self.settings.reclassify_cron),
         )
 
-    def _extract(
-        self, payload: dict[str, Any], job_id: str | None = None
-    ) -> dict[str, Any]:
+    def _extract(self, payload: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
         events = EventRepository(self.connection)
         event = events.get_event(payload["event_id"])
         if not event:
@@ -240,14 +222,12 @@ class Worker:
                                 image,
                                 timeout_seconds=self.settings.image_describer_timeout_seconds,
                             )
-                            description_event = events.insert_image_description_event(
-                                event, image_index, result
-                            )
+                            description_event = events.insert_image_description_event(event, image_index, result)
                             description = description_event["content"]
                         locator = description["locator"]
-                        uri_hash = locator.get("sha256") or hashlib.sha256(
-                            str(locator.get("uri", "")).encode()
-                        ).hexdigest()
+                        uri_hash = (
+                            locator.get("sha256") or hashlib.sha256(str(locator.get("uri", "")).encode()).hexdigest()
+                        )
                         description_texts.append(
                             f'<image_evidence index="{image_index}" uri_hash="{uri_hash}">\n'
                             f"[caption]\n{description.get('caption', '')}\n"
@@ -319,16 +299,11 @@ class Worker:
                         )
                     ]
                 else:
-                    recent = (
-                        events.get_recent_events(event["session_id"], event, 3)
-                        if event.get("session_id")
-                        else []
-                    )
+                    recent = events.get_recent_events(event["session_id"], event, 3) if event.get("session_id") else []
                     event_context = {
                         "occurred_at": event["occurred_at"],
                         "recent_events": [
-                            {**item, "content": json.loads(item["content_json"])}
-                            for item in reversed(recent)
+                            {**item, "content": json.loads(item["content_json"])} for item in reversed(recent)
                         ],
                     }
                     extracted = (
@@ -356,9 +331,7 @@ class Worker:
                 duration_us=(time.perf_counter_ns() - started) // 1000,
                 detail={
                     "extractor": (
-                        "explicit_memory"
-                        if event["event_type"] == "explicit_memory"
-                        else type(self.extractor).__name__
+                        "explicit_memory" if event["event_type"] == "explicit_memory" else type(self.extractor).__name__
                     ),
                     "claim_count": len(extracted),
                     "context_event_ids": [item["id"] for item in recent],
@@ -409,17 +382,11 @@ class Worker:
 
     def _make_consolidator(self) -> ConflictConsolidator:
         """从环境配置构建冲突归并器。"""
-        judge = LLMConflictJudge(
-            components.make_llm_client(self.settings, self.connection, operation="conflict")
-        )
+        judge = LLMConflictJudge(components.make_llm_client(self.settings, self.connection, operation="conflict"))
         return ConflictConsolidator(
             self.connection,
             judge,
-            float(
-                self.config.get(
-                    "consolidate_confidence", self.settings.consolidate_confidence
-                )
-            ),
+            float(self.config.get("consolidate_confidence", self.settings.consolidate_confidence)),
         )
 
 
@@ -436,6 +403,11 @@ def _handle_expire(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 def _handle_decay(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理访问衰减任务。"""
     return decay_claims(worker.connection)
+
+
+def _handle_rebuild_usefulness(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
+    """从 retrieval_feedback 重建 usefulness 聚合。"""
+    return rebuild_usefulness(worker.connection, worker.settings)
 
 
 def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
@@ -463,9 +435,7 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
         int(
             payload.get(
                 "limit",
-                worker.config.get(
-                    "consolidate_batch_size", worker.settings.consolidate_batch_size
-                ),
+                worker.config.get("consolidate_batch_size", worker.settings.consolidate_batch_size),
             )
         ),
         payload.get("namespace", "default"),
@@ -558,9 +528,7 @@ def _handle_purge_retention(worker: Worker, job: dict[str, Any]) -> dict[str, An
     """处理事件保留清理任务。"""
     from hl_mem.security.retention import purge_retained_events
 
-    cutoff = (
-        datetime.now(timezone.utc) - timedelta(days=worker.settings.retention_days)
-    ).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=worker.settings.retention_days)).isoformat()
     return {"purged": purge_retained_events(worker.connection, "default", cutoff)}
 
 
@@ -575,6 +543,7 @@ JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {
     "extract_event": _handle_extract,
     "expire_ttl": _handle_expire,
     "decay_access": _handle_decay,
+    "rebuild_usefulness": _handle_rebuild_usefulness,
     "consolidate_conflicts": _handle_consolidate,
     "deduplicate_claims": _handle_deduplicate,
     "discover_relations": _handle_discover_relations,
@@ -599,9 +568,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.worker")
     parser.add_argument("command", choices=("run", "run-once", "status"))
     parser.add_argument("--db", default=settings.database_path)
-    parser.add_argument(
-        "--poll-interval", type=float, default=settings.worker_poll_interval
-    )
+    parser.add_argument("--poll-interval", type=float, default=settings.worker_poll_interval)
     args = parser.parse_args()
     if args.command == "status":
         database = Database(args.db)

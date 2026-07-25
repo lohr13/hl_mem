@@ -109,9 +109,7 @@ class RecallService:
             }.get(trigger, "llm_short")
             if self.query_expander is None or time.monotonic() >= expansion_deadline:
                 tracer.trace.expansion_trigger = trigger
-                tracer.trace.expansions.append(
-                    QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout")
-                )
+                tracer.trace.expansions.append(QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout"))
                 return [], []
             tracer.trace.expansion_trigger = trigger
             remaining = max(0.001, expansion_deadline - time.monotonic())
@@ -158,11 +156,8 @@ class RecallService:
             query_blobs.extend(blobs)
 
         low_recall_expander = None
-        if (
-            self.settings.query_expansion_mode == "auto"
-            and initial_trigger is None
-            and self.query_expander is not None
-        ):
+        if self.settings.query_expansion_mode == "auto" and initial_trigger is None and self.query_expander is not None:
+
             def low_recall_expander(candidate_count: int) -> tuple[list[WeightedQuery], list[bytes]]:
                 trigger = QueryExpander.trigger_for(
                     query,
@@ -200,14 +195,11 @@ class RecallService:
                 else None
             ),
             query_blobs=(
-                query_blobs
-                if self.query_expander is not None and self.settings.query_expansion_mode != "off"
-                else None
+                query_blobs if self.query_expander is not None and self.settings.query_expansion_mode != "off" else None
             ),
             low_recall_expander=low_recall_expander,
         )
         self._record_access(claims)
-        self._record_feedback(claims, query_id)
         assembly_started = time.perf_counter_ns()
         results = self._assemble_results(claims, namespace)
         tracer.trace.phases.assembly_us = (time.perf_counter_ns() - assembly_started) // 1000
@@ -216,6 +208,7 @@ class RecallService:
             ExperienceService(self.connection).list_policies("active", namespace=namespace),
             query,
         )
+        self._record_feedback(results, observations, policies, query_id)
         response = {
             "results": results,
             "observations": observations,
@@ -271,28 +264,44 @@ class RecallService:
         except Exception as error:
             self._emit_failure("access_record", "access_record_failed", error, len(claims))
 
-    def _record_feedback(self, claims: list[dict[str, Any]], query_id: str) -> None:
+    def _record_feedback(
+        self,
+        claims: list[dict[str, Any]],
+        observations: list[dict[str, Any]],
+        policies: list[dict[str, Any]],
+        query_id: str,
+    ) -> None:
+        """为实际返回的三类记忆创建唯一 exposure，并把主键返回给调用方。"""
         try:
             recorded_at = _now()
-            ExperienceService(self.connection).record_feedback_batch(
-                [
-                    (
-                        new_id(),
-                        query_id,
-                        "claim",
-                        claim["id"],
-                        rank,
-                        float(claim.get("_score", 0.0)),
-                        0,
-                        None,
-                        None,
-                        recorded_at,
+            feedback: list[tuple[Any, ...]] = []
+            for memory_type, items in (
+                ("claim", claims),
+                ("observation", observations),
+                ("policy", policies),
+            ):
+                for rank, item in enumerate(items, 1):
+                    feedback_id = new_id()
+                    item["feedback_id"] = feedback_id
+                    feedback.append(
+                        (
+                            feedback_id,
+                            query_id,
+                            memory_type,
+                            item["id"],
+                            rank,
+                            float(item.get("_score", item.get("score", 0.0))),
+                            0,
+                            None,
+                            None,
+                            recorded_at,
+                        )
                     )
-                    for rank, claim in enumerate(claims, 1)
-                ]
-            )
+            ExperienceService(self.connection).record_feedback_batch(feedback)
         except Exception as error:
-            self._emit_failure("feedback_record", "feedback_record_failed", error, len(claims))
+            self._emit_failure(
+                "feedback_record", "feedback_record_failed", error, len(claims) + len(observations) + len(policies)
+            )
 
     @staticmethod
     def _emit_failure(operation: str, outcome: str, error: Exception, claim_count: int) -> None:

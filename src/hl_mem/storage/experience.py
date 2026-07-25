@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from hl_mem.lifecycle import (
     TERMINAL_EPISODE_STATUSES,
@@ -16,6 +16,9 @@ from hl_mem.lifecycle import (
     assert_episode_transition,
 )
 from hl_mem.storage._shared import decode_json, encode_json
+
+if TYPE_CHECKING:
+    from hl_mem.settings import Settings
 
 
 def _id() -> str:
@@ -55,7 +58,13 @@ def backprop_episode_reward(
 class ExperienceRepository:
     """以事务方式维护经验证据和策略生命周期。"""
 
-    def __init__(self, connection: sqlite3.Connection, min_support: int = 2, retire_after_failures: int = 3) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        min_support: int = 2,
+        retire_after_failures: int = 3,
+        settings: Settings | None = None,
+    ) -> None:
         if min_support < 2:
             raise ValueError("min_support must be at least 2")
         if retire_after_failures < 1:
@@ -63,6 +72,7 @@ class ExperienceRepository:
         self.connection = connection
         self.min_support = min_support
         self.retire_after_failures = retire_after_failures
+        self.settings = settings
 
     def record_episode(self, episode_id: str, goal: str, status: str, reward: float, occurred_at: str) -> str:
         """记录一次独立 Episode 并返回其 ID。"""
@@ -247,20 +257,72 @@ class ExperienceRepository:
         return self.connection.total_changes - before
 
     def submit_retrieval_feedback(
-        self, query_id: str, memory_id: str, helpful: bool, task_outcome: str | None, created_at: str
+        self,
+        feedback_id: str,
+        helpful: bool,
+        task_outcome: float | None,
+        created_at: str,
     ) -> dict[str, bool]:
-        """回填或创建一次 claim 检索反馈，返回创建和更新状态。"""
-        cursor = self.connection.execute(
-            "UPDATE retrieval_feedback SET helpful=?,task_outcome=? "
-            "WHERE id=(SELECT id FROM retrieval_feedback WHERE query_id=? AND memory_type='claim' "
-            "AND memory_id=? ORDER BY created_at DESC,id DESC LIMIT 1)",
-            (int(helpful), task_outcome, query_id, memory_id),
+        """按 exposure 主键幂等提交或修改检索反馈。"""
+        from hl_mem.domain.feedback import BayesianUsefulnessPolicy
+        from hl_mem.settings import Settings
+        from hl_mem.storage.usefulness import UsefulnessRepository
+
+        if task_outcome is not None and not 0.0 <= task_outcome <= 1.0:
+            raise ValueError("task_outcome must be between 0 and 1")
+        settings = self.settings or Settings()
+        policy = BayesianUsefulnessPolicy(
+            settings.feedback_bonus_every, settings.feedback_bonus_days, settings.feedback_bonus_cap_days
         )
-        if cursor.rowcount == 0:
-            self.record_feedback(_id(), query_id, "claim", memory_id, True, helpful, task_outcome, created_at)
-            return {"created": True, "updated": False}
-        self.connection.commit()
-        return {"created": False, "updated": True}
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT memory_type,memory_id,helpful,task_outcome FROM retrieval_feedback WHERE id=?",
+                (feedback_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"feedback exposure not found: {feedback_id}")
+            old_helpful = row["helpful"]
+            old_outcome = row["task_outcome"]
+            if old_helpful == int(helpful) and old_outcome == task_outcome:
+                self.connection.commit()
+                return {"created": False, "updated": False}
+            if settings.feedback_lifecycle_mode == "off":
+                self.connection.execute(
+                    "UPDATE retrieval_feedback SET helpful=?,task_outcome=? WHERE id=?",
+                    (int(helpful), task_outcome, feedback_id),
+                )
+                self.connection.commit()
+                return {"created": False, "updated": True}
+            repository = UsefulnessRepository(self.connection, policy)
+            if old_helpful is not None or old_outcome is not None:
+                repository.upsert(
+                    row["memory_type"],
+                    row["memory_id"],
+                    helpful_delta=-int(old_helpful == 1),
+                    unhelpful_delta=-int(old_helpful == 0),
+                    success_delta=-float(old_outcome or 0.0),
+                    outcome_delta=-int(old_outcome is not None),
+                    commit=False,
+                )
+            self.connection.execute(
+                "UPDATE retrieval_feedback SET helpful=?,task_outcome=? WHERE id=?",
+                (int(helpful), task_outcome, feedback_id),
+            )
+            repository.upsert(
+                row["memory_type"],
+                row["memory_id"],
+                helpful_delta=int(helpful),
+                unhelpful_delta=int(not helpful),
+                success_delta=float(task_outcome or 0.0),
+                outcome_delta=int(task_outcome is not None),
+                commit=False,
+            )
+            self.connection.commit()
+            return {"created": False, "updated": True}
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def induce_policy(
         self,

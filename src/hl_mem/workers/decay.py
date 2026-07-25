@@ -20,6 +20,7 @@ def _load_policy() -> dict[str, tuple[int, int]]:
         "permanent": (permanent_decay, permanent_archive),
     }
 
+
 # Access-frequency decay bonus: every ACCESS_BONUS_EVERY hits adds
 # ACCESS_BONUS_DAYS to both decay_after and archive_after, capped at
 # ACCESS_BONUS_CAP.  A frequently-recalled memory decays slower.
@@ -38,12 +39,14 @@ def decay_claims(
     now: str | None = None,
     rollout_grace_days: int = 7,
     min_confidence: float = 0.05,
+    feedback_lifecycle_mode: str | None = None,
 ) -> dict[str, int]:
     """Linearly decay inactive claims and archive them at scope-specific boundaries."""
     reference = _parse(now) if now else datetime.now(timezone.utc)
     day_start = reference.replace(hour=0, minute=0, second=0, microsecond=0)
     minimum = min(1.0, max(0.0, float(min_confidence)))
     policy = _load_policy()
+    feedback_mode = feedback_lifecycle_mode or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
     decayed = archived = 0
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -51,18 +54,23 @@ def decay_claims(
             "SELECT applied_at FROM schema_migrations WHERE version='005_memory_management'"
         ).fetchone()
         migration_at = _parse(migration[0]) if migration else None
-        grace_until = (migration_at + timedelta(days=rollout_grace_days)
-                       if migration_at else None)
+        grace_until = migration_at + timedelta(days=rollout_grace_days) if migration_at else None
         rows = connection.execute(
-            "SELECT id,scope,confidence,access_count,recorded_from,last_accessed_at,last_decayed_at,"
-            "expires_at,status "
-            "FROM claims WHERE status IN ('active','disputed')"
+            "SELECT c.id,c.scope,c.confidence,c.access_count,c.recorded_from,c.last_accessed_at,c.last_decayed_at,"
+            "c.expires_at,c.status,COALESCE(u.retention_bonus_days,0) AS feedback_bonus "
+            "FROM claims c LEFT JOIN memory_usefulness u ON u.memory_type='claim' AND u.memory_id=c.id "
+            "WHERE c.status IN ('active','disputed')"
         ).fetchall()
         for row in rows:
             claim = dict(row)
             anchor = _parse(claim["last_accessed_at"] or claim["recorded_from"])
-            if (claim["last_accessed_at"] is None and migration_at and grace_until
-                    and reference < grace_until and anchor <= migration_at):
+            if (
+                claim["last_accessed_at"] is None
+                and migration_at
+                and grace_until
+                and reference < grace_until
+                and anchor <= migration_at
+            ):
                 continue
             decay_after, archive_after = policy.get(claim["scope"], policy["permanent"])
             access_count = max(0, int(claim.get("access_count") or 0))
@@ -76,12 +84,21 @@ def decay_claims(
             )
             decay_after += bonus
             archive_after += bonus
+            if feedback_mode == "on":
+                feedback_bonus = min(
+                    int(claim.get("feedback_bonus") or 0),
+                    int(os.getenv("HL_MEM_FEEDBACK_BONUS_CAP_DAYS", "180")),
+                )
+                decay_after += feedback_bonus
+                archive_after += feedback_bonus
             inactive_days = (reference - anchor).total_seconds() / 86400.0
             if inactive_days > archive_after:
                 assert_transition(claim["status"], "archived")
                 cursor = connection.execute(
                     "UPDATE claims SET status='archived',embedding_dense=NULL,embedding_sparse=NULL "
-                    "WHERE id=? AND status IN ('active','disputed')", (claim["id"],))
+                    "WHERE id=? AND status IN ('active','disputed')",
+                    (claim["id"],),
+                )
                 archived += cursor.rowcount
                 continue
             if inactive_days <= decay_after:
@@ -95,11 +112,9 @@ def decay_claims(
             if elapsed_days <= 0:
                 continue
             daily_delta = (1.0 - minimum) / (archive_after - decay_after)
-            confidence = max(minimum, float(claim["confidence"] or 0.0)
-                             - daily_delta * elapsed_days)
+            confidence = max(minimum, float(claim["confidence"] or 0.0) - daily_delta * elapsed_days)
             cursor = connection.execute(
-                "UPDATE claims SET confidence=?,last_decayed_at=? "
-                "WHERE id=? AND status IN ('active','disputed')",
+                "UPDATE claims SET confidence=?,last_decayed_at=? " "WHERE id=? AND status IN ('active','disputed')",
                 (confidence, reference.isoformat(), claim["id"]),
             )
             decayed += cursor.rowcount

@@ -132,11 +132,7 @@ class ClaimRepository:
     def is_unchanged(self, original: dict[str, Any]) -> bool:
         """检查声明仍活跃且 Python 值未发生变化。"""
         current = self.get_claim(original["id"])
-        return bool(
-            current
-            and current["status"] == "active"
-            and current.get("value") == original.get("value")
-        )
+        return bool(current and current["status"] == "active" and current.get("value") == original.get("value"))
 
     def update_classification(
         self,
@@ -331,19 +327,30 @@ class ClaimRepository:
             self.connection.rollback()
             raise
 
-    def helpful_rates(self, claim_ids: list[str]) -> dict[str, float]:
-        """返回已有显式反馈的 claim helpful 比率。"""
+    def helpful_rates(self, claim_ids: list[str], min_samples: int | None = None) -> dict[str, float]:
+        """批量返回平滑 usefulness；无样本保持 0.5 prior。"""
+        import os
+
         unique_ids = list(dict.fromkeys(claim_ids))
         if not unique_ids:
             return {}
+        threshold = min_samples or int(os.getenv("HL_MEM_FEEDBACK_MIN_SAMPLES", "3"))
         placeholders = ",".join("?" for _ in unique_ids)
         rows = self.connection.execute(
-            "SELECT memory_id,avg(helpful) AS helpful_rate FROM retrieval_feedback "
-            f"WHERE memory_type='claim' AND helpful IS NOT NULL AND memory_id IN ({placeholders}) "
-            "GROUP BY memory_id",
+            "SELECT c.id AS memory_id,COALESCE(u.helpful_count,0) AS helpful_count,"
+            "COALESCE(u.unhelpful_count,0) AS unhelpful_count,COALESCE(u.usefulness_score,0.5) AS usefulness_score "
+            "FROM claims c LEFT JOIN memory_usefulness u ON u.memory_type='claim' AND u.memory_id=c.id "
+            f"WHERE c.id IN ({placeholders})",
             unique_ids,
         ).fetchall()
-        return {row["memory_id"]: float(row["helpful_rate"]) for row in rows}
+        return {
+            row["memory_id"]: (
+                float(row["usefulness_score"])
+                if row["helpful_count"] + row["unhelpful_count"] >= threshold
+                else (row["helpful_count"] + 2) / (row["helpful_count"] + row["unhelpful_count"] + 4)
+            )
+            for row in rows
+        }
 
     def insert_conflict_case(self, conflict_case: dict[str, Any], commit: bool = True) -> bool:
         """写入幂等冲突审核记录。"""

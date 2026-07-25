@@ -232,10 +232,40 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     @app.post("/v1/feedback")
     def post_feedback(
         payload: FeedbackInput, connection: sqlite3.Connection = Depends(get_connection)
-    ) -> dict[str, bool]:
-        return ExperienceService(connection).submit_retrieval_feedback(
-            payload.query_id, payload.memory_id, payload.helpful, payload.task_outcome, _now()
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = ExperienceService(connection, settings=settings).submit_retrieval_feedback(
+            payload.feedback_id, payload.helpful, payload.task_outcome, _now()
         )
+        correction = payload.correction
+        if correction is None:
+            return result
+        if correction.action == "replace" and not correction.corrected_text:
+            raise HTTPException(422, "corrected_text is required for replace")
+        event = {
+            "idempotency_key": correction.idempotency_key,
+            "tenant_id": "default",
+            "event_type": "feedback" if correction.action == "retract" else "correction",
+            "actor_type": "user",
+            "content": {
+                "memory_id": correction.memory_id,
+                "action": correction.action,
+                "text": correction.corrected_text or "",
+            },
+            "occurred_at": _now(),
+        }
+        event_result = IngestService(connection).ingest_event(event, correction.idempotency_key)
+        if not event_result["created"]:
+            correction_result = {"id": correction.memory_id, "idempotent": True}
+        elif correction.action == "retract":
+            try:
+                correction_result = ForgetService(connection).forget(correction.memory_id)
+            except NotFoundError as error:
+                raise HTTPException(404, str(error)) from error
+        else:
+            correction_result = {"id": correction.memory_id, "replacement_event_id": event_result["id"]}
+        result["correction"] = correction_result
+        result["correction_event_id"] = event_result["id"]
+        return result
 
     @app.post("/v1/episodes/{episode_id}/traces")
     def add_episode_trace(

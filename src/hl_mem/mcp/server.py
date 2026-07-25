@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.application.forget import ForgetService
@@ -13,12 +14,13 @@ from hl_mem.storage.database import Database
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import EvidenceRepository
+from hl_mem.experience.service import ExperienceService
 
 
 class McpMemoryServer:
     """提供可嵌入任意 MCP 传输层的最小记忆工具集。"""
 
-    _TOOLS = ("memory_recall", "memory_save", "memory_forget", "memory_explain")
+    _TOOLS = ("memory_recall", "memory_save", "memory_forget", "memory_explain", "memory_feedback")
 
     def __init__(
         self,
@@ -53,6 +55,8 @@ class McpMemoryServer:
                 return self._recall(connection, arguments)
             if name == "memory_forget":
                 return self._forget(connection, arguments)
+            if name == "memory_feedback":
+                return self._feedback(connection, arguments)
             return self._explain(connection, arguments)
 
     def _save(self, connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -100,6 +104,48 @@ class McpMemoryServer:
                 raise
             return {"id": memory_id, "forgotten": False}
 
+    def _feedback(self, connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        """按 feedback_id 提交 usefulness，并仅在显式 correction 字段存在时纠正记忆。"""
+        feedback_id = str(arguments.get("feedback_id", ""))
+        if not feedback_id:
+            raise ValueError("feedback_id is required")
+        now = datetime.now(timezone.utc).isoformat()
+        result: dict[str, Any] = ExperienceService(connection, settings=self.settings).submit_retrieval_feedback(
+            feedback_id,
+            bool(arguments["helpful"]),
+            float(arguments["task_outcome"]) if arguments.get("task_outcome") is not None else None,
+            now,
+        )
+        correction = arguments.get("correction")
+        if not correction:
+            return result
+        memory_id = str(correction.get("memory_id", ""))
+        action = str(correction.get("action", ""))
+        key = str(correction.get("idempotency_key", ""))
+        if not memory_id or action not in {"retract", "replace"} or not key:
+            raise ValueError("correction requires memory_id, retract|replace action, and idempotency_key")
+        text = str(correction.get("corrected_text") or "")
+        if action == "replace" and not text:
+            raise ValueError("corrected_text is required for replace")
+        event = IngestService(connection).ingest_event(
+            {
+                "idempotency_key": key,
+                "tenant_id": "default",
+                "event_type": "feedback" if action == "retract" else "correction",
+                "actor_type": "user",
+                "content": {"memory_id": memory_id, "action": action, "text": text},
+                "occurred_at": now,
+            },
+            key,
+        )
+        if not event["created"]:
+            result["correction"] = {"id": memory_id, "idempotent": True}
+        elif action == "retract":
+            result["correction"] = ForgetService(connection).forget(memory_id)
+        else:
+            result["correction"] = {"id": memory_id, "replacement_event_id": event["id"]}
+        return result
+
     @staticmethod
     def _explain(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         """通过 repository 返回事件或 claim 的证据链。"""
@@ -120,4 +166,6 @@ class McpMemoryServer:
             for link in links
         ]
         return {"type": "claim", "id": memory_id, "evidence": evidence}
+
+
 from hl_mem import components
