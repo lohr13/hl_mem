@@ -47,13 +47,13 @@ class LLMClient:
         self._operation = operation
         self._strict_unsupported = False
 
-    def complete(self, request: LLMRequest) -> LLMResponse:
+    def complete(self, request: LLMRequest, *, timeout_seconds: float | None = None) -> LLMResponse:
         """完成一次 LLM 调用，并按 provider 能力选择或降级结构化模式。"""
         mode = self._select_structured_mode(request)
         started_at = datetime.now(timezone.utc).isoformat()
         started = time.perf_counter()
         try:
-            response = self._complete_with_mode(request, mode)
+            response = self._complete_with_mode(request, mode, timeout_seconds)
         except httpx.HTTPStatusError as error:
             should_fallback = (
                 request.structured_output is not None
@@ -76,7 +76,7 @@ class LLMClient:
                 detail={"provider": self.provider.name, "model": self.model},
             )
             try:
-                response = self._complete_with_mode(request, StructuredOutputMode.JSON_OBJECT)
+                response = self._complete_with_mode(request, StructuredOutputMode.JSON_OBJECT, timeout_seconds)
             except Exception as fallback_error:
                 self._record_span(
                     StructuredOutputMode.JSON_OBJECT,
@@ -126,15 +126,16 @@ class LLMClient:
         self,
         request: LLMRequest,
         mode: StructuredOutputMode,
+        timeout_seconds: float | None = None,
     ) -> LLMResponse:
         payload = self.provider.build_payload(self.model, request, mode)
         response_payload = retry_http(
-            lambda: self._post_once(payload),
+            lambda: self._post_once(payload, timeout_seconds),
             max_attempts=self.max_attempts,
         )
         return self.provider.parse_response(response_payload)
 
-    def _post_once(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post_once(self, payload: dict[str, Any], timeout_seconds: float | None = None) -> dict[str, Any]:
         """发送一次 Chat Completions 请求并解析 JSON 外壳。"""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -145,7 +146,7 @@ class LLMClient:
             f"{self.base_url}/chat/completions",
             headers=headers,
             json=payload,
-            timeout=self.timeout,
+            timeout=httpx.Timeout(timeout_seconds) if timeout_seconds is not None else self.timeout,
         )
         response.raise_for_status()
         return response.json()

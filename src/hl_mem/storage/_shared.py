@@ -36,6 +36,11 @@ def insert_row(connection: sqlite3.Connection, table: str, data: dict[str, Any],
     return connection.total_changes > before
 
 
+def escape_like_pattern(pattern: str) -> str:
+    """转义 SQLite LIKE 模式元字符，使用户输入按字面量匹配。"""
+    return pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def sanitize_fts_query(query: str, *, tokenizer: str = "unicode61") -> str:
     """清洗 FTS5 查询字符串，安全引用用户文本为字面量 phrase。
 

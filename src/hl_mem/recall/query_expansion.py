@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import queue
 import threading
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any, cast
 
 from hl_mem.domain.recall import RecallIntent
@@ -38,8 +38,12 @@ _QUERY_SCHEMA = {
 class QueryExpander:
     """通过 LLM 生成最多两条受约束的语义查询改写。"""
 
-    def __init__(self, client: LLMClient) -> None:
+    def __init__(self, client: LLMClient, *, max_concurrency: int = 4) -> None:
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be positive")
         self.client = client
+        self._executor = ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="query-expansion")
+        self._capacity = threading.BoundedSemaphore(max_concurrency)
 
     @staticmethod
     def trigger_for(
@@ -78,20 +82,16 @@ class QueryExpander:
         if max_expansions <= 0:
             return self._empty(started, "empty")
         request = self._request(query, intent, max_expansions)
-        responses: queue.Queue[object] = queue.Queue(maxsize=1)
-
-        def complete() -> None:
-            try:
-                responses.put(self.client.complete(request))
-            except Exception as error:
-                responses.put(error)
-
-        threading.Thread(target=complete, name="query-expansion", daemon=True).start()
+        if not self._capacity.acquire(blocking=False):
+            return self._empty(started, "concurrency_limit")
+        future = self._executor.submit(self._complete, request, timeout_seconds)
+        future.add_done_callback(lambda _future: self._capacity.release())
         try:
-            response = responses.get(timeout=timeout_seconds)
-        except queue.Empty:
+            response = future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            future.cancel()
             return self._empty(started, "timeout")
-        if isinstance(response, Exception):
+        except Exception:
             return self._empty(started, "error")
         response = cast(LLMResponse, response)
 
@@ -174,3 +174,9 @@ class QueryExpander:
             latency_ms=(time.perf_counter() - started) * 1000,
             outcome=outcome,
         )
+
+    def _complete(self, request: LLMRequest, timeout_seconds: float) -> LLMResponse:
+        """向支持 deadline 的真实客户端下推本次扩展超时。"""
+        if isinstance(self.client, LLMClient):
+            return self.client.complete(request, timeout_seconds=timeout_seconds)
+        return self.client.complete(request)

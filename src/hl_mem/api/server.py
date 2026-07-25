@@ -30,7 +30,7 @@ from hl_mem.api.schemas import (
 )
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService, new_id
-from hl_mem.application.recall import RecallService
+from hl_mem.application.recall import RecallService, recall_side_effect_health
 from hl_mem.errors import ConflictError, NotFoundError, ValidationError
 from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
 from hl_mem.ingest.budget import TokenBudget
@@ -119,11 +119,13 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             "embedder": "fake" if isinstance(embedder, FakeEmbedder) else "real",
             "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
             "settings": settings.snapshot(),
+            "components": components.component_health(),
             "llm_stats": {
                 "calls": sum(item["count"] for item in operations),
                 "total_tokens": sum(item["total_tokens"] for item in operations),
             },
             "vector_search": SearchTracer.vector_search_metrics(),
+            "recall_side_effects": recall_side_effect_health(),
         }
 
     @app.post("/v1/events")

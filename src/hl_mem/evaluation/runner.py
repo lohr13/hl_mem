@@ -173,6 +173,7 @@ class BenchmarkRunner:
         extracted_ids = {event_id for ids in evidence.values() for event_id in ids}
         evidence_scores = evidence_precision_recall(extracted_ids, case.gold_evidence_event_ids)
         gold_yield = len(extracted_ids & set(case.gold_evidence_event_ids))
+        temporal = temporal_correctness(results, case.gold_temporal)
         return {
             **evidence_scores,
             "claim_yield": gold_yield / len(case.gold_evidence_event_ids) if case.gold_evidence_event_ids else 0.0,
@@ -196,7 +197,8 @@ class BenchmarkRunner:
             "recall_at_10": recall_at_k(results, case.gold_evidence_event_ids, 10),
             "mrr": mrr(results, case.gold_evidence_event_ids),
             "ndcg_at_10": ndcg_at_k(results, case.gold_evidence_event_ids, 10),
-            "temporal_correctness": temporal_correctness(results, case.gold_temporal),
+            "temporal_correctness": temporal["overall"],
+            "temporal_details": temporal,
             "judge": "not_run",
         }
 

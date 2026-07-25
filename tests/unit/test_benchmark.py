@@ -28,11 +28,40 @@ def test_adapter_normalizes_roles_stable_ids_and_missing_time() -> None:
     cases = list(LongMemEvalAdapter.from_fixture(FIXTURE))
     first = cases[0]
 
-    assert first.events[0]["id"] == "lme:fixture-preference:m1"
+    assert first.events[0]["id"] == "lme:fixture-preference:0:m1"
     assert first.events[0]["actor_type"] == "user"
     assert first.events[1]["actor_type"] == "assistant"
     assert first.events[1]["occurred_at"] == "2000-01-01T00:00:01+00:00"
-    assert first.gold_evidence_event_ids == ("lme:fixture-preference:m1",)
+    assert first.gold_evidence_event_ids == ("lme:fixture-preference:0:m1",)
+
+
+def test_adapter_scopes_duplicate_message_ids_by_session(tmp_path: Path) -> None:
+    """仅在 session 内唯一的 message_id 不得碰撞事件或幂等键。"""
+    fixture = tmp_path / "duplicate-message-ids.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "question_id": "duplicate",
+                    "haystack_sessions": [
+                        {"session_id": "first", "messages": [{"message_id": "m1", "content": "one"}]},
+                        {"session_id": "second", "messages": [{"message_id": "m1", "content": "two"}]},
+                    ],
+                    "question": "which",
+                    "answer_message_ids": ["second:m1"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    case = next(iter(LongMemEvalAdapter.from_fixture(fixture)))
+    assert [event["id"] for event in case.events] == [
+        "lme:duplicate:first:m1",
+        "lme:duplicate:second:m1",
+    ]
+    assert len({event["idempotency_key"] for event in case.events}) == 2
+    assert case.gold_evidence_event_ids == ("lme:duplicate:second:m1",)
 
 
 def test_adapter_synthesizes_update_and_expiry_checkpoints() -> None:
@@ -40,7 +69,7 @@ def test_adapter_synthesizes_update_and_expiry_checkpoints() -> None:
     update, expiry = list(LongMemEvalAdapter.from_fixture(FIXTURE))[1:]
 
     assert any(
-        checkpoint.expected_hidden_event_ids == ("lme:fixture-update:old",)
+        checkpoint.expected_hidden_event_ids == ("lme:fixture-update:0:old",)
         for checkpoint in update.lifecycle_checkpoints
     )
     assert any(
@@ -71,25 +100,58 @@ def test_metrics_use_unique_evidence_ids_and_hand_calculated_values() -> None:
 def test_temporal_correctness_checks_valid_and_recorded_intervals() -> None:
     """valid-time 或 recorded-time 越界仍算正确时应失败。"""
     gold = (
-        GoldTemporal("a", None, None, "2025-01-01T00:00:00+00:00", "2025-02-01T00:00:00+00:00"),
+        GoldTemporal(
+            "a",
+            "2025-01-01T00:00:00+00:00",
+            "2025-02-01T00:00:00+00:00",
+            "2025-01-01T00:00:00+00:00",
+            "2025-02-01T00:00:00+00:00",
+            "2025-01-05T00:00:00+00:00",
+            "2025-02-05T00:00:00+00:00",
+        ),
     )
     results = [
         {
             "evidence": [{"event_id": "a"}],
             "valid_from": "2025-01-10T00:00:00+00:00",
             "valid_to": "2025-01-20T00:00:00+00:00",
-            "recorded_from": "2025-01-10T00:00:00+00:00",
+            "occurred_at": "2025-01-10T00:00:00+00:00",
+            "recorded_from": "2025-01-12T00:00:00+00:00",
             "recorded_to": None,
         },
         {
             "evidence": [{"event_id": "a"}],
             "valid_from": "2025-03-01T00:00:00+00:00",
+            "occurred_at": "2025-03-01T00:00:00+00:00",
             "recorded_from": "2025-03-01T00:00:00+00:00",
         },
     ]
 
-    assert temporal_correctness(results, gold) == 0.5
+    assert temporal_correctness(results, gold) == {
+        "overall": 0.5,
+        "valid_time": 0.5,
+        "occurred_time": 0.5,
+        "recorded_time": 0.5,
+    }
     assert bootstrap_ci([1.0, 1.0, 1.0], seed=7) == (1.0, 1.0)
+
+
+def test_temporal_correctness_marks_missing_recorded_gold_not_applicable() -> None:
+    """缺少 recorded-time gold 时不得拿 occurred-time 边界代替。"""
+    gold = (GoldTemporal("a", "2025-01-01", None, "2025-01-01", None),)
+    result = temporal_correctness(
+        [
+            {
+                "evidence": [{"event_id": "a"}],
+                "valid_from": "2025-01-02",
+                "occurred_at": "2025-01-02",
+                "recorded_from": "2099-01-01",
+            }
+        ],
+        gold,
+    )
+    assert result["recorded_time"] == "not_applicable"
+    assert result["overall"] == 1.0
 
 
 def test_runner_config_hash_is_stable_and_databases_are_isolated(tmp_path: Path, monkeypatch: object) -> None:

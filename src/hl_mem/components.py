@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Literal
@@ -39,6 +40,28 @@ _EXTRACTOR_REGISTRY: dict[str, str] = {
 }
 
 Reranker = DashScopeReranker
+LOGGER = logging.getLogger(__name__)
+
+_COMPONENT_HEALTH: dict[str, dict[str, str | None]] = {}
+
+
+def component_health() -> dict[str, dict[str, str | None]]:
+    """返回可选组件最近一次构造的请求、有效模式与降级原因。"""
+    return {name: dict(status) for name, status in _COMPONENT_HEALTH.items()}
+
+
+def _record_component_health(
+    name: str,
+    requested_mode: str,
+    effective_mode: str,
+    degradation_reason: str | None = None,
+) -> None:
+    """记录不含敏感信息的组件构造状态。"""
+    _COMPONENT_HEALTH[name] = {
+        "requested_mode": requested_mode,
+        "effective_mode": effective_mode,
+        "degradation_reason": degradation_reason,
+    }
 
 
 def make_image_describer(settings: Settings) -> ImageDescriberProtocol | None:
@@ -117,10 +140,20 @@ def make_query_expander(
 ) -> QueryExpander | None:
     """按模式构造查询扩展器；关闭时不创建 LLM 客户端。"""
     if settings.query_expansion_mode == "off" or settings.query_expansion_max == 0:
+        _record_component_health("query_expander", settings.query_expansion_mode, "off")
         return None
     try:
-        return QueryExpander(make_llm_client(settings, connection, operation="query_expansion"))
-    except Exception:
+        result = QueryExpander(
+            make_llm_client(settings, connection, operation="query_expansion"),
+            max_concurrency=settings.query_expansion_max_concurrency,
+        )
+        _record_component_health("query_expander", settings.query_expansion_mode, settings.query_expansion_mode)
+        return result
+    except ConfigurationError as error:
+        if settings.environment == "production" or not settings.allow_fake_fallback:
+            raise
+        LOGGER.warning("query expansion disabled after configuration error: %s", error)
+        _record_component_health("query_expander", settings.query_expansion_mode, "off", str(error))
         return None
 
 
@@ -130,11 +163,22 @@ def make_relation_discoverer(
 ) -> RelationDiscoveryProtocol | None:
     """按发布模式构造关系发现器；关闭时不创建 LLM 客户端。"""
     if settings.relation_discovery_mode == "off":
+        _record_component_health("relation_discoverer", settings.relation_discovery_mode, "off")
         return None
     try:
         from hl_mem.workers.discover_relations import LLMRelationDiscoverer
-        return LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
-    except Exception:
+        result = LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
+        _record_component_health(
+            "relation_discoverer",
+            settings.relation_discovery_mode,
+            settings.relation_discovery_mode,
+        )
+        return result
+    except ConfigurationError as error:
+        if settings.environment == "production" or not settings.allow_fake_fallback:
+            raise
+        LOGGER.warning("relation discovery disabled after configuration error: %s", error)
+        _record_component_health("relation_discoverer", settings.relation_discovery_mode, "off", str(error))
         return None
 
 

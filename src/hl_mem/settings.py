@@ -20,6 +20,11 @@ RelationDiscoveryMode = Literal["off", "audit", "auto"]
 ExtractorMode = Literal["fake", "real", "llm"]
 LLMProvider = Literal["dashscope", "zhipu", "openai_compatible"]
 StructuredOutputModeName = Literal["auto", "json_object", "json_schema"]
+QueryExpansionMode = Literal["off", "auto", "always"]
+ProcedureRecallMode = Literal["off", "keyword", "auto"]
+FeedbackLifecycleMode = Literal["off", "observe", "on"]
+ImageDescriberMode = Literal["off", "on"]
+ImageDescriberProvider = Literal["dashscope"]
 
 
 class Environment(StrEnum):
@@ -83,19 +88,22 @@ class Settings:
     tag_candidate_limit: int = 20
     # query_expansion: auto 仅在短查询或指代查询时触发 LLM 改写，提升 recall
     # from_env 默认 auto，Settings() 默认 off（测试安全）
-    query_expansion_mode: str = "off"
+    query_expansion_mode: QueryExpansionMode = "off"
     query_expansion_max: int = 2
     query_expansion_candidate_floor: int = 8
     query_expansion_token_ceiling: int = 256
     query_expansion_timeout_seconds: float = 2.0
     query_expansion_total_timeout_seconds: float = 3.0
+    query_expansion_max_concurrency: int = 4
     # procedure_recall: keyword 为纯确定性路由，仅 TOOL/PROCEDURE intent 进入 Experience pipeline
-    procedure_recall_mode: str = "keyword"
+    procedure_recall_mode: ProcedureRecallMode = "keyword"
     procedure_llm_threshold: float = 0.80
     procedure_router_timeout_seconds: float = 1.5
     procedure_candidate_limit: int = 30
     procedure_recent_outcome_window: int = 20
     procedure_outcome_half_life_days: int = 30
+    recall_side_effect_max_attempts: int = 3
+    recall_side_effect_backoff_seconds: float = 0.05
     vector_backend: VectorBackend = VectorBackend.SQLITE_SCAN
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
@@ -112,8 +120,8 @@ class Settings:
     llm_max_attempts: int = 3
     llm_schema_retries: int = 2
     # image_describer: 当前没有图片输入源；接入视觉 API 后可通过 HL_MEM_IMAGE_DESCRIBER_MODE=on 开启
-    image_describer_mode: str = "off"
-    image_describer_provider: str = "dashscope"
+    image_describer_mode: ImageDescriberMode = "off"
+    image_describer_provider: ImageDescriberProvider = "dashscope"
     image_describer_api_key: str | None = None
     image_describer_base_url: str = "https://coding.dashscope.aliyuncs.com/v1"
     image_describer_model: str = "qwen3.7-plus"
@@ -153,7 +161,7 @@ class Settings:
     ttl_backfill_batch_size: int = 100
     ttl_backfill_grace_hours: int = 0
     # feedback_lifecycle: observe 只聚合 usefulness，不影响 TTL/decay；观察稳定后可切换为 on
-    feedback_lifecycle_mode: str = "observe"
+    feedback_lifecycle_mode: FeedbackLifecycleMode = "observe"
     feedback_bonus_every: int = 3
     feedback_bonus_days: int = 14
     feedback_bonus_cap_days: int = 180
@@ -209,12 +217,17 @@ class Settings:
             query_expansion_total_timeout_seconds=float(
                 os.getenv("HL_MEM_QUERY_EXPANSION_TOTAL_TIMEOUT_SECONDS", "3.0")
             ),
+            query_expansion_max_concurrency=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX_CONCURRENCY", "4")),
             procedure_recall_mode=os.getenv("HL_MEM_PROCEDURE_RECALL_MODE", "keyword").lower(),
             procedure_llm_threshold=float(os.getenv("HL_MEM_PROCEDURE_LLM_THRESHOLD", "0.80")),
             procedure_router_timeout_seconds=float(os.getenv("HL_MEM_PROCEDURE_ROUTER_TIMEOUT_SECONDS", "1.5")),
             procedure_candidate_limit=int(os.getenv("HL_MEM_PROCEDURE_CANDIDATE_LIMIT", "30")),
             procedure_recent_outcome_window=int(os.getenv("HL_MEM_PROCEDURE_RECENT_OUTCOME_WINDOW", "20")),
             procedure_outcome_half_life_days=int(os.getenv("HL_MEM_PROCEDURE_OUTCOME_HALF_LIFE_DAYS", "30")),
+            recall_side_effect_max_attempts=int(os.getenv("HL_MEM_RECALL_SIDE_EFFECT_MAX_ATTEMPTS", "3")),
+            recall_side_effect_backoff_seconds=float(
+                os.getenv("HL_MEM_RECALL_SIDE_EFFECT_BACKOFF_SECONDS", "0.05")
+            ),
             vector_backend=vector_backend,
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
@@ -287,6 +300,19 @@ class Settings:
         set_active_aliases(load_entity_aliases())
         return settings
 
+    @classmethod
+    def for_test(cls) -> "Settings":
+        """返回不创建真实网络客户端的显式测试配置。"""
+        return cls(
+            environment=Environment.TEST,
+            embedder_mode="fake",
+            extractor_mode="fake",
+            reranker_mode="off",
+            query_expansion_mode="off",
+            relation_discovery_mode="off",
+            image_describer_mode="off",
+        )
+
     def validate(self) -> None:
         """校验生产环境所需的安全配置组合。"""
         if self.feedback_lifecycle_mode not in {"off", "observe", "on"}:
@@ -333,6 +359,7 @@ class Settings:
                 self.query_expansion_token_ceiling,
                 self.query_expansion_timeout_seconds,
                 self.query_expansion_total_timeout_seconds,
+                self.query_expansion_max_concurrency,
             )
             <= 0
         ):
@@ -348,6 +375,8 @@ class Settings:
             self.procedure_outcome_half_life_days,
         ) <= 0:
             raise ConfigurationError("procedure recall limits and timeouts must be positive")
+        if self.recall_side_effect_max_attempts < 1 or self.recall_side_effect_backoff_seconds < 0:
+            raise ConfigurationError("recall side-effect attempts must be positive and backoff non-negative")
         if (
             self.hermes_circuit_failure_threshold < 1
             or self.hermes_circuit_open_seconds <= 0
@@ -453,12 +482,15 @@ class Settings:
             "query_expansion_token_ceiling": self.query_expansion_token_ceiling,
             "query_expansion_timeout_seconds": self.query_expansion_timeout_seconds,
             "query_expansion_total_timeout_seconds": self.query_expansion_total_timeout_seconds,
+            "query_expansion_max_concurrency": self.query_expansion_max_concurrency,
             "procedure_recall_mode": self.procedure_recall_mode,
             "procedure_llm_threshold": self.procedure_llm_threshold,
             "procedure_router_timeout_seconds": self.procedure_router_timeout_seconds,
             "procedure_candidate_limit": self.procedure_candidate_limit,
             "procedure_recent_outcome_window": self.procedure_recent_outcome_window,
             "procedure_outcome_half_life_days": self.procedure_outcome_half_life_days,
+            "recall_side_effect_max_attempts": self.recall_side_effect_max_attempts,
+            "recall_side_effect_backoff_seconds": self.recall_side_effect_backoff_seconds,
             "vector_backend": self.vector_backend,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,

@@ -82,7 +82,9 @@ class LongMemEvalAdapter:
         raw_by_id: dict[str, Mapping[str, Any]] = {}
         for index, message in enumerate(messages):
             message_id = str(message.get("message_id") or message.get("id") or index)
-            stable_id = f"lme:{case_id}:{message_id}"
+            session_key = str(message["_session_key"])
+            scoped_message_id = f"{session_key}:{message_id}"
+            stable_id = f"lme:{case_id}:{scoped_message_id}"
             occurred_at = self._timestamp(message) or (self.FALLBACK_EPOCH + timedelta(seconds=index)).isoformat()
             role = str(message.get("role") or message.get("speaker") or "user").lower()
             actor_type = {"human": "user", "ai": "assistant"}.get(role, role)
@@ -91,33 +93,55 @@ class LongMemEvalAdapter:
             events.append(
                 {
                     "id": stable_id,
-                    "idempotency_key": f"longmemeval:{case_id}:{message_id}",
+                    "idempotency_key": f"longmemeval:{case_id}:{scoped_message_id}",
                     "tenant_id": f"eval:{case_id}",
                     "event_type": "message",
                     "actor_type": actor_type,
                     "content": {
                         "text": str(message.get("content") or message.get("text") or ""),
-                        "benchmark_locator": {"case_id": case_id, "message_id": message_id},
+                        "benchmark_locator": {
+                            "case_id": case_id,
+                            "session_id": session_key,
+                            "message_id": message_id,
+                        },
                     },
                     "occurred_at": occurred_at,
                     "recorded_at": (self.FALLBACK_EPOCH + timedelta(seconds=index)).isoformat(),
                 }
             )
-            id_map[message_id] = stable_id
-            raw_by_id[message_id] = message
+            id_map[scoped_message_id] = stable_id
+            raw_by_id[scoped_message_id] = message
+        stable_ids = [str(event["id"]) for event in events]
+        if len(stable_ids) != len(set(stable_ids)):
+            raise ValueError(f"duplicate stable message id in LongMemEval case: {case_id}")
+        message_counts: dict[str, int] = {}
+        for message in messages:
+            message_id = str(message.get("message_id") or message.get("id"))
+            message_counts[message_id] = message_counts.get(message_id, 0) + 1
+        for scoped_message_id, stable_id in list(id_map.items()):
+            message_id = scoped_message_id.split(":", 1)[1]
+            if message_counts.get(message_id) == 1:
+                id_map[message_id] = stable_id
+                raw_by_id[message_id] = raw_by_id[scoped_message_id]
         answer_ids = self._answer_ids(record)
         gold_ids = tuple(dict.fromkeys(id_map[item] for item in answer_ids if item in id_map))
-        gold_temporal = tuple(
-            GoldTemporal(
-                evidence_event_id=event_id,
-                occurred_start=self._timestamp(raw_by_id[message_id]),
-                occurred_end=None,
-                valid_from=self._timestamp(raw_by_id[message_id]),
-                valid_to=self._optional_string(raw_by_id[message_id].get("valid_to")),
+        gold_temporal_items: list[GoldTemporal] = []
+        temporal_seen: set[str] = set()
+        for message_id, event_id in id_map.items():
+            if event_id not in gold_ids or event_id in temporal_seen:
+                continue
+            temporal_seen.add(event_id)
+            raw_message = raw_by_id[message_id]
+            gold_temporal_items.append(
+                GoldTemporal(
+                    evidence_event_id=event_id,
+                    occurred_start=self._timestamp(raw_message),
+                    occurred_end=None,
+                    valid_from=self._timestamp(raw_message),
+                    valid_to=self._optional_string(raw_message.get("valid_to")),
+                )
             )
-            for message_id, event_id in id_map.items()
-            if event_id in gold_ids
-        )
+        gold_temporal = tuple(gold_temporal_items)
         checkpoints = self._checkpoints(events, messages, id_map)
         return BenchmarkCase(
             case_id=case_id,
@@ -138,12 +162,21 @@ class LongMemEvalAdapter:
         if not isinstance(sessions, Sequence) or isinstance(sessions, (str, bytes)):
             raise ValueError("LongMemEval sessions/messages must be a list")
         flattened: list[Mapping[str, Any]] = []
-        for session in sessions:
+        for session_index, session in enumerate(sessions):
+            session_key = (
+                str(session.get("session_id") or session.get("id") or session_index)
+                if isinstance(session, Mapping)
+                else str(session_index)
+            )
             items = session.get("messages", []) if isinstance(session, Mapping) else session
             if isinstance(items, Mapping):
-                flattened.append(items)
+                flattened.append({**items, "_session_key": session_key})
             elif isinstance(items, Sequence) and not isinstance(items, (str, bytes)):
-                flattened.extend(item for item in items if isinstance(item, Mapping))
+                flattened.extend(
+                    {**item, "_session_key": session_key}
+                    for item in items
+                    if isinstance(item, Mapping)
+                )
         return flattened
 
     @staticmethod
@@ -189,7 +222,7 @@ class LongMemEvalAdapter:
             )
         for event, message in zip(events, messages, strict=True):
             if superseded := message.get("supersedes_message_id"):
-                old_id = id_map.get(str(superseded))
+                old_id = id_map.get(f"{message['_session_key']}:{superseded}") or id_map.get(str(superseded))
                 if old_id:
                     checkpoints.append(
                         LifecycleCheckpoint(

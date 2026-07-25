@@ -24,7 +24,7 @@ def expire_claims(
         "LEFT JOIN memory_usefulness u ON u.memory_type='claim' AND u.memory_id=c.id "
         "WHERE c.status='active' AND c.expires_at IS NOT NULL",
     ).fetchall()
-    expired_ids: list[str] = []
+    expired_claims: list[tuple[str, str]] = []
     for row in rows:
         base = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
         effective = base
@@ -39,13 +39,13 @@ def expire_claims(
                 )
         if effective <= datetime.fromisoformat(reference):
             assert_transition(row["status"], "expired")
-            expired_ids.append(row["id"])
+            expired_claims.append((row["id"], effective.isoformat(timespec="seconds")))
     cursor_count = 0
-    for claim_id in expired_ids:
+    for claim_id, effective_expire in expired_claims:
         cursor = connection.execute(
-            "UPDATE claims SET status='expired',valid_to=CASE WHEN valid_to IS NULL OR expires_at<valid_to "
-            "THEN expires_at ELSE valid_to END WHERE id=? AND status='active'",
-            (claim_id,),
+            "UPDATE claims SET status='expired',valid_to=CASE WHEN valid_to IS NULL OR ?<valid_to "
+            "THEN ? ELSE valid_to END WHERE id=? AND status='active'",
+            (effective_expire, effective_expire, claim_id),
         )
         cursor_count += cursor.rowcount
     connection.commit()

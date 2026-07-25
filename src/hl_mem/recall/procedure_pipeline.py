@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from hl_mem.domain.temporal import RecallIntent, parse_utc
+from hl_mem.storage._shared import escape_like_pattern
 from hl_mem.storage.experience import ExperienceRepository
 
 MemoryKind = Literal["policy", "episode", "trace", "claim"]
@@ -81,12 +82,23 @@ def recall_procedure(
         query,
     )
     result: list[MemoryCandidate] = []
-    pattern = f"%{query.strip()}%"
+    normalized_query = query.strip()
+    pattern = f"%{escape_like_pattern(normalized_query)}%"
+    outcome_filter = (
+        "AND (goal LIKE ? ESCAPE '\\' OR COALESCE(outcome_summary,'') LIKE ? ESCAPE '\\') "
+        if normalized_query
+        else ""
+    )
+    outcome_parameters: tuple[object, ...] = (
+        (namespace, pattern, pattern, recent_outcome_window)
+        if normalized_query
+        else (namespace, recent_outcome_window)
+    )
     outcome_rows = repository.connection.execute(
         "SELECT status,COALESCE(ended_at,started_at) AS occurred_at FROM episodes "
-        "WHERE namespace_key=? AND (?='%%' OR goal LIKE ? OR COALESCE(outcome_summary,'') LIKE ?) "
+        f"WHERE namespace_key=? {outcome_filter}"
         "ORDER BY COALESCE(ended_at,started_at) DESC,id ASC LIMIT ?",
-        (namespace, pattern, pattern, pattern, recent_outcome_window),
+        outcome_parameters,
     ).fetchall()
     outcome_weight = 0.0
     success_weight = 0.0

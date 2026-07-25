@@ -15,7 +15,7 @@ from hl_mem.lifecycle import InvalidTransitionError as InvalidStateTransitionErr
 from hl_mem.lifecycle import (
     assert_episode_transition,
 )
-from hl_mem.storage._shared import decode_json, encode_json
+from hl_mem.storage._shared import decode_json, encode_json, escape_like_pattern
 
 if TYPE_CHECKING:
     from hl_mem.settings import Settings
@@ -445,15 +445,21 @@ class ExperienceRepository:
 
     def list_active_policies(self, namespace: str, query: str, limit: int) -> list[dict[str, Any]]:
         """按 namespace 和文本相关性有界查询可用策略。"""
-        pattern = f"%{query.strip()}%"
+        normalized_query = query.strip()
+        pattern = f"%{escape_like_pattern(normalized_query)}%"
+        query_filter = (
+            "AND (p.trigger LIKE ? ESCAPE '\\' OR p.procedure LIKE ? ESCAPE '\\') " if normalized_query else ""
+        )
+        parameters: tuple[Any, ...] = (
+            (namespace, pattern, pattern, limit) if normalized_query else (namespace, limit)
+        )
         rows = self.connection.execute(
             "SELECT p.*,COALESCE(mu.usefulness_score,0.5) AS usefulness_score "
             "FROM policies p LEFT JOIN memory_usefulness mu "
             "ON mu.memory_type='policy' AND mu.memory_id=p.id "
             "WHERE p.namespace_key=? AND p.status='active' AND p.procedure_status<>'retired' "
-            "AND (?='%%' OR p.trigger LIKE ? OR p.procedure LIKE ?) "
-            "ORDER BY p.reliability DESC,p.updated_at DESC,p.id ASC LIMIT ?",
-            (namespace, pattern, pattern, pattern, limit),
+            f"{query_filter}ORDER BY p.reliability DESC,p.updated_at DESC,p.id ASC LIMIT ?",
+            parameters,
         ).fetchall()
         result = [dict(row) for row in rows]
         for policy in result:
@@ -462,12 +468,20 @@ class ExperienceRepository:
 
     def list_success_episodes(self, namespace: str, query: str, limit: int) -> list[dict[str, Any]]:
         """有界查询 namespace 内与目标或结果相关的成功 Episode。"""
-        pattern = f"%{query.strip()}%"
+        normalized_query = query.strip()
+        pattern = f"%{escape_like_pattern(normalized_query)}%"
+        query_filter = (
+            "AND (goal LIKE ? ESCAPE '\\' OR COALESCE(outcome_summary,'') LIKE ? ESCAPE '\\') "
+            if normalized_query
+            else ""
+        )
+        parameters: tuple[Any, ...] = (
+            (namespace, pattern, pattern, limit) if normalized_query else (namespace, limit)
+        )
         rows = self.connection.execute(
             "SELECT * FROM episodes WHERE namespace_key=? AND status='success' "
-            "AND (?='%%' OR goal LIKE ? OR COALESCE(outcome_summary,'') LIKE ?) "
-            "ORDER BY reward DESC,COALESCE(ended_at,started_at) DESC,id ASC LIMIT ?",
-            (namespace, pattern, pattern, pattern, limit),
+            f"{query_filter}ORDER BY reward DESC,COALESCE(ended_at,started_at) DESC,id ASC LIMIT ?",
+            parameters,
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -482,13 +496,17 @@ class ExperienceRepository:
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
-        pattern = f"%{query.strip()}%"
+        normalized_query = query.strip()
+        pattern = f"%{escape_like_pattern(normalized_query)}%"
+        action_order = "CASE WHEN t.action LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END," if normalized_query else ""
+        parameters: tuple[Any, ...] = (
+            (*ids, pattern, limit) if normalized_query else (*ids, limit)
+        )
         rows = self.connection.execute(
             f"SELECT t.*,e.reward AS parent_reward,e.status AS parent_status,e.ended_at "
             f"FROM traces t JOIN episodes e ON e.id=t.episode_id WHERE t.episode_id IN ({placeholders}) "
-            "ORDER BY CASE WHEN ?='%%' OR t.action LIKE ? THEN 0 ELSE 1 END,"
-            "e.reward DESC,t.value DESC,t.episode_id ASC,t.sequence_no ASC LIMIT ?",
-            (*ids, pattern, pattern, limit),
+            f"ORDER BY {action_order}e.reward DESC,t.value DESC,t.episode_id ASC,t.sequence_no ASC LIMIT ?",
+            parameters,
         ).fetchall()
         return [dict(row) for row in rows]
 

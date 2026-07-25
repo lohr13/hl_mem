@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 from hl_mem.domain.recall import RecallIntent
@@ -88,6 +89,63 @@ def test_expander_timeout_falls_back_without_waiting_for_client() -> None:
 
     assert result.expansions == () and result.outcome == "timeout"
     assert time.monotonic() - started < 0.15
+
+
+def test_expander_reuses_bounded_executor_threads() -> None:
+    """连续扩展不得为每个请求创建一个新线程。"""
+    client = _Client({"queries": ["改写"]})
+    expander = QueryExpander(client, max_concurrency=2)
+
+    for _ in range(6):
+        result = expander.expand(
+            "查询",
+            intent=RecallIntent.CURRENT_STATE,
+            timeout_seconds=1.0,
+            token_ceiling=256,
+        )
+        assert result.outcome == "applied"
+
+    worker_names = {thread.name for thread in threading.enumerate() if thread.name.startswith("query-expansion")}
+    assert len(worker_names) <= 2
+
+
+def test_expander_rejects_calls_beyond_concurrency_limit() -> None:
+    """并发额度耗尽时必须立即拒绝，不能继续排队堆积。"""
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingClient(_Client):
+        def complete(self, request):
+            entered.set()
+            release.wait(timeout=1.0)
+            return super().complete(request)
+
+    expander = QueryExpander(BlockingClient({"queries": ["改写"]}), max_concurrency=1)
+    first_result: list[object] = []
+    first = threading.Thread(
+        target=lambda: first_result.append(
+            expander.expand(
+                "第一个",
+                intent=RecallIntent.CURRENT_STATE,
+                timeout_seconds=0.5,
+                token_ceiling=256,
+            )
+        )
+    )
+    first.start()
+    assert entered.wait(timeout=0.2)
+
+    rejected = expander.expand(
+        "第二个",
+        intent=RecallIntent.CURRENT_STATE,
+        timeout_seconds=0.5,
+        token_ceiling=256,
+    )
+    release.set()
+    first.join(timeout=1.0)
+
+    assert rejected.outcome == "concurrency_limit"
+    assert first_result
 
 
 def test_weighted_rrf_uses_query_and_channel_weights() -> None:

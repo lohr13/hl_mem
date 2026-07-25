@@ -200,6 +200,8 @@ def _validate_proposal(
         return "inactive_endpoint"
     if any(support_id not in claims for support_id in proposal.supporting_claim_ids):
         return "missing_support"
+    if any(claims[support_id]["status"] not in {"active", "disputed"} for support_id in proposal.supporting_claim_ids):
+        return "inactive_support"
     return None
 
 
@@ -265,12 +267,14 @@ def discover_relations(
             + [endpoint for item in proposed for endpoint in (item.from_claim_id, item.to_claim_id)]
         )
     )
-    claims = ClaimRepository(connection).batch_get_claims(ids)
     repository = RelationProposalRepository(connection)
     counts = {"candidates": len(candidates), "proposals": 0, "applied": 0, "conflicts": 0, "rejected": 0}
     now = datetime.now(timezone.utc).isoformat()
+    run_id = uuid.uuid4().hex
     connection.execute("BEGIN IMMEDIATE")
     try:
+        # LLM 调用期间端点或证据可能已被其他 worker 关闭；写事务拿锁后必须重读。
+        claims = ClaimRepository(connection).batch_get_claims(ids)
         for proposal in proposed[:max_proposals]:
             if proposal.relation not in ALLOWED_RELATIONS:
                 counts["rejected"] += 1
@@ -279,6 +283,7 @@ def discover_relations(
             proposal_id = repository.insert_proposal(
                 {
                     "source_claim_id": proposal.from_claim_id,
+                    "run_id": run_id,
                     "target_claim_id": proposal.to_claim_id,
                     "relation": proposal.relation,
                     "confidence": proposal.confidence,
@@ -298,7 +303,11 @@ def discover_relations(
                 continue
             status, relation_id, conflict_case_id = "rejected", None, None
             if reason is not None:
-                decision_reason = reason
+                decision_reason = (
+                    "stale-input"
+                    if reason in {"missing_endpoint", "inactive_endpoint", "missing_support", "inactive_support"}
+                    else reason
+                )
             elif proposal.relation == "summarizes":
                 decision_reason = "topic_summary_builder_only"
             elif proposal.relation in AUTO_RELATIONS and proposal.confidence >= auto_apply_confidence:
@@ -325,13 +334,23 @@ def discover_relations(
                             now,
                         ),
                     )
+                endpoint_update_failed = False
                 for endpoint_id in (proposal.from_claim_id, proposal.to_claim_id):
                     endpoint = claims[endpoint_id]
                     if endpoint["status"] == "active":
                         assert_transition("active", "disputed")
-                        connection.execute("UPDATE claims SET status='disputed' WHERE id=?", (endpoint_id,))
-                status, decision_reason = "conflict_created", "contradiction_threshold"
-                counts["conflicts"] += 1
+                        cursor = connection.execute(
+                            "UPDATE claims SET status='disputed' WHERE id=? AND status='active'",
+                            (endpoint_id,),
+                        )
+                        if cursor.rowcount != 1:
+                            endpoint_update_failed = True
+                            break
+                if endpoint_update_failed:
+                    status, decision_reason = "rejected", "stale-input"
+                else:
+                    status, decision_reason = "conflict_created", "contradiction_threshold"
+                    counts["conflicts"] += 1
             else:
                 decision_reason = "below_confidence_threshold"
             if status == "rejected":

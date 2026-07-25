@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import sqlite3
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -28,6 +30,28 @@ from hl_mem.recall.trace import (
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.evidence import DerivationRepository, EvidenceRepository
+
+LOGGER = logging.getLogger(__name__)
+_SIDE_EFFECT_LOCK = threading.Lock()
+_SIDE_EFFECT_HEALTH = {
+    "access_record": {"failures": 0, "last_error": None},
+    "feedback_record": {"failures": 0, "last_error": None},
+    "audit_emit": {"failures": 0, "last_error": None},
+}
+
+
+def recall_side_effect_health() -> dict[str, dict[str, int | str | None]]:
+    """返回召回副作用的进程级降级计数与最近错误类型。"""
+    with _SIDE_EFFECT_LOCK:
+        return {name: dict(status) for name, status in _SIDE_EFFECT_HEALTH.items()}
+
+
+def _record_side_effect_failure(operation: str, error: Exception) -> None:
+    """原子累计副作用失败状态。"""
+    with _SIDE_EFFECT_LOCK:
+        status = _SIDE_EFFECT_HEALTH[operation]
+        status["failures"] = int(status["failures"] or 0) + 1
+        status["last_error"] = type(error).__name__
 
 
 def budget_pack(items: list[dict[str, Any]], token_budget: int) -> list[dict[str, Any]]:
@@ -361,8 +385,12 @@ class RecallService:
 
     def _record_access(self, claims: list[dict[str, Any]]) -> None:
         try:
-            ClaimRepository(self.connection).record_access([claim["id"] for claim in claims], _now())
+            self._run_side_effect_with_retry(
+                lambda: ClaimRepository(self.connection).record_access([claim["id"] for claim in claims], _now())
+            )
         except Exception as error:
+            _record_side_effect_failure("access_record", error)
+            LOGGER.exception("recall side effect failed: access_record")
             self._emit_failure("access_record", "access_record_failed", error, len(claims))
 
     def _record_feedback(
@@ -399,11 +427,26 @@ class RecallService:
                             recorded_at,
                         )
                     )
-            ExperienceService(self.connection).record_feedback_batch(feedback)
+            self._run_side_effect_with_retry(lambda: ExperienceService(self.connection).record_feedback_batch(feedback))
         except Exception as error:
+            _record_side_effect_failure("feedback_record", error)
+            LOGGER.exception("recall side effect failed: feedback_record")
             self._emit_failure(
                 "feedback_record", "feedback_record_failed", error, len(claims) + len(observations) + len(policies)
             )
+
+    def _run_side_effect_with_retry(self, operation: Any) -> Any:
+        """仅对 SQLite busy/locked 做 Settings 控制的有限退避重试。"""
+        attempts = self.settings.recall_side_effect_max_attempts
+        for attempt in range(attempts):
+            try:
+                return operation()
+            except sqlite3.OperationalError as error:
+                busy = "busy" in str(error).lower() or "locked" in str(error).lower()
+                if not busy or attempt + 1 >= attempts:
+                    raise
+                time.sleep(self.settings.recall_side_effect_backoff_seconds * (attempt + 1))
+        raise RuntimeError("unreachable recall side-effect retry state")
 
     @staticmethod
     def _emit_failure(operation: str, outcome: str, error: Exception, claim_count: int) -> None:
@@ -414,8 +457,9 @@ class RecallService:
                 outcome,
                 detail={"error_class": type(error).__name__, "claim_count": claim_count},
             )
-        except Exception:
-            pass
+        except Exception as audit_error:
+            _record_side_effect_failure("audit_emit", audit_error)
+            LOGGER.exception("recall failure audit emission failed")
 
     def _assemble_results(
         self,

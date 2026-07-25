@@ -17,20 +17,15 @@ class RelationProposalRepository:
         self.connection = connection
 
     def insert_proposal(self, proposal: dict[str, Any], commit: bool = True) -> str | None:
-        """幂等插入提案，重复时返回已有提案标识。"""
+        """插入本次运行的不可变提案；唯一键冲突时返回 None。"""
         stored = dict(proposal)
         stored.setdefault("id", uuid.uuid4().hex)
+        stored.setdefault("run_id", uuid.uuid4().hex)
         stored["supporting_claim_ids_json"] = json.dumps(
             stored.pop("supporting_claim_ids", []), ensure_ascii=False, separators=(",", ":")
         )
         inserted = insert_row(self.connection, "relation_proposals", stored, commit)
-        if inserted:
-            return str(stored["id"])
-        row = self.connection.execute(
-            "SELECT id FROM relation_proposals WHERE source_claim_id=? AND target_claim_id=? AND relation=?",
-            (stored["source_claim_id"], stored["target_claim_id"], stored["relation"]),
-        ).fetchone()
-        return str(row["id"]) if row else None
+        return str(stored["id"]) if inserted else None
 
     def update_proposal_status(
         self,

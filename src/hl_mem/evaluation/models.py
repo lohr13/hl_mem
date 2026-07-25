@@ -16,6 +16,8 @@ class GoldTemporal:
     occurred_end: str | None
     valid_from: str | None
     valid_to: str | None
+    recorded_from: str | None = None
+    recorded_to: str | None = None
 
 
 @dataclass(frozen=True)

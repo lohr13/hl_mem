@@ -80,27 +80,63 @@ def _within(value: str | None, start: str | None, end: str | None) -> bool:
     return value is None or (not start or value >= start) and (not end or value < end)
 
 
-def temporal_correctness(results: Sequence[Mapping[str, Any]], gold_temporal: Sequence[GoldTemporal]) -> float:
-    """返回相关结果中同时满足 valid-time 与 recorded-time 的比例。"""
+def _point_within(value: str | None, start: str | None, end: str | None) -> bool:
+    """验证事件点时间；gold 有边界时缺失值不能视作正确。"""
+    if value is None:
+        return start is None and end is None
+    return (not start or value >= start) and (not end or value < end)
+
+
+def temporal_correctness(
+    results: Sequence[Mapping[str, Any]],
+    gold_temporal: Sequence[GoldTemporal],
+) -> dict[str, float | str]:
+    """分别评估 valid、occurred、recorded 时间；缺 gold 的维度标记不可用。"""
     gold_by_id = {item.evidence_event_id: item for item in gold_temporal}
     checked = 0
-    correct = 0
+    correct = {"overall": 0, "valid_time": 0, "occurred_time": 0, "recorded_time": 0}
+    recorded_checked = 0
     for result in results:
         matching = [gold_by_id[item] for item in _evidence_ids(result) if item in gold_by_id]
         if not matching:
             continue
         checked += 1
+        valid_result = False
+        occurred_result = False
+        recorded_result = False
+        recorded_required = False
         for gold in matching:
             valid_ok = _within(result.get("valid_from"), gold.valid_from, gold.valid_to) and _within(
                 result.get("valid_to"), gold.valid_from, gold.valid_to
             )
-            recorded_ok = _within(
-                result.get("recorded_from"), gold.occurred_start, gold.occurred_end
-            ) and _within(result.get("recorded_to"), gold.occurred_start, gold.occurred_end)
-            if valid_ok and recorded_ok:
-                correct += 1
+            occurred_value = result.get("occurred_at") or result.get("observed_at")
+            occurred_ok = _point_within(occurred_value, gold.occurred_start, gold.occurred_end)
+            has_recorded_gold = gold.recorded_from is not None or gold.recorded_to is not None
+            recorded_required = recorded_required or has_recorded_gold
+            recorded_ok = not has_recorded_gold or (
+                _within(result.get("recorded_from"), gold.recorded_from, gold.recorded_to)
+                and _within(result.get("recorded_to"), gold.recorded_from, gold.recorded_to)
+            )
+            valid_result = valid_result or valid_ok
+            occurred_result = occurred_result or occurred_ok
+            recorded_result = recorded_result or (has_recorded_gold and recorded_ok)
+            if valid_ok and occurred_ok and recorded_ok:
+                correct["overall"] += 1
                 break
-    return correct / checked if checked else 0.0
+        correct["valid_time"] += int(valid_result)
+        correct["occurred_time"] += int(occurred_result)
+        if recorded_required:
+            recorded_checked += 1
+            correct["recorded_time"] += int(recorded_result)
+    denominator = checked or 1
+    return {
+        "overall": correct["overall"] / denominator if checked else 0.0,
+        "valid_time": correct["valid_time"] / denominator if checked else 0.0,
+        "occurred_time": correct["occurred_time"] / denominator if checked else 0.0,
+        "recorded_time": (
+            correct["recorded_time"] / recorded_checked if recorded_checked else "not_applicable"
+        ),
+    }
 
 
 def bootstrap_ci(
