@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from typing import Literal
 
 import httpx
@@ -11,12 +12,19 @@ from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.embedder import Embedder, FakeEmbedder
 from hl_mem.ingest.extractors import FakeExtractor
+from hl_mem.ingest.image_describer import DashScopeImageDescriber
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.observability.llm_spans import LLMSpanRecorder
-from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol, RelationDiscoveryProtocol, RerankerProtocol
+from hl_mem.protocols import (
+    EmbedderProtocol,
+    ExtractorProtocol,
+    ImageDescriberProtocol,
+    RelationDiscoveryProtocol,
+    RerankerProtocol,
+)
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.reranker import (
     DashScopeReranker,
@@ -31,6 +39,23 @@ _EXTRACTOR_REGISTRY: dict[str, str] = {
 }
 
 Reranker = DashScopeReranker
+
+
+def make_image_describer(settings: Settings) -> ImageDescriberProtocol | None:
+    """按配置构造图片描述器；关闭时不创建网络客户端。"""
+    if settings.image_describer_mode == "off":
+        return None
+    if not settings.image_describer_api_key:
+        raise ConfigurationError("IMAGE_API_KEY or LLM_API_KEY is required")
+    return DashScopeImageDescriber(
+        settings.image_describer_api_key,
+        settings.image_describer_base_url,
+        settings.image_describer_model,
+        max_bytes=settings.image_max_bytes,
+        allow_file_uris=settings.image_allow_file_uris,
+        file_allow_roots=tuple(Path(root) for root in settings.image_file_allow_roots),
+        max_attempts=settings.llm_max_attempts,
+    )
 
 
 def make_llm_client(

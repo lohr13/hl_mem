@@ -100,6 +100,16 @@ class Settings:
     llm_timeout: float = 90.0
     llm_max_attempts: int = 3
     llm_schema_retries: int = 2
+    image_describer_mode: str = "off"
+    image_describer_provider: str = "dashscope"
+    image_describer_api_key: str | None = None
+    image_describer_base_url: str = "https://coding.dashscope.aliyuncs.com/v1"
+    image_describer_model: str = "qwen3.7-plus"
+    image_describer_timeout_seconds: float = 20.0
+    image_max_bytes: int = 10485760
+    image_max_parts: int = 4
+    image_allow_file_uris: bool = False
+    image_file_allow_roots: tuple[str, ...] = ()
     extraction_chunk_target_chars: int = 12000
     extraction_chunk_overlap_turns: int = 2
     extraction_max_split_depth: int = 3
@@ -200,6 +210,24 @@ class Settings:
             llm_timeout=float(os.getenv("LLM_TIMEOUT", "90")),
             llm_max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
             llm_schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
+            image_describer_mode=os.getenv("HL_MEM_IMAGE_DESCRIBER_MODE", "off").lower(),
+            image_describer_provider=os.getenv("HL_MEM_IMAGE_DESCRIBER_PROVIDER", "dashscope").lower(),
+            image_describer_api_key=os.getenv("IMAGE_API_KEY") or os.getenv("LLM_API_KEY"),
+            image_describer_base_url=os.getenv(
+                "HL_MEM_IMAGE_DESCRIBER_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"
+            ),
+            image_describer_model=os.getenv("HL_MEM_IMAGE_DESCRIBER_MODEL", "qwen3.7-plus"),
+            image_describer_timeout_seconds=float(
+                os.getenv("HL_MEM_IMAGE_DESCRIBER_TIMEOUT_SECONDS", "20")
+            ),
+            image_max_bytes=int(os.getenv("HL_MEM_IMAGE_MAX_BYTES", "10485760")),
+            image_max_parts=int(os.getenv("HL_MEM_IMAGE_MAX_PARTS", "4")),
+            image_allow_file_uris=(
+                os.getenv("HL_MEM_IMAGE_ALLOW_FILE_URIS", "false").lower() == "true"
+            ),
+            image_file_allow_roots=tuple(
+                part for part in os.getenv("HL_MEM_IMAGE_FILE_ALLOW_ROOTS", "").split(os.pathsep) if part
+            ),
             extraction_chunk_target_chars=int(os.getenv("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS", "12000")),
             extraction_chunk_overlap_turns=int(os.getenv("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS", "2")),
             extraction_max_split_depth=int(os.getenv("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH", "3")),
@@ -291,6 +319,25 @@ class Settings:
             raise ConfigurationError("LLM_MAX_ATTEMPTS must be at least 1")
         if self.llm_schema_retries < 0:
             raise ConfigurationError("HL_MEM_LLM_SCHEMA_RETRIES must be non-negative")
+        if self.image_describer_mode not in {"off", "on"}:
+            raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_MODE must be 'off' or 'on'")
+        if self.image_describer_provider != "dashscope":
+            raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_PROVIDER must be 'dashscope'")
+        if (
+            self.image_max_bytes < 1
+            or self.image_max_parts < 1
+            or self.image_describer_timeout_seconds <= 0
+        ):
+            raise ConfigurationError("image limits and timeout must be positive")
+        if self.image_describer_mode == "on":
+            if not self.image_describer_api_key:
+                raise ConfigurationError("IMAGE_API_KEY or LLM_API_KEY is required when image describer is on")
+            if not self.image_describer_base_url.lower().startswith("https://"):
+                raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_BASE_URL must use HTTPS")
+            if not self.image_describer_model.strip():
+                raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_MODEL must not be empty")
+            if self.image_allow_file_uris and not self.image_file_allow_roots:
+                raise ConfigurationError("HL_MEM_IMAGE_FILE_ALLOW_ROOTS is required when file image URIs are enabled")
         if not 0.0 <= self.dedup_threshold <= 1.0:
             raise ConfigurationError("HL_MEM_DEDUP_THRESHOLD must be between 0 and 1")
         if not self.dedup_threshold <= self.dedup_auto_merge_min_confidence <= 1.0:
@@ -376,6 +423,9 @@ class Settings:
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,
+            "image_describer_mode": self.image_describer_mode,
+            "image_describer_provider": self.image_describer_provider,
+            "image_describer_model": self.image_describer_model,
             "extraction_chunk_target_chars": self.extraction_chunk_target_chars,
             "extraction_chunk_overlap_turns": self.extraction_chunk_overlap_turns,
             "extraction_max_split_depth": self.extraction_max_split_depth,

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 
@@ -49,11 +52,84 @@ class FileTextPart:
         return self._source_uri
 
 
-def parse_content(content: dict[str, Any] | str) -> list[TextPart | FileTextPart]:
+@dataclass(frozen=True)
+class ImagePart:
+    """URI 或 base64 图片内容；两种来源必须且只能提供一种。"""
+
+    uri: str | None
+    base64_data: str | None
+    mime_type: str
+    sha256: str | None = None
+    page: int | None = None
+    region: tuple[float, float, float, float] | None = None
+
+    def __post_init__(self) -> None:
+        """校验图片来源、MIME 与定位区域。"""
+        if (self.uri is None) == (self.base64_data is None):
+            raise ValueError("image must provide exactly one of uri or base64_data")
+        if not self.mime_type.startswith("image/"):
+            raise ValueError("image mime_type must start with image/")
+        if self.page is not None and self.page < 0:
+            raise ValueError("image page must be a non-negative integer")
+        if self.region is not None:
+            if len(self.region) != 4:
+                raise ValueError("image region must contain four coordinates")
+            x1, y1, x2, y2 = self.region
+            if not (0.0 <= x1 < x2 <= 1.0 and 0.0 <= y1 < y2 <= 1.0):
+                raise ValueError("image region must be normalized and ordered")
+
+    def source_uri(self) -> str | None:
+        """返回图片来源 URI。"""
+        return self.uri
+
+    def to_text(self) -> str:
+        """描述前不把图片伪装成文本。"""
+        return ""
+
+
+def _parse_image(raw: dict[str, Any], max_bytes: int) -> ImagePart:
+    uri = raw.get("uri")
+    base64_data = raw.get("base64_data")
+    mime_type = str(raw.get("mime_type", ""))
+    if base64_data is not None:
+        try:
+            decoded = base64.b64decode(str(base64_data), validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise ValueError("image base64_data is invalid") from error
+        if len(decoded) > max_bytes:
+            raise ValueError(f"image exceeds maximum size of {max_bytes} bytes")
+    raw_region = raw.get("region")
+    region = None
+    if raw_region is not None:
+        if not isinstance(raw_region, (list, tuple)) or len(raw_region) != 4:
+            raise ValueError("image region must contain four coordinates")
+        region = tuple(float(value) for value in raw_region)
+        x1, y1, x2, y2 = region
+        if not (0.0 <= x1 < x2 <= 1.0 and 0.0 <= y1 < y2 <= 1.0):
+            raise ValueError("image region must be normalized and ordered")
+    page = raw.get("page")
+    if page is not None and (not isinstance(page, int) or page < 0):
+        raise ValueError("image page must be a non-negative integer")
+    return ImagePart(
+        uri=str(uri) if uri is not None else None,
+        base64_data=str(base64_data) if base64_data is not None else None,
+        mime_type=mime_type,
+        sha256=str(raw["sha256"]) if raw.get("sha256") is not None else None,
+        page=page,
+        region=region,
+    )
+
+
+def parse_content(
+    content: dict[str, Any] | str,
+    *,
+    image_max_bytes: int = 10 * 1024 * 1024,
+    image_max_parts: int = 4,
+) -> list[TextPart | FileTextPart | ImagePart]:
     """从事件 content 中解析可供提取器消费的内容部分。"""
     if isinstance(content, str):
         return [TextPart(content)]
-    parts: list[TextPart | FileTextPart] = []
+    parts: list[TextPart | FileTextPart | ImagePart] = []
     if text := content.get("text"):
         parts.append(TextPart(str(text)))
     files = content.get("files")
@@ -67,4 +143,12 @@ def parse_content(content: dict[str, Any] | str) -> list[TextPart | FileTextPart
                         str(file_part["uri"]) if file_part.get("uri") is not None else None,
                     )
                 )
+    images = content.get("images")
+    if isinstance(images, list):
+        if len(images) > image_max_parts:
+            raise ValueError(f"content contains more than {image_max_parts} images")
+        for image in images:
+            if not isinstance(image, dict):
+                raise ValueError("each image must be an object")
+            parts.append(_parse_image(image, image_max_bytes))
     return parts or [TextPart(str(content))]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from typing import Any, Callable
 from hl_mem import components
 from hl_mem.application.ingest import IngestService
 from hl_mem.domain.claims.attributes import infer_canonical_attribute
+from hl_mem.domain.content import ImagePart, parse_content
 from hl_mem.domain.consolidation_scope import ConsolidationScope
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.event_filter import EventFilter
@@ -83,6 +85,9 @@ class Worker:
         self.jobs = JobRepository(self.connection)
         self.filter = self.config.get("event_filter") or EventFilter()
         self.extractor = self.config.get("extractor") or self._make_extractor()
+        self.image_describer = self.config.get("image_describer")
+        if "image_describer" not in self.config:
+            self.image_describer = components.make_image_describer(self.settings)
         self.embedder = self.config.get("embedder") or self._make_embedder()
         self.budget = self.config.get("budget") or TokenBudget(
             int(self.config.get("daily_token_limit", self.settings.daily_token_limit)),
@@ -201,6 +206,69 @@ class Worker:
             tenant_id=event.get("tenant_id", "default"),
         ):
             content = json.loads(event["content_json"])
+            image_parts = [
+                part
+                for part in parse_content(
+                    content,
+                    image_max_bytes=self.settings.image_max_bytes,
+                    image_max_parts=self.settings.image_max_parts,
+                )
+                if isinstance(part, ImagePart)
+            ]
+            description_event_ids: list[str] = []
+            description_texts: list[str] = []
+            image_errors: list[str] = []
+            if self.image_describer is not None:
+                for image_index, image in enumerate(image_parts):
+                    try:
+                        existing = events.find_image_description(
+                            event["id"],
+                            image_index,
+                            str(
+                                getattr(
+                                    self.image_describer,
+                                    "model",
+                                    self.settings.image_describer_model,
+                                )
+                            ),
+                        )
+                        if existing is not None:
+                            description_event = existing
+                            description = existing["content"]
+                        else:
+                            result = self.image_describer.describe(
+                                image,
+                                timeout_seconds=self.settings.image_describer_timeout_seconds,
+                            )
+                            description_event = events.insert_image_description_event(
+                                event, image_index, result
+                            )
+                            description = description_event["content"]
+                        locator = description["locator"]
+                        uri_hash = locator.get("sha256") or hashlib.sha256(
+                            str(locator.get("uri", "")).encode()
+                        ).hexdigest()
+                        description_texts.append(
+                            f'<image_evidence index="{image_index}" uri_hash="{uri_hash}">\n'
+                            f"[caption]\n{description.get('caption', '')}\n"
+                            f"[ocr]\n{description.get('ocr_text', '')}\n</image_evidence>"
+                        )
+                        description_event_ids.append(description_event["id"])
+                    except Exception as error:
+                        image_errors.append(f"image {image_index}: {type(error).__name__}: {error}")
+                        self.audit.emit(
+                            "image_description",
+                            "evaluated",
+                            "error",
+                            event_id=event["id"],
+                            detail={"image_index": image_index, "error_class": type(error).__name__},
+                        )
+            if description_texts:
+                textual = "\n".join(part.to_text() for part in parse_content(content) if part.to_text())
+                content = {"text": "\n".join(filter(None, [textual, *description_texts]))}
+            elif image_errors and not any(part.to_text() for part in parse_content(content)):
+                raise RuntimeError("; ".join(image_errors))
+            event["_image_description_event_ids"] = description_event_ids
             started = time.perf_counter_ns()
             allowed, reason = self.filter.should_extract({**event, "content": content})
             self.audit.emit(

@@ -8,7 +8,36 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 from hl_mem.domain.recall import RecallIntent
 
 if TYPE_CHECKING:
+    from hl_mem.domain.content import ImagePart
     from hl_mem.ingest.extractors import ExtractedClaim
+
+
+@dataclass(frozen=True)
+class ImageLocator:
+    """图片在原始证据中的稳定定位信息。"""
+
+    uri: str | None
+    media_type: str
+    sha256: str | None
+    page: int | None = None
+    region: tuple[float, float, float, float] | None = None
+
+
+@dataclass(frozen=True)
+class ImageDescription:
+    """视觉模型返回的可审计派生文本。"""
+
+    caption: str
+    ocr_text: str
+    model: str
+    confidence: float | None
+    locator: ImageLocator
+
+
+class ImageDescriberProtocol(Protocol):
+    """把图片证据转换为 caption/OCR。"""
+
+    def describe(self, image: ImagePart, *, timeout_seconds: float) -> ImageDescription: ...
 
 
 class ClaimRow(TypedDict, total=False):

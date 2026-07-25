@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import uuid
+from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any
 
+from hl_mem.protocols import ImageDescription
 from hl_mem.storage._shared import (
     decode_json,
     encode_json,
@@ -46,6 +50,69 @@ class EventRepository:
         """按幂等键返回已存在的事件标识。"""
         row = self.connection.execute("SELECT id FROM events WHERE idempotency_key=?", (idempotency_key,)).fetchone()
         return str(row["id"]) if row else None
+
+    def insert_image_description_event(
+        self,
+        source_event: dict[str, Any],
+        image_index: int,
+        description: ImageDescription,
+        *,
+        commit: bool = True,
+    ) -> dict[str, Any]:
+        """幂等写入图片描述派生事件，并返回已存在或新建事件。"""
+        image_hash = description.locator.sha256 or hashlib.sha256(
+            (description.locator.uri or f"image-{image_index}").encode()
+        ).hexdigest()
+        idempotency_key = f"image-describe:{source_event['id']}:{image_hash}:{description.model}"
+        existing_id = self.find_id_by_idempotency_key(idempotency_key)
+        if existing_id:
+            existing = self.get_event(existing_id)
+            if existing is None:
+                raise RuntimeError(f"idempotent image description event disappeared: {existing_id}")
+            return existing
+        event_id = uuid.uuid4().hex
+        event = {
+            "id": event_id,
+            "idempotency_key": idempotency_key,
+            "tenant_id": source_event.get("tenant_id", "default"),
+            "user_id": source_event.get("user_id"),
+            "project_id": source_event.get("project_id"),
+            "agent_id": source_event.get("agent_id"),
+            "session_id": source_event.get("session_id"),
+            "event_type": "image_description",
+            "actor_type": "system",
+            "content": {
+                "source_event_id": source_event["id"],
+                "image_index": image_index,
+                "caption": description.caption,
+                "ocr_text": description.ocr_text,
+                "model": description.model,
+                "confidence": description.confidence,
+                "locator": asdict(description.locator),
+            },
+            "occurred_at": source_event["occurred_at"],
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "source_uri": description.locator.uri,
+            "sensitivity": source_event.get("sensitivity", "normal"),
+        }
+        self.insert_event(event, commit=commit)
+        stored = self.get_event(event_id)
+        if stored is None:
+            raise RuntimeError(f"failed to read inserted image description event: {event_id}")
+        return stored
+
+    def find_image_description(
+        self, source_event_id: str, image_index: int, model: str
+    ) -> dict[str, Any] | None:
+        """按来源、图片序号和模型查找可复用的派生描述事件。"""
+        row = self.connection.execute(
+            "SELECT id FROM events WHERE event_type='image_description' "
+            "AND json_extract(content_json, '$.source_event_id')=? "
+            "AND json_extract(content_json, '$.image_index')=? "
+            "AND json_extract(content_json, '$.model')=? ORDER BY recorded_at DESC LIMIT 1",
+            (source_event_id, image_index, model),
+        ).fetchone()
+        return self.get_event(str(row["id"])) if row else None
 
     def get_recent_events(self, session_id: str, before: dict[str, Any], limit: int) -> list[dict[str, Any]]:
         """返回游标之前的最近事件。"""

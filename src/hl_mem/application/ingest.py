@@ -266,6 +266,7 @@ class IngestService:
             )
             if exact:
                 _link_event(evidence, exact["id"], event["id"], commit=False)
+                _link_image_descriptions(evidence, exact["id"], event, commit=False)
                 result_id = exact["id"]
                 connection.commit()
                 emit_audit_events()
@@ -294,6 +295,7 @@ class IngestService:
                 )
                 if resolution == "entails":
                     _link_event(evidence, current["id"], event["id"], commit=False)
+                    _link_image_descriptions(evidence, current["id"], event, commit=False)
                     result_id = current["id"]
                     connection.commit()
                     emit_audit_events()
@@ -336,6 +338,7 @@ class IngestService:
                 )
                 if duplicate_id:
                     _link_event(evidence, duplicate_id, event["id"], commit=False)
+                    _link_image_descriptions(evidence, duplicate_id, event, commit=False)
                     result_id = duplicate_id
                     connection.commit()
                     emit_audit_events()
@@ -346,6 +349,7 @@ class IngestService:
                 winner = claims.find_by_fact_hash(namespace, claim["fact_hash"])
                 if winner:
                     _link_event(evidence, winner["id"], event["id"], commit=False)
+                    _link_image_descriptions(evidence, winner["id"], event, commit=False)
                     result_id = winner["id"]
                 connection.commit()
                 emit_audit_events()
@@ -378,6 +382,7 @@ class IngestService:
                     commit=False,
                 )
             _link_event(evidence, claim["id"], event["id"], commit=False)
+            _link_image_descriptions(evidence, claim["id"], event, commit=False)
             connection.commit()
         except Exception:
             connection.rollback()
@@ -524,3 +529,26 @@ def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: 
         },
         commit=commit,
     )
+
+
+def _link_image_descriptions(
+    repo: EvidenceRepository,
+    claim_id: str,
+    event: dict[str, Any],
+    *,
+    commit: bool = False,
+) -> None:
+    """把图片描述派生事件作为 supports 证据链接到 Claim。"""
+    for description_event_id in event.get("_image_description_event_ids", []):
+        repo.add_link(
+            {
+                "id": new_id(),
+                "derived_type": "claim",
+                "derived_id": claim_id,
+                "evidence_type": "event",
+                "evidence_id": description_event_id,
+                "relation": "supports",
+                "weight": 1.0,
+            },
+            commit=commit,
+        )
