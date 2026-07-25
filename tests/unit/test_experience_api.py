@@ -86,9 +86,10 @@ def test_recall_records_impressions_and_feedback_updates_them(tmp_path) -> None:
         assert impression[1] is not None
         assert impression[2] is None
 
+        feedback_id = recalled["results"][0]["feedback_id"]
         response = client.post(
             "/v1/feedback",
-            json={"query_id": query_id, "memory_id": "claim-1", "helpful": True, "task_outcome": "success"},
+            json={"feedback_id": feedback_id, "helpful": True, "task_outcome": 1.0},
         )
         assert response.status_code == 200
         assert response.json()["updated"] is True
@@ -96,4 +97,4 @@ def test_recall_records_impressions_and_feedback_updates_them(tmp_path) -> None:
             "SELECT helpful,task_outcome FROM retrieval_feedback WHERE query_id=? AND memory_id='claim-1'",
             (query_id,),
         ).fetchone()
-        assert tuple(stored) == (1, "success")
+        assert tuple(stored) == (1, 1.0)

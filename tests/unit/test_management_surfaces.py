@@ -10,7 +10,7 @@ from hl_mem.storage.database import Database
 
 def test_mcp_exposes_minimal_memory_tool_contract(tmp_path) -> None:
     server = McpMemoryServer(tmp_path / "mcp.db")
-    assert set(server.list_tools()) == {"memory_recall", "memory_save", "memory_forget", "memory_explain"}
+    assert set(server.list_tools()) == {"memory_recall", "memory_save", "memory_forget", "memory_explain", "memory_feedback"}
     saved = server.call_tool("memory_save", {"text": "记住 SQLite", "subject": "项目"})
     assert saved["id"]
     assert server.call_tool("memory_explain", {"id": saved["id"]})["type"] == "event"

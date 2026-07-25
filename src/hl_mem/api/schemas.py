@@ -86,6 +86,7 @@ class ClaimOutput(BaseModel):
     entities: list[str] | None = None
     replacement: dict[str, Any] | None = None
     evidence: list[dict[str, Any]] = Field(default_factory=list)
+    feedback_id: str | None = None
     relations: list[dict[str, Any]] = Field(default_factory=list)
     conflicts: list[dict[str, Any]] | None = None
 
