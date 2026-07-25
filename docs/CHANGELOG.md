@@ -4,6 +4,44 @@
 
 ---
 
+## v0.11.2 — 2026-07-25
+
+### 发布收口
+- Trigram FTS 行为回归测试（确定性，30+ cases，验证中文/英文/混合查询、标点安全、空查询）
+- Migration 022 升级回归测试（验证 drop/recreate/backfill 原子性）
+- CI 扩展为全量测试套件（342 tests）
+- 数据清洗：514 claims → 441 active（27 expired + 26 deduped + 120 reclassified）
+
+### 数字
+- 测试: 325 → 342 (+17)
+- Migrations: 22（无变化）
+
+## v0.11.1 — 2026-07-24
+
+### 代码质量重构
+
+#### P0：安全修复
+- **空 trigger guard**：FTS5 触发器在空匹配时匹配全部行（行为 bug），修复为安全跳过
+- **BaseException → Exception**：except BaseException 吞掉 KeyboardInterrupt/SystemExit，改为 Exception
+- **Reranker 无 retry**：网络抖动时静默降级，增加 retry + 超时保护
+- **死代码清理**：删除 6 处未使用的模块/函数/变量
+
+#### P1：类型 + 一致性
+- **Enum-ify config**：`embedder_mode`/`reranker_mode` 等字符串配置改为 Enum，编译时检测拼写错误
+- **Enforce status enums**：ClaimStatus/EpisodeStatus 在所有写入路径强制校验
+- **统一 HTTP retry**：`http_utils.retry_http()` 统一所有 HTTP 调用的重试策略
+- **日调度提取**：4 处 copy-paste 的 daily job 注册逻辑提取为 `enqueue_daily_job()`
+- **类型标注收紧**：核心路径消除 `X | Any` 模式（等价于 Any），替换为精确类型
+
+#### P2：可维护性
+- **Docstrings**：核心模块补全 docstring
+- **`close()` 签名**：统一 close 方法的签名和调用约定
+- **空模块清理**：删除 empty/experimental 模块
+
+### 数字
+- 测试: 325（本版本无新增测试，重点在质量提升）
+- 净改动: +docstrings -dead_code，行数基本持平
+
 ## v0.11.0 — 2026-07-24
 
 ### Hindsight 对标：控制面 + 协议边界

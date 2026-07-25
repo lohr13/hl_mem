@@ -18,19 +18,19 @@ v0.3.0 经历了完整的架构重构（Phase 0-12），各阶段详细记录：
 
 | 阶段 | 文档 | 核心内容 |
 |------|------|----------|
-| Phase 1 (P0) | [refactor-phase1-p0.md](refactor-phase1-p0.md) | 数据正确性：事务原子化、fact_hash v2 |
-| Phase 2 (Domain) | [refactor-phase2-domain.md](refactor-phase2-domain.md) | 统一 ClaimStatus + EpisodeStatus + 状态守卫 |
-| Phase 3 (Services) | [refactor-phase3-services.md](refactor-phase3-services.md) | 共享 Application Services |
-| Phase 4 (Deps) | [refactor-phase4-dependencies.md](refactor-phase4-dependencies.md) | 依赖方向修正 |
-| Phase 5 (Dedup) | [refactor-phase5-dedup.md](refactor-phase5-dedup.md) | 合并 Hermes providers + 工厂集中化 |
-| Phase 6 (Maintenance) | [refactor-phase6-maintenance.md](refactor-phase6-maintenance.md) | schemas 拆分 + 配置集中化 |
-| Phase 7 (Quality) | [refactor-phase7-quality.md](refactor-phase7-quality.md) | Protocol + errors + retry + router 合并 |
-| Phase 8 (Hardfix) | [refactor-phase8-hardfix.md](refactor-phase8-hardfix.md) | observation recall + conflict + context budget |
-| Phase 9 (Improvements) | [refactor-phase9-improvements.md](refactor-phase9-improvements.md) | relations + multimodal + extractor routing |
-| Phase 10-11 (Conflict) | [refactor-phase10-conflict-fix.md](refactor-phase10-conflict-fix.md) · [phase11](refactor-phase11-mutual-exclusivity.md) | 白名单互斥模型 + 冲突检测修复 |
-| Phase 12 (Quality) | [refactor-phase12-quality.md](refactor-phase12-quality.md) | 实体归一化 + dedup 0.82 + attribute reconcile + TTL |
+| Phase 1 (P0) | [refactor-phase1-p0.md](archive/refactor/refactor-phase1-p0.md) | 数据正确性：事务原子化、fact_hash v2 |
+| Phase 2 (Domain) | [refactor-phase2-domain.md](archive/refactor/refactor-phase2-domain.md) | 统一 ClaimStatus + EpisodeStatus + 状态守卫 |
+| Phase 3 (Services) | [refactor-phase3-services.md](archive/refactor/refactor-phase3-services.md) | 共享 Application Services |
+| Phase 4 (Deps) | [refactor-phase4-dependencies.md](archive/refactor/refactor-phase4-dependencies.md) | 依赖方向修正 |
+| Phase 5 (Dedup) | [refactor-phase5-dedup.md](archive/refactor/refactor-phase5-dedup.md) | 合并 Hermes providers + 工厂集中化 |
+| Phase 6 (Maintenance) | [refactor-phase6-maintenance.md](archive/refactor/refactor-phase6-maintenance.md) | schemas 拆分 + 配置集中化 |
+| Phase 7 (Quality) | [refactor-phase7-quality.md](archive/refactor/refactor-phase7-quality.md) | Protocol + errors + retry + router 合并 |
+| Phase 8 (Hardfix) | [refactor-phase8-hardfix.md](archive/refactor/refactor-phase8-hardfix.md) | observation recall + conflict + context budget |
+| Phase 9 (Improvements) | [refactor-phase9-improvements.md](archive/refactor/refactor-phase9-improvements.md) | relations + multimodal + extractor routing |
+| Phase 10-11 (Conflict) | [refactor-phase10-conflict-fix.md](archive/refactor/refactor-phase10-conflict-fix.md) · [phase11](archive/refactor/refactor-phase11-mutual-exclusivity.md) | 白名单互斥模型 + 冲突检测修复 |
+| Phase 12 (Quality) | [refactor-phase12-quality.md](archive/refactor/refactor-phase12-quality.md) | 实体归一化 + dedup 0.82 + attribute reconcile + TTL |
 
-完整重构提案见各阶段 `*-proposal.md` 文件。
+完整重构提案见 [archive/refactor/](archive/refactor/) 中各阶段的 `*-proposal.md` 文件。
 
 ## 配置参考
 

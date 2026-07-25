@@ -1,6 +1,21 @@
 # HL-Mem
 
-> v0.11.0 · 325 passed · 1 skipped · 22 migrations · [CHANGELOG](docs/CHANGELOG.md)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
+[![Tests: 342 passed](https://img.shields.io/badge/tests-342%20passed-brightgreen.svg)](docs/CHANGELOG.md)
+[![Version: 0.11.2](https://img.shields.io/badge/version-0.11.2-blue.svg)](docs/CHANGELOG.md)
+
+**Local-first, evidence-driven memory for AI agents.** Stop your LLM from forgetting across sessions.
+
+HL-Mem provides persistent, structured memory with dual-temporal modeling, evidence chains, hybrid retrieval (FTS + Dense + Reranker), and an experience channel for learning from past tool-call sequences. Runs on SQLite — no external services required.
+
+[English overview above ↑ / 中文文档见下方 ↓]
+
+---
+
+## 中文文档
+
+> v0.11.2 · 342 passed · 1 skipped · 22 migrations · [CHANGELOG](docs/CHANGELOG.md)
 
 面向 AI Agent 的本地优先、跨会话记忆系统。证据驱动、双时间模型、双通道设计、可解释召回、slot+tags 分类体系、importance 联动 TTL。
 
@@ -23,6 +38,21 @@ HL-Mem 将这些理念统一为**事件溯源双通道**设计：事实通道处
 - Claim 提取支持 occurred range（occurred_start/occurred_end）与 entities
 - Reranker provider registry 统一 provider 选择与构造
 - claims/tags FTS 使用 trigram tokenizer，恢复中文连续子串检索
+
+### v0.11.2 新能力
+
+- Trigram FTS 行为回归测试（确定性，30+ cases）
+- Migration 022 升级回归测试
+- CI 扩展为全量测试套件（342 tests）
+
+### v0.11.1 新能力（Code Quality Refactor）
+
+- P0：空 trigger guard 修复、`BaseException` → `Exception`、reranker retry、死代码清理
+- 配置值 Enum 化并强制使用 status enums
+- 统一 HTTP retry 策略，清理空模块和实验性模块
+- 提取共享的日调度函数 `enqueue_daily_job`
+- 收紧类型标注，消除 `X | Any` 模式
+- 补全核心模块 docstrings
 
 ## 核心架构
 
@@ -310,7 +340,7 @@ python install_to_hermes.py --hermes-home ~/.hermes
 | 在线备份 + CLI 导入导出 | ✅ |
 | SQLite 向量存储（BLOB 全量余弦扫描） | ✅ |
 | PostgreSQL 后端 | 📋 未来规模触发项 |
-| 325 tests passed，1 skipped | ✅ |
+| 342 tests passed，1 skipped | ✅ |
 | Mental Model 深化 | 📋 基础已实现，推理增强延后 |
 | 多租户 | 📋 设计保留 |
 
@@ -325,7 +355,7 @@ python install_to_hermes.py --hermes-home ~/.hermes
 | [adr/0001-core-strategy.md](docs/adr/0001-core-strategy.md) | ADR：双通道架构选型 |
 | [adr/0002-mvp-scope-and-embedding.md](docs/adr/0002-mvp-scope-and-embedding.md) | ADR：首版范围 + Embedding 选型 |
 | [review/consensus.md](docs/review/consensus.md) | 首版设计共识 |
-| [refactor-phase*.md](docs/) | 架构重构各阶段详细记录 |
+| [archive/refactor/](docs/archive/refactor/) | 架构重构各阶段历史记录 |
 
 ## License
 

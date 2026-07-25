@@ -1,14 +1,14 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-07-24 · v0.11.0
+> 最后更新：2026-07-25 · v0.11.2
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.11.0
-- **阶段**：v0.11.0 发布收口，325 passed，1 skipped
+- **版本**：v0.11.2
+- **阶段**：v0.11.2 发布收口，342 passed，1 skipped
 - **服务**：FastAPI on port 8200，LLM=glm-5.2，Embedding=text-embedding-v4 (2048d)，Reranker=gte-rerank-v2
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），22 migrations
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），22 migrations，约 441 active / 514 total claims
 - **FTS**：trigram（claims/tags），unicode61（events）
 
 ## 已完成
@@ -56,7 +56,7 @@
 | [implementation-plan.md](implementation-plan.md) | 实现计划 |
 | [adr/0001-core-strategy.md](adr/0001-core-strategy.md) | 核心策略决策 |
 | [adr/0002-mvp-scope-and-embedding.md](adr/0002-mvp-scope-and-embedding.md) | 首版范围 + Embedding 选型 |
-| [refactor-phase*.md](.) | 架构重构各阶段详细记录 |
+| [archive/refactor/](archive/refactor/) | 架构重构各阶段历史记录 |
 | [review/consensus.md](review/consensus.md) | 首版共识 |
 | [review/optimization-consensus.md](review/optimization-consensus.md) | 优化共识 |
 | [archive/](archive/) | 历史任务单和中间讨论 |
