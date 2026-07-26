@@ -30,8 +30,8 @@ def expire_claims(
             "SELECT c.id,c.status,c.expires_at,c.valid_to,c.canonical_slot,c.observed_at,c.recorded_from,"
             "COALESCE(u.retention_bonus_days,0) AS bonus_days FROM claims c "
             "LEFT JOIN memory_usefulness u ON u.memory_type='claim' AND u.memory_id=c.id "
-            "WHERE c.status=? AND c.expires_at IS NOT NULL AND c.expires_at<=?",
-            ("active", reference),
+            "WHERE c.status=? AND c.expires_at IS NOT NULL",
+            ("active",),
         ).fetchall()
         expired_claims: list[tuple[str, str, str, str | None]] = []
         for row in rows:
