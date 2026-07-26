@@ -6,6 +6,8 @@ import json
 import threading
 import time
 
+import httpx
+
 from hl_mem.domain.recall import RecallIntent
 from hl_mem.llm.types import LLMResponse
 from hl_mem.protocols import WeightedQuery
@@ -97,6 +99,29 @@ def test_expander_timeout_falls_back_without_waiting_for_client() -> None:
 
     assert result.expansions == () and result.outcome == "timeout"
     assert time.monotonic() - started < 0.15
+    assert result.error_class == "deadline_timeout"
+
+
+def test_expander_classifies_http_timeout_and_rate_limit() -> None:
+    class FailedClient(_Client):
+        def __init__(self, error):
+            super().__init__({})
+            self.error = error
+
+        def complete(self, request):
+            raise self.error
+
+    request = httpx.Request("POST", "https://provider.invalid")
+    timeout = QueryExpander(FailedClient(httpx.ReadTimeout("slow", request=request))).expand(
+        "query", intent=RecallIntent.CURRENT_STATE, timeout_seconds=0.2, token_ceiling=256
+    )
+    response = httpx.Response(429, request=request, json={"code": "Throttled"})
+    limited = QueryExpander(FailedClient(httpx.HTTPStatusError("limited", request=request, response=response))).expand(
+        "query", intent=RecallIntent.CURRENT_STATE, timeout_seconds=0.2, token_ceiling=256
+    )
+
+    assert timeout.error_class == "http_timeout"
+    assert limited.error_class == "rate_limit" and limited.http_status == 429
 
 
 def test_expander_reuses_bounded_executor_threads() -> None:

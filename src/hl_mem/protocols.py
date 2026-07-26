@@ -244,6 +244,10 @@ class QueryExpansionResult:
     output_tokens: int
     latency_ms: float
     outcome: str = "applied"
+    error_class: str | None = None
+    attempts: int = 0
+    http_status: int | None = None
+    provider_code: str | None = None
 
 
 class QueryExpansionProtocol(Protocol):

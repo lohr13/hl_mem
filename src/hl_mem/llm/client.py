@@ -21,6 +21,37 @@ from .types import (
 )
 
 
+def classify_provider_error(error: Exception) -> tuple[str, int | None, str | None]:
+    """将 provider 异常归一化为稳定的诊断类别。"""
+    if isinstance(error, httpx.TimeoutException):
+        return "http_timeout", None, None
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        provider_code: str | None = None
+        try:
+            body = error.response.json()
+            if isinstance(body, dict):
+                raw_code = body.get("code")
+                raw_error = body.get("error")
+                if raw_code is None and isinstance(raw_error, dict):
+                    raw_code = raw_error.get("code")
+                provider_code = str(raw_code) if raw_code else None
+        except (TypeError, ValueError):
+            pass
+        if status == 429:
+            category = "quota" if provider_code and "quota" in provider_code.lower() else "rate_limit"
+        elif status in {401, 403}:
+            category = "auth"
+        elif status >= 500:
+            category = "upstream"
+        else:
+            category = "http_error"
+        return category, status, provider_code
+    if isinstance(error, httpx.RequestError):
+        return "upstream", None, None
+    return type(error).__name__, None, None
+
+
 class LLMClient:
     """执行与 provider 无关的同步 LLM 请求。"""
 
@@ -112,7 +143,7 @@ class LLMClient:
             model=self.model,
             structured_mode=mode.value,
             status=status,
-            error_class=type(error).__name__ if error is not None else None,
+            error_class=classify_provider_error(error)[0] if error is not None else None,
             raw_request_id=response.raw_request_id if response is not None else None,
             input_tokens=response.input_tokens if response is not None else None,
             output_tokens=response.output_tokens if response is not None else None,

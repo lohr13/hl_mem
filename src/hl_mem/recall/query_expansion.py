@@ -11,7 +11,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 
 from hl_mem.domain.recall import RecallIntent
-from hl_mem.llm.client import LLMClient
+from hl_mem.llm.client import LLMClient, classify_provider_error
 from hl_mem.llm.types import (
     LLMMessage,
     LLMRequest,
@@ -91,15 +91,32 @@ class QueryExpander:
         request = self._request(query, intent, max_expansions)
         if not self._capacity.acquire(blocking=False):
             return self._empty(started, "concurrency_limit")
-        future = self._executor.submit(self._complete, request, timeout_seconds)
-        future.add_done_callback(lambda _future: self._capacity.release())
+        deadline = time.monotonic() + timeout_seconds
+        future = self._executor.submit(self._complete_with_retry, request, deadline)
+        released = threading.Event()
+
+        def release_capacity(_future: object) -> None:
+            if not released.is_set():
+                released.set()
+                self._capacity.release()
+
+        future.add_done_callback(release_capacity)
         try:
-            response = future.result(timeout=timeout_seconds)
+            response, attempts = future.result(timeout=max(0.001, deadline - time.monotonic()))
         except FutureTimeoutError:
             future.cancel()
-            return self._empty(started, "timeout")
-        except Exception:
-            return self._empty(started, "error")
+            release_capacity(future)
+            return self._empty(started, "timeout", error_class="deadline_timeout", attempts=1)
+        except Exception as error:
+            error_class, http_status, provider_code = classify_provider_error(error)
+            return self._empty(
+                started,
+                "error",
+                error_class=error_class,
+                attempts=int(getattr(error, "_expansion_attempts", 1)),
+                http_status=http_status,
+                provider_code=provider_code,
+            )
         input_tokens = int(response.input_tokens or 0)
         output_tokens = int(response.output_tokens or 0)
         total_tokens = int(response.usage_total_tokens or input_tokens + output_tokens)
@@ -127,6 +144,7 @@ class QueryExpander:
             output_tokens=output_tokens,
             latency_ms=(time.perf_counter() - started) * 1000,
             outcome="applied" if expansions else "empty",
+            attempts=attempts,
         )
 
     @staticmethod
@@ -170,6 +188,10 @@ class QueryExpander:
         *,
         input_tokens: int = 0,
         output_tokens: int = 0,
+        error_class: str | None = None,
+        attempts: int = 0,
+        http_status: int | None = None,
+        provider_code: str | None = None,
     ) -> QueryExpansionResult:
         return QueryExpansionResult(
             expansions=(),
@@ -178,10 +200,25 @@ class QueryExpander:
             output_tokens=output_tokens,
             latency_ms=(time.perf_counter() - started) * 1000,
             outcome=outcome,
+            error_class=error_class,
+            attempts=attempts,
+            http_status=http_status,
+            provider_code=provider_code,
         )
 
-    def _complete(self, request: LLMRequest, timeout_seconds: float) -> LLMResponse:
+    def _complete_with_retry(self, request: LLMRequest, deadline: float) -> tuple[LLMResponse, int]:
         """向支持 deadline 的真实客户端下推本次扩展超时。"""
-        if isinstance(self.client, LLMClient):
-            return self.client.complete(request, timeout_seconds=timeout_seconds)
-        return self.client.complete(request)
+        for attempt in range(1, 3):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("query expansion deadline exhausted")
+            try:
+                if isinstance(self.client, LLMClient):
+                    return self.client.complete(request, timeout_seconds=remaining), attempt
+                return self.client.complete(request), attempt
+            except Exception as error:
+                setattr(error, "_expansion_attempts", attempt)
+                category, _, _ = classify_provider_error(error)
+                if attempt == 2 or category not in {"http_timeout", "rate_limit", "upstream"}:
+                    raise
+        raise RuntimeError("unreachable query expansion retry state")

@@ -252,6 +252,10 @@ class RecallService:
                         output_tokens=result.output_tokens,
                         latency_ms=result.latency_ms,
                         outcome=result.outcome,
+                        error_class=result.error_class,
+                        attempts=result.attempts,
+                        http_status=result.http_status,
+                        provider_code=result.provider_code,
                     )
                 )
                 return [], []
@@ -355,6 +359,7 @@ class RecallService:
             "policies": policies,
             "total": len(results),
             "query_id": query_id,
+            "answerability": self._answerability(claims, tracer),
         }
         if context_mode == "packed":
             response["context"] = self._assemble_context(
@@ -367,6 +372,26 @@ class RecallService:
             tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
             response["search_trace"] = tracer.to_dict()
         return response
+
+    @staticmethod
+    def _answerability(claims: list[dict[str, Any]], tracer: SearchTracer) -> str:
+        """按组合证据规则给出 shadow answerability，不截断候选结果。"""
+        if not claims:
+            tracer.trace.answerability = "no_evidence"
+            return "no_evidence"
+        top = claims[0]
+        trace = tracer.trace.candidates.get(str(top["id"]))
+        fts_hit = bool(trace and "fts" in trace.channels)
+        dense_score = float(trace.channel_scores.get("dense", 0.0)) if trace else 0.0
+        slot = str(top.get("canonical_slot") or "")
+        high_confidence_slot = slot.startswith(("identity.", "config.", "preference."))
+        scores = [float(item.get("_score", 0.0)) for item in claims[:2]]
+        margin_ok = len(scores) == 1 or scores[0] - scores[1] > 0.05
+        reranker_ok = trace is None or trace.rerank_score is None or trace.rerank_score > 0.4
+        has_signal = fts_hit or dense_score > 0.3 or high_confidence_slot
+        answerability = "supported" if has_signal and margin_ok and reranker_ok else "low_confidence"
+        tracer.trace.answerability = answerability
+        return answerability
 
     def _assemble_observations(self, claim_ids: list[str]) -> list[dict[str, Any]]:
         """查询与召回 Claim 相关的活跃派生记忆。"""
@@ -607,6 +632,7 @@ class RecallService:
             "policies": [item for item in results if item["memory_type"] == "policy"],
             "total": len(results),
             "query_id": query_id,
+            "answerability": self._answerability([], tracer) if not results else "supported",
         }
         if context_mode == "packed":
             used = sum(max(1, (len(item.text) + 1) // 2) for item in selected)

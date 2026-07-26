@@ -65,6 +65,10 @@ class QueryExpansionTrace:
     output_tokens: int = 0
     latency_ms: float = 0.0
     outcome: str = "applied"
+    error_class: str | None = None
+    attempts: int = 0
+    http_status: int | None = None
+    provider_code: str | None = None
 
     @classmethod
     def from_text(
@@ -108,6 +112,8 @@ class SearchTrace:
     candidate_counts: dict[str, int] = field(default_factory=dict)
     quota_tokens: dict[str, int] = field(default_factory=dict)
     reflow_tokens: int = 0
+    reranker_error_class: str | None = None
+    answerability: str = "no_evidence"
 
 
 class SearchTracer:

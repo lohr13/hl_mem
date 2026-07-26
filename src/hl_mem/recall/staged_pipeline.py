@@ -575,9 +575,12 @@ def _rerank(ctx: RecallContext) -> RecallContext:
             [_claim_text(claim) for claim in candidates],
             top_n=ctx.candidate_limit,
         )
-    except Exception:
+    except Exception as error:
         ctx.rerank_us = (time.perf_counter_ns() - started) // 1000
         ctx.outcome = "error_fallback"
+        if ctx.tracer is not None:
+            ctx.tracer.trace.phases.reranker_us = ctx.rerank_us
+            ctx.tracer.trace.reranker_error_class = type(error).__name__
         return ctx
     ctx.rerank_us = (time.perf_counter_ns() - started) // 1000
     if ctx.tracer is not None:
@@ -591,6 +594,8 @@ def _rerank(ctx: RecallContext) -> RecallContext:
     ctx.reranked = reranked
     if not reranked:
         ctx.outcome = "error_fallback" if result_status == "error" else "empty_fallback"
+        if ctx.tracer is not None and ctx.outcome == "error_fallback":
+            ctx.tracer.trace.reranker_error_class = getattr(reranker, "last_error_class", None) or "RerankerError"
         return ctx
 
     valid = [(candidates[index], score) for index, score in reranked if 0 <= index < len(candidates)]

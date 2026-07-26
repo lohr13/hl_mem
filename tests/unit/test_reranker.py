@@ -147,6 +147,7 @@ def test_pipeline_reranker_exception_falls_back_to_rrf() -> None:
             raise httpx.ConnectError("unavailable")
 
     result = hybrid_claims(Repo(), "query", pack_vector([1.0]), 2, None, FailedReranker())
+    assert result
     assert [claim["id"] for claim in result] == ["first", "second"]
 
 
