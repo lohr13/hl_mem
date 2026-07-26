@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.13.2](https://img.shields.io/badge/version-0.13.2-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.13.3](https://img.shields.io/badge/version-0.13.3-blue.svg)](docs/CHANGELOG.md)
 [![Tests: 445 passed](https://img.shields.io/badge/tests-445%20passed-brightgreen.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
@@ -121,7 +121,7 @@ selection guidance.
 - Multi-tenancy
 - PostgreSQL storage adapter (behind protocol boundary)
 
-Current baseline: v0.13.2, 29 migrations, 445 tests passed and 1 skipped. Detailed maturity claims live in the
+Current baseline: v0.13.3, 29 migrations, 445 tests passed and 1 skipped. Detailed maturity claims live in the
 [capability matrix](docs/capability-matrix.md).
 
 ## 中文
