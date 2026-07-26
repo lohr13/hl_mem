@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 FORBIDDEN_IMPORTS: dict[str, frozenset[str]] = {
-    "core": frozenset({"ingest", "llm", "storage", "api", "workers"}),
-    "domain": frozenset({"storage", "api", "workers"}),
+    "core": frozenset({"ingest", "llm", "storage", "api", "workers", "recall", "application"}),
+    "domain": frozenset({"storage", "api", "workers", "recall", "ingest", "llm", "application"}),
+    "storage": frozenset({"api", "workers", "application"}),
+    "application": frozenset({"api"}),
 }
 
 

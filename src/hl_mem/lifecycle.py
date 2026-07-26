@@ -65,6 +65,27 @@ class DerivationStatus(str, Enum):
 
     ACTIVE = "active"
     STALE = "stale"
+    ARCHIVED = "archived"
+
+
+POLICY_TRANSITIONS: frozenset[tuple[PolicyStatus, PolicyStatus]] = frozenset(
+    {
+        (PolicyStatus.CANDIDATE, PolicyStatus.ACTIVE),
+        (PolicyStatus.CANDIDATE, PolicyStatus.RETIRED),
+        (PolicyStatus.ACTIVE, PolicyStatus.RETIRED),
+        (PolicyStatus.ACTIVE, PolicyStatus.CANDIDATE),
+    }
+)
+
+
+DERIVATION_TRANSITIONS: frozenset[tuple[DerivationStatus, DerivationStatus]] = frozenset(
+    {
+        (DerivationStatus.ACTIVE, DerivationStatus.STALE),
+        (DerivationStatus.STALE, DerivationStatus.ACTIVE),
+        (DerivationStatus.ACTIVE, DerivationStatus.ARCHIVED),
+        (DerivationStatus.ARCHIVED, DerivationStatus.ACTIVE),
+    }
+)
 
 
 TERMINAL_EPISODE_STATUSES: frozenset[EpisodeStatus] = frozenset(
@@ -103,3 +124,23 @@ def assert_episode_transition(from_status: str, to_status: str) -> None:
         raise InvalidTransitionError(f"invalid episode status transition: {from_status} -> {to_status}") from error
     if transition not in ALLOWED_EPISODE_TRANSITIONS:
         raise InvalidTransitionError(f"invalid episode status transition: {from_status} -> {to_status}")
+
+
+def assert_valid_policy_transition(from_status: str, to_status: str) -> None:
+    """断言 Policy 状态转换合法。"""
+    try:
+        transition = (PolicyStatus(from_status), PolicyStatus(to_status))
+    except ValueError as error:
+        raise InvalidTransitionError(f"invalid policy status transition: {from_status} -> {to_status}") from error
+    if transition not in POLICY_TRANSITIONS:
+        raise InvalidTransitionError(f"invalid policy status transition: {from_status} -> {to_status}")
+
+
+def assert_valid_derivation_transition(from_status: str, to_status: str) -> None:
+    """断言 Derivation 状态转换合法。"""
+    try:
+        transition = (DerivationStatus(from_status), DerivationStatus(to_status))
+    except ValueError as error:
+        raise InvalidTransitionError(f"invalid derivation status transition: {from_status} -> {to_status}") from error
+    if transition not in DERIVATION_TRANSITIONS:
+        raise InvalidTransitionError(f"invalid derivation status transition: {from_status} -> {to_status}")

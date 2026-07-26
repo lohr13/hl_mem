@@ -2,6 +2,14 @@
 
 本文件记录发布级变更摘要。测试数字是对应版本的发布基线；migration 数是该版本结束时的 SQL migration 总数。
 
+## v0.13.4 — 2026-07-26
+
+- **P0 治理**：版本 SSOT 覆盖 `pyproject.toml`，mypy 新错误门禁，CI 固定 lockfile，v0.10 历史数据库升级夹具，
+  Policy/Derivation 生命周期守卫，以及扩展后的分层导入边界。
+- **P1 公共契约**：新增兼容性政策、OpenAPI/MCP 快照、JSONL 导出格式版本和环境变量稳定性分级。
+- **P2 质量趋势**：新增 nightly/manual 趋势基础设施设计文档，未实现运行器或工作流。
+- **验证**：按治理任务约束未运行 pytest；最近已验证基线为 445 passed，1 skipped。
+
 ## v0.13.3 — 2026-07-26
 
 ### Fixed

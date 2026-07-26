@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from hl_mem.lifecycle import DerivationStatus
+from hl_mem.lifecycle import DerivationStatus, assert_valid_derivation_transition
 from hl_mem.storage._shared import insert_row, row_to_dict
 
 
@@ -83,6 +83,10 @@ class DerivationRepository:
 
     def update_status(self, observation_id: str, status: str, commit: bool = True) -> bool:
         """更新派生记忆状态。"""
+        row = self.connection.execute("SELECT status FROM derivations WHERE id=?", (observation_id,)).fetchone()
+        if row is None:
+            return False
+        assert_valid_derivation_transition(row["status"], status)
         cursor = self.connection.execute("UPDATE derivations SET status=? WHERE id=?", (status, observation_id))
         if commit:
             self.connection.commit()

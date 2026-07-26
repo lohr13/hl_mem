@@ -14,6 +14,7 @@ from hl_mem.lifecycle import InvalidTransitionError as InvalidStateTransitionErr
 from hl_mem.lifecycle import (
     PolicyStatus,
     assert_episode_transition,
+    assert_valid_policy_transition,
 )
 from hl_mem.storage._shared import decode_json, encode_json, escape_like_pattern
 
@@ -371,7 +372,7 @@ class ExperienceRepository:
 
     def add_support(self, policy_id: str, episode_id: str) -> None:
         """为策略增加一条未重复的成功 Episode 证据。"""
-        policy = self.connection.execute("SELECT status FROM policies WHERE id=?", (policy_id,)).fetchone()
+        policy = self.connection.execute("SELECT status,support FROM policies WHERE id=?", (policy_id,)).fetchone()
         if not policy:
             raise ValueError(f"policy not found: {policy_id}")
         if policy["status"] == PolicyStatus.RETIRED:
@@ -382,6 +383,8 @@ class ExperienceRepository:
         before = self.connection.total_changes
         self._link_episode(policy_id, episode_id)
         if self.connection.total_changes > before:
+            if policy["status"] == PolicyStatus.CANDIDATE and policy["support"] + 1 >= self.min_support:
+                assert_valid_policy_transition(policy["status"], PolicyStatus.ACTIVE)
             self.connection.execute(
                 "UPDATE policies SET support=support+1,status=CASE WHEN support+1>=? THEN ? ELSE status END WHERE id=?",
                 (self.min_support, PolicyStatus.ACTIVE, policy_id),
@@ -417,6 +420,11 @@ class ExperienceRepository:
                 policy_id,
             ),
         )
+        updated = self.connection.execute(
+            "SELECT status,consecutive_failures FROM policies WHERE id=?", (policy_id,)
+        ).fetchone()
+        if updated["consecutive_failures"] >= self.retire_after_failures:
+            assert_valid_policy_transition(policy["status"], PolicyStatus.RETIRED)
         self.connection.commit()
 
     def get_policy(self, policy_id: str) -> dict[str, Any]:

@@ -14,11 +14,18 @@ from hl_mem.evaluation.runner import BenchmarkRunner
 from hl_mem.storage.database import Database, default_database_path
 from hl_mem.storage.events import EventRepository
 
+EXPORT_FORMAT_VERSION = "1"
+
 
 def export_database(database_path: str | Path, output_path: str | Path) -> int:
     """将不可变事件按 JSONL 导出。"""
-    rows = Database(database_path).open().execute("SELECT * FROM events ORDER BY recorded_at,id").fetchall()
+    database = Database(database_path)
+    try:
+        rows = database.open().execute("SELECT * FROM events ORDER BY recorded_at,id").fetchall()
+    finally:
+        database.close()
     with Path(output_path).open("w", encoding="utf-8") as stream:
+        stream.write(json.dumps({"type": "metadata", "format_version": EXPORT_FORMAT_VERSION}) + "\n")
         for row in rows:
             stream.write(json.dumps({"type": "event", "data": dict(row)}, ensure_ascii=False) + "\n")
     return len(rows)
@@ -26,15 +33,23 @@ def export_database(database_path: str | Path, output_path: str | Path) -> int:
 
 def import_database(database_path: str | Path, input_path: str | Path) -> int:
     """幂等导入 JSONL 事件档案。"""
-    repository = EventRepository(Database(database_path).open())
-    imported = 0
-    with Path(input_path).open("r", encoding="utf-8") as stream:
-        for line in stream:
-            record: dict[str, Any] = json.loads(line)
-            if record.get("type") != "event" or not isinstance(record.get("data"), dict):
-                raise ValueError("archive contains unsupported record")
-            imported += int(repository.insert_event(record["data"], commit=True))
-    return imported
+    database = Database(database_path)
+    try:
+        repository = EventRepository(database.open())
+        imported = 0
+        with Path(input_path).open("r", encoding="utf-8") as stream:
+            for line in stream:
+                record: dict[str, Any] = json.loads(line)
+                if record.get("type") == "metadata":
+                    if record.get("format_version") != EXPORT_FORMAT_VERSION:
+                        raise ValueError(f"unsupported archive format version: {record.get('format_version')}")
+                    continue
+                if record.get("type") != "event" or not isinstance(record.get("data"), dict):
+                    raise ValueError("archive contains unsupported record")
+                imported += int(repository.insert_event(record["data"], commit=True))
+        return imported
+    finally:
+        database.close()
 
 
 def list_conflicts(database_path: str | Path) -> list[dict[str, Any]]:

@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 from typing import Any
 
+from hl_mem.lifecycle import DerivationStatus, assert_valid_derivation_transition
 from hl_mem.recall.observation import ObservationBuilder
 
 
@@ -41,6 +42,9 @@ class DerivedMemoryMaintainer:
         if len(rows) != len(unique_ids):
             raise ValueError("all evidence claims must be active")
         watermark = max(row["recorded_from"] for row in rows)
+        existing = self.connection.execute("SELECT status FROM derivations WHERE id=?", (derivation_id,)).fetchone()
+        if existing is not None and existing["status"] != DerivationStatus.ACTIVE:
+            assert_valid_derivation_transition(existing["status"], DerivationStatus.ACTIVE)
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             self.connection.execute(
@@ -76,6 +80,14 @@ class DerivedMemoryMaintainer:
 
     def mark_stale_dependencies(self) -> int:
         """将依赖非活动 Claim 的派生记忆标记为 stale。"""
+        affected = self.connection.execute(
+            "SELECT id,status FROM derivations WHERE status='active' AND EXISTS ("
+            "SELECT 1 FROM evidence_links e JOIN claims c ON c.id=e.evidence_id "
+            "WHERE e.derived_id=derivations.id AND e.evidence_type='claim' "
+            "AND c.status NOT IN ('active'))"
+        ).fetchall()
+        for row in affected:
+            assert_valid_derivation_transition(row["status"], DerivationStatus.STALE)
         cursor = self.connection.execute(
             "UPDATE derivations SET status='stale' WHERE status='active' AND EXISTS ("
             "SELECT 1 FROM evidence_links e JOIN claims c ON c.id=e.evidence_id "

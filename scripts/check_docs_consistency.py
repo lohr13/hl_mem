@@ -19,6 +19,15 @@ def get_version() -> str:
     return match.group(1)
 
 
+def get_project_version() -> str:
+    """从 pyproject.toml 读取发布包版本。"""
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'(?ms)^\[project\].*?^version\s*=\s*["\']([^"\']+)["\']', text)
+    if match is None:
+        raise ValueError("pyproject.toml 的 [project] 中未找到 version")
+    return match.group(1)
+
+
 def get_migration_count() -> int:
     """从 SQL migration 文件数量读取 migration SSOT。"""
     return len(list((ROOT / "src/hl_mem/storage/migrations").glob("*.sql")))
@@ -54,6 +63,7 @@ def main() -> int:
     """运行全部文档一致性检查并返回进程退出码。"""
     try:
         version = get_version()
+        project_version = get_project_version()
         migration_count = get_migration_count()
         readme = read("README.md")
         architecture = read("docs/architecture.md")
@@ -62,6 +72,8 @@ def main() -> int:
         changelog = read("docs/CHANGELOG.md")
 
         errors: list[str] = []
+        if project_version != version:
+            errors.append(f"  pyproject.toml version: found '{project_version}', expected '{version}'")
         errors += check_value(readme, r"shields\.io/badge/version-v?(\d+\.\d+\.\d+)-", version, "README badge version")
         errors += check_value(readme, r"Current baseline:\s*v?(\d+\.\d+\.\d+)", version, "README body version")
         errors += check_value(architecture, r"Document baseline:\s*v?(\d+\.\d+\.\d+)", version, "architecture baseline")

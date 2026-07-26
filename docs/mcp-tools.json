@@ -1,0 +1,122 @@
+[
+  {
+    "description": "Recall relevant memories.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "debug": {
+          "type": "boolean"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "known_as_of": {
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "memory_recall"
+  },
+  {
+    "description": "Save an explicit memory.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "predicate": {
+          "type": "string"
+        },
+        "qualifiers": {
+          "type": "object"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "memory_save"
+  },
+  {
+    "description": "Forget a memory by identifier.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "memory_forget"
+  },
+  {
+    "description": "Explain a memory's evidence chain.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "memory_explain"
+  },
+  {
+    "description": "Submit usefulness feedback.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "correction": {
+          "type": "object"
+        },
+        "feedback_id": {
+          "type": "string"
+        },
+        "helpful": {
+          "type": "boolean"
+        },
+        "task_outcome": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "feedback_id",
+        "helpful"
+      ],
+      "type": "object"
+    },
+    "name": "memory_feedback"
+  }
+]

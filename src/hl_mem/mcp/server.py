@@ -17,10 +17,80 @@ from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import EvidenceRepository
 
 
+def get_tool_schemas() -> list[dict[str, Any]]:
+    """返回稳定、可快照化的 MCP 工具 JSON Schema。"""
+    object_schema = {"type": "object", "additionalProperties": True}
+    return [
+        {
+            "name": "memory_recall",
+            "description": "Recall relevant memories.",
+            "inputSchema": {
+                **object_schema,
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1},
+                    "as_of": {"type": "string"},
+                    "known_as_of": {"type": "string"},
+                    "intent": {"type": "string"},
+                    "namespace": {"type": "string"},
+                    "debug": {"type": "boolean"},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "memory_save",
+            "description": "Save an explicit memory.",
+            "inputSchema": {
+                **object_schema,
+                "properties": {
+                    "text": {"type": "string"},
+                    "content": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "predicate": {"type": "string"},
+                    "qualifiers": {"type": "object"},
+                },
+            },
+        },
+        {
+            "name": "memory_forget",
+            "description": "Forget a memory by identifier.",
+            "inputSchema": {
+                **object_schema,
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"],
+            },
+        },
+        {
+            "name": "memory_explain",
+            "description": "Explain a memory's evidence chain.",
+            "inputSchema": {
+                **object_schema,
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"],
+            },
+        },
+        {
+            "name": "memory_feedback",
+            "description": "Submit usefulness feedback.",
+            "inputSchema": {
+                **object_schema,
+                "properties": {
+                    "feedback_id": {"type": "string"},
+                    "helpful": {"type": "boolean"},
+                    "task_outcome": {"type": "number", "minimum": 0, "maximum": 1},
+                    "correction": {"type": "object"},
+                },
+                "required": ["feedback_id", "helpful"],
+            },
+        },
+    ]
+
+
 class McpMemoryServer:
     """提供可嵌入任意 MCP 传输层的最小记忆工具集。"""
 
-    _TOOLS = ("memory_recall", "memory_save", "memory_forget", "memory_explain", "memory_feedback")
+    _TOOLS = tuple(tool["name"] for tool in get_tool_schemas())
 
     def __init__(
         self,

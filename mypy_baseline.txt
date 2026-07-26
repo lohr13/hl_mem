@@ -1,0 +1,57 @@
+1	src/hl_mem/adapters/hermes/provider.py | union-attr | Item "None" of "str | None" has no attribute "rstrip"
+5	src/hl_mem/application/ingest.py | union-attr | Item "ExtractedClaim" of "ExtractedClaim | dict[str, Any]" has no attribute "get"
+1	src/hl_mem/application/recall.py | arg-type | Argument "claim_results" to "_recall_experience" of "RecallService" has incompatible type "list[RecallResult]"; expected "list[dict[str, Any]]"
+1	src/hl_mem/application/recall.py | arg-type | Argument 1 to "_assemble_context" of "RecallService" has incompatible type "list[RecallResult]"; expected "list[dict[str, Any]]"
+1	src/hl_mem/application/recall.py | arg-type | Argument 1 to "_record_feedback" of "RecallService" has incompatible type "list[RecallResult]"; expected "list[dict[str, Any]]"
+1	src/hl_mem/application/recall.py | arg-type | Argument 1 to "append" of "list" has incompatible type "dict[str, Any]"; expected "RecallResult"
+1	src/hl_mem/application/recall.py | arg-type | Argument 1 to "get" of "dict" has incompatible type "Any | None"; expected "str"
+1	src/hl_mem/application/recall.py | arg-type | Argument 6 to "hybrid_claims" has incompatible type "RerankerProtocol | None"; expected "DashScopeReranker | None"
+1	src/hl_mem/application/recall.py | assignment | Incompatible types in assignment (expression has type "str", target has type "int | None")
+1	src/hl_mem/application/recall.py | operator | Unsupported operand type for unary - ("object")
+1	src/hl_mem/cli.py | no-redef | Name "result" already defined on line <LINE>
+1	src/hl_mem/domain/claims/conflicts.py | arg-type | Argument 1 to "canonical_conflict_slot" has incompatible type "Any | None"; expected "str"
+1	src/hl_mem/domain/claims/dedup.py | arg-type | Argument 1 to "canonical_conflict_slot" has incompatible type "Any | None"; expected "str"
+1	src/hl_mem/domain/content.py | arg-type | Argument "region" to "ImagePart" has incompatible type "tuple[float, ...] | None"; expected "tuple[float, float, float, float] | None"
+1	src/hl_mem/evaluation/runner.py | arg-type | Argument 1 to "extract" of "FakeExtractor" has incompatible type "object"; expected "str | dict[str, Any]"
+1	src/hl_mem/evaluation/runner.py | name-defined | Name "results" is not defined
+2	src/hl_mem/evaluation/runner.py | name-defined | Name "temporal" is not defined
+1	src/hl_mem/ingest/extractors.py | assignment | Incompatible types in assignment (expression has type "str | Any", target has type "bool")
+1	src/hl_mem/ingest/schemas.py | valid-type | Invalid type alias: expression is not a valid type
+1	src/hl_mem/ingest/schemas.py | valid-type | Parameter 1 of Literal[...] is invalid
+1	src/hl_mem/ingest/schemas.py | valid-type | Variable "hl_mem.ingest.schemas.TopicTag" is not valid as a type
+1	src/hl_mem/recall/observation.py | misc | List comprehension has incompatible type List[Any | None]; expected List[str]
+1	src/hl_mem/recall/procedure_pipeline.py | arg-type | Argument 1 to "float" has incompatible type "object"; expected "str | Buffer | SupportsFloat | SupportsIndex"
+1	src/hl_mem/recall/staged_pipeline.py | arg-type | Argument 1 to "_weighted_rrf_scores" has incompatible type "list[tuple[list[dict[str, Any]], float, float]]"; expected "list[tuple[list[dict[str, Any]], float] | tuple[list[dict[str, Any]], float, float]]"
+1	src/hl_mem/recall/staged_pipeline.py | arg-type | Argument 2 to "record_channel" of "SearchTracer" has incompatible type "list[ClaimRow]"; expected "list[dict[str, Any]]"
+1	src/hl_mem/recall/staged_pipeline.py | arg-type | Argument 3 to "_preference_first" has incompatible type "RecallIntent | None"; expected "RecallIntent"
+1	src/hl_mem/recall/staged_pipeline.py | arg-type | Argument 4 to "_visibility_filter_reason" has incompatible type "RecallIntent | None"; expected "RecallIntent"
+1	src/hl_mem/recall/staged_pipeline.py | arg-type | Argument 4 to "claim_is_visible" has incompatible type "RecallIntent | None"; expected "RecallIntent | str"
+1	src/hl_mem/recall/staged_pipeline.py | arg-type | Argument 6 to "expand_related_claims" has incompatible type "RecallIntent | None"; expected "RecallIntent"
+1	src/hl_mem/recall/staged_pipeline.py | list-item | List item 0 has incompatible type "tuple[str, list[ClaimRow], float, float]"; expected "tuple[str, list[dict[str, Any]], float, float]"
+1	src/hl_mem/recall/staged_pipeline.py | union-attr | Item "None" of "RecallIntent | None" has no attribute "value"
+1	src/hl_mem/recall/trace.py | assignment | Incompatible types in assignment (expression has type "CandidateTrace | None", variable has type "CandidateTrace")
+1	src/hl_mem/settings.py | arg-type | Argument "embedder_mode" to "Settings" has incompatible type "str"; expected "Literal['fake', 'real']"
+1	src/hl_mem/settings.py | arg-type | Argument "extractor_mode" to "Settings" has incompatible type "str"; expected "Literal['fake', 'real', 'llm']"
+1	src/hl_mem/settings.py | arg-type | Argument "feedback_lifecycle_mode" to "Settings" has incompatible type "str"; expected "Literal['off', 'observe', 'on']"
+1	src/hl_mem/settings.py | arg-type | Argument "image_describer_mode" to "Settings" has incompatible type "str"; expected "Literal['off', 'on']"
+1	src/hl_mem/settings.py | arg-type | Argument "image_describer_provider" to "Settings" has incompatible type "str"; expected "Literal['dashscope']"
+1	src/hl_mem/settings.py | arg-type | Argument "llm_provider" to "Settings" has incompatible type "str"; expected "Literal['dashscope', 'zhipu', 'openai_compatible']"
+1	src/hl_mem/settings.py | arg-type | Argument "llm_structured_mode" to "Settings" has incompatible type "str"; expected "Literal['auto', 'json_object', 'json_schema']"
+1	src/hl_mem/settings.py | arg-type | Argument "procedure_recall_mode" to "Settings" has incompatible type "str"; expected "Literal['off', 'keyword', 'auto']"
+1	src/hl_mem/settings.py | arg-type | Argument "query_expansion_mode" to "Settings" has incompatible type "str"; expected "Literal['off', 'auto', 'always']"
+1	src/hl_mem/settings.py | arg-type | Argument "relation_discovery_mode" to "Settings" has incompatible type "str"; expected "Literal['off', 'audit', 'auto']"
+1	src/hl_mem/settings.py | arg-type | Argument "relation_expansion_mode" to "Settings" has incompatible type "str"; expected "Literal['off', 'on']"
+1	src/hl_mem/settings.py | arg-type | Argument "reranker_mode" to "Settings" has incompatible type "str"; expected "Literal['off', 'fake', 'on', 'real']"
+1	src/hl_mem/settings.py | arg-type | Argument "reranker_provider" to "Settings" has incompatible type "str"; expected "Literal['dashscope']"
+1	src/hl_mem/storage/claims.py | arg-type | Argument 1 to "claim_is_visible" has incompatible type "ClaimRow | dict[str, Any]"; expected "dict[str, Any]"
+1	src/hl_mem/storage/claims.py | misc | List comprehension has incompatible type List[ClaimRow | dict[str, Any]]; expected List[dict[str, Any]]
+1	src/hl_mem/storage/claims.py | misc | List comprehension has incompatible type List[dict[str, Any]]; expected List[ClaimRow]
+1	src/hl_mem/storage/claims.py | return-value | Incompatible return value type (got "list[dict[str, Any]]", expected "list[ClaimRow]")
+1	src/hl_mem/workers/deduplicate.py | index | Value of type "dict[Any, Any] | None" is not indexable
+1	src/hl_mem/workers/deduplicate.py | union-attr | Item "None" of "dict[Any, Any] | None" has no attribute "get"
+1	src/hl_mem/workers/discover_relations.py | arg-type | Argument 1 to "propose" of "RelationDiscoveryProtocol" has incompatible type "dict[str, Any]"; expected "ClaimRow"
+1	src/hl_mem/workers/discover_relations.py | arg-type | Argument 2 to "propose" of "RelationDiscoveryProtocol" has incompatible type "list[dict[str, Any]]"; expected "list[ClaimRow]"
+4	src/hl_mem/workers/discover_relations.py | index | Value of type "dict[str, Any] | None" is not indexable
+4	src/hl_mem/workers/discover_relations.py | union-attr | Item "None" of "dict[str, Any] | None" has no attribute "get"
+1	src/hl_mem/workers/discover_relations.py | union-attr | Item "None" of "dict[str, Any] | None" has no attribute "items"
+1	src/hl_mem/workers/reclassify.py | arg-type | Argument 1 to "update_classification" of "ClaimRepository" has incompatible type "Any | None"; expected "str"

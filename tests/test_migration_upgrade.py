@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+import struct
 from pathlib import Path
 
 from hl_mem.storage.database import Database
 
 MIGRATION_DIR = Path(__file__).resolve().parents[1] / "src/hl_mem/storage/migrations"
+V010_FIXTURE = Path(__file__).resolve().parent / "fixtures/v010_after_018.sql"
 
 
 def test_v006_database_upgrades_to_current_schema(tmp_path: Path) -> None:
@@ -51,5 +53,56 @@ def test_v006_database_upgrades_to_current_schema(tmp_path: Path) -> None:
         row = upgraded.execute("SELECT content_json FROM events WHERE id=?", ("upgrade-event",)).fetchone()
         assert row is not None
         assert row[0] == '{"text":"migration ok"}'
+    finally:
+        database.close()
+
+
+def test_v010_snapshot_preserves_data_through_current_schema(tmp_path: Path) -> None:
+    """018 历史快照升级后保留关系、FTS、向量与双时间字段。"""
+    database_path = tmp_path / "v010.db"
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "CREATE TABLE schema_migrations "
+        "(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    historical_migrations = sorted(MIGRATION_DIR.glob("*.sql"))[:18]
+    assert historical_migrations[-1].stem.startswith("018_")
+    for migration in historical_migrations:
+        connection.executescript(migration.read_text(encoding="utf-8"))
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (migration.stem,))
+    connection.executescript(V010_FIXTURE.read_text(encoding="utf-8"))
+    expected_counts = {
+        table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+        for table in ("events", "claims", "evidence_links", "episodes", "traces")
+    }
+    connection.commit()
+    connection.close()
+
+    database = Database(database_path)
+    try:
+        upgraded = database.open()
+        for table, expected_count in expected_counts.items():
+            assert upgraded.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == expected_count
+        assert (
+            upgraded.execute(
+                "SELECT count(*) FROM claims_fts WHERE claims_fts MATCH ?", ('"历史迁移保留测试"',)
+            ).fetchone()[0]
+            == 1
+        )
+        blob = upgraded.execute("SELECT embedding_dense FROM claims WHERE id='claim-018-1'").fetchone()[0]
+        assert struct.unpack("<3f", blob) == (1.0, 2.0, 3.0)
+        temporal = upgraded.execute(
+            "SELECT valid_from,valid_to,recorded_from,recorded_to FROM claims WHERE id='claim-018-2'"
+        ).fetchone()
+        assert tuple(temporal) == (
+            "2025-01-02T00:00:00Z",
+            "2025-12-31T23:59:59Z",
+            "2025-01-02T00:00:01Z",
+            None,
+        )
+        expected_versions = {migration.stem for migration in MIGRATION_DIR.glob("*.sql")}
+        applied_versions = {row[0] for row in upgraded.execute("SELECT version FROM schema_migrations")}
+        assert expected_versions <= applied_versions
+        assert "029_ttl_scan_indexes" in applied_versions
     finally:
         database.close()

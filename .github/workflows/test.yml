@@ -18,17 +18,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v5
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --frozen
       - name: Run full test suite
         env:
           HL_MEM_ENV: test
         run: |
-          python -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term-missing --cov-fail-under=60
+          uv run --frozen python -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term-missing --cov-fail-under=60
       - name: Run migration upgrade test
-        run: python -m pytest tests/test_migration_upgrade.py -q --tb=short
+        run: uv run --frozen python -m pytest tests/test_migration_upgrade.py -q --tb=short
 
   lint:
     runs-on: ubuntu-latest
@@ -47,8 +46,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e ".[dev]"
-      - run: mypy src/hl_mem/ --ignore-missing-imports || true
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - run: uv pip install mypy
+      - run: .venv/bin/python scripts/check_mypy_baseline.py
 
   format:
     runs-on: ubuntu-latest
@@ -125,3 +126,17 @@ jobs:
         with:
           python-version: "3.11"
       - run: python scripts/check_docs_consistency.py
+
+  contract-snapshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - name: Check OpenAPI and MCP contracts
+        run: |
+          uv run --frozen python scripts/check_openapi_snapshot.py
+          uv run --frozen python scripts/check_mcp_snapshot.py

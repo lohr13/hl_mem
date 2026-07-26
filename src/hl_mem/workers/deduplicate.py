@@ -8,10 +8,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from hl_mem.domain.claims.dedup import DedupJudge
 from hl_mem.llm.client import LLMClient
 from hl_mem.protocols import EmbedderProtocol
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.workers.dedup_judge import DedupJudge
 from hl_mem.workers.scheduling import enqueue_daily_job
 
 EMBEDDING_TEXT_VERSION = "v1: predicate+value"
