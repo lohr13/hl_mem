@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.13.1](https://img.shields.io/badge/version-0.13.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.13.2](https://img.shields.io/badge/version-0.13.2-blue.svg)](docs/CHANGELOG.md)
 [![Tests: 445 passed](https://img.shields.io/badge/tests-445%20passed-brightgreen.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
@@ -91,16 +91,37 @@ selection guidance.
 
 ## Project Status
 
-| Area | Status |
-|---|---|
-| Core ingestion, evidence, deduplication, and conflict handling | Stable |
-| Hybrid recall, temporal filtering, reranking, and context packing | Stable |
-| Experience channel and lifecycle management | Stable |
-| REST API and Hermes integration | Stable |
-| MCP server | Beta |
-| Mental-model reasoning enhancements and multi-tenancy | Planned |
+### Stable (default-on, regression-tested)
 
-Current baseline: v0.13.1, 29 migrations, 445 tests passed and 1 skipped. Detailed maturity claims live in the
+- Event ingestion, evidence chains, atomic writes
+- LLM extraction, embedding, FTS + Dense + RRF hybrid recall
+- Dual-temporal filtering, TTL, decay, archival, explicit forgetting
+- Three-layer dedup + conflict detection
+- REST API, Hermes Provider, online backup, audit logs
+
+### Beta (usable with safe defaults, needs more observation)
+
+- Multi-query recall (default: auto)
+- Relation candidate discovery (default: audit)
+- Feedback-driven maintenance (default: observe)
+- Semantic dedup (default: audit)
+- MCP Server (5 tools)
+- Benchmark suite + LongMemEval adapter
+
+### Experimental (opt-in only)
+
+- Image evidence (default: off)
+- Extraction pre-filter (default: off)
+- Independent tag channel (default: off)
+- PostgreSQL connectivity probe (no storage semantics)
+
+### Planned
+
+- Mental model reasoning enhancements
+- Multi-tenancy
+- PostgreSQL storage adapter (behind protocol boundary)
+
+Current baseline: v0.13.2, 29 migrations, 445 tests passed and 1 skipped. Detailed maturity claims live in the
 [capability matrix](docs/capability-matrix.md).
 
 ## 中文

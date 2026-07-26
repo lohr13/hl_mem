@@ -26,7 +26,29 @@ jobs:
         env:
           HL_MEM_ENV: test
         run: |
-          python -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term-missing
+          python -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term-missing --cov-fail-under=60
+      - name: Run migration upgrade test
+        run: python -m pytest tests/test_migration_upgrade.py -q --tb=short
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check src/
+
+  type-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: mypy src/hl_mem/ --ignore-missing-imports || true
 
   format:
     runs-on: ubuntu-latest
@@ -84,12 +106,22 @@ jobs:
         run: |
           python -c "import tempfile; from pathlib import Path; from hl_mem.storage.database import Database; path = Path(tempfile.mkdtemp()) / 'fresh.db'; db = Database(path); connection = db.open(); applied = {row[0] for row in connection.execute('SELECT version FROM schema_migrations')}; expected = {path.stem for path in Path('src/hl_mem/storage/migrations').glob('*.sql')}; missing = expected - applied; assert not missing, f'missing SQL migrations: {sorted(missing)}'; db.close(); print(f'applied {len(expected)} SQL migrations')"
 
-  import-boundaries:
+  import-boundary:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - run: pip install -e ".[dev]"
       - name: Check dependency direction
         run: python scripts/check_imports.py
+
+  doc-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python scripts/check_docs_consistency.py

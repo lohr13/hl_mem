@@ -1,0 +1,112 @@
+#!/usr/bin/env python
+"""校验版本号、migration 数量与测试数量在维护文档中保持一致。"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def get_version() -> str:
+    """从包入口读取版本 SSOT。"""
+    text = (ROOT / "src/hl_mem/__init__.py").read_text(encoding="utf-8")
+    match = re.search(r'^__version__\s*=\s*["\']v?([^"\']+)["\']', text, re.MULTILINE)
+    if match is None:
+        raise ValueError("src/hl_mem/__init__.py 中未找到 __version__")
+    return match.group(1)
+
+
+def get_migration_count() -> int:
+    """从 SQL migration 文件数量读取 migration SSOT。"""
+    return len(list((ROOT / "src/hl_mem/storage/migrations").glob("*.sql")))
+
+
+def read(path: str) -> str:
+    """以 UTF-8 读取项目文档。"""
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def check_value(text: str, pattern: str, expected: str | int, label: str) -> list[str]:
+    """检查指定模式捕获的值与预期一致。"""
+    matches = re.findall(pattern, text, re.MULTILINE | re.IGNORECASE)
+    if not matches:
+        return [f"  {label}: reference not found (pattern: {pattern})"]
+    expected_text = str(expected)
+    return [f"  {label}: found '{value}', expected '{expected_text}'" for value in matches if value != expected_text]
+
+
+def latest_changelog_entry(changelog: str) -> tuple[str, str]:
+    """返回 CHANGELOG 最新版本号及其条目正文。"""
+    match = re.search(
+        r"^##\s+v?(\d+\.\d+\.\d+)\b(?P<body>.*?)(?=^##\s+v?\d+\.\d+\.\d+\b|\Z)",
+        changelog,
+        re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        raise ValueError("docs/CHANGELOG.md 中未找到版本条目")
+    return match.group(1), match.group("body")
+
+
+def main() -> int:
+    """运行全部文档一致性检查并返回进程退出码。"""
+    try:
+        version = get_version()
+        migration_count = get_migration_count()
+        readme = read("README.md")
+        architecture = read("docs/architecture.md")
+        handoff = read("docs/HANDOFF.md")
+        capability_matrix = read("docs/capability-matrix.md")
+        changelog = read("docs/CHANGELOG.md")
+
+        errors: list[str] = []
+        errors += check_value(readme, r"shields\.io/badge/version-v?(\d+\.\d+\.\d+)-", version, "README badge version")
+        errors += check_value(readme, r"Current baseline:\s*v?(\d+\.\d+\.\d+)", version, "README body version")
+        errors += check_value(architecture, r"Document baseline:\s*v?(\d+\.\d+\.\d+)", version, "architecture baseline")
+        errors += check_value(handoff, r"\*\*版本\*\*[：:]\s*v?(\d+\.\d+\.\d+)", version, "HANDOFF version")
+        errors += check_value(
+            capability_matrix, r"基线[：:]\s*v?(\d+\.\d+\.\d+)", version, "capability matrix baseline"
+        )
+        errors += check_value(
+            readme, r"Current baseline:.*?\b(\d+)\s+migrations\b", migration_count, "README migrations"
+        )
+        errors += check_value(
+            architecture, r"\b(\d+)\s+immutable SQL migrations\b", migration_count, "architecture migrations"
+        )
+        errors += check_value(handoff, r"\b(\d+)\s+migrations\b", migration_count, "HANDOFF migrations")
+
+        headers = re.findall(r"^##\s+v?(\d+\.\d+\.\d+)\b", changelog, re.MULTILINE)
+        duplicates = sorted({header for header in headers if headers.count(header) > 1})
+        if duplicates:
+            errors.append(f"  CHANGELOG: duplicate version headers: {', '.join(duplicates)}")
+
+        latest_version, latest_entry = latest_changelog_entry(changelog)
+        if latest_version != version:
+            errors.append(f"  CHANGELOG latest version: found '{latest_version}', expected '{version}'")
+        readme_tests = re.search(r"shields\.io/badge/tests-(\d+)%20passed-", readme, re.IGNORECASE)
+        changelog_tests = re.search(r"\b(\d+)\s+passed\b", latest_entry, re.IGNORECASE)
+        if readme_tests is None:
+            errors.append("  README test badge: test count not found")
+        if changelog_tests is None:
+            errors.append("  CHANGELOG latest entry: test count not found")
+        if readme_tests and changelog_tests and readme_tests.group(1) != changelog_tests.group(1):
+            errors.append(
+                f"  README test badge: found '{readme_tests.group(1)}', "
+                f"expected latest CHANGELOG count '{changelog_tests.group(1)}'"
+            )
+    except (OSError, ValueError) as exc:
+        print(f"Document consistency check failed:\n  {exc}")
+        return 1
+
+    if errors:
+        print("Document consistency check failed:")
+        print("\n".join(errors))
+        return 1
+    print(f"All docs consistent: v{version}, {migration_count} migrations")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
