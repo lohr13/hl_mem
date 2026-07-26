@@ -1,12 +1,12 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-07-26 · v0.12.4
+> 最后更新：2026-07-26 · v0.13.1
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.12.4
-- **阶段**：v0.12.4 全量审查 P0/P1 修复完成
+- **版本**：v0.13.1
+- **阶段**：v0.13.0 工程收敛审查 P1 修复完成
 - **服务**：FastAPI on port 8200，LLM=glm-5.1，Embedding=text-embedding-v4 (2048d)，Reranker=gte-rerank-v2
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），29 migrations，约 403 active / 514 total claims
 - **FTS**：trigram（claims/tags），unicode61（events）
@@ -25,11 +25,11 @@
 - 生命周期：TTL 过期 → 线性衰减 → 归档 → 重分类
 - 显式遗忘：级联撤回 + 向量清除 + stale 传播
 - Hermes Provider（358 行，2s timeout + circuit breaker）
-- MCP Server（4 工具契约）
+- MCP Server（5 工具契约，可嵌入工具套件，beta）
 - REST API 新增 `POST /v1/extract/dry-run`、`POST /v1/consolidate`
 - LLM 可观测性：`llm_call_spans` 持久化调用 span，`healthz` 暴露 24h 聚合
 - 审计日志 + 在线备份 + CLI 导入导出
-- 可选 PostgreSQL 后端
+- 实验性 PostgreSQL 连接探针（尚无 HL-Mem 存储语义）
 
 ### v0.12.0 六大特性
 

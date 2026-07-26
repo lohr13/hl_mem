@@ -18,6 +18,9 @@ def expire_claims(
 ) -> dict[str, int]:
     """过期 expires_at 已到达且仍处于 active 的 claim。"""
     reference = normalize_utc_iso(now or datetime.now(timezone.utc).isoformat(), "now")
+    candidate_cutoff = (datetime.fromisoformat(reference).astimezone(timezone.utc) + timedelta(days=180)).isoformat(
+        timespec="seconds"
+    )
     mode = feedback_lifecycle_mode or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
     short_ttl_seconds = (
         slot_short_ttl_seconds
@@ -30,8 +33,8 @@ def expire_claims(
             "SELECT c.id,c.status,c.expires_at,c.valid_to,c.canonical_slot,c.observed_at,c.recorded_from,"
             "COALESCE(u.retention_bonus_days,0) AS bonus_days FROM claims c "
             "LEFT JOIN memory_usefulness u ON u.memory_type='claim' AND u.memory_id=c.id "
-            "WHERE c.status=? AND c.expires_at IS NOT NULL",
-            ("active",),
+            "WHERE c.status=? AND c.expires_at IS NOT NULL AND c.expires_at<=?",
+            ("active", candidate_cutoff),
         ).fetchall()
         expired_claims: list[tuple[str, str, str, str | None]] = []
         for row in rows:

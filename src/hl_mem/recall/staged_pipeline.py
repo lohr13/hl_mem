@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import sqlite3
 import time
 from collections.abc import Callable
@@ -680,7 +682,42 @@ def _fold_bucket(claim: dict[str, Any]) -> tuple[Any, ...] | None:
         claim.get("subject_entity_id"),
         claim.get("canonical_slot"),
         normalize_predicate(str(claim.get("predicate") or "")),
+        json.dumps(claim.get("qualifiers") or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
     )
+
+
+_PROTECTED_VALUE_PATTERN = re.compile(
+    r"(?<!\w)(?:v?\d+(?:\.\d+)+|\d+)(?!\w)|(?:[A-Za-z]:\\|/)[^\s\"']+",
+    re.IGNORECASE,
+)
+
+
+def _protected_value_tokens(claim: dict[str, Any]) -> tuple[str, ...]:
+    """提取不得因向量相似而混同的数值、版本和路径标记。"""
+    value = claim.get("value", claim.get("value_json"))
+    serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return tuple(sorted(_PROTECTED_VALUE_PATTERN.findall(serialized)))
+
+
+def _valid_intervals_overlap(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """判断两个半开有效时间区间是否重叠；无界端点按正负无穷处理。"""
+
+    def parse(value: Any) -> datetime | None:
+        if value in (None, ""):
+            return None
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+    left_start, left_end = parse(left.get("valid_from")), parse(left.get("valid_to"))
+    right_start, right_end = parse(right.get("valid_from")), parse(right.get("valid_to"))
+    return (left_end is None or right_start is None or right_start < left_end) and (
+        right_end is None or left_start is None or left_start < right_end
+    )
+
+
+def _fold_semantics_compatible(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """仅允许保护值一致且有效时间重叠的 Claim 互相折叠。"""
+    return _protected_value_tokens(left) == _protected_value_tokens(right) and _valid_intervals_overlap(left, right)
 
 
 def fold_similar_claims(
@@ -702,7 +739,7 @@ def fold_similar_claims(
         if (embedding := claim.get("embedding_dense")) is not None
     }
     kept: list[dict[str, Any]] = []
-    kept_vectors: dict[tuple[Any, ...], list[tuple[float, ...]]] = {}
+    kept_candidates: dict[tuple[Any, ...], list[tuple[dict[str, Any], tuple[float, ...]]]] = {}
     for claim in fold_candidates:
         bucket = _fold_bucket(claim)
         vector = decoded.get(str(claim["id"]))
@@ -710,13 +747,15 @@ def fold_similar_claims(
             bucket is not None
             and vector is not None
             and any(
-                normalized_cosine_similarity(vector, retained) >= threshold for retained in kept_vectors.get(bucket, [])
+                _fold_semantics_compatible(claim, retained_claim)
+                and normalized_cosine_similarity(vector, retained_vector) >= threshold
+                for retained_claim, retained_vector in kept_candidates.get(bucket, [])
             )
         ):
             continue
         kept.append(claim)
         if bucket is not None and vector is not None:
-            kept_vectors.setdefault(bucket, []).append(vector)
+            kept_candidates.setdefault(bucket, []).append((claim, vector))
     kept.extend(untouched)
     original_order = {str(claim["id"]): index for index, claim in enumerate(claims)}
     return sorted(kept, key=lambda item: original_order[str(item["id"])])

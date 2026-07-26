@@ -67,6 +67,63 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
 
         self.assertEqual([claim["id"] for claim in folded], ["likes", "dislikes", "disputed"])
 
+    def test_fold_preserves_different_ports_qualifiers_and_disjoint_valid_times(self) -> None:
+        """端口、限定条件或有效时间不兼容时，即使向量相同也不得折叠。"""
+        vector = pack_vector([1.0, 0.0])
+        base = {
+            "namespace_key": "default",
+            "subject_entity_id": "service",
+            "canonical_slot": "state.service_port",
+            "predicate": "端口",
+            "status": "active",
+            "embedding_dense": vector,
+        }
+        claims = [
+            {
+                **base,
+                "id": "production-8200",
+                "value": "端口 8200",
+                "qualifiers": {"environment": "production"},
+                "valid_from": "2026-01-01T00:00:00+00:00",
+                "valid_to": "2026-02-01T00:00:00+00:00",
+                "_score": 0.9,
+            },
+            {
+                **base,
+                "id": "production-8080",
+                "value": "端口 8080",
+                "qualifiers": {"environment": "production"},
+                "valid_from": "2026-01-01T00:00:00+00:00",
+                "valid_to": "2026-02-01T00:00:00+00:00",
+                "_score": 0.8,
+            },
+            {
+                **base,
+                "id": "staging-8200",
+                "value": "端口 8200",
+                "qualifiers": {"environment": "staging"},
+                "valid_from": "2026-01-01T00:00:00+00:00",
+                "valid_to": "2026-02-01T00:00:00+00:00",
+                "_score": 0.7,
+            },
+            {
+                **base,
+                "id": "production-8200-later",
+                "value": "服务端口是 8200",
+                "qualifiers": {"environment": "production"},
+                "valid_from": "2026-03-01T00:00:00+00:00",
+                "valid_to": None,
+                "_score": 0.6,
+            },
+        ]
+
+        folded = fold_similar_claims(claims, 0.95)
+
+        self.assertEqual(
+            [claim["id"] for claim in folded],
+            ["production-8200", "production-8080", "staging-8200", "production-8200-later"],
+        )
+
     def test_fold_decodes_only_top_candidate_window_once_each(self) -> None:
         """大候选集只解码配置窗口内的向量，且每条至多一次。"""
         vector = pack_vector([1.0, 0.0])
@@ -174,6 +231,25 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
             )
             self.assertEqual(expire_claims(connection, "2026-07-26T00:00:00+00:00"), {"expired": 1})
             connection.close()
+
+    def test_ttl_scan_uses_180_day_candidate_window(self) -> None:
+        """TTL 查询应先用最大 feedback bonus 窗口缩小 expires_at 候选集。"""
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "ttl-window.db")
+            connection = database.open()
+            try:
+                statements: list[str] = []
+                connection.set_trace_callback(statements.append)
+
+                expire_claims(connection, "2026-07-26T00:00:00+00:00")
+
+                normalized = [" ".join(statement.split()).lower() for statement in statements]
+                self.assertTrue(
+                    any("c.expires_at<='2027-01-22t00:00:00+00:00'" in statement for statement in normalized),
+                    normalized,
+                )
+            finally:
+                database.close()
 
     def test_temporal_cleanup_uses_configured_age_and_expiry_days(self) -> None:
         """自定义年龄门槛和过期周期必须改变清理结果。"""

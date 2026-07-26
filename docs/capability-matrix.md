@@ -1,6 +1,6 @@
 # HL-Mem 能力成熟度矩阵
 
-> 基线：v0.13.0。默认模式取自 `Settings`；`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
+> 基线：v0.13.1。默认模式取自部署入口 `Settings.from_env()`；`Settings()` / `Settings.for_test()` 的测试默认值可能不同。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
 
 ## 成熟度定义
 
@@ -26,7 +26,7 @@
 | Event 幂等摄入与证据链 | stable | `on` | 否 | 是 | 写入或约束失败时事务回滚并返回具体错误 | 保持跨版本事务、幂等、并发和证据完整性回归 |
 | LLM Claim 提取 | stable | `on`（生产配置 provider） | 是 | 是 | retry 后失败则 Job 失败，可重试；原始 Event 保留 | 保持 schema 兼容、解析质量和调用可观测性 |
 | Extraction pre-filter | experimental | `off` | 否 | 开启后写 audit | 规则异常时 `error_fallback` 到正常提取 | 生产回放证明显著节省调用且事实漏失低于既定阈值 |
-| Embedding | stable | `on`（real/fake 由环境决定） | real 模式是 | 是 | 外部调用失败按 retry 策略报错；不写伪向量 | 维度、provider、重建和失败恢复持续受保护 |
+| Embedding | stable | `on`（生产校验强制 `real`；开发/测试默认 `fake`） | real 模式是 | 是 | 外部调用失败按 retry 策略报错；不写伪向量 | 维度、provider、重建和失败恢复持续受保护 |
 | FTS + Dense + RRF 混合召回 | stable | `on` | Dense 查询本身否 | 是，受控更新访问统计 | 某个可选通道无候选时使用其余通道；核心错误明确失败 | 保持中文/英文、时间、作用域和排序回归 |
 | Tag soft boost | stable | `on` | 否 | 否 | 无 tag 命中即零 boost | 离线排名不回退并保持可解释权重 |
 | 独立 Tag channel | experimental | `off` | 否 | 否 | 关闭或无结果时保持 FTS + Dense 双通道 | 评测证明对主要数据集净增益且无显著延迟/噪声 |
@@ -38,7 +38,7 @@
 | Episode / Trace | stable | `on` | 否 | 是 | 不影响 Claim 主通道；非法状态转换明确失败 | 保持 API、状态机、reward 与 usefulness 回归 |
 | Policy / Procedure 归纳 | beta | `auto`（定时 Job） | 是 | 是 | 归纳失败保留 Episode，Job 可重试且不发布新策略 | 多 Episode 支撑、成功率、退役与审计指标达到阈值 |
 | Mental Model 维护 | beta | `auto`（定时 Job） | 是 | 是 | 刷新失败保留旧模型并标记 stale/记录 Job 错误 | 水位幂等、证据覆盖、刷新质量和 stale 恢复达到阈值 |
-| MCP Server | stable | `on` | 否 | 依工具而定 | 委托 application 服务；服务错误按 MCP 错误返回 | 工具契约、事务边界和 REST 行为持续一致 |
+| MCP Server（可嵌入工具套件） | beta | `on` | 否 | 依工具而定 | 委托 application 服务；服务错误按 MCP 错误返回；尚无独立 transport/runtime 入口 | 工具契约、事务边界和 REST 行为持续一致，并补齐 transport/runtime 入口 |
 | Hermes Provider | beta | `on`（部署时启用） | 是，调用本地 HL-Mem HTTP | 间接写入 | timeout/circuit breaker 后不阻断 Agent 主任务 | 兼容矩阵、重连、超时和长时间运行指标达到 SLO |
 | Audit / LLM spans | stable | `on` | 否 | 是 | 关键审计写入失败时明确报错；非关键 span 不改变业务结果 | 保持字段稳定、敏感信息脱敏和可查询性 |
-| SQLite 备份与 migration | stable | `on` | 否 | 是 | migration 失败事务回滚；备份失败不替换现有备份 | 空库和历史快照升级、恢复演练、连续编号均由 CI 门禁保护 |
+| SQLite 备份与 migration | stable | `on` | 否 | 是 | migration 失败事务回滚；备份失败不替换现有备份 | 空库升级由 CI 门禁保护；历史快照升级与恢复演练仍需独立门禁 |
