@@ -53,6 +53,7 @@ EMBEDDING_MODEL=text-embedding-v4
 
 # Reranker
 HL_MEM_RERANKER=on                # off | fake | on | real
+HL_MEM_EXTRACT_PRE_FILTER=off     # off（默认）| on
 
 # 去重 / 冲突
 HL_MEM_DEDUP_THRESHOLD=0.82       # 语义去重阈值

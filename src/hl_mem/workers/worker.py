@@ -19,7 +19,8 @@ from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
-from hl_mem.observability.audit import NullAuditLogger, audit_scope
+from hl_mem.ingest.pre_filter import ExtractionPreFilter
+from hl_mem.observability.audit import AuditLogger, NullAuditLogger, audit_scope
 from hl_mem.settings import Settings, parse_daily_cron
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
@@ -85,6 +86,7 @@ class Worker:
         self.connection = self.database.open_worker()
         self.jobs = JobRepository(self.connection)
         self.filter = self.config.get("event_filter") or EventFilter()
+        self.pre_filter = self.config.get("pre_filter") or ExtractionPreFilter()
         self.extractor = self.config.get("extractor") or self._make_extractor()
         self.image_describer = self.config.get("image_describer")
         if "image_describer" not in self.config:
@@ -94,7 +96,13 @@ class Worker:
             int(self.config.get("daily_token_limit", self.settings.daily_token_limit)),
             self.db_path.with_suffix(".budget.db"),
         )
-        self.audit = self.config.get("audit") or NullAuditLogger()
+        configured_audit = self.config.get("audit")
+        if configured_audit is not None:
+            self.audit = configured_audit
+        elif self.settings.extract_pre_filter:
+            self.audit = AuditLogger(self.db_path)
+        else:
+            self.audit = NullAuditLogger()
 
     def run_once(self) -> dict[str, Any]:
         now = _now()
@@ -266,6 +274,37 @@ class Worker:
             )
             if not allowed:
                 return {"claims": 0}
+            if self.settings.extract_pre_filter:
+                started = time.perf_counter_ns()
+                try:
+                    decision = self.pre_filter.evaluate(event, content)
+                except Exception as error:
+                    self.audit.emit(
+                        "extraction_pre_filter",
+                        "evaluated",
+                        "error_fallback",
+                        duration_us=(time.perf_counter_ns() - started) // 1000,
+                        detail={
+                            "error_class": type(error).__name__,
+                            "rule_version": str(getattr(self.pre_filter, "rule_version", "unknown")),
+                        },
+                    )
+                else:
+                    self.audit.emit(
+                        "extraction_pre_filter",
+                        "evaluated",
+                        "allow" if decision.should_extract else "skip",
+                        duration_us=(time.perf_counter_ns() - started) // 1000,
+                        detail={
+                            "reason": decision.reason,
+                            "rule_version": str(getattr(self.pre_filter, "rule_version", "unknown")),
+                            "event_type": event["event_type"],
+                            "actor_type": event["actor_type"],
+                            "content_chars": len(event["content_json"]),
+                        },
+                    )
+                    if not decision.should_extract:
+                        return {"claims": 0, "pre_filter": decision.reason}
             estimate = max(1, len(event["content_json"]) // 2)
             can_spend = self.budget.can_spend(estimate)
             self.audit.emit(

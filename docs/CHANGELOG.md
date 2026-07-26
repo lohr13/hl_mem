@@ -4,6 +4,19 @@
 
 ---
 
+## v0.12.3 — 2026-07-26
+
+- 新增默认关闭的 deterministic extraction pre-filter，通过
+  `HL_MEM_EXTRACT_PRE_FILTER=on` 显式启用。
+- 预筛位于 token budget/LLM 调用前，识别通用 runtime/tool control frame、
+  assistant action narration 和短 operational request。
+- 每次启用后的判定写入 `extraction_pre_filter` audit；规则异常时记录
+  `error_fallback` 并继续正常 extraction。
+- 新增纯规则、Settings、Worker skip/audit/fallback 行为测试与
+  `docs/design/extraction-pre-filter.md`。
+
+---
+
 ## v0.12.1 — 2026-07-26
 
 ### P0 修复（数据完整性）

@@ -27,6 +27,14 @@ ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
 
 
+def _parse_on_off(value: str, variable_name: str) -> bool:
+    """严格解析 on/off 环境变量。"""
+    normalized = value.strip().lower()
+    if normalized not in {"on", "off"}:
+        raise ConfigurationError(f"{variable_name} must be 'on' or 'off'")
+    return normalized == "on"
+
+
 class Environment(StrEnum):
     """支持的部署环境。"""
 
@@ -112,6 +120,7 @@ class Settings:
     policy_induction_lookback_days: int = 7
     policy_induction_min_episodes: int = 3
     extractor_mode: ExtractorMode = "fake"
+    extract_pre_filter: bool = False
     llm_api_key: str | None = None
     llm_base_url: str = "https://coding.dashscope.aliyuncs.com/v1"
     llm_model: str = "qwen3.7-plus"
@@ -237,6 +246,10 @@ class Settings:
             policy_induction_lookback_days=int(os.getenv("HL_MEM_POLICY_INDUCTION_LOOKBACK_DAYS", "7")),
             policy_induction_min_episodes=int(os.getenv("HL_MEM_POLICY_INDUCTION_MIN_EPISODES", "3")),
             extractor_mode=os.getenv("HL_MEM_EXTRACTOR", "fake").lower(),
+            extract_pre_filter=_parse_on_off(
+                os.getenv("HL_MEM_EXTRACT_PRE_FILTER", "off"),
+                "HL_MEM_EXTRACT_PRE_FILTER",
+            ),
             llm_api_key=os.getenv("LLM_API_KEY"),
             llm_base_url=os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
             llm_model=os.getenv("LLM_MODEL", "qwen3.7-plus"),
@@ -496,6 +509,7 @@ class Settings:
             "recall_side_effect_max_attempts": self.recall_side_effect_max_attempts,
             "recall_side_effect_backoff_seconds": self.recall_side_effect_backoff_seconds,
             "vector_backend": self.vector_backend,
+            "extract_pre_filter": self.extract_pre_filter,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,
