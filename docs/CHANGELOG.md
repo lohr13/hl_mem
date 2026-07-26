@@ -17,6 +17,38 @@
 
 ---
 
+## v0.12.3 — 2026-07-26
+
+### 提取预筛（Extraction Pre-filter）
+
+- 新增确定性规则预筛模块（`src/hl_mem/ingest/pre_filter.py`），在 LLM 提取前判断事件是否值得花费一次 API 调用。
+- 生产回放 4139 条事件：过滤 24.5%（1016/4139），潜在事实丢失 ≤0.1%（35 条弱标签，实际人工确认 ~0-1 条）。
+- 五类过滤规则（`deterministic-v2`）：
+  - `runtime_notice`：后台进程退出/完成通知。
+  - `tool_control_frame`：纯命令包装 + exit code（遇到版本号/工作目录等事实信号时放行）。
+  - `transient_tool_result`：timeout/cancelled/background-started（混合有效输出时放行）。
+  - `assistant_action_narration`：≤60 字符的纯动作叙述（"Codex 在跑"、"等它完成"）。
+  - `operational_status_query`：≤80 字符的操作状态查询（"正常吗"、"完成了吗"）。
+- Keep-signal 优先：显式记忆、图片内容、含"记住/偏好/要求/必须"等持久信号一律放行。
+- 可观测：被跳过的事件记录到 audit_log，含 reason 和 rule_version。
+- 可降级：预筛出错时 fallback 到正常提取。
+- 默认 `off`，通过 `HL_MEM_EXTRACT_PRE_FILTER=on` 开启。
+- 设计文档：`docs/design/extraction-pre-filter.md`。
+
+### v0.12.2 记忆库质量修复
+
+- 数据清洗：38 条语义重复 claim 被 superseded（441→403 active）。
+- 召回结果暴露 `score` 字段（使用 final blended score）。
+- 提取 prompt 增加自足性约束、主体正确性、attribute 对照表和反例。
+- 召回增加可配置相似度折叠（`recall_dedup_threshold`，默认 0.95）。
+- Temporal 清理接入 maintenance cycle：65 条无 expires_at 的 temporal claim 获得处理。
+
+### 测试
+
+- 433 passed, 1 skipped（+22 预筛测试）
+
+---
+
 ## v0.12.1 — 2026-07-26
 
 ### P0 修复（数据完整性）

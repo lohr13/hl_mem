@@ -1,14 +1,14 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-07-26 · v0.12.1
+> 最后更新：2026-07-26 · v0.12.3
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.12.1
-- **阶段**：v0.12.1 P0+P1 修复收口，401 passed，1 skipped
-- **服务**：FastAPI on port 8200，LLM=glm-5.2，Embedding=text-embedding-v4 (2048d)，Reranker=gte-rerank-v2
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），27 migrations，约 441 active / 514 total claims
+- **版本**：v0.12.3
+- **阶段**：提取预筛 + 记忆库质量修复完成，433 passed
+- **服务**：FastAPI on port 8200，LLM=glm-5.1，Embedding=text-embedding-v4 (2048d)，Reranker=gte-rerank-v2
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），27 migrations，约 403 active / 514 total claims
 - **FTS**：trigram（claims/tags），unicode61（events）
 
 ## 已完成

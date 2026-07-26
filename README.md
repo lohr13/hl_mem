@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Tests: 401 passed](https://img.shields.io/badge/tests-401%20passed-brightgreen.svg)](docs/CHANGELOG.md)
+[![Tests: 433 passed](https://img.shields.io/badge/tests-433%20passed-brightgreen.svg)](docs/CHANGELOG.md)
 [![Version: 0.12.3](https://img.shields.io/badge/version-0.12.3-blue.svg)](docs/CHANGELOG.md)
 
 **Local-first, evidence-driven memory for AI agents.** Stop your LLM from forgetting across sessions.
@@ -15,7 +15,7 @@ HL-Mem provides persistent, structured memory with dual-temporal modeling, evide
 
 ## 中文文档
 
-> v0.12.3 · 27 migrations · [CHANGELOG](docs/CHANGELOG.md)
+> v0.12.3 · 433 passed · 1 skipped · 27 migrations · [CHANGELOG](docs/CHANGELOG.md)
 
 面向 AI Agent 的本地优先、跨会话记忆系统。证据驱动、双时间模型、双通道设计、可解释召回、slot+tags 分类体系、importance 联动 TTL。
 
