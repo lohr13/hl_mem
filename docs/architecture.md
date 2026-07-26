@@ -87,7 +87,7 @@ src/hl_mem/
 │   ├── observation.py        # Derived-memory assembly
 │   ├── ranking.py            # Multi-factor ranking
 │   ├── relation_expansion.py # One-hop relation expansion
-│   ├── reranker.py           # Optional gte-rerank-v2 reranking
+│   ├── reranker.py           # Optional reranking (model configured via .env)
 │   ├── staged_pipeline.py    # FTS + dense + optional tag channel and RRF
 │   └── trace.py              # SearchTrace diagnostics and metrics
 ├── security/                 # Retention and content policy
@@ -180,7 +180,7 @@ POST /v1/recall
   → FTS5 BM25 + dense cosine + optional tag candidates
   → reciprocal-rank fusion (RRF)
   → recency + importance + access + scope + helpfulness scoring
-  → optional gte-rerank-v2 reranking
+  → optional reranking (model configured via .env)
   → relation, Observation, and Experience expansion
   → token-budget and cross-type quota packing
   → evidence-aware Context Packet + optional SearchTrace

@@ -215,7 +215,7 @@ These weights intentionally cap all non-semantic signals at 30%. Access is a use
 
 ### 5.3 Reranker interaction
 
-Send the top `candidate_limit` pre-ranked candidates to the reranker. Use each returned relevance score directly after clamping it to `[0, 1]`; do not normalize across the candidate set. The configured `gte-rerank-v2` scores are already bounded relevance scores, and candidate-set normalization would make the same score mean different things for different result counts. Final score is:
+Send the top `candidate_limit` pre-ranked candidates to the reranker. Use each returned relevance score directly after clamping it to `[0, 1]`; do not normalize across the candidate set. The configured reranker (model via `.env`) returns already-bounded relevance scores, and candidate-set normalization would make the same score mean different things for different result counts. Final score is:
 
 ```text
 0.80 * clamp(reranker_score, 0, 1) + 0.20 * prior_score

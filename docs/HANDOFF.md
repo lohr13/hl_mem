@@ -16,7 +16,7 @@
 ### 核心功能
 
 - 3 种记忆类型（event + claim + observation）
-- LLM 提取（前序上下文 + 时间锚定 + ADD-only）+ Embedding（2048d）+ Reranker
+- LLM 提取（前序上下文 + 时间锚定 + ADD-only）+ Embedding + Reranker（模型和维度均由 `.env` 配置）
 - 三层去重：fact_hash v2 → conflict_key（白名单互斥）→ semantic (best-match, 0.82)
 - 冲突检测：确定性 ConflictResolver（5 slots）+ LLM ConflictConsolidator（灰区）
 - 数据质量：实体归一化 + canonical attribute reconcile + scope 后置规则 + TTL policy
@@ -78,4 +78,4 @@
 - LLM 提取可能产生假事实 → 原始证据链保留
 - 中文实体归一化/时间表达容易出错 → 独立中文测试集
 - 自动遗忘可能误删低频关键信息 → 首版只降权和归档，不物理删除
-- `text-embedding-v4` 批量上限 10 条/批 → 异步受控并发
+- 当前 embedding 模型批量上限 10 条/批（取决于模型，见 `.env` 配置） → 异步受控并发

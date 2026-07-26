@@ -20,7 +20,7 @@ HL-Mem 已完成最初 Phase 0–6 的建设目标。本文不再作为待实现
 ## Milestone 2（✅ Completed）：可信事实与混合召回
 
 - 交付双时间 Claim、实体归一化、slot + tags、冲突状态机和三层去重。
-- 接入 glm-5.2 提取、text-embedding-v4、FTS + dense + RRF 与可选 gte-rerank-v2。
+- 接入 LLM 提取、Embedding、FTS + dense + RRF 与可选 Reranker（具体模型和维度由 `.env` 配置）。
 - 完成 TTL、历史 `as_of`、显式保存/遗忘、上下文预算和原子写入事务。
 
 ## Milestone 3（✅ Completed）：派生记忆与生命周期
