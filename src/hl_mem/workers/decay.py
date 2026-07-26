@@ -37,36 +37,54 @@ def _parse(value: str) -> datetime:
 def cleanup_stale_temporal_claims(
     connection: sqlite3.Connection,
     now: str | None = None,
+    age_days: int = 30,
+    expiry_days: int = 90,
 ) -> dict[str, int]:
-    """保守清理超过 30 天且缺少 expires_at 的稳定 temporal Claim。"""
+    """在写事务快照内保守清理缺少 expires_at 的稳定 temporal Claim。"""
     reference = _parse(now) if now else datetime.now(timezone.utc)
-    cutoff = reference - timedelta(days=30)
+    cutoff = reference - timedelta(days=age_days)
     promoted = 0
     expired_at_set = 0
-    rows = connection.execute(
-        "SELECT id,recorded_from,canonical_attribute FROM claims "
-        "WHERE scope=? AND expires_at IS NULL AND status=? AND volatility=?",
-        ("temporal", "active", "stable"),
-    ).fetchall()
     connection.execute("BEGIN IMMEDIATE")
     try:
+        rows = connection.execute(
+            "SELECT id,recorded_from,canonical_attribute,volatility FROM claims "
+            "WHERE scope=? AND expires_at IS NULL AND status=? AND volatility=? AND recorded_from<?",
+            ("temporal", "active", "stable", cutoff.isoformat()),
+        ).fetchall()
         for row in rows:
             recorded_from = _parse(row["recorded_from"])
-            if recorded_from >= cutoff:
-                continue
             attribute = str(row["canonical_attribute"] or "")
             if attribute.startswith(("fact.decision", "fact.history", "fact.architecture")):
                 cursor = connection.execute(
-                    "UPDATE claims SET scope=? WHERE id=? AND scope=? AND expires_at IS NULL AND status=?",
-                    ("permanent", row["id"], "temporal", "active"),
+                    "UPDATE claims SET scope=? WHERE id=? AND scope=? AND expires_at IS NULL AND status=? "
+                    "AND canonical_attribute IS ? AND volatility=? AND recorded_from=?",
+                    (
+                        "permanent",
+                        row["id"],
+                        "temporal",
+                        "active",
+                        row["canonical_attribute"],
+                        row["volatility"],
+                        row["recorded_from"],
+                    ),
                 )
                 promoted += cursor.rowcount
             elif attribute.startswith(("state.", "plan.", "config.env")):
-                expires_at = (recorded_from + timedelta(days=90)).isoformat()
+                expires_at = (recorded_from + timedelta(days=expiry_days)).isoformat()
                 cursor = connection.execute(
                     "UPDATE claims SET expires_at=? "
-                    "WHERE id=? AND scope=? AND expires_at IS NULL AND status=?",
-                    (expires_at, row["id"], "temporal", "active"),
+                    "WHERE id=? AND scope=? AND expires_at IS NULL AND status=? "
+                    "AND canonical_attribute IS ? AND volatility=? AND recorded_from=?",
+                    (
+                        expires_at,
+                        row["id"],
+                        "temporal",
+                        "active",
+                        row["canonical_attribute"],
+                        row["volatility"],
+                        row["recorded_from"],
+                    ),
                 )
                 expired_at_set += cursor.rowcount
         connection.commit()

@@ -4,6 +4,16 @@
 
 ---
 
+## v0.12.4 — 2026-07-26
+
+- 修复 temporal cleanup 与 TTL 到期处理的事务快照/CAS 并发竞态。
+- 关系提案改为按 `run_id` 保留同 mode 的跨运行审计历史。
+- 召回折叠增加语义桶、争议事实保护、单次向量解码和候选上限。
+- 保留 tool error 中的持久诊断信号，并配置化 temporal cleanup 周期。
+- 修正提取 confidence 指令，新增 TTL/cleanup 扫描索引。
+
+---
+
 ## v0.12.3 — 2026-07-26
 
 - 新增默认关闭的 deterministic extraction pre-filter，通过

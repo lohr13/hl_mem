@@ -86,6 +86,22 @@ class ExtractionPreFilterTests(unittest.TestCase):
         self.assertFalse(decision.should_extract)
         self.assertEqual(decision.reason, "transient_tool_error")
 
+    def test_tool_error_with_durable_port_diagnostic_is_allowed(self) -> None:
+        decision = self.pre_filter.evaluate(
+            {"event_type": "message", "actor_type": "tool"},
+            {"text": '{"success":false,"error":"port 8200 already in use"}'},
+        )
+        self.assertTrue(decision.should_extract)
+        self.assertEqual(decision.reason, "eligible")
+
+    def test_plain_timeout_error_envelope_is_skipped(self) -> None:
+        decision = self.pre_filter.evaluate(
+            {"event_type": "message", "actor_type": "tool"},
+            {"text": '{"success":false,"error":"timeout"}'},
+        )
+        self.assertFalse(decision.should_extract)
+        self.assertEqual(decision.reason, "transient_tool_error")
+
     def test_short_assistant_action_narration_is_skipped(self) -> None:
         decision = self.pre_filter.evaluate(
             {"event_type": "message", "actor_type": "assistant"},
@@ -166,6 +182,19 @@ class ExtractionPreFilterSettingsTests(unittest.TestCase):
         with patch.dict("os.environ", {"HL_MEM_EXTRACT_PRE_FILTER": "sometimes"}, clear=True):
             with self.assertRaisesRegex(Exception, "HL_MEM_EXTRACT_PRE_FILTER"):
                 Settings.from_env()
+
+    def test_temporal_cleanup_durations_are_loaded_from_environment(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "HL_MEM_TEMPORAL_CLEANUP_AGE_DAYS": "45",
+                "HL_MEM_TEMPORAL_CLEANUP_EXPIRY_DAYS": "120",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env()
+        self.assertEqual(settings.temporal_cleanup_age_days, 45)
+        self.assertEqual(settings.temporal_cleanup_expiry_days, 120)
 
 
 class _CountingExtractor:

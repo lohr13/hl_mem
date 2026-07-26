@@ -89,6 +89,7 @@ class Settings:
     packed_context_token_budget: int = 2000
     recall_candidate_floor: int = 50
     recall_dedup_threshold: float = 0.95
+    recall_dedup_candidate_limit: int = 100
     preference_recency_boost: float = 0.12
     tag_boost_enabled: bool = True
     tag_boost_weight: float = 0.05
@@ -170,6 +171,8 @@ class Settings:
     slot_short_ttl_seconds: int = 86400
     ttl_backfill_batch_size: int = 100
     ttl_backfill_grace_hours: int = 0
+    temporal_cleanup_age_days: int = 30
+    temporal_cleanup_expiry_days: int = 90
     # feedback_lifecycle: observe 只聚合 usefulness，不影响 TTL/decay；观察稳定后可切换为 on
     feedback_lifecycle_mode: FeedbackLifecycleMode = "observe"
     feedback_bonus_every: int = 3
@@ -214,6 +217,7 @@ class Settings:
             packed_context_token_budget=int(os.getenv("HL_MEM_PACKED_CONTEXT_TOKEN_BUDGET", "2000")),
             recall_candidate_floor=int(os.getenv("HL_MEM_RECALL_CANDIDATE_FLOOR", "50")),
             recall_dedup_threshold=float(os.getenv("HL_MEM_RECALL_DEDUP_THRESHOLD", "0.95")),
+            recall_dedup_candidate_limit=int(os.getenv("HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT", "100")),
             preference_recency_boost=float(os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")),
             tag_boost_enabled=os.getenv("HL_MEM_TAG_BOOST_ENABLED", "true").lower() == "true",
             tag_boost_weight=float(os.getenv("HL_MEM_TAG_BOOST_WEIGHT", "0.05")),
@@ -304,6 +308,8 @@ class Settings:
             slot_short_ttl_seconds=int(os.getenv("HL_MEM_SLOT_SHORT_TTL_SECONDS", "86400")),
             ttl_backfill_batch_size=int(os.getenv("HL_MEM_TTL_BACKFILL_BATCH_SIZE", "100")),
             ttl_backfill_grace_hours=int(os.getenv("HL_MEM_TTL_BACKFILL_GRACE_HOURS", "0")),
+            temporal_cleanup_age_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_AGE_DAYS", "30")),
+            temporal_cleanup_expiry_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_EXPIRY_DAYS", "90")),
             feedback_lifecycle_mode=os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower(),
             feedback_bonus_every=int(os.getenv("HL_MEM_FEEDBACK_BONUS_EVERY", "3")),
             feedback_bonus_days=int(os.getenv("HL_MEM_FEEDBACK_BONUS_DAYS", "14")),
@@ -358,6 +364,8 @@ class Settings:
             raise ConfigurationError("recall budgets must be positive")
         if not 0.0 <= self.recall_dedup_threshold <= 1.0:
             raise ConfigurationError("HL_MEM_RECALL_DEDUP_THRESHOLD must be between 0 and 1 (0 disables fold)")
+        if self.recall_dedup_candidate_limit < 1:
+            raise ConfigurationError("HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT must be positive")
         if not 0.0 <= self.preference_recency_boost <= 1.0:
             raise ConfigurationError("HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1")
         if not 0.0 <= self.tag_boost_weight <= 1.0:
@@ -446,6 +454,8 @@ class Settings:
             raise ConfigurationError("TTL durations must be positive")
         if self.ttl_backfill_batch_size < 1 or self.ttl_backfill_grace_hours < 0:
             raise ConfigurationError("TTL backfill batch size must be positive and grace hours non-negative")
+        if min(self.temporal_cleanup_age_days, self.temporal_cleanup_expiry_days) < 1:
+            raise ConfigurationError("temporal cleanup durations must be positive")
         if not (
             0.0 <= self.importance_write_floor <= self.importance_low_threshold <= self.importance_high_threshold <= 1.0
         ):

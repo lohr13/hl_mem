@@ -149,9 +149,17 @@ class Worker:
 
     def _run_maintenance(self) -> None:
         """执行一轮 TTL、衰减、派生记忆、保留策略和定时任务维护。"""
-        cleanup_stale_temporal_claims(self.connection)
-        expire_claims(self.connection)
-        decay_claims(self.connection)
+        cleanup_stale_temporal_claims(
+            self.connection,
+            age_days=self.settings.temporal_cleanup_age_days,
+            expiry_days=self.settings.temporal_cleanup_expiry_days,
+        )
+        expire_claims(
+            self.connection,
+            feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
+            slot_short_ttl_seconds=self.settings.slot_short_ttl_seconds,
+        )
+        decay_claims(self.connection, feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode)
         maintenance_now = _now()
         maintainer = DerivedMemoryMaintainer(self.connection)
         maintainer.mark_stale_dependencies()
@@ -437,12 +445,19 @@ def _handle_extract(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_expire(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理 TTL 过期任务。"""
-    return expire_claims(worker.connection)
+    return expire_claims(
+        worker.connection,
+        feedback_lifecycle_mode=worker.settings.feedback_lifecycle_mode,
+        slot_short_ttl_seconds=worker.settings.slot_short_ttl_seconds,
+    )
 
 
 def _handle_decay(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理访问衰减任务。"""
-    return decay_claims(worker.connection)
+    return decay_claims(
+        worker.connection,
+        feedback_lifecycle_mode=worker.settings.feedback_lifecycle_mode,
+    )
 
 
 def _handle_rebuild_usefulness(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:

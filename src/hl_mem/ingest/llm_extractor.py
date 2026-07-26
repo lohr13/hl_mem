@@ -75,7 +75,7 @@ attribute 对照表：
 - fact.architecture：系统结构、分层和组件关系；具体 API 方法签名、请求/响应格式才使用 fact.api_design。
 - config.timeout：超时配置，不使用 config.env；config.policy：行为策略约束，不使用 config.env。
 - preference.workflow：工作流偏好，不使用 choice.tool；config.path：文件路径，不使用 choice.tool。
-去重意识：如果新内容只是已有事实的补充或改写，将 confidence 降到 0.5 以下。
+confidence 只表示该 claim 本身的事实可信度。每条 claim 独立判断事实可信度，不要猜测它与已有记忆的关系。
 反例：
 ❌ "串行" → ✅ "LLM 提取任务串行执行"
 ❌ "90s" → ✅ "LLM 请求超时为 90 秒"

@@ -15,6 +15,21 @@ _DURABLE_SIGNAL = re.compile(
     r"记住|偏好|要求|必须|始终|永远不要|以后都)",
     re.IGNORECASE,
 )
+_DURABLE_DIAGNOSTIC_SIGNAL = re.compile(
+    r"(?:"
+    r"\bport\s+\d{2,5}\b|\b(?:provider|model|version)\s*(?:is|=|:)\s*\S+|"
+    r"(?-i:\b[A-Z][A-Z0-9_]{2,}\b)\s*(?:is|=|:)\s*\S+|"
+    r"(?:database|config(?:uration)?|working)?\s*(?:file\s+)?path\s*(?:is|=|:)\s*\S+|"
+    r"(?:[A-Za-z]:[\\/]|/(?:etc|opt|srv|var|home|workspace)/)\S+|"
+    r"(?:root cause|caused by|because|根因|原因是|端口|路径|版本|环境变量|provider)"
+    r")",
+    re.IGNORECASE,
+)
+_DURABLE_TOOL_MEMORY_SIGNAL = re.compile(
+    r"(?:\bremember\b|\bprefer(?:s|red|ence)?\b|\bmust\b|\balways\b|\bnever\b|"
+    r"记住|偏好|必须|始终|永远不要|以后都)",
+    re.IGNORECASE,
+)
 _RUNTIME_NOTICE = re.compile(
     r"^\s*\[IMPORTANT:\s*(?:Background process|Tool)\b",
     re.IGNORECASE | re.DOTALL,
@@ -78,7 +93,7 @@ class ExtractionPreFilter:
             return PreFilterDecision(False, "runtime_notice")
 
         if actor_type == "tool":
-            if _TOOL_CONTROL_PREFIX.search(text) and not _TOOL_WRAPPER_KEEP_SIGNAL.search(text):
+            if _TOOL_CONTROL_PREFIX.search(text) and not self._contains_durable_tool_signal(text):
                 return PreFilterDecision(False, "tool_control_frame")
             if self._is_transient_tool_result(text):
                 return PreFilterDecision(False, "transient_tool_result")
@@ -106,6 +121,15 @@ class ExtractionPreFilter:
         )
 
     @staticmethod
+    def _contains_durable_tool_signal(text: str) -> bool:
+        """判断 tool 正文是否包含值得提取的持久配置或诊断证据。"""
+        return bool(
+            _DURABLE_TOOL_MEMORY_SIGNAL.search(text)
+            or _DURABLE_DIAGNOSTIC_SIGNAL.search(text)
+            or _TOOL_WRAPPER_KEEP_SIGNAL.search(text)
+        )
+
+    @staticmethod
     def _is_transient_tool_result(text: str) -> bool:
         if re.fullmatch(
             r"\s*(?:\[Command timed out after\b[^\]\r\n]*\]|Tool loop warning:.*|"
@@ -119,6 +143,13 @@ class ExtractionPreFilter:
         except (json.JSONDecodeError, TypeError):
             return False
         if not isinstance(payload, dict):
+            return False
+        durable_text = "\n".join(
+            str(payload[key])
+            for key in ("error", "output", "stdout")
+            if payload.get(key) is not None and payload.get(key) != ""
+        )
+        if ExtractionPreFilter._contains_durable_tool_signal(durable_text):
             return False
         status = payload.get("status")
         completion_reason = payload.get("completion_reason")
@@ -146,5 +177,12 @@ class ExtractionPreFilter:
         except (json.JSONDecodeError, TypeError):
             return False
         if not isinstance(payload, dict) or not payload.get("error"):
+            return False
+        durable_text = "\n".join(
+            str(payload[key])
+            for key in ("error", "output", "stdout")
+            if payload.get(key) is not None and payload.get(key) != ""
+        )
+        if ExtractionPreFilter._contains_durable_tool_signal(durable_text):
             return False
         return payload.get("success") is False or payload.get("status") == "error"

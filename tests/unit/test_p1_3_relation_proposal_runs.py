@@ -56,8 +56,8 @@ def test_audit_and_auto_runs_create_independent_proposals(tmp_path: Path) -> Non
         database.close()
 
 
-def test_duplicate_mode_does_not_return_old_proposal_id(tmp_path: Path) -> None:
-    """同模式唯一键冲突必须明确返回 None，不能冒充本次写入。"""
+def test_same_mode_different_runs_are_both_retained(tmp_path: Path) -> None:
+    """同模式的不同运行必须各自保留不可变 proposal。"""
     database = Database(tmp_path / "proposal-dedup.db")
     connection = database.open()
     try:
@@ -81,7 +81,13 @@ def test_duplicate_mode_does_not_return_old_proposal_id(tmp_path: Path) -> None:
             "status": "pending",
             "created_at": "2026-01-01T00:00:00+00:00",
         }
-        assert repository.insert_proposal({**proposal, "run_id": "run-1"}) is not None
+        first_id = repository.insert_proposal({**proposal, "run_id": "run-1"})
+        second_id = repository.insert_proposal({**proposal, "run_id": "run-2"})
+        assert first_id is not None and second_id is not None and first_id != second_id
+        rows = connection.execute(
+            "SELECT run_id,mode FROM relation_proposals ORDER BY run_id"
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [("run-1", "audit"), ("run-2", "audit")]
         assert repository.insert_proposal({**proposal, "run_id": "run-2"}) is None
     finally:
         database.close()

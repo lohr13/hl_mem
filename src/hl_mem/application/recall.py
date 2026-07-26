@@ -296,6 +296,7 @@ class RecallService:
                 tag_candidate_limit=self.settings.tag_candidate_limit,
                 preference_recency_boost=self.settings.preference_recency_boost,
                 dedup_threshold=self.settings.recall_dedup_threshold,
+                dedup_candidate_limit=self.settings.recall_dedup_candidate_limit,
             ),
             relation_connection=self.connection,
             relation_config=self.relation_config,

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.config import RECALL_VECTOR_SCAN_LIMIT
-from hl_mem.core.vector import cosine_similarity
+from hl_mem.core.vector import normalized_cosine_similarity, normalized_vector
 from hl_mem.domain.claims.attributes import SLOT_REGISTRY, normalize_predicate
 from hl_mem.domain.claims.query_tags import (
     LOW_INFORMATION_TAGS,
@@ -48,6 +48,7 @@ class RecallConfig:
     tag_candidate_limit: int = 20
     preference_recency_boost: float = 1.0
     dedup_threshold: float = 0.0
+    dedup_candidate_limit: int = 100
 
 
 @dataclass
@@ -78,6 +79,7 @@ class RecallContext:
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
     dedup_threshold: float = 0.0
+    dedup_candidate_limit: int = 100
     fts: list[dict[str, Any]] = field(default_factory=list)
     dense: list[dict[str, Any]] = field(default_factory=list)
     tags: list[dict[str, Any]] = field(default_factory=list)
@@ -388,6 +390,7 @@ def _collect_candidates(
         tag_channel_weight=config.tag_channel_weight if tag_channel_weight is None else tag_channel_weight,
         tag_candidate_limit=effective_tag_candidate_limit,
         dedup_threshold=config.dedup_threshold,
+        dedup_candidate_limit=config.dedup_candidate_limit,
         fts=fts,
         dense=dense,
         tags=tag_results,
@@ -622,7 +625,7 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
         claim["_score"] = ctx.rerank_scores.get(claim["id"], ctx.pre_scores[claim["id"]])
         claim["_pre_score"] = ctx.pre_scores[claim["id"]]
         claim["_features"] = dict(ctx.feature_by_id[claim["id"]])
-    folded = fold_similar_claims(ctx.ranked_result, ctx.dedup_threshold)
+    folded = fold_similar_claims(ctx.ranked_result, ctx.dedup_threshold, ctx.dedup_candidate_limit)
     final = _preference_first(folded, ctx.limit, ctx.selected_intent)
     tracer = ctx.tracer
     if tracer is not None:
@@ -684,19 +687,53 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
     return final
 
 
-def fold_similar_claims(claims: list[dict[str, Any]], threshold: float) -> list[dict[str, Any]]:
-    """按最终得分顺序折叠 embedding 高度相似的 Claim。threshold <= 0 禁用折叠。"""
+def _fold_bucket(claim: dict[str, Any]) -> tuple[Any, ...] | None:
+    """返回允许折叠的保守语义桶；争议 Claim 永不参与折叠。"""
+    if claim.get("status", "active") == "disputed":
+        return None
+    return (
+        claim.get("namespace_key"),
+        claim.get("subject_entity_id"),
+        claim.get("canonical_slot"),
+        normalize_predicate(str(claim.get("predicate") or "")),
+    )
+
+
+def fold_similar_claims(
+    claims: list[dict[str, Any]],
+    threshold: float,
+    candidate_limit: int = 100,
+) -> list[dict[str, Any]]:
+    """在兼容语义桶内折叠高相似 Claim，并限制同步比较窗口。"""
     if threshold <= 0.0:
         return list(claims)
+    if candidate_limit < 1:
+        raise ValueError("candidate_limit must be positive")
+    ranked = sorted(claims, key=lambda item: -float(item.get("_score", 0.0)))
+    fold_candidates = ranked[:candidate_limit]
+    untouched = ranked[candidate_limit:]
+    decoded = {
+        str(claim["id"]): normalized_vector(embedding)
+        for claim in fold_candidates
+        if (embedding := claim.get("embedding_dense")) is not None
+    }
     kept: list[dict[str, Any]] = []
-    for claim in sorted(claims, key=lambda item: -float(item.get("_score", 0.0))):
-        embedding = claim.get("embedding_dense")
-        if embedding is not None and any(
-            retained.get("embedding_dense") is not None
-            and cosine_similarity(embedding, retained["embedding_dense"]) >= threshold
-            for retained in kept
+    kept_vectors: dict[tuple[Any, ...], list[tuple[float, ...]]] = {}
+    for claim in fold_candidates:
+        bucket = _fold_bucket(claim)
+        vector = decoded.get(str(claim["id"]))
+        if (
+            bucket is not None
+            and vector is not None
+            and any(
+                normalized_cosine_similarity(vector, retained) >= threshold
+                for retained in kept_vectors.get(bucket, [])
+            )
         ):
             continue
         kept.append(claim)
+        if bucket is not None and vector is not None:
+            kept_vectors.setdefault(bucket, []).append(vector)
+    kept.extend(untouched)
     original_order = {str(claim["id"]): index for index, claim in enumerate(claims)}
     return sorted(kept, key=lambda item: original_order[str(item["id"])])

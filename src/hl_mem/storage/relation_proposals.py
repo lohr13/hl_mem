@@ -17,7 +17,7 @@ class RelationProposalRepository:
         self.connection = connection
 
     def insert_proposal(self, proposal: dict[str, Any], commit: bool = True) -> str | None:
-        """插入本次运行的不可变提案；唯一键冲突时返回 None。"""
+        """插入本次运行的不可变提案；仅同一 run 的唯一键冲突返回 None。"""
         stored = dict(proposal)
         stored.setdefault("id", uuid.uuid4().hex)
         stored.setdefault("run_id", uuid.uuid4().hex)
