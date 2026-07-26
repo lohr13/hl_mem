@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.14.2
+- Document baseline: v0.14.3
 - Updated: 2026-07-26
 - Deployment baseline: local-first, SQLite-first
 
@@ -101,7 +101,7 @@ src/hl_mem/
 │   ├── jobs.py               # Durable job queue
 │   ├── relation_proposals.py # Auditable relation candidates
 │   ├── usefulness.py         # Feedback usefulness aggregation
-│   └── migrations/           # 29 immutable SQL migrations (001–029)
+│   └── migrations/           # 30 immutable SQL migrations (001-030)
 ├── workers/
 │   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
 │   ├── ttl.py                # Importance-aware expiry
