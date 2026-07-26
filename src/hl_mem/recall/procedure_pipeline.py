@@ -54,7 +54,7 @@ def _recency(value: object, half_life_days: int) -> float:
     if not value:
         return 0.0
     age = max(0.0, (datetime.now(timezone.utc) - parse_utc(str(value))).total_seconds() / 86400)
-    return 0.5 ** (age / half_life_days)
+    return float(0.5 ** (age / half_life_days))
 
 
 def _text(value: object) -> str:

@@ -88,7 +88,9 @@ class Deduplicator:
         new_slot = new.get("canonical_slot")
         values_differ = cls._canonical_claim(existing) != cls._canonical_claim(new)
         same_exclusive_slot = bool(
-            is_mutually_exclusive_attribute(existing_slot)
+            isinstance(existing_slot, str)
+            and isinstance(new_slot, str)
+            and is_mutually_exclusive_attribute(existing_slot)
             and is_mutually_exclusive_attribute(new_slot)
             and canonical_conflict_slot(existing_slot) == canonical_conflict_slot(new_slot)
         )

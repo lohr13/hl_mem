@@ -10,6 +10,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
+from time import perf_counter
 from typing import Any
 
 from hl_mem.application.ingest import IngestService
@@ -30,9 +31,9 @@ DEFAULT_BASELINE = ROOT / "evaluation/baselines/smoke_v2_baseline.json"
 DEFAULT_RESULTS = ROOT / "evaluation/results"
 FIXED_TIME = "2026-01-01T00:00:00+00:00"
 DEFAULT_TOLERANCES = {
-    "recall_at_5": 0.1,
+    "recall_at_5": 0.05,
     "recall_at_10": 0.1,
-    "mrr": 0.1,
+    "mrr": 0.05,
     "precision_at_5": 0.1,
     "temporal_accuracy": 0.0,
     "supersede_accuracy": 0.0,
@@ -189,7 +190,18 @@ def run_case(case: dict[str, Any], database_path: Path) -> dict[str, Any]:
         )
         precision_5 = relevant_in_top_5 / min(5, len(results)) if results else 0.0
         no_match = bool(case["expected"].get("no_match"))
-        passed = not results if no_match else recall_10 == 1.0
+        max_rank = case["expected"].get("max_rank")
+        rank_constraint_passed = True
+        if case["type"] == "recall":
+            if not isinstance(max_rank, int) or max_rank < 1:
+                raise ValueError(f"recall case {case['id']} must define a positive max_rank")
+            top_ranked_evidence = {
+                str(evidence.get("event_id") or evidence.get("evidence_id") or evidence.get("id"))
+                for result in results[:max_rank]
+                for evidence in result.get("evidence", [])
+            }
+            rank_constraint_passed = set(expected_ids).issubset(top_ranked_evidence)
+        passed = not results if no_match else recall_10 == 1.0 and rank_constraint_passed
         item = {
             "id": case["id"],
             "type": case["type"],
@@ -198,6 +210,8 @@ def run_case(case: dict[str, Any], database_path: Path) -> dict[str, Any]:
             "recall_at_10": recall_10,
             "mrr": reciprocal_rank,
             "precision_at_5": precision_5,
+            "max_rank": max_rank,
+            "rank_constraint_passed": rank_constraint_passed,
             "returned_ids": [result["id"] for result in results],
         }
         if case["type"] == "temporal":
@@ -247,13 +261,26 @@ def dataset_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def percentile(values: list[float], percentile_rank: float) -> float:
+    """使用线性插值计算延迟分位数。"""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * percentile_rank
+    lower_index = int(position)
+    upper_index = min(lower_index + 1, len(ordered) - 1)
+    weight = position - lower_index
+    return ordered[lower_index] + (ordered[upper_index] - ordered[lower_index]) * weight
+
+
 def case_metrics(case_results: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
     """提取适合持久化比较的逐用例数值指标。"""
     return {
         str(item["id"]): {
             key: float(value)
             for key, value in item.items()
-            if key not in {"id", "type", "passed", "returned_ids"} and isinstance(value, (int, float))
+            if key not in {"id", "type", "passed", "returned_ids", "latency_ms", "max_rank", "rank_constraint_passed"}
+            and isinstance(value, (int, float))
         }
         for item in case_results
     }
@@ -312,9 +339,16 @@ def main() -> int:
     cases = load_cases(args.dataset)
     with tempfile.TemporaryDirectory(prefix="hl-mem-smoke-") as temporary:
         root = Path(temporary)
-        case_results = [run_case(case, root / f"{case['id']}.sqlite3") for case in cases]
+        case_results = []
+        for case in cases:
+            started_at = perf_counter()
+            case_result = run_case(case, root / f"{case['id']}.sqlite3")
+            case_result["latency_ms"] = (perf_counter() - started_at) * 1000.0
+            case_results.append(case_result)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     metrics = aggregate(case_results)
+    latencies = [float(item["latency_ms"]) for item in case_results]
+    latency = {"p50_ms": percentile(latencies, 0.5), "p90_ms": percentile(latencies, 0.9)}
     per_case = case_metrics(case_results)
     source_hash = dataset_hash(args.dataset)
     if args.update_baseline:
@@ -333,6 +367,7 @@ def main() -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "components": {"extractor": "fake", "embedder": "fake"},
         "metrics": metrics,
+        "latency": latency,
         "cases": case_results,
         "baseline_comparison": {
             "baseline": baseline["metrics"],
@@ -348,6 +383,7 @@ def main() -> int:
         json.dumps(
             {
                 "current": metrics,
+                "latency": latency,
                 "baseline": baseline["metrics"],
                 "delta": aggregate_delta,
                 "passed": passed,

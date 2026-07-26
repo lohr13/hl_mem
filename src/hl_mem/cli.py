@@ -145,7 +145,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.limit is not None and args.limit < 1:
             parser.error("--limit must be positive")
         layers = tuple(item.strip() for item in args.layers.split(",") if item.strip())
-        result = BenchmarkRunner(limit=args.limit).run(
+        benchmark_result = BenchmarkRunner(limit=args.limit).run(
             source=args.source,
             subset=args.subset,
             layers=layers,
@@ -156,8 +156,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             json.dumps(
                 {
                     "benchmark": args.benchmark,
-                    "cases": len(result["cases"]),
-                    "config_hash": result["config_hash"],
+                    "cases": len(benchmark_result["cases"]),
+                    "config_hash": benchmark_result["config_hash"],
                     "output": str(args.output),
                 },
                 ensure_ascii=False,
@@ -166,12 +166,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         return
     if args.command == "conflicts":
-        result: Any = (
+        conflict_result: Any = (
             list_conflicts(args.db)
             if args.conflict_command == "list"
             else resolve_conflict(args.db, args.case_id, args.decision)
         )
-        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        print(json.dumps(conflict_result, ensure_ascii=False, sort_keys=True))
         return
     count = export_database(args.db, args.path) if args.command == "export" else import_database(args.db, args.path)
     print(json.dumps({"processed": count}))

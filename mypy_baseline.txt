@@ -1,7 +1,0 @@
-1	src/hl_mem/adapters/hermes/provider.py | union-attr | Item "None" of "str | None" has no attribute "rstrip"
-1	src/hl_mem/cli.py | no-redef | Name "result" already defined on line <LINE>
-1	src/hl_mem/domain/claims/conflicts.py | arg-type | Argument 1 to "canonical_conflict_slot" has incompatible type "Any | None"; expected "str"
-1	src/hl_mem/domain/claims/dedup.py | arg-type | Argument 1 to "canonical_conflict_slot" has incompatible type "Any | None"; expected "str"
-1	src/hl_mem/domain/content.py | arg-type | Argument "region" to "ImagePart" has incompatible type "tuple[float, ...] | None"; expected "tuple[float, float, float, float] | None"
-1	src/hl_mem/ingest/extractors.py | assignment | Incompatible types in assignment (expression has type "str | Any", target has type "bool")
-1	src/hl_mem/workers/reclassify.py | arg-type | Argument 1 to "update_classification" of "ClaimRepository" has incompatible type "Any | None"; expected "str"

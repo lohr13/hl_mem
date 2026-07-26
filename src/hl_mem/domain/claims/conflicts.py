@@ -97,7 +97,12 @@ class ConflictResolver:
     def resolve(self, existing: dict[str, Any], new: dict[str, Any]) -> str:
         existing_slot = existing.get("canonical_slot")
         new_slot = new.get("canonical_slot")
-        if not (is_mutually_exclusive_attribute(existing_slot) and is_mutually_exclusive_attribute(new_slot)):
+        if not (
+            isinstance(existing_slot, str)
+            and isinstance(new_slot, str)
+            and is_mutually_exclusive_attribute(existing_slot)
+            and is_mutually_exclusive_attribute(new_slot)
+        ):
             return "compatible"
         if canonical_conflict_slot(existing_slot) != canonical_conflict_slot(new_slot):
             return "compatible"

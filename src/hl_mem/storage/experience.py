@@ -18,6 +18,8 @@ from hl_mem.lifecycle import (
 )
 from hl_mem.storage._shared import decode_json, encode_json, escape_like_pattern
 
+__all__ = ["ExperienceRepository", "InvalidStateTransitionError", "backprop_episode_reward"]
+
 if TYPE_CHECKING:
     from hl_mem.settings import Settings
 

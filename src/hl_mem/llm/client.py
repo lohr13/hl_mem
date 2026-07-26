@@ -149,7 +149,10 @@ class LLMClient:
             timeout=httpx.Timeout(timeout_seconds) if timeout_seconds is not None else self.timeout,
         )
         response.raise_for_status()
-        return response.json()
+        response_payload = response.json()
+        if not isinstance(response_payload, dict):
+            raise TypeError("LLM response body must be a JSON object")
+        return response_payload
 
     def _select_structured_mode(self, request: LLMRequest) -> StructuredOutputMode:
         """根据请求偏好、能力和已缓存降级状态选择结构化模式。"""

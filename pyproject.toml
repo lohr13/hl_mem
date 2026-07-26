@@ -1,6 +1,6 @@
 [project]
 name = "hl-mem"
-version = "0.14.1"
+version = "0.14.2"
 description = "Evidence-aware local memory service"
 readme = "README.md"
 license = "Apache-2.0"
@@ -73,6 +73,17 @@ exclude = [".build-venv", "var", "evaluation/results"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/hl_mem/storage/experience.py" = ["I001"]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "hl_mem.core.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "hl_mem.domain.*"
+strict = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hl_mem"]

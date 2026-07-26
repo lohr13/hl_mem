@@ -22,7 +22,10 @@ class HLMemProvider:
     def __init__(self, db_path: str | None = None, daemon_url: str | None = None, timeout: float = 2.0) -> None:
         settings = Settings.from_env()
         self.db_path = db_path
-        self.daemon_url = (daemon_url or os.getenv("HL_MEM_URL", "http://127.0.0.1:8200")).rstrip("/")
+        configured_daemon_url = daemon_url or os.getenv("HL_MEM_URL", "http://127.0.0.1:8200")
+        if configured_daemon_url is None:
+            raise ValueError("daemon URL must be configured")
+        self.daemon_url = configured_daemon_url.rstrip("/")
         self.timeout = timeout
         self._client = HLMemHttpClient(
             self.daemon_url,

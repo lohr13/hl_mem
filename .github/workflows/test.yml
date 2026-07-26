@@ -50,7 +50,7 @@ jobs:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
-      - run: uv run --frozen python scripts/check_mypy_baseline.py
+      - run: uv run --frozen python -m mypy src/hl_mem/ --ignore-missing-imports
 
   quality-smoke:
     runs-on: ubuntu-latest
@@ -109,7 +109,7 @@ jobs:
       - run: uv sync --frozen
       - name: Apply migrations from an empty database
         run: |
-          python -c "import tempfile; from pathlib import Path; from hl_mem.storage.database import Database; path = Path(tempfile.mkdtemp()) / 'fresh.db'; db = Database(path); connection = db.open(); applied = {row[0] for row in connection.execute('SELECT version FROM schema_migrations')}; expected = {path.stem for path in Path('src/hl_mem/storage/migrations').glob('*.sql')}; missing = expected - applied; assert not missing, f'missing SQL migrations: {sorted(missing)}'; db.close(); print(f'applied {len(expected)} SQL migrations')"
+          uv run --frozen python -c "import tempfile; from pathlib import Path; from hl_mem.storage.database import Database; path = Path(tempfile.mkdtemp()) / 'fresh.db'; db = Database(path); connection = db.open(); applied = {row[0] for row in connection.execute('SELECT version FROM schema_migrations')}; expected = {path.stem for path in Path('src/hl_mem/storage/migrations').glob('*.sql')}; missing = expected - applied; assert not missing, f'missing SQL migrations: {sorted(missing)}'; db.close(); print(f'applied {len(expected)} SQL migrations')"
 
   import-boundary:
     runs-on: ubuntu-latest

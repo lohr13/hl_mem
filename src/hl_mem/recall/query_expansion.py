@@ -8,7 +8,7 @@ import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from typing import Any, cast
+from typing import Any
 
 from hl_mem.domain.recall import RecallIntent
 from hl_mem.llm.client import LLMClient
@@ -100,8 +100,6 @@ class QueryExpander:
             return self._empty(started, "timeout")
         except Exception:
             return self._empty(started, "error")
-        response = cast(LLMResponse, response)
-
         input_tokens = int(response.input_tokens or 0)
         output_tokens = int(response.output_tokens or 0)
         total_tokens = int(response.usage_total_tokens or input_tokens + output_tokens)

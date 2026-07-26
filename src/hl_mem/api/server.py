@@ -12,7 +12,7 @@ from typing import Any, AsyncIterator, Iterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
 from hl_mem import __version__, components
@@ -60,7 +60,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.max_request_body = max_request_body
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """检查请求体声明长度，并继续处理未超限的请求。"""
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > self.max_request_body:

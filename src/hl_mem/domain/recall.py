@@ -18,6 +18,8 @@ from hl_mem.domain.constants import (
 )
 from hl_mem.domain.temporal import RecallIntent, parse_utc
 
+__all__ = ["QueryRoute", "RecallIntent", "route_query", "route_recall_intent"]
+
 
 @dataclass(frozen=True)
 class QueryRoute:

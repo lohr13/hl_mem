@@ -149,7 +149,7 @@ def reclassify_claims(
         allowed_ids = {claim["id"] for claim in batch}
         for item in classify_batch(llm_client, batch):
             claim_id = item.get("id")
-            if claim_id not in allowed_ids:
+            if not isinstance(claim_id, str) or claim_id not in allowed_ids:
                 continue
             scope = item.get("scope", "permanent")
             scope = scope if scope in {"temporal", "permanent"} else "permanent"

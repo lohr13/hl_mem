@@ -2,6 +2,12 @@
 
 本文件记录发布级变更摘要。测试数字是对应版本的发布基线；migration 数是该版本结束时的 SQL migration 总数。
 
+## v0.14.2 — 2026-07-26
+
+- **类型治理**：清零 mypy 错误，移除 baseline 门禁，并对 core/domain 启用 strict。
+- **CI 与质量门禁**：migration 使用冻结的 uv 环境；quality smoke 收紧 Recall@5/MRR 容差、增加最大排名约束并报告 p50/p90 延迟。
+- **Tests**: validated by CI workflow on tag commit
+
 ## v0.14.1 — 2026-07-26
 
 - **治理门禁**：mypy 纳入 uv 锁文件，Ruff 扩展为全仓库检查，主 CI 增加 smoke 与 `v*` tag 触发。

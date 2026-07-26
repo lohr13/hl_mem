@@ -107,8 +107,8 @@ class RecallContext:
     ranked_claims: list[dict[str, Any]] = field(default_factory=list)
 
     rerank_us: int = 0
-    reranked: list = field(default_factory=list)
-    valid_reranked: list = field(default_factory=list)
+    reranked: list[tuple[int, float]] = field(default_factory=list)
+    valid_reranked: list[tuple[dict[str, Any], float]] = field(default_factory=list)
     rerank_scores: dict[str, float] = field(default_factory=dict)
     ranked_result: list[dict[str, Any]] = field(default_factory=list)
     outcome: str = ""

@@ -103,7 +103,12 @@ def _parse_image(raw: dict[str, Any], max_bytes: int) -> ImagePart:
     if raw_region is not None:
         if not isinstance(raw_region, (list, tuple)) or len(raw_region) != 4:
             raise ValueError("image region must contain four coordinates")
-        region = tuple(float(value) for value in raw_region)
+        region = (
+            float(raw_region[0]),
+            float(raw_region[1]),
+            float(raw_region[2]),
+            float(raw_region[3]),
+        )
         x1, y1, x2, y2 = region
         if not (0.0 <= x1 < x2 <= 1.0 and 0.0 <= y1 < y2 <= 1.0):
             raise ValueError("image region must be normalized and ordered")

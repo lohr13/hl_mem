@@ -22,7 +22,7 @@ class PostgresDatabase:
         if self.connection is not None:
             return self.connection
         try:
-            import psycopg  # type: ignore[import-not-found]
+            import psycopg
         except ImportError as error:
             raise RuntimeError("PostgreSQL backend requires the optional psycopg package") from error
         self.connection = psycopg.connect(self.dsn, connect_timeout=self.connect_timeout)

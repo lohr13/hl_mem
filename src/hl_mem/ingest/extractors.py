@@ -59,7 +59,7 @@ class FakeExtractor:
             if match := pattern.search(text):
                 value = match.group(1).strip()
                 canonical_attribute = infer_canonical_attribute(predicate, "用户", value)
-                qualifiers = {"state_change": True}
+                qualifiers: dict[str, Any] = {"state_change": True}
                 if predicate == "service_status":
                     qualifiers["service"] = value.removesuffix("现在挂了").strip() or "unknown"
                 elif not text.startswith("现在"):
