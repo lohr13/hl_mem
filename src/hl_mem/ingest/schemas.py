@@ -2,14 +2,80 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS, OPERATIONAL_SLOT_NAMES
 
-CanonicalSlot = Literal[*OPERATIONAL_SLOT_NAMES]
-TopicTag = Literal[*tuple(sorted(ALLOWED_TOPIC_TAGS))]
+CanonicalSlot: TypeAlias = Literal[
+    "preference.ui_theme",
+    "preference.response_style",
+    "preference.tool_choice",
+    "choice.tool",
+    "choice.database",
+    "choice.model",
+    "choice.provider",
+    "choice.memory_system",
+    "state.service_health",
+    "identity.name",
+    "config.port",
+    "config.path",
+    "config.env",
+    "config.network",
+    "plan.deadline",
+]
+TopicTag: TypeAlias = Literal[
+    "account",
+    "api",
+    "architecture",
+    "behavior",
+    "bugfix",
+    "capability",
+    "cause",
+    "choice",
+    "config",
+    "connectivity",
+    "constraint",
+    "contact",
+    "decision",
+    "dependency",
+    "deployment",
+    "evaluation",
+    "fact",
+    "framework",
+    "goal",
+    "hardware",
+    "identity",
+    "implementation",
+    "issue",
+    "job",
+    "membership",
+    "memory",
+    "migration",
+    "os",
+    "other",
+    "plan",
+    "preference",
+    "process",
+    "protocol",
+    "requirement",
+    "resolution",
+    "role",
+    "routing",
+    "schedule",
+    "state",
+    "test",
+    "timeout",
+    "tool_choice",
+    "version",
+    "workflow",
+]
+
+if set(get_args(CanonicalSlot)) != set(OPERATIONAL_SLOT_NAMES):
+    raise RuntimeError("CanonicalSlot type alias is out of sync with OPERATIONAL_SLOT_NAMES")
+if set(get_args(TopicTag)) != set(ALLOWED_TOPIC_TAGS):
+    raise RuntimeError("TopicTag type alias is out of sync with ALLOWED_TOPIC_TAGS")
 
 
 class ExtractedClaimSchema(BaseModel):

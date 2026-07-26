@@ -1,10 +1,7 @@
 """Extract useful info from Hindsight .pyc files and client API."""
 
-import dis
-import importlib.util
 import marshal
 import os
-import sys
 import types
 
 HINDSIGHT_BASE = "C:/Users/Administrator/AppData/Local/hermes/hermes-agent/.venv/Lib/site-packages/hindsight_api"

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 
-from hl_mem.observability.audit import AuditLogger, NullAuditLogger, audit_context, audit_scope
+from hl_mem.observability.audit import (
+    AuditLogger,
+    NullAuditLogger,
+    audit_context,
+    audit_scope,
+)
 from hl_mem.storage.database import Database
 
 

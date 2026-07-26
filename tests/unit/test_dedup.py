@@ -1,4 +1,3 @@
-import sqlite3
 
 from hl_mem.domain.claims.dedup import Deduplicator
 from hl_mem.ingest.embedder import FakeEmbedder

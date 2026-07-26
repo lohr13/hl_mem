@@ -67,6 +67,32 @@ def _compact_claim(claim: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _claim_row(claim: dict[str, Any]) -> ClaimRow:
+    """在动态 SQLite 行与关系发现协议之间建立显式类型边界。"""
+    row = ClaimRow(
+        id=str(claim["id"]),
+        namespace_key=str(claim["namespace_key"]),
+        subject_entity_id=str(claim.get("subject_entity_id") or ""),
+        predicate=str(claim.get("predicate") or ""),
+        value=claim.get("value"),
+        status=str(claim["status"]),
+        confidence=float(claim.get("confidence") or 0.0),
+        canonical_attribute=claim.get("canonical_attribute"),
+        canonical_slot=claim.get("canonical_slot"),
+        topic_tags=list(claim.get("topic_tags") or []),
+        valid_from=claim.get("valid_from"),
+        valid_to=claim.get("valid_to"),
+        recorded_from=claim.get("recorded_from"),
+        recorded_to=claim.get("recorded_to"),
+        access_count=int(claim.get("access_count") or 0),
+        helpful_rate=float(claim.get("helpful_rate") or 0.0),
+    )
+    embedding = claim.get("embedding_dense")
+    if isinstance(embedding, bytes):
+        row["embedding_dense"] = embedding
+    return row
+
+
 class LLMRelationDiscoverer(RelationDiscoveryProtocol):
     """复用统一 LLM 客户端的一次性批量关系判定器。"""
 
@@ -129,7 +155,7 @@ def build_neighbor_pool(
     connection: sqlite3.Connection,
     source_claim: dict[str, Any],
     pool_limit: int,
-) -> list[dict[str, Any]]:
+) -> list[ClaimRow]:
     """用单条参数化 SQL 构造同 namespace 的有界候选池。"""
     if pool_limit < 1:
         raise ValueError("pool_limit must be positive")
@@ -164,10 +190,14 @@ def build_neighbor_pool(
             scan_limit,
         ),
     ).fetchall()
-    candidates = [ClaimRepository._decode_claim(dict(row)) for row in rows]
+    candidates: list[dict[str, Any]] = []
+    for stored_row in rows:
+        candidate = ClaimRepository._decode_claim(dict(stored_row))
+        if candidate is None:
+            raise RuntimeError("SQLite returned an empty claim row")
+        candidates.append(candidate)
     source_embedding = source_claim.get("embedding_dense")
     for candidate in candidates:
-        assert candidate is not None
         candidate["_dense_similarity"] = (
             cosine_similarity(source_embedding, candidate["embedding_dense"])
             if source_embedding and candidate.get("embedding_dense")
@@ -183,7 +213,7 @@ def build_neighbor_pool(
             str(item["id"]),
         )
     )
-    return [{key: value for key, value in item.items() if not key.startswith("_")} for item in candidates[:pool_limit]]
+    return [_claim_row(item) for item in candidates[:pool_limit]]
 
 
 def _validate_proposal(
@@ -196,10 +226,12 @@ def _validate_proposal(
         return "self_loop"
     if not 0.0 <= proposal.confidence <= 1.0:
         return "confidence_out_of_range"
-    endpoints = [claims.get(proposal.from_claim_id), claims.get(proposal.to_claim_id)]
-    if any(endpoint is None for endpoint in endpoints):
+    from_claim = claims.get(proposal.from_claim_id)
+    to_claim = claims.get(proposal.to_claim_id)
+    if from_claim is None or to_claim is None:
         return "missing_endpoint"
-    if endpoints[0]["namespace_key"] != endpoints[1]["namespace_key"]:
+    endpoints = (from_claim, to_claim)
+    if from_claim["namespace_key"] != to_claim["namespace_key"]:
         return "cross_namespace"
     if any(endpoint["status"] not in {"active", "disputed"} for endpoint in endpoints):
         return "inactive_endpoint"
@@ -264,7 +296,7 @@ def discover_relations(
     if source is None or source["status"] not in {"active", "disputed"}:
         return {"candidates": 0, "proposals": 0, "applied": 0, "conflicts": 0, "rejected": 0}
     candidates = build_neighbor_pool(connection, source, pool_limit)
-    proposed = discoverer.propose(source, candidates, max_proposals=max_proposals)
+    proposed = discoverer.propose(_claim_row(source), candidates, max_proposals=max_proposals)
     ids = list(
         dict.fromkeys(
             [source["id"], *(item["id"] for item in candidates)]

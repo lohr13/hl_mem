@@ -380,7 +380,7 @@ class RecallService:
         token_budget: int,
     ) -> dict[str, Any]:
         """按优先级跨类型组装受 token 预算约束的上下文。"""
-        all_items = (
+        all_items: list[dict[str, Any]] = (
             [{"type": "claim", "data": item, "priority": 2} for item in claims]
             + [{"type": "observation", "data": item, "priority": 1} for item in observations]
             + [{"type": "policy", "data": item, "priority": 0} for item in policies]

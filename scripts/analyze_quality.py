@@ -1,8 +1,6 @@
 """Quick data quality analysis for hl_mem claims."""
 
-import json
 import sqlite3
-from collections import Counter
 
 conn = sqlite3.connect("var/hl_mem.db")
 conn.row_factory = sqlite3.Row

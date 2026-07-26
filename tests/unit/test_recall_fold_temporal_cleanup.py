@@ -9,7 +9,11 @@ from typing import Any
 from unittest.mock import patch
 
 from hl_mem.ingest.embedder import pack_vector
-from hl_mem.recall.staged_pipeline import RecallConfig, fold_similar_claims, hybrid_claims
+from hl_mem.recall.staged_pipeline import (
+    RecallConfig,
+    fold_similar_claims,
+    hybrid_claims,
+)
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.decay import cleanup_stale_temporal_claims

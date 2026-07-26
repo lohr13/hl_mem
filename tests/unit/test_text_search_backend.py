@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from hl_mem.protocols import TextSearchBackend
-from hl_mem.settings import Settings
 
 
 class StubTextSearchBackend:

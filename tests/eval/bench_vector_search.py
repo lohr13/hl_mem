@@ -51,7 +51,6 @@ def test_vector_search_latency(scale: int, tmp_path: Path) -> None:
     conn = db.open()
     _populate_claims(conn, scale)
 
-    query_vec = _random_vector(2048)
     latencies = []
 
     for _ in range(20):

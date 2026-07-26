@@ -3,7 +3,11 @@
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
-from hl_mem.workers.consolidate import ConflictConsolidator, ConsolidationDecision, enqueue_daily_consolidation
+from hl_mem.workers.consolidate import (
+    ConflictConsolidator,
+    ConsolidationDecision,
+    enqueue_daily_consolidation,
+)
 
 
 class Judge:

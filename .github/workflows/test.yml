@@ -3,6 +3,7 @@ name: Tests
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -38,7 +39,7 @@ jobs:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
-      - run: uv run --frozen ruff check src/
+      - run: uv run --frozen ruff check .
 
   type-check:
     runs-on: ubuntu-latest
@@ -49,8 +50,15 @@ jobs:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
-      - run: uv pip install mypy
-      - run: .venv/bin/python scripts/check_mypy_baseline.py
+      - run: uv run --frozen python scripts/check_mypy_baseline.py
+
+  quality-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - run: uv run --frozen python scripts/run_quality_smoke.py
 
   format:
     runs-on: ubuntu-latest

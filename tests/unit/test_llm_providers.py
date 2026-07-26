@@ -1,7 +1,16 @@
 import httpx
 
-from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
-from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
+from hl_mem.llm.providers import (
+    DashScopeProvider,
+    OpenAICompatibleProvider,
+    ZhipuProvider,
+)
+from hl_mem.llm.types import (
+    LLMMessage,
+    LLMRequest,
+    StructuredOutputMode,
+    StructuredOutputSpec,
+)
 
 
 def _request() -> LLMRequest:

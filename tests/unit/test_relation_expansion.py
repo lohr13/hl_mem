@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from hl_mem.domain.recall import RecallIntent
 from hl_mem.domain.relations import get_relations_batch
-from hl_mem.recall.relation_expansion import RelationExpansionConfig, expand_related_claims
+from hl_mem.recall.relation_expansion import (
+    RelationExpansionConfig,
+    expand_related_claims,
+)
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 

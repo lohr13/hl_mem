@@ -8,11 +8,9 @@ hl_mem 数据清洗脚本 v2
 """
 
 import json
-import os
 import sqlite3
 import sys
 from collections import Counter
-from datetime import datetime, timezone
 
 DB_PATH = "var/hl_mem.db"
 DRY_RUN = "--dry-run" in sys.argv
@@ -284,7 +282,6 @@ def main():
     merged_cnt = 0
     for d in dupes:
         ids = d["ids"].split(",")
-        subjects = d["subjects"].split(",")
         # Keep the first (highest importance or most general subject), supersede the rest
         # Prefer subject "用户" or "hl_mem" as canonical
         rows_info = []

@@ -190,13 +190,13 @@ def _apply_equivalent_pair(
         current = {row["id"]: dict(row) for row in current_rows}
         current_left = current.get(left["id"])
         current_right = current.get(right["id"])
+        if pair is None or current_left is None or current_right is None:
+            connection.rollback()
+            return False
         stale = (
-            pair is None
-            or pair["decision"] != "equivalent"
+            pair["decision"] != "equivalent"
             or float(pair["judge_confidence"] or 0.0) < min_confidence
             or pair["applied_at"] is not None
-            or current_left is None
-            or current_right is None
             or current_left["status"] != "active"
             or current_right["status"] != "active"
             or current_left["recorded_from"] != left.get("recorded_from")

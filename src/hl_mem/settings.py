@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
@@ -25,6 +25,95 @@ ProcedureRecallMode = Literal["off", "keyword", "auto"]
 FeedbackLifecycleMode = Literal["off", "observe", "on"]
 ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
+
+
+@overload
+def _env_choice(name: str, default: EmbedderMode, allowed: tuple[Literal["fake"], Literal["real"]]) -> EmbedderMode: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: RerankerMode,
+    allowed: tuple[Literal["off"], Literal["fake"], Literal["on"], Literal["real"]],
+) -> RerankerMode: ...
+
+
+@overload
+def _env_choice(name: str, default: RerankerProvider, allowed: tuple[Literal["dashscope"]]) -> RerankerProvider: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: RelationExpansionMode,
+    allowed: tuple[Literal["off"], Literal["on"]],
+) -> RelationExpansionMode: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: RelationDiscoveryMode,
+    allowed: tuple[Literal["off"], Literal["audit"], Literal["auto"]],
+) -> RelationDiscoveryMode: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: QueryExpansionMode,
+    allowed: tuple[Literal["off"], Literal["auto"], Literal["always"]],
+) -> QueryExpansionMode: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: ProcedureRecallMode,
+    allowed: tuple[Literal["off"], Literal["keyword"], Literal["auto"]],
+) -> ProcedureRecallMode: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: ExtractorMode,
+    allowed: tuple[Literal["fake"], Literal["real"], Literal["llm"]],
+) -> ExtractorMode: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: LLMProvider,
+    allowed: tuple[Literal["dashscope"], Literal["zhipu"], Literal["openai_compatible"]],
+) -> LLMProvider: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: StructuredOutputModeName,
+    allowed: tuple[Literal["auto"], Literal["json_object"], Literal["json_schema"]],
+) -> StructuredOutputModeName: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: FeedbackLifecycleMode,
+    allowed: tuple[Literal["off"], Literal["observe"], Literal["on"]],
+) -> FeedbackLifecycleMode: ...
+
+
+def _env_choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
+    """读取、规范化并校验枚举型环境变量。"""
+    value = os.getenv(name, default).strip().lower()
+    if value not in allowed:
+        choices = ", ".join(repr(item) for item in allowed)
+        raise ConfigurationError(f"{name} must be one of: {choices}")
+    return value
 
 
 def _parse_on_off(value: str, variable_name: str) -> bool:
@@ -194,7 +283,7 @@ class Settings:
             environment=environment,
             database_path=os.getenv("HL_MEM_DB_PATH", "var/hl_mem.db"),
             allow_fake_fallback=os.getenv("HL_MEM_ALLOW_FAKE_FALLBACK", "").lower() == "true",
-            embedder_mode=os.getenv("HL_MEM_EMBEDDER", "real" if production else "fake").lower(),
+            embedder_mode=_env_choice("HL_MEM_EMBEDDER", "real" if production else "fake", ("fake", "real")),
             embedding_dim=int(os.getenv("EMBEDDING_DIM", "2048")),
             embedding_api_key=os.getenv("EMBEDDING_API_KEY"),
             embedding_base_url=os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
@@ -202,14 +291,18 @@ class Settings:
             embedding_connect_timeout=float(os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")),
             embedding_read_timeout=float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
             embedding_max_attempts=int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
-            reranker_mode=os.getenv("HL_MEM_RERANKER", "real" if production else "off").lower(),
-            reranker_provider=os.getenv("HL_MEM_RERANKER_PROVIDER", "dashscope").lower(),
+            reranker_mode=_env_choice(
+                "HL_MEM_RERANKER", "real" if production else "off", ("off", "fake", "on", "real")
+            ),
+            reranker_provider=_env_choice("HL_MEM_RERANKER_PROVIDER", "dashscope", ("dashscope",)),
             reranker_api_key=os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY"),
             reranker_base_url=os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
             reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
-            relation_expansion_mode=os.getenv("HL_MEM_RELATION_EXPANSION", "off").lower(),
+            relation_expansion_mode=_env_choice("HL_MEM_RELATION_EXPANSION", "off", ("off", "on")),
             relation_expansion_max_depth=int(os.getenv("HL_MEM_RELATION_EXPANSION_MAX_DEPTH", "1")),
-            relation_discovery_mode=os.getenv("HL_MEM_RELATION_DISCOVERY_MODE", "audit").lower(),
+            relation_discovery_mode=_env_choice(
+                "HL_MEM_RELATION_DISCOVERY_MODE", "audit", ("off", "audit", "auto")
+            ),
             relation_discovery_pool_limit=int(os.getenv("HL_MEM_RELATION_DISCOVERY_POOL_LIMIT", "40")),
             relation_discovery_max_proposals=int(os.getenv("HL_MEM_RELATION_DISCOVERY_MAX_PROPOSALS", "10")),
             relation_auto_apply_confidence=float(os.getenv("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE", "0.90")),
@@ -224,7 +317,7 @@ class Settings:
             tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower() == "true",
             tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
             tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
-            query_expansion_mode=os.getenv("HL_MEM_QUERY_EXPANSION_MODE", "auto").lower(),
+            query_expansion_mode=_env_choice("HL_MEM_QUERY_EXPANSION_MODE", "auto", ("off", "auto", "always")),
             query_expansion_max=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX", "2")),
             query_expansion_candidate_floor=int(os.getenv("HL_MEM_QUERY_EXPANSION_CANDIDATE_FLOOR", "8")),
             query_expansion_token_ceiling=int(os.getenv("HL_MEM_QUERY_EXPANSION_TOKEN_CEILING", "256")),
@@ -233,7 +326,9 @@ class Settings:
                 os.getenv("HL_MEM_QUERY_EXPANSION_TOTAL_TIMEOUT_SECONDS", "3.0")
             ),
             query_expansion_max_concurrency=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX_CONCURRENCY", "4")),
-            procedure_recall_mode=os.getenv("HL_MEM_PROCEDURE_RECALL_MODE", "keyword").lower(),
+            procedure_recall_mode=_env_choice(
+                "HL_MEM_PROCEDURE_RECALL_MODE", "keyword", ("off", "keyword", "auto")
+            ),
             procedure_llm_threshold=float(os.getenv("HL_MEM_PROCEDURE_LLM_THRESHOLD", "0.80")),
             procedure_router_timeout_seconds=float(os.getenv("HL_MEM_PROCEDURE_ROUTER_TIMEOUT_SECONDS", "1.5")),
             procedure_candidate_limit=int(os.getenv("HL_MEM_PROCEDURE_CANDIDATE_LIMIT", "30")),
@@ -247,7 +342,7 @@ class Settings:
             hermes_prefetch_cache_ttl_seconds=float(os.getenv("HL_MEM_HERMES_PREFETCH_CACHE_TTL_SECONDS", "300")),
             policy_induction_lookback_days=int(os.getenv("HL_MEM_POLICY_INDUCTION_LOOKBACK_DAYS", "7")),
             policy_induction_min_episodes=int(os.getenv("HL_MEM_POLICY_INDUCTION_MIN_EPISODES", "3")),
-            extractor_mode=os.getenv("HL_MEM_EXTRACTOR", "fake").lower(),
+            extractor_mode=_env_choice("HL_MEM_EXTRACTOR", "fake", ("fake", "real", "llm")),
             extract_pre_filter=_parse_on_off(
                 os.getenv("HL_MEM_EXTRACT_PRE_FILTER", "off"),
                 "HL_MEM_EXTRACT_PRE_FILTER",
@@ -255,13 +350,17 @@ class Settings:
             llm_api_key=os.getenv("LLM_API_KEY"),
             llm_base_url=os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
             llm_model=os.getenv("LLM_MODEL", "qwen3.7-plus"),
-            llm_provider=os.getenv("HL_MEM_LLM_PROVIDER", "dashscope").lower(),
-            llm_structured_mode=os.getenv("HL_MEM_LLM_STRUCTURED_MODE", "auto").lower(),
+            llm_provider=_env_choice(
+                "HL_MEM_LLM_PROVIDER", "dashscope", ("dashscope", "zhipu", "openai_compatible")
+            ),
+            llm_structured_mode=_env_choice(
+                "HL_MEM_LLM_STRUCTURED_MODE", "auto", ("auto", "json_object", "json_schema")
+            ),
             llm_timeout=float(os.getenv("LLM_TIMEOUT", "90")),
             llm_max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
             llm_schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
-            image_describer_mode=os.getenv("HL_MEM_IMAGE_DESCRIBER_MODE", "off").lower(),
-            image_describer_provider=os.getenv("HL_MEM_IMAGE_DESCRIBER_PROVIDER", "dashscope").lower(),
+            image_describer_mode=_env_choice("HL_MEM_IMAGE_DESCRIBER_MODE", "off", ("off", "on")),
+            image_describer_provider=_env_choice("HL_MEM_IMAGE_DESCRIBER_PROVIDER", "dashscope", ("dashscope",)),
             image_describer_api_key=os.getenv("IMAGE_API_KEY") or os.getenv("LLM_API_KEY"),
             image_describer_base_url=os.getenv(
                 "HL_MEM_IMAGE_DESCRIBER_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"
@@ -308,7 +407,9 @@ class Settings:
             ttl_backfill_grace_hours=int(os.getenv("HL_MEM_TTL_BACKFILL_GRACE_HOURS", "0")),
             temporal_cleanup_age_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_AGE_DAYS", "30")),
             temporal_cleanup_expiry_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_EXPIRY_DAYS", "90")),
-            feedback_lifecycle_mode=os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower(),
+            feedback_lifecycle_mode=_env_choice(
+                "HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe", ("off", "observe", "on")
+            ),
             feedback_bonus_every=int(os.getenv("HL_MEM_FEEDBACK_BONUS_EVERY", "3")),
             feedback_bonus_days=int(os.getenv("HL_MEM_FEEDBACK_BONUS_DAYS", "14")),
             feedback_bonus_cap_days=int(os.getenv("HL_MEM_FEEDBACK_BONUS_CAP_DAYS", "180")),

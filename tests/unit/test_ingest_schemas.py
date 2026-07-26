@@ -3,7 +3,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from hl_mem.ingest.schemas import ExtractionResponseSchema, extraction_response_json_schema
+from hl_mem.ingest.schemas import (
+    ExtractionResponseSchema,
+    extraction_response_json_schema,
+)
 
 
 def _valid_response() -> dict[str, Any]:

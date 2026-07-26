@@ -16,9 +16,8 @@ import argparse
 import json
 import shutil
 import sqlite3
-import sys
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 DB_PATH = Path("REDACTED_PATH/var/hl_mem.db")
@@ -102,7 +101,6 @@ def analyze(db: sqlite3.Connection) -> dict:
             )
 
     # === 2. Expire stale temporal claims ===
-    cutoff = (datetime.now() - timedelta(days=7)).isoformat()
     stale_keywords = [
         "events /",
         "claims",
@@ -138,7 +136,7 @@ def analyze(db: sqlite3.Connection) -> dict:
         is_hindsight = any(kw.lower() in text for kw in hindsight_keywords)
 
         if is_hindsight:
-            actions["expire_stale"].append((d["id"], f"hindsight reference (retired)"))
+            actions["expire_stale"].append((d["id"], "hindsight reference (retired)"))
         elif is_stale and d["canonical_attribute"].startswith("state."):
             actions["expire_stale"].append((d["id"], f"stale state snapshot: {text[:50]}"))
         elif is_stale and "test" in text:
@@ -239,7 +237,7 @@ def print_dry_run(actions: dict, db: sqlite3.Connection):
 
     # Summary stats
     r = db.execute("SELECT status, COUNT(*) as c FROM claims GROUP BY status ORDER BY c DESC").fetchall()
-    print(f"\n--- Current status distribution ---")
+    print("\n--- Current status distribution ---")
     for row in r:
         print(f"  {row['status']}: {row['c']}")
 
@@ -256,7 +254,7 @@ def print_dry_run(actions: dict, db: sqlite3.Connection):
     projected["disputed"] = current.get("disputed", 0) - len(restore_ids - expire_ids - archive_ids - dedup_drop_ids)
     projected["active"] = current.get("active", 0) + len(restore_ids & {x[0] for x in []})  # rough
 
-    print(f"\n--- Projected changes ---")
+    print("\n--- Projected changes ---")
     print(f"  disputed → active: {len(restore_ids)}")
     print(f"  → expired (stale/hindsight): {len(expire_ids)}")
     print(f"  → superseded (dedup): {len(dedup_drop_ids)}")
@@ -328,11 +326,11 @@ def main():
 
         # Final stats
         r = db.execute("SELECT status, COUNT(*) as c FROM claims GROUP BY status ORDER BY c DESC").fetchall()
-        print(f"\n--- Final status distribution ---")
+        print("\n--- Final status distribution ---")
         for row in r:
             print(f"  {row['status']}: {row['c']}")
     else:
-        print(f"\n(Dry run only. Use --execute to apply changes.)")
+        print("\n(Dry run only. Use --execute to apply changes.)")
 
 
 if __name__ == "__main__":

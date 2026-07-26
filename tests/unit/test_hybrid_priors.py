@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 
 import pytest
 
 from hl_mem.application.ingest import IngestService
-
-
-def store_extracted(conn, claim, event, now, embedder, **kw):
-    return IngestService.store_extracted(conn, claim, event, now, embedder, **kw)
-
-
 from hl_mem.ingest.embedder import FakeEmbedder, pack_vector
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import SYSTEM_PROMPT, LLMExtractor
@@ -19,6 +12,11 @@ from hl_mem.recall.ranking import blend_reranker_score, memory_features, memory_
 from hl_mem.recall.recall_pipeline import hybrid_claims
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
+
+
+def store_extracted(conn, claim, event, now, embedder, **kw):
+    return IngestService.store_extracted(conn, claim, event, now, embedder, **kw)
+
 
 NOW = "2026-07-21T00:00:00+00:00"
 

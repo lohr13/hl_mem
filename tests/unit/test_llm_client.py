@@ -3,7 +3,12 @@ import pytest
 
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider
-from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
+from hl_mem.llm.types import (
+    LLMMessage,
+    LLMRequest,
+    StructuredOutputMode,
+    StructuredOutputSpec,
+)
 from hl_mem.observability.llm_spans import LLMSpanRecorder
 from hl_mem.storage.database import Database
 

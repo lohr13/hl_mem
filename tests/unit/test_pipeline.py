@@ -1,15 +1,11 @@
-import hl_mem.application.ingest as pipeline_module
-from hl_mem.application import ingest as pipeline_module
 from hl_mem.application.ingest import IngestService
+from hl_mem.ingest.embedder import FakeEmbedder
+from hl_mem.ingest.extractors import ExtractedClaim
+from hl_mem.storage.database import Database
 
 
 def store_extracted(conn, claim, event, now, embedder, **kw):
     return IngestService.store_extracted(conn, claim, event, now, embedder, **kw)
-
-
-from hl_mem.ingest.embedder import FakeEmbedder
-from hl_mem.ingest.extractors import ExtractedClaim
-from hl_mem.storage.database import Database
 
 
 def test_fact_hash_exact_duplicate_merges_evidence(tmp_path) -> None:

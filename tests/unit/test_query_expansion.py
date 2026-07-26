@@ -11,7 +11,12 @@ from hl_mem.llm.types import LLMResponse
 from hl_mem.protocols import WeightedQuery
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.staged_pipeline import RRF_K, _weighted_rrf_scores
-from hl_mem.recall.trace import QueryExpansionTrace, SearchPhaseMetrics, SearchTrace, SearchTracer
+from hl_mem.recall.trace import (
+    QueryExpansionTrace,
+    SearchPhaseMetrics,
+    SearchTrace,
+    SearchTracer,
+)
 
 
 class _Client:
