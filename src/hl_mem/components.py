@@ -16,7 +16,11 @@ from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.image_describer import DashScopeImageDescriber
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
+from hl_mem.llm.providers import (
+    DashScopeProvider,
+    OpenAICompatibleProvider,
+    ZhipuProvider,
+)
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.observability.llm_spans import LLMSpanRecorder
 from hl_mem.protocols import (

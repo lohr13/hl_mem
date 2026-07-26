@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""校验版本号、migration 数量与测试数量在维护文档中保持一致。"""
+"""校验版本号与 migration 数量在维护文档中保持一致。"""
 
 from __future__ import annotations
 
@@ -94,20 +94,9 @@ def main() -> int:
         if duplicates:
             errors.append(f"  CHANGELOG: duplicate version headers: {', '.join(duplicates)}")
 
-        latest_version, latest_entry = latest_changelog_entry(changelog)
+        latest_version, _ = latest_changelog_entry(changelog)
         if latest_version != version:
             errors.append(f"  CHANGELOG latest version: found '{latest_version}', expected '{version}'")
-        readme_tests = re.search(r"shields\.io/badge/tests-(\d+)%20passed-", readme, re.IGNORECASE)
-        changelog_tests = re.search(r"\b(\d+)\s+passed\b", latest_entry, re.IGNORECASE)
-        if readme_tests is None:
-            errors.append("  README test badge: test count not found")
-        if changelog_tests is None:
-            errors.append("  CHANGELOG latest entry: test count not found")
-        if readme_tests and changelog_tests and readme_tests.group(1) != changelog_tests.group(1):
-            errors.append(
-                f"  README test badge: found '{readme_tests.group(1)}', "
-                f"expected latest CHANGELOG count '{changelog_tests.group(1)}'"
-            )
     except (OSError, ValueError) as exc:
         print(f"Document consistency check failed:\n  {exc}")
         return 1

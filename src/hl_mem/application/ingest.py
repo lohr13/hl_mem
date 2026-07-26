@@ -24,7 +24,11 @@ from hl_mem.domain.claims.conflicts import (
     compute_legacy_conflict_key,
 )
 from hl_mem.domain.claims.dedup import Deduplicator
-from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration, normalize_utc_iso
+from hl_mem.domain.claims.retention import (
+    TTLPolicy,
+    compute_expiration,
+    normalize_utc_iso,
+)
 from hl_mem.domain.constants import DEFAULT_SUBJECT
 from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.ingest.extractors import ExtractedClaim
@@ -75,7 +79,15 @@ def _now() -> str:
 
 
 def _summary(claim: ExtractedClaim | dict[str, Any]) -> dict[str, Any]:
-    value = claim.get("value", getattr(claim, "value", None))
+    if isinstance(claim, ExtractedClaim):
+        return {
+            "subject": claim.subject,
+            "predicate": claim.predicate,
+            "value_hash": hashlib.sha256(str(claim.value).encode()).hexdigest(),
+            "confidence": claim.confidence,
+            "status": None,
+        }
+    value = claim.get("value")
     return {
         "subject": claim.get("subject_entity_id", getattr(claim, "subject", None)),
         "predicate": claim.get("predicate", getattr(claim, "predicate", None)),

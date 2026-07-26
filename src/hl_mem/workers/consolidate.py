@@ -13,7 +13,12 @@ from hl_mem.domain.claims.conflicts import compute_claim_pair_key
 from hl_mem.domain.consolidation_scope import ConsolidationScope
 from hl_mem.lifecycle import assert_transition
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
+from hl_mem.llm.types import (
+    LLMMessage,
+    LLMRequest,
+    StructuredOutputMode,
+    StructuredOutputSpec,
+)
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.scheduling import enqueue_daily_job
 

@@ -7,7 +7,7 @@ import json
 import re
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -20,12 +20,21 @@ from hl_mem.domain.claims.query_tags import (
     TAG_INFO_WEIGHT,
     extract_query_tags,
 )
-from hl_mem.domain.recall import RecallIntent, claim_is_visible, route_recall_intent
+from hl_mem.domain.recall import RecallIntent, route_recall_intent
+from hl_mem.domain.temporal import claim_is_visible
 from hl_mem.observability.audit import current_audit
-from hl_mem.protocols import WeightedQuery
-from hl_mem.recall.ranking import DEFAULT_WEIGHTS, blend_reranker_score, memory_features, memory_score
-from hl_mem.recall.relation_expansion import RelationExpansionConfig, expand_related_claims
-from hl_mem.recall.reranker import DashScopeReranker, RerankResult
+from hl_mem.protocols import RerankerProtocol, WeightedQuery
+from hl_mem.recall.ranking import (
+    DEFAULT_WEIGHTS,
+    blend_reranker_score,
+    memory_features,
+    memory_score,
+)
+from hl_mem.recall.relation_expansion import (
+    RelationExpansionConfig,
+    expand_related_claims,
+)
+from hl_mem.recall.reranker import RerankResult
 from hl_mem.recall.trace import SearchTracer
 from hl_mem.storage.claims import ClaimRepository
 
@@ -62,7 +71,7 @@ class RecallContext:
     query_blob: bytes = b""
     limit: int = 5
     as_of: str | None = None
-    reranker: DashScopeReranker | None = None
+    reranker: RerankerProtocol | None = None
     known_as_of: str | None = None
     namespace: str = "default"
     relation_connection: sqlite3.Connection | None = None
@@ -71,7 +80,7 @@ class RecallContext:
 
     candidate_limit: int = 50
     ranking_now: str = ""
-    selected_intent: RecallIntent | None = None
+    selected_intent: RecallIntent = RecallIntent.CURRENT_STATE
     reference: str = ""
     preference_boost: float = 1.0
     query_tags: list[str] = field(default_factory=list)
@@ -170,7 +179,7 @@ def _rrf_scores(channels: list[list[dict[str, Any]]], rank_constant: int) -> dic
 
 
 def _weighted_rrf_scores(
-    channels: list[tuple[list[dict[str, Any]], float] | tuple[list[dict[str, Any]], float, float]],
+    channels: Sequence[tuple[list[dict[str, Any]], float] | tuple[list[dict[str, Any]], float, float]],
     rank_constant: int,
 ) -> dict[str, float]:
     """按查询权重和通道权重计算 RRF，空通道不产生分数。"""
@@ -196,7 +205,7 @@ def hybrid_claims(
     query_blob: bytes,
     limit: int,
     as_of: str | None,
-    reranker: DashScopeReranker | None = None,
+    reranker: RerankerProtocol | None = None,
     now: str | None = None,
     intent: RecallIntent | str | None = None,
     known_as_of: str | None = None,
@@ -253,7 +262,7 @@ def _collect_candidates(
     query_blob: bytes,
     limit: int,
     as_of: str | None,
-    reranker: DashScopeReranker | None = None,
+    reranker: RerankerProtocol | None = None,
     now: str | None = None,
     intent: RecallIntent | str | None = None,
     known_as_of: str | None = None,
@@ -298,14 +307,20 @@ def _collect_candidates(
         nonlocal fts_us, dense_us
         label = "original" if index == 0 else f"expansion_{index}"
         started = time.perf_counter_ns()
-        fts_results = repo.search_claims_fts(
-            item.text, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
-        )
+        fts_results = [
+            dict(claim)
+            for claim in repo.search_claims_fts(
+                item.text, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
+            )
+        ]
         fts_us += (time.perf_counter_ns() - started) // 1000
         started = time.perf_counter_ns()
-        dense_results = repo.search_claims_vector(
-            blob, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
-        )
+        dense_results = [
+            dict(claim)
+            for claim in repo.search_claims_vector(
+                blob, candidate_limit, reference, selected_intent, known_as_of, namespace=namespace
+            )
+        ]
         dense_us += (time.perf_counter_ns() - started) // 1000
         query_channels.extend(
             [(f"{label}:fts", fts_results, item.weight, 1.0), (f"{label}:dense", dense_results, item.weight, 1.0)]

@@ -6,7 +6,12 @@ import json
 from typing import Any
 
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
+from hl_mem.llm.types import (
+    LLMMessage,
+    LLMRequest,
+    StructuredOutputMode,
+    StructuredOutputSpec,
+)
 
 
 class DedupJudge:

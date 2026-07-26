@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
@@ -33,7 +34,7 @@ def _contains(start: str | None, end: str | None, point: datetime) -> bool:
 
 
 def claim_is_visible(
-    claim: dict[str, Any],
+    claim: Mapping[str, Any],
     valid_as_of: str,
     known_as_of: str | None,
     intent: RecallIntent | str,

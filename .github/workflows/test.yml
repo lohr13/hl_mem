@@ -36,8 +36,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install ruff
-      - run: ruff check src/
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - run: uv run --frozen ruff check src/
 
   type-check:
     runs-on: ubuntu-latest
@@ -58,14 +59,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install formatters
-        run: |
-          python -m pip install --upgrade pip
-          pip install black isort
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
       - name: Check formatting
         run: |
-          black --check .
-          isort --check-only .
+          uv run --frozen black --check .
+          uv run --frozen isort --check-only .
 
   build:
     runs-on: ubuntu-latest
@@ -77,11 +76,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
       - name: Build wheel and source distribution
-        run: |
-          python -m pip install --upgrade pip
-          pip install build
-          python -m build
+        run: uv run --frozen python -m build
       - name: Verify import in a clean environment
         run: |
           python -m venv .build-venv
@@ -99,10 +97,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install package
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
       - name: Apply migrations from an empty database
         run: |
           python -c "import tempfile; from pathlib import Path; from hl_mem.storage.database import Database; path = Path(tempfile.mkdtemp()) / 'fresh.db'; db = Database(path); connection = db.open(); applied = {row[0] for row in connection.execute('SELECT version FROM schema_migrations')}; expected = {path.stem for path in Path('src/hl_mem/storage/migrations').glob('*.sql')}; missing = expected - applied; assert not missing, f'missing SQL migrations: {sorted(missing)}'; db.close(); print(f'applied {len(expected)} SQL migrations')"
@@ -114,9 +110,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e ".[dev]"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
       - name: Check dependency direction
-        run: python scripts/check_imports.py
+        run: uv run --frozen python scripts/check_imports.py
 
   doc-consistency:
     runs-on: ubuntu-latest
@@ -128,6 +125,8 @@ jobs:
       - run: python scripts/check_docs_consistency.py
 
   contract-snapshots:
+    # NOTE: Snapshot mismatch means contract changed.
+    # Reviewers must verify this is intentional before approving.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

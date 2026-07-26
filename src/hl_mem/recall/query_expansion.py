@@ -12,7 +12,13 @@ from typing import Any, cast
 
 from hl_mem.domain.recall import RecallIntent
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.types import LLMMessage, LLMRequest, LLMResponse, StructuredOutputMode, StructuredOutputSpec
+from hl_mem.llm.types import (
+    LLMMessage,
+    LLMRequest,
+    LLMResponse,
+    StructuredOutputMode,
+    StructuredOutputSpec,
+)
 from hl_mem.protocols import QueryExpansion, QueryExpansionResult
 
 _COREFERENCE_TERMS = ("这", "这个", "那个", "上次", "之前", "它", "他们")

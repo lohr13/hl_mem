@@ -12,7 +12,12 @@ from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
 from hl_mem.errors import ConfigurationError
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.types import LLMMessage, LLMRequest, StructuredOutputMode, StructuredOutputSpec
+from hl_mem.llm.types import (
+    LLMMessage,
+    LLMRequest,
+    StructuredOutputMode,
+    StructuredOutputSpec,
+)
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database

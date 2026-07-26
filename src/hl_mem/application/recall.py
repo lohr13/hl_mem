@@ -15,7 +15,12 @@ from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
-from hl_mem.protocols import EmbedderProtocol, IntentRouterProtocol, RecallResult, RerankerProtocol, WeightedQuery
+from hl_mem.protocols import (
+    EmbedderProtocol,
+    IntentRouterProtocol,
+    RerankerProtocol,
+    WeightedQuery,
+)
 from hl_mem.recall.procedure_pipeline import MemoryCandidate, recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
@@ -33,7 +38,7 @@ from hl_mem.storage.evidence import DerivationRepository, EvidenceRepository
 
 LOGGER = logging.getLogger(__name__)
 _SIDE_EFFECT_LOCK = threading.Lock()
-_SIDE_EFFECT_HEALTH = {
+_SIDE_EFFECT_HEALTH: dict[str, dict[str, int | str | None]] = {
     "access_record": {"failures": 0, "last_error": None},
     "feedback_record": {"failures": 0, "last_error": None},
     "audit_emit": {"failures": 0, "last_error": None},
@@ -380,7 +385,7 @@ class RecallService:
             + [{"type": "observation", "data": item, "priority": 1} for item in observations]
             + [{"type": "policy", "data": item, "priority": 0} for item in policies]
         )
-        all_items.sort(key=lambda item: -item["priority"])
+        all_items.sort(key=lambda item: -item["priority"] if isinstance(item.get("priority"), int) else 0)
         packed = budget_pack(all_items, token_budget)
         used = 0
         for item in packed:
@@ -475,7 +480,7 @@ class RecallService:
         self,
         claims: list[dict[str, Any]],
         namespace: str = "default",
-    ) -> list[RecallResult]:
+    ) -> list[dict[str, Any]]:
         if not claims:
             return []
         evidence_repo = EvidenceRepository(self.connection)
@@ -486,7 +491,7 @@ class RecallService:
         replacement_map = self._batch_replacements(claim_repo, superseded_ids)
         relations_map = self._batch_relations(claim_ids)
         rivals_map = self._batch_rivals(claims, namespace)
-        results: list[RecallResult] = []
+        results: list[dict[str, Any]] = []
         for claim in claims:
             evidence = all_evidence.get(claim["id"], [])
             decoded = claim.get("value")
@@ -495,8 +500,9 @@ class RecallService:
                 if isinstance(decoded, dict) and decoded.get("_type") == "superseded_value"
                 else decoded
             )
-            replacement = replacement_map.get(claim.get("superseded_by_id"))
-            result = {
+            superseded_by_id = claim.get("superseded_by_id")
+            replacement = replacement_map.get(str(superseded_by_id)) if superseded_by_id else None
+            result: dict[str, Any] = {
                 "type": "claim",
                 "memory_type": "claim",
                 "id": claim["id"],

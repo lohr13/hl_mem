@@ -16,7 +16,7 @@ from hl_mem.domain.constants import (
     PROCEDURE_KEYWORDS,
     TOOL_KEYWORDS,
 )
-from hl_mem.domain.temporal import RecallIntent, claim_is_visible, parse_utc
+from hl_mem.domain.temporal import RecallIntent, parse_utc
 
 
 @dataclass(frozen=True)

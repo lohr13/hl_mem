@@ -6,7 +6,7 @@ import hashlib
 
 import httpx
 
-from hl_mem.core.vector import pack_vector, unpack_vector
+from hl_mem.core.vector import pack_vector
 from hl_mem.http_utils import retry_http
 
 

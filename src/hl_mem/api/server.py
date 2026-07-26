@@ -32,7 +32,11 @@ from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService, new_id
 from hl_mem.application.recall import RecallService, recall_side_effect_health
 from hl_mem.errors import ConflictError, NotFoundError, ValidationError
-from hl_mem.experience.service import ExperienceService, InvalidStateTransitionError, backprop_episode_reward
+from hl_mem.experience.service import (
+    ExperienceService,
+    InvalidStateTransitionError,
+    backprop_episode_reward,
+)
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope

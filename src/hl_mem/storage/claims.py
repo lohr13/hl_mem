@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import cosine_similarity
@@ -14,15 +14,6 @@ from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
 from hl_mem.protocols import ClaimRow, EmbedderProtocol
-
-
-@dataclass(frozen=True)
-class SupersedeResult:
-    """原子替代操作结果。"""
-
-    applied: bool
-
-
 from hl_mem.storage._shared import (
     decode_json,
     encode_json,
@@ -31,6 +22,13 @@ from hl_mem.storage._shared import (
     row_to_dict,
     sanitize_fts_query,
 )
+
+
+@dataclass(frozen=True)
+class SupersedeResult:
+    """原子替代操作结果。"""
+
+    applied: bool
 
 
 class ClaimRepository:
@@ -295,13 +293,16 @@ class ClaimRepository:
         namespace: str,
     ) -> list[ClaimRow]:
         """以统一后端协议委托 SQLite 向量扫描。"""
-        return self.search_claims_vector(
-            query_blob,
-            limit,
-            reference_time,
-            intent,
-            known_as_of,
-            namespace,
+        return cast(
+            list[ClaimRow],
+            self.search_claims_vector(
+                query_blob,
+                limit,
+                reference_time,
+                intent,
+                known_as_of,
+                namespace,
+            ),
         )
 
     def record_access(self, claim_ids: list[str], accessed_at: str) -> int:
@@ -485,8 +486,8 @@ class ClaimRepository:
         namespace: str = "default",
     ) -> list[dict[str, Any]]:
         """使用统一策略返回 FTS 或向量候选。"""
-        candidates = (
-            self.search_claims_fts(query, limit, valid_as_of, intent, known_as_of, namespace)
+        candidates: list[dict[str, Any]] = (
+            [dict(item) for item in self.search_claims_fts(query, limit, valid_as_of, intent, known_as_of, namespace)]
             if query is not None
             else self.search_claims_vector(query_blob or b"", limit, valid_as_of, intent, known_as_of, namespace)
         )
@@ -527,11 +528,14 @@ class ClaimRepository:
             if not is_fts_syntax_error(error):
                 raise
             return []
-        return [
-            claim
-            for claim in self._decode_rows(rows)
-            if claim_is_visible(claim, reference, known_as_of, selected_intent)
-        ]
+        return cast(
+            list[ClaimRow],
+            [
+                claim
+                for claim in self._decode_rows(rows)
+                if claim_is_visible(claim, reference, known_as_of, selected_intent)
+            ],
+        )
 
     def search_claims_tags(
         self,

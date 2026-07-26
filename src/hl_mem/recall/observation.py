@@ -37,10 +37,11 @@ class ObservationBuilder:
     @staticmethod
     def _event_ids(claim: dict[str, Any]) -> list[str]:
         values = claim.get("event_ids") or claim.get("evidence") or []
-        return [
+        event_ids = (
             item.get("evidence_id", item.get("event_id", item.get("id"))) if isinstance(item, dict) else item
             for item in values
-        ]
+        )
+        return [str(event_id) for event_id in event_ids if event_id is not None]
 
     @staticmethod
     def _value(claim: dict[str, Any]) -> Any:

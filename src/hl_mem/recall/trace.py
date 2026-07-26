@@ -199,10 +199,10 @@ class SearchTracer:
         for candidate in self.trace.candidates.values():
             candidate.included = candidate.claim_id in final_ids
         for rank, claim in enumerate(claims, 1):
-            candidate = self._candidate(str(claim["id"]), preserve=True)
-            if candidate is not None:
-                candidate.final_rank = rank
-                candidate.included = True
+            final_candidate = self._candidate(str(claim["id"]), preserve=True)
+            if final_candidate is not None:
+                final_candidate.final_rank = rank
+                final_candidate.included = True
 
     def to_dict(self) -> dict[str, Any]:
         """返回不含查询明文、claim value 或密钥的 JSON 兼容字典。"""

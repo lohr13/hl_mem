@@ -41,6 +41,16 @@ def read_baseline() -> Counter[str]:
     return errors
 
 
+def missing_baseline_files(baseline: Counter[str]) -> list[str]:
+    """返回基线中已经不存在的源码文件，避免陈旧条目长期残留。"""
+    missing: set[str] = set()
+    for error in baseline:
+        path_text, _, _ = error.partition(" | ")
+        if path_text and not (ROOT / Path(path_text)).is_file():
+            missing.add(path_text)
+    return sorted(missing)
+
+
 def main() -> int:
     """运行 mypy，并在发现新错误时失败。"""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -60,6 +70,11 @@ def main() -> int:
         print(f"mypy baseline updated: {sum(current.values())} errors")
         return 0
     baseline = read_baseline()
+    missing_files = missing_baseline_files(baseline)
+    if missing_files:
+        print("mypy baseline check failed; baseline references missing files:")
+        print("\n".join(f"  {path}" for path in missing_files))
+        return 1
     new_errors = current - baseline
     if new_errors:
         print("mypy baseline check failed; new errors:")

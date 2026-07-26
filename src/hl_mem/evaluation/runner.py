@@ -148,6 +148,8 @@ class BenchmarkRunner:
             event = dict(raw_event)
             service.ingest_event(event)
             content = event.get("content", {})
+            if not isinstance(content, (str, dict)):
+                raise TypeError(f"benchmark event content must be text or an object, got {type(content).__name__}")
             for extracted in self.extractor.extract(content):
                 IngestService.store_extracted(
                     connection,
@@ -172,7 +174,6 @@ class BenchmarkRunner:
         extracted_ids = {event_id for ids in evidence.values() for event_id in ids}
         evidence_scores = evidence_precision_recall(extracted_ids, case.gold_evidence_event_ids)
         gold_yield = len(extracted_ids & set(case.gold_evidence_event_ids))
-        temporal = temporal_correctness(results, case.gold_temporal)
         return {
             **evidence_scores,
             "claim_yield": gold_yield / len(case.gold_evidence_event_ids) if case.gold_evidence_event_ids else 0.0,
@@ -190,6 +191,7 @@ class BenchmarkRunner:
             debug=True,
         )
         results = response["results"]
+        temporal = temporal_correctness(results, case.gold_temporal)
         return {
             "recall_at_1": recall_at_k(results, case.gold_evidence_event_ids, 1),
             "recall_at_5": recall_at_k(results, case.gold_evidence_event_ids, 5),

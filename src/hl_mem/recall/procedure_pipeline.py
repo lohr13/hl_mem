@@ -42,6 +42,8 @@ def _match(query: str, text: str) -> float:
 
 
 def _bounded(value: object, default: float = 0.0) -> float:
+    if not isinstance(value, (str, bytes, int, float)):
+        return default
     try:
         return min(1.0, max(0.0, float(value)))
     except (TypeError, ValueError):

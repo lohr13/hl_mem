@@ -1,0 +1,22 @@
+name: Quality Smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - run: uv run --frozen python scripts/run_quality_smoke.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quality-smoke-${{ github.sha }}
+          path: evaluation/results/

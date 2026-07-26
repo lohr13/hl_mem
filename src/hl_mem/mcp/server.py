@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from hl_mem import components
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService
 from hl_mem.application.recall import RecallService
@@ -236,6 +237,3 @@ class McpMemoryServer:
             for link in links
         ]
         return {"type": "claim", "id": memory_id, "evidence": evidence}
-
-
-from hl_mem import components
