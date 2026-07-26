@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.config import RECALL_VECTOR_SCAN_LIMIT
+from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import SLOT_REGISTRY, normalize_predicate
 from hl_mem.domain.claims.query_tags import (
     LOW_INFORMATION_TAGS,
@@ -46,6 +47,7 @@ class RecallConfig:
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
     preference_recency_boost: float = 1.0
+    dedup_threshold: float = 0.95
 
 
 @dataclass
@@ -75,6 +77,7 @@ class RecallContext:
     tag_channel_enabled: bool = False
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
+    dedup_threshold: float = 0.95
     fts: list[dict[str, Any]] = field(default_factory=list)
     dense: list[dict[str, Any]] = field(default_factory=list)
     tags: list[dict[str, Any]] = field(default_factory=list)
@@ -384,6 +387,7 @@ def _collect_candidates(
         tag_channel_enabled=effective_tag_channel_enabled,
         tag_channel_weight=config.tag_channel_weight if tag_channel_weight is None else tag_channel_weight,
         tag_candidate_limit=effective_tag_candidate_limit,
+        dedup_threshold=config.dedup_threshold,
         fts=fts,
         dense=dense,
         tags=tag_results,
@@ -614,7 +618,12 @@ def _rerank(ctx: RecallContext) -> RecallContext:
 
 def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
     """执行截断、偏好保留、trace、审计和最终分数装配。"""
-    final = _preference_first(ctx.ranked_result, ctx.limit, ctx.selected_intent)
+    for claim in ctx.ranked_result:
+        claim["_score"] = ctx.rerank_scores.get(claim["id"], ctx.pre_scores[claim["id"]])
+        claim["_pre_score"] = ctx.pre_scores[claim["id"]]
+        claim["_features"] = dict(ctx.feature_by_id[claim["id"]])
+    folded = fold_similar_claims(ctx.ranked_result, ctx.dedup_threshold)
+    final = _preference_first(folded, ctx.limit, ctx.selected_intent)
     tracer = ctx.tracer
     if tracer is not None:
         final_ids = {str(claim["id"]) for claim in final}
@@ -672,6 +681,20 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
             },
         },
     )
-    for claim in final:
-        claim["_score"] = ctx.rerank_scores.get(claim["id"], ctx.pre_scores[claim["id"]])
     return final
+
+
+def fold_similar_claims(claims: list[dict[str, Any]], threshold: float) -> list[dict[str, Any]]:
+    """按最终得分顺序折叠 embedding 高度相似的 Claim。"""
+    kept: list[dict[str, Any]] = []
+    for claim in sorted(claims, key=lambda item: -float(item.get("_score", 0.0))):
+        embedding = claim.get("embedding_dense")
+        if embedding is not None and any(
+            retained.get("embedding_dense") is not None
+            and cosine_similarity(embedding, retained["embedding_dense"]) >= threshold
+            for retained in kept
+        ):
+            continue
+        kept.append(claim)
+    original_order = {str(claim["id"]): index for index, claim in enumerate(claims)}
+    return sorted(kept, key=lambda item: original_order[str(item["id"])])

@@ -34,6 +34,48 @@ def _parse(value: str) -> datetime:
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
+def cleanup_stale_temporal_claims(
+    connection: sqlite3.Connection,
+    now: str | None = None,
+) -> dict[str, int]:
+    """保守清理超过 30 天且缺少 expires_at 的稳定 temporal Claim。"""
+    reference = _parse(now) if now else datetime.now(timezone.utc)
+    cutoff = reference - timedelta(days=30)
+    promoted = 0
+    expired_at_set = 0
+    rows = connection.execute(
+        "SELECT id,recorded_from,canonical_attribute FROM claims "
+        "WHERE scope=? AND expires_at IS NULL AND status=? AND volatility=?",
+        ("temporal", "active", "stable"),
+    ).fetchall()
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        for row in rows:
+            recorded_from = _parse(row["recorded_from"])
+            if recorded_from >= cutoff:
+                continue
+            attribute = str(row["canonical_attribute"] or "")
+            if attribute.startswith(("fact.decision", "fact.history", "fact.architecture")):
+                cursor = connection.execute(
+                    "UPDATE claims SET scope=? WHERE id=? AND scope=? AND expires_at IS NULL AND status=?",
+                    ("permanent", row["id"], "temporal", "active"),
+                )
+                promoted += cursor.rowcount
+            elif attribute.startswith(("state.", "plan.", "config.env")):
+                expires_at = (recorded_from + timedelta(days=90)).isoformat()
+                cursor = connection.execute(
+                    "UPDATE claims SET expires_at=? "
+                    "WHERE id=? AND scope=? AND expires_at IS NULL AND status=?",
+                    (expires_at, row["id"], "temporal", "active"),
+                )
+                expired_at_set += cursor.rowcount
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return {"expired_at_set": expired_at_set, "promoted": promoted}
+
+
 def decay_claims(
     connection: sqlite3.Connection,
     now: str | None = None,

@@ -72,6 +72,8 @@ class ClaimOutput(BaseModel):
     memory_type: Literal["claim"] = "claim"
     id: str
     text: Any
+    score: float
+    features: dict[str, float] = Field(default_factory=dict)
     status: str
     confidence: float | None = None
     canonical_attribute: str | None = Field(

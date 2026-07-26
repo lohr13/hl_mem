@@ -67,6 +67,19 @@ topic_tags 是用于存储、统计和分类的多值标签，只能从以下集
 {_TOPIC_TAG_PROMPT}
 subject 默认为“用户”；明确提到项目名或服务名时使用该名称。代词（他、她、它、那个）必须结合上下文替换为具体名称；不要在事实中保留代词。
 subject 必须复用标准实体名。同一实体不得因大小写、空格、连字符、产品后缀或“插件/memory/CLI”等描述产生新名称。若事件上下文提供 canonical_entities，必须从其中选择；组件级事实仍归组件，项目级事实归项目。示例：hlmem/HL_MEM → hl_mem；Codex CLI → Codex；LLMExtractor → llm_extractor。
+value 自足性：value 必须脱离原对话上下文和 qualifiers 后仍可理解，包含必要的主体、关系、对象和单位。
+短于 12 字符的纯状态词、数值或时长必须重写为完整命题；qualifiers 只能补充结构化信息，不能承载理解主句所必需的信息。
+主体正确性：输出前先判断“这条事实真正描述谁/什么”。区分 speaker_entity（说话者）与 semantic_subject（语义主体），subject 必须使用 semantic_subject。
+版本号、端口、环境变量、路由规则和文件路径的 semantic_subject 不是“用户”，应绑定其所属产品、组件、配置或工作流。
+attribute 对照表：
+- fact.architecture：系统结构、分层和组件关系；具体 API 方法签名、请求/响应格式才使用 fact.api_design。
+- config.timeout：超时配置，不使用 config.env；config.policy：行为策略约束，不使用 config.env。
+- preference.workflow：工作流偏好，不使用 choice.tool；config.path：文件路径，不使用 choice.tool。
+去重意识：如果新内容只是已有事实的补充或改写，将 confidence 降到 0.5 以下。
+反例：
+❌ "串行" → ✅ "LLM 提取任务串行执行"
+❌ "90s" → ✅ "LLM 请求超时为 90 秒"
+❌ subject=用户 value="Codex 只改代码" → ✅ subject=coding-workflow value="Codex 负责代码修改，Hermes 负责测试验证"
 文本包含“改用”“换成”“现在用”“不用了”“改为”等变更信号时，在 qualifiers 中加入 \"change\": true。
 跳过以下低价值信息，不要提取为 claim：
 - 服务健康状态报告（如 healthz 返回值、服务状态 ok/running/stopped、版本号查询结果）

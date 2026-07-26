@@ -122,6 +122,27 @@ class ClaimRow(TypedDict, total=False):
     recorded_to: str | None
     access_count: int
     helpful_rate: float
+    score: float
+    features: dict[str, float]
+
+
+class RecallResult(TypedDict):
+    """公开 Claim 召回结果的类型契约。"""
+
+    type: str
+    memory_type: str
+    id: str
+    text: object
+    score: float
+    features: dict[str, float]
+    status: str
+    confidence: float | None
+    canonical_attribute: str | None
+    canonical_slot: str | None
+    topic_tags: list[str]
+    valid_from: str | None
+    evidence: list[dict[str, object]]
+    relations: list[dict[str, object]]
 
 
 @dataclass(frozen=True)

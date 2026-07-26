@@ -15,7 +15,7 @@ from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
-from hl_mem.protocols import EmbedderProtocol, IntentRouterProtocol, RerankerProtocol, WeightedQuery
+from hl_mem.protocols import EmbedderProtocol, IntentRouterProtocol, RecallResult, RerankerProtocol, WeightedQuery
 from hl_mem.recall.procedure_pipeline import MemoryCandidate, recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
@@ -295,6 +295,7 @@ class RecallService:
                 tag_channel_weight=self.settings.tag_channel_weight,
                 tag_candidate_limit=self.settings.tag_candidate_limit,
                 preference_recency_boost=self.settings.preference_recency_boost,
+                dedup_threshold=self.settings.recall_dedup_threshold,
             ),
             relation_connection=self.connection,
             relation_config=self.relation_config,
@@ -465,7 +466,7 @@ class RecallService:
         self,
         claims: list[dict[str, Any]],
         namespace: str = "default",
-    ) -> list[dict[str, Any]]:
+    ) -> list[RecallResult]:
         if not claims:
             return []
         evidence_repo = EvidenceRepository(self.connection)
@@ -476,7 +477,7 @@ class RecallService:
         replacement_map = self._batch_replacements(claim_repo, superseded_ids)
         relations_map = self._batch_relations(claim_ids)
         rivals_map = self._batch_rivals(claims, namespace)
-        results: list[dict[str, Any]] = []
+        results: list[RecallResult] = []
         for claim in claims:
             evidence = all_evidence.get(claim["id"], [])
             decoded = claim.get("value")
@@ -491,6 +492,8 @@ class RecallService:
                 "memory_type": "claim",
                 "id": claim["id"],
                 "text": text,
+                "score": float(claim.get("_score", 0.0)),
+                "features": dict(claim.get("_features") or {}),
                 "status": claim["status"],
                 "confidence": claim["confidence"],
                 "canonical_attribute": claim.get("canonical_attribute"),

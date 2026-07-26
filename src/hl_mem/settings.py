@@ -80,6 +80,7 @@ class Settings:
     relation_conflict_confidence: float = 0.80
     packed_context_token_budget: int = 2000
     recall_candidate_floor: int = 50
+    recall_dedup_threshold: float = 0.95
     preference_recency_boost: float = 0.12
     tag_boost_enabled: bool = True
     tag_boost_weight: float = 0.05
@@ -203,6 +204,7 @@ class Settings:
             relation_conflict_confidence=float(os.getenv("HL_MEM_RELATION_CONFLICT_CONFIDENCE", "0.80")),
             packed_context_token_budget=int(os.getenv("HL_MEM_PACKED_CONTEXT_TOKEN_BUDGET", "2000")),
             recall_candidate_floor=int(os.getenv("HL_MEM_RECALL_CANDIDATE_FLOOR", "50")),
+            recall_dedup_threshold=float(os.getenv("HL_MEM_RECALL_DEDUP_THRESHOLD", "0.95")),
             preference_recency_boost=float(os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")),
             tag_boost_enabled=os.getenv("HL_MEM_TAG_BOOST_ENABLED", "true").lower() == "true",
             tag_boost_weight=float(os.getenv("HL_MEM_TAG_BOOST_WEIGHT", "0.05")),
@@ -341,6 +343,8 @@ class Settings:
             raise ConfigurationError("HL_MEM_RELATION_CONFLICT_CONFIDENCE must be between 0 and 1")
         if self.packed_context_token_budget < 1 or self.recall_candidate_floor < 1:
             raise ConfigurationError("recall budgets must be positive")
+        if not 0.0 <= self.recall_dedup_threshold <= 1.0:
+            raise ConfigurationError("HL_MEM_RECALL_DEDUP_THRESHOLD must be between 0 and 1")
         if not 0.0 <= self.preference_recency_boost <= 1.0:
             raise ConfigurationError("HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1")
         if not 0.0 <= self.tag_boost_weight <= 1.0:

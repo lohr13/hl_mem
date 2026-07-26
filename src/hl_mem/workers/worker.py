@@ -30,7 +30,7 @@ from hl_mem.workers.consolidate import (
     auto_resolve_conflicts,
     enqueue_daily_consolidation,
 )
-from hl_mem.workers.decay import decay_claims
+from hl_mem.workers.decay import cleanup_stale_temporal_claims, decay_claims
 from hl_mem.workers.deduplicate import deduplicate_claims, enqueue_daily_deduplication
 from hl_mem.workers.induce_policies import (
     enqueue_daily_policy_induction,
@@ -141,6 +141,7 @@ class Worker:
 
     def _run_maintenance(self) -> None:
         """执行一轮 TTL、衰减、派生记忆、保留策略和定时任务维护。"""
+        cleanup_stale_temporal_claims(self.connection)
         expire_claims(self.connection)
         decay_claims(self.connection)
         maintenance_now = _now()
