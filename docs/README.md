@@ -6,8 +6,11 @@ Maintained documentation for HL-Mem. Historical task specifications, reviews, an
 ## Getting Started
 
 - [Quickstart](../README.md#quickstart)
-- [Configuration](../.env.example)
+- [Configuration template](../.env.example)
 - [Architecture Overview](architecture.md)
+
+Recommended reading order: start with the root Quickstart, then read Architecture and the Capability Matrix. Use the API
+reference while integrating; consult Design, Proposals, and Research when evaluating internals or future work.
 
 ## Reference
 
@@ -23,10 +26,11 @@ Maintained documentation for HL-Mem. Historical task specifications, reviews, an
 - [Feature Design](design/)
 - [Feature Proposals](proposals/)
 - [Research Notes](research/)
+- [Competitor Comparison](research/competitor-comparison.md)
 
 ## Project
 
-- [Implementation Plan](implementation-plan.md)
+- [Completed Milestones and Roadmap](implementation-plan.md)
 - [Handoff Status](HANDOFF.md)
 - [Historical Archive](archive/)
 

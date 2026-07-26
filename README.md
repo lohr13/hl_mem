@@ -3,7 +3,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Version: 0.13.1](https://img.shields.io/badge/version-0.13.1-blue.svg)](docs/CHANGELOG.md)
-[![Tests: 443 passed](https://img.shields.io/badge/tests-443%20passed-brightgreen.svg)](docs/CHANGELOG.md)
+[![Tests: 445 passed](https://img.shields.io/badge/tests-445%20passed-brightgreen.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 > Local-first, evidence-driven long-term memory for AI agents. / 面向 AI Agent 的本地优先、证据驱动长期记忆。
@@ -74,6 +74,7 @@ recall pipelines, data model, and component boundaries.
 | [API reference](docs/api.md) | REST endpoints and request conventions |
 | [Configuration](.env.example) | Runtime settings and provider options |
 | [Capability matrix](docs/capability-matrix.md) | Maturity, defaults, and evidence |
+| [Competitor comparison](docs/research/competitor-comparison.md) | Detailed Mem0, Zep, LangMem, and Letta comparison |
 | [Changelog](docs/CHANGELOG.md) | Release history |
 
 ## Comparison
@@ -84,6 +85,9 @@ recall pipelines, data model, and component boundaries.
 | Zep | Temporal knowledge graph | Runs local-first on SQLite + FTS5 without an external database service |
 | LangMem | Profile/collection memory model | Uses slots for conflict, TTL, and dedup; open multi-value tags for retrieval |
 | Letta/ADEPT | Long-term memory inside autonomous agents | Focuses on memory infrastructure and decouples the agent through adapters |
+
+See the [full architectural comparison](docs/research/competitor-comparison.md) for deployment models, trade-offs, and
+selection guidance.
 
 ## Project Status
 
@@ -96,7 +100,7 @@ recall pipelines, data model, and component boundaries.
 | MCP server | Beta |
 | Mental-model reasoning enhancements and multi-tenancy | Planned |
 
-Current baseline: v0.13.1, 29 migrations, 443 tests passed and 1 skipped. Detailed maturity claims live in the
+Current baseline: v0.13.1, 29 migrations, 445 tests passed and 1 skipped. Detailed maturity claims live in the
 [capability matrix](docs/capability-matrix.md).
 
 ## 中文
