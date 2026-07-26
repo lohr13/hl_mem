@@ -18,3 +18,4 @@ var/*.db-*
 var/*.db.cleanup_backup_*
 var/*.db.bak_*
 tests/eval/reports/*.json
+evaluation/results/
