@@ -6,7 +6,7 @@
 
 - **分支**：`main`
 - **版本**：v0.12.4
-- **阶段**：v0.12.3 全量审查 P0/P1 修复完成
+- **阶段**：v0.12.4 全量审查 P0/P1 修复完成
 - **服务**：FastAPI on port 8200，LLM=glm-5.1，Embedding=text-embedding-v4 (2048d)，Reranker=gte-rerank-v2
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），29 migrations，约 403 active / 514 total claims
 - **FTS**：trigram（claims/tags），unicode61（events）
