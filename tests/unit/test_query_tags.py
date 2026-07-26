@@ -1,6 +1,14 @@
 """查询标签确定性解析测试。"""
 
-from hl_mem.domain.claims.query_tags import extract_query_tags
+from hl_mem.domain.claims.query_tags import extract_query_slot_hints, extract_query_tags
+
+
+def test_query_slot_hints_cover_high_precision_patterns() -> None:
+    assert extract_query_slot_hints("我叫什么名字")[0] == ["identity.name"]
+    assert extract_query_slot_hints("GPU 型号")[0] == ["config.hardware"]
+    assert extract_query_slot_hints("embedding 模型")[0] == ["config.model"]
+    assert extract_query_slot_hints("REDACTED_PROXY 代理")[0] == ["config.network"]
+    assert extract_query_slot_hints("我喜欢什么工具")[0] == ["preference.*"]
 
 
 def test_extract_query_tags_maps_chinese_and_english_in_stable_order() -> None:

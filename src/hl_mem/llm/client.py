@@ -10,6 +10,7 @@ import httpx
 
 from hl_mem.errors import LLMStructuredOutputUnsupportedError
 from hl_mem.http_utils import retry_http
+from hl_mem.monitoring.metrics import DEFAULT_PROVIDER_METRICS, ProviderCall
 from hl_mem.observability.audit import current_audit
 from hl_mem.observability.llm_spans import LLMSpanRecorder
 
@@ -135,6 +136,12 @@ class LLMClient:
         error: Exception | None = None,
     ) -> None:
         """在启用记录器时持久化一次完整调用。"""
+        error_class = classify_provider_error(error)[0] if error is not None else None
+        DEFAULT_PROVIDER_METRICS.record(
+            ProviderCall(
+                "llm", self._operation, status, (time.perf_counter() - started) * 1000, error_class=error_class
+            )
+        )
         if self._span_recorder is None:
             return
         self._span_recorder.record(
@@ -143,7 +150,7 @@ class LLMClient:
             model=self.model,
             structured_mode=mode.value,
             status=status,
-            error_class=classify_provider_error(error)[0] if error is not None else None,
+            error_class=error_class,
             raw_request_id=response.raw_request_id if response is not None else None,
             input_tokens=response.input_tokens if response is not None else None,
             output_tokens=response.output_tokens if response is not None else None,

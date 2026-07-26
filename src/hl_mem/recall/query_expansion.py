@@ -19,6 +19,7 @@ from hl_mem.llm.types import (
     StructuredOutputMode,
     StructuredOutputSpec,
 )
+from hl_mem.monitoring.alerts import CircuitBreaker
 from hl_mem.protocols import QueryExpansion, QueryExpansionResult
 
 _COREFERENCE_TERMS = ("这", "这个", "那个", "上次", "之前", "它", "他们")
@@ -51,6 +52,7 @@ class QueryExpander:
         self.client = client
         self._executor = ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="query-expansion")
         self._capacity = threading.BoundedSemaphore(max_concurrency)
+        self._circuit = CircuitBreaker()
 
     @staticmethod
     def trigger_for(
@@ -88,6 +90,8 @@ class QueryExpander:
         started = time.perf_counter()
         if max_expansions <= 0:
             return self._empty(started, "empty")
+        if not self._circuit.allow():
+            return self._empty(started, "circuit_open", error_class="circuit_open")
         request = self._request(query, intent, max_expansions)
         if not self._capacity.acquire(blocking=False):
             return self._empty(started, "concurrency_limit")
@@ -106,8 +110,10 @@ class QueryExpander:
         except FutureTimeoutError:
             future.cancel()
             release_capacity(future)
+            self._circuit.record(False)
             return self._empty(started, "timeout", error_class="deadline_timeout", attempts=1)
         except Exception as error:
+            self._circuit.record(False)
             error_class, http_status, provider_code = classify_provider_error(error)
             return self._empty(
                 started,
@@ -118,6 +124,7 @@ class QueryExpander:
                 provider_code=provider_code,
             )
         input_tokens = int(response.input_tokens or 0)
+        self._circuit.record(True)
         output_tokens = int(response.output_tokens or 0)
         total_tokens = int(response.usage_total_tokens or input_tokens + output_tokens)
         if total_tokens > token_ceiling:

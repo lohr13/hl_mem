@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -9,6 +10,8 @@ import httpx
 
 from hl_mem.errors import ConfigurationError
 from hl_mem.http_utils import retry_http
+from hl_mem.llm.client import classify_provider_error
+from hl_mem.monitoring.metrics import DEFAULT_PROVIDER_METRICS, ProviderCall
 from hl_mem.protocols import RerankerProtocol
 from hl_mem.settings import Settings
 
@@ -62,7 +65,21 @@ class DashScopeReranker:
             response.raise_for_status()
             return response
 
-        response = retry_http(send_request)
+        started = time.perf_counter()
+        try:
+            response = retry_http(send_request)
+        except Exception as error:
+            DEFAULT_PROVIDER_METRICS.record(
+                ProviderCall(
+                    "reranker",
+                    "rerank",
+                    "error",
+                    (time.perf_counter() - started) * 1000,
+                    error_class=classify_provider_error(error)[0],
+                    fallback=True,
+                )
+            )
+            raise
         results = response.json()["output"]["results"]
         ranked = [(int(item["index"]), float(item["relevance_score"])) for item in results]
         if any(index < 0 or index >= len(documents) for index, _ in ranked):
@@ -72,6 +89,9 @@ class DashScopeReranker:
         ranked = sorted(ranked, key=lambda item: item[1], reverse=True)
         self.last_outcome, self.last_error_class = ("success" if ranked else "empty"), None
         self.last_result = RerankResult(ranked, self.last_outcome)
+        DEFAULT_PROVIDER_METRICS.record(
+            ProviderCall("reranker", "rerank", "success", (time.perf_counter() - started) * 1000)
+        )
         return ranked
 
 

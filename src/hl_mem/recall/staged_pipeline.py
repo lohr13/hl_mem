@@ -18,6 +18,7 @@ from hl_mem.domain.claims.attributes import SLOT_REGISTRY, normalize_predicate
 from hl_mem.domain.claims.query_tags import (
     LOW_INFORMATION_TAGS,
     TAG_INFO_WEIGHT,
+    extract_query_slot_hints,
     extract_query_tags,
 )
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
@@ -84,6 +85,7 @@ class RecallContext:
     reference: str = ""
     preference_boost: float = 1.0
     query_tags: list[str] = field(default_factory=list)
+    query_slot_hints: list[str] = field(default_factory=list)
     tag_boost_enabled: bool = True
     tag_boost_weight: float = 0.05
     tag_channel_enabled: bool = False
@@ -294,6 +296,8 @@ def _collect_candidates(
     effective_tag_boost_enabled = config.tag_boost_enabled if tag_boost_enabled is None else tag_boost_enabled
     effective_tag_channel_enabled = config.tag_channel_enabled if tag_channel_enabled is None else tag_channel_enabled
     query_tags = extract_query_tags(query) if effective_tag_boost_enabled or effective_tag_channel_enabled else []
+    query_slot_hints, hinted_tags = extract_query_slot_hints(query)
+    query_tags = list(dict.fromkeys([*query_tags, *hinted_tags]))
 
     queries = weighted_queries or [WeightedQuery(query, "original", 1.0)]
     blobs = query_blobs or [query_blob]
@@ -371,6 +375,7 @@ def _collect_candidates(
             tracer.record_channel("tag", tag_results)
     if tracer is not None:
         tracer.trace.query_tags = query_tags
+        tracer.trace.query_slot_hints = query_slot_hints
         tracer.trace.tag_boost_applied = bool(effective_tag_boost_enabled and query_tags)
         tracer.trace.tag_channel_applied = bool(effective_tag_channel_enabled and query_tags and tag_results)
 
@@ -394,6 +399,7 @@ def _collect_candidates(
             config.preference_recency_boost if preference_recency_boost is None else preference_recency_boost
         ),
         query_tags=query_tags,
+        query_slot_hints=query_slot_hints,
         tag_boost_enabled=effective_tag_boost_enabled,
         tag_boost_weight=config.tag_boost_weight if tag_boost_weight is None else tag_boost_weight,
         tag_channel_enabled=effective_tag_channel_enabled,
@@ -458,6 +464,13 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
         claim_id: memory_score(features)
         + tag_boosts.get(claim_id, 0.0)
         + (
+            0.05
+            if any(
+                _slot_matches(str(by_id[claim_id].get("canonical_slot") or ""), hint) for hint in ctx.query_slot_hints
+            )
+            else 0.0
+        )
+        + (
             ctx.preference_boost * features["recency"]
             if ctx.selected_intent is RecallIntent.PREFERENCE and _is_preference_claim(by_id[claim_id])
             else 0.0
@@ -470,11 +483,20 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
     ctx.tag_boosts = tag_boosts
     ctx.ranked_claims = _sort_pre_rank(by_id, feature_by_id, pre_scores)
     if tracer is not None:
+        tracer.trace.slot_boost_applied = any(
+            any(_slot_matches(str(claim.get("canonical_slot") or ""), hint) for hint in ctx.query_slot_hints)
+            for claim in by_id.values()
+        )
         tracer.trace.tag_boost_applied = bool(tag_boosts)
         tracer.record_tag_boosts(tag_boosts)
         tracer.trace.phases.fusion_us = (time.perf_counter_ns() - started) // 1000
         tracer.record_pre_rank(ctx.ranked_claims, pre_scores)
     return ctx
+
+
+def _slot_matches(slot: str, hint: str) -> bool:
+    """匹配精确 slot 或 preference 通配 hint。"""
+    return slot.startswith("preference.") if hint == "preference.*" else slot == hint
 
 
 def _sort_pre_rank(

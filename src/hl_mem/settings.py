@@ -269,6 +269,14 @@ class Settings:
     feedback_bonus_cap_days: int = 180
     feedback_min_samples: int = 3
     max_request_body: int = 2 * 1024 * 1024
+    alert_webhook_url: str | None = None
+    alert_dedupe_seconds: float = 300.0
+    expansion_circuit_failure_threshold: int = 5
+    expansion_circuit_open_seconds: float = 60.0
+    smtp_host: str | None = None
+    smtp_port: int = 25
+    alert_email_from: str | None = None
+    alert_email_to: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -300,9 +308,7 @@ class Settings:
             reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
             relation_expansion_mode=_env_choice("HL_MEM_RELATION_EXPANSION", "off", ("off", "on")),
             relation_expansion_max_depth=int(os.getenv("HL_MEM_RELATION_EXPANSION_MAX_DEPTH", "1")),
-            relation_discovery_mode=_env_choice(
-                "HL_MEM_RELATION_DISCOVERY_MODE", "audit", ("off", "audit", "auto")
-            ),
+            relation_discovery_mode=_env_choice("HL_MEM_RELATION_DISCOVERY_MODE", "audit", ("off", "audit", "auto")),
             relation_discovery_pool_limit=int(os.getenv("HL_MEM_RELATION_DISCOVERY_POOL_LIMIT", "40")),
             relation_discovery_max_proposals=int(os.getenv("HL_MEM_RELATION_DISCOVERY_MAX_PROPOSALS", "10")),
             relation_auto_apply_confidence=float(os.getenv("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE", "0.90")),
@@ -326,9 +332,7 @@ class Settings:
                 os.getenv("HL_MEM_QUERY_EXPANSION_TOTAL_TIMEOUT_SECONDS", "3.0")
             ),
             query_expansion_max_concurrency=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX_CONCURRENCY", "4")),
-            procedure_recall_mode=_env_choice(
-                "HL_MEM_PROCEDURE_RECALL_MODE", "keyword", ("off", "keyword", "auto")
-            ),
+            procedure_recall_mode=_env_choice("HL_MEM_PROCEDURE_RECALL_MODE", "keyword", ("off", "keyword", "auto")),
             procedure_llm_threshold=float(os.getenv("HL_MEM_PROCEDURE_LLM_THRESHOLD", "0.80")),
             procedure_router_timeout_seconds=float(os.getenv("HL_MEM_PROCEDURE_ROUTER_TIMEOUT_SECONDS", "1.5")),
             procedure_candidate_limit=int(os.getenv("HL_MEM_PROCEDURE_CANDIDATE_LIMIT", "30")),
@@ -350,9 +354,7 @@ class Settings:
             llm_api_key=os.getenv("LLM_API_KEY"),
             llm_base_url=os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
             llm_model=os.getenv("LLM_MODEL", "qwen3.7-plus"),
-            llm_provider=_env_choice(
-                "HL_MEM_LLM_PROVIDER", "dashscope", ("dashscope", "zhipu", "openai_compatible")
-            ),
+            llm_provider=_env_choice("HL_MEM_LLM_PROVIDER", "dashscope", ("dashscope", "zhipu", "openai_compatible")),
             llm_structured_mode=_env_choice(
                 "HL_MEM_LLM_STRUCTURED_MODE", "auto", ("auto", "json_object", "json_schema")
             ),
@@ -407,14 +409,20 @@ class Settings:
             ttl_backfill_grace_hours=int(os.getenv("HL_MEM_TTL_BACKFILL_GRACE_HOURS", "0")),
             temporal_cleanup_age_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_AGE_DAYS", "30")),
             temporal_cleanup_expiry_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_EXPIRY_DAYS", "90")),
-            feedback_lifecycle_mode=_env_choice(
-                "HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe", ("off", "observe", "on")
-            ),
+            feedback_lifecycle_mode=_env_choice("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe", ("off", "observe", "on")),
             feedback_bonus_every=int(os.getenv("HL_MEM_FEEDBACK_BONUS_EVERY", "3")),
             feedback_bonus_days=int(os.getenv("HL_MEM_FEEDBACK_BONUS_DAYS", "14")),
             feedback_bonus_cap_days=int(os.getenv("HL_MEM_FEEDBACK_BONUS_CAP_DAYS", "180")),
             feedback_min_samples=int(os.getenv("HL_MEM_FEEDBACK_MIN_SAMPLES", "3")),
             max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
+            alert_webhook_url=os.getenv("HL_MEM_ALERT_WEBHOOK_URL"),
+            alert_dedupe_seconds=float(os.getenv("HL_MEM_ALERT_DEDUPE_SECONDS", "300")),
+            expansion_circuit_failure_threshold=int(os.getenv("HL_MEM_EXPANSION_CIRCUIT_FAILURE_THRESHOLD", "5")),
+            expansion_circuit_open_seconds=float(os.getenv("HL_MEM_EXPANSION_CIRCUIT_OPEN_SECONDS", "60")),
+            smtp_host=os.getenv("HL_MEM_SMTP_HOST"),
+            smtp_port=int(os.getenv("HL_MEM_SMTP_PORT", "25")),
+            alert_email_from=os.getenv("HL_MEM_ALERT_EMAIL_FROM"),
+            alert_email_to=os.getenv("HL_MEM_ALERT_EMAIL_TO"),
         )
         settings.validate()
         set_active_aliases(load_entity_aliases())

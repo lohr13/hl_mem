@@ -45,6 +45,25 @@ CHINESE_TAG_MAP: tuple[tuple[str, str], ...] = (
 
 TAG_INFO_WEIGHT = {tag: 1.0 for tag in ALLOWED_TOPIC_TAGS if tag not in LOW_INFORMATION_TAGS}
 
+_SLOT_HINT_RULES: tuple[tuple[re.Pattern[str], str, tuple[str, ...]], ...] = (
+    (re.compile(r"叫什么|姓名|名字|name", re.I), "identity.name", ("identity",)),
+    (re.compile(r"GPU|显卡|内存|CPU|硬件", re.I), "config.hardware", ("hardware",)),
+    (re.compile(r"提取模型|embedding\s*模型|reranker\s*模型|模型", re.I), "config.model", ("model", "implementation")),
+    (re.compile(r"代理|REDACTED_PROXY|网络", re.I), "config.network", ("connectivity",)),
+    (re.compile(r"喜欢|偏好|习惯|趁手|顺手", re.I), "preference.*", ()),
+)
+
+
+def extract_query_slot_hints(query: str) -> tuple[list[str], list[str]]:
+    """从查询中提取高精度 slot hint 及受控 topic tag。"""
+    slots: list[str] = []
+    tags: list[str] = []
+    for pattern, slot, related_tags in _SLOT_HINT_RULES:
+        if pattern.search(query):
+            slots.append(slot)
+            tags.extend(tag for tag in related_tags if tag in ALLOWED_TOPIC_TAGS)
+    return list(dict.fromkeys(slots)), list(dict.fromkeys(tags))
+
 
 def extract_query_tags(query: str) -> list[str]:
     """使用中英文高置信规则从 query 提取去重后的有效标签。"""

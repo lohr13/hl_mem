@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import time
 
 import httpx
 
 from hl_mem.core.vector import pack_vector
 from hl_mem.http_utils import retry_http
+from hl_mem.llm.client import classify_provider_error
+from hl_mem.monitoring.metrics import DEFAULT_PROVIDER_METRICS, ProviderCall
 
 
 class Embedder:
@@ -44,6 +47,8 @@ class Embedder:
         return self.embed_batch([text])[0]
 
     def _request(self, texts: list[str]) -> list[bytes]:
+        started = time.perf_counter()
+
         def send_request() -> httpx.Response:
             post = self._client.post if self._client is not None else httpx.post
             response = post(
@@ -58,6 +63,15 @@ class Embedder:
         try:
             response = retry_http(send_request, max_attempts=self.max_attempts)
         except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as error:
+            DEFAULT_PROVIDER_METRICS.record(
+                ProviderCall(
+                    "embedding",
+                    "embed",
+                    "error",
+                    (time.perf_counter() - started) * 1000,
+                    error_class=classify_provider_error(error)[0],
+                )
+            )
             raise RuntimeError(
                 f"embedding request failed after {self.max_attempts} attempt(s): {type(error).__name__}: {error}"
             ) from error
@@ -67,6 +81,9 @@ class Embedder:
         blobs = [pack_vector(item["embedding"]) for item in data]
         if any(len(blob) != self.dim * 4 for blob in blobs):
             raise ValueError("embedding response dimension does not match configured dimension")
+        DEFAULT_PROVIDER_METRICS.record(
+            ProviderCall("embedding", "embed", "success", (time.perf_counter() - started) * 1000)
+        )
         return blobs
 
 

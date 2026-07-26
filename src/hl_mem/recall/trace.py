@@ -102,6 +102,8 @@ class SearchTrace:
     outcome: str = "success"
     truncated: bool = False
     query_tags: list[str] = field(default_factory=list)
+    query_slot_hints: list[str] = field(default_factory=list)
+    slot_boost_applied: bool = False
     tag_boost_applied: bool = False
     tag_channel_applied: bool = False
     expansion_trigger: str | None = None

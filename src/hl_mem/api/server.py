@@ -114,6 +114,8 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
 
     @app.get("/healthz")
     def healthz(connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
+        from hl_mem.application.health import monitoring_snapshot
+
         connection.execute("SELECT 1").fetchone()
         since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         operations = llm_span_stats(connection, since)["operations"]
@@ -130,6 +132,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             },
             "vector_search": SearchTracer.vector_search_metrics(),
             "recall_side_effects": recall_side_effect_health(),
+            "monitoring": monitoring_snapshot(),
         }
 
     @app.post("/v1/events")
