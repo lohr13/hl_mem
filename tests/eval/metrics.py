@@ -95,7 +95,9 @@ def evaluate_results(case: EvalCase, response: dict[str, Any], latency_ms: float
     }
     text = " ".join(_text(item).casefold() for item in top_five if str(item.get("id")) in relevant)
     keyword_checks = [keyword.casefold() in text for keyword in case.expected_keywords]
-    keyword_correct = (all(keyword_checks) if case.keyword_match == "all" else any(keyword_checks)) if keyword_checks else True
+    keyword_correct = (
+        (all(keyword_checks) if case.keyword_match == "all" else any(keyword_checks)) if keyword_checks else True
+    )
     matched = [item for item in top_five if str(item.get("id")) in relevant]
     confidence_correct = all(
         float(item.get("confidence", 0.0)) >= float(case.expected_min_confidence or 0.0) for item in matched
@@ -103,7 +105,9 @@ def evaluate_results(case: EvalCase, response: dict[str, Any], latency_ms: float
     stale = sum(str(item.get("status")) in case.forbidden_statuses for item in results if isinstance(item, dict))
     temporal = sum(_temporal_violation(item, case.as_of) for item in results if isinstance(item, dict))
     evidence_hits = len(expected_evidence.intersection(returned_evidence))
-    evidence_score = evidence_hits / len(returned_evidence) if returned_evidence else (0.0 if expected_evidence else None)
+    evidence_score = (
+        evidence_hits / len(returned_evidence) if returned_evidence else (0.0 if expected_evidence else None)
+    )
     is_empty = not results
     mrr = compute_mrr(relevant, results) if case.expected_type == "claim" else None
     ndcg = compute_binary_ndcg_at_10(relevant, results) if case.expected_type == "claim" else None
@@ -114,7 +118,11 @@ def evaluate_results(case: EvalCase, response: dict[str, Any], latency_ms: float
         relevant_count=len(relevant),
         relevant_hits=len(hit_ids),
         recall_at_5=(1.0 if hit_ids else 0.0) if case.expected_type == "claim" else None,
-        top_1_correct=(1.0 if results and str(results[0].get("id")) in relevant else 0.0) if case.expected_type == "claim" else None,
+        top_1_correct=(
+            (1.0 if results and str(results[0].get("id")) in relevant else 0.0)
+            if case.expected_type == "claim"
+            else None
+        ),
         keyword_correct=keyword_correct,
         confidence_correct=confidence_correct,
         evidence_correct=evidence_score,
@@ -145,7 +153,8 @@ def aggregate_metrics(scores: list[QueryScore]) -> dict[str, float]:
         "recall_at_5": _average([float(score.recall_at_5) for score in answered]),
         "mrr": _average([float(score.mrr) for score in answered]),
         "ndcg_at_10": _average([float(score.ndcg_at_10) for score in answered]),
-        "micro_recall": sum(score.relevant_hits for score in answered) / max(1, sum(score.relevant_count for score in answered)),
+        "micro_recall": sum(score.relevant_hits for score in answered)
+        / max(1, sum(score.relevant_count for score in answered)),
         "top_1_correctness": _average([float(score.top_1_correct) for score in answered]),
         "no_answer_precision": len(correct_empty) / max(1, len(predicted_empty)),
         "no_answer_recall": len(correct_empty) / max(1, len(empty)),

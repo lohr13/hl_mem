@@ -29,8 +29,8 @@ from hl_mem.protocols import (
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.reranker import (
     DashScopeReranker,
-    make_reranker as make_registered_reranker,
 )
+from hl_mem.recall.reranker import make_reranker as make_registered_reranker
 from hl_mem.settings import Settings
 
 _EXTRACTOR_REGISTRY: dict[str, str] = {
@@ -167,6 +167,7 @@ def make_relation_discoverer(
         return None
     try:
         from hl_mem.workers.discover_relations import LLMRelationDiscoverer
+
         result = LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
         _record_component_health(
             "relation_discoverer",

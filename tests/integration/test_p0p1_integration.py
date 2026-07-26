@@ -48,11 +48,14 @@ def test_procedure_episode_feedback_reaches_usefulness(
             json={"feedback_id": episode["feedback_id"], "helpful": True, "task_outcome": 1.0},
         )
         assert response.status_code == 200
-        row = app.state.db.open().execute(
-            "SELECT helpful_count,outcome_count FROM memory_usefulness "
-            "WHERE memory_type=? AND memory_id=?",
-            ("episode", episode_id),
-        ).fetchone()
+        row = (
+            app.state.db.open()
+            .execute(
+                "SELECT helpful_count,outcome_count FROM memory_usefulness " "WHERE memory_type=? AND memory_id=?",
+                ("episode", episode_id),
+            )
+            .fetchone()
+        )
         assert tuple(row) == (1, 1)
 
 

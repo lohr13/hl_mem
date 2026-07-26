@@ -166,8 +166,10 @@ def bind_cases(connection: sqlite3.Connection, cases: list[EvalCase]) -> list[Ev
                 if _matches(
                     _normalized_text(
                         (
-                            claim.get("subject_entity_id"), claim.get("predicate"),
-                            claim.get("value_json"), claim.get("qualifiers_json"),
+                            claim.get("subject_entity_id"),
+                            claim.get("predicate"),
+                            claim.get("value_json"),
+                            claim.get("qualifiers_json"),
                         )
                     ),
                     group,

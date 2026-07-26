@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hl_mem.ingest.embedder import pack_vector
-from hl_mem.storage.database import Database
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.database import Database
 from scripts.cleanup_duplicates_v3 import cleanup_duplicates
 
 

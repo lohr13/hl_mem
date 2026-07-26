@@ -3,23 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-import struct
-from typing import Iterable
 
 import httpx
 
+from hl_mem.core.vector import pack_vector, unpack_vector
 from hl_mem.http_utils import retry_http
-
-
-def pack_vector(values: Iterable[float]) -> bytes:
-    values = list(values)
-    return struct.pack(f"<{len(values)}f", *values)
-
-
-def unpack_vector(blob: bytes) -> tuple[float, ...]:
-    if len(blob) % 4:
-        raise ValueError("embedding BLOB length must be divisible by four")
-    return struct.unpack(f"<{len(blob) // 4}f", blob)
 
 
 class Embedder:

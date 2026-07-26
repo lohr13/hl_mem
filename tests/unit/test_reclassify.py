@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from hl_mem.ingest.embedder import pack_vector
-from hl_mem.storage.database import Database
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.database import Database
 from hl_mem.workers.reclassify import reclassify_claims
 
 NOW = "2026-07-21T00:00:00+00:00"
@@ -30,6 +30,7 @@ def test_reclassify_batches_updates_and_is_idempotent(tmp_path, monkeypatch):
     connection = Database(tmp_path / "reclass.db").open()
     for index in range(6):
         _claim(connection, str(index))
+
     class FakeClient:
         """测试用 LLM 客户端；classify_batch 会被替换。"""
 

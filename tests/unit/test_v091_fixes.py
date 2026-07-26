@@ -28,7 +28,11 @@ from hl_mem.workers.ttl import expire_claims
 
 @pytest.mark.parametrize(
     "slot",
-    [name for name, definition in SLOT_REGISTRY.items() if definition.is_operational and definition.required_qualifiers],
+    [
+        name
+        for name, definition in SLOT_REGISTRY.items()
+        if definition.is_operational and definition.required_qualifiers
+    ],
 )
 def test_required_slot_qualifier_rejects_missing_and_empty_values(slot: str) -> None:
     required = SLOT_REGISTRY[slot].required_qualifiers
@@ -40,12 +44,8 @@ def test_required_slot_qualifier_rejects_missing_and_empty_values(slot: str) -> 
 
 def test_compute_expiration_normalizes_positive_and_negative_offsets_to_utc() -> None:
     policy = TTLPolicy(temporal_ttl_days_low=1)
-    positive, _ = compute_expiration(
-        "temporal", 0.1, "stable", None, None, "2026-01-02T01:00:00+08:00", "", policy
-    )
-    negative, _ = compute_expiration(
-        "temporal", 0.1, "stable", None, None, "2026-01-01T12:00:00-05:00", "", policy
-    )
+    positive, _ = compute_expiration("temporal", 0.1, "stable", None, None, "2026-01-02T01:00:00+08:00", "", policy)
+    negative, _ = compute_expiration("temporal", 0.1, "stable", None, None, "2026-01-01T12:00:00-05:00", "", policy)
     assert positive == "2026-01-02T17:00:00+00:00"
     assert negative == "2026-01-02T17:00:00+00:00"
 

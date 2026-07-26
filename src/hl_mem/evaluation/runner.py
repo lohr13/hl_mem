@@ -162,8 +162,7 @@ class BenchmarkRunner:
         claims = [dict(row) for row in connection.execute("SELECT * FROM claims ORDER BY recorded_from,id")]
         evidence_by_claim: dict[str, set[str]] = defaultdict(set)
         for row in connection.execute(
-            "SELECT derived_id,evidence_id FROM evidence_links "
-            "WHERE derived_type='claim' AND evidence_type='event'"
+            "SELECT derived_id,evidence_id FROM evidence_links " "WHERE derived_type='claim' AND evidence_type='event'"
         ):
             evidence_by_claim[row["derived_id"]].add(row["evidence_id"])
         return claims, evidence_by_claim
@@ -281,9 +280,7 @@ class BenchmarkRunner:
         aggregated: dict[str, Any] = {}
         for layer in layers:
             layer_metrics = [
-                case["metrics"][layer]
-                for case in case_results
-                if not case["errors"] and layer in case["metrics"]
+                case["metrics"][layer] for case in case_results if not case["errors"] and layer in case["metrics"]
             ]
             names = sorted(
                 {

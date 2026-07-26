@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import time
 import threading
+import time
 from typing import Any
 
 import httpx
@@ -50,6 +50,7 @@ class HLMemHttpClient:
 
     def get(self, path: str) -> httpx.Response:
         """执行同步 GET 请求。"""
+
         def send_request() -> httpx.Response:
             response = httpx.get(f"{self.daemon_url}{path}", timeout=self.timeout)
             response.raise_for_status()
@@ -59,6 +60,7 @@ class HLMemHttpClient:
 
     def post(self, path: str, payload: dict[str, Any]) -> httpx.Response:
         """执行同步 POST 请求。"""
+
         def send_request() -> httpx.Response:
             response = httpx.post(f"{self.daemon_url}{path}", json=payload, timeout=self.timeout)
             response.raise_for_status()

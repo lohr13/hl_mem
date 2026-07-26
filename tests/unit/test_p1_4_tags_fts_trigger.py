@@ -27,8 +27,7 @@ def test_tags_fts_trigger_only_tracks_topic_tags_changes(tmp_path: Path) -> None
         assert access_delta == 1
         assert tags_delta > 1
         indexed = connection.execute(
-            "SELECT c.id FROM claims_tags_fts f JOIN claims c ON c.rowid=f.rowid "
-            "WHERE claims_tags_fts MATCH ?",
+            "SELECT c.id FROM claims_tags_fts f JOIN claims c ON c.rowid=f.rowid " "WHERE claims_tags_fts MATCH ?",
             ('"after"',),
         ).fetchone()
         assert indexed["id"] == "claim"

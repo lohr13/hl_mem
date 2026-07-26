@@ -14,14 +14,26 @@ def test_worker_module_exposes_cli_entrypoint() -> None:
 
 def queue(connection, job_id="job", event_id="event", max_attempts=3) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    EventRepository(connection).insert_event({
-        "id": event_id, "event_type": "message", "actor_type": "user",
-        "content_json": '{"text":"记住使用 SQLite"}', "occurred_at": now, "recorded_at": now,
-    })
-    JobRepository(connection).insert_job({
-        "id": job_id, "job_type": "extract_event", "payload_json": json.dumps({"event_id": event_id}),
-        "created_at": now, "updated_at": now, "max_attempts": max_attempts,
-    })
+    EventRepository(connection).insert_event(
+        {
+            "id": event_id,
+            "event_type": "message",
+            "actor_type": "user",
+            "content_json": '{"text":"记住使用 SQLite"}',
+            "occurred_at": now,
+            "recorded_at": now,
+        }
+    )
+    JobRepository(connection).insert_job(
+        {
+            "id": job_id,
+            "job_type": "extract_event",
+            "payload_json": json.dumps({"event_id": event_id}),
+            "created_at": now,
+            "updated_at": now,
+            "max_attempts": max_attempts,
+        }
+    )
 
 
 def test_run_once_extracts_and_completes(tmp_path) -> None:

@@ -81,12 +81,15 @@ def test_migration_022_upgrades_fts_to_trigram(
     }
     assert set(schemas) == {"claims_fts", "claims_tags_fts"}
     assert all("tokenize='trigram'" in sql for sql in schemas.values())
-    assert connection.execute(
-        "SELECT count(*) FROM claims_fts WHERE claims_fts MATCH '\"记忆系统\"'"
-    ).fetchone()[0] == 1
-    assert connection.execute(
-        "SELECT count(*) FROM claims_tags_fts WHERE claims_tags_fts MATCH '\"architecture\"'"
-    ).fetchone()[0] == 3
+    assert (
+        connection.execute("SELECT count(*) FROM claims_fts WHERE claims_fts MATCH '\"记忆系统\"'").fetchone()[0] == 1
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM claims_tags_fts WHERE claims_tags_fts MATCH '\"architecture\"'"
+        ).fetchone()[0]
+        == 3
+    )
 
 
 def test_chinese_fts_returns_results_after_migration(
@@ -115,9 +118,7 @@ def test_schema_migrations_registered(
 ) -> None:
     """升级后 schema_migrations 记录 migration 022。"""
     _, connection = upgraded_database
-    row = connection.execute(
-        "SELECT version FROM schema_migrations WHERE version='022_fts_trigram'"
-    ).fetchone()
+    row = connection.execute("SELECT version FROM schema_migrations WHERE version='022_fts_trigram'").fetchone()
     assert row["version"] == "022_fts_trigram"
 
 

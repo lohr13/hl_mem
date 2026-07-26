@@ -21,6 +21,6 @@ def test_short_acknowledgement_and_raw_tool_output_are_filtered() -> None:
 def test_regular_and_structured_tool_events_pass() -> None:
     filter_ = EventFilter()
     assert filter_.should_extract({"content": {"text": "用户偏好简短回答"}})[0]
-    assert filter_.should_extract(
-        {"event_type": "tool_result", "content": {"text": "服务配置详情", "service": "api"}}
-    )[0]
+    assert filter_.should_extract({"event_type": "tool_result", "content": {"text": "服务配置详情", "service": "api"}})[
+        0
+    ]

@@ -60,9 +60,10 @@ class EventRepository:
         commit: bool = True,
     ) -> dict[str, Any]:
         """幂等写入图片描述派生事件，并返回已存在或新建事件。"""
-        image_hash = description.locator.sha256 or hashlib.sha256(
-            (description.locator.uri or f"image-{image_index}").encode()
-        ).hexdigest()
+        image_hash = (
+            description.locator.sha256
+            or hashlib.sha256((description.locator.uri or f"image-{image_index}").encode()).hexdigest()
+        )
         idempotency_key = f"image-describe:{source_event['id']}:{image_hash}:{description.model}"
         existing_id = self.find_id_by_idempotency_key(idempotency_key)
         if existing_id:
@@ -101,9 +102,7 @@ class EventRepository:
             raise RuntimeError(f"failed to read inserted image description event: {event_id}")
         return stored
 
-    def find_image_description(
-        self, source_event_id: str, image_index: int, model: str
-    ) -> dict[str, Any] | None:
+    def find_image_description(self, source_event_id: str, image_index: int, model: str) -> dict[str, Any] | None:
         """按来源、图片序号和模型查找可复用的派生描述事件。"""
         row = self.connection.execute(
             "SELECT id FROM events WHERE event_type='image_description' "

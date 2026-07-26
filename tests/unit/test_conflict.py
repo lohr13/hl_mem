@@ -4,8 +4,9 @@ from hl_mem.domain.claims.conflicts import ConflictResolver, compute_conflict_ke
 
 
 def test_conflict_key_is_canonical_and_stable() -> None:
-    assert compute_conflict_key(" Default ", "用 户", "偏好", "preference.ui_theme", {"scope": "ＵＩ", "note": 1}) == \
-           compute_conflict_key("default", "用户", "偏好", "preference.ui_theme", {"note": 2, "scope": "UI"})
+    assert compute_conflict_key(
+        " Default ", "用 户", "偏好", "preference.ui_theme", {"scope": "ＵＩ", "note": 1}
+    ) == compute_conflict_key("default", "用户", "偏好", "preference.ui_theme", {"note": 2, "scope": "UI"})
 
 
 def test_conflict_key_aligns_cross_predicate_tool_choice_slots() -> None:
@@ -104,7 +105,10 @@ def test_config_port_deterministic_conflict_rules() -> None:
     }
     assert resolver.resolve(base, {**base}) == "entails"
     assert resolver.resolve(base, {**base, "value": 8081}) == "contradicts"
-    assert resolver.resolve(
-        base,
-        {**base, "value": 8081, "qualifiers": {"state_change": True}},
-    ) == "state_change"
+    assert (
+        resolver.resolve(
+            base,
+            {**base, "value": 8081, "qualifiers": {"state_change": True}},
+        )
+        == "state_change"
+    )

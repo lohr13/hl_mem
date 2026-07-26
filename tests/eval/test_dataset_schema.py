@@ -14,8 +14,7 @@ from tests.eval.dataset import BindingError, bind_cases, load_cases
 def _connection() -> sqlite3.Connection:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
-    connection.executescript(
-        """
+    connection.executescript("""
         CREATE TABLE claims (
             id TEXT PRIMARY KEY, subject_entity_id TEXT, predicate TEXT, value_json TEXT,
             qualifiers_json TEXT, status TEXT, confidence REAL, valid_from TEXT, valid_to TEXT,
@@ -25,8 +24,7 @@ def _connection() -> sqlite3.Connection:
         CREATE TABLE evidence_links (
             derived_type TEXT, derived_id TEXT, evidence_type TEXT, evidence_id TEXT
         );
-        """
-    )
+        """)
     return connection
 
 
@@ -82,8 +80,17 @@ def test_bind_cases_resolves_unique_claim_and_event_by_keywords(tmp_path: Path) 
     connection.execute(
         "INSERT INTO claims VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (
-            "claim-1", "hl_mem", "配置", json.dumps("SQLite WAL"), "{}", "active", 0.95,
-            "2026-01-01T00:00:00+00:00", None, "2026-01-01T00:00:00+00:00", None,
+            "claim-1",
+            "hl_mem",
+            "配置",
+            json.dumps("SQLite WAL"),
+            "{}",
+            "active",
+            0.95,
+            "2026-01-01T00:00:00+00:00",
+            None,
+            "2026-01-01T00:00:00+00:00",
+            None,
         ),
     )
     connection.execute("INSERT INTO events VALUES (?,?)", ("event-1", json.dumps({"text": "数据库使用 SQLite WAL"})))

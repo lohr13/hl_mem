@@ -123,8 +123,10 @@ def cleanup_duplicates(db_path: Path, backup_path: Path, *, dry_run: bool) -> di
             for snapshot in group:
                 current = current_rows.get(snapshot["id"])
                 comparable = ("namespace_key", "subject_entity_id", "value_json", "embedding_dense")
-                if current is None or current["status"] != "active" or any(
-                    current[field] != snapshot[field] for field in comparable
+                if (
+                    current is None
+                    or current["status"] != "active"
+                    or any(current[field] != snapshot[field] for field in comparable)
                 ):
                     raise sqlite3.IntegrityError(f"claim changed during cleanup: {snapshot['id']}")
             keeper = group[0]
@@ -132,8 +134,7 @@ def cleanup_duplicates(db_path: Path, backup_path: Path, *, dry_run: bool) -> di
                 if loser["id"] == keeper["id"]:
                     continue
                 cursor = connection.execute(
-                    "UPDATE claims SET status=?,supersedes_id=?,superseded_by_id=? "
-                    "WHERE id=? AND status=?",
+                    "UPDATE claims SET status=?,supersedes_id=?,superseded_by_id=? " "WHERE id=? AND status=?",
                     ("superseded", keeper["id"], keeper["id"], loser["id"], "active"),
                 )
                 if not cursor.rowcount:

@@ -43,11 +43,7 @@ CHINESE_TAG_MAP: tuple[tuple[str, str], ...] = (
     ("解决", "resolution"),
 )
 
-TAG_INFO_WEIGHT = {
-    tag: 1.0
-    for tag in ALLOWED_TOPIC_TAGS
-    if tag not in LOW_INFORMATION_TAGS
-}
+TAG_INFO_WEIGHT = {tag: 1.0 for tag in ALLOWED_TOPIC_TAGS if tag not in LOW_INFORMATION_TAGS}
 
 
 def extract_query_tags(query: str) -> list[str]:

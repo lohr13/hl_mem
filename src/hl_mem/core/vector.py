@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 import math
+import struct
 from collections.abc import Sequence
+from typing import Iterable
 
-from hl_mem.ingest.embedder import unpack_vector
+
+def pack_vector(values: Iterable[float]) -> bytes:
+    """将浮点序列编码为小端 float32 BLOB。"""
+    materialized = list(values)
+    return struct.pack(f"<{len(materialized)}f", *materialized)
+
+
+def unpack_vector(blob: bytes) -> tuple[float, ...]:
+    """将小端 float32 BLOB 解码为浮点元组。"""
+    if len(blob) % 4:
+        raise ValueError("embedding BLOB length must be divisible by four")
+    return struct.unpack(f"<{len(blob) // 4}f", blob)
 
 
 def cosine_similarity(query_blob: bytes, target_blob: bytes) -> float:

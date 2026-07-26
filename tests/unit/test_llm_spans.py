@@ -96,7 +96,5 @@ def test_llm_span_stats_aggregation(tmp_path) -> None:
 def test_llm_span_migration_is_registered(tmp_path) -> None:
     """打开数据库应应用并注册 019 migration。"""
     connection = Database(tmp_path / "migration.db").open()
-    version = connection.execute(
-        "SELECT version FROM schema_migrations WHERE version='019_llm_call_spans'"
-    ).fetchone()
+    version = connection.execute("SELECT version FROM schema_migrations WHERE version='019_llm_call_spans'").fetchone()
     assert version is not None

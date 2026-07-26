@@ -45,9 +45,7 @@ def test_audit_and_auto_runs_create_independent_proposals(tmp_path: Path) -> Non
         )
 
         assert audit_id is not None and auto_id is not None and audit_id != auto_id
-        rows = connection.execute(
-            "SELECT run_id,mode,model,rationale FROM relation_proposals ORDER BY mode"
-        ).fetchall()
+        rows = connection.execute("SELECT run_id,mode,model,rationale FROM relation_proposals ORDER BY mode").fetchall()
         assert [tuple(row) for row in rows] == [
             ("run-audit", "audit", "model-a", "first"),
             ("run-auto", "auto", "model-b", "second"),
@@ -84,9 +82,7 @@ def test_same_mode_different_runs_are_both_retained(tmp_path: Path) -> None:
         first_id = repository.insert_proposal({**proposal, "run_id": "run-1"})
         second_id = repository.insert_proposal({**proposal, "run_id": "run-2"})
         assert first_id is not None and second_id is not None and first_id != second_id
-        rows = connection.execute(
-            "SELECT run_id,mode FROM relation_proposals ORDER BY run_id"
-        ).fetchall()
+        rows = connection.execute("SELECT run_id,mode FROM relation_proposals ORDER BY run_id").fetchall()
         assert [tuple(row) for row in rows] == [("run-1", "audit"), ("run-2", "audit")]
         assert repository.insert_proposal({**proposal, "run_id": "run-2"}) is None
     finally:

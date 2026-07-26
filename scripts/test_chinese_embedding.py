@@ -1,9 +1,11 @@
 """Test embedding for Chinese text using the same env as server."""
+
 import os
 import sys
 
 # Load .env like start_server.py does
 from pathlib import Path
+
 env_file = Path(__file__).parent.parent / ".env"
 if env_file.exists():
     for line in env_file.read_text().splitlines():
@@ -14,11 +16,12 @@ if env_file.exists():
 os.environ.setdefault("HL_MEM_RERANKER", "on")
 os.environ.setdefault("HL_MEM_EMBEDDER", "real")
 
-from hl_mem.settings import Settings
-from hl_mem.components import make_embedder
-from hl_mem.ingest.embedder import pack_vector, unpack_vector
-from hl_mem.core.vector import cosine_similarity
 import struct
+
+from hl_mem.components import make_embedder
+from hl_mem.core.vector import cosine_similarity
+from hl_mem.ingest.embedder import pack_vector, unpack_vector
+from hl_mem.settings import Settings
 
 settings = Settings.from_env()
 print(f"embedder_mode: {settings.embedder_mode}")
@@ -43,12 +46,15 @@ for query in ["hl_mem", "唇形同步", "配置", "memory"]:
 
 # Now test dense search with the Chinese embedding
 print("\n\n=== Dense search test ===")
-import sqlite3, json
+import json
+import sqlite3
+
 conn = sqlite3.connect("var/hl_mem.db")
 conn.row_factory = sqlite3.Row
 
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
+
 db = Database("var/hl_mem.db")
 conn2 = db.open()
 repo = ClaimRepository(conn2)

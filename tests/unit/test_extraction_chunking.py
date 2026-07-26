@@ -85,12 +85,7 @@ def test_large_conversation_contains_each_turn_once_as_extractable_content() -> 
         ChunkingPolicy(250, 2, 3),
     )
 
-    extracted_turns = [
-        json.loads(line)
-        for chunk in chunks
-        for line in chunk.text.splitlines()
-        if line.strip()
-    ]
+    extracted_turns = [json.loads(line) for chunk in chunks for line in chunk.text.splitlines() if line.strip()]
     assert extracted_turns == turns
 
 

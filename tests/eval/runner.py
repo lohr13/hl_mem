@@ -21,7 +21,6 @@ from hl_mem.api.server import create_app
 from tests.eval.dataset import EvalCase, bind_cases, load_cases
 from tests.eval.metrics import QueryScore, aggregate_metrics, evaluate_results
 
-
 RecallCallable = Callable[[EvalCase], dict[str, Any]]
 
 
@@ -41,12 +40,7 @@ def _score_passed(score: QueryScore) -> bool:
     if score.expected_type == "empty":
         return score.is_empty_prediction
     evidence_passed = score.evidence_correct is None or score.evidence_correct == 1.0
-    return bool(
-        score.recall_at_5
-        and score.keyword_correct
-        and score.confidence_correct
-        and evidence_passed
-    )
+    return bool(score.recall_at_5 and score.keyword_correct and score.confidence_correct and evidence_passed)
 
 
 def _test_layer_counts(scores: list[QueryScore]) -> dict[str, int]:
@@ -60,14 +54,12 @@ def print_report_summary(report: dict[str, Any]) -> None:
     metrics = report["metrics"]
     latency = report["latency"]
     print(
-        f"Test layer: passed={test_layer['passed']}, "
-        f"failed={test_layer['failed']}, skipped={test_layer['skipped']}"
+        f"Test layer: passed={test_layer['passed']}, " f"failed={test_layer['failed']}, skipped={test_layer['skipped']}"
     )
     scenarios = report.get("scenarios")
     if scenarios is not None:
         print(
-            f"Scenarios: passed={scenarios['passed']}, "
-            f"failed={scenarios['failed']}, skipped={scenarios['skipped']}"
+            f"Scenarios: passed={scenarios['passed']}, " f"failed={scenarios['failed']}, skipped={scenarios['skipped']}"
         )
     print(
         f"Retrieval: recall@5={metrics['recall_at_5']:.3f}, "

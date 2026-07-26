@@ -85,14 +85,10 @@ def recall_procedure(
     normalized_query = query.strip()
     pattern = f"%{escape_like_pattern(normalized_query)}%"
     outcome_filter = (
-        "AND (goal LIKE ? ESCAPE '\\' OR COALESCE(outcome_summary,'') LIKE ? ESCAPE '\\') "
-        if normalized_query
-        else ""
+        "AND (goal LIKE ? ESCAPE '\\' OR COALESCE(outcome_summary,'') LIKE ? ESCAPE '\\') " if normalized_query else ""
     )
     outcome_parameters: tuple[object, ...] = (
-        (namespace, pattern, pattern, recent_outcome_window)
-        if normalized_query
-        else (namespace, recent_outcome_window)
+        (namespace, pattern, pattern, recent_outcome_window) if normalized_query else (namespace, recent_outcome_window)
     )
     outcome_rows = repository.connection.execute(
         "SELECT status,COALESCE(ended_at,started_at) AS occurred_at FROM episodes "

@@ -12,8 +12,7 @@ def test_emit_writes_context_and_explicit_override(tmp_path) -> None:
     audit = AuditLogger(path)
     original = audit_context.get()
     with audit_scope(audit, trace_id="trace", tenant_id="context", event_id="event"):
-        assert audit.emit("filter", "evaluated", "allow", tenant_id="explicit",
-                          detail={"reason": "message"})
+        assert audit.emit("filter", "evaluated", "allow", tenant_id="explicit", detail={"reason": "message"})
     assert audit_context.get() == original
     row = connection.execute("SELECT * FROM audit_log").fetchone()
     assert row["trace_id"] == "trace" and row["tenant_id"] == "explicit"

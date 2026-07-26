@@ -1,6 +1,7 @@
 """Extract useful info from Hindsight .pyc files and client API."""
-import importlib.util
+
 import dis
+import importlib.util
 import marshal
 import os
 import sys
@@ -24,7 +25,7 @@ for root, dirs, files in os.walk(os.path.join(HINDSIGHT_BASE, "__pycache__")):
 
         try:
             with open(pyc_path, "rb") as fh:
-                # Skip magic number (4) + flags (4) + timestamp/size (8) 
+                # Skip magic number (4) + flags (4) + timestamp/size (8)
                 fh.read(16)
                 code = marshal.load(fh)
 
@@ -62,7 +63,9 @@ print("\n" + "=" * 60)
 print("Hindsight Client API — Data Models")
 print("=" * 60)
 
-CLIENT_BASE = "C:/Users/Administrator/AppData/Local/hermes/hermes-agent/.venv/Lib/site-packages/hindsight_client_api/models"
+CLIENT_BASE = (
+    "C:/Users/Administrator/AppData/Local/hermes/hermes-agent/.venv/Lib/site-packages/hindsight_client_api/models"
+)
 for f in sorted(os.listdir(CLIENT_BASE)):
     if f.endswith(".py") and not f.startswith("__"):
         path = os.path.join(CLIENT_BASE, f)
@@ -72,6 +75,17 @@ for f in sorted(os.listdir(CLIENT_BASE)):
         lines = content.split("\n")
         for i, line in enumerate(lines):
             stripped = line.strip()
-            if stripped.startswith("class ") or "attribute_map" in stripped or ": " in stripped and ("str" in stripped or "int" in stripped or "float" in stripped or "bool" in stripped or "list" in stripped):
+            if (
+                stripped.startswith("class ")
+                or "attribute_map" in stripped
+                or ": " in stripped
+                and (
+                    "str" in stripped
+                    or "int" in stripped
+                    or "float" in stripped
+                    or "bool" in stripped
+                    or "list" in stripped
+                )
+            ):
                 if not stripped.startswith("#") and not stripped.startswith('"""'):
                     print(f"  {f}: {stripped[:120]}")

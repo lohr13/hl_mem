@@ -19,10 +19,7 @@ class LongMemEvalAdapter:
     FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
     def __init__(self, manifest_path: Path | None = None) -> None:
-        self.manifest_path = (
-            manifest_path
-            or Path(__file__).parents[3] / "benchmarks" / "longmemeval" / "manifest.json"
-        )
+        self.manifest_path = manifest_path or Path(__file__).parents[3] / "benchmarks" / "longmemeval" / "manifest.json"
 
     @classmethod
     def from_fixture(cls, source: Path | None = None) -> Iterable[BenchmarkCase]:
@@ -172,20 +169,13 @@ class LongMemEvalAdapter:
             if isinstance(items, Mapping):
                 flattened.append({**items, "_session_key": session_key})
             elif isinstance(items, Sequence) and not isinstance(items, (str, bytes)):
-                flattened.extend(
-                    {**item, "_session_key": session_key}
-                    for item in items
-                    if isinstance(item, Mapping)
-                )
+                flattened.extend({**item, "_session_key": session_key} for item in items if isinstance(item, Mapping))
         return flattened
 
     @staticmethod
     def _answer_ids(record: Mapping[str, Any]) -> tuple[str, ...]:
         value = (
-            record.get("answer_message_ids")
-            or record.get("gold_message_ids")
-            or record.get("answer_session_ids")
-            or ()
+            record.get("answer_message_ids") or record.get("gold_message_ids") or record.get("answer_session_ids") or ()
         )
         if isinstance(value, (str, int)):
             return (str(value),)

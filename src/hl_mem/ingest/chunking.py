@@ -115,26 +115,16 @@ def _split_oversized_text_unit(text: str, target_chars: int) -> list[str]:
         pieces: list[str] = []
         for start, end in _pack_units(sentences, target_chars):
             piece = "".join(sentences[start:end])
-            pieces.extend(
-                piece[offset : offset + target_chars] for offset in range(0, len(piece), target_chars)
-            )
+            pieces.extend(piece[offset : offset + target_chars] for offset in range(0, len(piece), target_chars))
         return pieces
     return [text[offset : offset + target_chars] for offset in range(0, len(text), target_chars)]
 
 
 def _text_units(text: str, target_chars: int) -> list[str]:
-    paragraphs = [
-        paragraph
-        for paragraph in re.split(r"\n\s*\n|(?=^#{1,6}\s)", text, flags=re.MULTILINE)
-        if paragraph
-    ]
+    paragraphs = [paragraph for paragraph in re.split(r"\n\s*\n|(?=^#{1,6}\s)", text, flags=re.MULTILINE) if paragraph]
     if not paragraphs:
         return [text]
-    return [
-        piece
-        for paragraph in paragraphs
-        for piece in _split_oversized_text_unit(paragraph, target_chars)
-    ]
+    return [piece for paragraph in paragraphs for piece in _split_oversized_text_unit(paragraph, target_chars)]
 
 
 def _conversation_context(turn: dict[str, Any]) -> str:
@@ -173,9 +163,7 @@ def split_extraction_content(
         if structure is ContentStructure.CONVERSATION and start > 0 and policy.overlap_turns:
             context_start = max(0, start - policy.overlap_turns)
             turns = _conversation_turns(content) or []
-            context_prefix = "\n".join(
-                _conversation_context(turn) for turn in turns[context_start:start]
-            )
+            context_prefix = "\n".join(_conversation_context(turn) for turn in turns[context_start:start])
         chunks.append(
             ExtractionChunk(
                 index=chunk_index,
@@ -195,11 +183,7 @@ def _preferred_split_offset(text: str, structure: ContentStructure) -> int | Non
     midpoint = len(text) // 2
     if structure in {ContentStructure.CONVERSATION, ContentStructure.JSONL}:
         line_boundaries = [match.end() for match in re.finditer(r"\n", text)]
-        return (
-            min(line_boundaries, key=lambda offset: abs(offset - midpoint))
-            if line_boundaries
-            else None
-        )
+        return min(line_boundaries, key=lambda offset: abs(offset - midpoint)) if line_boundaries else None
     candidates: list[int] = []
     for match in re.finditer(r"\n\s*\n|\n|(?<=[。！？!?；;])", text):
         if 0 < match.end() < len(text):

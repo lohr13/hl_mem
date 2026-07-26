@@ -13,8 +13,8 @@ from typing import Any, Callable
 from hl_mem import components
 from hl_mem.application.ingest import IngestService
 from hl_mem.domain.claims.attributes import infer_canonical_attribute
-from hl_mem.domain.content import ImagePart, parse_content
 from hl_mem.domain.consolidation_scope import ConsolidationScope
+from hl_mem.domain.content import ImagePart, parse_content
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
@@ -33,15 +33,15 @@ from hl_mem.workers.consolidate import (
 )
 from hl_mem.workers.decay import cleanup_stale_temporal_claims, decay_claims
 from hl_mem.workers.deduplicate import deduplicate_claims, enqueue_daily_deduplication
+from hl_mem.workers.discover_relations import discover_relations
 from hl_mem.workers.induce_policies import (
     enqueue_daily_policy_induction,
     induce_policies,
 )
 from hl_mem.workers.mental_models import DerivedMemoryMaintainer
+from hl_mem.workers.rebuild_usefulness import rebuild_usefulness
 from hl_mem.workers.scheduling import enqueue_daily_job
 from hl_mem.workers.ttl import expire_claims
-from hl_mem.workers.rebuild_usefulness import rebuild_usefulness
-from hl_mem.workers.discover_relations import discover_relations
 
 
 def _now() -> str:

@@ -280,9 +280,7 @@ class WorkerPreFilterIntegrationTests(unittest.TestCase):
             worker.database.close()
         self.assertEqual(result, {"claims": 0, "pre_filter": "tool_control_frame"})
         self.assertEqual(extractor.calls, 0)
-        self.assertTrue(
-            any(row[:3] == ("extraction_pre_filter", "evaluated", "skip") for row in audit.rows)
-        )
+        self.assertTrue(any(row[:3] == ("extraction_pre_filter", "evaluated", "skip") for row in audit.rows))
 
     def test_pre_filter_error_falls_back_to_extraction(self) -> None:
         with TemporaryDirectory() as directory:
@@ -295,9 +293,7 @@ class WorkerPreFilterIntegrationTests(unittest.TestCase):
             worker.database.close()
         self.assertEqual(result["claims"], 0)
         self.assertEqual(extractor.calls, 1)
-        self.assertTrue(
-            any(row[:3] == ("extraction_pre_filter", "evaluated", "error_fallback") for row in audit.rows)
-        )
+        self.assertTrue(any(row[:3] == ("extraction_pre_filter", "evaluated", "error_fallback") for row in audit.rows))
 
     def test_enabled_worker_uses_persistent_audit_by_default(self) -> None:
         with TemporaryDirectory() as directory:

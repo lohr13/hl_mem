@@ -1,6 +1,7 @@
 """Diagnose Chinese recall issues."""
-import sqlite3
+
 import json
+import sqlite3
 
 # 1. FTS test
 conn = sqlite3.connect("var/hl_mem.db")
@@ -31,10 +32,10 @@ conn.close()
 
 # 2. Dense vector search test
 print("\n=== Dense vector search test ===")
-from hl_mem.storage.database import Database
-from hl_mem.storage.claims import ClaimRepository
 from hl_mem.components import make_embedder
 from hl_mem.settings import Settings
+from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.database import Database
 
 settings = Settings.from_env()
 embedder = make_embedder(settings)
@@ -49,6 +50,7 @@ for query in ["唇形同步", "代理配置", "记忆系统架构", "hl_mem"]:
         continue
     # Pack to bytes if it's a list
     import struct
+
     if isinstance(raw_vec, list):
         blob = struct.pack(f"<{len(raw_vec)}f", *raw_vec)
     else:

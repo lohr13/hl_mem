@@ -1,6 +1,7 @@
 """Quick data quality analysis for hl_mem claims."""
-import sqlite3
+
 import json
+import sqlite3
 from collections import Counter
 
 conn = sqlite3.connect("var/hl_mem.db")
@@ -82,6 +83,7 @@ low = conn.execute(
 ).fetchall()
 for r in low:
     import json as _json
+
     val = ""
     try:
         val = str(_json.loads(r["value_json"]))[:60] if r["value_json"] else ""
@@ -104,12 +106,15 @@ stale_temporal = conn.execute(
 ).fetchall()
 for r in stale_temporal:
     import json as _json
+
     val = ""
     try:
         val = str(_json.loads(r["value_json"]))[:60] if r["value_json"] else ""
     except Exception:
         val = (r["value_json"] or "")[:60]
-    print(f"  [{r['importance']:.2f}] {r['recorded_from'][:10] if r['recorded_from'] else 'N/A'} | {r['subject_entity_id'] or 'NULL'} | {r['predicate']} | {val}")
+    print(
+        f"  [{r['importance']:.2f}] {r['recorded_from'][:10] if r['recorded_from'] else 'N/A'} | {r['subject_entity_id'] or 'NULL'} | {r['predicate']} | {val}"
+    )
 print(f"\n  Total stale temporal: {len(stale_temporal)} (showing first 15)")
 
 print()
@@ -126,9 +131,9 @@ print()
 print("=" * 60)
 print("Canonical Slot Coverage")
 print("=" * 60)
-with_slot = conn.execute(
-    "SELECT COUNT(*) FROM claims WHERE status='active' AND canonical_slot IS NOT NULL"
-).fetchone()[0]
+with_slot = conn.execute("SELECT COUNT(*) FROM claims WHERE status='active' AND canonical_slot IS NOT NULL").fetchone()[
+    0
+]
 print(f"  With slot: {with_slot}/{total_active} active")
 slot_dist = conn.execute(
     "SELECT canonical_slot, COUNT(*) as cnt FROM claims WHERE status='active' "
@@ -149,6 +154,7 @@ xs_dups = conn.execute(
 ).fetchall()
 for r in xs_dups:
     import json as _json
+
     val = ""
     try:
         val = str(_json.loads(r["value_json"]))[:80] if r["value_json"] else ""

@@ -73,10 +73,7 @@ def test_build_plan_only_selects_current_disputed_without_live_peer(tmp_path: Pa
 def test_apply_only_changes_status_and_preserves_evidence(tmp_path: Path) -> None:
     database_path = tmp_path / "apply.db"
     connection = _fixture(database_path)
-    before_claims = {
-        row["id"]: dict(row)
-        for row in connection.execute("SELECT * FROM claims ORDER BY id")
-    }
+    before_claims = {row["id"]: dict(row) for row in connection.execute("SELECT * FROM claims ORDER BY id")}
     before_evidence = [tuple(row) for row in connection.execute("SELECT * FROM evidence_links ORDER BY id")]
     plan = build_plan(connection, now="2026-07-22T00:00:00+00:00")
     connection.close()

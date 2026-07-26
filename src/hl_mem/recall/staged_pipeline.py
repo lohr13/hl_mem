@@ -168,10 +168,7 @@ def _rrf_scores(channels: list[list[dict[str, Any]]], rank_constant: int) -> dic
 
 
 def _weighted_rrf_scores(
-    channels: list[
-        tuple[list[dict[str, Any]], float]
-        | tuple[list[dict[str, Any]], float, float]
-    ],
+    channels: list[tuple[list[dict[str, Any]], float] | tuple[list[dict[str, Any]], float, float]],
     rank_constant: int,
 ) -> dict[str, float]:
     """按查询权重和通道权重计算 RRF，空通道不产生分数。"""
@@ -285,11 +282,7 @@ def _collect_candidates(
     total_started = time.perf_counter_ns()
     effective_tag_boost_enabled = config.tag_boost_enabled if tag_boost_enabled is None else tag_boost_enabled
     effective_tag_channel_enabled = config.tag_channel_enabled if tag_channel_enabled is None else tag_channel_enabled
-    query_tags = (
-        extract_query_tags(query)
-        if effective_tag_boost_enabled or effective_tag_channel_enabled
-        else []
-    )
+    query_tags = extract_query_tags(query) if effective_tag_boost_enabled or effective_tag_channel_enabled else []
 
     queries = weighted_queries or [WeightedQuery(query, "original", 1.0)]
     blobs = query_blobs or [query_blob]
@@ -437,11 +430,7 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
         query_tag_set = set(ctx.query_tags)
         for claim_id, claim in by_id.items():
             overlap = query_tag_set.intersection(claim.get("topic_tags") or [])
-            weighted = sum(
-                TAG_INFO_WEIGHT.get(tag, 0.5)
-                for tag in overlap
-                if tag not in LOW_INFORMATION_TAGS
-            )
+            weighted = sum(TAG_INFO_WEIGHT.get(tag, 0.5) for tag in overlap if tag not in LOW_INFORMATION_TAGS)
             if weighted <= 0.0:
                 continue
             boost = min(weighted / len(query_tag_set), 1.0) * ctx.tag_boost_weight
@@ -493,10 +482,7 @@ def _expand_related(ctx: RecallContext) -> RecallContext:
     if ctx.relation_connection is None or config is None or not config.enabled:
         return ctx
     started = time.perf_counter_ns()
-    seeds = [
-        {**claim, "_semantic_score": ctx.feature_by_id[claim["id"]]["semantic"]}
-        for claim in ctx.ranked_claims
-    ]
+    seeds = [{**claim, "_semantic_score": ctx.feature_by_id[claim["id"]]["semantic"]} for claim in ctx.ranked_claims]
     expanded, metadata_items = expand_related_claims(
         ctx.relation_connection,
         ctx.repo,
@@ -595,9 +581,7 @@ def _rerank(ctx: RecallContext) -> RecallContext:
     raw_scores = {claim["id"]: float(score) for claim, score in valid}
     if ctx.tracer is not None:
         ctx.tracer.record_rerank([(str(claim["id"]), float(score)) for claim, score in valid])
-    rerank_scores = {
-        claim["id"]: blend_reranker_score(score, ctx.feature_by_id[claim["id"]]) for claim, score in valid
-    }
+    rerank_scores = {claim["id"]: blend_reranker_score(score, ctx.feature_by_id[claim["id"]]) for claim, score in valid}
     ctx.rerank_scores = rerank_scores
     reranked_claims = sorted(
         (claim for claim, _ in valid),
@@ -726,8 +710,7 @@ def fold_similar_claims(
             bucket is not None
             and vector is not None
             and any(
-                normalized_cosine_similarity(vector, retained) >= threshold
-                for retained in kept_vectors.get(bucket, [])
+                normalized_cosine_similarity(vector, retained) >= threshold for retained in kept_vectors.get(bucket, [])
             )
         ):
             continue

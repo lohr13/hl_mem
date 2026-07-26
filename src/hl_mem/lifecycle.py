@@ -100,8 +100,6 @@ def assert_episode_transition(from_status: str, to_status: str) -> None:
     try:
         transition = (EpisodeStatus(from_status), EpisodeStatus(to_status))
     except ValueError as error:
-        raise InvalidTransitionError(
-            f"invalid episode status transition: {from_status} -> {to_status}"
-        ) from error
+        raise InvalidTransitionError(f"invalid episode status transition: {from_status} -> {to_status}") from error
     if transition not in ALLOWED_EPISODE_TRANSITIONS:
         raise InvalidTransitionError(f"invalid episode status transition: {from_status} -> {to_status}")

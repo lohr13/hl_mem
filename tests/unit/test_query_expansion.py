@@ -39,7 +39,10 @@ def test_auto_trigger_boundaries_and_coreference() -> None:
     assert QueryExpander.trigger_for("之前讨论的那个生产环境部署方案", "auto") == "coreference"
     assert QueryExpander.trigger_for("普通且足够具体的查询文本", "off") is None
     assert QueryExpander.trigger_for("普通且足够具体的查询文本", "always") == "always"
-    assert QueryExpander.trigger_for("普通且足够具体的查询文本", "auto", candidate_count=7, candidate_floor=8) == "low_recall"
+    assert (
+        QueryExpander.trigger_for("普通且足够具体的查询文本", "auto", candidate_count=7, candidate_floor=8)
+        == "low_recall"
+    )
 
 
 def test_expander_cleans_deduplicates_and_limits_results() -> None:

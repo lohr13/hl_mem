@@ -11,10 +11,18 @@ from tests.eval.metrics import (
 
 def _case(**changes: object) -> EvalCase:
     values = dict(
-        case_id="C01", query="偏好？", intent="current_state", expected_type="claim",
-        expected_min_confidence=0.8, expected_status_filter="active", expected_keywords=("零基础设施",),
-        keyword_match="all", binding=None, forbidden_statuses=("superseded", "expired", "disputed"),
-        relevant_claim_ids=("right",), expected_evidence_event_ids=("event-1",),
+        case_id="C01",
+        query="偏好？",
+        intent="current_state",
+        expected_type="claim",
+        expected_min_confidence=0.8,
+        expected_status_filter="active",
+        expected_keywords=("零基础设施",),
+        keyword_match="all",
+        binding=None,
+        forbidden_statuses=("superseded", "expired", "disputed"),
+        relevant_claim_ids=("right",),
+        expected_evidence_event_ids=("event-1",),
     )
     values.update(changes)
     return EvalCase(**values)
@@ -22,10 +30,16 @@ def _case(**changes: object) -> EvalCase:
 
 def test_evaluate_results_scores_hit_content_status_and_evidence() -> None:
     result = {
-        "results": [{
-            "id": "right", "text": "偏好零基础设施", "status": "active", "confidence": 0.9,
-            "valid_from": "2026-01-01T00:00:00+00:00", "evidence": [{"type": "event", "id": "event-1"}],
-        }],
+        "results": [
+            {
+                "id": "right",
+                "text": "偏好零基础设施",
+                "status": "active",
+                "confidence": 0.9,
+                "valid_from": "2026-01-01T00:00:00+00:00",
+                "evidence": [{"type": "event", "id": "event-1"}],
+            }
+        ],
         "observations": [],
     }
 
@@ -43,9 +57,9 @@ def test_rank_metrics_use_relevant_result_positions() -> None:
     relevant = {"right", "other-right"}
 
     assert compute_mrr(relevant, results) == 0.5
-    assert compute_binary_ndcg_at_10(relevant, results) == (
-        1.0 / 1.584962500721156 + 1.0 / 2.0
-    ) / (1.0 + 1.0 / 1.584962500721156)
+    assert compute_binary_ndcg_at_10(relevant, results) == (1.0 / 1.584962500721156 + 1.0 / 2.0) / (
+        1.0 + 1.0 / 1.584962500721156
+    )
 
 
 def test_evaluate_results_populates_rank_metrics_only_for_claim_cases() -> None:
@@ -72,10 +86,19 @@ def test_evaluate_results_populates_rank_metrics_only_for_claim_cases() -> None:
 
 def test_evaluate_results_detects_stale_and_temporal_violations() -> None:
     case = _case(as_of="2026-02-01T00:00:00+00:00")
-    result = {"results": [{
-        "id": "wrong", "text": "无关", "status": "superseded", "confidence": 0.2,
-        "valid_from": "2026-03-01T00:00:00+00:00", "valid_to": None, "evidence": [],
-    }]}
+    result = {
+        "results": [
+            {
+                "id": "wrong",
+                "text": "无关",
+                "status": "superseded",
+                "confidence": 0.2,
+                "valid_from": "2026-03-01T00:00:00+00:00",
+                "valid_to": None,
+                "evidence": [],
+            }
+        ]
+    }
 
     score = evaluate_results(case, result)
 
@@ -86,9 +109,42 @@ def test_evaluate_results_detects_stale_and_temporal_violations() -> None:
 
 
 def test_aggregate_metrics_handles_answer_and_empty_cases() -> None:
-    answer = evaluate_results(_case(), {"results": [{"id": "right", "text": "零基础设施", "status": "active", "confidence": 1.0, "evidence": [{"type": "event", "id": "event-1"}]}]})
-    empty_true = evaluate_results(_case(case_id="N01", expected_type="empty", expected_min_confidence=None, expected_keywords=(), relevant_claim_ids=(), expected_evidence_event_ids=()), {"results": []})
-    empty_false = evaluate_results(_case(case_id="N02", expected_type="empty", expected_min_confidence=None, expected_keywords=(), relevant_claim_ids=(), expected_evidence_event_ids=()), {"results": [{"id": "noise", "status": "active", "text": "x", "confidence": 1.0, "evidence": []}]})
+    answer = evaluate_results(
+        _case(),
+        {
+            "results": [
+                {
+                    "id": "right",
+                    "text": "零基础设施",
+                    "status": "active",
+                    "confidence": 1.0,
+                    "evidence": [{"type": "event", "id": "event-1"}],
+                }
+            ]
+        },
+    )
+    empty_true = evaluate_results(
+        _case(
+            case_id="N01",
+            expected_type="empty",
+            expected_min_confidence=None,
+            expected_keywords=(),
+            relevant_claim_ids=(),
+            expected_evidence_event_ids=(),
+        ),
+        {"results": []},
+    )
+    empty_false = evaluate_results(
+        _case(
+            case_id="N02",
+            expected_type="empty",
+            expected_min_confidence=None,
+            expected_keywords=(),
+            relevant_claim_ids=(),
+            expected_evidence_event_ids=(),
+        ),
+        {"results": [{"id": "noise", "status": "active", "text": "x", "confidence": 1.0, "evidence": []}]},
+    )
 
     metrics = aggregate_metrics([answer, empty_true, empty_false])
 

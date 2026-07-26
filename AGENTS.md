@@ -4,7 +4,7 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v0.10.1（2026-07-24）**
+**当前版本：v0.12.4（2026-07-26）**
 
 ## 技术栈
 
@@ -17,14 +17,14 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 - **TTL**：retention 纯函数（scope × importance 三档）
 - **跨 subject 去重**：DedupJudge（audit-only 默认开启）
 - **包管理**：uv（lockfile: uv.lock）
-- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）292 passed，1 skipped
+- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）443 passed，1 skipped
 
 ## 代码结构
 
 ```
 src/hl_mem/
 ├── api/                    # FastAPI 适配层
-│   ├── server.py              # REST API (14 routes)
+│   ├── server.py              # REST API (16 routes)
 │   └── schemas.py             # Pydantic DTO
 ├── application/            # 共享应用服务
 │   ├── ingest.py              # IngestService
@@ -64,8 +64,10 @@ src/hl_mem/
 │   ├── evidence.py            # EvidenceRepository
 │   ├── experience.py          # ExperienceRepository
 │   ├── jobs.py                # JobRepository
+│   ├── relation_proposals.py  # 关系候选审计
+│   ├── usefulness.py          # 反馈效用聚合
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 21 SQL migrations (001-021)
+│   └── migrations/            # 29 SQL migrations (001-029)
 ├── workers/                # 后台任务
 │   ├── worker.py              # Job 调度器
 │   ├── ttl.py                 # TTL 过期
@@ -73,9 +75,15 @@ src/hl_mem/
 │   ├── consolidate.py         # LLM 语义归并
 │   ├── deduplicate.py         # 跨 subject 语义去重
 │   ├── backfill_expires_at.py # TTL 回填工具
+│   ├── discover_relations.py  # 关系候选发现
+│   ├── mental_models.py       # Mental Model 维护
+│   ├── rebuild_usefulness.py  # usefulness 重建
 │   └── induce_policies.py     # 策略归纳
 ├── experience/             # Experience 通道
 │   └── service.py             # Episode/Trace/Policy
+├── evaluation/             # Benchmark / LongMemEval
+├── observability/          # 审计日志与 LLM spans
+├── security/               # retention 策略
 ├── adapters/hermes/        # Hermes 集成
 │   ├── provider.py            # HermesMemoryProvider
 │   └── plugin/                # 薄委托层
@@ -96,7 +104,7 @@ src/hl_mem/
 .venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short
 ```
 
-当前：292 passed，1 skipped。
+当前：443 passed，1 skipped。
 
 ## 关键设计决策
 
@@ -144,4 +152,4 @@ src/hl_mem/
 
 ## Migration
 
-21 个 SQL migration（001-021），按版本号顺序执行。不可变。
+29 个 SQL migration（001-029），按版本号顺序执行。不可变。

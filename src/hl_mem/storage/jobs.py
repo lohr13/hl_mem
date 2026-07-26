@@ -153,9 +153,7 @@ class JobRepository:
 
     def retry_failed(self) -> int:
         """将失败任务重置为待处理状态，由调用方提交事务。"""
-        cursor = self.connection.execute(
-            "UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'"
-        )
+        cursor = self.connection.execute("UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'")
         return cursor.rowcount
 
     def _finish(self, job_id: str, status: str, updated_at: str, error: str | None, lease_token: str) -> bool:

@@ -1,6 +1,6 @@
 [project]
 name = "hl-mem"
-version = "0.12.4"
+version = "0.13.0"
 description = "Evidence-aware local memory service"
 readme = "README.md"
 license = "Apache-2.0"
@@ -26,9 +26,13 @@ hl-mem-worker = "hl_mem.workers.worker:main"
 
 [dependency-groups]
 dev = [
+    "black>=24.0",
+    "build>=1.2",
+    "isort>=5.13",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
+    "ruff>=0.5",
 ]
 
 [build-system]
@@ -49,6 +53,15 @@ source = ["src/hl_mem"]
 
 [tool.coverage.report]
 show_missing = true
+fail_under = 60
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hl_mem"]

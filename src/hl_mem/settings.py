@@ -240,9 +240,7 @@ class Settings:
             procedure_recent_outcome_window=int(os.getenv("HL_MEM_PROCEDURE_RECENT_OUTCOME_WINDOW", "20")),
             procedure_outcome_half_life_days=int(os.getenv("HL_MEM_PROCEDURE_OUTCOME_HALF_LIFE_DAYS", "30")),
             recall_side_effect_max_attempts=int(os.getenv("HL_MEM_RECALL_SIDE_EFFECT_MAX_ATTEMPTS", "3")),
-            recall_side_effect_backoff_seconds=float(
-                os.getenv("HL_MEM_RECALL_SIDE_EFFECT_BACKOFF_SECONDS", "0.05")
-            ),
+            recall_side_effect_backoff_seconds=float(os.getenv("HL_MEM_RECALL_SIDE_EFFECT_BACKOFF_SECONDS", "0.05")),
             vector_backend=vector_backend,
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
@@ -393,12 +391,15 @@ class Settings:
             raise ConfigurationError("HL_MEM_PROCEDURE_RECALL_MODE must be 'off', 'keyword', or 'auto'")
         if not 0.0 <= self.procedure_llm_threshold <= 1.0:
             raise ConfigurationError("HL_MEM_PROCEDURE_LLM_THRESHOLD must be between 0 and 1")
-        if min(
-            self.procedure_router_timeout_seconds,
-            self.procedure_candidate_limit,
-            self.procedure_recent_outcome_window,
-            self.procedure_outcome_half_life_days,
-        ) <= 0:
+        if (
+            min(
+                self.procedure_router_timeout_seconds,
+                self.procedure_candidate_limit,
+                self.procedure_recent_outcome_window,
+                self.procedure_outcome_half_life_days,
+            )
+            <= 0
+        ):
             raise ConfigurationError("procedure recall limits and timeouts must be positive")
         if self.recall_side_effect_max_attempts < 1 or self.recall_side_effect_backoff_seconds < 0:
             raise ConfigurationError("recall side-effect attempts must be positive and backoff non-negative")

@@ -35,15 +35,18 @@ def build_snapshot(source: str | Path, target: str | Path, manifest_path: str | 
         tables = {row[0] for row in target_connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         status_counts = (
             dict(target_connection.execute("SELECT status,count(*) FROM claims GROUP BY status").fetchall())
-            if "claims" in tables else {}
+            if "claims" in tables
+            else {}
         )
         versions = (
             [row[0] for row in target_connection.execute("SELECT version FROM schema_migrations ORDER BY version")]
-            if "schema_migrations" in tables else []
+            if "schema_migrations" in tables
+            else []
         )
         counts = {
             table: target_connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
-            for table in ("events", "claims") if table in tables
+            for table in ("events", "claims")
+            if table in tables
         }
     finally:
         target_connection.close()
@@ -58,7 +61,9 @@ def build_snapshot(source: str | Path, target: str | Path, manifest_path: str | 
     }
     manifest_target = Path(manifest_path)
     manifest_target.parent.mkdir(parents=True, exist_ok=True)
-    manifest_target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_target.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return manifest
 
 

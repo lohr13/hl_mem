@@ -23,11 +23,7 @@ RESULT_LIMIT = 10
 
 def _load_cases() -> list[dict[str, Any]]:
     """读取中文 FTS JSONL 评测集。"""
-    return [
-        json.loads(line)
-        for line in DATASET_PATH.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in DATASET_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _claim_text(claim: dict[str, Any]) -> str:

@@ -57,8 +57,7 @@ def generate_markdown_summary(result: Mapping[str, Any], output: Path) -> Path:
         "| --- | --- | ---: |",
     ]
     lines.extend(
-        f"| {layer} | {metric} | {value} |"
-        for layer, metric, value in _metric_rows(result.get("metrics", {}))
+        f"| {layer} | {metric} | {value} |" for layer, metric, value in _metric_rows(result.get("metrics", {}))
     )
     lines.extend(["", "## Categories", "", "| Category | Layer | Metric | Value |", "| --- | --- | --- | ---: |"])
     for category, metrics in result.get("categories", {}).items():

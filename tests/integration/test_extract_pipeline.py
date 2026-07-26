@@ -8,10 +8,15 @@ def test_fake_pipeline_filter_claim_evidence_recall_and_stats(tmp_path, monkeypa
     monkeypatch.setenv("HL_MEM_EXTRACTOR", "fake")
     app = create_app(tmp_path / "pipeline.db")
     with TestClient(app) as client:
-        response = client.post("/v1/events", json={
-            "idempotency_key": "fact-1", "event_type": "message", "actor_type": "user",
-            "content": {"text": "用户使用 PostgreSQL"},
-        })
+        response = client.post(
+            "/v1/events",
+            json={
+                "idempotency_key": "fact-1",
+                "event_type": "message",
+                "actor_type": "user",
+                "content": {"text": "用户使用 PostgreSQL"},
+            },
+        )
         assert response.status_code == 200
         assert Worker(tmp_path / "pipeline.db").run_once()["status"] == "succeeded"
         Worker(tmp_path / "pipeline.db").run_once()  # process relation-discovery job
@@ -28,10 +33,14 @@ def test_filter_skips_extraction_and_job(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HL_MEM_EXTRACTOR", "fake")
     app = create_app(tmp_path / "filtered.db")
     with TestClient(app) as client:
-        client.post("/v1/events", json={
-            "event_type": "tool_result", "actor_type": "tool",
-            "content": {"text": "command output"},
-        })
+        client.post(
+            "/v1/events",
+            json={
+                "event_type": "tool_result",
+                "actor_type": "tool",
+                "content": {"text": "command output"},
+            },
+        )
         assert Worker(tmp_path / "filtered.db").run_once()["claims"] == 0
         assert client.get("/v1/stats").json()["jobs_pending"] == 0
 

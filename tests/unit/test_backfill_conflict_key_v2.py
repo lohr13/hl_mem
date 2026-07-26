@@ -59,13 +59,12 @@ def test_backfill_rolls_back_whole_batch_on_malformed_json(tmp_path) -> None:
     with pytest.raises(ValueError, match="bad"):
         backfill_conflict_keys_v2(connection)
 
-    rows = connection.execute(
-        "SELECT conflict_key_version,legacy_conflict_key FROM claims ORDER BY id"
-    ).fetchall()
+    rows = connection.execute("SELECT conflict_key_version,legacy_conflict_key FROM claims ORDER BY id").fetchall()
     assert [tuple(row) for row in rows] == [(1, None), (1, None)]
-    assert connection.execute(
-        "SELECT 1 FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,)
-    ).fetchone() is None
+    assert (
+        connection.execute("SELECT 1 FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,)).fetchone()
+        is None
+    )
 
 
 def test_006_migration_stales_observations_and_runs_data_backfill(tmp_path) -> None:

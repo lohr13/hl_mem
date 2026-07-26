@@ -153,7 +153,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=default_database_path(), help="SQLite database path")
     parser.add_argument("--apply", action="store_true", help="apply updates; default is dry-run")
-    parser.add_argument("--force", action="store_true", help="explicitly overwrite rows that already have slot/tag values")
+    parser.add_argument(
+        "--force", action="store_true", help="explicitly overwrite rows that already have slot/tag values"
+    )
     parser.add_argument("--batch-size", type=int, default=100)
     args = parser.parse_args(argv)
     connection = sqlite3.connect(args.db)

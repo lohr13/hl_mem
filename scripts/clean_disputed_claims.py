@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-
 RULES_VERSION = "scheme-1-status-only-v1"
 LIVE_STATUSES = frozenset({"active", "candidate", "disputed"})
 
@@ -169,9 +168,7 @@ def apply_cleanup(database_path: Path, backup_path: Path, expected_plan: Cleanup
         if integrity_check != "ok" or foreign_key_violations:
             raise RuntimeError("database integrity verification failed")
         active_count = int(connection.execute("SELECT count(*) FROM claims WHERE status='active'").fetchone()[0])
-        disputed_count = int(
-            connection.execute("SELECT count(*) FROM claims WHERE status='disputed'").fetchone()[0]
-        )
+        disputed_count = int(connection.execute("SELECT count(*) FROM claims WHERE status='disputed'").fetchone()[0])
         connection.commit()
         return CleanupResult(
             updated_count=len(expected_plan.eligible_ids),

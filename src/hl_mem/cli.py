@@ -41,10 +41,13 @@ def list_conflicts(database_path: str | Path) -> list[dict[str, Any]]:
     """列出等待人工审核的冲突案例。"""
     database = Database(database_path)
     try:
-        rows = database.open().execute(
-            "SELECT * FROM conflict_cases WHERE status IN ('pending','manual_required') "
-            "ORDER BY created_at,id"
-        ).fetchall()
+        rows = (
+            database.open()
+            .execute(
+                "SELECT * FROM conflict_cases WHERE status IN ('pending','manual_required') " "ORDER BY created_at,id"
+            )
+            .fetchall()
+        )
         return [dict(row) for row in rows]
     finally:
         database.close()

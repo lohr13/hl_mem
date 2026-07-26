@@ -46,6 +46,7 @@ class DashScopeReranker:
             self.last_outcome, self.last_error_class = "empty", None
             self.last_result = RerankResult([], self.last_outcome)
             return []
+
         def send_request() -> httpx.Response:
             post = self._client.post if self._client is not None else httpx.post
             response = post(
@@ -104,8 +105,7 @@ def make_reranker(
     if not settings.reranker_api_key:
         if settings.environment == "production" or not settings.allow_fake_fallback:
             raise ConfigurationError(
-                f"HL_MEM_RERANKER={settings.reranker_mode} but "
-                "RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
+                f"HL_MEM_RERANKER={settings.reranker_mode} but " "RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
             )
         return None
     registry = provider_types or RERANKER_PROVIDERS

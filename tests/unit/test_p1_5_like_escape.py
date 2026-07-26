@@ -30,15 +30,9 @@ def test_episode_queries_do_not_expand_like_wildcards(tmp_path: Path) -> None:
         )
         repository = ExperienceRepository(connection)
 
-        assert [row["id"] for row in repository.list_success_episodes("default", "%", 10)] == [
-            "literal-percent"
-        ]
-        assert [row["id"] for row in repository.list_success_episodes("default", "_", 10)] == [
-            "literal-underscore"
-        ]
-        assert [row["id"] for row in repository.list_success_episodes("default", "\\", 10)] == [
-            "literal-slash"
-        ]
+        assert [row["id"] for row in repository.list_success_episodes("default", "%", 10)] == ["literal-percent"]
+        assert [row["id"] for row in repository.list_success_episodes("default", "_", 10)] == ["literal-underscore"]
+        assert [row["id"] for row in repository.list_success_episodes("default", "\\", 10)] == ["literal-slash"]
         assert len(repository.list_success_episodes("default", "", 10)) == 4
     finally:
         database.close()

@@ -158,9 +158,7 @@ class HLMemProvider:
         """返回 Hermes 会话已经缓存的预取文本。"""
         return self._prefetch_cache.get(session_id or self._session_id, query)
 
-    def on_delegation(
-        self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any
-    ) -> None:
+    def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any) -> None:
         """记录 Hermes 委派任务及其子代理结果。"""
         del kwargs
         qualifiers = {"child_session_id": child_session_id} if child_session_id else None

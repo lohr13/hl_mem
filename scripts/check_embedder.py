@@ -1,4 +1,5 @@
 """Quick diagnostic: what does embedder.embed return?"""
+
 from hl_mem.components import make_embedder
 from hl_mem.settings import Settings
 

@@ -45,6 +45,7 @@ def test_audit_failure_is_logged_and_counted(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """审计后端自身失败也不能再被静默吞掉。"""
+
     class BrokenAudit:
         def emit(self, *args: object, **kwargs: object) -> None:
             raise RuntimeError("audit unavailable")

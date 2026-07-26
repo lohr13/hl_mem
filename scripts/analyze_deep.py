@@ -1,6 +1,7 @@
 """Deep dive into fact.other and cross-subject duplicates."""
-import sqlite3
+
 import json
+import sqlite3
 
 conn = sqlite3.connect("var/hl_mem.db")
 conn.row_factory = sqlite3.Row
@@ -75,9 +76,7 @@ dead_with_no_active = conn.execute(
     "  AND c2.predicate = c1.predicate"
     ")"
 ).fetchone()[0]
-total_dead = conn.execute(
-    "SELECT COUNT(*) FROM claims WHERE status IN ('expired','superseded')"
-).fetchone()[0]
+total_dead = conn.execute("SELECT COUNT(*) FROM claims WHERE status IN ('expired','superseded')").fetchone()[0]
 print(f"  Dead claims with no active counterpart on same subject+predicate: {dead_with_no_active}")
 print(f"  Total dead: {total_dead}")
 

@@ -4,9 +4,8 @@ import httpx
 import pytest
 
 from hl_mem.api.schemas import RecallInput
-from hl_mem.recall.recall_pipeline import hybrid_claims
-from hl_mem.recall.recall_pipeline import matching_policies
 from hl_mem.ingest.embedder import pack_vector
+from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
 from hl_mem.recall.reranker import FakeReranker, Reranker
 
 
@@ -55,7 +54,7 @@ class Repo:
         self.claims = _claims()
 
     def search_claims_fts(self, *args, **kwargs):
-        return self.claims[:kwargs.get("limit", len(self.claims))]
+        return self.claims[: kwargs.get("limit", len(self.claims))]
 
     def list_embedded(self, *args, **kwargs):
         return self.claims
@@ -69,7 +68,8 @@ class Repo:
 
 def test_fake_reranker_returns_input_order() -> None:
     assert FakeReranker().rerank("查询", ["甲", "乙", "丙"], top_n=2) == [
-        (0, 1.0), (1, 0.99),
+        (0, 1.0),
+        (1, 0.99),
     ]
 
 

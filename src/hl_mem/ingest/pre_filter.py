@@ -26,8 +26,7 @@ _DURABLE_DIAGNOSTIC_SIGNAL = re.compile(
     re.IGNORECASE,
 )
 _DURABLE_TOOL_MEMORY_SIGNAL = re.compile(
-    r"(?:\bremember\b|\bprefer(?:s|red|ence)?\b|\bmust\b|\balways\b|\bnever\b|"
-    r"记住|偏好|必须|始终|永远不要|以后都)",
+    r"(?:\bremember\b|\bprefer(?:s|red|ence)?\b|\bmust\b|\balways\b|\bnever\b|" r"记住|偏好|必须|始终|永远不要|以后都)",
     re.IGNORECASE,
 )
 _RUNTIME_NOTICE = re.compile(
@@ -65,6 +64,8 @@ _OPERATIONAL_STATUS_QUERY = re.compile(
     r"(?:需要|要不要).*(?:重启|重新开会话)|(?:test|tests?)\s+passed)",
     re.IGNORECASE,
 )
+
+
 @dataclass(frozen=True)
 class PreFilterDecision:
     """描述一次预筛是否应继续调用 extraction LLM。"""
@@ -100,11 +101,7 @@ class ExtractionPreFilter:
             if self._is_transient_tool_error(text):
                 return PreFilterDecision(False, "transient_tool_error")
 
-        if (
-            actor_type == "assistant"
-            and len(text) <= ASSISTANT_ACTION_MAX_CHARS
-            and _ASSISTANT_ACTION.fullmatch(text)
-        ):
+        if actor_type == "assistant" and len(text) <= ASSISTANT_ACTION_MAX_CHARS and _ASSISTANT_ACTION.fullmatch(text):
             return PreFilterDecision(False, "assistant_action_narration")
         if actor_type == "user" and len(text) <= 80 and _OPERATIONAL_STATUS_QUERY.search(text):
             return PreFilterDecision(False, "operational_status_query")
@@ -114,11 +111,7 @@ class ExtractionPreFilter:
     def _text(content: dict[str, Any] | str) -> str:
         if isinstance(content, str):
             return content
-        return "\n".join(
-            str(value)
-            for key in ("text", "output", "stdout")
-            if (value := content.get(key)) is not None
-        )
+        return "\n".join(str(value) for key in ("text", "output", "stdout") if (value := content.get(key)) is not None)
 
     @staticmethod
     def _contains_durable_tool_signal(text: str) -> bool:
@@ -154,9 +147,7 @@ class ExtractionPreFilter:
         status = payload.get("status")
         completion_reason = payload.get("completion_reason")
         output = payload.get("output")
-        if (
-            status in {"killed", "cancelled"} or completion_reason in {"killed", "cancelled"}
-        ) and output in {None, ""}:
+        if (status in {"killed", "cancelled"} or completion_reason in {"killed", "cancelled"}) and output in {None, ""}:
             return True
         if not isinstance(output, str):
             return False

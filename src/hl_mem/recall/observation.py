@@ -22,9 +22,10 @@ class ObservationBuilder:
         latest = dates[-1] if dates else "未知"
         return {
             "body": f"基于 {len(active)} 条证据：{summary}\n来源：{','.join(events)}\n"
-                    f"最早观察：{earliest}，最近观察：{latest}",
-            "claim_ids": [claim["id"] for claim in active], "event_ids": events,
-            "confidence": sum(float(claim.get("confidence", .5)) for claim in active) / len(active),
+            f"最早观察：{earliest}，最近观察：{latest}",
+            "claim_ids": [claim["id"] for claim in active],
+            "event_ids": events,
+            "confidence": sum(float(claim.get("confidence", 0.5)) for claim in active) / len(active),
         }
 
     @staticmethod
@@ -36,8 +37,10 @@ class ObservationBuilder:
     @staticmethod
     def _event_ids(claim: dict[str, Any]) -> list[str]:
         values = claim.get("event_ids") or claim.get("evidence") or []
-        return [item.get("evidence_id", item.get("event_id", item.get("id")))
-                if isinstance(item, dict) else item for item in values]
+        return [
+            item.get("evidence_id", item.get("event_id", item.get("id"))) if isinstance(item, dict) else item
+            for item in values
+        ]
 
     @staticmethod
     def _value(claim: dict[str, Any]) -> Any:

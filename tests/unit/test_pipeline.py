@@ -1,9 +1,12 @@
 import hl_mem.application.ingest as pipeline_module
-from hl_mem.application.ingest import IngestService
 from hl_mem.application import ingest as pipeline_module
+from hl_mem.application.ingest import IngestService
+
 
 def store_extracted(conn, claim, event, now, embedder, **kw):
     return IngestService.store_extracted(conn, claim, event, now, embedder, **kw)
+
+
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.storage.database import Database
@@ -14,22 +17,27 @@ def test_fact_hash_exact_duplicate_merges_evidence(tmp_path) -> None:
     connection = database.open()
     claim = ExtractedClaim("使用", "PostgreSQL", 0.9, "stable", "用户", {})
     base_event = {
-        "tenant_id": "default", "actor_type": "user",
+        "tenant_id": "default",
+        "actor_type": "user",
         "occurred_at": "2026-07-21T10:00:00+00:00",
     }
     first_id = store_extracted(
-        connection, claim, {**base_event, "id": "event-1"},
-        "2026-07-21T10:01:00+00:00", FakeEmbedder(8),
+        connection,
+        claim,
+        {**base_event, "id": "event-1"},
+        "2026-07-21T10:01:00+00:00",
+        FakeEmbedder(8),
     ).claim_id
     second_id = store_extracted(
-        connection, claim, {**base_event, "id": "event-2"},
-        "2026-07-21T10:02:00+00:00", FakeEmbedder(8),
+        connection,
+        claim,
+        {**base_event, "id": "event-2"},
+        "2026-07-21T10:02:00+00:00",
+        FakeEmbedder(8),
     ).claim_id
     assert second_id == first_id
     assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
-    assert connection.execute(
-        "SELECT count(*) FROM evidence_links WHERE derived_id=?", (first_id,)
-    ).fetchone()[0] == 2
+    assert connection.execute("SELECT count(*) FROM evidence_links WHERE derived_id=?", (first_id,)).fetchone()[0] == 2
     database.close()
 
 
@@ -54,16 +62,20 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
     connection = database.open()
     claim_id = store_extracted(
         connection,
-        ExtractedClaim("使用", "PostgreSQL", canonical_attribute="choice.database",
-                       canonical_slot="choice.database", qualifiers={"project": "hl_mem"}),
+        ExtractedClaim(
+            "使用",
+            "PostgreSQL",
+            canonical_attribute="choice.database",
+            canonical_slot="choice.database",
+            qualifiers={"project": "hl_mem"},
+        ),
         {"id": "event-v2", "actor_type": "user", "tenant_id": "default"},
         "2026-07-21T10:01:00+00:00",
         FakeEmbedder(8),
     ).claim_id
 
     row = connection.execute(
-        "SELECT canonical_attribute,conflict_key_version,conflict_key,legacy_conflict_key "
-        "FROM claims WHERE id=?",
+        "SELECT canonical_attribute,conflict_key_version,conflict_key,legacy_conflict_key " "FROM claims WHERE id=?",
         (claim_id,),
     ).fetchone()
     assert row["canonical_attribute"] == "choice.database"

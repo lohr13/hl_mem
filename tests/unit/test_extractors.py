@@ -25,6 +25,4 @@ def test_fake_embedder_is_not_exported_from_ingest_package() -> None:
 def test_chinese_scenario_count_and_shape() -> None:
     assert len(CHINESE_TEST_CASES) == 30
     assert all(set(case) == {"input", "expected", "status"} for case in CHINESE_TEST_CASES)
-    assert {case["status"] for case in CHINESE_TEST_CASES} == {
-        "active", "superseded", "disputed", "expired"
-    }
+    assert {case["status"] for case in CHINESE_TEST_CASES} == {"active", "superseded", "disputed", "expired"}

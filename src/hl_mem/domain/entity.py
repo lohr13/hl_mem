@@ -9,7 +9,6 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_ENTITY_ALIASES: dict[str, str] = {
     "hlmem": "hl_mem",
     "hl_mem": "hl_mem",

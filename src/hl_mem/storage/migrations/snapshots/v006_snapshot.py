@@ -8,53 +8,123 @@ import re
 import unicodedata
 from typing import Any
 
-
 PREDICATE_NORMALIZE = {
-    "prefers": "偏好", "preference": "偏好", "偏好": "偏好", "喜欢": "偏好",
-    "uses": "使用", "use": "使用", "使用": "使用", "用": "使用",
-    "status": "状态", "service_status": "状态", "状态": "状态",
-    "identity": "身份", "身份": "身份", "config": "配置", "配置": "配置",
-    "plan": "计划", "计划": "计划", "fact": "事实", "事实": "事实",
+    "prefers": "偏好",
+    "preference": "偏好",
+    "偏好": "偏好",
+    "喜欢": "偏好",
+    "uses": "使用",
+    "use": "使用",
+    "使用": "使用",
+    "用": "使用",
+    "status": "状态",
+    "service_status": "状态",
+    "状态": "状态",
+    "identity": "身份",
+    "身份": "身份",
+    "config": "配置",
+    "配置": "配置",
+    "plan": "计划",
+    "计划": "计划",
+    "fact": "事实",
+    "事实": "事实",
     "explicit_memory": "explicit_memory",
 }
 
 PREDICATE_ATTRIBUTE_MAP: dict[str, tuple[tuple[str, ...], str]] = {
-    "偏好": ((
-        "preference.ui_theme", "preference.response_style", "preference.workflow",
-        "preference.architecture", "preference.tool_choice", "preference.other",
-    ), "preference.other"),
-    "使用": ((
-        "choice.tool", "choice.database", "choice.os", "choice.model", "choice.api",
-        "choice.framework", "choice.provider", "choice.protocol", "choice.memory_system",
-    ), "choice.tool"),
-    "状态": ((
-        "state.service_health", "state.process", "state.deployment", "state.test_suite",
-        "state.connectivity", "state.job", "state.other",
-    ), "state.other"),
-    "身份": ((
-        "identity.name", "identity.role", "identity.contact", "identity.account", "identity.other",
-    ), "identity.other"),
-    "配置": ((
-        "config.port", "config.path", "config.env", "config.network", "config.routing",
-        "config.provider", "config.model", "config.timeout", "config.schedule",
-        "config.hardware", "config.other",
-    ), "config.other"),
-    "计划": ((
-        "plan.goal", "plan.deadline", "plan.decision", "plan.migration",
-        "plan.evaluation", "plan.other",
-    ), "plan.other"),
-    "事实": ((
-        "fact.capability", "fact.implementation", "fact.issue", "fact.cause",
-        "fact.resolution", "fact.constraint", "fact.project_membership",
-        "fact.tool_choice", "fact.other",
-    ), "fact.other"),
+    "偏好": (
+        (
+            "preference.ui_theme",
+            "preference.response_style",
+            "preference.workflow",
+            "preference.architecture",
+            "preference.tool_choice",
+            "preference.other",
+        ),
+        "preference.other",
+    ),
+    "使用": (
+        (
+            "choice.tool",
+            "choice.database",
+            "choice.os",
+            "choice.model",
+            "choice.api",
+            "choice.framework",
+            "choice.provider",
+            "choice.protocol",
+            "choice.memory_system",
+        ),
+        "choice.tool",
+    ),
+    "状态": (
+        (
+            "state.service_health",
+            "state.process",
+            "state.deployment",
+            "state.test_suite",
+            "state.connectivity",
+            "state.job",
+            "state.other",
+        ),
+        "state.other",
+    ),
+    "身份": (
+        (
+            "identity.name",
+            "identity.role",
+            "identity.contact",
+            "identity.account",
+            "identity.other",
+        ),
+        "identity.other",
+    ),
+    "配置": (
+        (
+            "config.port",
+            "config.path",
+            "config.env",
+            "config.network",
+            "config.routing",
+            "config.provider",
+            "config.model",
+            "config.timeout",
+            "config.schedule",
+            "config.hardware",
+            "config.other",
+        ),
+        "config.other",
+    ),
+    "计划": (
+        (
+            "plan.goal",
+            "plan.deadline",
+            "plan.decision",
+            "plan.migration",
+            "plan.evaluation",
+            "plan.other",
+        ),
+        "plan.other",
+    ),
+    "事实": (
+        (
+            "fact.capability",
+            "fact.implementation",
+            "fact.issue",
+            "fact.cause",
+            "fact.resolution",
+            "fact.constraint",
+            "fact.project_membership",
+            "fact.tool_choice",
+            "fact.other",
+        ),
+        "fact.other",
+    ),
     "explicit_memory": (("memory.explicit",), "memory.explicit"),
 }
 
 ATTRIBUTE_ALLOWLIST = frozenset(
-    attribute
-    for attributes, _fallback in PREDICATE_ATTRIBUTE_MAP.values()
-    for attribute in attributes
+    attribute for attributes, _fallback in PREDICATE_ATTRIBUTE_MAP.values() for attribute in attributes
 ) | {"custom.unknown"}
 
 ATTRIBUTE_ALIASES = {
@@ -97,9 +167,11 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     ),
     "状态": (
         (("挂了", "健康", "正常", "ok"), "state.service_health"),
-        (("进程", "运行中"), "state.process"), (("部署",), "state.deployment"),
+        (("进程", "运行中"), "state.process"),
+        (("部署",), "state.deployment"),
         (("passed", "failed", "pytest", "测试通过", "测试数", "测试"), "state.test_suite"),
-        (("超时", "不可达", "连接"), "state.connectivity"), (("任务", "job"), "state.job"),
+        (("超时", "不可达", "连接"), "state.connectivity"),
+        (("任务", "job"), "state.job"),
     ),
     "身份": (
         (("姓名", "名字", "昵称"), "identity.name"),
@@ -110,15 +182,31 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     "配置": (
         (
             (
-                "环境变量", "http_proxy", "https_proxy", "no_proxy", "api_key",
-                "llm_model", "embedding_model", "reranker_model", "env",
+                "环境变量",
+                "http_proxy",
+                "https_proxy",
+                "no_proxy",
+                "api_key",
+                "llm_model",
+                "embedding_model",
+                "reranker_model",
+                "env",
             ),
             "config.env",
         ),
         (
             (
-                "base_url", "endpoint", "hostname", "localhost", "127.0.0.1",
-                "ipv4", "host", "域名", "代理", "网络", "network",
+                "base_url",
+                "endpoint",
+                "hostname",
+                "localhost",
+                "127.0.0.1",
+                "ipv4",
+                "host",
+                "域名",
+                "代理",
+                "网络",
+                "network",
             ),
             "config.network",
         ),
@@ -127,20 +215,25 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
         (("模型名", "model="), "config.model"),
         (("百炼", "dashscope", "智谱", "zhipu", "openai", "anthropic", "provider", "供应商"), "config.provider"),
         (("路由", "直连"), "config.routing"),
-        (("timeout", "超时"), "config.timeout"), (("cron", "定时", "schedule"), "config.schedule"),
+        (("timeout", "超时"), "config.timeout"),
+        (("cron", "定时", "schedule"), "config.schedule"),
         (("gpu", "显卡", "硬件"), "config.hardware"),
     ),
     "计划": (
-        (("截止", "deadline", "之前"), "plan.deadline"), (("决定", "选择", "不切换"), "plan.decision"),
-        (("迁移",), "plan.migration"), (("评测", "evaluation"), "plan.evaluation"),
+        (("截止", "deadline", "之前"), "plan.deadline"),
+        (("决定", "选择", "不切换"), "plan.decision"),
+        (("迁移",), "plan.migration"),
+        (("评测", "evaluation"), "plan.evaluation"),
         (("计划", "打算", "目标"), "plan.goal"),
     ),
     "事实": (
         (("当前采用", "当前使用", "选择了", "codex"), "fact.tool_choice"),
         (("支持", "具备", "能力"), "fact.capability"),
         (("已实现", "实现了", "新增", "接入", "修复实现"), "fact.implementation"),
-        (("缺陷", "问题", "bug"), "fact.issue"), (("因为", "原因"), "fact.cause"),
-        (("已修复", "解决"), "fact.resolution"), (("只允许", "必须", "约束"), "fact.constraint"),
+        (("缺陷", "问题", "bug"), "fact.issue"),
+        (("因为", "原因"), "fact.cause"),
+        (("已修复", "解决"), "fact.resolution"),
+        (("只允许", "必须", "约束"), "fact.constraint"),
         (("项目", "成员"), "fact.project_membership"),
     ),
 }
@@ -197,9 +290,7 @@ _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], str]
         (re.compile(r"(?i)(?:\bpassed\b|\bfailed\b|pytest|测试通过|测试数)"), "state.test_suite"),
         (re.compile(r"(?i)(?:部署|deployed|上线|发布)"), "state.deployment"),
     ),
-    "事实": (
-        (re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),
-    ),
+    "事实": ((re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),),
 }
 
 
@@ -317,9 +408,7 @@ def compute_conflict_key(
     canonical_namespace = unicodedata.normalize("NFKC", namespace).strip().casefold()
     canonical_subject = re.sub(r"\s+", "", unicodedata.normalize("NFKC", subject)).casefold()
     exclusive = {
-        key: _canonicalize_json(value)
-        for key, value in (qualifiers or {}).items()
-        if key in EXCLUSIVE_QUALIFIERS
+        key: _canonicalize_json(value) for key, value in (qualifiers or {}).items() if key in EXCLUSIVE_QUALIFIERS
     }
     slot = canonical_conflict_slot(normalize_canonical_attribute(canonical_attribute))
     raw = json.dumps(

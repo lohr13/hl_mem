@@ -9,6 +9,7 @@ Operations:
 
 Safety: --dry-run by default, backup before execution.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -56,10 +57,10 @@ def is_near_duplicate(a: str, b: str) -> bool:
 def analyze(db: sqlite3.Connection) -> dict:
     """Analyze all data quality issues and return action plan."""
     actions = {
-        "restore_disputed": [],      # (id, reason)
-        "expire_stale": [],          # (id, reason)
-        "dedup_supersede": [],       # (keep_id, supersede_id, reason)
-        "archive_completed": [],     # (id, reason)
+        "restore_disputed": [],  # (id, reason)
+        "expire_stale": [],  # (id, reason)
+        "dedup_supersede": [],  # (keep_id, supersede_id, reason)
+        "archive_completed": [],  # (id, reason)
     }
 
     # === 1. Restore ALL false disputed → active ===
@@ -69,15 +70,28 @@ def analyze(db: sqlite3.Connection) -> dict:
     # All 308 disputed claims have conflict_key_version=2 but were disputed
     # by the OLD predicate-only conflict detection.
     generic_attrs = {
-        "fact.other", "plan.other", "state.other", "choice.tool",
-        "state.service_health", "state.test_suite", "fact.implementation",
-        "fact.tool_choice", "config.env", "config.path", "config.other",
-        "config.port", "plan.deadline", "identity.other", "preference.tool_choice",
-        "fact.other", "choice.database", "config.provider", "config.hardware",
+        "fact.other",
+        "plan.other",
+        "state.other",
+        "choice.tool",
+        "state.service_health",
+        "state.test_suite",
+        "fact.implementation",
+        "fact.tool_choice",
+        "config.env",
+        "config.path",
+        "config.other",
+        "config.port",
+        "plan.deadline",
+        "identity.other",
+        "preference.tool_choice",
+        "fact.other",
+        "choice.database",
+        "config.provider",
+        "config.hardware",
     }
     for row in db.execute(
-        "SELECT id, canonical_attribute, conflict_key "
-        "FROM claims WHERE status = 'disputed'"
+        "SELECT id, canonical_attribute, conflict_key " "FROM claims WHERE status = 'disputed'"
     ).fetchall():
         d = dict(row)
         attr = d["canonical_attribute"]
@@ -90,9 +104,19 @@ def analyze(db: sqlite3.Connection) -> dict:
     # === 2. Expire stale temporal claims ===
     cutoff = (datetime.now() - timedelta(days=7)).isoformat()
     stale_keywords = [
-        "events /", "claims", "审计日志", "audit", "active claims",
-        "migration 005", "96 events", "202 claims", "passed",
-        "个测试", "测试全部通过", "service_health", "deployed with latest",
+        "events /",
+        "claims",
+        "审计日志",
+        "audit",
+        "active claims",
+        "migration 005",
+        "96 events",
+        "202 claims",
+        "passed",
+        "个测试",
+        "测试全部通过",
+        "service_health",
+        "deployed with latest",
     ]
     hindsight_keywords = ["hindsight", "Hindsight"]
 
@@ -114,17 +138,11 @@ def analyze(db: sqlite3.Connection) -> dict:
         is_hindsight = any(kw.lower() in text for kw in hindsight_keywords)
 
         if is_hindsight:
-            actions["expire_stale"].append(
-                (d["id"], f"hindsight reference (retired)")
-            )
+            actions["expire_stale"].append((d["id"], f"hindsight reference (retired)"))
         elif is_stale and d["canonical_attribute"].startswith("state."):
-            actions["expire_stale"].append(
-                (d["id"], f"stale state snapshot: {text[:50]}")
-            )
+            actions["expire_stale"].append((d["id"], f"stale state snapshot: {text[:50]}"))
         elif is_stale and "test" in text:
-            actions["expire_stale"].append(
-                (d["id"], f"stale test result: {text[:50]}")
-            )
+            actions["expire_stale"].append((d["id"], f"stale test result: {text[:50]}"))
 
     # === 3. Deduplicate near-identical active claims ===
     active_claims = []
@@ -164,8 +182,7 @@ def analyze(db: sqlite3.Connection) -> dict:
                         # c should be kept, s should be superseded — but s was already seen
                         # Remove previous supersede if any, add reverse
                         actions["dedup_supersede"] = [
-                            (k, d2, r) for k, d2, r in actions["dedup_supersede"]
-                            if d2 != s["id"]
+                            (k, d2, r) for k, d2, r in actions["dedup_supersede"] if d2 != s["id"]
                         ]
                         actions["dedup_supersede"].append(
                             (c["id"], s["id"], f"dup of [{c['id'][:8]}]: {s['text'][:40]}")
@@ -177,8 +194,16 @@ def analyze(db: sqlite3.Connection) -> dict:
 
     # === 4. Archive completed plans ===
     completed_keywords = [
-        "清理", "hindsight", "残留", "创建安装脚本", "已完成",
-        "m1-m6", "全部完成", "已提交", "已部署", "重启",
+        "清理",
+        "hindsight",
+        "残留",
+        "创建安装脚本",
+        "已完成",
+        "m1-m6",
+        "全部完成",
+        "已提交",
+        "已部署",
+        "重启",
     ]
     for row in db.execute(
         "SELECT id, value_json, canonical_attribute, scope "
@@ -193,9 +218,7 @@ def analyze(db: sqlite3.Connection) -> dict:
             text = (d["value_json"] or "").lower()
 
         if any(kw.lower() in text for kw in completed_keywords):
-            actions["archive_completed"].append(
-                (d["id"], f"completed plan: {str(v)[:50]}")
-            )
+            actions["archive_completed"].append((d["id"], f"completed plan: {str(v)[:50]}"))
 
     return actions
 
@@ -251,34 +274,22 @@ def execute_cleanup(db: sqlite3.Connection, actions: dict):
 
     # 1. Restore false disputed → active
     for claim_id, reason in actions["restore_disputed"]:
-        db.execute(
-            "UPDATE claims SET status = 'active' WHERE id = ? AND status = 'disputed'",
-            (claim_id,)
-        )
+        db.execute("UPDATE claims SET status = 'active' WHERE id = ? AND status = 'disputed'", (claim_id,))
         count += 1
 
     # 2. Expire stale temporal
     for claim_id, reason in actions["expire_stale"]:
-        db.execute(
-            "UPDATE claims SET status = 'expired', expires_at = ? WHERE id = ?",
-            (now, claim_id)
-        )
+        db.execute("UPDATE claims SET status = 'expired', expires_at = ? WHERE id = ?", (now, claim_id))
         count += 1
 
     # 3. Dedup supersede
     for keep_id, drop_id, reason in actions["dedup_supersede"]:
-        db.execute(
-            "UPDATE claims SET status = 'superseded', superseded_by_id = ? WHERE id = ?",
-            (keep_id, drop_id)
-        )
+        db.execute("UPDATE claims SET status = 'superseded', superseded_by_id = ? WHERE id = ?", (keep_id, drop_id))
         count += 1
 
     # 4. Archive completed plans
     for claim_id, reason in actions["archive_completed"]:
-        db.execute(
-            "UPDATE claims SET status = 'expired', expires_at = ? WHERE id = ?",
-            (now, claim_id)
-        )
+        db.execute("UPDATE claims SET status = 'expired', expires_at = ? WHERE id = ?", (now, claim_id))
         count += 1
 
     db.commit()

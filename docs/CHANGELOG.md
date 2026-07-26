@@ -1,425 +1,93 @@
 # HL-Mem 变更记录
 
-本文件记录影响跨对话交接的设计与实现变化。代码提交历史仍由 Git 保存；这里记录"为什么改"和"哪些模块受影响"。
+本文件记录发布级变更摘要。测试数字是对应版本的发布基线；migration 数是该版本结束时的 SQL migration 总数。
 
----
+## v0.13.0 — 2026-07-26
+
+- **变更摘要**：工程收敛版本；修正文档 SSOT，扩展格式、构建、Python 3.12、空库 migration 和依赖方向 CI 门禁，并新增能力成熟度矩阵。
+- **Migrations**：29（无新增）。
+- **测试**：443 passed，1 skipped（沿用 v0.12.4 发布基线，本版本按发布约束未重跑 pytest）。
 
 ## v0.12.4 — 2026-07-26
 
-- 修复 temporal cleanup 与 TTL 到期处理的事务快照/CAS 并发竞态。
-- 关系提案改为按 `run_id` 保留同 mode 的跨运行审计历史。
-- 召回折叠增加语义桶、争议事实保护、单次向量解码和候选上限。
-- 保留 tool error 中的持久诊断信号，并配置化 temporal cleanup 周期。
-- 修正提取 confidence 指令，新增 TTL/cleanup 扫描索引。
-
----
+- **变更摘要**：修复 temporal cleanup/TTL 并发竞态；关系提案按 `run_id` 保留审计历史；收敛召回折叠语义和成本；新增 TTL/cleanup 扫描索引。
+- **Migrations**：29（新增 028、029）。
+- **测试**：443 passed，1 skipped。
 
 ## v0.12.3 — 2026-07-26
 
-- 新增默认关闭的 deterministic extraction pre-filter，通过
-  `HL_MEM_EXTRACT_PRE_FILTER=on` 显式启用。
-- 预筛位于 token budget/LLM 调用前，识别通用 runtime/tool control frame、
-  assistant action narration 和短 operational request。
-- 每次启用后的判定写入 `extraction_pre_filter` audit；规则异常时记录
-  `error_fallback` 并继续正常 extraction。
-- 新增纯规则、Settings、Worker skip/audit/fallback 行为测试与
-  `docs/design/extraction-pre-filter.md`。
+- **变更摘要**：新增默认关闭的 deterministic extraction pre-filter；在 LLM 调用前过滤低价值运行时事件，保留审计并在规则异常时回退正常提取。
+- **Migrations**：27（无新增）。
+- **测试**：433 passed，1 skipped。
 
----
+## v0.12.2 — 2026-07-26
 
-## v0.12.3 — 2026-07-26
-
-### 提取预筛（Extraction Pre-filter）
-
-- 新增确定性规则预筛模块（`src/hl_mem/ingest/pre_filter.py`），在 LLM 提取前判断事件是否值得花费一次 API 调用。
-- 生产回放 4139 条事件：过滤 24.5%（1016/4139），潜在事实丢失 ≤0.1%（35 条弱标签，实际人工确认 ~0-1 条）。
-- 五类过滤规则（`deterministic-v2`）：
-  - `runtime_notice`：后台进程退出/完成通知。
-  - `tool_control_frame`：纯命令包装 + exit code（遇到版本号/工作目录等事实信号时放行）。
-  - `transient_tool_result`：timeout/cancelled/background-started（混合有效输出时放行）。
-  - `assistant_action_narration`：≤60 字符的纯动作叙述（"Codex 在跑"、"等它完成"）。
-  - `operational_status_query`：≤80 字符的操作状态查询（"正常吗"、"完成了吗"）。
-- Keep-signal 优先：显式记忆、图片内容、含"记住/偏好/要求/必须"等持久信号一律放行。
-- 可观测：被跳过的事件记录到 audit_log，含 reason 和 rule_version。
-- 可降级：预筛出错时 fallback 到正常提取。
-- 默认 `off`，通过 `HL_MEM_EXTRACT_PRE_FILTER=on` 开启。
-- 设计文档：`docs/design/extraction-pre-filter.md`。
-
-### v0.12.2 记忆库质量修复
-
-- 数据清洗：38 条语义重复 claim 被 superseded（441→403 active）。
-- 召回结果暴露 `score` 字段（使用 final blended score）。
-- 提取 prompt 增加自足性约束、主体正确性、attribute 对照表和反例。
-- 召回增加可配置相似度折叠（`recall_dedup_threshold`，默认 0.95）。
-- Temporal 清理接入 maintenance cycle：65 条无 expires_at 的 temporal claim 获得处理。
-
-### 测试
-
-- 433 passed, 1 skipped（+22 预筛测试）
-
----
+- **变更摘要**：清理语义重复 Claim；召回输出 score；增强提取 prompt；增加相似度折叠和 temporal 回填维护。
+- **Migrations**：27（无新增）。
+- **测试**：411 passed，1 skipped。
 
 ## v0.12.1 — 2026-07-26
 
-### P0 修复（数据完整性）
-
-- **P0-1**: `memory_usefulness` CHECK 约束扩展为五类（claim/observation/policy/episode/trace），修复 Procedure feedback 写入时违反 CHECK 导致整体回滚（migration 025）。
-- **P0-2**: TTL bonus 延期后 `valid_to` 现在使用 effective 过期时间而非原始 `expires_at`，修复双时间模型被回溯破坏。
-- **P0-3**: 关系发现在 `BEGIN IMMEDIATE` 写事务内重新读取并验证 endpoint 状态，修复并发下为已撤回/过期 Claim 写关系的竞态。
-
-### P1 修复（可维护性/性能/一致性）
-
-- **P1-1**: 组件工厂只降级 `ConfigurationError` 并记日志，不再 `except Exception: return None` 静默吞掉所有异常。
-- **P1-2**: 查询扩展改用固定大小 `ThreadPoolExecutor` + `BoundedSemaphore` 并发上限，替代每次创建 daemon thread。
-- **P1-3**: 关系提案新增 `run_id` 列，旧 audit 不再被新 auto 决策覆盖（migration 026）。
-- **P1-4**: Tags FTS 触发器收窄为 `AFTER UPDATE OF topic_tags_json`，消除无关字段更新的写放大（migration 027）。
-- **P1-5**: Procedure LIKE 查询转义 `%`、`_`、`\\` 通配符。
-- **P1-6**: Benchmark temporal correctness 分离 valid/occurred/recorded 三种时间验证，无 recorded gold 时标记 not_applicable。
-- **P1-7**: LongMemEval stable ID 包含 session key，修复跨 session 同 message_id 碰撞。
-- **P1-8**: Settings 五个新模式字段定义为 `Literal` 类型，新增 `Settings.for_test()` 显式测试构造入口。
-- **P1-9**: 召回副作用失败改为 `LOGGER.exception` + 有界 retry + 降级计数器，不再静默 `except Exception: pass`。
-- **P1-10**: 新增 4 条 SQLite 跨层集成测试，覆盖三个 P0 的组合回归路径。
-
-### Migrations
-
-- `025_memory_usefulness_episode_trace.sql`：重建表，CHECK 扩为五类。
-- `026_relation_proposals_run_id.sql`：新增 `run_id` 列 + 双唯一约束。
-- `027_tags_fts_trigger_narrow.sql`：Tags FTS 触发器收窄。
-
-### 测试
-
-- 401 passed, 1 skipped（+28 新测试）
-
----
+- **变更摘要**：修复 usefulness 类型约束、TTL 双时间和关系并发写入；收敛组件降级、查询扩展并发、召回副作用和 benchmark 时间语义。
+- **Migrations**：27（新增 025–027）。
+- **测试**：401 passed，1 skipped。
 
 ## v0.12.0 — 2026-07-26
 
-### 六大新特性
-
-- **多查询召回**：新增受控 QueryExpander。短查询、指代查询或候选不足时可调用 LLM 生成最多 2 个扩展 query，带单次 2 秒/总计 3 秒超时、token ceiling 和原始 query 回退。
-- **关系候选发现**：新增 claim 关系发现 worker、proposal repository 与审计状态；通过 LLM 识别 supports/follows/about 等候选关系，自动写边与 proposal 审计分离。
-- **Benchmark suite**：新增 LongMemEval adapter、离线 runner、JSON/Markdown 报告，以及 extraction、retrieval、lifecycle 三层指标和 bootstrap confidence interval；通过 `hl-mem eval` 按需执行。
-- **图片证据入口**：扩展多模态内容协议，新增 DashScope 视觉描述器、图片大小/数量限制、受控 file URI 白名单，并将图片描述与原始图片定位信息纳入事件证据。
-- **反馈驱动维护**：新增 usefulness 聚合、反馈归因与重建 worker，使 helpful/unhelpful 信号可供 TTL 延长与 decay 调整使用，同时保留只观察不生效的安全模式。
-- **Tool/Procedure intent**：新增 TOOL/PROCEDURE intent、确定性 keyword router 与 Experience 专用召回 pipeline，结合最近 outcome 和时间衰减排序 procedure/policy 结果。
-
-### Migrations
-
-- `023_relation_proposals.sql`：新增关系候选 proposal 审计存储。
-- `024_memory_usefulness.sql`：新增记忆 usefulness 聚合存储。
-
-### 默认配置
-
-- `HL_MEM_QUERY_EXPANSION_MODE=auto`：仅短查询、指代查询或候选不足时触发；超时/失败回退原始 query。
-- `HL_MEM_RELATION_DISCOVERY_MODE=audit`：默认只写 proposal，不自动写关系边。
-- Benchmark suite 无常驻配置，通过 CLI 按需运行。
-- `HL_MEM_IMAGE_DESCRIBER_MODE=off`：当前无图片输入源，接入视觉 API 后显式开启。
-- `HL_MEM_FEEDBACK_LIFECYCLE_MODE=observe`：只聚合 usefulness，不影响 TTL/decay。
-- `HL_MEM_PROCEDURE_RECALL_MODE=keyword`：零 LLM 调用的确定性路由。
-
-### 数字
-
-- 测试: 342 → 373 (+31)，1 skipped
-- Migrations: 22 → 24（新增 023、024）
+- **变更摘要**：交付多查询召回、关系候选发现、Benchmark suite、图片证据入口、反馈驱动维护和 Tool/Procedure intent 六大特性。
+- **Migrations**：24（新增 023、024）。
+- **测试**：373 passed，1 skipped。
 
 ## v0.11.2 — 2026-07-25
 
-### 发布收口
-- Trigram FTS 行为回归测试（确定性，30+ cases，验证中文/英文/混合查询、标点安全、空查询）
-- Migration 022 升级回归测试（验证 drop/recreate/backfill 原子性）
-- CI 扩展为全量测试套件（342 tests）
-- 数据清洗：514 claims → 441 active（27 expired + 26 deduped + 120 reclassified）
-
-### 数字
-- 测试: 325 → 342 (+17)
-- Migrations: 22（无变化）
+- **变更摘要**：补齐 trigram FTS 行为与 migration 022 回归，CI 扩展为全量测试套件并完成数据清理。
+- **Migrations**：22（无新增）。
+- **测试**：342 passed。
 
 ## v0.11.1 — 2026-07-24
 
-### 代码质量重构
-
-#### P0：安全修复
-- **空 trigger guard**：FTS5 触发器在空匹配时匹配全部行（行为 bug），修复为安全跳过
-- **BaseException → Exception**：except BaseException 吞掉 KeyboardInterrupt/SystemExit，改为 Exception
-- **Reranker 无 retry**：网络抖动时静默降级，增加 retry + 超时保护
-- **死代码清理**：删除 6 处未使用的模块/函数/变量
-
-#### P1：类型 + 一致性
-- **Enum-ify config**：`embedder_mode`/`reranker_mode` 等字符串配置改为 Enum，编译时检测拼写错误
-- **Enforce status enums**：ClaimStatus/EpisodeStatus 在所有写入路径强制校验
-- **统一 HTTP retry**：`http_utils.retry_http()` 统一所有 HTTP 调用的重试策略
-- **日调度提取**：4 处 copy-paste 的 daily job 注册逻辑提取为 `enqueue_daily_job()`
-- **类型标注收紧**：核心路径消除 `X | Any` 模式（等价于 Any），替换为精确类型
-
-#### P2：可维护性
-- **Docstrings**：核心模块补全 docstring
-- **`close()` 签名**：统一 close 方法的签名和调用约定
-- **空模块清理**：删除 empty/experimental 模块
-
-### 数字
-- 测试: 325（本版本无新增测试，重点在质量提升）
-- 净改动: +docstrings -dead_code，行数基本持平
+- **变更摘要**：修复空 trigger、异常边界和 reranker retry；统一配置 Enum、HTTP retry、状态校验和核心类型/docstring。
+- **Migrations**：22（无新增）。
+- **测试**：325 passed。
 
 ## v0.11.0 — 2026-07-24
 
-### Hindsight 对标：控制面 + 协议边界
-
-基于 Hindsight .pyc 逆向分析，引入 10 维度架构对标后的 P0-P2 改进。
-
-#### P0：可观测性 + 评测闭环
-- **LLM 调用账本** (migration 019): 每次 LLM 调用持久化 span（operation/provider/model/status/tokens/latency），healthz 暴露 24h 聚合统计，token 拆分为 input/output/cached
-- **Job 进度系统** (migration 020): jobs 表增加 stage/processed/total/heartbeat_at，consolidation/dedup worker 逐条上报进度，lease token CAS 保护
-- **中文 FTS 评测集**: 30 条中文查询评测 case，实测 FTS5 unicode61 tokenizer 对中文 0% recall——证实了换 tokenizer 的必要性
-- **TextSearchBackend 协议**: 定义全文检索后端协议边界 + fts_tokenizer 配置占位
-
-#### P1：扩展点 + 提取增强
-- **Dry-run extraction**: POST /v1/extract/dry-run，提取不落库，支持自定义 instructions
-- **Reranker provider registry**: DashScopeReranker + make_reranker 工厂 + reranker_provider 配置
-- **ConsolidationScope**: 显式 scope 控制（namespace/slot/tag 过滤 + max_pairs 限制），POST /v1/consolidate
-- **提取模型增强** (migration 021): claims 表增加 occurred_start/occurred_end/entities_json，ExtractedClaim 增加对应字段
-
-#### P2：协议边界
-- **VectorSearchBackend 协议**: 向量检索后端协议定义 + vector_backend 配置占位 + healthz vector_search metrics
-
-#### 关键发现
-- FTS5 默认 tokenizer 对纯中文查询 0% recall（之前被 dense channel 掩盖）
-- hl_mem 已有 DashScope/Zhipu/OpenAI-compatible 三 provider，真正缺的是调用级可观测性
-
-#### 中文 FTS 修复与 migration 022
-- claims_fts 与 claims_tags_fts 从 unicode61 重建为 trigram tokenizer，存量数据回填
-- 中文连续子串恢复可检索；trigram 全文查询至少需要 3 个 Unicode 字符
-- query sanitizer 按 tokenizer 分流（claims=trigram, events=unicode61），统一双引号 phrase quoting
-- 删除无效的 fts_tokenizer Settings 环境变量；tokenizer 由 schema migration 决定
-- tokenizer 变化影响 BM25 统计和候选顺序，不承诺与 unicode61 排序相同
-- 514 claims 微基准：trigram FTS 索引约为 unicode61 的 4.4 倍，查询仍低于 1ms
-- migration 022 单事务 drop/recreate/backfill 两个 FTS 表
-
-### 数字
-- 测试: 292 → 325 (+33)
-- Migrations: 021 → 022 (+1)
-- 新增 API: /v1/extract/dry-run, /v1/consolidate
+- **变更摘要**：新增 LLM spans、Job 进度、中文 FTS 评测、后端协议、dry-run extraction、ConsolidationScope，并将 Claim FTS 切换为 trigram。
+- **Migrations**：22（新增 019–022）。
+- **测试**：325 passed。
 
 ## v0.10.1 — 2026-07-24
 
-### 代码质量重构（基于 Hermes × Codex 双分析师共识评估）
-
-#### P0：评测闭环 + 配置单一来源
-- **冻结排序因子**：排序链已稳定，不再增加新 boost/channel/weight
-- **新增 MRR + binary nDCG@10**：扩充离线评测指标
-- **报告口径分离**：分别报告测试层（passed/failed/skipped）与 retrieval 指标（recall@5/MRR/nDCG@10/p50/p95）
-- **移除管线内部 Settings()**：引入 RecallConfig dataclass，配置由应用入口提供，消除第二配置入口
-
-#### P1：类型化重构 + 行为测试
-- **state dict → RecallContext dataclass**：召回管线从 35 字段的 dict[str, Any] 迁移到显式类型标注的 dataclass，消除字段名拼写错误风险
-- **behavioral scenarios 独立**：tests/scenarios/ 现可独立执行和报告
-
-#### P2：清理 + benchmark
-- **删除死代码**：_link_event_atomically、Database.__enter__/__exit__
-- **IngestService 幽灵依赖**：删除未使用的 embedder 参数，收紧 connection 类型
-- **StoreClaimResult → dataclass**：从 str 子类改为 @dataclass(frozen=True)
-- **中文常量收敛**：新建 domain/constants.py，替换散落的硬编码中文
-- **加 CI**：.github/workflows/test.yml（push/PR 自动跑单测）
-- **向量检索 benchmark**：522/2k/10k 三档延迟与内存基准
+- **变更摘要**：冻结排序因子，增加 MRR/nDCG，统一 RecallConfig，类型化召回上下文并独立 behavioral scenarios。
+- **Migrations**：18（无新增）。
+- **测试**：292 passed，1 skipped。
 
 ## v0.10.0 — 2026-07-24
 
-### Phase 18: Topic Tags 检索接入
-- **Soft boost（方案 D）**：FTS/Dense RRF 融合后，命中的 query tags 给予 0.05 微小权重作为 tie-breaker，默认开启
-- **独立 Tag channel（方案 B）**：第三召回通道（独立 tags FTS），weight=0.15，默认关闭待评测
-- **中英文 query→tag 解析**：确定性词典匹配（"架构决策" → [architecture, decision]）
-- **migration 018**：claims_tags_fts 独立 FTS 表 + 3 triggers
-- 影响：`recall/staged_pipeline.py`、`domain/claims/query_tags.py`、`application/recall.py`、migration `018_claims_tags_fts.sql`
+- **变更摘要**：完成 topic tags soft boost、可选独立 tag channel 和确定性 query-to-tag 解析。
+- **Migrations**：18（新增 018）。
+- **测试**：292 passed，1 skipped。
 
-### v0.9.1 — 2026-07-24
+## v0.9.1 — 2026-07-24
 
-### 审查修复（11 个 P0/P1）
-- **conflict_key v3**：移除 predicate，减少假冲突
-- **去重 min_confidence**：跨 subject 去重必须满足最小置信度阈值
-- **qualifier 降级**：slot 无匹配时 canonical_slot=NULL 而非填默认
-- **TTL UTC 统一**：retention 计算全部使用 UTC
-- **回填 CAS**：TTL/slot 回填使用 compare-and-swap 防并发
-- 影响：26 文件，测试 277 passed
+- **变更摘要**：修复 qualifier 降级、TTL UTC 统一和回填 CAS。
+- **Migrations**：17（无新增）。
+- **测试**：277 passed。
 
-### v0.9.0 — 2026-07-24
+## v0.9.0 — 2026-07-24
 
-### Phase 17: 数据质量治理（4 Stages）
-- **Stage 1 — slot+tags 双层分类**：migration 016 引入 canonical_slot（15 operational）+ topic_tags_json（开放多值）
-- **Stage 2 — 行为切换**：claim 写入/冲突/去重/TTL 全面切换到 slot 模型
-- **Stage 3 — 跨 subject 去重**：DedupJudge worker（audit-only 默认），dedup_pairs 审计表
-- **Stage 4 — TTL + importance 联动**：retention 纯函数（scope × importance 三档矩阵），migration 017
-- 影响：`domain/claims/`（新建）、`workers/deduplicate.py`（新建）、`workers/backfill_expires_at.py`（新建）、`recall/staged_pipeline.py`（新）
+- **变更摘要**：交付 slot+tags 分类、跨 subject 审计去重，以及 importance 联动 TTL。
+- **Migrations**：17（新增 016、017）。
+- **测试**：发布记录未保留精确计数；v0.9.1 基线为 277 passed。
 
-### v0.7.0 — 2026-07-24
+## v0.7.0 — 2026-07-24
 
-### Phase 16: 代码收敛
-- 统一 RRF/vector/retry/stage 实现（删除 9 个重复实现 + 4 个兼容层）
-- Hermes provider 同步契约收敛 + circuit breaker 修复
-- 事务所有权统一到 application 层
-- 净减 333 行
-
-### v0.6.0 — 2026-07-24
-
-### Phase 15: 复杂度治理（14 个 P1/P2）
-- Settings 统一注入（消除 config.py 双轨）
-- LLM 调用全部走 LLMClient（消除散落的 httpx.post）
-- 上帝函数拆阶段函数
-- repository 按职责拆分 5 文件
-- Hermes provider 拆三子对象
-- 多跳 BFS 预备（默认 max_depth=1）
-
-### v0.4.3 — 2026-07-23
-
-### Phase 14: Hindsight 对标
-- LLMClient + Provider 解耦（百炼/智谱/OpenAI-compatible）
-- 长输入结构感知分块 + 输出超限递归二分恢复
-- 统一 SearchTrace（候选/分数/过滤原因/耗时可回放）
-- 一跳关系扩展召回（默认关闭，灰度开关）
+- **变更摘要**：完成 canonical attribute、scope 后置规则、TTL policy 和 decay priority。
+- **Migrations**：15。
+- **测试**：发布记录未保留精确计数。
 
 ## v0.3.0 — 2026-07-23
 
-### Phase 12: 数据质量提升
-
-- **实体归一化**：6 组 alias 映射（如 `GLM-5.1`→`glm-5.2`），合并同一实体的不同写法
-- **语义去重升级**：阈值从 0.95 降至 0.82，算法从全量比较改为 best-match（每条候选只匹配最相似的现有 claim），显著减少假阴性
-- **canonical attribute reconcile**：新 claim 写入时自动与同实体的 canonical attribute 对账，低置信度新 claim 不覆盖高置信度旧值
-- **scope 后置规则**：`normalize_scope` 在写入后自动修正 scope（如 "port" + 整数值 → `config.port`）
-- **TTL policy**：`ATTRIBUTE_TTL_DAYS` 配置化，仅短期状态类型（service_health/process/connectivity/test_suite）设 7 天 TTL
-- **decay priority**：衰减 worker 按 priority 排序执行，高优先级 claim 先处理
-- 影响：`config.py`、`recall/dedup.py`、`recall/attribute_map.py`、`domain/entity.py`、`workers/decay.py`、migration `006_canonical_attribute.sql`
-
-### Phase 10-11: 冲突检测大修（v0.3.0 bump）
-
-- **互斥模型翻转**：从"默认互斥 + 白名单排除"改为"默认非互斥 + 白名单包含"，只有 5 个真正单值槽位参与冲突检测：`ui_theme`、`response_style`、`config.port`、`config.model`、`service.health`
-- **ConflictResolver 误报修复**：根因是 conflict_key 生成时 predicate 未规范化，导致同一属性的不同表述产生不同 key，冲突检测失效
-- **predicate 规范化**：统一大小写、空格、别名映射
-- **ingest 冲突案例**：新增 `conflict_cases` 表和状态机（pending → auto_resolved / manual_required → resolved / rejected）
-- **authority tie-break**：同 conflict_key 的 claim 按 authority 排序，高 authority 覆盖低 authority
-- **低值过滤**：importance < 0.3 的 claim 不参与冲突检测
-- **semantic dedup 旁路修复**：修复了 mutual-exclusivity 检查短路导致 semantic dedup 被跳过的 bug
-- 影响：`recall/conflict.py`、`config.py`、migration `013_conflict_cases.sql`
-
-### Phase 0-9: 架构重构
-
-#### P0 数据正确性
-
-- 事务原子化：整个写入流程（update_status + insert_claim + supersede + evidence_link）在单一 BEGIN IMMEDIATE 中
-- fact_hash v2：JSON 数组有边界哈希，替代 v1 的自由文本拼接（migration `011_fact_hash_v2.sql`）
-- MCP pipeline 修复：MCP 工具委托 application 服务，不再绕过事务边界
-
-#### 架构分层
-
-- **application/** 层：新增 IngestService、RecallService、ForgetService，REST/MCP/Worker 统一入口
-- **domain/** + **core/**：纯函数，不依赖基础设施。domain/temporal 独立双时间可见性逻辑
-- **依赖方向修复**：`core/vector` + `domain/temporal` 从 storage 中提取，消除循环依赖
-- **统一状态枚举**：ClaimStatus + EpisodeStatus 集中到 `lifecycle.py`，`assert_transition()` 守卫所有状态变更
-
-#### 维护与质量
-
-- schemas 拆分：`schemas.py` 从 server.py 独立
-- 集中配置：`config.py`（常量）+ `settings.py`（Settings dataclass + from_env() 校验）+ `components.py`（工厂）
-- Hermes provider 合并：删除冗余 adapter，统一为 `adapters/hermes/provider.py`（358 行）
-- P2 质量修复：Protocol 接口化、错误分类化、retry 工具化、router 合并、zombie fields 清理
-
-#### 功能增强
-
-- 3 个核心问题修复：observation recall、conflict resolution、context budget
-- 5 项改进：记忆关系（summarizes/supports/follows/about）、多模态内容协议、提取器路由、偏好专用召回 intent、Settings 配置快照
-
----
-
-## 2026-07-22 — Phase 3-7
-
-- 增加带 proof count、source watermark、证据准入和 stale 传播的派生记忆维护
-- 完成 Episode、Trace、反馈归因以及内嵌 Procedure 的 Policy 生命周期
-- 增加确定性查询路由、RRF/MMR、预算装箱、MCP 工具契约和 CLI 导入导出
-- 增加可选 PostgreSQL 连接边界、SQLite 在线备份恢复、租户配额和保留策略
-- SQLite WAL 仍是默认后端，离线测试不依赖外部 API 或 PostgreSQL
-
----
-
-## 2026-07-24 — v0.9.0 · Phase 17 数据质量治理
-
-### Stage 1-2: canonical_slot + topic_tags 分类体系（方案 E）
-- 新增 SLOT_REGISTRY（55 attribute，15 operational slot）
-- 新增 migration 016：canonical_slot + topic_tags_json 字段
-- conflict_key 改用 canonical_slot（无 slot 返回 NULL，不参与冲突）
-- dedup 适配：有 slot 按 slot 隔离，无 slot 按 predicate+embedding
-- LLM prompt 展示完整 slot 定义 + abstain 规则
-- 回填工具 backfill_claim_slots_v1.py（dry-run + apply）
-- 解决 fact.other 占 46% 的分类粗糙问题
-
-### Stage 3: 跨 subject 语义去重
-- 新增 migration 017：dedup_pairs 审计表
-- DedupJudge（LLM 判断 equivalent/distinct/uncertain）
-- 后台 worker workers/deduplicate.py（audit-only 默认开启）
-- 安全护栏：threshold 0.92 + LLM 二次确认 + supersede 语义
-- 解决同一事实因 subject 不同被重复存储的问题
-
-### Stage 4: TTL 三因子 + importance 治理
-- 新建 domain/claims/retention.py 纯函数模块
-- TTL = f(scope, importance)：temporal 低→3天/中→7天/高→14天
-- 写入门槛：importance < 0.2 不写入（保护类型例外）
-- reclassify 从原始锚点重算 expires_at（不增量更新）
-- 存量回填脚本 workers/backfill_expires_at.py
-
----
-
-## 2026-07-24 — v0.7.0 · Phase 16 代码收敛
-
-### Batch 1: 消除重复实现
-- 向量编解码统一到 pack_vector/unpack_vector
-- RRF + budget_pack 统一
-- HTTP retry 统一到 http_utils.retry_http()
-- 召回管线假阶段改为真实分阶段
-- TypeError 兼容猜测删除
-
-### Batch 2: 统一契约
-- 事务所有权统一（repository 不 commit，application/worker 拥有）
-- API monkeypatch 删除
-- value_json 双轨消除（统一为 value Python 值）
-
-### Batch 3: Hermes 收敛 + 兼容层清理
-- Hermes 同步/异步双契约收敛为同步一代
-- 熔断器线程安全（Lock + half-open 单探测）
-- prefetch TTL + session-end 清理
-- 过期兼容层全部删除（-7 文件 -333 行）
-
----
-
-## 2026-07-23/24 — v0.4.3 → v0.6.0 · Phase 13-15 复杂度治理
-
-### Phase 13: 架构修复
-- 幂等竞态修复 + 去重 TOCTOU + lease token + 预算硬限 + N+1 批量 + domain 纯化
-
-### Phase 14: Hindsight 对标
-- LLMClient/Provider 解耦 + Pydantic schema 约束
-- 长输入结构感知分块 + 输出超限递归二分
-- 统一 SearchTrace（候选/分数/过滤原因/耗时可回放）
-- 一跳关系扩展召回（默认关闭）
-
-### Phase 15: 品质审查修复
-- Settings 统一入口 + LLM 全部走 LLMClient
-- 写入逻辑迁 domain/claims/ + 上帝函数拆阶段
-- repository 拆 5 文件 + domain/types.py dataclass
-- Hermes provider 拆 3 子对象 + 多跳 BFS 预备 + magic number 集中
-
----
-
-## 2026-07-22 — v0.3.5 · Phase 8-12 核心功能
-
-- 冲突检测互斥白名单模型（5 真正单值槽位）
-- TTL 矩阵（scope × volatility）
-- 多因子召回排序（semantic + recency + access）
-- canonical_attribute v2 + conflict_key v2
-- access_count + last_accessed_at + 软衰减
-- 记忆关系图 + 派生记忆维护
-
-- 建立文档入口、交接状态、MemOS/Hindsight 选型分析、核心 ADR、系统架构和分阶段实施计划
-- 完成 Hermes × Codex 三轮 review 并形成一致接受的首版共识
-- **决策**：统一事件溯源双通道设计，事实通道参考 Hindsight，经验通道参考 MemOS
-- **决策**：MVP 使用 SQLite，不引入 Neo4j，不依赖 Hindsight/MemOS 运行时
-- **决策**：Embedding 选 `text-embedding-v4` 2048 维 Dense+Sparse
-- **决策**：首版范围精简为 3 种记忆类型、2 档 volatility、2 档 visibility
-- 完成首版完整实现：事件日志、LLM 提取、混合检索、矛盾检测、TTL、遗忘、Worker、Hermes Provider
-- Prompt 调优（中文值保持、predicate 标准化、conflict 检测修复）
-- qwen3.7-plus + text-embedding-v4 端到端验证通过
+- **变更摘要**：完成冲突检测、事务原子化、fact_hash v2、MCP application 委托与初始架构分层。
+- **Migrations**：13。
+- **测试**：发布记录未保留精确计数。

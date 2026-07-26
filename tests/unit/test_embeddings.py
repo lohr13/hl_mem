@@ -3,8 +3,8 @@ import struct
 import httpx
 import pytest
 
-from hl_mem.ingest.embedder import Embedder, FakeEmbedder, pack_vector, unpack_vector
 from hl_mem.core.vector import cosine_similarity
+from hl_mem.ingest.embedder import Embedder, FakeEmbedder, pack_vector, unpack_vector
 
 
 def test_fake_dimension_and_vector_round_trip() -> None:
@@ -23,7 +23,9 @@ def test_real_embedder_chunks_at_ten(monkeypatch) -> None:
     batches = []
 
     class Response:
-        def raise_for_status(self): pass
+        def raise_for_status(self):
+            pass
+
         def json(self):
             return {"data": [{"index": i, "embedding": [1.0, 0.0]} for i in range(len(batches[-1]))]}
 

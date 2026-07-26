@@ -15,8 +15,8 @@ from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import Embedder
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.llm_extractor import LLMExtractor
-from hl_mem.storage.database import Database
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.worker import Worker
@@ -44,7 +44,14 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setenv("HL_MEM_EXTRACTOR", "llm")
     monkeypatch.setenv("HL_MEM_EMBEDDER", "real")
 
-    required = ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "EMBEDDING_API_KEY", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL")
+    required = (
+        "LLM_API_KEY",
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "EMBEDDING_API_KEY",
+        "EMBEDDING_BASE_URL",
+        "EMBEDDING_MODEL",
+    )
     missing = [name for name in required if not os.getenv(name)]
     if missing:
         pytest.skip(f"缺少真实 API 配置: {', '.join(missing)}")

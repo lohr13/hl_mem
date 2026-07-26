@@ -72,9 +72,7 @@ def test_scope_filters_by_tags(tmp_path) -> None:
     _claim(connection, "b", [0.8, 0.6], slot="fact.other", tags=["database", "python"])
     _claim(connection, "c", [0.8, 0.6], slot="fact.other", tags=["tooling"])
 
-    pairs = ConflictConsolidator(connection, _Judge()).scan_candidates(
-        scope=ConsolidationScope(tag_filter=["python"])
-    )
+    pairs = ConflictConsolidator(connection, _Judge()).scan_candidates(scope=ConsolidationScope(tag_filter=["python"]))
 
     assert _pair_ids(pairs) == {frozenset(("a", "b"))}
 
@@ -105,7 +103,12 @@ def test_consolidate_api_stores_scope_payload(tmp_path) -> None:
     with TestClient(create_app(database_path)) as client:
         response = client.post(
             "/v1/consolidate",
-            json={"namespace": "project", "slot_filter": "choice.database", "tag_filter": ["database"], "max_pairs": 12},
+            json={
+                "namespace": "project",
+                "slot_filter": "choice.database",
+                "tag_filter": ["database"],
+                "max_pairs": 12,
+            },
         )
         assert response.status_code == 200
         job_id = response.json()["id"]

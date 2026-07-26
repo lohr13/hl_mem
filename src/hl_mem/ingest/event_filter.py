@@ -53,9 +53,17 @@ class EventFilter:
     def _is_status_report(text: str) -> bool:
         """检测 assistant 的纯状态汇报消息（无用户价值的事实）。"""
         status_patterns = [
-            "healthz", "服务运行中", "服务健康", "服务状态",
-            "git commit", "测试通过", "测试全绿", "passed",
-            "迁移完成", "migration", "已推送",
+            "healthz",
+            "服务运行中",
+            "服务健康",
+            "服务状态",
+            "git commit",
+            "测试通过",
+            "测试全绿",
+            "passed",
+            "迁移完成",
+            "migration",
+            "已推送",
         ]
         text_lower = text.lower()
         # 只过滤短消息（<200字符），长消息可能包含有价值内容

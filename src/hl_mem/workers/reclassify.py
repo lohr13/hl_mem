@@ -17,7 +17,6 @@ from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 
-
 CLASSIFY_PROMPT = """Classify each supplied memory without extracting or rewriting it.
 Return JSON {"classifications":[{"id":...,"scope":"temporal|permanent","importance":0.0-1.0}]}.
 Scope is independent from volatility: temporal is useful for a bounded real-world period;
@@ -28,7 +27,7 @@ Do not infer importance merely from emotional wording."""
 
 def _chunks(values: list[dict[str, Any]], size: int) -> Iterable[list[dict[str, Any]]]:
     for start in range(0, len(values), size):
-        yield values[start:start + size]
+        yield values[start : start + size]
 
 
 def _text(claim: dict[str, Any]) -> str:

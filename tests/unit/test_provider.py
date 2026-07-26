@@ -4,8 +4,11 @@ from hl_mem.adapters.hermes.provider import HLMemProvider
 
 
 class Response:
-    def raise_for_status(self): pass
-    def json(self): return {"results": [{"id": "one"}]}
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"results": [{"id": "one"}]}
 
 
 class AsyncClient:
@@ -16,8 +19,11 @@ class AsyncClient:
     def __init__(self, **kwargs):
         assert kwargs["timeout"] == 2.0
 
-    async def __aenter__(self): return self
-    async def __aexit__(self, *_args): return None
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
 
     async def post(self, url, **kwargs):
         type(self).calls += 1
@@ -34,7 +40,8 @@ class AsyncClient:
 
 
 class EpisodeResponse(Response):
-    def json(self): return {"id": "episode-1"}
+    def json(self):
+        return {"id": "episode-1"}
 
 
 def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:

@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any
 from hl_mem.lifecycle import (
     TERMINAL_EPISODE_STATUSES,
     EpisodeStatus,
-    PolicyStatus,
 )
 from hl_mem.lifecycle import InvalidTransitionError as InvalidStateTransitionError
 from hl_mem.lifecycle import (
+    PolicyStatus,
     assert_episode_transition,
 )
 from hl_mem.storage._shared import decode_json, encode_json, escape_like_pattern
@@ -450,9 +450,7 @@ class ExperienceRepository:
         query_filter = (
             "AND (p.trigger LIKE ? ESCAPE '\\' OR p.procedure LIKE ? ESCAPE '\\') " if normalized_query else ""
         )
-        parameters: tuple[Any, ...] = (
-            (namespace, pattern, pattern, limit) if normalized_query else (namespace, limit)
-        )
+        parameters: tuple[Any, ...] = (namespace, pattern, pattern, limit) if normalized_query else (namespace, limit)
         rows = self.connection.execute(
             "SELECT p.*,COALESCE(mu.usefulness_score,0.5) AS usefulness_score "
             "FROM policies p LEFT JOIN memory_usefulness mu "
@@ -475,9 +473,7 @@ class ExperienceRepository:
             if normalized_query
             else ""
         )
-        parameters: tuple[Any, ...] = (
-            (namespace, pattern, pattern, limit) if normalized_query else (namespace, limit)
-        )
+        parameters: tuple[Any, ...] = (namespace, pattern, pattern, limit) if normalized_query else (namespace, limit)
         rows = self.connection.execute(
             "SELECT * FROM episodes WHERE namespace_key=? AND status='success' "
             f"{query_filter}ORDER BY reward DESC,COALESCE(ended_at,started_at) DESC,id ASC LIMIT ?",
@@ -499,9 +495,7 @@ class ExperienceRepository:
         normalized_query = query.strip()
         pattern = f"%{escape_like_pattern(normalized_query)}%"
         action_order = "CASE WHEN t.action LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END," if normalized_query else ""
-        parameters: tuple[Any, ...] = (
-            (*ids, pattern, limit) if normalized_query else (*ids, limit)
-        )
+        parameters: tuple[Any, ...] = (*ids, pattern, limit) if normalized_query else (*ids, limit)
         rows = self.connection.execute(
             f"SELECT t.*,e.reward AS parent_reward,e.status AS parent_status,e.ended_at "
             f"FROM traces t JOIN episodes e ON e.id=t.episode_id WHERE t.episode_id IN ({placeholders}) "

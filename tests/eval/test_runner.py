@@ -22,9 +22,16 @@ def test_runner_records_per_case_metrics_and_manifest(tmp_path: Path) -> None:
     database_path = tmp_path / "snapshot.db"
     sqlite3.connect(database_path).close()
     case = EvalCase(
-        case_id="N01", query="不存在？", intent="current_state", expected_type="empty",
-        expected_min_confidence=None, expected_status_filter="active", expected_keywords=(), keyword_match="all",
-        binding=None, forbidden_statuses=("disputed",),
+        case_id="N01",
+        query="不存在？",
+        intent="current_state",
+        expected_type="empty",
+        expected_min_confidence=None,
+        expected_status_filter="active",
+        expected_keywords=(),
+        keyword_match="all",
+        binding=None,
+        forbidden_statuses=("disputed",),
     )
 
     report = run_evaluation([case], lambda _case: {"results": [], "observations": []}, database_path)
@@ -45,9 +52,16 @@ def test_runner_records_per_case_metrics_and_manifest(tmp_path: Path) -> None:
 
 def test_latency_percentiles_handle_multiple_scores() -> None:
     case = EvalCase(
-        case_id="N01", query="不存在？", intent="current_state", expected_type="empty",
-        expected_min_confidence=None, expected_status_filter="active", expected_keywords=(), keyword_match="all",
-        binding=None, forbidden_statuses=("disputed",),
+        case_id="N01",
+        query="不存在？",
+        intent="current_state",
+        expected_type="empty",
+        expected_min_confidence=None,
+        expected_status_filter="active",
+        expected_keywords=(),
+        keyword_match="all",
+        binding=None,
+        forbidden_statuses=("disputed",),
     )
     scores = [
         evaluate_results(case, {"results": []}, latency_ms=10.0),

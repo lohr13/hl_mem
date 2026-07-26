@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from hl_mem.ingest.chunking import ChunkingPolicy
-from hl_mem.ingest.llm_extractor import LLMExtractor, SYSTEM_PROMPT
+from hl_mem.ingest.llm_extractor import SYSTEM_PROMPT, LLMExtractor
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import ZhipuProvider
 from hl_mem.llm.types import LLMRequest, LLMResponse
@@ -57,8 +57,10 @@ def test_occurred_at_is_injected_into_user_prompt() -> None:
 
 
 def test_normalizes_predicate_and_preserves_chinese_value() -> None:
-    raw = ('{"claims":[{"subject":"用户","predicate":"Prefers",'
-           '"value":"深色模式","qualifiers":{}}],"should_memorize":true}')
+    raw = (
+        '{"claims":[{"subject":"用户","predicate":"Prefers",'
+        '"value":"深色模式","qualifiers":{}}],"should_memorize":true}'
+    )
     client = _FakeLLMClient(raw)
     claim = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("我喜欢深色模式")[0]
     assert claim.predicate == "偏好"
@@ -100,12 +102,8 @@ def test_claim_validates_canonical_attribute_against_predicate() -> None:
     valid = LLMExtractor._claim(
         {"predicate": "偏好", "value": "Codex", "canonical_attribute": "preference.tool_choice"}
     )
-    invalid = LLMExtractor._claim(
-        {"predicate": "偏好", "value": "深色", "canonical_attribute": "invented.slot"}
-    )
-    wrong_domain = LLMExtractor._claim(
-        {"predicate": "偏好", "value": "深色", "canonical_attribute": "config.port"}
-    )
+    invalid = LLMExtractor._claim({"predicate": "偏好", "value": "深色", "canonical_attribute": "invented.slot"})
+    wrong_domain = LLMExtractor._claim({"predicate": "偏好", "value": "深色", "canonical_attribute": "config.port"})
     assert valid.canonical_attribute == "preference.tool_choice"
     # reconcile infers a valid attribute from "深色" content instead of returning custom.unknown
     assert invalid.canonical_attribute == "preference.ui_theme"

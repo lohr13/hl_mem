@@ -97,18 +97,36 @@ class AuditLogger:
             values = dict(context)
             values.update({key: value for key, value in dimensions.items() if value is not None})
             explicit = {
-                "trace_id": trace_id, "tenant_id": tenant_id, "event_id": event_id,
-                "claim_id": claim_id, "related_claim_id": related_claim_id,
-                "query_id": query_id, "job_id": job_id,
+                "trace_id": trace_id,
+                "tenant_id": tenant_id,
+                "event_id": event_id,
+                "claim_id": claim_id,
+                "related_claim_id": related_claim_id,
+                "query_id": query_id,
+                "job_id": job_id,
             }
             values.update({key: value for key, value in explicit.items() if value is not None})
-            trace = str(values.get("trace_id") or values.get("event_id") or
-                        values.get("query_id") or values.get("job_id") or uuid.uuid4().hex)
+            trace = str(
+                values.get("trace_id")
+                or values.get("event_id")
+                or values.get("query_id")
+                or values.get("job_id")
+                or uuid.uuid4().hex
+            )
             row = (
-                _now(), str(phase), str(action), str(outcome), duration_us, trace,
-                str(values.get("tenant_id", "default")), values.get("event_id"),
-                values.get("claim_id"), values.get("related_claim_id"),
-                values.get("query_id"), values.get("job_id"), self._detail_json(detail),
+                _now(),
+                str(phase),
+                str(action),
+                str(outcome),
+                duration_us,
+                trace,
+                str(values.get("tenant_id", "default")),
+                values.get("event_id"),
+                values.get("claim_id"),
+                values.get("related_claim_id"),
+                values.get("query_id"),
+                values.get("job_id"),
+                self._detail_json(detail),
             )
             self.emitted_count += 1
             with self._lock:
@@ -116,7 +134,8 @@ class AuditLogger:
                 connection.execute(
                     "INSERT INTO audit_log(occurred_at,phase,action,outcome,duration_us,"
                     "trace_id,tenant_id,event_id,claim_id,related_claim_id,query_id,job_id,detail_json) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", row,
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    row,
                 )
                 connection.commit()
             self.written_count += 1
@@ -129,10 +148,7 @@ class AuditLogger:
                 if self._connection is not None:
                     self._connection.rollback()
             except Exception as rollback_error:
-                self.last_error += (
-                    f"; rollback {type(rollback_error).__name__}: "
-                    f"{_safe_error(rollback_error)}"
-                )
+                self.last_error += f"; rollback {type(rollback_error).__name__}: " f"{_safe_error(rollback_error)}"
             return False
 
     @contextmanager
@@ -143,13 +159,24 @@ class AuditLogger:
             yield detail
         except Exception as error:
             detail.update(error_class=type(error).__name__, error=_safe_error(error))
-            self.emit(phase, action, "error", duration_us=(time.perf_counter_ns() - started) // 1000,
-                      detail=detail, **dimensions)
+            self.emit(
+                phase,
+                action,
+                "error",
+                duration_us=(time.perf_counter_ns() - started) // 1000,
+                detail=detail,
+                **dimensions,
+            )
             raise
         else:
-            self.emit(phase, action, str(detail.pop("outcome", "success")),
-                      duration_us=(time.perf_counter_ns() - started) // 1000,
-                      detail=detail, **dimensions)
+            self.emit(
+                phase,
+                action,
+                str(detail.pop("outcome", "success")),
+                duration_us=(time.perf_counter_ns() - started) // 1000,
+                detail=detail,
+                **dimensions,
+            )
 
     def cleanup(self, retention_days: int = RETENTION_DAYS) -> bool:
         """Delete expired audit rows and reclaim free pages, at most once per UTC day."""
@@ -173,16 +200,17 @@ class AuditLogger:
                 if self._connection is not None:
                     self._connection.rollback()
             except Exception as rollback_error:
-                self.last_error += (
-                    f"; rollback {type(rollback_error).__name__}: "
-                    f"{_safe_error(rollback_error)}"
-                )
+                self.last_error += f"; rollback {type(rollback_error).__name__}: " f"{_safe_error(rollback_error)}"
             return False
 
     def health(self) -> dict[str, int | bool | str | None]:
-        return {"enabled": self.enabled, "emitted": self.emitted_count,
-                "written": self.written_count, "dropped_count": self.dropped_count,
-                "last_error": self.last_error}
+        return {
+            "enabled": self.enabled,
+            "emitted": self.emitted_count,
+            "written": self.written_count,
+            "dropped_count": self.dropped_count,
+            "last_error": self.last_error,
+        }
 
     def close(self) -> bool:
         try:
@@ -212,8 +240,7 @@ class NullAuditLogger:
         return False
 
     def health(self) -> dict[str, int | bool | str | None]:
-        return {"enabled": False, "emitted": 0, "written": 0,
-                "dropped_count": 0, "last_error": None}
+        return {"enabled": False, "emitted": 0, "written": 0, "dropped_count": 0, "last_error": None}
 
     def close(self) -> bool:
         return True

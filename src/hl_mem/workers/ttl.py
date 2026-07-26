@@ -6,8 +6,8 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from hl_mem.lifecycle import assert_transition
 from hl_mem.domain.claims.retention import normalize_utc_iso
+from hl_mem.lifecycle import assert_transition
 
 
 def expire_claims(
@@ -42,9 +42,7 @@ def expire_claims(
                 if row["valid_to"]:
                     effective = min(effective, datetime.fromisoformat(row["valid_to"].replace("Z", "+00:00")))
                 if row["canonical_slot"] == "state.service_health":
-                    anchor = datetime.fromisoformat(
-                        (row["observed_at"] or row["recorded_from"]).replace("Z", "+00:00")
-                    )
+                    anchor = datetime.fromisoformat((row["observed_at"] or row["recorded_from"]).replace("Z", "+00:00"))
                     effective = min(effective, anchor + timedelta(seconds=short_ttl_seconds))
             if effective <= datetime.fromisoformat(reference):
                 assert_transition(row["status"], "expired")

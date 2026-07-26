@@ -88,10 +88,7 @@ def slot_qualifier_key(canonical_slot: str | None, qualifiers: dict[str, Any] | 
     if slot is None:
         return {}
     values = qualifiers or {}
-    return {
-        key: _canonicalize_json(values.get(key))
-        for key in SLOT_REGISTRY[slot].required_qualifiers
-    }
+    return {key: _canonicalize_json(values.get(key)) for key in SLOT_REGISTRY[slot].required_qualifiers}
 
 
 class ConflictResolver:

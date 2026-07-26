@@ -157,7 +157,4 @@ class Deduplicator:
 
     @staticmethod
     def _text(claim: dict[str, Any]) -> str:
-        return (
-            f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} "
-            f"{claim.get('value', '')}"
-        )
+        return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} " f"{claim.get('value', '')}"

@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11"]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -27,3 +27,69 @@ jobs:
           HL_MEM_ENV: test
         run: |
           python -m pytest tests/ -q --tb=short
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install formatters
+        run: |
+          python -m pip install --upgrade pip
+          pip install black isort
+      - name: Check formatting
+        run: |
+          black --check .
+          isort --check-only .
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+          python -m build
+      - name: Verify import in a clean environment
+        run: |
+          python -m venv .build-venv
+          .build-venv/bin/python -m pip install --upgrade pip
+          .build-venv/bin/python -m pip install dist/*.whl
+          .build-venv/bin/python -c "import hl_mem; print(hl_mem.__version__)"
+
+  migrations:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Apply migrations from an empty database
+        run: |
+          python -c "import tempfile; from pathlib import Path; from hl_mem.storage.database import Database; path = Path(tempfile.mkdtemp()) / 'fresh.db'; db = Database(path); connection = db.open(); applied = {row[0] for row in connection.execute('SELECT version FROM schema_migrations')}; expected = {path.stem for path in Path('src/hl_mem/storage/migrations').glob('*.sql')}; missing = expected - applied; assert not missing, f'missing SQL migrations: {sorted(missing)}'; db.close(); print(f'applied {len(expected)} SQL migrations')"
+
+  import-boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check dependency direction
+        run: python scripts/check_imports.py

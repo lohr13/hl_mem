@@ -6,12 +6,13 @@ hl_mem 数据清洗脚本 v2
   python scripts/cleanup_data_v2.py --dry-run   # 只看不改
   python scripts/cleanup_data_v2.py              # 实际执行
 """
-import sqlite3
+
 import json
-import sys
 import os
-from datetime import datetime, timezone
+import sqlite3
+import sys
 from collections import Counter
+from datetime import datetime, timezone
 
 DB_PATH = "var/hl_mem.db"
 DRY_RUN = "--dry-run" in sys.argv
@@ -122,22 +123,96 @@ def main():
     # Keyword-based reclassification rules
     RECLASSIFY_RULES = [
         # (keywords_in_value, new_attribute)
-        (["分层架构", "application/", "core/", "domain/", "storage/", "api/", "adapters/",
-          "IngestService", "RecallService", "ForgetService", "层架构", "分层",
-          "模块结构", "目录结构", "顶层分层"], "fact.architecture"),
-        (["重构完成", "6阶段", "Phase 1", "Phase 2", "Phase 3", "Phase 4", "Phase 5",
-          "Phase 6", "Phase 7", "Phase 8", "Phase 9", "Phase 10", "Phase 11",
-          "Phase 12", "Phase 13", "Phase 14", "Phase 15", "Phase 16", "Phase 17",
-          "Phase 18", "阶段重构", "批次", "全部完成", "全部修复", "5批次",
-          "commit=", "push"], "fact.history"),
-        (["不引入", "不用", "暂不", "跳过", "选择", "决定不用", "改用",
-          "决定", "务实选择", "当前不需要", "暂缓", "推迟"], "fact.decision"),
-        (["CLI", "--version", "healthz", "端点", "支持", "能力",
-          "可以", "能够", "支持查询", "支持配置"], "fact.capability"),
-        (["token budget", "锁", "竞态", "TOCTOU", "lost update", "race condition",
-          "bug", "问题", "缺陷", "僵尸进程", "崩溃"], "fact.issue"),
-        (["接口", "REST", "API", "endpoint", "HTTP", "schema",
-          "OpenAPI"], "fact.api_design"),
+        (
+            [
+                "分层架构",
+                "application/",
+                "core/",
+                "domain/",
+                "storage/",
+                "api/",
+                "adapters/",
+                "IngestService",
+                "RecallService",
+                "ForgetService",
+                "层架构",
+                "分层",
+                "模块结构",
+                "目录结构",
+                "顶层分层",
+            ],
+            "fact.architecture",
+        ),
+        (
+            [
+                "重构完成",
+                "6阶段",
+                "Phase 1",
+                "Phase 2",
+                "Phase 3",
+                "Phase 4",
+                "Phase 5",
+                "Phase 6",
+                "Phase 7",
+                "Phase 8",
+                "Phase 9",
+                "Phase 10",
+                "Phase 11",
+                "Phase 12",
+                "Phase 13",
+                "Phase 14",
+                "Phase 15",
+                "Phase 16",
+                "Phase 17",
+                "Phase 18",
+                "阶段重构",
+                "批次",
+                "全部完成",
+                "全部修复",
+                "5批次",
+                "commit=",
+                "push",
+            ],
+            "fact.history",
+        ),
+        (
+            [
+                "不引入",
+                "不用",
+                "暂不",
+                "跳过",
+                "选择",
+                "决定不用",
+                "改用",
+                "决定",
+                "务实选择",
+                "当前不需要",
+                "暂缓",
+                "推迟",
+            ],
+            "fact.decision",
+        ),
+        (
+            ["CLI", "--version", "healthz", "端点", "支持", "能力", "可以", "能够", "支持查询", "支持配置"],
+            "fact.capability",
+        ),
+        (
+            [
+                "token budget",
+                "锁",
+                "竞态",
+                "TOCTOU",
+                "lost update",
+                "race condition",
+                "bug",
+                "问题",
+                "缺陷",
+                "僵尸进程",
+                "崩溃",
+            ],
+            "fact.issue",
+        ),
+        (["接口", "REST", "API", "endpoint", "HTTP", "schema", "OpenAPI"], "fact.api_design"),
         (["worker", "异步", "队列", "job", "定时", "04:00"], "fact.worker"),
     ]
 
@@ -223,9 +298,7 @@ def main():
 
         # Sort: prefer 用户 > hl_mem > others; then by importance desc
         subject_priority = {"用户": 0, "hl_mem": 1, "Hermes": 2}
-        rows_info.sort(
-            key=lambda x: (subject_priority.get(x["subject_entity_id"], 99), -x["importance"])
-        )
+        rows_info.sort(key=lambda x: (subject_priority.get(x["subject_entity_id"], 99), -x["importance"]))
 
         keeper = rows_info[0]
         to_supersede = rows_info[1:]
@@ -240,7 +313,9 @@ def main():
         except Exception:
             val_preview = (d["value_json"] or "")[:60]
 
-        print(f"  [{d['cnt']}x] keeper={keeper['subject_entity_id']} | supersede {[r['subject_entity_id'] for r in to_supersede]}")
+        print(
+            f"  [{d['cnt']}x] keeper={keeper['subject_entity_id']} | supersede {[r['subject_entity_id'] for r in to_supersede]}"
+        )
         print(f"       {val_preview}")
 
         if not DRY_RUN:

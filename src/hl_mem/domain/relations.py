@@ -86,11 +86,15 @@ def get_relations_batch(
         chunk = unique_ids[start : start + 500]
         placeholders = ",".join("?" for _ in chunk)
         extended = include_memory_relations or include_reverse_evidence
-        columns = "derived_id,relation,evidence_type,evidence_id,weight" if extended else (
-            "derived_id,relation,evidence_type,evidence_id"
+        columns = (
+            "derived_id,relation,evidence_type,evidence_id,weight"
+            if extended
+            else ("derived_id,relation,evidence_type,evidence_id")
         )
-        allowed = "'supports','contradicts','follows','about','derived_from','supersedes'" if extended else (
-            "'supports','contradicts','follows','about'"
+        allowed = (
+            "'supports','contradicts','follows','about','derived_from','supersedes'"
+            if extended
+            else ("'supports','contradicts','follows','about'")
         )
         rows = connection.execute(
             f"SELECT {columns} FROM evidence_links WHERE derived_type='claim' "

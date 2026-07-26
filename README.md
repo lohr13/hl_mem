@@ -3,7 +3,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Tests: 443 passed](https://img.shields.io/badge/tests-443%20passed-brightgreen.svg)](docs/CHANGELOG.md)
-[![Version: 0.12.4](https://img.shields.io/badge/version-0.12.4-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.13.0](https://img.shields.io/badge/version-0.13.0-blue.svg)](docs/CHANGELOG.md)
 
 **Local-first, evidence-driven memory for AI agents.** Stop your LLM from forgetting across sessions.
 
@@ -15,7 +15,7 @@ HL-Mem provides persistent, structured memory with dual-temporal modeling, evide
 
 ## 中文文档
 
-> v0.12.4 · 443 passed · 1 skipped · 29 migrations · [CHANGELOG](docs/CHANGELOG.md)
+> v0.13.0 · 443 passed · 1 skipped · 29 migrations · [CHANGELOG](docs/CHANGELOG.md)
 
 面向 AI Agent 的本地优先、跨会话记忆系统。证据驱动、双时间模型、双通道设计、可解释召回、slot+tags 分类体系、importance 联动 TTL。
 
@@ -90,7 +90,7 @@ HL-Mem 将这些理念统一为**事件溯源双通道**设计：事实通道处
                     ┌───────────────▼───────────────┐
                     │       Storage Layer           │
                     │  SQLite WAL + FTS5 + Vector   │
-                    │  24 Migrations · 7 Tables     │
+                    │  29 Migrations · SQLite WAL   │
                     │  + Audit · Backup · Retention │
                     │  + Dedup Pairs · Slot Tags    │
                     └───────────────────────────────┘
@@ -190,8 +190,10 @@ src/hl_mem/
 │   ├── evidence.py            # EvidenceRepository
 │   ├── experience.py          # ExperienceRepository
 │   ├── jobs.py                # JobRepository
+│   ├── relation_proposals.py  # 关系候选审计
+│   ├── usefulness.py          # 反馈效用聚合
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 24 SQL migrations (001-024)
+│   └── migrations/            # 29 SQL migrations (001-029)
 ├── workers/                # 后台任务
 │   ├── worker.py              # Job 调度器
 │   ├── ttl.py                 # TTL 过期
@@ -199,9 +201,15 @@ src/hl_mem/
 │   ├── consolidate.py         # LLM 语义冲突归并
 │   ├── deduplicate.py         # 跨 subject 语义去重
 │   ├── backfill_expires_at.py # TTL 回填工具
+│   ├── discover_relations.py  # 关系候选发现
+│   ├── mental_models.py       # Mental Model 维护
+│   ├── rebuild_usefulness.py  # usefulness 重建
 │   └── induce_policies.py     # 策略归纳
 ├── experience/             # Experience 通道
 │   └── service.py             # Episode/Trace/Policy
+├── evaluation/             # Benchmark / LongMemEval
+├── observability/          # 审计日志与 LLM spans
+├── security/               # retention 策略
 ├── adapters/hermes/        # Hermes 集成
 │   ├── provider.py            # HermesMemoryProvider
 │   └── plugin/                # 薄委托层
@@ -331,7 +339,7 @@ python install_to_hermes.py --hermes-home ~/.hermes
 
 | 组件 | 状态 |
 |------|------|
-| SQLite Schema（24 migrations） | ✅ |
+| SQLite Schema（29 migrations） | ✅ |
 | 幂等事件写入 + 事务原子化 | ✅ |
 | LLM 提取（前序上下文 + 时间锚定 + ADD-only） | ✅ |
 | Event Filter + Token Budget | ✅ |
@@ -350,7 +358,7 @@ python install_to_hermes.py --hermes-home ~/.hermes
 | 在线备份 + CLI 导入导出 | ✅ |
 | SQLite 向量存储（BLOB 全量余弦扫描） | ✅ |
 | PostgreSQL 后端 | 📋 未来规模触发项 |
-| 373 tests passed，1 skipped | ✅ |
+| 443 passed，1 skipped | ✅ |
 | Mental Model 深化 | 📋 基础已实现，推理增强延后 |
 | 多租户 | 📋 设计保留 |
 

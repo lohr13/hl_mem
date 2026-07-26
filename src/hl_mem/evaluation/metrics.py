@@ -133,9 +133,7 @@ def temporal_correctness(
         "overall": correct["overall"] / denominator if checked else 0.0,
         "valid_time": correct["valid_time"] / denominator if checked else 0.0,
         "occurred_time": correct["occurred_time"] / denominator if checked else 0.0,
-        "recorded_time": (
-            correct["recorded_time"] / recorded_checked if recorded_checked else "not_applicable"
-        ),
+        "recorded_time": (correct["recorded_time"] / recorded_checked if recorded_checked else "not_applicable"),
     }
 
 
@@ -150,10 +148,7 @@ def bootstrap_ci(
     if not 0.0 < confidence < 1.0:
         raise ValueError("confidence must be between 0 and 1")
     generator = random.Random(seed)
-    samples = sorted(
-        sum(generator.choice(values) for _ in values) / len(values)
-        for _ in range(1000)
-    )
+    samples = sorted(sum(generator.choice(values) for _ in values) / len(values) for _ in range(1000))
     tail = (1.0 - confidence) / 2.0
     lower = samples[max(0, math.floor(tail * len(samples)))]
     upper = samples[min(len(samples) - 1, math.ceil((1.0 - tail) * len(samples)) - 1)]

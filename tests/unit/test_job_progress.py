@@ -81,7 +81,5 @@ def test_progress_fields_in_job_dict(tmp_path) -> None:
 def test_job_progress_migration_is_registered(tmp_path) -> None:
     """打开数据库应应用并注册 020 migration。"""
     connection = Database(tmp_path / "migration.db").open()
-    version = connection.execute(
-        "SELECT version FROM schema_migrations WHERE version='020_job_progress'"
-    ).fetchone()
+    version = connection.execute("SELECT version FROM schema_migrations WHERE version='020_job_progress'").fetchone()
     assert version is not None

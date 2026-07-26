@@ -19,7 +19,6 @@ from hl_mem.evaluation.models import GoldTemporal
 from hl_mem.evaluation.reporting import generate_json_report, generate_markdown_summary
 from hl_mem.evaluation.runner import BenchmarkRunner
 
-
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "longmemeval_small.json"
 
 
@@ -72,10 +71,7 @@ def test_adapter_synthesizes_update_and_expiry_checkpoints() -> None:
         checkpoint.expected_hidden_event_ids == ("lme:fixture-update:0:old",)
         for checkpoint in update.lifecycle_checkpoints
     )
-    assert any(
-        checkpoint.worker_action == "expire_ttl"
-        for checkpoint in expiry.lifecycle_checkpoints
-    )
+    assert any(checkpoint.worker_action == "expire_ttl" for checkpoint in expiry.lifecycle_checkpoints)
 
 
 def test_metrics_use_unique_evidence_ids_and_hand_calculated_values() -> None:

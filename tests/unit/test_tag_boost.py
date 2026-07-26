@@ -178,13 +178,16 @@ def test_tag_channel_adds_candidate_and_ignores_empty_channel_in_denominator() -
 
     assert {claim["id"] for claim in added} == {"text", "tag"}
     assert with_tag.tag_queries == [["architecture"]]
-    assert baseline[0]["_score"] == hybrid_claims(
-        without_tag,
-        "架构",
-        pack_vector([1.0]),
-        1,
-        None,
-        now=NOW,
-        tag_boost_enabled=False,
-        tag_channel_enabled=False,
-    )[0]["_score"]
+    assert (
+        baseline[0]["_score"]
+        == hybrid_claims(
+            without_tag,
+            "架构",
+            pack_vector([1.0]),
+            1,
+            None,
+            now=NOW,
+            tag_boost_enabled=False,
+            tag_channel_enabled=False,
+        )[0]["_score"]
+    )

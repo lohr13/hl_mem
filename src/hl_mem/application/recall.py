@@ -161,10 +161,15 @@ class RecallService:
         query_id = query_id or new_id()
         intent_source = "explicit" if intent is not None else "keyword"
         inferred_intent = route_recall_intent(query, as_of)
-        if intent is None and self.settings.procedure_recall_mode == "off" and inferred_intent in {
-            RecallIntent.TOOL,
-            RecallIntent.PROCEDURE,
-        }:
+        if (
+            intent is None
+            and self.settings.procedure_recall_mode == "off"
+            and inferred_intent
+            in {
+                RecallIntent.TOOL,
+                RecallIntent.PROCEDURE,
+            }
+        ):
             inferred_intent = RecallIntent.CURRENT_STATE
             intent_source = "fallback"
         elif (
@@ -314,7 +319,10 @@ class RecallService:
         self._record_access(claims)
         assembly_started = time.perf_counter_ns()
         results = self._assemble_results(claims, namespace)
-        if selected_intent in {RecallIntent.TOOL, RecallIntent.PROCEDURE} and self.settings.procedure_recall_mode != "off":
+        if (
+            selected_intent in {RecallIntent.TOOL, RecallIntent.PROCEDURE}
+            and self.settings.procedure_recall_mode != "off"
+        ):
             return self._recall_experience(
                 query=query,
                 selected_intent=selected_intent,
@@ -597,7 +605,9 @@ class RecallService:
         if context_mode == "packed":
             used = sum(max(1, (len(item.text) + 1) // 2) for item in selected)
             response["context"] = {
-                "context_items": [{"type": item.memory_type, "data": result} for item, result in zip(selected, results)],
+                "context_items": [
+                    {"type": item.memory_type, "data": result} for item, result in zip(selected, results)
+                ],
                 "used_tokens_estimate": used,
                 "truncated": len(selected) < len(candidates),
                 "quota_tokens": quotas,

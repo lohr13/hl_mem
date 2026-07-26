@@ -6,7 +6,8 @@ import json
 import threading
 import time
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, cast
 
 from hl_mem.domain.recall import RecallIntent

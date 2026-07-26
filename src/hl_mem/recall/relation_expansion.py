@@ -20,9 +20,7 @@ class RelationExpansionConfig:
     candidate_limit: int = 20
     relation_weight: float = 0.35
     max_depth: int = 1
-    allowed_relations: frozenset[str] = frozenset(
-        {"summarizes", "supports", "follows", "about", "derived_from"}
-    )
+    allowed_relations: frozenset[str] = frozenset({"summarizes", "supports", "follows", "about", "derived_from"})
 
 
 @dataclass(frozen=True)
@@ -94,12 +92,7 @@ def expand_related_claims(
     config: RelationExpansionConfig,
 ) -> tuple[list[dict[str, Any]], list[ExpandedCandidate]]:
     """从融合种子出发执行有界 BFS，并保留每个候选的最高分路径。"""
-    if (
-        not config.enabled
-        or config.seed_limit <= 0
-        or config.candidate_limit <= 0
-        or config.max_depth <= 0
-    ):
+    if not config.enabled or config.seed_limit <= 0 or config.candidate_limit <= 0 or config.max_depth <= 0:
         return [], []
     selected_seeds = seeds[: config.seed_limit]
     seed_ids = [str(seed["id"]) for seed in selected_seeds]
