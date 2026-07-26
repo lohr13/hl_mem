@@ -4,6 +4,39 @@
 
 ---
 
+## v0.12.1 — 2026-07-26
+
+### P0 修复（数据完整性）
+
+- **P0-1**: `memory_usefulness` CHECK 约束扩展为五类（claim/observation/policy/episode/trace），修复 Procedure feedback 写入时违反 CHECK 导致整体回滚（migration 025）。
+- **P0-2**: TTL bonus 延期后 `valid_to` 现在使用 effective 过期时间而非原始 `expires_at`，修复双时间模型被回溯破坏。
+- **P0-3**: 关系发现在 `BEGIN IMMEDIATE` 写事务内重新读取并验证 endpoint 状态，修复并发下为已撤回/过期 Claim 写关系的竞态。
+
+### P1 修复（可维护性/性能/一致性）
+
+- **P1-1**: 组件工厂只降级 `ConfigurationError` 并记日志，不再 `except Exception: return None` 静默吞掉所有异常。
+- **P1-2**: 查询扩展改用固定大小 `ThreadPoolExecutor` + `BoundedSemaphore` 并发上限，替代每次创建 daemon thread。
+- **P1-3**: 关系提案新增 `run_id` 列，旧 audit 不再被新 auto 决策覆盖（migration 026）。
+- **P1-4**: Tags FTS 触发器收窄为 `AFTER UPDATE OF topic_tags_json`，消除无关字段更新的写放大（migration 027）。
+- **P1-5**: Procedure LIKE 查询转义 `%`、`_`、`\\` 通配符。
+- **P1-6**: Benchmark temporal correctness 分离 valid/occurred/recorded 三种时间验证，无 recorded gold 时标记 not_applicable。
+- **P1-7**: LongMemEval stable ID 包含 session key，修复跨 session 同 message_id 碰撞。
+- **P1-8**: Settings 五个新模式字段定义为 `Literal` 类型，新增 `Settings.for_test()` 显式测试构造入口。
+- **P1-9**: 召回副作用失败改为 `LOGGER.exception` + 有界 retry + 降级计数器，不再静默 `except Exception: pass`。
+- **P1-10**: 新增 4 条 SQLite 跨层集成测试，覆盖三个 P0 的组合回归路径。
+
+### Migrations
+
+- `025_memory_usefulness_episode_trace.sql`：重建表，CHECK 扩为五类。
+- `026_relation_proposals_run_id.sql`：新增 `run_id` 列 + 双唯一约束。
+- `027_tags_fts_trigger_narrow.sql`：Tags FTS 触发器收窄。
+
+### 测试
+
+- 401 passed, 1 skipped（+28 新测试）
+
+---
+
 ## v0.12.0 — 2026-07-26
 
 ### 六大新特性
