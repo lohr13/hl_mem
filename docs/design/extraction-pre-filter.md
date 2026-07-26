@@ -106,3 +106,46 @@ HL_MEM_EXTRACT_PRE_FILTER=on   # 启用确定性预筛
   本机路径或某个 provider 专属业务事实。
 - **指标漂移**：开启前后按周比较 extraction `no_claims`、pre-filter skip reason 和人工抽检；
   fact_loss 达到 5% 时立即关闭开关并收窄相应规则。
+
+## 生产回放复盘（2026-07-26）
+
+对 4,139 条生产 event 的 retrospective replay 中，v1 跳过 1,786 条：1,699 条没有产生 claim，
+87 条曾产生 claim。后者只是“潜在损失”的弱标签，不等于真实事实损失；逐条复核显示其中包含大量重复 claim
+和从控制帧误提取的运行状态。
+
+| v1 reason | 跳过数 | 跳过且曾产出 claim | 弱标签精度 | 人工复核结论 |
+| --- | ---: | ---: | ---: | --- |
+| `assistant_action_narration` | 774 | 48 | 93.8% | 最大真实风险；200 字窗口会覆盖完整解释，且宽泛关键词可在句中任意位置命中 |
+| `tool_control_frame` | 696 | 17 | 97.6% | 多数是重复或从命令文本误提取；版本号、工作目录仍可能有价值 |
+| `transient_tool_result` | 180 | 10 | 94.4% | 多数是噪声；混合输出中的 Codex 版本可能有价值 |
+| `runtime_notice` | 13 | 7 | 46.2% | claim 基本属于误提取，人工精度接近 100% |
+| `operational_status_query` | 60 | 4 | 93.3% | claim 均为误提取，人工精度接近 100% |
+| `operational_action_request` | 4 | 1 | 75.0% | 可能表达工作偏好，保守起见不再预筛 |
+| `transient_tool_error` | 59 | 0 | 100% | 没有观察到潜在损失 |
+
+这里不能把 `1 - 曾产出 claim / 跳过数` 冒充“真实精度”，因为当前没有逐条 gold label。v2 重放提供一个可复现的
+弱标签下界：新规则跳过 1,016/4,139（24.5%）条，其中 25 条曾产出 claim，整体弱标签精度为
+`991 / 1,016 = 97.5%`。分 reason 的弱标签精度如下：
+
+| v2 reason | 跳过数 | 曾产出 claim | 弱标签精度 | 真实价值估计 |
+| --- | ---: | ---: | ---: | --- |
+| `assistant_action_narration` | 57 | 1 | 98.2% | 约 98%–100%；仅剩 1 条需人工复核 |
+| `tool_control_frame` | 666 | 10 | 98.5% | 约 99%–100%；样本主要是路径、参数和重复配置误提取 |
+| `transient_tool_result` | 161 | 3 | 98.1% | 接近 100%；纯 timeout/background-start envelope |
+| `transient_tool_error` | 59 | 0 | 100% | 100%（按弱标签） |
+| `runtime_notice` | 13 | 7 | 46.2% | 接近 100%；7 条均为已确认误提取 |
+| `operational_status_query` | 60 | 4 | 93.3% | 接近 100%；4 条均为已确认误提取 |
+
+v2 的规则调整：
+
+- assistant narration 最大长度从 200 降至 60，并从“任意动作词子串”改为整条消息匹配明确的第一人称、
+  下一步或进行中动作句式；`需要重启`、`不需要重启`、`Codex 在跑` 等事实陈述不再命中；
+- `[terminal]` / `[execute_code]` 仍过滤纯 wrapper，但包含 `--version`、`pwd`、`cwd` 或工作目录信号时放行；
+- transient result 只接受完整的 timeout/background-start 文本或结构化状态 envelope，不再因混合输出中的一个
+  timeout 子串拒绝整条消息；
+- `operational_action_request` 取消拒绝规则，让可能表达偏好的请求进入 extractor；
+- 规则版本升级为 `deterministic-v2`，便于按 audit reason/version 对比上线前后指标。
+
+按已复核类别估计，v2 的真实 false-positive event 约为 0–1 条，即新跳过集的 0%–0.1%；
+即使采用最保守的弱标签口径，上界也是 25/1,016（2.46%），低于 5% 风险阈值。该估计不是 gold-label
+结论，上线后仍须对 25 条弱风险样本和随机 no-claim 样本持续人工抽检。

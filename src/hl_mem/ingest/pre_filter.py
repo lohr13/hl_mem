@@ -7,7 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-RULE_VERSION = "deterministic-v1"
+RULE_VERSION = "deterministic-v2"
+ASSISTANT_ACTION_MAX_CHARS = 60
 
 _DURABLE_SIGNAL = re.compile(
     r"(?:\bremember\b|\bprefer(?:s|red|ence)?\b|\brequire(?:s|d|ment)?\b|\bmust\b|\balways\b|\bnever\b|"
@@ -24,19 +25,22 @@ _TOOL_CONTROL_PREFIX = re.compile(
     r"^\s*\[execute_code\].*\(\d+\s+lines?\s+output\)\s*$",
     re.IGNORECASE | re.DOTALL,
 )
-_TRANSIENT_TOOL_RESULT = re.compile(
-    r"(?:\[Command timed out after\b|Tool loop warning:|same_tool_failure_warning|"
-    r'"status"\s*:\s*"(?:killed|cancelled)"|'
-    r'"output"\s*:\s*"Background process started"|'
-    r'"completion_reason"\s*:\s*"(?:killed|cancelled)")',
+_TOOL_WRAPPER_KEEP_SIGNAL = re.compile(
+    r"(?:--version\b|\b(?:pwd|cwd)\b|working\s+director(?:y|ies)|工作目录)",
     re.IGNORECASE,
 )
 _ASSISTANT_ACTION = re.compile(
-    r"(?:\b(?:let me|i(?:'ll| will)|next|now|checking|waiting|still running)\b|"
-    r"让我|我来|接下来|现在|先|再|继续|跑一下|检查|确认|等待|开始|完成后|重启|提交|"
-    r"修复|实现|测试|审查|还在跑|在跑|等它|"
-    r"(?:waiting for|still running|check(?:ing)?|verify(?:ing)?|run the tests?|"
-    r"等它|还在跑|检查一下|验证一下|跑一下|继续处理))",
+    r"^\s*(?:"
+    r"(?:let me|i(?:'ll| will)|next(?:,\s*)?(?:i(?:'ll| will)\s+)?|"
+    r"now(?:,\s*)?(?:i(?:'ll| will)\s+)?)"
+    r"\s+(?:check|verify|run|test|review|restart|wait|continue|fix|implement|submit)\b[^.!?\n]*[:：.]?|"
+    r"(?:checking|waiting(?:\s+for)?|still running|running the tests?|continuing)\b[^.!?\n]*[:：.]?|"
+    r"(?:让我|我来|我(?:先|再|现在|接下来)?|先|再|接下来|现在)"
+    r"(?:检查|确认|验证|跑|运行|测试|重启|提交|修复|实现|审查|继续处理|等|等待)"
+    r"[^。！？\n]*[:：。]?|"
+    r"(?:继续等待|等它(?:完成)?|还在跑|正在(?:检查|确认|验证|运行|测试))[^。！？\n]*[:：。]?|"
+    r"(?:检查|确认|验证|测试|运行|跑一下|提交|重启)(?:一下)?[^。！？\n]{0,24}[:：]"
+    r")\s*$",
     re.IGNORECASE,
 )
 _OPERATIONAL_STATUS_QUERY = re.compile(
@@ -46,13 +50,6 @@ _OPERATIONAL_STATUS_QUERY = re.compile(
     r"(?:需要|要不要).*(?:重启|重新开会话)|(?:test|tests?)\s+passed)",
     re.IGNORECASE,
 )
-_OPERATIONAL_ACTION_REQUEST = re.compile(
-    r"(?:^\s*(?:please\s+)?(?:check|review|verify|restart|run|test)\b|"
-    r"^\s*(?:请|你可以|你让|再让|帮我).*(?:检查|看看|审查|验证|重启|运行|测试))",
-    re.IGNORECASE,
-)
-
-
 @dataclass(frozen=True)
 class PreFilterDecision:
     """描述一次预筛是否应继续调用 extraction LLM。"""
@@ -81,19 +78,21 @@ class ExtractionPreFilter:
             return PreFilterDecision(False, "runtime_notice")
 
         if actor_type == "tool":
-            if _TOOL_CONTROL_PREFIX.search(text):
+            if _TOOL_CONTROL_PREFIX.search(text) and not _TOOL_WRAPPER_KEEP_SIGNAL.search(text):
                 return PreFilterDecision(False, "tool_control_frame")
             if self._is_transient_tool_result(text):
                 return PreFilterDecision(False, "transient_tool_result")
             if self._is_transient_tool_error(text):
                 return PreFilterDecision(False, "transient_tool_error")
 
-        if actor_type == "assistant" and len(text) <= 200 and _ASSISTANT_ACTION.search(text):
+        if (
+            actor_type == "assistant"
+            and len(text) <= ASSISTANT_ACTION_MAX_CHARS
+            and _ASSISTANT_ACTION.fullmatch(text)
+        ):
             return PreFilterDecision(False, "assistant_action_narration")
         if actor_type == "user" and len(text) <= 80 and _OPERATIONAL_STATUS_QUERY.search(text):
             return PreFilterDecision(False, "operational_status_query")
-        if actor_type == "user" and len(text) <= 80 and _OPERATIONAL_ACTION_REQUEST.search(text):
-            return PreFilterDecision(False, "operational_action_request")
         return PreFilterDecision(True, "eligible")
 
     @staticmethod
@@ -108,7 +107,12 @@ class ExtractionPreFilter:
 
     @staticmethod
     def _is_transient_tool_result(text: str) -> bool:
-        if _TRANSIENT_TOOL_RESULT.search(text):
+        if re.fullmatch(
+            r"\s*(?:\[Command timed out after\b[^\]\r\n]*\]|Tool loop warning:.*|"
+            r"same_tool_failure_warning|Background process started)\s*",
+            text,
+            re.IGNORECASE,
+        ):
             return True
         try:
             payload = json.loads(text)
@@ -116,7 +120,22 @@ class ExtractionPreFilter:
             return False
         if not isinstance(payload, dict):
             return False
-        return payload.get("status") in {"killed", "cancelled"} or payload.get("output") == "Background process started"
+        status = payload.get("status")
+        completion_reason = payload.get("completion_reason")
+        output = payload.get("output")
+        if (
+            status in {"killed", "cancelled"} or completion_reason in {"killed", "cancelled"}
+        ) and output in {None, ""}:
+            return True
+        if not isinstance(output, str):
+            return False
+        return bool(
+            re.fullmatch(
+                r"\s*(?:Background process started|\[Command timed out after\b[^\]\r\n]*\])\s*",
+                output,
+                re.IGNORECASE,
+            )
+        )
 
     @staticmethod
     def _is_transient_tool_error(text: str) -> bool:

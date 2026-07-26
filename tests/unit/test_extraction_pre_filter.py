@@ -46,6 +46,14 @@ class ExtractionPreFilterTests(unittest.TestCase):
         self.assertFalse(decision.should_extract)
         self.assertEqual(decision.reason, "tool_control_frame")
 
+    def test_terminal_wrapper_without_fact_signal_is_skipped(self) -> None:
+        decision = self.pre_filter.evaluate(
+            {"event_type": "message", "actor_type": "tool"},
+            {"text": "[terminal] ran `git status --short` -> exit 0, 1 lines output"},
+        )
+        self.assertFalse(decision.should_extract)
+        self.assertEqual(decision.reason, "tool_control_frame")
+
     def test_transient_tool_failure_is_skipped(self) -> None:
         decision = self.pre_filter.evaluate(
             {"event_type": "message", "actor_type": "tool"},
@@ -53,6 +61,22 @@ class ExtractionPreFilterTests(unittest.TestCase):
         )
         self.assertFalse(decision.should_extract)
         self.assertEqual(decision.reason, "transient_tool_result")
+
+    def test_tool_output_with_timeout_and_version_fact_is_allowed(self) -> None:
+        decision = self.pre_filter.evaluate(
+            {"event_type": "message", "actor_type": "tool"},
+            {"text": "Codex CLI 0.41.0\n[Command timed out after 10s]"},
+        )
+        self.assertTrue(decision.should_extract)
+        self.assertEqual(decision.reason, "eligible")
+
+    def test_cancelled_tool_result_with_version_output_is_allowed(self) -> None:
+        decision = self.pre_filter.evaluate(
+            {"event_type": "message", "actor_type": "tool"},
+            {"text": '{"status":"cancelled","output":"Codex CLI 0.41.0"}'},
+        )
+        self.assertTrue(decision.should_extract)
+        self.assertEqual(decision.reason, "eligible")
 
     def test_short_tool_error_envelope_is_skipped(self) -> None:
         decision = self.pre_filter.evaluate(
@@ -70,6 +94,30 @@ class ExtractionPreFilterTests(unittest.TestCase):
         self.assertFalse(decision.should_extract)
         self.assertEqual(decision.reason, "assistant_action_narration")
 
+    def test_assistant_explanation_with_restart_fact_is_allowed(self) -> None:
+        decision = self.pre_filter.evaluate(
+            {"event_type": "message", "actor_type": "assistant"},
+            {"text": "服务进程需要重启才能加载新代码，但会话在代码变更后不需要重启。"},
+        )
+        self.assertTrue(decision.should_extract)
+        self.assertEqual(decision.reason, "eligible")
+
+    def test_short_assistant_runtime_fact_is_allowed(self) -> None:
+        decision = self.pre_filter.evaluate(
+            {"event_type": "message", "actor_type": "assistant"},
+            {"text": "Codex 在跑版本号升级任务。"},
+        )
+        self.assertTrue(decision.should_extract)
+        self.assertEqual(decision.reason, "eligible")
+
+    def test_assistant_action_followed_by_path_fact_is_allowed(self) -> None:
+        decision = self.pre_filter.evaluate(
+            {"event_type": "message", "actor_type": "assistant"},
+            {"text": "Let me check. The database path is var/hl_mem.db."},
+        )
+        self.assertTrue(decision.should_extract)
+        self.assertEqual(decision.reason, "eligible")
+
     def test_short_operational_status_query_is_skipped(self) -> None:
         decision = self.pre_filter.evaluate(
             {"event_type": "message", "actor_type": "user"},
@@ -78,18 +126,26 @@ class ExtractionPreFilterTests(unittest.TestCase):
         self.assertFalse(decision.should_extract)
         self.assertEqual(decision.reason, "operational_status_query")
 
-    def test_short_action_request_is_skipped(self) -> None:
+    def test_short_action_request_is_allowed_as_possible_preference(self) -> None:
         decision = self.pre_filter.evaluate(
             {"event_type": "message", "actor_type": "user"},
-            {"text": "Please check whether the service is healthy."},
+            {"text": "请让 Codex 审查架构。"},
         )
-        self.assertFalse(decision.should_extract)
-        self.assertEqual(decision.reason, "operational_action_request")
+        self.assertTrue(decision.should_extract)
+        self.assertEqual(decision.reason, "eligible")
 
     def test_tool_output_with_durable_fact_is_allowed(self) -> None:
         decision = self.pre_filter.evaluate(
             {"event_type": "message", "actor_type": "tool"},
             {"text": 'version = "0.12.3"\ndatabase_path = "var/hl_mem.db"'},
+        )
+        self.assertTrue(decision.should_extract)
+        self.assertEqual(decision.reason, "eligible")
+
+    def test_terminal_wrapper_with_output_summary_is_allowed(self) -> None:
+        decision = self.pre_filter.evaluate(
+            {"event_type": "message", "actor_type": "tool"},
+            {"text": "[terminal] ran `pwd && codex --version` -> REDACTED_PATH; codex-cli 0.41.0"},
         )
         self.assertTrue(decision.should_extract)
         self.assertEqual(decision.reason, "eligible")
