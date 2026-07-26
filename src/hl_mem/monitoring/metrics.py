@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 import threading
 import time
 from collections import Counter, deque
@@ -67,3 +68,33 @@ class ProviderMetrics:
 
 
 DEFAULT_PROVIDER_METRICS = ProviderMetrics()
+
+
+class PersistentProviderMetrics(ProviderMetrics):
+    """以内存窗口加 SQLite 事件形成跨进程 SSOT。"""
+
+    def __init__(self, connection: sqlite3.Connection, max_calls: int = 100) -> None:
+        super().__init__(max_calls)
+        self.connection = connection
+
+    def record(self, call: ProviderCall) -> None:
+        """同时写入内存窗口与 provider_calls 表。"""
+        if call.timestamp == 0.0:
+            call = ProviderCall(**{**asdict(call), "timestamp": time.time()})
+        super().record(call)
+        self.connection.execute(
+            "INSERT INTO provider_calls(provider_type,operation,status,latency_ms,query_id,error_class,http_status,provider_code,fallback,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                call.provider_type,
+                call.operation,
+                call.status,
+                call.latency_ms,
+                call.query_id,
+                call.error_class,
+                call.http_status,
+                call.provider_code,
+                int(call.fallback),
+                call.timestamp,
+            ),
+        )
+        self.connection.commit()

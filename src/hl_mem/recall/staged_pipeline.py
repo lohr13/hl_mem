@@ -651,6 +651,10 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
     """执行截断、偏好保留、trace、审计和最终分数装配。"""
     for claim in ctx.ranked_result:
         claim["_score"] = ctx.rerank_scores.get(claim["id"], ctx.pre_scores[claim["id"]])
+        claim["_score_path"] = "reranker_applied" if claim["id"] in ctx.rerank_scores else "reranker_fallback"
+        claim["_reranker_raw_score"] = next(
+            (float(score) for candidate, score in ctx.valid_reranked if candidate["id"] == claim["id"]), None
+        )
         claim["_pre_score"] = ctx.pre_scores[claim["id"]]
         claim["_features"] = dict(ctx.feature_by_id[claim["id"]])
     folded = fold_similar_claims(ctx.ranked_result, ctx.dedup_threshold, ctx.dedup_candidate_limit)

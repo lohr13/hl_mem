@@ -533,6 +533,8 @@ class RecallService:
                 "id": claim["id"],
                 "text": text,
                 "score": float(claim.get("_score", 0.0)),
+                "score_path": str(claim.get("_score_path", "reranker_fallback")),
+                "reranker_raw_score": claim.get("_reranker_raw_score"),
                 "features": dict(claim.get("_features") or {}),
                 "status": claim["status"],
                 "confidence": claim["confidence"],

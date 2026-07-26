@@ -17,6 +17,7 @@ from hl_mem.domain.claims.attributes import (
     validate_canonical_attribute,
     validate_slot_instance,
 )
+from hl_mem.domain.claims.claim import build_index_text
 from hl_mem.domain.claims.conflicts import (
     ConflictResolver,
     compute_claim_pair_key,
@@ -66,7 +67,7 @@ def new_id() -> str:
 
 def claim_text(claim: dict[str, Any]) -> str:
     """生成用于向量化的 claim 文本。"""
-    return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} {claim.get('value', '')}"
+    return str(claim.get("index_text") or build_index_text(claim))
 
 
 def compute_fact_hash(subject: str, predicate: str, value: Any) -> str:
@@ -507,6 +508,7 @@ def _build_claim_drafts(
         "embedding_model": getattr(embedder, "model", "fake"),
         "embedding_dim": embedder.dim,
     }
+    claim["index_text"] = build_index_text(claim)
     claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
     return _ClaimDraft(claim, qualifiers)
 

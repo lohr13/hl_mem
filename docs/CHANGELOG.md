@@ -1,5 +1,11 @@
 # HL-Mem 变更记录
 
+## v0.15.0 — 2026-07-26
+
+- Provider diagnostics, safe answerability shadow gating, and bounded expansion deadlines.
+- Query slot hints, regression coverage, sliding-window monitoring, alerts, and health snapshots.
+- Calibration, score paths, claim index text, provider-call persistence, daily reports, and controlled A/B evaluation.
+
 本文件记录发布级变更摘要。测试数字是对应版本的发布基线；migration 数是该版本结束时的 SQL migration 总数。
 
 ## v0.14.3 — 2026-07-26
