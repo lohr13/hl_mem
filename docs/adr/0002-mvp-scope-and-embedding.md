@@ -46,4 +46,4 @@ ADR-0001 定义了统一事件溯源双通道记忆服务的完整目标设计�
 
 ## 参考
 
-完整共识、逐条表态、排期和验收标准见 [review/consensus.md](../review/consensus.md)。
+完整共识、逐条表态、排期和验收标准见[归档共识](../archive/reviews/consensus.md)。

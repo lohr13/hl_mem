@@ -6,8 +6,8 @@
 
 - **分支**：`main`
 - **版本**：v0.13.1
-- **阶段**：v0.13.0 工程收敛审查 P1 修复完成
-- **服务**：FastAPI on port 8200，LLM=glm-5.1，Embedding=text-embedding-v4 (2048d)，Reranker=gte-rerank-v2
+- **阶段**：v0.13.1
+- **服务**：FastAPI on port 8200，LLM=glm-5.2，Embedding=text-embedding-v4 (2048d)，Reranker=gte-rerank-v2
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），29 migrations，约 403 active / 514 total claims
 - **FTS**：trigram（claims/tags），unicode61（events）
 
@@ -24,7 +24,7 @@
 - Experience 通道：Episode + Trace + Policy + 奖励回传
 - 生命周期：TTL 过期 → 线性衰减 → 归档 → 重分类
 - 显式遗忘：级联撤回 + 向量清除 + stale 传播
-- Hermes Provider（358 行，2s timeout + circuit breaker）
+- Hermes Provider（2s timeout + circuit breaker）
 - MCP Server（5 工具契约，可嵌入工具套件，beta）
 - REST API 新增 `POST /v1/extract/dry-run`、`POST /v1/consolidate`
 - LLM 可观测性：`llm_call_spans` 持久化调用 span，`healthz` 暴露 24h 聚合
@@ -51,7 +51,6 @@
 
 ## 下一步
 
-- 接入 Hermes MemoryProvider 正式替换试跑
 - 观察 relation proposal 准确率与 usefulness 聚合数据，再评估 `auto` / `on` 模式
 - 接入实际图片输入源后评估开启视觉描述器
 - 根据实际使用反馈调优提取 prompt 和召回质量
@@ -68,8 +67,10 @@
 | [adr/0001-core-strategy.md](adr/0001-core-strategy.md) | 核心策略决策 |
 | [adr/0002-mvp-scope-and-embedding.md](adr/0002-mvp-scope-and-embedding.md) | 首版范围 + Embedding 选型 |
 | [archive/refactor/](archive/refactor/) | 架构重构各阶段历史记录 |
-| [review/consensus.md](review/consensus.md) | 首版共识 |
-| [review/optimization-consensus.md](review/optimization-consensus.md) | 优化共识 |
+| [api.md](api.md) | REST API 端点与请求约定 |
+| [capability-matrix.md](capability-matrix.md) | 能力成熟度与默认模式 |
+| [archive/reviews/consensus.md](archive/reviews/consensus.md) | 首版共识（历史归档） |
+| [archive/reviews/optimization-consensus.md](archive/reviews/optimization-consensus.md) | 优化共识（历史归档） |
 | [archive/](archive/) | 历史任务单和中间讨论 |
 
 ## 已知风险
