@@ -344,7 +344,7 @@ class Settings:
         if self.packed_context_token_budget < 1 or self.recall_candidate_floor < 1:
             raise ConfigurationError("recall budgets must be positive")
         if not 0.0 <= self.recall_dedup_threshold <= 1.0:
-            raise ConfigurationError("HL_MEM_RECALL_DEDUP_THRESHOLD must be between 0 and 1")
+            raise ConfigurationError("HL_MEM_RECALL_DEDUP_THRESHOLD must be between 0 and 1 (0 disables fold)")
         if not 0.0 <= self.preference_recency_boost <= 1.0:
             raise ConfigurationError("HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1")
         if not 0.0 <= self.tag_boost_weight <= 1.0:

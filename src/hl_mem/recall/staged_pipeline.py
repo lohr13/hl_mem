@@ -47,7 +47,7 @@ class RecallConfig:
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
     preference_recency_boost: float = 1.0
-    dedup_threshold: float = 0.95
+    dedup_threshold: float = 0.0
 
 
 @dataclass
@@ -77,7 +77,7 @@ class RecallContext:
     tag_channel_enabled: bool = False
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
-    dedup_threshold: float = 0.95
+    dedup_threshold: float = 0.0
     fts: list[dict[str, Any]] = field(default_factory=list)
     dense: list[dict[str, Any]] = field(default_factory=list)
     tags: list[dict[str, Any]] = field(default_factory=list)
@@ -685,7 +685,9 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
 
 
 def fold_similar_claims(claims: list[dict[str, Any]], threshold: float) -> list[dict[str, Any]]:
-    """按最终得分顺序折叠 embedding 高度相似的 Claim。"""
+    """按最终得分顺序折叠 embedding 高度相似的 Claim。threshold <= 0 禁用折叠。"""
+    if threshold <= 0.0:
+        return list(claims)
     kept: list[dict[str, Any]] = []
     for claim in sorted(claims, key=lambda item: -float(item.get("_score", 0.0))):
         embedding = claim.get("embedding_dense")

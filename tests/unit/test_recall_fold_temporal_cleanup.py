@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from hl_mem.ingest.embedder import pack_vector
-from hl_mem.recall.staged_pipeline import fold_similar_claims, hybrid_claims
+from hl_mem.recall.staged_pipeline import fold_similar_claims, hybrid_claims, RecallConfig
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.decay import cleanup_stale_temporal_claims
@@ -66,8 +66,9 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
             def rerank(self, _query, documents, top_n=20):
                 return [(index, 1.0 - index * 0.1) for index in range(len(documents))][:top_n]
 
-        codex = hybrid_claims(Repo(), "Codex", vector, 10, None, Reranker())
-        architecture = hybrid_claims(Repo(), "hl_mem 架构", vector, 10, None, Reranker())
+        config = RecallConfig(dedup_threshold=0.95)
+        codex = hybrid_claims(Repo(), "Codex", vector, 10, None, Reranker(), recall_config=config)
+        architecture = hybrid_claims(Repo(), "hl_mem 架构", vector, 10, None, Reranker(), recall_config=config)
         self.assertLessEqual(sum("VT" in str(item["value"]) for item in codex), 1)
         self.assertLessEqual(sum("application" in str(item["value"]) for item in architecture), 2)
 

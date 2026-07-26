@@ -7,9 +7,10 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def disable_optional_llm_features(monkeypatch: pytest.MonkeyPatch) -> None:
-    """默认关闭非专项测试中的可选 LLM 功能。"""
+    """默认关闭非专项测试中的可选 LLM 功能和召回折叠。"""
     monkeypatch.setenv("HL_MEM_QUERY_EXPANSION_MODE", "off")
     monkeypatch.setenv("HL_MEM_RELATION_DISCOVERY_MODE", "off")
+    monkeypatch.setenv("HL_MEM_RECALL_DEDUP_THRESHOLD", "0.0")
 
 
 def pytest_configure(config: pytest.Config) -> None:
