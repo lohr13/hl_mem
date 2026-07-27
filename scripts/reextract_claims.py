@@ -54,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="仅提取并生成执行计划，不修改 claims")
     parser.add_argument("--database", type=Path, help="数据库路径；默认读取 HL_MEM_DB_PATH/Settings")
     parser.add_argument("--plan", type=Path, help="dry-run 计划路径；默认与数据库位于同一目录")
+    parser.add_argument("--limit", type=int, help="最多处理的事件数")
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -67,8 +68,8 @@ def parse_args() -> argparse.Namespace:
         help="每处理多少个事件输出一次进度",
     )
     args = parser.parse_args()
-    if args.batch_size < 1 or args.progress_every < 1:
-        parser.error("--batch-size and --progress-every must be positive")
+    if args.batch_size < 1 or args.progress_every < 1 or (args.limit is not None and args.limit < 1):
+        parser.error("--batch-size, --progress-every, and --limit must be positive")
     return args
 
 
@@ -159,6 +160,7 @@ def dry_run(
     plan_path: Path,
     batch_size: int,
     progress_every: int,
+    limit: int | None,
 ) -> dict[str, int]:
     """执行真实提取并生成不修改 claims 的可复用计划。"""
     extractor = make_extractor(settings, require_real=True, connection=connection)
@@ -177,6 +179,8 @@ def dry_run(
             },
         )
         for event in iter_events(connection, batch_size):
+            if limit is not None and counts["events"] >= limit:
+                break
             counts["events"] += 1
             try:
                 extracted_claims = extractor.extract(event["content"], extraction_context(connection, event))
@@ -275,6 +279,7 @@ def apply_plan(
     settings: Settings,
     plan_path: Path,
     progress_every: int,
+    limit: int | None,
 ) -> dict[str, int]:
     """校验并应用 dry-run 计划。"""
     if not plan_path.is_file():
@@ -299,6 +304,8 @@ def apply_plan(
                 continue
             if record["type"] != "event":
                 raise RuntimeError(f"unknown plan record type: {record['type']}")
+            if limit is not None and counts["events"] >= limit:
+                continue
             event_row = connection.execute("SELECT * FROM events WHERE id=?", (record["event_id"],)).fetchone()
             if event_row is None:
                 raise RuntimeError(f"planned event disappeared: {record['event_id']}")
@@ -353,9 +360,9 @@ def main() -> int:
     connection = database.open_worker()
     try:
         if args.dry_run:
-            counts = dry_run(connection, settings, plan_path, args.batch_size, args.progress_every)
+            counts = dry_run(connection, settings, plan_path, args.batch_size, args.progress_every, args.limit)
             return 1 if counts["errors"] else 0
-        apply_plan(connection, settings, plan_path, args.progress_every)
+        apply_plan(connection, settings, plan_path, args.progress_every, args.limit)
         return 0
     finally:
         database.close()
