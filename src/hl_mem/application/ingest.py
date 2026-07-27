@@ -17,7 +17,7 @@ from hl_mem.domain.claims.attributes import (
     validate_canonical_attribute,
     validate_slot_instance,
 )
-from hl_mem.domain.claims.claim import build_index_text
+from hl_mem.domain.claims.claim import IndexTextMode, build_index_text
 from hl_mem.domain.claims.conflicts import (
     ConflictResolver,
     compute_claim_pair_key,
@@ -220,6 +220,7 @@ class IngestService:
         ttl_days: int | None = None,
         policy: TTLPolicy | None = None,
         relation_discovery_mode: str = "off",
+        index_text_mode: IndexTextMode = "legacy",
     ) -> StoreClaimResult:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
@@ -236,7 +237,15 @@ class IngestService:
                 slot_short_ttl_seconds=effective_policy.slot_short_ttl_seconds,
                 short_ttl_slots=effective_policy.short_ttl_slots,
             )
-        draft = _build_claim_drafts(extracted, event, now, embedder, authority, effective_policy)
+        draft = _build_claim_drafts(
+            extracted,
+            event,
+            now,
+            embedder,
+            authority,
+            effective_policy,
+            index_text_mode,
+        )
         if isinstance(draft, StoreClaimResult):
             audit.emit(
                 "ingest",
@@ -422,6 +431,7 @@ def _build_claim_drafts(
     embedder: EmbedderProtocol,
     authority: str | None,
     policy: TTLPolicy,
+    index_text_mode: IndexTextMode,
 ) -> _ClaimDraft | StoreClaimResult:
     """阶段 1：规范化提取结果、计算 TTL 并生成 claim 草稿。"""
     # NOTE: tenant_id/namespace 当前是单租户部署中的软标签，不是隔离边界。
@@ -508,7 +518,7 @@ def _build_claim_drafts(
         "embedding_model": getattr(embedder, "model", "fake"),
         "embedding_dim": embedder.dim,
     }
-    claim["index_text"] = build_index_text(claim)
+    claim["index_text"] = build_index_text({**claim, "topic_tags": topic_tags}, mode=index_text_mode)
     claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
     return _ClaimDraft(claim, qualifiers)
 

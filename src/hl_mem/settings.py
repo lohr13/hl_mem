@@ -25,6 +25,7 @@ ProcedureRecallMode = Literal["off", "keyword", "auto"]
 FeedbackLifecycleMode = Literal["off", "observe", "on"]
 ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
+IndexTextMode = Literal["legacy", "value_only", "natural"]
 
 
 @overload
@@ -107,6 +108,14 @@ def _env_choice(
 ) -> FeedbackLifecycleMode: ...
 
 
+@overload
+def _env_choice(
+    name: str,
+    default: IndexTextMode,
+    allowed: tuple[Literal["legacy"], Literal["value_only"], Literal["natural"]],
+) -> IndexTextMode: ...
+
+
 def _env_choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
     """读取、规范化并校验枚举型环境变量。"""
     value = os.getenv(name, default).strip().lower()
@@ -161,6 +170,7 @@ class Settings:
     embedding_connect_timeout: float = 5.0
     embedding_read_timeout: float = 30.0
     embedding_max_attempts: int = 3
+    index_text_mode: IndexTextMode = "legacy"
     reranker_mode: RerankerMode = "off"
     reranker_provider: RerankerProvider = "dashscope"
     reranker_api_key: str | None = None
@@ -299,6 +309,11 @@ class Settings:
             embedding_connect_timeout=float(os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")),
             embedding_read_timeout=float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
             embedding_max_attempts=int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
+            index_text_mode=_env_choice(
+                "HL_MEM_INDEX_TEXT_MODE",
+                "legacy",
+                ("legacy", "value_only", "natural"),
+            ),
             reranker_mode=_env_choice(
                 "HL_MEM_RERANKER", "real" if production else "off", ("off", "fake", "on", "real")
             ),
@@ -572,6 +587,8 @@ class Settings:
             raise ConfigurationError("importance thresholds must be ordered between 0 and 1")
         if self.embedder_mode not in {"fake", "real"}:
             raise ConfigurationError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
+        if self.index_text_mode not in {"legacy", "value_only", "natural"}:
+            raise ConfigurationError("HL_MEM_INDEX_TEXT_MODE must be 'legacy', 'value_only', or 'natural'")
         if self.reranker_mode not in {"off", "fake", "on", "real"}:
             raise ConfigurationError("HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'")
         if self.reranker_provider != "dashscope":
@@ -601,6 +618,7 @@ class Settings:
             "environment": self.environment,
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
+            "index_text_mode": self.index_text_mode,
             "reranker_mode": self.reranker_mode,
             "reranker_provider": self.reranker_provider,
             "relation_expansion_mode": self.relation_expansion_mode,

@@ -2,20 +2,31 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+
+IndexTextMode = Literal["legacy", "value_only", "natural"]
 
 
-def build_index_text(claim: dict[str, Any]) -> str:
-    """组合 subject、predicate、value、slot 与受控 tags 作为独立索引文本。"""
+def build_index_text(claim: dict[str, Any], mode: IndexTextMode = "legacy") -> str:
+    """按配置模式生成独立索引文本。"""
+    if mode not in {"legacy", "value_only", "natural"}:
+        raise ValueError(f"unsupported index_text mode: {mode}")
+    value = str(claim.get("value") if claim.get("value") is not None else "").strip()
+    if mode == "value_only":
+        return value
+    if mode == "natural":
+        subject = str(claim.get("subject_entity_id") or "").strip()
+        return f"{subject}：{value}" if subject and value else subject or value
+
     tags = " ".join(str(tag) for tag in claim.get("topic_tags", []) if tag)
     return " ".join(
-        str(value).strip()
-        for value in (
+        str(part).strip()
+        for part in (
             claim.get("subject_entity_id"),
             claim.get("predicate"),
             claim.get("value"),
             claim.get("canonical_slot"),
             tags,
         )
-        if value is not None and str(value).strip()
+        if part is not None and str(part).strip()
     )

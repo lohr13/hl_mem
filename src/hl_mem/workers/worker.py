@@ -350,6 +350,8 @@ class Worker:
                     recent = events.get_recent_events(event["session_id"], event, 3) if event.get("session_id") else []
                     event_context = {
                         "occurred_at": event["occurred_at"],
+                        "actor_type": event.get("actor_type"),
+                        "session_id": event.get("session_id"),
                         "recent_events": [
                             {**item, "content": json.loads(item["content_json"])} for item in reversed(recent)
                         ],
@@ -410,6 +412,7 @@ class Worker:
                     authority,
                     policy=self.settings.retention_policy(),
                     relation_discovery_mode=self.settings.relation_discovery_mode,
+                    index_text_mode=self.settings.index_text_mode,
                 )
                 if result.status == "skipped":
                     rejections.append({"reason": result.reason, "predicate": claim.predicate})

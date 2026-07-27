@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import unicodedata
 from dataclasses import replace
@@ -40,6 +41,8 @@ from .chunking import (
 from .extractors import ExtractedClaim
 from .repair import repair_extraction_json
 from .schemas import ExtractionResponseSchema, extraction_response_json_schema
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _operational_slot_prompt() -> str:
@@ -223,16 +226,48 @@ class LLMExtractor:
         self.last_usage_tokens = 0
         self.last_input_tokens = 0
         self.last_output_tokens = 0
+        self._schema_retry_count = 0
+        self._repair_count = 0
+        self._llm_call_count = 0
+        self._memorize_decisions: list[tuple[bool, str]] = []
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
         """同步分块提取事实，并在输出截断时递归二分恢复。"""
         self.last_usage_tokens = 0
         self.last_input_tokens = 0
         self.last_output_tokens = 0
+        self._schema_retry_count = 0
+        self._repair_count = 0
+        self._llm_call_count = 0
+        self._memorize_decisions = []
         event_context = context or {}
         chunks = split_extraction_content(content, self.chunking_policy)
         chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
-        return self._merge_chunk_claims(chunk_claims)
+        claims = self._merge_chunk_claims(chunk_claims)
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug(
+                "%s",
+                json.dumps(
+                    {
+                        "event": "llm_extraction",
+                        "actor": event_context.get("actor") or event_context.get("actor_type"),
+                        "session_id": event_context.get("session_id"),
+                        "content_length": self._content_length(content),
+                        "should_memorize": any(decision for decision, _reason in self._memorize_decisions),
+                        "reason": self._decision_reason(),
+                        "claims_count": len(claims),
+                        "schema_retry_count": self._schema_retry_count,
+                        "repair_count": self._repair_count,
+                        "llm_call_count": self._llm_call_count,
+                        "input_tokens": self.last_input_tokens,
+                        "output_tokens": self.last_output_tokens,
+                        "total_tokens": self.last_usage_tokens,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            )
+        return claims
 
     def _extract_chunk_with_auto_split(
         self,
@@ -269,7 +304,10 @@ class LLMExtractor:
         occurred_at = str(event_context.get("occurred_at", "未知"))
         result = self._request_chunk(chunk, context, occurred_at)
         if not result.should_memorize:
+            self._memorize_decisions.append((False, "should_memorize=false"))
             return []
+        reasons = sorted({item.reason for item in result.claims if item.reason})
+        self._memorize_decisions.append((True, "；".join(reasons) or "should_memorize=true"))
         parsed: list[ExtractedClaim] = []
         for item in result.claims:
             claim = self._claim(item.model_dump())
@@ -305,6 +343,8 @@ class LLMExtractor:
         schema_errors: list[dict[str, Any]] = []
         previous_output: Any = None
         for attempt in range(self.schema_retries + 1):
+            if attempt:
+                self._schema_retry_count += 1
             retry_instruction = ""
             if schema_errors:
                 retry_instruction = self._schema_retry_instruction(previous_output, schema_errors)
@@ -334,6 +374,7 @@ class LLMExtractor:
                 ),
             )
             response = self.llm_client.complete(request)
+            self._llm_call_count += 1
             self.last_usage_tokens += response.usage_total_tokens
             self.last_input_tokens += response.input_tokens or 0
             self.last_output_tokens += response.output_tokens or 0
@@ -342,14 +383,12 @@ class LLMExtractor:
                     f"LLM output truncated: provider={self.llm_client.provider.name}, model={self.model}"
                 )
             previous_output_payload: Any = response.content
-            validation_payload: Any = response.content
             try:
                 raw = self._parse_json(response.content)
                 previous_output_payload = raw
-                validation_payload = raw
                 repaired = repair_extraction_json(raw)
+                self._repair_count += self._count_repairs(raw, repaired)
                 compatible = self._parse_legacy_defaults(repaired)
-                validation_payload = compatible
                 return ExtractionResponseSchema.model_validate(compatible)
             except (PydanticValidationError, ValueError) as error:
                 if self._looks_like_truncated_json(response.content):
@@ -365,6 +404,31 @@ class LLMExtractor:
                         f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
                     ) from error
         raise RuntimeError("unreachable")
+
+    @staticmethod
+    def _content_length(content: dict[str, Any] | str) -> int:
+        """返回实际待提取文本长度。"""
+        if isinstance(content, dict) and isinstance(content.get("text"), str):
+            return len(content["text"])
+        return len(content) if isinstance(content, str) else len(json.dumps(content, ensure_ascii=False))
+
+    def _decision_reason(self) -> str:
+        """合并分块判定原因并保持稳定顺序。"""
+        reasons = list(dict.fromkeys(reason for _decision, reason in self._memorize_decisions if reason))
+        return "；".join(reasons) or "no_chunks"
+
+    @classmethod
+    def _count_repairs(cls, original: Any, repaired: Any) -> int:
+        """递归统计确定性修复改变的叶子字段数。"""
+        if isinstance(original, dict) and isinstance(repaired, dict):
+            return sum(
+                cls._count_repairs(original.get(key), repaired.get(key)) for key in original.keys() | repaired.keys()
+            )
+        if isinstance(original, list) and isinstance(repaired, list):
+            return sum(cls._count_repairs(left, right) for left, right in zip(original, repaired, strict=False)) + abs(
+                len(original) - len(repaired)
+            )
+        return int(original != repaired)
 
     @staticmethod
     def _looks_like_truncated_json(content: str | dict[str, Any]) -> bool:

@@ -15,6 +15,14 @@ def test_new_feature_modes_use_literal_annotations() -> None:
     assert hints["feedback_lifecycle_mode"] == Literal["off", "observe", "on"]
     assert hints["image_describer_mode"] == Literal["off", "on"]
     assert hints["image_describer_provider"] == Literal["dashscope"]
+    assert hints["index_text_mode"] == Literal["legacy", "value_only", "natural"]
+
+
+def test_index_text_mode_defaults_to_legacy_and_reads_environment(monkeypatch) -> None:
+    """默认保持旧格式，同时允许通过环境变量切换实验模式。"""
+    assert Settings().index_text_mode == "legacy"
+    monkeypatch.setenv("HL_MEM_INDEX_TEXT_MODE", "natural")
+    assert Settings.from_env().index_text_mode == "natural"
 
 
 def test_for_test_returns_safe_non_network_configuration() -> None:
