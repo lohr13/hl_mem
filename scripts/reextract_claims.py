@@ -1,8 +1,23 @@
-"""重新提取全部事件的 claim，并回填 canonical_slot 与 topic_tags。"""
+"""重新提取全部事件的 claim，并回填 canonical_slot 与 topic_tags。
+
+单实例锁机制
+-----------
+本脚本通过文件锁确保同一时间只有一个 reextract 实例运行，避免多个进程
+同时写入 SQLite 导致 "database is locked" 错误。
+
+锁文件位于 ``var/reextract.lock``，内容为持有锁的进程 PID。
+- 在 Unix 上，使用 ``fcntl.flock(LOCK_EX | LOCK_NB)`` 实现原子排他锁。
+- 在 Windows 上（无 fcntl），退化为 PID 文件 + 进程存活检查。
+- 启动时若发现锁文件存在，先检查其中 PID 对应的进程是否存活：
+  - 若进程已不存在（崩溃残留），自动清理过期锁文件并继续。
+  - 若进程仍存活，打印错误并退出（exit code 1）。
+- 脚本正常或异常退出时，通过 try/finally 自动释放锁并清理锁文件。
+"""
 
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -12,6 +27,13 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, TextIO
+
+try:
+    import fcntl as _fcntl
+
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
 
 import httpx
 
@@ -345,11 +367,113 @@ def apply_plan(
     return counts
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """检查指定 PID 的进程是否存活。"""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # 进程存在但无权限发送信号
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _acquire_lock(lock_path: Path) -> int | None:
+    """获取排他锁，返回锁文件描述符（Unix）或 None（Windows PID-only 模式）。
+
+    如果锁已被其他存活进程持有，打印错误并 sys.exit(1)。
+    如果锁文件存在但持有进程已死亡，自动清理过期锁文件。
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 检查是否存在残留锁文件
+    if lock_path.exists():
+        try:
+            old_pid = int(lock_path.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            old_pid = 0
+
+        if old_pid and _pid_is_alive(old_pid):
+            print(
+                f"error: another reextract process is already running (PID {old_pid}). "
+                f"Lock file: {lock_path}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        else:
+            # 进程已不存在，清理过期锁文件
+            if old_pid:
+                print(
+                    f"warning: stale lock file found (PID {old_pid} no longer running), removing",
+                    file=sys.stderr,
+                )
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    # 写入当前 PID
+    lock_path.write_text(str(os.getpid()), encoding="utf-8")
+
+    # Unix: 使用 fcntl.flock 获取原子排他锁
+    if _HAS_FCNTL:
+        fd = os.open(str(lock_path), os.O_RDWR)
+        try:
+            _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                os.close(fd)
+                print(
+                    f"error: could not acquire lock on {lock_path} (another instance running)",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            raise
+        return fd
+
+    # Windows: 无 fcntl，仅依赖 PID 文件 + 进程检查（已在上方完成）
+    return None
+
+
+def _release_lock(lock_path: Path, fd: int | None) -> None:
+    """释放锁并清理锁文件。"""
+    if fd is not None and _HAS_FCNTL:
+        try:
+            _fcntl.flock(fd, _fcntl.LOCK_UN)
+        except OSError:
+            pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        pass
+
+
 def main() -> int:
     """加载配置，执行 dry-run 或应用已生成的重提取计划。"""
     load_project_env(PROJECT_ROOT / ".env")
     os.environ.setdefault("HL_MEM_EXTRACTOR", "real")
     args = parse_args()
+
+    # 获取单实例锁，防止多个 reextract 进程并发写入数据库
+    lock_path = PROJECT_ROOT / "var" / "reextract.lock"
+    lock_fd = _acquire_lock(lock_path)
+    try:
+        return _run(args)
+    finally:
+        _release_lock(lock_path, lock_fd)
+
+
+def _run(args: argparse.Namespace) -> int:
+    """实际的 main 逻辑（在锁保护下执行）。"""
     settings = Settings.from_env()
     if args.database is not None:
         settings = Settings(**{**settings.__dict__, "database_path": str(args.database)})
