@@ -38,6 +38,7 @@ from .chunking import (
     split_extraction_content,
 )
 from .extractors import ExtractedClaim
+from .repair import repair_extraction_json
 from .schemas import ExtractionResponseSchema, extraction_response_json_schema
 
 
@@ -63,8 +64,10 @@ predicate 只能是以下标准值之一：偏好（喜欢或不喜欢的事物�
 canonical_attribute 是兼容字段：对能确定 operational slot 的事实填写同名值；否则按 predicate 填写兼容属性，系统会保持旧逻辑校验。
 canonical_slot 只表示参与业务规则的 operational slot，只能从以下 15 个值选择；无法唯一确定时必须返回 null，不得创造新值：
 {_OPERATIONAL_SLOT_PROMPT}
-topic_tags 是用于存储、统计和分类的多值标签，只能从以下集合选择，可返回空数组：
+topic_tags 必须是 JSON 数组，只能包含以下 44 个英文标签，可返回空数组；禁止输出中文标签或集合外的值：
 {_TOPIC_TAG_PROMPT}
+顶层和每条 claim 的 entities 必须是 JSON 数组，且数组元素必须是字符串（例如 ["PostgreSQL"]）；没有实体时分别返回 [] 或 null，禁止直接输出字符串。
+sensitivity 只能是以下三个英文值之一：normal、sensitive、restricted，禁止输出“普通”“敏感”“受限”等中文值。
 subject 默认为“用户”；明确提到项目名或服务名时使用该名称。代词（他、她、它、那个）必须结合上下文替换为具体名称；不要在事实中保留代词。
 subject 必须复用标准实体名。同一实体不得因大小写、空格、连字符、产品后缀或“插件/memory/CLI”等描述产生新名称。若事件上下文提供 canonical_entities，必须从其中选择；组件级事实仍归组件，项目级事实归项目。示例：hlmem/HL_MEM → hl_mem；Codex CLI → Codex；LLMExtractor → llm_extractor。
 value 自足性：value 必须脱离原对话上下文和 qualifiers 后仍可理解，包含必要的主体、关系、对象和单位。
@@ -88,6 +91,31 @@ confidence 只表示该 claim 本身的事实可信度。每条 claim 独立判�
 - 临时调试输出、中间步骤状态报告（如"正在处理..."、"已启动 Codex"）
 - 已被覆盖的旧配置值（如 superseded 的 provider 变更历史）
 如果 should_memorize 为 false 或所有 claim 都属于上述类型，返回空 claims 列表。
+完整 JSON 示例：
+{{
+  "claims": [
+    {{
+      "subject": "用户",
+      "predicate": "偏好",
+      "canonical_attribute": "preference.response_style",
+      "canonical_slot": "preference.response_style",
+      "topic_tags": ["preference", "behavior"],
+      "value": "用户偏好简洁、直接的回答风格",
+      "qualifiers": {{}},
+      "confidence": 0.95,
+      "volatility": "stable",
+      "reason": "用户明确表达长期偏好",
+      "scope": "permanent",
+      "importance": 0.8,
+      "occurred_start": null,
+      "occurred_end": null,
+      "entities": ["用户"]
+    }}
+  ],
+  "entities": ["用户"],
+  "should_memorize": true,
+  "sensitivity": "normal"
+}}
 不要输出 JSON 以外的解释。"""
 
 SYSTEM_PROMPT += """
@@ -274,11 +302,12 @@ class LLMExtractor:
         occurred_at: str,
     ) -> ExtractionResponseSchema:
         """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
-        schema_errors: list[str] = []
+        schema_errors: list[dict[str, Any]] = []
+        previous_output: Any = None
         for attempt in range(self.schema_retries + 1):
             retry_instruction = ""
             if schema_errors:
-                retry_instruction = "\n上一次输出不符合 schema。只修正这些错误路径/类型：" + ", ".join(schema_errors)
+                retry_instruction = self._schema_retry_instruction(previous_output, schema_errors)
             request = LLMRequest(
                 messages=[
                     LLMMessage(role="system", content=SYSTEM_PROMPT),
@@ -312,21 +341,28 @@ class LLMExtractor:
                 raise LLMOutputTruncatedError(
                     f"LLM output truncated: provider={self.llm_client.provider.name}, model={self.model}"
                 )
+            previous_output_payload: Any = response.content
+            validation_payload: Any = response.content
             try:
                 raw = self._parse_json(response.content)
-                compatible = self._parse_legacy_defaults(raw)
+                previous_output_payload = raw
+                validation_payload = raw
+                repaired = repair_extraction_json(raw)
+                compatible = self._parse_legacy_defaults(repaired)
+                validation_payload = compatible
                 return ExtractionResponseSchema.model_validate(compatible)
             except (PydanticValidationError, ValueError) as error:
                 if self._looks_like_truncated_json(response.content):
                     raise LLMOutputTruncatedError(
                         f"LLM output appears truncated: provider={self.llm_client.provider.name}, model={self.model}"
                     ) from error
-                schema_errors = self._schema_error_paths(error)
+                previous_output = previous_output_payload
+                schema_errors = self._schema_error_details(error, previous_output)
                 if attempt == self.schema_retries:
                     raise LLMSchemaValidationError(
                         "LLM response does not contain valid JSON or match schema: "
                         f"provider={self.llm_client.provider.name}, model={self.model}, "
-                        f"chunk_length={len(chunk.text)}, errors={schema_errors}"
+                        f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
                     ) from error
         raise RuntimeError("unreachable")
 
@@ -415,6 +451,53 @@ class LLMExtractor:
         if isinstance(error, PydanticValidationError):
             return [f"{'.'.join(str(part) for part in item['loc'])}:{item['type']}" for item in error.errors()]
         return [f"response:{type(error).__name__}"]
+
+    @staticmethod
+    def _schema_error_details(error: Exception, payload: Any) -> list[dict[str, Any]]:
+        """提取错误路径、非法值和该字段允许值，供 schema 重试使用。"""
+        if not isinstance(error, PydanticValidationError):
+            return [
+                {
+                    "path": "response",
+                    "error_type": type(error).__name__,
+                    "invalid_value": payload,
+                    "allowed_values": ["valid JSON object matching the supplied schema"],
+                }
+            ]
+
+        details: list[dict[str, Any]] = []
+        for item in error.errors():
+            path = ".".join(str(part) for part in item["loc"])
+            if "topic_tags" in item["loc"]:
+                allowed_values: list[str] = sorted(ALLOWED_TOPIC_TAGS)
+            elif item["loc"] and item["loc"][-1] == "sensitivity":
+                allowed_values = ["normal", "sensitive", "restricted"]
+            elif item["loc"] and item["loc"][-1] == "entities":
+                allowed_values = ["JSON array of strings", "null (claim entities only)"]
+            else:
+                allowed_values = [str(item.get("ctx", {}).get("expected", "value matching the JSON schema"))]
+            details.append(
+                {
+                    "path": path,
+                    "error_type": item["type"],
+                    "invalid_value": item.get("input"),
+                    "allowed_values": allowed_values,
+                }
+            )
+        return details
+
+    @staticmethod
+    def _schema_retry_instruction(previous_output: Any, schema_errors: list[dict[str, Any]]) -> str:
+        """构建包含上次 JSON 和可操作错误详情的 schema 重试指令。"""
+        return (
+            "\n上一次输出不符合 schema。请基于上次输出生成完整 JSON，只修正下列错误。\n"
+            "<previous_invalid_json>\n"
+            f"{json.dumps(previous_output, ensure_ascii=False, default=str)}\n"
+            "</previous_invalid_json>\n"
+            "<schema_errors>\n"
+            f"{json.dumps(schema_errors, ensure_ascii=False, default=str)}\n"
+            "</schema_errors>"
+        )
 
     @staticmethod
     def _parse_json(raw: Any) -> dict[str, Any]:
