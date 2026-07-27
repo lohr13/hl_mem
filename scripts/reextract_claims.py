@@ -1,4 +1,18 @@
-"""重新提取全部事件的 claim，并回填 canonical_slot 与 topic_tags。"""
+"""重新提取全部事件的 claim，并回填 canonical_slot 与 topic_tags。
+
+单实例锁机制
+============
+本脚本使用文件锁确保同一时间只有一个 reextract 实例运行，避免多个进程并发
+写入 SQLite 导致 "database is locked" 错误。
+
+实现方式：
+- 锁文件路径：var/reextract.lock（位于项目根目录下）
+- 使用 fcntl.flock（Unix）或 msvcrt.locking（Windows）获取排他文件锁
+- 锁文件中写入当前进程 PID，用于检测过期/僵死锁
+- 如果锁已被另一个存活进程持有，打印错误信息并以 exit code 1 退出
+- 如果锁文件存在但对应进程已不存在（僵死锁），自动清理并重新获取
+- 脚本正常或异常退出时通过 try/finally 自动释放锁并关闭文件描述符
+"""
 
 from __future__ import annotations
 
@@ -12,6 +26,16 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, TextIO
+
+# Cross-platform file locking support
+try:
+    import fcntl
+
+    _LOCK_IMPL = "fcntl"
+except ImportError:
+    import msvcrt
+
+    _LOCK_IMPL = "msvcrt"
 
 import httpx
 
@@ -34,6 +58,114 @@ from hl_mem.storage.database import Database  # noqa: E402
 PLAN_SCHEMA_VERSION = 1
 DEFAULT_BATCH_SIZE = 50
 DEFAULT_PROGRESS_EVERY = 25
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """检查指定 PID 的进程是否存活。"""
+    if pid <= 0:
+        return False
+    try:
+        # Unix: send signal 0 to check existence
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+    except AttributeError:
+        # Windows fallback: use tasklist or ctypes
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return False
+
+
+def _read_lock_pid(lock_path: Path) -> int | None:
+    """从锁文件中读取 PID。"""
+    try:
+        content = lock_path.read_text(encoding="utf-8").strip()
+        return int(content)
+    except (OSError, ValueError):
+        return None
+
+
+def acquire_reextract_lock(project_root: Path) -> tuple[TextIO, Path]:
+    """获取 reextract 排他锁。
+
+    返回 (lock_file_handle, lock_path)，调用方需在 finally 中关闭文件描述符。
+    如果锁已被另一个存活进程持有，打印错误并 raise SystemExit(1)。
+    如果锁文件存在但对应进程已死亡，自动清理过期锁并重试。
+    """
+    var_dir = project_root / "var"
+    var_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = var_dir / "reextract.lock"
+
+    # 检查是否存在僵死锁（锁文件存在但进程已死）
+    if lock_path.exists():
+        existing_pid = _read_lock_pid(lock_path)
+        if existing_pid is not None and not _pid_is_alive(existing_pid):
+            print(
+                f"[reextract] 检测到过期锁文件（PID {existing_pid} 已不存在），自动清理",
+                file=sys.stderr,
+                flush=True,
+            )
+            try:
+                lock_path.unlink()
+            except OSError:
+                pass  # 可能被其他进程同时清理
+
+    # 打开锁文件并尝试获取排他锁
+    lock_fd = open(lock_path, "w", encoding="utf-8")
+    try:
+        if _LOCK_IMPL == "fcntl":
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            # Windows msvcrt: lock the first byte
+            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+    except (IOError, OSError):
+        # 锁已被占用 — 读取持有者 PID 以提供有用的错误信息
+        lock_fd.close()
+        holder_pid = _read_lock_pid(lock_path)
+        msg = f"[reextract] 另一个实例正在运行"
+        if holder_pid is not None:
+            msg += f"（PID {holder_pid}）"
+        msg += "，请等待其完成后再重试"
+        print(msg, file=sys.stderr, flush=True)
+        raise SystemExit(1)
+
+    # 写入当前 PID 到锁文件
+    lock_fd.seek(0)
+    lock_fd.truncate()
+    lock_fd.write(str(os.getpid()))
+    lock_fd.flush()
+
+    return lock_fd, lock_path
+
+
+def release_reextract_lock(lock_fd: TextIO, lock_path: Path) -> None:
+    """释放排他锁并清理锁文件。"""
+    try:
+        if _LOCK_IMPL == "fcntl":
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+        else:
+            try:
+                lock_fd.seek(0)
+                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    finally:
+        lock_fd.close()
+        try:
+            lock_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def load_project_env(path: Path) -> None:
@@ -350,22 +482,28 @@ def main() -> int:
     load_project_env(PROJECT_ROOT / ".env")
     os.environ.setdefault("HL_MEM_EXTRACTOR", "real")
     args = parse_args()
-    settings = Settings.from_env()
-    if args.database is not None:
-        settings = Settings(**{**settings.__dict__, "database_path": str(args.database)})
-        settings.validate()
-    database_path = Path(settings.database_path)
-    plan_path = args.plan or database_path.with_name(f"{database_path.name}.reextract-plan.jsonl")
-    database = Database(database_path)
-    connection = database.open_worker()
+
+    # 获取排他锁，确保同一时间只有一个 reextract 实例运行
+    lock_fd, lock_path = acquire_reextract_lock(PROJECT_ROOT)
     try:
-        if args.dry_run:
-            counts = dry_run(connection, settings, plan_path, args.batch_size, args.progress_every, args.limit)
-            return 1 if counts["errors"] else 0
-        apply_plan(connection, settings, plan_path, args.progress_every, args.limit)
-        return 0
+        settings = Settings.from_env()
+        if args.database is not None:
+            settings = Settings(**{**settings.__dict__, "database_path": str(args.database)})
+            settings.validate()
+        database_path = Path(settings.database_path)
+        plan_path = args.plan or database_path.with_name(f"{database_path.name}.reextract-plan.jsonl")
+        database = Database(database_path)
+        connection = database.open_worker()
+        try:
+            if args.dry_run:
+                counts = dry_run(connection, settings, plan_path, args.batch_size, args.progress_every, args.limit)
+                return 1 if counts["errors"] else 0
+            apply_plan(connection, settings, plan_path, args.progress_every, args.limit)
+            return 0
+        finally:
+            database.close()
     finally:
-        database.close()
+        release_reextract_lock(lock_fd, lock_path)
 
 
 if __name__ == "__main__":
