@@ -40,12 +40,7 @@ def _score_passed(score: QueryScore) -> bool:
     if score.expected_type == "empty":
         return score.is_empty_prediction
     evidence_passed = score.evidence_correct is None or score.evidence_correct == 1.0
-    return bool(
-        score.recall_at_5
-        and score.keyword_correct
-        and score.confidence_correct
-        and evidence_passed
-    )
+    return bool(score.recall_at_5 and score.keyword_correct and score.confidence_correct and evidence_passed)
 
 
 def _test_layer_counts(scores: list[QueryScore]) -> dict[str, int]:
@@ -59,14 +54,12 @@ def print_report_summary(report: dict[str, Any]) -> None:
     metrics = report["metrics"]
     latency = report["latency"]
     print(
-        f"Test layer: passed={test_layer['passed']}, "
-        f"failed={test_layer['failed']}, skipped={test_layer['skipped']}"
+        f"Test layer: passed={test_layer['passed']}, " f"failed={test_layer['failed']}, skipped={test_layer['skipped']}"
     )
     scenarios = report.get("scenarios")
     if scenarios is not None:
         print(
-            f"Scenarios: passed={scenarios['passed']}, "
-            f"failed={scenarios['failed']}, skipped={scenarios['skipped']}"
+            f"Scenarios: passed={scenarios['passed']}, " f"failed={scenarios['failed']}, skipped={scenarios['skipped']}"
         )
     print(
         f"Retrieval: recall@5={metrics['recall_at_5']:.3f}, "
@@ -83,9 +76,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def run_evaluation(
-    cases: list[EvalCase], recall: RecallCallable, source_path: str | Path
-) -> dict[str, Any]:
+def run_evaluation(cases: list[EvalCase], recall: RecallCallable, source_path: str | Path) -> dict[str, Any]:
     """运行全部样本并返回含 manifest、逐条诊断和聚合指标的报告。"""
     source = Path(source_path).resolve()
     scores = []
@@ -96,9 +87,7 @@ def run_evaluation(
         latency_ms = (time.perf_counter() - started) * 1000
         score = evaluate_results(case, response, latency_ms)
         scores.append(score)
-        queries.append(
-            {"case_id": case.case_id, "response": response, "score": score.as_dict()}
-        )
+        queries.append({"case_id": case.case_id, "response": response, "score": score.as_dict()})
     return {
         "manifest": {
             "generated_at": datetime.now(timezone.utc).isoformat(),

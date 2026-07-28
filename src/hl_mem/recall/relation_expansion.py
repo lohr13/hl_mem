@@ -20,9 +20,7 @@ class RelationExpansionConfig:
     candidate_limit: int = 20
     relation_weight: float = 0.35
     max_depth: int = 1
-    allowed_relations: frozenset[str] = frozenset(
-        {"summarizes", "supports", "follows", "about", "derived_from"}
-    )
+    allowed_relations: frozenset[str] = frozenset({"summarizes", "supports", "follows", "about", "derived_from"})
 
 
 @dataclass(frozen=True)
@@ -94,12 +92,7 @@ def expand_related_claims(
     config: RelationExpansionConfig,
 ) -> tuple[list[dict[str, Any]], list[ExpandedCandidate]]:
     """从融合种子出发执行有界 BFS，并保留每个候选的最高分路径。"""
-    if (
-        not config.enabled
-        or config.seed_limit <= 0
-        or config.candidate_limit <= 0
-        or config.max_depth <= 0
-    ):
+    if not config.enabled or config.seed_limit <= 0 or config.candidate_limit <= 0 or config.max_depth <= 0:
         return [], []
     selected_seeds = seeds[: config.seed_limit]
     seed_ids = [str(seed["id"]) for seed in selected_seeds]
@@ -147,9 +140,7 @@ def expand_related_claims(
                     source=edge["source"],
                     edge_confidence=confidence,
                 )
-                cumulative_weight = (
-                    item.cumulative_weight * confidence * hop_attenuation
-                )
+                cumulative_weight = item.cumulative_weight * confidence * hop_attenuation
                 path = (*item.path, hop)
                 candidate = ExpandedCandidate(
                     seed_id=item.seed_id,
@@ -159,10 +150,7 @@ def expand_related_claims(
                     expansion_score=item.semantic_score * cumulative_weight,
                 )
                 existing = best.get(neighbor_id)
-                if (
-                    existing is None
-                    or candidate.expansion_score > existing.expansion_score
-                ):
+                if existing is None or candidate.expansion_score > existing.expansion_score:
                     best[neighbor_id] = candidate
                 next_item = _Frontier(
                     seed_id=item.seed_id,
@@ -184,9 +172,7 @@ def expand_related_claims(
             ),
         )[: config.candidate_limit]
 
-    ordered = sorted(
-        best.values(), key=lambda item: (-item.expansion_score, item.candidate_id)
-    )
+    ordered = sorted(best.values(), key=lambda item: (-item.expansion_score, item.candidate_id))
     rows = repo.batch_get_claims([item.candidate_id for item in ordered])
     accepted: list[ExpandedCandidate] = []
     claims: list[dict[str, Any]] = []

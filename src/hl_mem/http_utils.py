@@ -29,14 +29,8 @@ def retry_http(
             httpx.TimeoutException,
             httpx.HTTPStatusError,
         ) as error:
-            is_retryable = isinstance(
-                error, (httpx.ConnectError, httpx.TimeoutException)
-            ) or (
-                error.response is not None
-                and (
-                    error.response.status_code == 429
-                    or error.response.status_code >= 500
-                )
+            is_retryable = isinstance(error, (httpx.ConnectError, httpx.TimeoutException)) or (
+                error.response is not None and (error.response.status_code == 429 or error.response.status_code >= 500)
             )
             if not is_retryable or attempt == max_attempts:
                 raise

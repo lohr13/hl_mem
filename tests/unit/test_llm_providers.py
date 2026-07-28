@@ -102,8 +102,6 @@ def test_provider_parses_token_breakdown() -> None:
 def test_only_explicit_structured_format_errors_are_unsupported() -> None:
     provider = OpenAICompatibleProvider()
     request = httpx.Request("POST", "https://example.test/chat/completions")
-    response = httpx.Response(
-        400, request=request, text="response_format json_schema unsupported"
-    )
+    response = httpx.Response(400, request=request, text="response_format json_schema unsupported")
     error = httpx.HTTPStatusError("bad request", request=request, response=response)
     assert provider.is_structured_mode_unsupported(error) is True

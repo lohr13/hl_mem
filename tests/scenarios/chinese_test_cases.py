@@ -41,9 +41,7 @@ CHINESE_TEST_CASES = [
 def test_chinese_memory_scenarios_have_complete_expectations() -> None:
     """每条中文记忆场景都应包含完整且有效的行为预期。"""
     assert len(CHINESE_TEST_CASES) == 30
-    assert all(
-        set(case) == {"input", "expected", "status"} for case in CHINESE_TEST_CASES
-    )
+    assert all(set(case) == {"input", "expected", "status"} for case in CHINESE_TEST_CASES)
     assert {case["status"] for case in CHINESE_TEST_CASES} == {
         "active",
         "disputed",

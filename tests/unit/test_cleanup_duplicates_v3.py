@@ -36,9 +36,7 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
                 "embedding_dense": pack_vector([1.0, 0.0]),
             }
             repo.insert_claim({**base, "id": "short", "value": "不要运行 pytest"})
-            repo.insert_claim(
-                {**base, "id": "long", "value": "工作流中不要运行 pytest"}
-            )
+            repo.insert_claim({**base, "id": "long", "value": "工作流中不要运行 pytest"})
             repo.insert_claim(
                 {
                     **base,
@@ -85,9 +83,7 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
             self.assertTrue(backup_path.exists())
             check = sqlite3.connect(db_path)
             self.assertEqual(
-                check.execute(
-                    "SELECT status FROM claims WHERE id=?", ("short",)
-                ).fetchone()[0],
+                check.execute("SELECT status FROM claims WHERE id=?", ("short",)).fetchone()[0],
                 "superseded",
             )
             self.assertEqual(
@@ -130,9 +126,7 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
                 "embedding_dense": pack_vector([1.0, 0.0]),
             }
             repo.insert_claim({**base, "id": "short", "value": "不要运行 pytest"})
-            repo.insert_claim(
-                {**base, "id": "long", "value": "工作流中不要运行 pytest"}
-            )
+            repo.insert_claim({**base, "id": "long", "value": "工作流中不要运行 pytest"})
             database.close()
             backup_path.write_bytes(b"existing-backup")
 
@@ -157,9 +151,7 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
                 "embedding_dense": pack_vector([1.0, 0.0]),
             }
             repo.insert_claim({**base, "id": "short", "value": "不要运行 pytest"})
-            repo.insert_claim(
-                {**base, "id": "long", "value": "工作流中不要运行 pytest"}
-            )
+            repo.insert_claim({**base, "id": "long", "value": "工作流中不要运行 pytest"})
             database.close()
 
             def mutate_after_backup(source: Path, target: Path) -> None:
@@ -181,9 +173,7 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
 
             check = sqlite3.connect(db_path)
             self.assertEqual(
-                check.execute(
-                    "SELECT status FROM claims WHERE id=?", ("short",)
-                ).fetchone()[0],
+                check.execute("SELECT status FROM claims WHERE id=?", ("short",)).fetchone()[0],
                 "active",
             )
             check.close()

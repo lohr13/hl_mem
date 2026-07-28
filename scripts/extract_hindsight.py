@@ -45,9 +45,7 @@ for root, dirs, files in os.walk(os.path.join(HINDSIGHT_BASE, "__pycache__")):
             # Look for nested code objects (functions/methods)
             for const in code.co_consts:
                 if isinstance(const, types.CodeType):
-                    print(
-                        f"  Function: {const.co_name}({', '.join(const.co_varnames[: const.co_argcount])})"
-                    )
+                    print(f"  Function: {const.co_name}({', '.join(const.co_varnames[: const.co_argcount])})")
                     # Get docstring
                     if const.co_consts and isinstance(const.co_consts[0], str):
                         doc = const.co_consts[0].strip()[:150]
@@ -62,7 +60,9 @@ print("\n" + "=" * 60)
 print("Hindsight Client API — Data Models")
 print("=" * 60)
 
-CLIENT_BASE = "C:/Users/Administrator/AppData/Local/hermes/hermes-agent/.venv/Lib/site-packages/hindsight_client_api/models"
+CLIENT_BASE = (
+    "C:/Users/Administrator/AppData/Local/hermes/hermes-agent/.venv/Lib/site-packages/hindsight_client_api/models"
+)
 for f in sorted(os.listdir(CLIENT_BASE)):
     if f.endswith(".py") and not f.startswith("__"):
         path = os.path.join(CLIENT_BASE, f)

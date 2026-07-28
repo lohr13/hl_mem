@@ -30,9 +30,7 @@ for r in rows:
         tags = json.loads(r["topic_tags_json"]) if r["topic_tags_json"] else []
     except Exception:
         pass
-    print(
-        f"  [{r['importance']:.1f}] {r['subject_entity_id']} | {r['predicate']} | {val}"
-    )
+    print(f"  [{r['importance']:.1f}] {r['subject_entity_id']} | {r['predicate']} | {val}")
     print(f"       slot={r['canonical_slot']} tags={tags}")
 
 print()
@@ -63,9 +61,7 @@ for dup_val in [
                     val = str(val)[:100]
             except Exception:
                 val = (r["value_json"] or "")[:100]
-            print(
-                f"  [{r['subject_entity_id']}] {r['predicate']} | attr={r['canonical_attribute']} | {val}"
-            )
+            print(f"  [{r['subject_entity_id']}] {r['predicate']} | attr={r['canonical_attribute']} | {val}")
 
 print()
 print("=" * 60)
@@ -80,12 +76,8 @@ dead_with_no_active = conn.execute(
     "  AND c2.predicate = c1.predicate"
     ")"
 ).fetchone()[0]
-total_dead = conn.execute(
-    "SELECT COUNT(*) FROM claims WHERE status IN ('expired','superseded')"
-).fetchone()[0]
-print(
-    f"  Dead claims with no active counterpart on same subject+predicate: {dead_with_no_active}"
-)
+total_dead = conn.execute("SELECT COUNT(*) FROM claims WHERE status IN ('expired','superseded')").fetchone()[0]
+print(f"  Dead claims with no active counterpart on same subject+predicate: {dead_with_no_active}")
 print(f"  Total dead: {total_dead}")
 
 print()
@@ -107,8 +99,6 @@ for r in rows:
             val = str(val)[:80]
     except Exception:
         val = (r["value_json"] or "")[:80]
-    print(
-        f"  [{r['valid_from'][:10]}] imp={r['importance']:.1f} attr={r['canonical_attribute']} | {val}"
-    )
+    print(f"  [{r['valid_from'][:10]}] imp={r['importance']:.1f} attr={r['canonical_attribute']} | {val}")
 
 conn.close()

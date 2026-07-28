@@ -44,12 +44,8 @@ def test_required_slot_qualifier_rejects_missing_and_empty_values(slot: str) -> 
 
 def test_compute_expiration_normalizes_positive_and_negative_offsets_to_utc() -> None:
     policy = TTLPolicy(temporal_ttl_days_low=1)
-    positive, _ = compute_expiration(
-        "temporal", 0.1, "stable", None, None, "2026-01-02T01:00:00+08:00", "", policy
-    )
-    negative, _ = compute_expiration(
-        "temporal", 0.1, "stable", None, None, "2026-01-01T12:00:00-05:00", "", policy
-    )
+    positive, _ = compute_expiration("temporal", 0.1, "stable", None, None, "2026-01-02T01:00:00+08:00", "", policy)
+    negative, _ = compute_expiration("temporal", 0.1, "stable", None, None, "2026-01-01T12:00:00-05:00", "", policy)
     assert positive == "2026-01-02T17:00:00+00:00"
     assert negative == "2026-01-02T17:00:00+00:00"
 
@@ -166,12 +162,8 @@ def test_dedup_apply_rechecks_confidence_and_claim_versions(tmp_path) -> None:
         "status": "active",
         "canonical_slot": None,
     }
-    repo.insert_claim(
-        {**base, "id": "left", "subject_entity_id": "left", "value": "same"}
-    )
-    repo.insert_claim(
-        {**base, "id": "right", "subject_entity_id": "right", "value": "same"}
-    )
+    repo.insert_claim({**base, "id": "left", "subject_entity_id": "left", "value": "same"})
+    repo.insert_claim({**base, "id": "right", "subject_entity_id": "right", "value": "same"})
     connection.execute(
         "INSERT INTO dedup_pairs("
         "id,pair_key,left_claim_id,right_claim_id,similarity,decision,judge_confidence,created_at"
@@ -191,17 +183,11 @@ def test_dedup_apply_rechecks_confidence_and_claim_versions(tmp_path) -> None:
     left = repo.get_claim("left")
     right = repo.get_claim("right")
     assert left is not None and right is not None
-    assert not _apply_equivalent_pair(
-        connection, "pair", left, right, base["recorded_from"], 0.98
-    )
+    assert not _apply_equivalent_pair(connection, "pair", left, right, base["recorded_from"], 0.98)
     connection.execute("UPDATE dedup_pairs SET judge_confidence=0.99 WHERE id='pair'")
-    connection.execute(
-        "UPDATE claims SET recorded_from='2026-01-02T00:00:00+00:00' WHERE id='right'"
-    )
+    connection.execute("UPDATE claims SET recorded_from='2026-01-02T00:00:00+00:00' WHERE id='right'")
     connection.commit()
-    assert not _apply_equivalent_pair(
-        connection, "pair", left, right, base["recorded_from"], 0.98
-    )
+    assert not _apply_equivalent_pair(connection, "pair", left, right, base["recorded_from"], 0.98)
     assert repo.get_claim("right")["status"] == "active"
 
 
@@ -245,9 +231,7 @@ def test_cross_subject_candidate_limit_bounds_inputs_and_reuses_vectors(
 
 def test_conflict_key_v3_backfill_preserves_previous_key(tmp_path) -> None:
     connection = Database(tmp_path / "conflict-v3.db").open()
-    connection.execute(
-        "DELETE FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,)
-    )
+    connection.execute("DELETE FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,))
     ClaimRepository(connection).insert_claim(
         {
             "id": "claim",

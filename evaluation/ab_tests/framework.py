@@ -27,8 +27,5 @@ def run_ab(
     for variant in variants:
         rows = [runner(case, variant) for case in cases]
         keys = {key for row in rows for key in row}
-        output[variant.name] = {
-            key: sum(row.get(key, 0.0) for row in rows) / max(1, len(rows))
-            for key in keys
-        }
+        output[variant.name] = {key: sum(row.get(key, 0.0) for row in rows) / max(1, len(rows)) for key in keys}
     return output

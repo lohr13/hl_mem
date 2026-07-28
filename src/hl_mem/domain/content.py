@@ -145,9 +145,7 @@ def parse_content(
                     FileTextPart(
                         str(file_part["text"]),
                         str(file_part.get("filename", "unknown")),
-                        str(file_part["uri"])
-                        if file_part.get("uri") is not None
-                        else None,
+                        str(file_part["uri"]) if file_part.get("uri") is not None else None,
                     )
                 )
     images = content.get("images")

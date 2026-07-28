@@ -50,9 +50,7 @@ class QueryExpander:
         if max_concurrency < 1:
             raise ValueError("max_concurrency must be positive")
         self.client = client
-        self._executor = ThreadPoolExecutor(
-            max_workers=max_concurrency, thread_name_prefix="query-expansion"
-        )
+        self._executor = ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="query-expansion")
         self._capacity = threading.BoundedSemaphore(max_concurrency)
         self._circuit = CircuitBreaker()
 
@@ -108,16 +106,12 @@ class QueryExpander:
 
         future.add_done_callback(release_capacity)
         try:
-            response, attempts = future.result(
-                timeout=max(0.001, deadline - time.monotonic())
-            )
+            response, attempts = future.result(timeout=max(0.001, deadline - time.monotonic()))
         except FutureTimeoutError:
             future.cancel()
             release_capacity(future)
             self._circuit.record(False)
-            return self._empty(
-                started, "timeout", error_class="deadline_timeout", attempts=1
-            )
+            return self._empty(started, "timeout", error_class="deadline_timeout", attempts=1)
         except Exception as error:
             self._circuit.record(False)
             error_class, http_status, provider_code = classify_provider_error(error)
@@ -141,19 +135,13 @@ class QueryExpander:
                 output_tokens=output_tokens,
             )
         try:
-            payload = (
-                response.content
-                if isinstance(response.content, dict)
-                else json.loads(response.content)
-            )
+            payload = response.content if isinstance(response.content, dict) else json.loads(response.content)
             raw_queries = payload["queries"]
             if not isinstance(raw_queries, list):
                 raise TypeError("queries must be a list")
             texts = self._clean_queries(query, raw_queries, max_expansions)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            return self._empty(
-                started, "error", input_tokens=input_tokens, output_tokens=output_tokens
-            )
+            return self._empty(started, "error", input_tokens=input_tokens, output_tokens=output_tokens)
         expansion_source = _SOURCE_NAMES.get(source or "", "llm_short")
         expansions = tuple(QueryExpansion(text, expansion_source) for text in texts)
         return QueryExpansionResult(
@@ -172,9 +160,7 @@ class QueryExpander:
             "你是查询改写器。仅输出 JSON。生成语义等价、便于记忆检索的查询。"
             "禁止添加人物、时间、namespace 或原查询未给出的事实；不得改变查询意图和约束。"
         )
-        user = (
-            f"原查询：{query}\n召回意图：{intent.value}\n最多输出 {max_expansions} 条："
-        )
+        user = f"原查询：{query}\n召回意图：{intent.value}\n最多输出 {max_expansions} 条："
         return LLMRequest(
             messages=[LLMMessage("system", system), LLMMessage("user", user)],
             structured_output=StructuredOutputSpec(
@@ -227,9 +213,7 @@ class QueryExpander:
             provider_code=provider_code,
         )
 
-    def _complete_with_retry(
-        self, request: LLMRequest, deadline: float
-    ) -> tuple[LLMResponse, int]:
+    def _complete_with_retry(self, request: LLMRequest, deadline: float) -> tuple[LLMResponse, int]:
         """向支持 deadline 的真实客户端下推本次扩展超时。"""
         for attempt in range(1, 3):
             remaining = deadline - time.monotonic()
@@ -237,9 +221,7 @@ class QueryExpander:
                 raise TimeoutError("query expansion deadline exhausted")
             try:
                 if isinstance(self.client, LLMClient):
-                    return self.client.complete(
-                        request, timeout_seconds=remaining
-                    ), attempt
+                    return self.client.complete(request, timeout_seconds=remaining), attempt
                 return self.client.complete(request), attempt
             except Exception as error:
                 setattr(error, "_expansion_attempts", attempt)

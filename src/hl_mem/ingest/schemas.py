@@ -73,9 +73,7 @@ TopicTag: TypeAlias = Literal[
 ]
 
 if set(get_args(CanonicalSlot)) != set(OPERATIONAL_SLOT_NAMES):
-    raise RuntimeError(
-        "CanonicalSlot type alias is out of sync with OPERATIONAL_SLOT_NAMES"
-    )
+    raise RuntimeError("CanonicalSlot type alias is out of sync with OPERATIONAL_SLOT_NAMES")
 if set(get_args(TopicTag)) != set(ALLOWED_TOPIC_TAGS):
     raise RuntimeError("TopicTag type alias is out of sync with ALLOWED_TOPIC_TAGS")
 

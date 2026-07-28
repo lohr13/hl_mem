@@ -33,12 +33,7 @@ class UsefulnessRepository:
         if memory_type not in _TABLES:
             raise ValueError(f"invalid memory type: {memory_type}")
         table = _TABLES[memory_type]
-        if (
-            self.connection.execute(
-                f"SELECT 1 FROM {table} WHERE id=?", (memory_id,)
-            ).fetchone()
-            is None
-        ):
+        if self.connection.execute(f"SELECT 1 FROM {table} WHERE id=?", (memory_id,)).fetchone() is None:
             raise ValueError(f"{memory_type} not found: {memory_id}")
         return cast(MemoryType, memory_type)
 
@@ -105,9 +100,7 @@ class UsefulnessRepository:
         ).fetchone()
         return self._snapshot(row) if row else None
 
-    def get_batch(
-        self, memory_type: MemoryType, memory_ids: Iterable[str]
-    ) -> dict[str, UsefulnessSnapshot]:
+    def get_batch(self, memory_type: MemoryType, memory_ids: Iterable[str]) -> dict[str, UsefulnessSnapshot]:
         """批量读取聚合快照。"""
         ids = list(dict.fromkeys(memory_ids))
         if not ids:

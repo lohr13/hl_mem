@@ -101,9 +101,7 @@ def make_llm_client(
     }
     provider_type = provider_types.get(settings.llm_provider)
     if provider_type is None:
-        raise ConfigurationError(
-            "HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'"
-        )
+        raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
     provider = (
         DashScopeProvider(enable_thinking=settings.enable_llm_thinking)
         if provider_type is DashScopeProvider
@@ -127,9 +125,7 @@ def make_embedder(settings: Settings) -> EmbedderProtocol:
         return FakeEmbedder(settings.embedding_dim)
     if not settings.embedding_api_key:
         if settings.environment == "production" or not settings.allow_fake_fallback:
-            raise ConfigurationError(
-                "HL_MEM_EMBEDDER=real but EMBEDDING_API_KEY is missing"
-            )
+            raise ConfigurationError("HL_MEM_EMBEDDER=real but EMBEDDING_API_KEY is missing")
         return FakeEmbedder(settings.embedding_dim)
     return Embedder(
         settings.embedding_api_key,
@@ -170,9 +166,7 @@ def make_query_expander(
         if settings.environment == "production" or not settings.allow_fake_fallback:
             raise
         LOGGER.warning("query expansion disabled after configuration error: %s", error)
-        _record_component_health(
-            "query_expander", settings.query_expansion_mode, "off", str(error)
-        )
+        _record_component_health("query_expander", settings.query_expansion_mode, "off", str(error))
         return None
 
 
@@ -182,16 +176,12 @@ def make_relation_discoverer(
 ) -> RelationDiscoveryProtocol | None:
     """按发布模式构造关系发现器；关闭时不创建 LLM 客户端。"""
     if settings.relation_discovery_mode == "off":
-        _record_component_health(
-            "relation_discoverer", settings.relation_discovery_mode, "off"
-        )
+        _record_component_health("relation_discoverer", settings.relation_discovery_mode, "off")
         return None
     try:
         from hl_mem.workers.discover_relations import LLMRelationDiscoverer
 
-        result = LLMRelationDiscoverer(
-            make_llm_client(settings, connection, operation="relation_discovery")
-        )
+        result = LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
         _record_component_health(
             "relation_discoverer",
             settings.relation_discovery_mode,
@@ -201,12 +191,8 @@ def make_relation_discoverer(
     except ConfigurationError as error:
         if settings.environment == "production" or not settings.allow_fake_fallback:
             raise
-        LOGGER.warning(
-            "relation discovery disabled after configuration error: %s", error
-        )
-        _record_component_health(
-            "relation_discoverer", settings.relation_discovery_mode, "off", str(error)
-        )
+        LOGGER.warning("relation discovery disabled after configuration error: %s", error)
+        _record_component_health("relation_discoverer", settings.relation_discovery_mode, "off", str(error))
         return None
 
 
@@ -219,16 +205,10 @@ def make_extractor(
     """依据统一配置创建 LLM 提取组件。"""
     if settings.extractor_mode == "fake" and not require_real:
         if settings.environment == "production":
-            raise ConfigurationError(
-                "HL_MEM_EXTRACTOR=fake is not allowed in production"
-            )
+            raise ConfigurationError("HL_MEM_EXTRACTOR=fake is not allowed in production")
         return FakeExtractor()
     if not settings.llm_api_key:
-        if (
-            settings.environment == "production"
-            or require_real
-            or not settings.allow_fake_fallback
-        ):
+        if settings.environment == "production" or require_real or not settings.allow_fake_fallback:
             raise ConfigurationError("LLM_API_KEY is required")
         return FakeExtractor()
     structured_mode = (
@@ -248,9 +228,7 @@ def make_extractor(
     )
 
 
-def make_extractor_for_type(
-    event_type: str, settings: Settings
-) -> ExtractorProtocol | Literal["explicit"]:
+def make_extractor_for_type(event_type: str, settings: Settings) -> ExtractorProtocol | Literal["explicit"]:
     """根据事件类型选择提取器；显式记忆返回 worker 可识别的特殊标记。"""
     extractor_name = _EXTRACTOR_REGISTRY.get(event_type, "llm")
     if extractor_name == "explicit":

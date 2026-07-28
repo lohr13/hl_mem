@@ -69,9 +69,7 @@ def exclusive_run_lock(path: Path = LOCK_PATH) -> Iterator[None]:
             raise RuntimeError(f"已有 benchmark 进程持有独占锁：{path}") from error
         lock_file.seek(0)
         lock_file.truncate()
-        lock_file.write(
-            f"pid={os.getpid()} started_at={datetime.now(timezone.utc).isoformat()}\n"
-        )
+        lock_file.write(f"pid={os.getpid()} started_at={datetime.now(timezone.utc).isoformat()}\n")
         lock_file.flush()
         yield
     finally:
@@ -99,9 +97,7 @@ def prepare_run_paths(mode: str, *, resume: bool) -> dict[str, Path]:
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     """原子写入 JSON 文件。"""
     temporary_path = path.with_suffix(f"{path.suffix}.tmp")
-    temporary_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    temporary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary_path.replace(path)
 
 
@@ -224,11 +220,7 @@ def build_testset() -> list[dict[str, Any]]:
             if row["id"] in seen_ids:
                 continue
             content = decode_json(row["content_json"])
-            text = (
-                content
-                if isinstance(content, str)
-                else json.dumps(content, ensure_ascii=False)
-            )
+            text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
             events.append(
                 {
                     "id": row["id"],
@@ -250,11 +242,7 @@ def build_testset() -> list[dict[str, Any]]:
         ).fetchall()
         for row in rows:
             content = decode_json(row["content_json"])
-            text = (
-                content
-                if isinstance(content, str)
-                else json.dumps(content, ensure_ascii=False)
-            )
+            text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
             events.append(
                 {
                     "id": row["id"],
@@ -272,11 +260,7 @@ def build_testset() -> list[dict[str, Any]]:
 def load_or_build_testset() -> list[dict[str, Any]]:
     """复用完整测试集；数量不符时重新采样并落盘。"""
     if TESTSET_PATH.is_file():
-        testset = [
-            json.loads(line)
-            for line in TESTSET_PATH.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        testset = [json.loads(line) for line in TESTSET_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
         if len(testset) == NUM_EVENTS:
             return testset
 
@@ -324,15 +308,11 @@ def make_extractor(config: dict[str, Any]) -> LLMExtractor:
         llm_client=client,
         schema_retries=2,
         structured_mode=StructuredOutputMode.JSON_OBJECT,
-        chunking_policy=ChunkingPolicy(
-            target_chars=12000, overlap_turns=2, max_split_depth=3
-        ),
+        chunking_policy=ChunkingPolicy(target_chars=12000, overlap_turns=2, max_split_depth=3),
     )
 
 
-def run_single_extraction(
-    extractor: LLMExtractor, content: str, context: dict[str, Any]
-) -> dict[str, Any]:
+def run_single_extraction(extractor: LLMExtractor, content: str, context: dict[str, Any]) -> dict[str, Any]:
     """运行一次提取，并保留结构化质量、用量及 HTTP 错误指标。"""
     started = time.perf_counter()
     metrics: dict[str, Any] = {
@@ -390,9 +370,7 @@ def run_single_extraction(
         http_error = find_http_status_error(error)
         if http_error is not None:
             metrics["http_status_code"] = http_error.response.status_code
-            metrics["http_response_body"] = sanitize_http_response_body(
-                http_error.response.text
-            )
+            metrics["http_response_body"] = sanitize_http_response_body(http_error.response.text)
     schema_error_paths = [
         ".".join(str(part) for part in error.get("loc", ()))
         for error in getattr(extractor, "_last_schema_errors", [])
@@ -436,12 +414,8 @@ def print_summary(results: list[dict[str, Any]]) -> None:
     stats: dict[str, dict[str, Any]] = {}
     for model in MODELS:
         model_results = [result for result in results if result["model"] == model]
-        successes = [
-            result for result in model_results if result["extraction_error"] is None
-        ]
-        claims = [
-            claim for result in successes for claim in result.get("claims_data", [])
-        ]
+        successes = [result for result in model_results if result["extraction_error"] is None]
+        claims = [claim for result in successes for claim in result.get("claims_data", [])]
         predicates = Counter(claim["predicate"] for claim in claims)
         stats[model] = {
             "total": len(model_results),
@@ -449,10 +423,8 @@ def print_summary(results: list[dict[str, Any]]) -> None:
             "schema_success_rate": len(successes) / max(len(model_results), 1),
             "repairs": sum(result["repair_count"] for result in successes),
             "claim_count": len(claims),
-            "avg_tokens": sum(result["total_tokens"] for result in successes)
-            / max(len(successes), 1),
-            "avg_latency": sum(result["latency_ms"] for result in successes)
-            / max(len(successes), 1),
+            "avg_tokens": sum(result["total_tokens"] for result in successes) / max(len(successes), 1),
+            "avg_latency": sum(result["latency_ms"] for result in successes) / max(len(successes), 1),
             "subject_diversity": len({claim["subject"] for claim in claims}),
             "top_predicates": predicates.most_common(3),
         }
@@ -484,26 +456,20 @@ def print_summary(results: list[dict[str, Any]]) -> None:
         print()
     print("\nTop-3 predicate:")
     for model in MODELS:
-        print(
-            f"  {model}: {', '.join(f'{name}({count})' for name, count in stats[model]['top_predicates'])}"
-        )
+        print(f"  {model}: {', '.join(f'{name}({count})' for name, count in stats[model]['top_predicates'])}")
 
 
 def parse_args() -> argparse.Namespace:
     """解析运行模式；validation 必须先于 full 人工执行。"""
     parser = argparse.ArgumentParser(description="hl_mem 五模型结构化提取 benchmark")
     parser.add_argument("--mode", choices=("validation", "full"), required=True)
-    parser.add_argument(
-        "--resume", action="store_true", help="保留同一 run 已有数据并从断点继续"
-    )
+    parser.add_argument("--resume", action="store_true", help="保留同一 run 已有数据并从断点继续")
     return parser.parse_args()
 
 
 def testset_fingerprint(testset: list[dict[str, Any]]) -> str:
     """计算测试集内容 SHA-256。"""
-    payload = json.dumps(
-        testset, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    payload = json.dumps(testset, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -519,9 +485,7 @@ def git_commit_sha() -> str:
     return result.stdout.strip()
 
 
-def load_partial_results(
-    path: Path, run_id: str, fingerprint: str
-) -> list[dict[str, Any]]:
+def load_partial_results(path: Path, run_id: str, fingerprint: str) -> list[dict[str, Any]]:
     """只加载同一 run_id 与测试集指纹的断点结果。"""
     if not path.is_file():
         return []
@@ -530,10 +494,7 @@ def load_partial_results(
         if not line.strip():
             continue
         result = json.loads(line)
-        if (
-            result.get("run_id") == run_id
-            and result.get("testset_fingerprint") == fingerprint
-        ):
+        if result.get("run_id") == run_id and result.get("testset_fingerprint") == fingerprint:
             unique.setdefault((result["model"], result["event_id"]), result)
     return list(unique.values())
 
@@ -552,9 +513,7 @@ def assert_full_is_unlocked() -> None:
         raise RuntimeError("最近一次预验证未完整通过，禁止正式 benchmark")
 
 
-def run_benchmark(
-    mode: str, *, resume: bool
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def run_benchmark(mode: str, *, resume: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """执行一个隔离且可续跑的 validation/full run。"""
     if mode == "full" and not resume:
         assert_full_is_unlocked()
@@ -566,9 +525,7 @@ def run_benchmark(
     testset = full_testset[:VALIDATION_EVENTS] if mode == "validation" else full_testset
     expected_events = VALIDATION_EVENTS if mode == "validation" else NUM_EVENTS
     if len(testset) != expected_events:
-        raise RuntimeError(
-            f"测试集数量错误：expected={expected_events}, actual={len(testset)}"
-        )
+        raise RuntimeError(f"测试集数量错误：expected={expected_events}, actual={len(testset)}")
     fingerprint = testset_fingerprint(testset)
 
     if resume:
@@ -606,18 +563,13 @@ def run_benchmark(
         }
         write_json_atomic(paths["manifest.json"], manifest)
         paths["testset.jsonl"].write_text(
-            "\n".join(json.dumps(event, ensure_ascii=False) for event in testset)
-            + "\n",
+            "\n".join(json.dumps(event, ensure_ascii=False) for event in testset) + "\n",
             encoding="utf-8",
         )
 
-    results = load_partial_results(
-        paths["results.partial.jsonl"], manifest["run_id"], fingerprint
-    )
+    results = load_partial_results(paths["results.partial.jsonl"], manifest["run_id"], fingerprint)
     completed = {(result["model"], result["event_id"]) for result in results}
-    print(
-        f"run_id={manifest['run_id']} completed={len(completed)}/{manifest['expected_call_count']}"
-    )
+    print(f"run_id={manifest['run_id']} completed={len(completed)}/{manifest['expected_call_count']}")
     for config in configs:
         print(f"\n  ── {config['model']} ──")
         extractor = make_extractor(config)
@@ -649,15 +601,9 @@ def run_benchmark(
             results.append(result)
             completed.add(result_key)
             if index % 10 == 0 or index == len(testset):
-                model_results = [
-                    item for item in results if item["model"] == config["model"]
-                ]
-                errors = sum(
-                    item["extraction_error"] is not None for item in model_results
-                )
-                print(
-                    f"    [{index}/{len(testset)}] ok={len(model_results) - errors} err={errors}"
-                )
+                model_results = [item for item in results if item["model"] == config["model"]]
+                errors = sum(item["extraction_error"] is not None for item in model_results)
+                print(f"    [{index}/{len(testset)}] ok={len(model_results) - errors} err={errors}")
 
     expected_keys = {(model, event["id"]) for model in MODELS for event in testset}
     actual_keys = {(result["model"], result["event_id"]) for result in results}
@@ -680,21 +626,14 @@ def run_benchmark(
     manifest["status"] = "completed"
     manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
     manifest["actual_call_count"] = len(results)
-    manifest["error_count"] = sum(
-        result["extraction_error"] is not None for result in results
-    )
+    manifest["error_count"] = sum(result["extraction_error"] is not None for result in results)
     write_json_atomic(paths["manifest.json"], manifest)
     return results, manifest
 
 
-def assert_validation_passed(
-    results: list[dict[str, Any]], manifest: dict[str, Any]
-) -> None:
+def assert_validation_passed(results: list[dict[str, Any]], manifest: dict[str, Any]) -> None:
     """确认 15 次预验证全部连通、无错误且延迟合理。"""
-    if (
-        len(results) != VALIDATION_EVENTS * len(MODELS)
-        or manifest["actual_call_count"] != 15
-    ):
+    if len(results) != VALIDATION_EVENTS * len(MODELS) or manifest["actual_call_count"] != 15:
         raise RuntimeError("预验证结果不完整")
     errors = [result for result in results if result["extraction_error"]]
     if errors:

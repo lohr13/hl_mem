@@ -6,9 +6,7 @@ import re
 
 from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS
 
-LOW_INFORMATION_TAGS = frozenset(
-    {"other", "fact", "state", "choice", "config", "plan", "preference"}
-)
+LOW_INFORMATION_TAGS = frozenset({"other", "fact", "state", "choice", "config", "plan", "preference"})
 
 CHINESE_TAG_MAP: tuple[tuple[str, str], ...] = (
     ("架构", "architecture"),
@@ -45,9 +43,7 @@ CHINESE_TAG_MAP: tuple[tuple[str, str], ...] = (
     ("解决", "resolution"),
 )
 
-TAG_INFO_WEIGHT = {
-    tag: 1.0 for tag in ALLOWED_TOPIC_TAGS if tag not in LOW_INFORMATION_TAGS
-}
+TAG_INFO_WEIGHT = {tag: 1.0 for tag in ALLOWED_TOPIC_TAGS if tag not in LOW_INFORMATION_TAGS}
 
 _SLOT_HINT_RULES: tuple[tuple[re.Pattern[str], str, tuple[str, ...]], ...] = (
     (re.compile(r"叫什么|姓名|名字|name", re.I), "identity.name", ("identity",)),

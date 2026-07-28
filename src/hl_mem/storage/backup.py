@@ -42,9 +42,7 @@ def backup_database(source_path: str | Path, backup_path: str | Path) -> Path:
     return manifest
 
 
-def restore_database(
-    backup_path: str | Path, manifest_path: str | Path, target_path: str | Path
-) -> None:
+def restore_database(backup_path: str | Path, manifest_path: str | Path, target_path: str | Path) -> None:
     """校验备份清单后，通过 SQLite 在线备份 API 恢复。"""
     backup, manifest, target = Path(backup_path), Path(manifest_path), Path(target_path)
     metadata = json.loads(manifest.read_text(encoding="utf-8"))

@@ -27,9 +27,7 @@ class HLMemProvider:
     ) -> None:
         settings = Settings.from_env()
         self.db_path = db_path
-        configured_daemon_url = daemon_url or os.getenv(
-            "HL_MEM_URL", "http://127.0.0.1:8200"
-        )
+        configured_daemon_url = daemon_url or os.getenv("HL_MEM_URL", "http://127.0.0.1:8200")
         if configured_daemon_url is None:
             raise ValueError("daemon URL must be configured")
         self.daemon_url = configured_daemon_url.rstrip("/")
@@ -40,9 +38,7 @@ class HLMemProvider:
             settings.hermes_circuit_failure_threshold,
             settings.hermes_circuit_open_seconds,
         )
-        self._prefetch_cache = PrefetchCache(
-            self._client, settings.hermes_prefetch_cache_ttl_seconds
-        )
+        self._prefetch_cache = PrefetchCache(self._client, settings.hermes_prefetch_cache_ttl_seconds)
         self._mapper = EpisodeMapper()
         self._session_id = ""
         self._hermes_home = ""
@@ -89,9 +85,7 @@ class HLMemProvider:
         """初始化健康状态，或保存 Hermes 提供的会话上下文。"""
         if session_id is not None:
             self._session_id = session_id
-            self._hermes_home = str(
-                kwargs.get("hermes_home") or os.getenv("HERMES_HOME", "")
-            )
+            self._hermes_home = str(kwargs.get("hermes_home") or os.getenv("HERMES_HOME", ""))
             return
         if not self._can_call():
             return
@@ -99,9 +93,7 @@ class HLMemProvider:
             self._client.get("/healthz")
             self._on_success()
         except Exception:
-            logger.warning(
-                "Hermes health check failed; provider remains degraded", exc_info=True
-            )
+            logger.warning("Hermes health check failed; provider remains degraded", exc_info=True)
             self._on_failure()
 
     def prefetch(
@@ -143,15 +135,10 @@ class HLMemProvider:
             self._sync_episode_sync(kwargs["messages"], active_session)
         return None
 
-    def _sync_episode_sync(
-        self, messages: list[dict[str, Any]], session_id: str
-    ) -> None:
+    def _sync_episode_sync(self, messages: list[dict[str, Any]], session_id: str) -> None:
         async def sync() -> None:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                enriched = [
-                    {**message, "session_id": message.get("session_id") or session_id}
-                    for message in messages
-                ]
+                enriched = [{**message, "session_id": message.get("session_id") or session_id} for message in messages]
                 await self._sync_episode(client, enriched)
 
         try:
@@ -188,20 +175,12 @@ class HLMemProvider:
         """返回 Hermes 会话已经缓存的预取文本。"""
         return self._prefetch_cache.get(session_id or self._session_id, query)
 
-    def on_delegation(
-        self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any
-    ) -> None:
+    def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any) -> None:
         """记录 Hermes 委派任务及其子代理结果。"""
         del kwargs
-        qualifiers = (
-            {"child_session_id": child_session_id} if child_session_id else None
-        )
-        self._sync_post(
-            "/v1/events", self._hermes_event_payload("user", task, qualifiers)
-        )
-        self._sync_post(
-            "/v1/events", self._hermes_event_payload("assistant", result, qualifiers)
-        )
+        qualifiers = {"child_session_id": child_session_id} if child_session_id else None
+        self._sync_post("/v1/events", self._hermes_event_payload("user", task, qualifiers))
+        self._sync_post("/v1/events", self._hermes_event_payload("assistant", result, qualifiers))
 
     def on_session_end(self, **kwargs: Any) -> None:
         """处理 Hermes 会话结束钩子。"""
@@ -216,15 +195,11 @@ class HLMemProvider:
             self._on_success()
             return True
         except Exception:
-            logger.warning(
-                "Hermes memory write failed; request degraded", exc_info=True
-            )
+            logger.warning("Hermes memory write failed; request degraded", exc_info=True)
             self._on_failure()
             return False
 
-    async def _sync_episode(
-        self, client: httpx.AsyncClient, messages: list[dict[str, Any]]
-    ) -> None:
+    async def _sync_episode(self, client: httpx.AsyncClient, messages: list[dict[str, Any]]) -> None:
         tool_calls = self._mapper.tool_calls(messages)
         if len(tool_calls) < 2:
             return
@@ -233,16 +208,10 @@ class HLMemProvider:
             for message in messages
             if message.get("role") == "tool"
         }
-        goal_message = next(
-            (message for message in messages if message.get("role") == "user"), {}
-        )
+        goal_message = next((message for message in messages if message.get("role") == "user"), {})
         goal = str(goal_message.get("content") or "Complete tool-assisted task")
         session_id = next(
-            (
-                message.get("session_id")
-                for message in messages
-                if message.get("session_id")
-            ),
+            (message.get("session_id") for message in messages if message.get("session_id")),
             None,
         )
         response = await self._client.async_post(
@@ -251,9 +220,7 @@ class HLMemProvider:
             {
                 "goal": goal,
                 "session_id": session_id,
-                "task_type": self._mapper.task_type(
-                    [call["action"] for call in tool_calls]
-                ),
+                "task_type": self._mapper.task_type([call["action"] for call in tool_calls]),
             },
         )
         episode_id = response.json()["id"]
@@ -274,8 +241,7 @@ class HLMemProvider:
             )
         goal_index = messages.index(goal_message) if goal_message else -1
         final_answer = any(
-            message.get("role") == "assistant" and message.get("content")
-            for message in messages[goal_index + 1 :]
+            message.get("role") == "assistant" and message.get("content") for message in messages[goal_index + 1 :]
         )
         status = "failed" if has_error and not final_answer else "success"
         reward = 0.2 if status == "failed" else (0.5 if has_error else 0.8)

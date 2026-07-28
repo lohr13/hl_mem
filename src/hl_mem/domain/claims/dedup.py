@@ -86,9 +86,7 @@ class Deduplicator:
         return None, "new"
 
     @classmethod
-    def _values_are_mutually_exclusive(
-        cls, existing: dict[str, Any], new: dict[str, Any]
-    ) -> bool:
+    def _values_are_mutually_exclusive(cls, existing: dict[str, Any], new: dict[str, Any]) -> bool:
         existing_slot = existing.get("canonical_slot")
         new_slot = new.get("canonical_slot")
         values_differ = cls._canonical_claim(existing) != cls._canonical_claim(new)
@@ -97,8 +95,7 @@ class Deduplicator:
             and isinstance(new_slot, str)
             and is_mutually_exclusive_attribute(existing_slot)
             and is_mutually_exclusive_attribute(new_slot)
-            and canonical_conflict_slot(existing_slot)
-            == canonical_conflict_slot(new_slot)
+            and canonical_conflict_slot(existing_slot) == canonical_conflict_slot(new_slot)
         )
         return values_differ and same_exclusive_slot
 
@@ -114,7 +111,4 @@ class Deduplicator:
 
     @staticmethod
     def _text(claim: dict[str, Any]) -> str:
-        return (
-            f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} "
-            f"{claim.get('value', '')}"
-        )
+        return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} " f"{claim.get('value', '')}"

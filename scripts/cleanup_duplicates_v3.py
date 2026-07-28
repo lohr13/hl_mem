@@ -33,19 +33,13 @@ def _normalize(text: str) -> str:
     return re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)
 
 
-def _is_duplicate(
-    left: dict[str, Any], right: dict[str, Any], similarity: float
-) -> bool:
+def _is_duplicate(left: dict[str, Any], right: dict[str, Any], similarity: float) -> bool:
     """按规范规定的优先级判断 duplicate/refinement。"""
     left_value = _normalize(_value_text(left["value_json"]))
     right_value = _normalize(_value_text(right["value_json"]))
     if left_value == right_value:
         return True
-    if (
-        left_value
-        and right_value
-        and (left_value in right_value or right_value in left_value)
-    ):
+    if left_value and right_value and (left_value in right_value or right_value in left_value):
         return True
     same_subject = left["subject_entity_id"] == right["subject_entity_id"]
     return similarity >= (0.95 if same_subject else 0.97)
@@ -54,9 +48,7 @@ def _is_duplicate(
 def _duplicate_groups(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     """按最长 keeper 贪心分组，且要求每个 loser 与 keeper 直接满足规则。"""
     groups: list[list[dict[str, Any]]] = []
-    ordered = sorted(
-        rows, key=lambda row: (-len(_value_text(row["value_json"])), str(row["id"]))
-    )
+    ordered = sorted(rows, key=lambda row: (-len(_value_text(row["value_json"])), str(row["id"])))
     for candidate in ordered:
         for group in groups:
             keeper = group[0]
@@ -64,9 +56,7 @@ def _duplicate_groups(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
                 continue
             same_subject = candidate["subject_entity_id"] == keeper["subject_entity_id"]
             threshold = 0.90 if same_subject else 0.94
-            similarity = cosine_similarity(
-                candidate["embedding_dense"], keeper["embedding_dense"]
-            )
+            similarity = cosine_similarity(candidate["embedding_dense"], keeper["embedding_dense"])
             if similarity >= threshold and _is_duplicate(candidate, keeper, similarity):
                 group.append(candidate)
                 break
@@ -87,9 +77,7 @@ def _backup_database(db_path: Path, backup_path: Path) -> None:
         source.backup(target)
 
 
-def cleanup_duplicates(
-    db_path: Path, backup_path: Path, *, dry_run: bool
-) -> dict[str, int]:
+def cleanup_duplicates(db_path: Path, backup_path: Path, *, dry_run: bool) -> dict[str, int]:
     """扫描并折叠重复 Claim；dry-run 仅报告，不写库或备份。"""
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
@@ -108,9 +96,7 @@ def cleanup_duplicates(
         losers = [row for row in group if row["id"] != keeper["id"]]
         print(f"keeper={keeper['id']} value={_value_text(keeper['value_json'])!r}")
         for loser in losers:
-            print(
-                f"  supersede={loser['id']} value={_value_text(loser['value_json'])!r}"
-            )
+            print(f"  supersede={loser['id']} value={_value_text(loser['value_json'])!r}")
 
     if dry_run:
         connection.close()
@@ -150,22 +136,17 @@ def cleanup_duplicates(
                     or current["status"] != "active"
                     or any(current[field] != snapshot[field] for field in comparable)
                 ):
-                    raise sqlite3.IntegrityError(
-                        f"claim changed during cleanup: {snapshot['id']}"
-                    )
+                    raise sqlite3.IntegrityError(f"claim changed during cleanup: {snapshot['id']}")
             keeper = group[0]
             for loser in group:
                 if loser["id"] == keeper["id"]:
                     continue
                 cursor = connection.execute(
-                    "UPDATE claims SET status=?,supersedes_id=?,superseded_by_id=? "
-                    "WHERE id=? AND status=?",
+                    "UPDATE claims SET status=?,supersedes_id=?,superseded_by_id=? " "WHERE id=? AND status=?",
                     ("superseded", keeper["id"], keeper["id"], loser["id"], "active"),
                 )
                 if not cursor.rowcount:
-                    raise sqlite3.IntegrityError(
-                        f"claim changed during cleanup: {loser['id']}"
-                    )
+                    raise sqlite3.IntegrityError(f"claim changed during cleanup: {loser['id']}")
                 connection.execute(
                     "INSERT OR IGNORE INTO evidence_links("
                     "id,derived_type,derived_id,evidence_type,evidence_id,relation,weight"
@@ -190,15 +171,11 @@ def cleanup_duplicates(
 def main() -> None:
     """解析 CLI 参数并执行重复清理。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--dry-run", action="store_true", help="仅打印候选，不修改数据库"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="仅打印候选，不修改数据库")
     parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
     parser.add_argument("--backup-path", type=Path)
     args = parser.parse_args()
-    backup_path = args.backup_path or args.db_path.with_name(
-        f"{args.db_path.name}.bak_cleanup_v3"
-    )
+    backup_path = args.backup_path or args.db_path.with_name(f"{args.db_path.name}.bak_cleanup_v3")
     cleanup_duplicates(args.db_path, backup_path, dry_run=args.dry_run)
 
 

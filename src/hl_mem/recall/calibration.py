@@ -19,8 +19,7 @@ class CalibrationModel:
     def predict(self, features: dict[str, float]) -> float:
         """返回经过 sigmoid 映射的相关概率。"""
         value = self.intercept + sum(
-            weight * float(features.get(name, 0.0))
-            for name, weight in zip(self.feature_names, self.weights)
+            weight * float(features.get(name, 0.0)) for name, weight in zip(self.feature_names, self.weights)
         )
         value = max(-35.0, min(35.0, value))
         return 1.0 / (1.0 + math.exp(-value))
@@ -65,10 +64,7 @@ def fit_logistic(
         weight_gradients = [0.0] * len(names)
         intercept_gradient = 0.0
         for features, label in rows:
-            score = intercept + sum(
-                weights[index] * features.get(name, 0.0)
-                for index, name in enumerate(names)
-            )
+            score = intercept + sum(weights[index] * features.get(name, 0.0) for index, name in enumerate(names))
             probability = 1.0 / (1.0 + math.exp(-max(-35.0, min(35.0, score))))
             error = probability - label
             intercept_gradient += error
@@ -76,8 +72,5 @@ def fit_logistic(
                 weight_gradients[index] += error * features.get(name, 0.0)
         scale = learning_rate / len(rows)
         intercept -= scale * intercept_gradient
-        weights = [
-            weight - scale * gradient
-            for weight, gradient in zip(weights, weight_gradients)
-        ]
+        weights = [weight - scale * gradient for weight, gradient in zip(weights, weight_gradients)]
     return CalibrationModel(names, tuple(weights), intercept)

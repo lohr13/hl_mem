@@ -343,30 +343,18 @@ GOLD_ANNOTATIONS: dict[str, dict[str, Any]] = {
 def parse_args() -> argparse.Namespace:
     """解析输入、输出路径和模板模式。"""
     parser = argparse.ArgumentParser(description="生成 20 条 extraction gold 标注")
-    parser.add_argument(
-        "--input", type=Path, default=SCRIPT_DIR / "extraction_testset.jsonl"
-    )
-    parser.add_argument(
-        "--output", type=Path, default=SCRIPT_DIR / "gold_dataset.jsonl"
-    )
-    parser.add_argument(
-        "--template", action="store_true", help="只生成 gold_claims 为空的标注模板"
-    )
+    parser.add_argument("--input", type=Path, default=SCRIPT_DIR / "extraction_testset.jsonl")
+    parser.add_argument("--output", type=Path, default=SCRIPT_DIR / "gold_dataset.jsonl")
+    parser.add_argument("--template", action="store_true", help="只生成 gold_claims 为空的标注模板")
     return parser.parse_args()
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     """读取 JSONL 文件并忽略空行。"""
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def build_gold_dataset(
-    events: list[dict[str, Any]], *, template: bool
-) -> list[dict[str, Any]]:
+def build_gold_dataset(events: list[dict[str, Any]], *, template: bool) -> list[dict[str, Any]]:
     """按固定 ID 顺序构造可复现的 gold 数据集。"""
     by_id = {event["id"]: event for event in events}
     missing = [event_id for event_id in SELECTED_EVENT_IDS if event_id not in by_id]
@@ -376,11 +364,7 @@ def build_gold_dataset(
     dataset: list[dict[str, Any]] = []
     for event_id in SELECTED_EVENT_IDS:
         event = by_id[event_id]
-        annotation = (
-            {"should_memorize": False, "gold_claims": []}
-            if template
-            else GOLD_ANNOTATIONS[event_id]
-        )
+        annotation = {"should_memorize": False, "gold_claims": []} if template else GOLD_ANNOTATIONS[event_id]
         dataset.append(
             {
                 "event_id": event_id,

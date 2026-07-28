@@ -18,13 +18,10 @@ def expire_claims(
 ) -> dict[str, int]:
     """过期 expires_at 已到达且仍处于 active 的 claim。"""
     reference = normalize_utc_iso(now or datetime.now(timezone.utc).isoformat(), "now")
-    candidate_cutoff = (
-        datetime.fromisoformat(reference).astimezone(timezone.utc) + timedelta(days=180)
-    ).isoformat(timespec="seconds")
-    mode = (
-        feedback_lifecycle_mode
-        or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
+    candidate_cutoff = (datetime.fromisoformat(reference).astimezone(timezone.utc) + timedelta(days=180)).isoformat(
+        timespec="seconds"
     )
+    mode = feedback_lifecycle_mode or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
     short_ttl_seconds = (
         slot_short_ttl_seconds
         if slot_short_ttl_seconds is not None
@@ -51,14 +48,8 @@ def expire_claims(
                         datetime.fromisoformat(row["valid_to"].replace("Z", "+00:00")),
                     )
                 if row["canonical_slot"] == "state.service_health":
-                    anchor = datetime.fromisoformat(
-                        (row["observed_at"] or row["recorded_from"]).replace(
-                            "Z", "+00:00"
-                        )
-                    )
-                    effective = min(
-                        effective, anchor + timedelta(seconds=short_ttl_seconds)
-                    )
+                    anchor = datetime.fromisoformat((row["observed_at"] or row["recorded_from"]).replace("Z", "+00:00"))
+                    effective = min(effective, anchor + timedelta(seconds=short_ttl_seconds))
             if effective <= datetime.fromisoformat(reference):
                 assert_transition(row["status"], "expired")
                 expired_claims.append(

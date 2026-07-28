@@ -33,12 +33,7 @@ def test_fact_hash_exact_duplicate_merges_evidence(tmp_path) -> None:
     ).claim_id
     assert second_id == first_id
     assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
-    assert (
-        connection.execute(
-            "SELECT count(*) FROM evidence_links WHERE derived_id=?", (first_id,)
-        ).fetchone()[0]
-        == 2
-    )
+    assert connection.execute("SELECT count(*) FROM evidence_links WHERE derived_id=?", (first_id,)).fetchone()[0] == 2
     database.close()
 
 
@@ -76,8 +71,7 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
     ).claim_id
 
     row = connection.execute(
-        "SELECT canonical_attribute,conflict_key_version,conflict_key,legacy_conflict_key "
-        "FROM claims WHERE id=?",
+        "SELECT canonical_attribute,conflict_key_version,conflict_key,legacy_conflict_key " "FROM claims WHERE id=?",
         (claim_id,),
     ).fetchone()
     assert row["canonical_attribute"] == "choice.database"

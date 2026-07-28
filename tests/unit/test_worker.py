@@ -68,7 +68,4 @@ def test_lease_prevents_second_worker_from_taking_running_job(tmp_path) -> None:
     queue(first_db.open())
     now = datetime.now(timezone.utc).isoformat()
     assert JobRepository(first_db.open()).lease_job("2999-01-01T00:00:00+00:00", now)
-    assert (
-        JobRepository(second_db.open()).lease_job("2999-01-01T00:00:00+00:00", now)
-        is None
-    )
+    assert JobRepository(second_db.open()).lease_job("2999-01-01T00:00:00+00:00", now) is None

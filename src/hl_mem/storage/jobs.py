@@ -49,11 +49,7 @@ class JobRepository:
             self.connection.commit()
             if cursor.rowcount != 1:
                 return None
-            result = row_to_dict(
-                self.connection.execute(
-                    "SELECT * FROM jobs WHERE id=?", (row["id"],)
-                ).fetchone()
-            )
+            result = row_to_dict(self.connection.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
             if result:
                 result["lease_token"] = lease_token
                 result["payload"] = decode_json(result["payload_json"])
@@ -66,9 +62,7 @@ class JobRepository:
         """将当前租约任务标记为成功。"""
         return self._finish(job_id, "succeeded", updated_at, None, lease_token)
 
-    def fail_job(
-        self, job_id: str, error: str, updated_at: str, lease_token: str
-    ) -> bool:
+    def fail_job(self, job_id: str, error: str, updated_at: str, lease_token: str) -> bool:
         """记录任务失败，并按尝试次数决定重试或进入 dead。"""
         self.connection.execute("BEGIN IMMEDIATE")
         try:
@@ -85,9 +79,7 @@ class JobRepository:
             self.connection.rollback()
             raise
 
-    def force_finish_job(
-        self, job_id: str, status: str, updated_at: str, error: str | None = None
-    ) -> bool:
+    def force_finish_job(self, job_id: str, status: str, updated_at: str, error: str | None = None) -> bool:
         """管理员强制结束任务。"""
         cursor = self.connection.execute(
             "UPDATE jobs SET status=?,updated_at=?,last_error=?,leased_until=NULL,lease_token=NULL WHERE id=?",
@@ -99,9 +91,7 @@ class JobRepository:
     def counts(self) -> dict[str, int]:
         """按状态统计任务。"""
         counts = {key: 0 for key in ("pending", "running", "failed", "dead")}
-        rows = self.connection.execute(
-            "SELECT status,count(*) AS count FROM jobs GROUP BY status"
-        ).fetchall()
+        rows = self.connection.execute("SELECT status,count(*) AS count FROM jobs GROUP BY status").fetchall()
         for row in rows:
             if row["status"] in counts:
                 counts[row["status"]] = row["count"]
@@ -163,9 +153,7 @@ class JobRepository:
 
     def retry_failed(self) -> int:
         """将失败任务重置为待处理状态，由调用方提交事务。"""
-        cursor = self.connection.execute(
-            "UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'"
-        )
+        cursor = self.connection.execute("UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'")
         return cursor.rowcount
 
     def _finish(

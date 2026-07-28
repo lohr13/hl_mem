@@ -57,9 +57,7 @@ class ExtractionPreFilterTests(unittest.TestCase):
     def test_transient_tool_failure_is_skipped(self) -> None:
         decision = self.pre_filter.evaluate(
             {"event_type": "message", "actor_type": "tool"},
-            {
-                "text": '{"output":"[Command timed out after 10s]","exit_code":124,"error":null}'
-            },
+            {"text": '{"output":"[Command timed out after 10s]","exit_code":124,"error":null}'},
         )
         self.assertFalse(decision.should_extract)
         self.assertEqual(decision.reason, "transient_tool_result")
@@ -83,9 +81,7 @@ class ExtractionPreFilterTests(unittest.TestCase):
     def test_short_tool_error_envelope_is_skipped(self) -> None:
         decision = self.pre_filter.evaluate(
             {"event_type": "message", "actor_type": "tool"},
-            {
-                "text": '{"success":false,"error":"content is required for replace action"}'
-            },
+            {"text": '{"success":false,"error":"content is required for replace action"}'},
         )
         self.assertFalse(decision.should_extract)
         self.assertEqual(decision.reason, "transient_tool_error")
@@ -165,9 +161,7 @@ class ExtractionPreFilterTests(unittest.TestCase):
     def test_terminal_wrapper_with_output_summary_is_allowed(self) -> None:
         decision = self.pre_filter.evaluate(
             {"event_type": "message", "actor_type": "tool"},
-            {
-                "text": "[terminal] ran `pwd && codex --version` -> REDACTED_PATH; codex-cli 0.41.0"
-            },
+            {"text": "[terminal] ran `pwd && codex --version` -> REDACTED_PATH; codex-cli 0.41.0"},
         )
         self.assertTrue(decision.should_extract)
         self.assertEqual(decision.reason, "eligible")
@@ -185,9 +179,7 @@ class ExtractionPreFilterSettingsTests(unittest.TestCase):
             self.assertTrue(Settings.from_env().extract_pre_filter)
 
     def test_invalid_value_is_rejected(self) -> None:
-        with patch.dict(
-            "os.environ", {"HL_MEM_EXTRACT_PRE_FILTER": "sometimes"}, clear=True
-        ):
+        with patch.dict("os.environ", {"HL_MEM_EXTRACT_PRE_FILTER": "sometimes"}, clear=True):
             with self.assertRaisesRegex(Exception, "HL_MEM_EXTRACT_PRE_FILTER"):
                 Settings.from_env()
 
@@ -288,12 +280,7 @@ class WorkerPreFilterIntegrationTests(unittest.TestCase):
             worker.database.close()
         self.assertEqual(result, {"claims": 0, "pre_filter": "tool_control_frame"})
         self.assertEqual(extractor.calls, 0)
-        self.assertTrue(
-            any(
-                row[:3] == ("extraction_pre_filter", "evaluated", "skip")
-                for row in audit.rows
-            )
-        )
+        self.assertTrue(any(row[:3] == ("extraction_pre_filter", "evaluated", "skip") for row in audit.rows))
 
     def test_pre_filter_error_falls_back_to_extraction(self) -> None:
         with TemporaryDirectory() as directory:
@@ -306,12 +293,7 @@ class WorkerPreFilterIntegrationTests(unittest.TestCase):
             worker.database.close()
         self.assertEqual(result["claims"], 0)
         self.assertEqual(extractor.calls, 1)
-        self.assertTrue(
-            any(
-                row[:3] == ("extraction_pre_filter", "evaluated", "error_fallback")
-                for row in audit.rows
-            )
-        )
+        self.assertTrue(any(row[:3] == ("extraction_pre_filter", "evaluated", "error_fallback") for row in audit.rows))
 
     def test_enabled_worker_uses_persistent_audit_by_default(self) -> None:
         with TemporaryDirectory() as directory:

@@ -35,12 +35,8 @@ def test_supersede_with_inline_preserves_bitemporal_values_and_is_idempotent(
     _claim(connection, "new", value="浅色模式", valid_from="2026-02-01T00:00:00Z")
     repo = ClaimRepository(connection)
 
-    first = repo.supersede_with_inline(
-        "old", "new", "浅色模式", "2026-02-01T00:00:00Z", "2026-02-02T00:00:00Z"
-    )
-    second = repo.supersede_with_inline(
-        "old", "new", "浅色模式", "2026-02-01T00:00:00Z", "2026-02-02T00:00:00Z"
-    )
+    first = repo.supersede_with_inline("old", "new", "浅色模式", "2026-02-01T00:00:00Z", "2026-02-02T00:00:00Z")
+    second = repo.supersede_with_inline("old", "new", "浅色模式", "2026-02-01T00:00:00Z", "2026-02-02T00:00:00Z")
 
     old = repo.get_claim("old")
     assert first.applied is True and second.applied is False
@@ -81,15 +77,9 @@ def test_visibility_uses_half_open_valid_and_recorded_intervals() -> None:
         "recorded_from": "2026-01-10T00:00:00Z",
         "recorded_to": "2026-03-01T00:00:00Z",
     }
-    assert claim_is_visible(
-        claim, "2026-01-15T00:00:00Z", "2026-02-01T00:00:00Z", RecallIntent.HISTORICAL
-    )
-    assert not claim_is_visible(
-        claim, "2026-02-01T00:00:00Z", None, RecallIntent.HISTORICAL
-    )
-    assert not claim_is_visible(
-        claim, "2026-01-05T00:00:00Z", "2026-01-05T00:00:00Z", RecallIntent.HISTORICAL
-    )
+    assert claim_is_visible(claim, "2026-01-15T00:00:00Z", "2026-02-01T00:00:00Z", RecallIntent.HISTORICAL)
+    assert not claim_is_visible(claim, "2026-02-01T00:00:00Z", None, RecallIntent.HISTORICAL)
+    assert not claim_is_visible(claim, "2026-01-05T00:00:00Z", "2026-01-05T00:00:00Z", RecallIntent.HISTORICAL)
     assert parse_utc("2026-01-01T08:00:00+08:00") == parse_utc("2026-01-01T00:00:00Z")
     with pytest.raises(ValueError, match="invalid ISO-8601"):
         parse_utc("bad")
@@ -107,6 +97,4 @@ def test_ttl_closes_valid_interval_but_remains_historically_visible(tmp_path) ->
     assert expire_claims(connection, "2026-01-21T00:00:00Z") == {"expired": 1}
     claim = ClaimRepository(connection).get_claim("old")
     assert claim["valid_to"] == "2026-01-20T00:00:00+00:00"
-    assert claim_is_visible(
-        claim, "2026-01-19T00:00:00Z", None, RecallIntent.HISTORICAL
-    )
+    assert claim_is_visible(claim, "2026-01-19T00:00:00Z", None, RecallIntent.HISTORICAL)

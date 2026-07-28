@@ -57,9 +57,7 @@ def test_audit_failure_is_logged_and_counted(
     monkeypatch.setattr(recall_module, "current_audit", lambda: BrokenAudit())
     before = recall_side_effect_health()["audit_emit"]["failures"]
     with caplog.at_level(logging.ERROR):
-        RecallService._emit_failure(
-            "feedback_record", "feedback_record_failed", RuntimeError("write"), 1
-        )
+        RecallService._emit_failure("feedback_record", "feedback_record_failed", RuntimeError("write"), 1)
 
     assert recall_side_effect_health()["audit_emit"]["failures"] == before + 1
     assert "recall failure audit emission failed" in caplog.text

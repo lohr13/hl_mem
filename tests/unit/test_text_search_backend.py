@@ -34,9 +34,7 @@ class StubTextSearchBackend:
 
 def _search(backend: TextSearchBackend) -> list[dict]:
     """通过协议类型调用文本检索后端。"""
-    return backend.search(
-        "中文查询", 5, "2026-07-24T00:00:00+00:00", None, None, "default"
-    )
+    return backend.search("中文查询", 5, "2026-07-24T00:00:00+00:00", None, None, "default")
 
 
 def test_text_search_backend_accepts_structural_implementation() -> None:

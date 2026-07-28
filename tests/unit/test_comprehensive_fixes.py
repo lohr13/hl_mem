@@ -55,9 +55,7 @@ def test_concurrent_database_instances_apply_migrations_once(tmp_path) -> None:
         thread.join()
     assert errors == []
     with sqlite3.connect(path) as connection:
-        versions = connection.execute(
-            "SELECT version,count(*) FROM schema_migrations GROUP BY version"
-        ).fetchall()
+        versions = connection.execute("SELECT version,count(*) FROM schema_migrations GROUP BY version").fetchall()
     assert versions
     assert all(count == 1 for _, count in versions)
 
@@ -93,9 +91,7 @@ def test_repository_commit_false_allows_atomic_event_and_job_rollback(tmp_path) 
     assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
 
 
-def test_event_api_rolls_back_event_when_job_enqueue_fails(
-    tmp_path, monkeypatch
-) -> None:
+def test_event_api_rolls_back_event_when_job_enqueue_fails(tmp_path, monkeypatch) -> None:
     """任务入队异常时 API 不得留下孤立 Event。"""
     monkeypatch.setenv("HL_MEM_ENV", "test")
     app = server.create_app(tmp_path / "event-rollback.db")
@@ -148,9 +144,7 @@ def test_worker_extractor_fake_allowed_in_dev() -> None:
     assert isinstance(worker._make_extractor(), FakeExtractor)
 
 
-def test_health_reports_fake_components_in_test_environment(
-    tmp_path, monkeypatch
-) -> None:
+def test_health_reports_fake_components_in_test_environment(tmp_path, monkeypatch) -> None:
     """健康检查暴露当前模型组件是否为降级实现。"""
     monkeypatch.setenv("HL_MEM_ENV", "test")
     monkeypatch.setenv("HL_MEM_EMBEDDER", "fake")
@@ -161,9 +155,7 @@ def test_health_reports_fake_components_in_test_environment(
     assert body["reranker"] == "fake"
 
 
-def test_recall_feedback_failure_does_not_change_main_result(
-    tmp_path, monkeypatch
-) -> None:
+def test_recall_feedback_failure_does_not_change_main_result(tmp_path, monkeypatch) -> None:
     """召回曝光批量写入失败时仍返回主召回结果。"""
     monkeypatch.setenv("HL_MEM_ENV", "test")
     monkeypatch.setattr(
@@ -192,31 +184,14 @@ def test_episode_state_machine_reward_and_terminal_trace_guards(tmp_path) -> Non
         backprop_episode_reward(service.connection, "e1", -0.1)
 
 
-def test_episode_api_returns_conflict_for_illegal_transition(
-    tmp_path, monkeypatch
-) -> None:
+def test_episode_api_returns_conflict_for_illegal_transition(tmp_path, monkeypatch) -> None:
     """非法状态转换由 API 映射为 HTTP 409。"""
     monkeypatch.setenv("HL_MEM_ENV", "test")
     with TestClient(server.create_app(tmp_path / "episode-api.db")) as client:
         episode_id = client.post("/v1/episodes", json={"goal": "修复"}).json()["id"]
-        assert (
-            client.patch(
-                f"/v1/episodes/{episode_id}", json={"status": "success"}
-            ).status_code
-            == 200
-        )
-        assert (
-            client.patch(
-                f"/v1/episodes/{episode_id}", json={"status": "failed"}
-            ).status_code
-            == 409
-        )
-        assert (
-            client.post(
-                f"/v1/episodes/{episode_id}/traces", json={"action": "late"}
-            ).status_code
-            == 409
-        )
+        assert client.patch(f"/v1/episodes/{episode_id}", json={"status": "success"}).status_code == 200
+        assert client.patch(f"/v1/episodes/{episode_id}", json={"status": "failed"}).status_code == 409
+        assert client.post(f"/v1/episodes/{episode_id}/traces", json={"action": "late"}).status_code == 409
 
 
 def test_policy_operations_reject_missing_and_retired_policy(tmp_path) -> None:
@@ -227,9 +202,7 @@ def test_policy_operations_reject_missing_and_retired_policy(tmp_path) -> None:
         service.add_support("missing", "e1")
     with pytest.raises(ValueError, match="policy not found"):
         service.record_policy_outcome("missing", True, "2026-01-01T00:00:00Z")
-    policy_id = service.induce_policy(
-        "修复", {"steps": ["测试"]}, ["e1"], "2026-01-01T00:00:00Z"
-    )
+    policy_id = service.induce_policy("修复", {"steps": ["测试"]}, ["e1"], "2026-01-01T00:00:00Z")
     service.connection.execute(
         "UPDATE policies SET status='retired',procedure_status='retired' WHERE id=?",
         (policy_id,),
@@ -270,9 +243,7 @@ def test_embedding_retries_retryable_status_with_configured_timeout(
 
     monkeypatch.setattr(httpx, "post", post)
     monkeypatch.setattr("hl_mem.http_utils.time.sleep", lambda _: None)
-    assert (
-        len(Embedder("key", "https://example.test", "model", 2).embed_one("文本")) == 8
-    )
+    assert len(Embedder("key", "https://example.test", "model", 2).embed_one("文本")) == 8
     assert len(attempts) == 2
     assert attempts[0].connect == 5.0
     assert attempts[0].read == 30.0
@@ -286,19 +257,14 @@ def test_budget_uses_sqlite_atomic_updates(tmp_path) -> None:
     second.record_usage(4)
     assert first.get_stats()["used_tokens"] == 7
     with sqlite3.connect(path) as connection:
-        assert (
-            connection.execute("SELECT used_tokens FROM token_budget").fetchone()[0]
-            == 7
-        )
+        assert connection.execute("SELECT used_tokens FROM token_budget").fetchone()[0] == 7
 
 
 def test_experience_schema_has_status_checks(tmp_path) -> None:
     """新数据库 schema 在存储层拒绝非法 Episode/Policy 状态。"""
     connection = Database(tmp_path / "checks.db").open()
     with pytest.raises(sqlite3.IntegrityError):
-        connection.execute(
-            "INSERT INTO episodes(id,goal,status,started_at) VALUES ('bad','x','unknown','2026-01-01')"
-        )
+        connection.execute("INSERT INTO episodes(id,goal,status,started_at) VALUES ('bad','x','unknown','2026-01-01')")
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute(
             "INSERT INTO policies(id,trigger,procedure,status,created_at,updated_at) "

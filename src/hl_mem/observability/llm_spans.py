@@ -78,9 +78,7 @@ class LLMSpanRecorder:
         return span_id
 
 
-def llm_span_stats(
-    connection: sqlite3.Connection, since: str | None = None
-) -> dict[str, Any]:
+def llm_span_stats(connection: sqlite3.Connection, since: str | None = None) -> dict[str, Any]:
     """聚合 LLM 调用统计。"""
     where = "WHERE started_at >= ?" if since else "WHERE 1=1"
     params: tuple[str, ...] = (since,) if since else ()

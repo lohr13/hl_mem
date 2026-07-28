@@ -128,9 +128,7 @@ class SearchTracer:
         self.trace = trace
         self.max_candidates = max(1, max_candidates)
 
-    def _candidate(
-        self, claim_id: str, *, preserve: bool = False
-    ) -> CandidateTrace | None:
+    def _candidate(self, claim_id: str, *, preserve: bool = False) -> CandidateTrace | None:
         candidate = self.trace.candidates.get(claim_id)
         if candidate is not None:
             return candidate
@@ -173,9 +171,7 @@ class SearchTracer:
         if candidate is not None and reason not in candidate.filter_reasons:
             candidate.filter_reasons.append(reason)
 
-    def record_pre_rank(
-        self, claims: list[dict[str, Any]], scores: dict[str, float]
-    ) -> None:
+    def record_pre_rank(self, claims: list[dict[str, Any]], scores: dict[str, float]) -> None:
         """记录融合及多因子先验排序。"""
         for rank, claim in enumerate(claims, 1):
             claim_id = str(claim["id"])

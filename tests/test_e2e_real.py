@@ -34,9 +34,7 @@ def _load_env(path: Path) -> None:
 
 
 @pytest.mark.real_api
-def test_real_llm_embedding_end_to_end(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """使用临时目录验证真实提取、向量化、写入与全文召回链路。"""
     project_root = Path(__file__).resolve().parent.parent
     _load_env(project_root / ".env")
@@ -58,9 +56,7 @@ def test_real_llm_embedding_end_to_end(
     if missing:
         pytest.skip(f"缺少真实 API 配置: {', '.join(missing)}")
 
-    extractor = LLMExtractor(
-        os.environ["LLM_API_KEY"], os.environ["LLM_BASE_URL"], os.environ["LLM_MODEL"]
-    )
+    extractor = LLMExtractor(os.environ["LLM_API_KEY"], os.environ["LLM_BASE_URL"], os.environ["LLM_MODEL"])
     embedder = Embedder(
         os.environ["EMBEDDING_API_KEY"],
         os.environ["EMBEDDING_BASE_URL"],
@@ -109,9 +105,7 @@ def test_real_llm_embedding_end_to_end(
         for index, event_data in enumerate(events):
             now = datetime.now(timezone.utc).isoformat()
             event_id = uuid.uuid4().hex
-            content_json = json.dumps(
-                event_data["content"], ensure_ascii=False, sort_keys=True
-            )
+            content_json = json.dumps(event_data["content"], ensure_ascii=False, sort_keys=True)
             created = event_repo.insert_event(
                 {
                     "id": event_id,
@@ -161,11 +155,6 @@ def test_real_llm_embedding_end_to_end(
         claim_repo = ClaimRepository(connection)
         assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] > 0
         assert claim_repo.search_claims_fts("PostgreSQL", 5)
-        assert (
-            connection.execute(
-                "SELECT count(*) FROM jobs WHERE status='pending'"
-            ).fetchone()[0]
-            == 0
-        )
+        assert connection.execute("SELECT count(*) FROM jobs WHERE status='pending'").fetchone()[0] == 0
     finally:
         verification_database.close()

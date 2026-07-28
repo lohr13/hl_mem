@@ -51,9 +51,7 @@ class ProviderMetrics:
         def percentile(value: float) -> float:
             if not latencies:
                 return 0.0
-            return latencies[
-                min(len(latencies) - 1, max(0, math.ceil(value * len(latencies)) - 1))
-            ]
+            return latencies[min(len(latencies) - 1, max(0, math.ceil(value * len(latencies)) - 1))]
 
         return {
             "calls": len(calls),

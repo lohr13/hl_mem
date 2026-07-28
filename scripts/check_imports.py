@@ -10,12 +10,8 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 FORBIDDEN_IMPORTS: dict[str, frozenset[str]] = {
-    "core": frozenset(
-        {"ingest", "llm", "storage", "api", "workers", "recall", "application"}
-    ),
-    "domain": frozenset(
-        {"storage", "api", "workers", "recall", "ingest", "llm", "application"}
-    ),
+    "core": frozenset({"ingest", "llm", "storage", "api", "workers", "recall", "application"}),
+    "domain": frozenset({"storage", "api", "workers", "recall", "ingest", "llm", "application"}),
     "storage": frozenset({"api", "workers", "application"}),
     "application": frozenset({"api"}),
 }
@@ -71,11 +67,7 @@ def find_violations(source_root: Path) -> list[ImportViolation]:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for line, imported_module in imported_modules(tree, module):
                 parts = imported_module.split(".")
-                if (
-                    len(parts) < 2
-                    or parts[0] != "hl_mem"
-                    or parts[1] not in forbidden_layers
-                ):
+                if len(parts) < 2 or parts[0] != "hl_mem" or parts[1] not in forbidden_layers:
                     continue
                 violations.append(
                     ImportViolation(

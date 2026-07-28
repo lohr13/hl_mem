@@ -50,9 +50,7 @@ def test_compare_index_text_modes_ranks_each_target() -> None:
 def test_open_readonly_database_rejects_writes(tmp_path: Path) -> None:
     """诊断连接必须由 SQLite 强制只读。"""
     database_path = tmp_path / "readonly.db"
-    sqlite3.connect(database_path).execute(
-        "CREATE TABLE sample(id INTEGER)"
-    ).connection.close()
+    sqlite3.connect(database_path).execute("CREATE TABLE sample(id INTEGER)").connection.close()
 
     connection = open_readonly_database(database_path)
 

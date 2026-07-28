@@ -69,9 +69,7 @@ def backfill_expires_at(
             )
             changed = expires_at != claim.get("expires_at")
             updated += int(changed)
-            expires_at_dt = _as_utc(
-                datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
-            )
+            expires_at_dt = _as_utc(datetime.fromisoformat(str(expires_at).replace("Z", "+00:00")))
             should_expire = expires_at_dt <= expiration_cutoff
             if dry_run:
                 expired += int(should_expire)
@@ -116,19 +114,11 @@ def backfill_expires_at(
 def main() -> None:
     """从命令行执行 expires_at 回填，默认仅预览。"""
     settings = Settings.from_env()
-    parser = argparse.ArgumentParser(
-        prog="python -m hl_mem.workers.backfill_expires_at"
-    )
+    parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.backfill_expires_at")
     parser.add_argument("--db", default=settings.database_path)
-    parser.add_argument(
-        "--apply", action="store_true", help="实际写入；省略时为 dry-run"
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=settings.ttl_backfill_batch_size
-    )
-    parser.add_argument(
-        "--grace-hours", type=int, default=settings.ttl_backfill_grace_hours
-    )
+    parser.add_argument("--apply", action="store_true", help="实际写入；省略时为 dry-run")
+    parser.add_argument("--batch-size", type=int, default=settings.ttl_backfill_batch_size)
+    parser.add_argument("--grace-hours", type=int, default=settings.ttl_backfill_grace_hours)
     args = parser.parse_args()
     database = Database(args.db)
     try:

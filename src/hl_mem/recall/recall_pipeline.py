@@ -21,24 +21,18 @@ __all__ = [
 ]
 
 
-def matching_policies(
-    policies: list[dict[str, Any]], query: str
-) -> list[dict[str, Any]]:
+def matching_policies(policies: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
     """用 trigger 与 query 的通用关键词或短语重叠筛选策略。"""
     normalized_query = query.casefold().strip()
     if not normalized_query:
         return []
-    query_tokens = {
-        token for token in re.findall(r"\w+", normalized_query) if len(token) >= 2
-    }
+    query_tokens = {token for token in re.findall(r"\w+", normalized_query) if len(token) >= 2}
     matched: list[dict[str, Any]] = []
     for policy in policies:
         trigger = str(policy.get("trigger") or "").casefold().strip()
         if not trigger:
             continue
-        trigger_tokens = {
-            token for token in re.findall(r"\w+", trigger) if len(token) >= 2
-        }
+        trigger_tokens = {token for token in re.findall(r"\w+", trigger) if len(token) >= 2}
         if (
             normalized_query in trigger
             or trigger in normalized_query
@@ -58,6 +52,4 @@ def stale_observations(connection: Any, claim_id: str, commit: bool = True) -> N
         (claim_id,),
     ).fetchall()
     for row in rows:
-        DerivationRepository(connection).update_status(
-            row["derived_id"], "stale", commit=commit
-        )
+        DerivationRepository(connection).update_status(row["derived_id"], "stale", commit=commit)

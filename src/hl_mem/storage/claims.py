@@ -44,17 +44,12 @@ class ClaimRepository:
         if "value" in stored:
             stored["value_json"] = encode_json(stored.pop("value"), sort_keys=True)
         if "qualifiers" in stored:
-            stored["qualifiers_json"] = encode_json(
-                stored.pop("qualifiers"), sort_keys=True
-            )
+            stored["qualifiers_json"] = encode_json(stored.pop("qualifiers"), sort_keys=True)
         if "index_text" not in stored:
             index_claim = dict(claim)
             if "value" not in index_claim and stored.get("value_json") is not None:
                 index_claim["value"] = decode_json(stored["value_json"])
-            if (
-                "topic_tags" not in index_claim
-                and stored.get("topic_tags_json") is not None
-            ):
+            if "topic_tags" not in index_claim and stored.get("topic_tags_json") is not None:
                 index_claim["topic_tags"] = decode_json(stored["topic_tags_json"])
             stored["index_text"] = build_index_text(index_claim)
         return insert_row(self.connection, "claims", stored, commit)
@@ -62,11 +57,7 @@ class ClaimRepository:
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:
         """按标识获取并解码 Claim，不存在时返回 None。"""
         return self._decode_claim(
-            row_to_dict(
-                self.connection.execute(
-                    "SELECT * FROM claims WHERE id=?", (claim_id,)
-                ).fetchone()
-            )
+            row_to_dict(self.connection.execute("SELECT * FROM claims WHERE id=?", (claim_id,)).fetchone())
         )
 
     def batch_get_claims(self, claim_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -94,20 +85,15 @@ class ClaimRepository:
             ClaimStatus(status)
         except ValueError as error:
             raise ValidationError(f"invalid claim status: {status}") from error
-        cursor = self.connection.execute(
-            "UPDATE claims SET status=? WHERE id=?", (status, claim_id)
-        )
+        cursor = self.connection.execute("UPDATE claims SET status=? WHERE id=?", (status, claim_id))
         if commit:
             self.connection.commit()
         return cursor.rowcount == 1
 
-    def find_active(
-        self, namespace: str, subject_entity_id: str | None
-    ) -> list[dict[str, Any]]:
+    def find_active(self, namespace: str, subject_entity_id: str | None) -> list[dict[str, Any]]:
         """返回命名空间内指定主体的活跃 Claim。"""
         rows = self.connection.execute(
-            "SELECT * FROM claims WHERE namespace_key=? AND subject_entity_id IS ? "
-            "AND status='active'",
+            "SELECT * FROM claims WHERE namespace_key=? AND subject_entity_id IS ? " "AND status='active'",
             (namespace, subject_entity_id),
         ).fetchall()
         return self._decode_rows(rows)
@@ -152,11 +138,7 @@ class ClaimRepository:
     def is_unchanged(self, original: dict[str, Any]) -> bool:
         """检查声明仍活跃且 Python 值未发生变化。"""
         current = self.get_claim(original["id"])
-        return bool(
-            current
-            and current["status"] == "active"
-            and current.get("value") == original.get("value")
-        )
+        return bool(current and current["status"] == "active" and current.get("value") == original.get("value"))
 
     def update_classification(
         self,
@@ -190,8 +172,7 @@ class ClaimRepository:
         return [
             claim
             for claim in self._decode_rows(rows)
-            if slot_qualifier_key(canonical_slot, claim.get("qualifiers"))
-            == qualifier_key
+            if slot_qualifier_key(canonical_slot, claim.get("qualifiers")) == qualifier_key
         ]
 
     def find_cross_predicate_candidates(
@@ -238,14 +219,10 @@ class ClaimRepository:
                 for right in predicate_claims[left_index + 1 :]:
                     if left.get("subject_entity_id") == right.get("subject_entity_id"):
                         continue
-                    similarity = cosine_similarity(
-                        left["embedding_dense"], right["embedding_dense"]
-                    )
+                    similarity = cosine_similarity(left["embedding_dense"], right["embedding_dense"])
                     if similarity < threshold:
                         continue
-                    candidates.append(
-                        {"left": left, "right": right, "similarity": similarity}
-                    )
+                    candidates.append({"left": left, "right": right, "similarity": similarity})
         candidates.sort(
             key=lambda pair: (
                 -pair["similarity"],
@@ -267,9 +244,7 @@ class ClaimRepository:
         ).fetchall()
         return self._decode_rows(rows)
 
-    def find_by_fact_hash(
-        self, namespace: str, fact_hash: str
-    ) -> dict[str, Any] | None:
+    def find_by_fact_hash(self, namespace: str, fact_hash: str) -> dict[str, Any] | None:
         """按命名空间与事实哈希查找最新未终结 Claim。"""
         return self._decode_claim(
             row_to_dict(
@@ -290,14 +265,8 @@ class ClaimRepository:
     ) -> list[dict[str, Any]]:
         """返回指定双时间视图下仍携带向量的可见 Claim。"""
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        selected_intent = RecallIntent(
-            intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE)
-        )
-        statuses = (
-            "('active','superseded','expired')"
-            if selected_intent is RecallIntent.HISTORICAL
-            else "('active')"
-        )
+        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
         rows = self.connection.execute(
             f"SELECT * FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
             "AND namespace_key=? "
@@ -373,9 +342,7 @@ class ClaimRepository:
             self.connection.rollback()
             raise
 
-    def helpful_rates(
-        self, claim_ids: list[str], min_samples: int | None = None
-    ) -> dict[str, float]:
+    def helpful_rates(self, claim_ids: list[str], min_samples: int | None = None) -> dict[str, float]:
         """批量返回平滑 usefulness；无样本保持 0.5 prior。"""
         import os
 
@@ -395,21 +362,16 @@ class ClaimRepository:
             row["memory_id"]: (
                 float(row["usefulness_score"])
                 if row["helpful_count"] + row["unhelpful_count"] >= threshold
-                else (row["helpful_count"] + 2)
-                / (row["helpful_count"] + row["unhelpful_count"] + 4)
+                else (row["helpful_count"] + 2) / (row["helpful_count"] + row["unhelpful_count"] + 4)
             )
             for row in rows
         }
 
-    def insert_conflict_case(
-        self, conflict_case: dict[str, Any], commit: bool = True
-    ) -> bool:
+    def insert_conflict_case(self, conflict_case: dict[str, Any], commit: bool = True) -> bool:
         """写入幂等冲突审核记录。"""
         return insert_row(self.connection, "conflict_cases", conflict_case, commit)
 
-    def find_disputed_rivals(
-        self, conflict_keys: list[str], namespace: str
-    ) -> dict[str, list[dict[str, Any]]]:
+    def find_disputed_rivals(self, conflict_keys: list[str], namespace: str) -> dict[str, list[dict[str, Any]]]:
         """批量返回同命名空间内按冲突键分组的 disputed 声明。"""
         unique_keys = list(dict.fromkeys(conflict_keys))
         result: dict[str, list[dict[str, Any]]] = {key: [] for key in unique_keys}
@@ -424,9 +386,7 @@ class ClaimRepository:
                 (*chunk, namespace),
             ).fetchall()
             for row in rows:
-                result[row["conflict_key"]].append(
-                    {"id": row["id"], "value": decode_json(row["value_json"])}
-                )
+                result[row["conflict_key"]].append({"id": row["id"], "value": decode_json(row["value_json"])})
         return result
 
     @staticmethod
@@ -442,9 +402,7 @@ class ClaimRepository:
             claim["topic_tags"] = decode_json(claim.pop("topic_tags_json") or "[]")
         if "entities_json" in claim:
             encoded_entities = claim.pop("entities_json")
-            claim["entities"] = (
-                decode_json(encoded_entities) if encoded_entities else None
-            )
+            claim["entities"] = decode_json(encoded_entities) if encoded_entities else None
         return claim
 
     @classmethod
@@ -481,15 +439,10 @@ class ClaimRepository:
         if started_transaction:
             self.connection.execute("BEGIN IMMEDIATE")
         try:
-            old = self.connection.execute(
-                "SELECT * FROM claims WHERE id=?", (old_id,)
-            ).fetchone()
+            old = self.connection.execute("SELECT * FROM claims WHERE id=?", (old_id,)).fetchone()
             if not old:
                 raise ValueError(f"claim not found: {old_id}")
-            if (
-                old["status"] == "superseded"
-                and old["superseded_by_id"] == new_claim_id
-            ):
+            if old["status"] == "superseded" and old["superseded_by_id"] == new_claim_id:
                 if started_transaction:
                     self.connection.commit()
                 return SupersedeResult(False)
@@ -502,8 +455,7 @@ class ClaimRepository:
             decoded = decode_json(old["value_json"])
             old_value = (
                 decoded.get("old_value")
-                if isinstance(decoded, dict)
-                and decoded.get("_type") == "superseded_value"
+                if isinstance(decoded, dict) and decoded.get("_type") == "superseded_value"
                 else decoded
             )
             envelope = encode_json(
@@ -556,22 +508,11 @@ class ClaimRepository:
     ) -> list[dict[str, Any]]:
         """使用统一策略返回 FTS 或向量候选。"""
         candidates: list[dict[str, Any]] = (
-            [
-                dict(item)
-                for item in self.search_claims_fts(
-                    query, limit, valid_as_of, intent, known_as_of, namespace
-                )
-            ]
+            [dict(item) for item in self.search_claims_fts(query, limit, valid_as_of, intent, known_as_of, namespace)]
             if query is not None
-            else self.search_claims_vector(
-                query_blob or b"", limit, valid_as_of, intent, known_as_of, namespace
-            )
+            else self.search_claims_vector(query_blob or b"", limit, valid_as_of, intent, known_as_of, namespace)
         )
-        return [
-            item
-            for item in candidates
-            if claim_is_visible(item, valid_as_of, known_as_of, intent)
-        ]
+        return [item for item in candidates if claim_is_visible(item, valid_as_of, known_as_of, intent)]
 
     def retract(self, claim_id: str) -> bool:
         cursor = self.connection.execute(
@@ -592,14 +533,8 @@ class ClaimRepository:
     ) -> list[ClaimRow]:
         """使用 FTS5 查询并应用双时间可见性过滤。"""
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        selected_intent = RecallIntent(
-            intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE)
-        )
-        statuses = (
-            "('active','superseded','expired')"
-            if selected_intent is RecallIntent.HISTORICAL
-            else "('active')"
-        )
+        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
         try:
             rows = self.connection.execute(
                 "SELECT c.* FROM claims_fts f JOIN claims c ON c.rowid=f.rowid "
@@ -642,18 +577,9 @@ class ClaimRepository:
         if not query_tags:
             return []
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        selected_intent = RecallIntent(
-            intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE)
-        )
-        statuses = (
-            "('active','superseded','expired')"
-            if selected_intent is RecallIntent.HISTORICAL
-            else "('active')"
-        )
-        match_query = " OR ".join(
-            f'"{tag.replace(chr(34), chr(34) * 2)}"'
-            for tag in dict.fromkeys(query_tags)
-        )
+        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
+        match_query = " OR ".join(f'"{tag.replace(chr(34), chr(34) * 2)}"' for tag in dict.fromkeys(query_tags))
         try:
             rows = self.connection.execute(
                 "SELECT c.* FROM claims_tags_fts f JOIN claims c ON c.rowid=f.rowid "

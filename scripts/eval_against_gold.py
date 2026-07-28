@@ -27,9 +27,7 @@ class ClaimMatch:
 
 def parse_args() -> argparse.Namespace:
     """解析 gold、benchmark 路径与 value 匹配阈值。"""
-    parser = argparse.ArgumentParser(
-        description="按模型评估 extraction benchmark 的 gold 指标"
-    )
+    parser = argparse.ArgumentParser(description="按模型评估 extraction benchmark 的 gold 指标")
     parser.add_argument("--gold", type=Path, default=SCRIPT_DIR / "gold_dataset.jsonl")
     parser.add_argument(
         "--benchmark",
@@ -45,11 +43,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     resolved = path / "results.jsonl" if path.is_dir() else path
     if not resolved.is_file():
         raise FileNotFoundError(f"找不到 JSONL 文件：{resolved}")
-    return [
-        json.loads(line)
-        for line in resolved.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in resolved.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def normalize_text(value: Any) -> str:
@@ -65,18 +59,10 @@ def value_similarity(left: Any, right: Any) -> float:
     if not normalized_left or not normalized_right:
         return float(normalized_left == normalized_right)
     if normalized_left in normalized_right or normalized_right in normalized_left:
-        return min(len(normalized_left), len(normalized_right)) / max(
-            len(normalized_left), len(normalized_right)
-        )
+        return min(len(normalized_left), len(normalized_right)) / max(len(normalized_left), len(normalized_right))
     sequence_score = SequenceMatcher(None, normalized_left, normalized_right).ratio()
-    left_bigrams = {
-        normalized_left[index : index + 2]
-        for index in range(max(len(normalized_left) - 1, 1))
-    }
-    right_bigrams = {
-        normalized_right[index : index + 2]
-        for index in range(max(len(normalized_right) - 1, 1))
-    }
+    left_bigrams = {normalized_left[index : index + 2] for index in range(max(len(normalized_left) - 1, 1))}
+    right_bigrams = {normalized_right[index : index + 2] for index in range(max(len(normalized_right) - 1, 1))}
     union = left_bigrams | right_bigrams
     jaccard_score = len(left_bigrams & right_bigrams) / len(union) if union else 0.0
     return max(sequence_score, jaccard_score)
@@ -92,13 +78,9 @@ def match_claims(
     candidates: list[ClaimMatch] = []
     for gold_index, gold in enumerate(gold_claims):
         for predicted_index, predicted in enumerate(predicted_claims):
-            if normalize_text(gold.get("subject")) != normalize_text(
-                predicted.get("subject")
-            ):
+            if normalize_text(gold.get("subject")) != normalize_text(predicted.get("subject")):
                 continue
-            if normalize_text(gold.get("predicate")) != normalize_text(
-                predicted.get("predicate")
-            ):
+            if normalize_text(gold.get("predicate")) != normalize_text(predicted.get("predicate")):
                 continue
             score = value_similarity(gold.get("value"), predicted.get("value"))
             if score >= value_threshold:
@@ -107,13 +89,8 @@ def match_claims(
     matches: list[ClaimMatch] = []
     used_gold: set[int] = set()
     used_predicted: set[int] = set()
-    for candidate in sorted(
-        candidates, key=lambda item: item.value_score, reverse=True
-    ):
-        if (
-            candidate.gold_index in used_gold
-            or candidate.predicted_index in used_predicted
-        ):
+    for candidate in sorted(candidates, key=lambda item: item.value_score, reverse=True):
+        if candidate.gold_index in used_gold or candidate.predicted_index in used_predicted:
             continue
         matches.append(candidate)
         used_gold.add(candidate.gold_index)
@@ -143,36 +120,23 @@ def evaluate_model(
             continue
         evaluated_events += 1
         predicted_claims = result.get("claims_data") or []
-        predicted_should_memorize = bool(
-            result.get("should_memorize", predicted_claims)
-        )
-        should_matches += int(
-            predicted_should_memorize == gold_record["should_memorize"]
-        )
+        predicted_should_memorize = bool(result.get("should_memorize", predicted_claims))
+        should_matches += int(predicted_should_memorize == gold_record["should_memorize"])
         gold_claims = gold_record["gold_claims"]
-        matches = match_claims(
-            gold_claims, predicted_claims, value_threshold=value_threshold
-        )
+        matches = match_claims(gold_claims, predicted_claims, value_threshold=value_threshold)
         matched_claims += len(matches)
         gold_count += len(gold_claims)
         predicted_count += len(predicted_claims)
-        predicate_counts.update(
-            str(claim.get("predicate", "")) for claim in predicted_claims
-        )
+        predicate_counts.update(str(claim.get("predicate", "")) for claim in predicted_claims)
         scope_matches += sum(
-            gold_claims[match.gold_index].get("scope")
-            == predicted_claims[match.predicted_index].get("scope")
+            gold_claims[match.gold_index].get("scope") == predicted_claims[match.predicted_index].get("scope")
             for match in matches
         )
 
     return {
         "events": evaluated_events,
-        "should_memorize_accuracy": should_matches / evaluated_events
-        if evaluated_events
-        else 0.0,
-        "claim_precision": matched_claims / predicted_count
-        if predicted_count
-        else float(gold_count == 0),
+        "should_memorize_accuracy": should_matches / evaluated_events if evaluated_events else 0.0,
+        "claim_precision": matched_claims / predicted_count if predicted_count else float(gold_count == 0),
         "claim_recall": matched_claims / gold_count if gold_count else 1.0,
         "scope_accuracy": scope_matches / matched_claims if matched_claims else 0.0,
         "missed": gold_count - matched_claims,
@@ -183,9 +147,7 @@ def evaluate_model(
 
 def print_table(stats: dict[str, dict[str, Any]]) -> None:
     """输出紧凑的逐模型 Markdown 对比表。"""
-    print(
-        "| 模型 | 事件 | should_memorize | claim precision | claim recall | scope accuracy | 漏提取 | 过提取 |"
-    )
+    print("| 模型 | 事件 | should_memorize | claim precision | claim recall | scope accuracy | 漏提取 | 过提取 |")
     print("|---|---:|---:|---:|---:|---:|---:|---:|")
     for model, values in stats.items():
         print(
@@ -196,8 +158,7 @@ def print_table(stats: dict[str, dict[str, Any]]) -> None:
     print("\nPredicate 分布：")
     for model, values in stats.items():
         distribution = ", ".join(
-            f"{predicate or '<empty>'}={count}"
-            for predicate, count in values["predicate_distribution"].most_common()
+            f"{predicate or '<empty>'}={count}" for predicate, count in values["predicate_distribution"].most_common()
         )
         print(f"- {model}: {distribution or '<none>'}")
 

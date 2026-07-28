@@ -20,16 +20,12 @@ class AlertState:
 class AlertManager:
     """管理 WARNING/ERROR/CRITICAL 状态、五分钟去重和恢复通知。"""
 
-    def __init__(
-        self, channels: list[AlertChannel], dedupe_seconds: float = 300.0
-    ) -> None:
+    def __init__(self, channels: list[AlertChannel], dedupe_seconds: float = 300.0) -> None:
         self.channels = channels
         self.dedupe_seconds = dedupe_seconds
         self.states: dict[str, AlertState] = {}
 
-    def transition(
-        self, key: str, severity: str | None, detail: dict[str, object]
-    ) -> bool:
+    def transition(self, key: str, severity: str | None, detail: dict[str, object]) -> bool:
         """触发或恢复告警；返回是否实际发送通知。"""
         now = time.time()
         previous = self.states.get(key)

@@ -16,9 +16,7 @@ class RelationProposalRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_proposal(
-        self, proposal: dict[str, Any], commit: bool = True
-    ) -> str | None:
+    def insert_proposal(self, proposal: dict[str, Any], commit: bool = True) -> str | None:
         """插入本次运行的不可变提案；仅同一 run 的唯一键冲突返回 None。"""
         stored = dict(proposal)
         stored.setdefault("id", uuid.uuid4().hex)
@@ -67,7 +65,5 @@ class RelationProposalRepository:
         ).fetchall()
         result = [dict(row) for row in rows]
         for proposal in result:
-            proposal["supporting_claim_ids"] = json.loads(
-                proposal.pop("supporting_claim_ids_json")
-            )
+            proposal["supporting_claim_ids"] = json.loads(proposal.pop("supporting_claim_ids_json"))
         return result

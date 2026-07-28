@@ -36,9 +36,7 @@ def test_store_claim_with_occurred_range(tmp_path) -> None:
         ),
     )
 
-    row = connection.execute(
-        "SELECT occurred_start,occurred_end FROM claims WHERE id=?", (claim_id,)
-    ).fetchone()
+    row = connection.execute("SELECT occurred_start,occurred_end FROM claims WHERE id=?", (claim_id,)).fetchone()
 
     assert tuple(row) == ("2026-08-01T09:00:00+00:00", "2026-08-01T10:00:00+00:00")
 
@@ -78,9 +76,7 @@ def test_invalid_subject_without_replacement_uses_isolated_subject(tmp_path) -> 
     connection = Database(tmp_path / "unknown-subject.db").open()
     claim_id = _store(
         connection,
-        ExtractedClaim(
-            "事实", "环境变量已配置", subject="ALL_PROXY", entities=["server.py"]
-        ),
+        ExtractedClaim("事实", "环境变量已配置", subject="ALL_PROXY", entities=["server.py"]),
     )
 
     claim = ClaimRepository(connection).get_claim(claim_id)
@@ -92,12 +88,8 @@ def test_invalid_subject_without_replacement_uses_isolated_subject(tmp_path) -> 
 def test_invalid_subjects_from_different_events_are_isolated(tmp_path) -> None:
     """持久化兜底守卫不得让不同事件的非法主体共享标识。"""
     connection = Database(tmp_path / "isolated-subjects.db").open()
-    first_id = _store(
-        connection, ExtractedClaim("事实", "第一条配置", subject="ALL_PROXY")
-    )
-    second_id = _store(
-        connection, ExtractedClaim("事实", "第二条配置", subject="HTTP_PROXY")
-    )
+    first_id = _store(connection, ExtractedClaim("事实", "第一条配置", subject="ALL_PROXY"))
+    second_id = _store(connection, ExtractedClaim("事实", "第二条配置", subject="HTTP_PROXY"))
 
     first = ClaimRepository(connection).get_claim(first_id)
     second = ClaimRepository(connection).get_claim(second_id)
@@ -118,9 +110,7 @@ def test_recall_returns_temporal_entities(tmp_path) -> None:
         ),
     )
 
-    result = RecallService(connection, FakeEmbedder(8)).recall(
-        "Alice 参加发布会", limit=1
-    )["results"][0]
+    result = RecallService(connection, FakeEmbedder(8)).recall("Alice 参加发布会", limit=1)["results"][0]
 
     assert result["occurred_start"] == "2026-08-01T09:00:00+00:00"
     assert result["occurred_end"] == "2026-08-01T10:00:00+00:00"
@@ -132,9 +122,7 @@ def test_backward_compatible_null_fields(tmp_path) -> None:
     claim_id = _store(connection, ExtractedClaim("事实", "旧格式 claim"))
 
     claim = ClaimRepository(connection).get_claim(claim_id)
-    result = RecallService(connection, FakeEmbedder(8)).recall("旧格式 claim", limit=1)[
-        "results"
-    ][0]
+    result = RecallService(connection, FakeEmbedder(8)).recall("旧格式 claim", limit=1)["results"][0]
 
     assert claim["occurred_start"] is None
     assert claim["occurred_end"] is None

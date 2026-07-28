@@ -15,12 +15,8 @@ from hl_mem.storage.usefulness import UsefulnessRepository
 def test_bayesian_prior_and_negative_feedback_do_not_create_bonus() -> None:
     """无反馈保持 0.5 prior，负反馈仅降低 usefulness。"""
     policy = BayesianUsefulnessPolicy()
-    assert policy.evaluate(
-        helpful_count=0, unhelpful_count=0, success_sum=0.0, outcome_count=0
-    ) == (0.5, 0)
-    score, bonus = policy.evaluate(
-        helpful_count=0, unhelpful_count=8, success_sum=0.0, outcome_count=0
-    )
+    assert policy.evaluate(helpful_count=0, unhelpful_count=0, success_sum=0.0, outcome_count=0) == (0.5, 0)
+    score, bonus = policy.evaluate(helpful_count=0, unhelpful_count=8, success_sum=0.0, outcome_count=0)
     assert score < 0.5
     assert bonus == 0
 
@@ -28,24 +24,9 @@ def test_bayesian_prior_and_negative_feedback_do_not_create_bonus() -> None:
 def test_positive_bonus_is_stepped_and_capped() -> None:
     """每三个正证据增加 14 天且不超过 cap。"""
     policy = BayesianUsefulnessPolicy(max_bonus_days=30)
-    assert (
-        policy.evaluate(
-            helpful_count=2, unhelpful_count=0, success_sum=0.0, outcome_count=0
-        )[1]
-        == 0
-    )
-    assert (
-        policy.evaluate(
-            helpful_count=3, unhelpful_count=0, success_sum=0.0, outcome_count=0
-        )[1]
-        == 14
-    )
-    assert (
-        policy.evaluate(
-            helpful_count=99, unhelpful_count=0, success_sum=0.0, outcome_count=0
-        )[1]
-        == 30
-    )
+    assert policy.evaluate(helpful_count=2, unhelpful_count=0, success_sum=0.0, outcome_count=0)[1] == 0
+    assert policy.evaluate(helpful_count=3, unhelpful_count=0, success_sum=0.0, outcome_count=0)[1] == 14
+    assert policy.evaluate(helpful_count=99, unhelpful_count=0, success_sum=0.0, outcome_count=0)[1] == 30
 
 
 def test_settings_default_to_observe_and_validate_mode() -> None:
@@ -68,9 +49,7 @@ def test_usefulness_rebuild_matches_incremental_aggregate(tmp_path) -> None:
             "VALUES('f1','q1','claim','c1',0,1,0.8,'2026-01-01T00:00:00+00:00')"
         )
         repository = UsefulnessRepository(connection)
-        incremental = repository.upsert(
-            "claim", "c1", helpful_delta=1, success_delta=0.8, outcome_delta=1
-        )
+        incremental = repository.upsert("claim", "c1", helpful_delta=1, success_delta=0.8, outcome_delta=1)
         repository.rebuild_all()
         rebuilt = repository.get("claim", "c1")
         assert rebuilt is not None

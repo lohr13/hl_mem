@@ -44,11 +44,7 @@ def check_value(text: str, pattern: str, expected: str | int, label: str) -> lis
     if not matches:
         return [f"  {label}: reference not found (pattern: {pattern})"]
     expected_text = str(expected)
-    return [
-        f"  {label}: found '{value}', expected '{expected_text}'"
-        for value in matches
-        if value != expected_text
-    ]
+    return [f"  {label}: found '{value}', expected '{expected_text}'" for value in matches if value != expected_text]
 
 
 def latest_changelog_entry(changelog: str) -> tuple[str, str]:
@@ -77,9 +73,7 @@ def main() -> int:
 
         errors: list[str] = []
         if project_version != version:
-            errors.append(
-                f"  pyproject.toml version: found '{project_version}', expected '{version}'"
-            )
+            errors.append(f"  pyproject.toml version: found '{project_version}', expected '{version}'")
         errors += check_value(
             readme,
             r"shields\.io/badge/version-v?(\d+\.\d+\.\d+)-",
@@ -122,22 +116,16 @@ def main() -> int:
             migration_count,
             "architecture migrations",
         )
-        errors += check_value(
-            handoff, r"\b(\d+)\s+migrations\b", migration_count, "HANDOFF migrations"
-        )
+        errors += check_value(handoff, r"\b(\d+)\s+migrations\b", migration_count, "HANDOFF migrations")
 
         headers = re.findall(r"^##\s+v?(\d+\.\d+\.\d+)\b", changelog, re.MULTILINE)
         duplicates = sorted({header for header in headers if headers.count(header) > 1})
         if duplicates:
-            errors.append(
-                f"  CHANGELOG: duplicate version headers: {', '.join(duplicates)}"
-            )
+            errors.append(f"  CHANGELOG: duplicate version headers: {', '.join(duplicates)}")
 
         latest_version, _ = latest_changelog_entry(changelog)
         if latest_version != version:
-            errors.append(
-                f"  CHANGELOG latest version: found '{latest_version}', expected '{version}'"
-            )
+            errors.append(f"  CHANGELOG latest version: found '{latest_version}', expected '{version}'")
     except (OSError, ValueError) as exc:
         print(f"Document consistency check failed:\n  {exc}")
         return 1

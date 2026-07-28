@@ -32,10 +32,7 @@ def test_backup_restore_validates_sha256_manifest(tmp_path) -> None:
     manifest = backup_database(source, backup)
     target = tmp_path / "target.db"
     restore_database(backup, manifest, target)
-    assert (
-        Database(target).open().execute("SELECT count(*) FROM events").fetchone()[0]
-        == 1
-    )
+    assert Database(target).open().execute("SELECT count(*) FROM events").fetchone()[0] == 1
 
     backup.write_bytes(b"tampered")
     with pytest.raises(ValueError, match="checksum"):
@@ -50,12 +47,7 @@ def test_quota_and_retention_are_tenant_scoped(tmp_path) -> None:
     with pytest.raises(ValueError, match="quota"):
         enforce_event_quota(connection, "a", 2)
     assert purge_retained_events(connection, "a", "2025-06-01T00:00:00Z") == 1
-    assert (
-        connection.execute(
-            "SELECT count(*) FROM events WHERE tenant_id='b'"
-        ).fetchone()[0]
-        == 1
-    )
+    assert connection.execute("SELECT count(*) FROM events WHERE tenant_id='b'").fetchone()[0] == 1
 
 
 def test_postgres_adapter_is_optional_and_reports_missing_driver() -> None:

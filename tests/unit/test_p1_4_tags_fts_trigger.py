@@ -17,22 +17,17 @@ def test_tags_fts_trigger_only_tracks_topic_tags_changes(tmp_path: Path) -> None
             ("claim", "active", "2026-01-01T00:00:00+00:00", '["before"]'),
         )
         baseline = connection.total_changes
-        connection.execute(
-            "UPDATE claims SET access_count=access_count+1 WHERE id=?", ("claim",)
-        )
+        connection.execute("UPDATE claims SET access_count=access_count+1 WHERE id=?", ("claim",))
         access_delta = connection.total_changes - baseline
 
         baseline = connection.total_changes
-        connection.execute(
-            "UPDATE claims SET topic_tags_json=? WHERE id=?", ('["after"]', "claim")
-        )
+        connection.execute("UPDATE claims SET topic_tags_json=? WHERE id=?", ('["after"]', "claim"))
         tags_delta = connection.total_changes - baseline
 
         assert access_delta == 1
         assert tags_delta > 1
         indexed = connection.execute(
-            "SELECT c.id FROM claims_tags_fts f JOIN claims c ON c.rowid=f.rowid "
-            "WHERE claims_tags_fts MATCH ?",
+            "SELECT c.id FROM claims_tags_fts f JOIN claims c ON c.rowid=f.rowid " "WHERE claims_tags_fts MATCH ?",
             ('"after"',),
         ).fetchone()
         assert indexed["id"] == "claim"

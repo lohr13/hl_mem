@@ -36,9 +36,7 @@ def _decode_value(claim_id: str, raw: Any) -> Any:
 
 def backfill_conflict_keys_v2(connection: sqlite3.Connection) -> int:
     """在单事务中回填全部 v1 claim，并返回更新行数。"""
-    if connection.execute(
-        "SELECT 1 FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,)
-    ).fetchone():
+    if connection.execute("SELECT 1 FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,)).fetchone():
         return 0
 
     try:
@@ -61,9 +59,7 @@ def backfill_conflict_keys_v2(connection: sqlite3.Connection) -> int:
             legacy_key = (
                 claim["legacy_conflict_key"]
                 or claim["conflict_key"]
-                or compute_legacy_conflict_key(
-                    namespace, subject, predicate, qualifiers
-                )
+                or compute_legacy_conflict_key(namespace, subject, predicate, qualifiers)
             )
             v2_key = compute_conflict_key(namespace, subject, attribute, qualifiers)
             connection.execute(

@@ -28,9 +28,7 @@ class MemoryCandidate:
 
 
 def _tokens(text: str) -> set[str]:
-    return {
-        token for token in re.findall(r"[\w\u4e00-\u9fff]+", text.casefold()) if token
-    }
+    return {token for token in re.findall(r"[\w\u4e00-\u9fff]+", text.casefold()) if token}
 
 
 def _match(query: str, text: str) -> float:
@@ -92,14 +90,10 @@ def recall_procedure(
     normalized_query = query.strip()
     pattern = f"%{escape_like_pattern(normalized_query)}%"
     outcome_filter = (
-        "AND (goal LIKE ? ESCAPE '\\' OR COALESCE(outcome_summary,'') LIKE ? ESCAPE '\\') "
-        if normalized_query
-        else ""
+        "AND (goal LIKE ? ESCAPE '\\' OR COALESCE(outcome_summary,'') LIKE ? ESCAPE '\\') " if normalized_query else ""
     )
     outcome_parameters: tuple[object, ...] = (
-        (namespace, pattern, pattern, recent_outcome_window)
-        if normalized_query
-        else (namespace, recent_outcome_window)
+        (namespace, pattern, pattern, recent_outcome_window) if normalized_query else (namespace, recent_outcome_window)
     )
     outcome_rows = repository.connection.execute(
         "SELECT status,COALESCE(ended_at,started_at) AS occurred_at FROM episodes "
@@ -152,10 +146,7 @@ def recall_procedure(
                 str(item["id"]),
                 text,
                 score,
-                tuple(
-                    policy_evidence.get(str(item["id"]))
-                    or ({"type": "policy", "id": str(item["id"])},)
-                ),
+                tuple(policy_evidence.get(str(item["id"])) or ({"type": "policy", "id": str(item["id"])},)),
                 features,
             )
         )
@@ -165,9 +156,7 @@ def recall_procedure(
             "text_match": _match(query, text),
             "reward": _bounded(item.get("reward")),
             "recent_outcome": recent_outcome,
-            "recency": _recency(
-                item.get("ended_at") or item.get("started_at"), outcome_half_life_days
-            ),
+            "recency": _recency(item.get("ended_at") or item.get("started_at"), outcome_half_life_days),
         }
         score = (
             0.35 * features["text_match"]
@@ -218,7 +207,5 @@ def recall_procedure(
         )
     result.extend(claim_candidates or [])
     type_order = {"policy": 0, "episode": 1, "trace": 2, "claim": 3}
-    result.sort(
-        key=lambda item: (type_order[item.memory_type], -item.score, item.memory_id)
-    )
+    result.sort(key=lambda item: (type_order[item.memory_type], -item.score, item.memory_id))
     return result[: max(limit, 1) * 4]

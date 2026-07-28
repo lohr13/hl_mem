@@ -33,16 +33,12 @@ class _DryRunExtractor:
 
 def test_dry_run_returns_claims_without_storing(tmp_path, monkeypatch) -> None:
     extractor = _DryRunExtractor()
-    monkeypatch.setattr(
-        server.components, "make_extractor", lambda *_args, **_kwargs: extractor
-    )
+    monkeypatch.setattr(server.components, "make_extractor", lambda *_args, **_kwargs: extractor)
     app = server.create_app(tmp_path / "dry-run.db")
 
     with TestClient(app) as client:
         before = client.get("/v1/stats").json()
-        response = client.post(
-            "/v1/extract/dry-run", json={"text": "I prefer dark mode"}
-        )
+        response = client.post("/v1/extract/dry-run", json={"text": "I prefer dark mode"})
         after = client.get("/v1/stats").json()
 
     assert response.status_code == 200
@@ -56,9 +52,7 @@ def test_dry_run_returns_claims_without_storing(tmp_path, monkeypatch) -> None:
 
 def test_dry_run_custom_instructions(tmp_path, monkeypatch) -> None:
     extractor = _DryRunExtractor()
-    monkeypatch.setattr(
-        server.components, "make_extractor", lambda *_args, **_kwargs: extractor
-    )
+    monkeypatch.setattr(server.components, "make_extractor", lambda *_args, **_kwargs: extractor)
 
     with TestClient(server.create_app(tmp_path / "dry-run-instructions.db")) as client:
         response = client.post(

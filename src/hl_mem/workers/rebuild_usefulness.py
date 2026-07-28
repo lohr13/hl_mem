@@ -9,9 +9,7 @@ from hl_mem.settings import Settings
 from hl_mem.storage.usefulness import UsefulnessRepository
 
 
-def rebuild_usefulness(
-    connection: sqlite3.Connection, settings: Settings | None = None
-) -> dict[str, int]:
+def rebuild_usefulness(connection: sqlite3.Connection, settings: Settings | None = None) -> dict[str, int]:
     """幂等全量重建 memory_usefulness。"""
     config = settings or Settings.from_env()
     policy = BayesianUsefulnessPolicy(

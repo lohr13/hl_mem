@@ -58,9 +58,7 @@ def _operational_slot_prompt() -> str:
         definition = SLOT_REGISTRY[name]
         qualifiers = "、".join(definition.required_qualifiers) or "无"
         examples = "；".join(definition.examples) or "无"
-        lines.append(
-            f"- {name}：{definition.description}；必需 qualifiers：{qualifiers}；示例：{examples}"
-        )
+        lines.append(f"- {name}：{definition.description}；必需 qualifiers：{qualifiers}；示例：{examples}")
     return "\n".join(lines)
 
 
@@ -182,8 +180,7 @@ _PERMANENT_SCOPE_RE = re.compile(
     r"(?i)(?:长期|永久|始终|固定(?:配置|为)|设计原则|长期约束|必须记住|记住这个|explicit memory)"
 )
 _HEALTH_CHECK_RE = re.compile(
-    r"(?i)(?:\bhealthz\b|\bhealth\s*check\b|健康(?:检查|状态)|"
-    r"\b(?:ok|healthy|unhealthy|success|successful)\b)"
+    r"(?i)(?:\bhealthz\b|\bhealth\s*check\b|健康(?:检查|状态)|" r"\b(?:ok|healthy|unhealthy|success|successful)\b)"
 )
 _RUNTIME_CONFIGURATION_RE = re.compile(
     r"(?i)(?:\b(?:HTTP_PROXY|HTTPS_PROXY|NO_PROXY)\b|"
@@ -200,16 +197,10 @@ _TOOL_SNAPSHOT_RE = re.compile(
     r"\b(?:running|stopped|exited|completed)\b|进程(?:状态|已启动|已停止)|"
     r"审查(?:问题|缺陷|发现)|review (?:issue|finding))"
 )
-_QUOTED_REPORT_RE = re.compile(
-    r"(?i)(?:quoted|historical|history|report|snapshot|引用|历史|报告|快照)"
-)
+_QUOTED_REPORT_RE = re.compile(r"(?i)(?:quoted|historical|history|report|snapshot|引用|历史|报告|快照)")
 _DURABLE_SCOPE_ATTRIBUTES = frozenset(
     {
-        *(
-            name
-            for name in SLOT_REGISTRY
-            if name.startswith(("identity.", "preference.", "config."))
-        ),
+        *(name for name in SLOT_REGISTRY if name.startswith(("identity.", "preference.", "config."))),
         "memory.explicit",
     }
 )
@@ -232,16 +223,11 @@ def normalize_scope(
     scope = llm_scope if llm_scope in {"temporal", "permanent"} else "permanent"
     normalized_predicate = normalize_predicate(predicate)
     text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}")
-    source = unicodedata.normalize(
-        "NFKC", f"{actor_type or ''} {event_type or ''} {source_kind or ''}"
-    ).casefold()
+    source = unicodedata.normalize("NFKC", f"{actor_type or ''} {event_type or ''} {source_kind or ''}").casefold()
 
     if scope != "permanent":
         return scope, "llm_preserved"
-    if (
-        canonical_attribute in _DURABLE_SCOPE_ATTRIBUTES
-        and not _RUNTIME_CONFIGURATION_RE.search(text)
-    ):
+    if canonical_attribute in _DURABLE_SCOPE_ATTRIBUTES and not _RUNTIME_CONFIGURATION_RE.search(text):
         return "permanent", "durable_attribute"
     slot_definition = SLOT_REGISTRY.get(canonical_slot) if canonical_slot else None
     if slot_definition is not None and slot_definition.ttl_class == "short":
@@ -280,15 +266,9 @@ def _is_low_value_claim(claim: ExtractedClaim) -> bool:
     value = unicodedata.normalize("NFKC", str(claim.value)).strip()
     if not value:
         return True
-    if (
-        NUMERIC_OR_VERSION_RE.fullmatch(value)
-        and claim.canonical_slot not in MUTUALLY_EXCLUSIVE_SLOTS
-    ):
+    if NUMERIC_OR_VERSION_RE.fullmatch(value) and claim.canonical_slot not in MUTUALLY_EXCLUSIVE_SLOTS:
         return True
-    return (
-        claim.canonical_slot == "state.service_health"
-        and value.casefold() in LOW_VALUE_HEALTH_STATES
-    )
+    return claim.canonical_slot == "state.service_health" and value.casefold() in LOW_VALUE_HEALTH_STATES
 
 
 class LLMExtractor:
@@ -318,9 +298,7 @@ class LLMExtractor:
         self._memorize_decisions: list[tuple[bool, str]] = []
         self._last_schema_errors: list[dict[str, Any]] = []
 
-    def extract(
-        self, content: dict[str, Any] | str, context: dict[str, Any] | None = None
-    ) -> list[ExtractedClaim]:
+    def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
         """同步分块提取事实，并在输出截断时递归二分恢复。"""
         self.last_usage_tokens = 0
         self.last_input_tokens = 0
@@ -332,10 +310,7 @@ class LLMExtractor:
         self._last_schema_errors = []
         event_context = context or {}
         chunks = split_extraction_content(content, self.chunking_policy)
-        chunk_claims = [
-            self._extract_chunk_with_auto_split(chunk, event_context, depth=0)
-            for chunk in chunks
-        ]
+        chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
         claims = self._merge_chunk_claims(chunk_claims)
         if LOGGER.isEnabledFor(logging.DEBUG):
             LOGGER.debug(
@@ -343,13 +318,10 @@ class LLMExtractor:
                 json.dumps(
                     {
                         "event": "llm_extraction",
-                        "actor": event_context.get("actor")
-                        or event_context.get("actor_type"),
+                        "actor": event_context.get("actor") or event_context.get("actor_type"),
                         "session_id": event_context.get("session_id"),
                         "content_length": self._content_length(content),
-                        "should_memorize": any(
-                            decision for decision, _reason in self._memorize_decisions
-                        ),
+                        "should_memorize": any(decision for decision, _reason in self._memorize_decisions),
                         "reason": self._decision_reason(),
                         "claims_count": len(claims),
                         "schema_retry_count": self._schema_retry_count,
@@ -386,9 +358,7 @@ class LLMExtractor:
             return self._merge_chunk_claims(
                 [
                     self._extract_chunk_with_auto_split(left, event_context, depth + 1),
-                    self._extract_chunk_with_auto_split(
-                        right, event_context, depth + 1
-                    ),
+                    self._extract_chunk_with_auto_split(right, event_context, depth + 1),
                 ]
             )
 
@@ -405,16 +375,10 @@ class LLMExtractor:
             self._memorize_decisions.append((False, "should_memorize=false"))
             return []
         reasons = sorted({item.reason for item in result.claims if item.reason})
-        self._memorize_decisions.append(
-            (True, "；".join(reasons) or "should_memorize=true")
-        )
+        self._memorize_decisions.append((True, "；".join(reasons) or "should_memorize=true"))
         parsed: list[ExtractedClaim] = []
-        source_kind = str(
-            event_context.get("source_kind") or event_context.get("category") or ""
-        )
-        if re.search(
-            r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)", chunk.text
-        ):
+        source_kind = str(event_context.get("source_kind") or event_context.get("category") or "")
+        if re.search(r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)", chunk.text):
             source_kind = "quoted_report"
         for item in result.claims:
             claim = self._claim(item.model_dump())
@@ -426,9 +390,7 @@ class LLMExtractor:
                 claim.value,
                 claim.qualifiers,
                 canonical_attribute=claim.canonical_attribute,
-                actor_type=str(
-                    event_context.get("actor_type") or event_context.get("actor") or ""
-                ),
+                actor_type=str(event_context.get("actor_type") or event_context.get("actor") or ""),
                 event_type=str(event_context.get("event_type") or ""),
                 source_kind=source_kind,
             )
@@ -460,9 +422,7 @@ class LLMExtractor:
                 self._schema_retry_count += 1
             retry_instruction = ""
             if schema_errors:
-                retry_instruction = self._schema_retry_instruction(
-                    previous_output, schema_errors
-                )
+                retry_instruction = self._schema_retry_instruction(previous_output, schema_errors)
             request = LLMRequest(
                 messages=[
                     LLMMessage(role="system", content=SYSTEM_PROMPT),
@@ -511,7 +471,7 @@ class LLMExtractor:
                 return ExtractionResponseSchema.model_validate(compatible)
             except (PydanticValidationError, ValueError) as error:
                 if isinstance(error, PydanticValidationError):
-                    self._last_schema_errors.extend(error.errors())
+                    self._last_schema_errors.extend(dict(item) for item in error.errors())
                 if self._looks_like_truncated_json(response.content):
                     raise LLMOutputTruncatedError(
                         f"LLM output appears truncated: provider={self.llm_client.provider.name}, model={self.model}"
@@ -531,19 +491,11 @@ class LLMExtractor:
         """返回实际待提取文本长度。"""
         if isinstance(content, dict) and isinstance(content.get("text"), str):
             return len(content["text"])
-        return (
-            len(content)
-            if isinstance(content, str)
-            else len(json.dumps(content, ensure_ascii=False))
-        )
+        return len(content) if isinstance(content, str) else len(json.dumps(content, ensure_ascii=False))
 
     def _decision_reason(self) -> str:
         """合并分块判定原因并保持稳定顺序。"""
-        reasons = list(
-            dict.fromkeys(
-                reason for _decision, reason in self._memorize_decisions if reason
-            )
-        )
+        reasons = list(dict.fromkeys(reason for _decision, reason in self._memorize_decisions if reason))
         return "；".join(reasons) or "no_chunks"
 
     @classmethod
@@ -551,14 +503,12 @@ class LLMExtractor:
         """递归统计确定性修复改变的叶子字段数。"""
         if isinstance(original, dict) and isinstance(repaired, dict):
             return sum(
-                cls._count_repairs(original.get(key), repaired.get(key))
-                for key in original.keys() | repaired.keys()
+                cls._count_repairs(original.get(key), repaired.get(key)) for key in original.keys() | repaired.keys()
             )
         if isinstance(original, list) and isinstance(repaired, list):
-            return sum(
-                cls._count_repairs(left, right)
-                for left, right in zip(original, repaired, strict=False)
-            ) + abs(len(original) - len(repaired))
+            return sum(cls._count_repairs(left, right) for left, right in zip(original, repaired, strict=False)) + abs(
+                len(original) - len(repaired)
+            )
         return int(original != repaired)
 
     @staticmethod
@@ -583,9 +533,7 @@ class LLMExtractor:
                 key = (
                     unicodedata.normalize("NFKC", claim.subject).strip().casefold(),
                     unicodedata.normalize("NFKC", claim.predicate).strip().casefold(),
-                    unicodedata.normalize("NFKC", claim.canonical_slot or "")
-                    .strip()
-                    .casefold(),
+                    unicodedata.normalize("NFKC", claim.canonical_slot or "").strip().casefold(),
                     unicodedata.normalize("NFKC", str(claim.value)).strip().casefold(),
                     unicodedata.normalize(
                         "NFKC",
@@ -618,9 +566,7 @@ class LLMExtractor:
             claim = dict(item)
             legacy_core = {"predicate", "value"}
             versioned_fields = {"canonical_attribute", "scope", "importance"}
-            if not legacy_core.issubset(claim) or not versioned_fields.isdisjoint(
-                claim
-            ):
+            if not legacy_core.issubset(claim) or not versioned_fields.isdisjoint(claim):
                 normalized_claims.append(claim)
                 continue
             defaults: dict[str, Any] = {
@@ -653,10 +599,7 @@ class LLMExtractor:
     def _schema_error_paths(error: Exception) -> list[str]:
         """提取可安全回传给模型的 schema 错误路径与类型。"""
         if isinstance(error, PydanticValidationError):
-            return [
-                f"{'.'.join(str(part) for part in item['loc'])}:{item['type']}"
-                for item in error.errors()
-            ]
+            return [f"{'.'.join(str(part) for part in item['loc'])}:{item['type']}" for item in error.errors()]
         return [f"response:{type(error).__name__}"]
 
     @staticmethod
@@ -668,9 +611,7 @@ class LLMExtractor:
                     "path": "response",
                     "error_type": type(error).__name__,
                     "invalid_value": payload,
-                    "allowed_values": [
-                        "valid JSON object matching the supplied schema"
-                    ],
+                    "allowed_values": ["valid JSON object matching the supplied schema"],
                 }
             ]
 
@@ -684,13 +625,7 @@ class LLMExtractor:
             elif item["loc"] and item["loc"][-1] == "entities":
                 allowed_values = ["JSON array of strings", "null (claim entities only)"]
             else:
-                allowed_values = [
-                    str(
-                        item.get("ctx", {}).get(
-                            "expected", "value matching the JSON schema"
-                        )
-                    )
-                ]
+                allowed_values = [str(item.get("ctx", {}).get("expected", "value matching the JSON schema"))]
             details.append(
                 {
                     "path": path,
@@ -702,9 +637,7 @@ class LLMExtractor:
         return details
 
     @staticmethod
-    def _schema_retry_instruction(
-        previous_output: Any, schema_errors: list[dict[str, Any]]
-    ) -> str:
+    def _schema_retry_instruction(previous_output: Any, schema_errors: list[dict[str, Any]]) -> str:
         """构建包含上次 JSON 和可操作错误详情的 schema 重试指令。"""
         return (
             "\n上一次输出不符合 schema。请基于上次输出生成完整 JSON，只修正下列错误。\n"
@@ -721,9 +654,7 @@ class LLMExtractor:
         if isinstance(raw, dict):
             return raw
         text = str(raw).strip()
-        fenced = re.fullmatch(
-            r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE
-        )
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
         if fenced:
             text = fenced.group(1)
         try:
@@ -749,16 +680,10 @@ class LLMExtractor:
         invalid_reason = invalid_subject_reason(original_subject)
         if invalid_reason is not None:
             replacement = next(
-                (
-                    normalize_entity_id(entity)
-                    for entity in entities
-                    if invalid_subject_reason(entity) is None
-                ),
+                (normalize_entity_id(entity) for entity in entities if invalid_subject_reason(entity) is None),
                 None,
             )
-            subject = replacement or isolated_subject_id(
-                original_subject, predicate, value
-            )
+            subject = replacement or isolated_subject_id(original_subject, predicate, value)
             if original_subject not in entities:
                 entities.append(original_subject)
             current_audit().emit(
@@ -770,15 +695,11 @@ class LLMExtractor:
                     "normalized_subject": normalize_entity_id(original_subject),
                     "replacement_subject": subject,
                     "reason_code": invalid_reason,
-                    "isolation_reason": None
-                    if replacement
-                    else "invalid_subject_isolated",
+                    "isolation_reason": None if replacement else "invalid_subject_isolated",
                 },
             )
         qualifiers = item.get("qualifiers") or {}
-        inferred_attribute = infer_canonical_attribute(
-            predicate, subject, value, qualifiers
-        )
+        inferred_attribute = infer_canonical_attribute(predicate, subject, value, qualifiers)
         canonical_attribute, _attribute_reason = reconcile_canonical_attribute(
             predicate=predicate,
             llm_attribute=str(item.get("canonical_attribute", "")),
@@ -787,9 +708,7 @@ class LLMExtractor:
             value=value,
             qualifiers=qualifiers,
         )
-        projected_predicate = predicate_for_canonical_attribute(
-            canonical_attribute, predicate
-        )
+        projected_predicate = predicate_for_canonical_attribute(canonical_attribute, predicate)
         current_audit().emit(
             "extract",
             "predicate_normalized",
@@ -799,9 +718,7 @@ class LLMExtractor:
                 "normalized_predicate": projected_predicate,
                 "canonical_attribute": canonical_attribute,
                 "reason_code": (
-                    "canonical_attribute_projection"
-                    if projected_predicate != predicate
-                    else "llm_preserved"
+                    "canonical_attribute_projection" if projected_predicate != predicate else "llm_preserved"
                 ),
             },
         )
@@ -821,18 +738,14 @@ class LLMExtractor:
             predicate=predicate,
             value=value,
             confidence=confidence,
-            volatility=volatility
-            if volatility in {"stable", "ephemeral"}
-            else "stable",
+            volatility=volatility if volatility in {"stable", "ephemeral"} else "stable",
             subject=subject,
             qualifiers=qualifiers,
             reason=str(item.get("reason", "")),
             scope=scope,
             importance=importance,
             canonical_attribute=canonical_attribute,
-            canonical_slot=validate_slot_instance(
-                item.get("canonical_slot"), qualifiers
-            ),
+            canonical_slot=validate_slot_instance(item.get("canonical_slot"), qualifiers),
             topic_tags=normalize_topic_tags(item.get("topic_tags")),
             occurred_start=item.get("occurred_start"),
             occurred_end=item.get("occurred_end"),

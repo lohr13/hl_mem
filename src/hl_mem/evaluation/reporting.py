@@ -63,8 +63,7 @@ def generate_markdown_summary(result: Mapping[str, Any], output: Path) -> Path:
         "| --- | --- | ---: |",
     ]
     lines.extend(
-        f"| {layer} | {metric} | {value} |"
-        for layer, metric, value in _metric_rows(result.get("metrics", {}))
+        f"| {layer} | {metric} | {value} |" for layer, metric, value in _metric_rows(result.get("metrics", {}))
     )
     lines.extend(
         [
@@ -82,9 +81,7 @@ def generate_markdown_summary(result: Mapping[str, Any], output: Path) -> Path:
     lines.extend(["", "## Failed cases", ""])
     if failures:
         for case in failures:
-            lines.append(
-                f"- `{case.get('case_id')}`: {'; '.join(map(str, case.get('errors', [])))}"
-            )
+            lines.append(f"- `{case.get('case_id')}`: {'; '.join(map(str, case.get('errors', [])))}")
     else:
         lines.append("- None")
     output.mkdir(parents=True, exist_ok=True)

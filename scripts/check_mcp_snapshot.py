@@ -15,10 +15,7 @@ SNAPSHOT = ROOT / "docs/mcp-tools.json"
 
 def rendered_schema() -> str:
     """返回确定性序列化的 MCP 工具 JSON。"""
-    return (
-        json.dumps(get_tool_schemas(), ensure_ascii=False, indent=2, sort_keys=True)
-        + "\n"
-    )
+    return json.dumps(get_tool_schemas(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
 def main() -> int:

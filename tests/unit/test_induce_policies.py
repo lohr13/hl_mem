@@ -38,12 +38,8 @@ def test_daily_policy_induction_is_idempotent_and_worker_dispatches(tmp_path) ->
     path = tmp_path / "worker.db"
     connection = Database(path).open()
 
-    assert enqueue_daily_policy_induction(
-        connection, "2026-07-22T04:00:00+00:00", "03:30"
-    )
-    assert not enqueue_daily_policy_induction(
-        connection, "2026-07-22T05:00:00+00:00", "03:30"
-    )
+    assert enqueue_daily_policy_induction(connection, "2026-07-22T04:00:00+00:00", "03:30")
+    assert not enqueue_daily_policy_induction(connection, "2026-07-22T05:00:00+00:00", "03:30")
 
     worker = Worker(path, {"embedding_dim": 2})
     assert dispatch_job(worker, {"job_type": "induce_policies"}) == {

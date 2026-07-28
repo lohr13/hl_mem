@@ -7,9 +7,7 @@ import pytest
 import install_to_hermes
 
 
-def test_main_prints_start_and_success_messages(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_main_prints_start_and_success_messages(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """实际安装应在开始时提示，并在校验成功后打印完成提示。"""
     exit_code = install_to_hermes.main(["--hermes-home", str(tmp_path)])
 
@@ -17,6 +15,4 @@ def test_main_prints_start_and_success_messages(
     assert exit_code == 0
     assert "Installing HL-Mem Hermes plugin" in output
     assert "Installation succeeded" in output
-    assert output.index("Installing HL-Mem Hermes plugin") < output.index(
-        "Installation succeeded"
-    )
+    assert output.index("Installing HL-Mem Hermes plugin") < output.index("Installation succeeded")

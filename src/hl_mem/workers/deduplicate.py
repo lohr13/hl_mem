@@ -27,9 +27,7 @@ def _pair_key(left_id: str, right_id: str) -> str:
     return hashlib.sha256(ordered.encode("utf-8")).hexdigest()
 
 
-def enqueue_daily_deduplication(
-    connection: sqlite3.Connection, now: str, scheduled_minutes: int
-) -> bool:
+def enqueue_daily_deduplication(connection: sqlite3.Connection, now: str, scheduled_minutes: int) -> bool:
     """到达计划时间后幂等创建当天的跨主体去重任务。"""
     return (
         enqueue_daily_job(
@@ -206,10 +204,8 @@ def _apply_equivalent_pair(
             or current_left["predicate"] != current_right["predicate"]
             or current_left["canonical_slot"] is not None
             or current_right["canonical_slot"] is not None
-            or current_left["canonical_attribute"]
-            in {"memory.explicit", "identity.name"}
-            or current_right["canonical_attribute"]
-            in {"memory.explicit", "identity.name"}
+            or current_left["canonical_attribute"] in {"memory.explicit", "identity.name"}
+            or current_right["canonical_attribute"] in {"memory.explicit", "identity.name"}
         )
         if stale:
             connection.rollback()

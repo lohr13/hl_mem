@@ -10,9 +10,7 @@ class ObservationBuilder:
     MIN_SOURCES = 1
 
     def try_build(self, claims: list[dict[str, Any]]) -> dict[str, Any] | None:
-        active = [
-            claim for claim in claims if claim.get("status", "active") == "active"
-        ]
+        active = [claim for claim in claims if claim.get("status", "active") == "active"]
         if len(active) < self.MIN_PROOFS or not self._same_topic(active):
             return None
         events = sorted({event for claim in active for event in self._event_ids(claim)})
@@ -27,27 +25,20 @@ class ObservationBuilder:
             f"最早观察：{earliest}，最近观察：{latest}",
             "claim_ids": [claim["id"] for claim in active],
             "event_ids": events,
-            "confidence": sum(float(claim.get("confidence", 0.5)) for claim in active)
-            / len(active),
+            "confidence": sum(float(claim.get("confidence", 0.5)) for claim in active) / len(active),
         }
 
     @staticmethod
     def _same_topic(claims: list[dict[str, Any]]) -> bool:
-        keys = {
-            claim.get("conflict_key") for claim in claims if claim.get("conflict_key")
-        }
-        topics = {
-            (claim.get("subject_entity_id"), claim.get("predicate")) for claim in claims
-        }
+        keys = {claim.get("conflict_key") for claim in claims if claim.get("conflict_key")}
+        topics = {(claim.get("subject_entity_id"), claim.get("predicate")) for claim in claims}
         return len(keys) == 1 or len(topics) == 1
 
     @staticmethod
     def _event_ids(claim: dict[str, Any]) -> list[str]:
         values = claim.get("event_ids") or claim.get("evidence") or []
         event_ids = (
-            item.get("evidence_id", item.get("event_id", item.get("id")))
-            if isinstance(item, dict)
-            else item
+            item.get("evidence_id", item.get("event_id", item.get("id"))) if isinstance(item, dict) else item
             for item in values
         )
         return [str(event_id) for event_id in event_ids if event_id is not None]

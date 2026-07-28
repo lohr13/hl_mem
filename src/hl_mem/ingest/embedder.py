@@ -89,13 +89,9 @@ class Embedder:
             raise ValueError("embedding response count does not match input count")
         blobs = [pack_vector(item["embedding"]) for item in data]
         if any(len(blob) != self.dim * 4 for blob in blobs):
-            raise ValueError(
-                "embedding response dimension does not match configured dimension"
-            )
+            raise ValueError("embedding response dimension does not match configured dimension")
         DEFAULT_PROVIDER_METRICS.record(
-            ProviderCall(
-                "embedding", "embed", "success", (time.perf_counter() - started) * 1000
-            )
+            ProviderCall("embedding", "embed", "success", (time.perf_counter() - started) * 1000)
         )
         return blobs
 
@@ -117,7 +113,5 @@ class FakeEmbedder:
 
     def embed_one(self, text: str) -> bytes:
         seed = hashlib.sha256(text.casefold().encode("utf-8")).digest()
-        values = [
-            ((seed[index % len(seed)] / 127.5) - 1.0) for index in range(self.dim)
-        ]
+        values = [((seed[index % len(seed)] / 127.5) - 1.0) for index in range(self.dim)]
         return pack_vector(values)

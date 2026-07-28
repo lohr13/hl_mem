@@ -18,9 +18,7 @@ SNAPSHOT = ROOT / "docs/api-schema.json"
 
 def rendered_schema() -> str:
     """返回确定性序列化的 OpenAPI JSON。"""
-    return (
-        json.dumps(app.openapi(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    )
+    return json.dumps(app.openapi(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
 def main() -> int:
@@ -34,9 +32,7 @@ def main() -> int:
         print(f"OpenAPI snapshot updated: {SNAPSHOT.relative_to(ROOT)}")
         return 0
     if not SNAPSHOT.exists() or SNAPSHOT.read_text(encoding="utf-8") != rendered:
-        print(
-            "OpenAPI snapshot mismatch; run scripts/check_openapi_snapshot.py --update"
-        )
+        print("OpenAPI snapshot mismatch; run scripts/check_openapi_snapshot.py --update")
         return 1
     print("OpenAPI snapshot check passed")
     return 0

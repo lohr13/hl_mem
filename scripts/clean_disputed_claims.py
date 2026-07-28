@@ -58,18 +58,14 @@ def _is_current(row: sqlite3.Row, now: datetime) -> bool:
     valid_to = _parse_time(row["valid_to"])
     expires_at = _parse_time(row["expires_at"])
     recorded_to = _parse_time(row["recorded_to"])
-    return all(
-        bound is None or bound > now for bound in (valid_to, expires_at, recorded_to)
-    )
+    return all(bound is None or bound > now for bound in (valid_to, expires_at, recorded_to))
 
 
 def _query_token(connection: sqlite3.Connection, query: str) -> tuple[str, int]:
     digest = hashlib.sha256()
     count = 0
     for row in connection.execute(query):
-        digest.update(
-            json.dumps(tuple(row), ensure_ascii=False, default=str).encode("utf-8")
-        )
+        digest.update(json.dumps(tuple(row), ensure_ascii=False, default=str).encode("utf-8"))
         digest.update(b"\n")
         count += 1
     return digest.hexdigest(), count
@@ -88,9 +84,7 @@ def _evidence_token(connection: sqlite3.Connection) -> tuple[str, int]:
     return _query_token(connection, "SELECT * FROM evidence_links ORDER BY id")
 
 
-def build_plan(
-    connection: sqlite3.Connection, *, now: str | None = None
-) -> CleanupPlan:
+def build_plan(connection: sqlite3.Connection, *, now: str | None = None) -> CleanupPlan:
     """生成 status-only 清理计划，不写入数据库。"""
     connection.row_factory = sqlite3.Row
     generated_at = now or _now_iso()
@@ -146,9 +140,7 @@ def _backup_database(connection: sqlite3.Connection, backup_path: Path) -> None:
         backup.close()
 
 
-def apply_cleanup(
-    database_path: Path, backup_path: Path, expected_plan: CleanupPlan
-) -> CleanupResult:
+def apply_cleanup(database_path: Path, backup_path: Path, expected_plan: CleanupPlan) -> CleanupResult:
     """备份数据库并事务性应用已核对的 dry-run 计划。"""
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
@@ -171,24 +163,12 @@ def apply_cleanup(
             expected_plan.evidence_count,
         ):
             raise RuntimeError("evidence_links changed during apply")
-        integrity_check = str(
-            connection.execute("PRAGMA integrity_check").fetchone()[0]
-        )
-        foreign_key_violations = len(
-            connection.execute("PRAGMA foreign_key_check").fetchall()
-        )
+        integrity_check = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
+        foreign_key_violations = len(connection.execute("PRAGMA foreign_key_check").fetchall())
         if integrity_check != "ok" or foreign_key_violations:
             raise RuntimeError("database integrity verification failed")
-        active_count = int(
-            connection.execute(
-                "SELECT count(*) FROM claims WHERE status='active'"
-            ).fetchone()[0]
-        )
-        disputed_count = int(
-            connection.execute(
-                "SELECT count(*) FROM claims WHERE status='disputed'"
-            ).fetchone()[0]
-        )
+        active_count = int(connection.execute("SELECT count(*) FROM claims WHERE status='active'").fetchone()[0])
+        disputed_count = int(connection.execute("SELECT count(*) FROM claims WHERE status='disputed'").fetchone()[0])
         connection.commit()
         return CleanupResult(
             updated_count=len(expected_plan.eligible_ids),
@@ -205,18 +185,14 @@ def apply_cleanup(
         connection.close()
 
 
-def write_report(
-    report_path: Path, plan: CleanupPlan, result: CleanupResult | None
-) -> None:
+def write_report(report_path: Path, plan: CleanupPlan, result: CleanupResult | None) -> None:
     """写入不包含 claim value 的 JSON 运维报告。"""
     report_path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {
         "plan": asdict(plan),
         "result": asdict(result) if result else None,
     }
-    report_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -235,9 +211,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """执行 dry-run 或 apply 命令。"""
     args = _parser().parse_args(argv)
     if args.dry_run:
-        connection = sqlite3.connect(
-            f"file:{args.database.resolve().as_posix()}?mode=ro", uri=True
-        )
+        connection = sqlite3.connect(f"file:{args.database.resolve().as_posix()}?mode=ro", uri=True)
         try:
             plan = build_plan(connection)
         finally:

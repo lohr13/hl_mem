@@ -36,10 +36,7 @@ class EpisodeMapper:
     def task_type(actions: list[str]) -> str:
         """根据工具名称推导 Episode 任务类型。"""
         lowered = [action.lower() for action in actions]
-        if any(
-            any(marker in action for marker in ("terminal", "read_file", "patch"))
-            for action in lowered
-        ):
+        if any(any(marker in action for marker in ("terminal", "read_file", "patch")) for action in lowered):
             return "coding"
         if any("web_search" in action for action in lowered):
             return "research"
@@ -48,8 +45,6 @@ class EpisodeMapper:
     @staticmethod
     def error_signature(observation: str | None) -> str | None:
         """从工具观察中提取有界错误签名。"""
-        if observation and any(
-            marker in observation.lower() for marker in ("error", "failed", "exception")
-        ):
+        if observation and any(marker in observation.lower() for marker in ("error", "failed", "exception")):
             return observation[:500]
         return None

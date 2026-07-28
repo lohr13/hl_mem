@@ -40,9 +40,7 @@ def _text(claim: dict[str, Any]) -> str:
     return f"{claim.get('subject_entity_id') or ''} {claim.get('predicate') or ''} {value or ''}".strip()
 
 
-def classify_batch(
-    llm_client: LLMClient, claims: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+def classify_batch(llm_client: LLMClient, claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """通过统一 LLMClient 批量重分类记忆。"""
     response = llm_client.complete(
         LLMRequest(
@@ -89,11 +87,7 @@ def classify_batch(
             ),
         )
     )
-    parsed = (
-        response.content
-        if isinstance(response.content, dict)
-        else json.loads(response.content)
-    )
+    parsed = response.content if isinstance(response.content, dict) else json.loads(response.content)
     values = parsed.get("classifications", [])
     return values if isinstance(values, list) else []
 
@@ -115,9 +109,7 @@ def _classification_expiration(
         scope=scope,
         importance=importance,
         volatility=str(claim.get("volatility") or "stable"),
-        canonical_slot=validate_slot_instance(
-            claim.get("canonical_slot"), claim.get("qualifiers")
-        ),
+        canonical_slot=validate_slot_instance(claim.get("canonical_slot"), claim.get("qualifiers")),
         valid_to=claim.get("valid_to"),
         observed_at=observed_at,
         recorded_from=recorded_from,
@@ -172,12 +164,8 @@ def reclassify_claims(
                 importance = min(1.0, max(0.0, float(item.get("importance", 0.5))))
             except (TypeError, ValueError):
                 importance = 0.5
-            claim = next(
-                candidate for candidate in batch if candidate["id"] == claim_id
-            )
-            canonical_slot = validate_slot_instance(
-                claim.get("canonical_slot"), claim.get("qualifiers")
-            )
+            claim = next(candidate for candidate in batch if candidate["id"] == claim_id)
+            canonical_slot = validate_slot_instance(claim.get("canonical_slot"), claim.get("qualifiers"))
             conflict_key = compute_conflict_key(
                 str(claim.get("namespace_key") or "default"),
                 str(claim.get("subject_entity_id") or ""),
@@ -185,9 +173,7 @@ def reclassify_claims(
                 canonical_slot,
                 claim.get("qualifiers"),
             )
-            expires_at = _classification_expiration(
-                claim, scope, importance, effective_policy
-            )
+            expires_at = _classification_expiration(claim, scope, importance, effective_policy)
             updated += int(
                 repository.update_classification(
                     claim_id,

@@ -59,9 +59,7 @@ def test_predicate_is_projected_from_registered_attribute(
     assert predicate_for_canonical_attribute(attribute, llm_predicate) == expected
 
 
-def test_reconcile_accepts_registered_cross_family_attribute_without_content_conflict() -> (
-    None
-):
+def test_reconcile_accepts_registered_cross_family_attribute_without_content_conflict() -> None:
     assert reconcile_canonical_attribute(
         predicate="事实",
         llm_attribute="config.port",
@@ -72,10 +70,7 @@ def test_reconcile_accepts_registered_cross_family_attribute_without_content_con
 
 
 def test_attribute_validation_rejects_unknown_or_wrong_predicate_attribute() -> None:
-    assert (
-        validate_canonical_attribute("偏好", "preference.tool_choice")
-        == "preference.tool_choice"
-    )
+    assert validate_canonical_attribute("偏好", "preference.tool_choice") == "preference.tool_choice"
     assert validate_canonical_attribute("偏好", "config.port") == "preference.other"
     assert validate_canonical_attribute("偏好", "invented.slot") == "custom.unknown"
     assert validate_canonical_attribute("unknown", "invented.slot") == "custom.unknown"

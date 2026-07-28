@@ -64,9 +64,7 @@ def _tracer(limit: int = 1) -> SearchTracer:
 
 def test_search_tracer_serializes_ranks_scores_filters_and_timings() -> None:
     tracer = _tracer()
-    tracer.record_channel(
-        "fts", [{"id": "first", "_score": 0.9}, {"id": "second", "_score": 0.5}]
-    )
+    tracer.record_channel("fts", [{"id": "first", "_score": 0.9}, {"id": "second", "_score": 0.5}])
     tracer.record_filter("second", "status_filtered")
     tracer.record_pre_rank([{"id": "first"}], {"first": 0.75})
     tracer.record_rerank([("first", 0.8)])
@@ -102,9 +100,7 @@ def test_hybrid_claims_records_candidates_without_sensitive_text() -> None:
     serialized = json.dumps(tracer.to_dict())
 
     assert [claim["id"] for claim in results] == ["first"]
-    assert tracer.to_dict()["candidates"]["filtered"]["filter_reasons"] == [
-        "status_filtered"
-    ]
+    assert tracer.to_dict()["candidates"]["filtered"]["filter_reasons"] == ["status_filtered"]
     assert tracer.to_dict()["candidates"]["last"]["filter_reasons"] == ["final_limit"]
     assert tracer.to_dict()["phases"]["fusion_us"] >= 0
     assert "plaintext query" not in serialized

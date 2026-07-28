@@ -22,9 +22,7 @@ def main() -> None:
     rows = []
     for line in args.labels.read_text(encoding="utf-8").splitlines():
         item = json.loads(line)
-        rows.append(
-            (item["features"], int(item["label"] in {"relevant", "partially_relevant"}))
-        )
+        rows.append((item["features"], int(item["label"] in {"relevant", "partially_relevant"})))
     fit_logistic(rows).save(args.output)
 
 

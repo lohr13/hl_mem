@@ -19,9 +19,7 @@ class EvidenceRepository:
         """写入证据链接。"""
         return insert_row(self.connection, "evidence_links", link, commit)
 
-    def get_links_for_derived(
-        self, derived_type: str, derived_id: str
-    ) -> list[dict[str, Any]]:
+    def get_links_for_derived(self, derived_type: str, derived_id: str) -> list[dict[str, Any]]:
         """返回派生对象的证据链接。"""
         rows = self.connection.execute(
             "SELECT * FROM evidence_links WHERE derived_type=? AND derived_id=?",
@@ -29,16 +27,12 @@ class EvidenceRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def batch_get_links_for_derived(
-        self, derived_type: str, derived_ids: list[str]
-    ) -> dict[str, list[dict[str, str]]]:
+    def batch_get_links_for_derived(self, derived_type: str, derived_ids: list[str]) -> dict[str, list[dict[str, str]]]:
         """批量获取派生对象的证据链接，并按 derived_id 分组。"""
         unique_ids = list(dict.fromkeys(derived_ids))
         if not unique_ids:
             return {}
-        result: dict[str, list[dict[str, str]]] = {
-            derived_id: [] for derived_id in unique_ids
-        }
+        result: dict[str, list[dict[str, str]]] = {derived_id: [] for derived_id in unique_ids}
         for start in range(0, len(unique_ids), 500):
             chunk = unique_ids[start : start + 500]
             placeholders = ",".join("?" for _ in chunk)
@@ -47,14 +41,10 @@ class EvidenceRepository:
                 (derived_type, *chunk),
             ).fetchall()
             for row in rows:
-                result[row["derived_id"]].append(
-                    {"type": row["evidence_type"], "id": row["evidence_id"]}
-                )
+                result[row["derived_id"]].append({"type": row["evidence_type"], "id": row["evidence_id"]})
         return result
 
-    def get_links_for_evidence(
-        self, evidence_type: str, evidence_id: str
-    ) -> list[dict[str, Any]]:
+    def get_links_for_evidence(self, evidence_type: str, evidence_id: str) -> list[dict[str, Any]]:
         """返回直接引用指定证据的链接。"""
         rows = self.connection.execute(
             "SELECT * FROM evidence_links WHERE evidence_type=? AND evidence_id=?",
@@ -71,21 +61,15 @@ class DerivationRepository:
 
     def insert_observation(self, observation: dict[str, Any]) -> bool:
         """写入 observation 派生记忆。"""
-        return insert_row(
-            self.connection, "derivations", {"kind": "observation", **observation}
-        )
+        return insert_row(self.connection, "derivations", {"kind": "observation", **observation})
 
     def get_observation(self, observation_id: str) -> dict[str, Any] | None:
         """按标识返回派生记忆。"""
         return row_to_dict(
-            self.connection.execute(
-                "SELECT * FROM derivations WHERE id=?", (observation_id,)
-            ).fetchone()
+            self.connection.execute("SELECT * FROM derivations WHERE id=?", (observation_id,)).fetchone()
         )
 
-    def list_active_for_claims(
-        self, claim_ids: list[str], limit: int = 10
-    ) -> list[dict[str, Any]]:
+    def list_active_for_claims(self, claim_ids: list[str], limit: int = 10) -> list[dict[str, Any]]:
         """返回与给定声明相关的活跃派生记忆。"""
         if not claim_ids:
             return []
@@ -99,19 +83,13 @@ class DerivationRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def update_status(
-        self, observation_id: str, status: str, commit: bool = True
-    ) -> bool:
+    def update_status(self, observation_id: str, status: str, commit: bool = True) -> bool:
         """更新派生记忆状态。"""
-        row = self.connection.execute(
-            "SELECT status FROM derivations WHERE id=?", (observation_id,)
-        ).fetchone()
+        row = self.connection.execute("SELECT status FROM derivations WHERE id=?", (observation_id,)).fetchone()
         if row is None:
             return False
         assert_valid_derivation_transition(row["status"], status)
-        cursor = self.connection.execute(
-            "UPDATE derivations SET status=? WHERE id=?", (status, observation_id)
-        )
+        cursor = self.connection.execute("UPDATE derivations SET status=? WHERE id=?", (status, observation_id))
         if commit:
             self.connection.commit()
         return cursor.rowcount == 1

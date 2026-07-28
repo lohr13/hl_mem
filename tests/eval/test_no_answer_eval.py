@@ -19,11 +19,7 @@ def test_false_positive_reduces_no_answer_recall() -> None:
     )
     score = evaluate_results(
         case,
-        {
-            "results": [
-                {"id": "noise", "status": "active", "text": "咖啡", "evidence": []}
-            ]
-        },
+        {"results": [{"id": "noise", "status": "active", "text": "咖啡", "evidence": []}]},
     )
 
     assert aggregate_metrics([score])["no_answer_recall"] == 0.0

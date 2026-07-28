@@ -179,9 +179,7 @@ def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
         messages=messages,
     )
 
-    episode_requests = [
-        (url, payload) for url, payload in AsyncClient.requests if "/v1/episodes" in url
-    ]
+    episode_requests = [(url, payload) for url, payload in AsyncClient.requests if "/v1/episodes" in url]
     assert episode_requests[0][1] == {
         "goal": "修复项目并部署",
         "session_id": "session-1",

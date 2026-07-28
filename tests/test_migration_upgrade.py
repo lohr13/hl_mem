@@ -24,21 +24,15 @@ def test_v006_database_upgrades_to_current_schema(tmp_path: Path) -> None:
     assert len(historical_migrations) == 6
     for migration in historical_migrations:
         connection.executescript(migration.read_text(encoding="utf-8"))
-        connection.execute(
-            "INSERT INTO schema_migrations(version) VALUES (?)", (migration.stem,)
-        )
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (migration.stem,))
     connection.commit()
     connection.close()
 
     database = Database(database_path)
     try:
         upgraded = database.open()
-        expected_versions = {
-            migration.stem for migration in MIGRATION_DIR.glob("*.sql")
-        }
-        applied_versions = {
-            row[0] for row in upgraded.execute("SELECT version FROM schema_migrations")
-        }
+        expected_versions = {migration.stem for migration in MIGRATION_DIR.glob("*.sql")}
+        applied_versions = {row[0] for row in upgraded.execute("SELECT version FROM schema_migrations")}
         assert expected_versions <= applied_versions
         assert "029_ttl_scan_indexes" in applied_versions
 
@@ -56,9 +50,7 @@ def test_v006_database_upgrades_to_current_schema(tmp_path: Path) -> None:
             ),
         )
         upgraded.commit()
-        row = upgraded.execute(
-            "SELECT content_json FROM events WHERE id=?", ("upgrade-event",)
-        ).fetchone()
+        row = upgraded.execute("SELECT content_json FROM events WHERE id=?", ("upgrade-event",)).fetchone()
         assert row is not None
         assert row[0] == '{"text":"migration ok"}'
     finally:
@@ -77,9 +69,7 @@ def test_v010_snapshot_preserves_data_through_current_schema(tmp_path: Path) -> 
     assert historical_migrations[-1].stem.startswith("018_")
     for migration in historical_migrations:
         connection.executescript(migration.read_text(encoding="utf-8"))
-        connection.execute(
-            "INSERT INTO schema_migrations(version) VALUES (?)", (migration.stem,)
-        )
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (migration.stem,))
     connection.executescript(V010_FIXTURE.read_text(encoding="utf-8"))
     expected_counts = {
         table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
@@ -92,10 +82,7 @@ def test_v010_snapshot_preserves_data_through_current_schema(tmp_path: Path) -> 
     try:
         upgraded = database.open()
         for table, expected_count in expected_counts.items():
-            assert (
-                upgraded.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-                == expected_count
-            )
+            assert upgraded.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == expected_count
         assert (
             upgraded.execute(
                 "SELECT count(*) FROM claims_fts WHERE claims_fts MATCH ?",
@@ -103,9 +90,7 @@ def test_v010_snapshot_preserves_data_through_current_schema(tmp_path: Path) -> 
             ).fetchone()[0]
             == 1
         )
-        blob = upgraded.execute(
-            "SELECT embedding_dense FROM claims WHERE id='claim-018-1'"
-        ).fetchone()[0]
+        blob = upgraded.execute("SELECT embedding_dense FROM claims WHERE id='claim-018-1'").fetchone()[0]
         assert struct.unpack("<3f", blob) == (1.0, 2.0, 3.0)
         temporal = upgraded.execute(
             "SELECT valid_from,valid_to,recorded_from,recorded_to FROM claims WHERE id='claim-018-2'"
@@ -116,12 +101,8 @@ def test_v010_snapshot_preserves_data_through_current_schema(tmp_path: Path) -> 
             "2025-01-02T00:00:01Z",
             None,
         )
-        expected_versions = {
-            migration.stem for migration in MIGRATION_DIR.glob("*.sql")
-        }
-        applied_versions = {
-            row[0] for row in upgraded.execute("SELECT version FROM schema_migrations")
-        }
+        expected_versions = {migration.stem for migration in MIGRATION_DIR.glob("*.sql")}
+        applied_versions = {row[0] for row in upgraded.execute("SELECT version FROM schema_migrations")}
         assert expected_versions <= applied_versions
         assert "029_ttl_scan_indexes" in applied_versions
     finally:

@@ -43,24 +43,17 @@ class _Client:
 def test_auto_trigger_boundaries_and_coreference() -> None:
     assert QueryExpander.trigger_for("123456789", "auto") == "short_query"
     assert QueryExpander.trigger_for("1234567890", "auto") is None
-    assert (
-        QueryExpander.trigger_for("之前讨论的那个生产环境部署方案", "auto")
-        == "coreference"
-    )
+    assert QueryExpander.trigger_for("之前讨论的那个生产环境部署方案", "auto") == "coreference"
     assert QueryExpander.trigger_for("普通且足够具体的查询文本", "off") is None
     assert QueryExpander.trigger_for("普通且足够具体的查询文本", "always") == "always"
     assert (
-        QueryExpander.trigger_for(
-            "普通且足够具体的查询文本", "auto", candidate_count=7, candidate_floor=8
-        )
+        QueryExpander.trigger_for("普通且足够具体的查询文本", "auto", candidate_count=7, candidate_floor=8)
         == "low_recall"
     )
 
 
 def test_expander_cleans_deduplicates_and_limits_results() -> None:
-    client = _Client(
-        {"queries": [" 原查询 ", "Ａ方案", "A方案", "", "第二条", "第三条"]}
-    )
+    client = _Client({"queries": [" 原查询 ", "Ａ方案", "A方案", "", "第二条", "第三条"]})
     result = QueryExpander(client).expand(
         "原查询",
         intent=RecallIntent.CURRENT_STATE,
@@ -71,9 +64,7 @@ def test_expander_cleans_deduplicates_and_limits_results() -> None:
     )
 
     assert [item.text for item in result.expansions] == ["A方案", "第二条"]
-    assert all(
-        item.source == "llm_short" and item.weight == 0.6 for item in result.expansions
-    )
+    assert all(item.source == "llm_short" and item.weight == 0.6 for item in result.expansions)
     prompt = json.dumps(
         client.requests[0].messages,
         default=lambda value: value.__dict__,
@@ -133,20 +124,14 @@ def test_expander_classifies_http_timeout_and_rate_limit() -> None:
             raise self.error
 
     request = httpx.Request("POST", "https://provider.invalid")
-    timeout = QueryExpander(
-        FailedClient(httpx.ReadTimeout("slow", request=request))
-    ).expand(
+    timeout = QueryExpander(FailedClient(httpx.ReadTimeout("slow", request=request))).expand(
         "query",
         intent=RecallIntent.CURRENT_STATE,
         timeout_seconds=0.2,
         token_ceiling=256,
     )
     response = httpx.Response(429, request=request, json={"code": "Throttled"})
-    limited = QueryExpander(
-        FailedClient(
-            httpx.HTTPStatusError("limited", request=request, response=response)
-        )
-    ).expand(
+    limited = QueryExpander(FailedClient(httpx.HTTPStatusError("limited", request=request, response=response))).expand(
         "query",
         intent=RecallIntent.CURRENT_STATE,
         timeout_seconds=0.2,
@@ -171,11 +156,7 @@ def test_expander_reuses_bounded_executor_threads() -> None:
         )
         assert result.outcome == "applied"
 
-    worker_names = {
-        thread.name
-        for thread in threading.enumerate()
-        if thread.name.startswith("query-expansion")
-    }
+    worker_names = {thread.name for thread in threading.enumerate() if thread.name.startswith("query-expansion")}
     assert len(worker_names) <= 2
 
 
@@ -233,9 +214,7 @@ def test_weighted_rrf_uses_query_and_channel_weights() -> None:
 def test_trace_serializes_expansion_without_changing_legacy_defaults() -> None:
     trace = SearchTrace("q", "hash", "current_state", 5, 50, {}, SearchPhaseMetrics())
     assert SearchTracer(trace).to_dict()["expansions"] == []
-    trace.expansions.append(
-        QueryExpansionTrace.from_text("x" * 300, "llm_short", 0.6, input_tokens=2)
-    )
+    trace.expansions.append(QueryExpansionTrace.from_text("x" * 300, "llm_short", 0.6, input_tokens=2))
 
     payload = SearchTracer(trace).to_dict()
     assert len(payload["expansions"][0]["expansion_text"]) == 256

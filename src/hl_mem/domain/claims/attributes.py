@@ -227,12 +227,8 @@ _SLOT_DEFINITIONS = (
     _slot("custom.unknown", "", "未知自定义属性", is_fallback=True),
 )
 
-SLOT_REGISTRY: dict[str, SlotDefinition] = {
-    definition.name: definition for definition in _SLOT_DEFINITIONS
-}
-OPERATIONAL_SLOT_NAMES = tuple(
-    definition.name for definition in _SLOT_DEFINITIONS if definition.is_operational
-)
+SLOT_REGISTRY: dict[str, SlotDefinition] = {definition.name: definition for definition in _SLOT_DEFINITIONS}
+OPERATIONAL_SLOT_NAMES = tuple(definition.name for definition in _SLOT_DEFINITIONS if definition.is_operational)
 
 ALLOWED_TOPIC_TAGS = frozenset(
     {
@@ -309,11 +305,7 @@ PREDICATE_NORMALIZE = {
 
 PREDICATE_ATTRIBUTE_MAP: dict[str, tuple[tuple[str, ...], str]] = {
     predicate: (
-        tuple(
-            definition.name
-            for definition in _SLOT_DEFINITIONS
-            if definition.predicate == predicate
-        ),
+        tuple(definition.name for definition in _SLOT_DEFINITIONS if definition.predicate == predicate),
         next(
             definition.name
             for definition in _SLOT_DEFINITIONS
@@ -341,9 +333,7 @@ ATTRIBUTE_ALIASES = {
 }
 
 MUTUALLY_EXCLUSIVE_SLOTS = frozenset(
-    definition.name
-    for definition in _SLOT_DEFINITIONS
-    if definition.participates_in_conflict
+    definition.name for definition in _SLOT_DEFINITIONS if definition.participates_in_conflict
 )
 
 ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
@@ -487,26 +477,18 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     ),
 }
 
-_HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[
-    str, tuple[tuple[re.Pattern[str], str], ...]
-] = {
+_HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], str], ...]] = {
     "使用": (
         (
-            re.compile(
-                r"(?i)(?:gpt-|glm-|qwen|claude|gemini|deepseek|llama|mistral|embedding|rerank)"
-            ),
+            re.compile(r"(?i)(?:gpt-|glm-|qwen|claude|gemini|deepseek|llama|mistral|embedding|rerank)"),
             "choice.model",
         ),
         (
-            re.compile(
-                r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"
-            ),
+            re.compile(r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"),
             "choice.provider",
         ),
         (
-            re.compile(
-                r"(?i)(?:openai-compatible|\b(?:http|https|grpc|websocket|sse|mcp)\b|协议)"
-            ),
+            re.compile(r"(?i)(?:openai-compatible|\b(?:http|https|grpc|websocket|sse|mcp)\b|协议)"),
             "choice.protocol",
         ),
     ),
@@ -541,15 +523,11 @@ _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[
             "config.port",
         ),
         (
-            re.compile(
-                r"(?i)(?:\b(?:LLM_MODEL|EMBEDDING_MODEL|RERANKER_MODEL)\b|模型名|\bmodel\s*=)"
-            ),
+            re.compile(r"(?i)(?:\b(?:LLM_MODEL|EMBEDDING_MODEL|RERANKER_MODEL)\b|模型名|\bmodel\s*=)"),
             "config.model",
         ),
         (
-            re.compile(
-                r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"
-            ),
+            re.compile(r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"),
             "config.provider",
         ),
     ),
@@ -560,9 +538,7 @@ _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[
         ),
         (re.compile(r"(?i)(?:部署|deployed|上线|发布)"), "state.deployment"),
     ),
-    "事实": (
-        (re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),
-    ),
+    "事实": ((re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),),
 }
 
 
@@ -582,12 +558,7 @@ def normalize_predicate(predicate: str) -> str:
 
 def normalize_canonical_attribute(attribute: str) -> str:
     """把 LLM 属性字符串归一化并应用受控别名。"""
-    normalized = (
-        unicodedata.normalize("NFKC", str(attribute))
-        .strip()
-        .casefold()
-        .replace("-", "_")
-    )
+    normalized = unicodedata.normalize("NFKC", str(attribute)).strip().casefold().replace("-", "_")
     normalized = re.sub(r"\s+", "", normalized)
     return ATTRIBUTE_ALIASES.get(normalized, normalized)
 
@@ -596,11 +567,7 @@ def predicate_for_canonical_attribute(attribute: str | None, llm_predicate: str)
     """按已注册 canonical attribute 投影 predicate，未知属性保留模型判断。"""
     normalized_attribute = normalize_canonical_attribute(attribute or "")
     definition = SLOT_REGISTRY.get(normalized_attribute)
-    if (
-        definition is None
-        or normalized_attribute == "custom.unknown"
-        or not definition.predicate
-    ):
+    if definition is None or normalized_attribute == "custom.unknown" or not definition.predicate:
         return normalize_predicate(llm_predicate)
     return definition.predicate
 
@@ -629,9 +596,7 @@ def validate_canonical_slot(slot: str | None) -> str | None:
     return normalized if definition is not None and definition.is_operational else None
 
 
-def validate_slot_instance(
-    slot: str | None, qualifiers: dict[str, Any] | None
-) -> str | None:
+def validate_slot_instance(slot: str | None, qualifiers: dict[str, Any] | None) -> str | None:
     """校验 operational slot 及其实例必需 qualifier，失败时降级为空 slot。"""
     normalized = validate_canonical_slot(slot)
     if normalized is None:
@@ -650,10 +615,7 @@ def normalize_topic_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
     """规范化、去重并过滤存储、统计与分类标签。"""
     if not tags:
         return []
-    normalized = (
-        unicodedata.normalize("NFKC", str(tag)).strip().casefold().replace("-", "_")
-        for tag in tags
-    )
+    normalized = (unicodedata.normalize("NFKC", str(tag)).strip().casefold().replace("-", "_") for tag in tags)
     return list(dict.fromkeys(tag for tag in normalized if tag in ALLOWED_TOPIC_TAGS))
 
 
@@ -668,9 +630,7 @@ def infer_canonical_attribute(
     mapping = PREDICATE_ATTRIBUTE_MAP.get(normalized_predicate)
     if mapping is None:
         return "custom.unknown"
-    text = unicodedata.normalize(
-        "NFKC", f"{subject} {value} {qualifiers or {}}"
-    ).casefold()
+    text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}").casefold()
     precise = _high_confidence_attribute(normalized_predicate, text)
     if precise is not None:
         return precise
@@ -696,24 +656,17 @@ def reconcile_canonical_attribute(
         return validated, "unknown_predicate"
 
     allowed, fallback = mapping
-    text = unicodedata.normalize(
-        "NFKC", f"{subject} {value} {qualifiers or {}}"
-    ).casefold()
+    text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}").casefold()
     precise = _high_confidence_attribute(normalized_predicate, text)
     if precise is not None and precise in allowed:
         return precise, "high_confidence_rule"
 
-    normalized_inferred = validate_canonical_attribute(
-        normalized_predicate, inferred_attribute
-    )
+    normalized_inferred = validate_canonical_attribute(normalized_predicate, inferred_attribute)
     if normalized_inferred in allowed and normalized_inferred != fallback:
         return normalized_inferred, "fallback_reconciled"
 
     normalized_llm_attribute = normalize_canonical_attribute(llm_attribute or "")
-    if (
-        normalized_llm_attribute in ATTRIBUTE_ALLOWLIST
-        and normalized_llm_attribute != "custom.unknown"
-    ):
+    if normalized_llm_attribute in ATTRIBUTE_ALLOWLIST and normalized_llm_attribute != "custom.unknown":
         return normalized_llm_attribute, "registered_attribute"
 
     if validated in {fallback, "custom.unknown"} and normalized_inferred in allowed:

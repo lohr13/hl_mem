@@ -69,7 +69,4 @@ def sanitize_fts_query(query: str, *, tokenizer: str = "unicode61") -> str:
 def is_fts_syntax_error(error: sqlite3.OperationalError) -> bool:
     """仅识别由用户 MATCH 表达式触发的 FTS 语法错误。"""
     message = str(error).lower()
-    return any(
-        marker in message
-        for marker in ("fts5: syntax error", "malformed match", "unterminated string")
-    )
+    return any(marker in message for marker in ("fts5: syntax error", "malformed match", "unterminated string"))

@@ -20,45 +20,30 @@ def test_idempotency_cross_session_and_evidence(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("HL_MEM_RELATION_DISCOVERY_MODE", "audit")
     app = create_app(tmp_path / "e2e.db")
     with TestClient(app) as client:
-        first = client.post(
-            "/v1/events", json=event("key-1", "s1", "我喜欢 PostgreSQL")
-        )
-        duplicate = client.post(
-            "/v1/events", json=event("key-1", "s1", "我喜欢 PostgreSQL")
-        )
+        first = client.post("/v1/events", json=event("key-1", "s1", "我喜欢 PostgreSQL"))
+        duplicate = client.post("/v1/events", json=event("key-1", "s1", "我喜欢 PostgreSQL"))
         client.post("/v1/events", json=event("key-2", "s2", "记住 PostgreSQL 开启备份"))
         worker = Worker(tmp_path / "e2e.db")
         assert worker.run_once()["status"] == "succeeded"
         assert worker.run_once()["status"] == "succeeded"
-        response = client.post(
-            "/v1/recall", json={"query": "PostgreSQL", "session_id": "s3"}
-        )
+        response = client.post("/v1/recall", json={"query": "PostgreSQL", "session_id": "s3"})
         assert first.json()["created"] is True
         assert duplicate.json() == {"id": first.json()["id"], "created": False}
         assert response.status_code == 200
         assert response.json()["total"] == 2
-        assert all(
-            item["evidence"] and item["evidence"][0]["type"] == "event"
-            for item in response.json()["results"]
-        )
+        assert all(item["evidence"] and item["evidence"][0]["type"] == "event" for item in response.json()["results"])
         connection = app.state.db.open()
         assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 2
-        assert (
-            connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 4
-        )  # 2 extract + 2 relation-discovery
+        assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 4  # 2 extract + 2 relation-discovery
 
 
 def test_data_survives_database_restart(tmp_path) -> None:
     path = tmp_path / "restart.db"
     with TestClient(create_app(path)) as client:
-        client.post(
-            "/v1/events", json=event("persist-1", "s1", "记住使用 SQLite 持久化")
-        )
+        client.post("/v1/events", json=event("persist-1", "s1", "记住使用 SQLite 持久化"))
     assert Worker(path).run_once()["status"] == "succeeded"
     with TestClient(create_app(path)) as client:
-        response = client.post(
-            "/v1/recall", json={"query": "SQLite", "session_id": "s2"}
-        )
+        response = client.post("/v1/recall", json={"query": "SQLite", "session_id": "s2"})
         assert response.json()["total"] == 1
         assert response.json()["results"][0]["evidence"]
 

@@ -90,10 +90,7 @@ def budget_pack_by_type(
         else {"policy": 0.40, "episode": 0.20, "trace": 0.25, "claim": 0.15}
     )
     quotas = {kind: int(token_budget * ratio) for kind, ratio in ratios.items()}
-    grouped = {
-        kind: [item for item in candidates if item.memory_type == kind]
-        for kind in ratios
-    }
+    grouped = {kind: [item for item in candidates if item.memory_type == kind] for kind in ratios}
     packed: list[MemoryCandidate] = []
     used_by_type = {kind: 0 for kind in ratios}
     remaining = {kind: list(items) for kind, items in grouped.items()}
@@ -228,9 +225,7 @@ class RecallService:
                 intent_source=intent_source,
             )
         )
-        expansion_deadline = (
-            time.monotonic() + self.settings.query_expansion_total_timeout_seconds
-        )
+        expansion_deadline = time.monotonic() + self.settings.query_expansion_total_timeout_seconds
         weighted_queries = [WeightedQuery(query, "original", 1.0)]
         query_blobs = [self.embedder.embed_one(query)]
 
@@ -243,11 +238,7 @@ class RecallService:
             }.get(trigger, "llm_short")
             if self.query_expander is None or time.monotonic() >= expansion_deadline:
                 tracer.trace.expansion_trigger = trigger
-                tracer.trace.expansions.append(
-                    QueryExpansionTrace.from_text(
-                        "", trace_source, 0.6, outcome="timeout"
-                    )
-                )
+                tracer.trace.expansions.append(QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout"))
                 return [], []
             tracer.trace.expansion_trigger = trigger
             remaining = max(0.001, expansion_deadline - time.monotonic())
@@ -255,15 +246,11 @@ class RecallService:
                 query,
                 intent=selected_intent,
                 max_expansions=self.settings.query_expansion_max,
-                timeout_seconds=min(
-                    self.settings.query_expansion_timeout_seconds, remaining
-                ),
+                timeout_seconds=min(self.settings.query_expansion_timeout_seconds, remaining),
                 token_ceiling=self.settings.query_expansion_token_ceiling,
                 source=trigger,
             )
-            tracer.trace.expansion_total_tokens += (
-                result.input_tokens + result.output_tokens
-            )
+            tracer.trace.expansion_total_tokens += result.input_tokens + result.output_tokens
             if not result.expansions:
                 tracer.trace.expansions.append(
                     QueryExpansionTrace.from_text(
@@ -281,10 +268,7 @@ class RecallService:
                     )
                 )
                 return [], []
-            additions = [
-                WeightedQuery(item.text, item.source, item.weight)
-                for item in result.expansions
-            ]
+            additions = [WeightedQuery(item.text, item.source, item.weight) for item in result.expansions]
             for item in additions:
                 tracer.trace.expansions.append(
                     QueryExpansionTrace.from_text(
@@ -298,20 +282,14 @@ class RecallService:
                 )
             return additions, [self.embedder.embed_one(item.text) for item in additions]
 
-        initial_trigger = QueryExpander.trigger_for(
-            query, self.settings.query_expansion_mode
-        )
+        initial_trigger = QueryExpander.trigger_for(query, self.settings.query_expansion_mode)
         if initial_trigger is not None and self.query_expander is not None:
             additions, blobs = expand_for(initial_trigger)
             weighted_queries.extend(additions)
             query_blobs.extend(blobs)
 
         low_recall_expander = None
-        if (
-            self.settings.query_expansion_mode == "auto"
-            and initial_trigger is None
-            and self.query_expander is not None
-        ):
+        if self.settings.query_expansion_mode == "auto" and initial_trigger is None and self.query_expander is not None:
 
             def low_recall_expander(
                 candidate_count: int,
@@ -350,15 +328,11 @@ class RecallService:
             tracer=tracer,
             weighted_queries=(
                 weighted_queries
-                if self.query_expander is not None
-                and self.settings.query_expansion_mode != "off"
+                if self.query_expander is not None and self.settings.query_expansion_mode != "off"
                 else None
             ),
             query_blobs=(
-                query_blobs
-                if self.query_expander is not None
-                and self.settings.query_expansion_mode != "off"
-                else None
+                query_blobs if self.query_expander is not None and self.settings.query_expansion_mode != "off" else None
             ),
             low_recall_expander=low_recall_expander,
         )
@@ -376,23 +350,17 @@ class RecallService:
                 limit=limit,
                 query_id=query_id,
                 claim_results=results,
-                claim_scores={
-                    str(item["id"]): float(item.get("_score", 0.0)) for item in claims
-                },
+                claim_scores={str(item["id"]): float(item.get("_score", 0.0)) for item in claims},
                 token_budget=token_budget,
                 context_mode=context_mode,
                 debug=debug,
                 tracer=tracer,
                 total_started=total_started,
             )
-        tracer.trace.phases.assembly_us = (
-            time.perf_counter_ns() - assembly_started
-        ) // 1000
+        tracer.trace.phases.assembly_us = (time.perf_counter_ns() - assembly_started) // 1000
         observations = self._assemble_observations([claim["id"] for claim in claims])
         policies = matching_policies(
-            ExperienceService(self.connection).list_policies(
-                "active", namespace=namespace
-            ),
+            ExperienceService(self.connection).list_policies("active", namespace=namespace),
             query,
         )
         self._record_feedback(results, observations, policies, query_id)
@@ -412,9 +380,7 @@ class RecallService:
                 token_budget or self.settings.packed_context_token_budget,
             )
         if debug:
-            tracer.trace.phases.total_us = (
-                time.perf_counter_ns() - total_started
-            ) // 1000
+            tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
             response["search_trace"] = tracer.to_dict()
         return response
 
@@ -432,15 +398,9 @@ class RecallService:
         high_confidence_slot = slot.startswith(("identity.", "config.", "preference."))
         scores = [float(item.get("_score", 0.0)) for item in claims[:2]]
         margin_ok = len(scores) == 1 or scores[0] - scores[1] > 0.05
-        reranker_ok = (
-            trace is None or trace.rerank_score is None or trace.rerank_score > 0.4
-        )
+        reranker_ok = trace is None or trace.rerank_score is None or trace.rerank_score > 0.4
         has_signal = fts_hit or dense_score > 0.3 or high_confidence_slot
-        answerability = (
-            "supported"
-            if has_signal and margin_ok and reranker_ok
-            else "low_confidence"
-        )
+        answerability = "supported" if has_signal and margin_ok and reranker_ok else "low_confidence"
         tracer.trace.answerability = answerability
         return answerability
 
@@ -458,24 +418,15 @@ class RecallService:
         """按优先级跨类型组装受 token 预算约束的上下文。"""
         all_items: list[dict[str, Any]] = (
             [{"type": "claim", "data": item, "priority": 2} for item in claims]
-            + [
-                {"type": "observation", "data": item, "priority": 1}
-                for item in observations
-            ]
+            + [{"type": "observation", "data": item, "priority": 1} for item in observations]
             + [{"type": "policy", "data": item, "priority": 0} for item in policies]
         )
-        all_items.sort(
-            key=lambda item: (
-                -item["priority"] if isinstance(item.get("priority"), int) else 0
-            )
-        )
+        all_items.sort(key=lambda item: (-item["priority"] if isinstance(item.get("priority"), int) else 0))
         packed = budget_pack(all_items, token_budget)
         used = 0
         for item in packed:
             data = item.get("data", item)
-            text = str(
-                data.get("text") or data.get("body") or data.get("procedure") or ""
-            )
+            text = str(data.get("text") or data.get("body") or data.get("procedure") or "")
             used += max(1, (len(text) + 1) // 2)
         return {
             "context_items": packed,
@@ -486,16 +437,12 @@ class RecallService:
     def _record_access(self, claims: list[dict[str, Any]]) -> None:
         try:
             self._run_side_effect_with_retry(
-                lambda: ClaimRepository(self.connection).record_access(
-                    [claim["id"] for claim in claims], _now()
-                )
+                lambda: ClaimRepository(self.connection).record_access([claim["id"] for claim in claims], _now())
             )
         except Exception as error:
             _record_side_effect_failure("access_record", error)
             LOGGER.exception("recall side effect failed: access_record")
-            self._emit_failure(
-                "access_record", "access_record_failed", error, len(claims)
-            )
+            self._emit_failure("access_record", "access_record_failed", error, len(claims))
 
     def _record_feedback(
         self,
@@ -531,11 +478,7 @@ class RecallService:
                             recorded_at,
                         )
                     )
-            self._run_side_effect_with_retry(
-                lambda: ExperienceService(self.connection).record_feedback_batch(
-                    feedback
-                )
-            )
+            self._run_side_effect_with_retry(lambda: ExperienceService(self.connection).record_feedback_batch(feedback))
         except Exception as error:
             _record_side_effect_failure("feedback_record", error)
             LOGGER.exception("recall side effect failed: feedback_record")
@@ -556,15 +499,11 @@ class RecallService:
                 busy = "busy" in str(error).lower() or "locked" in str(error).lower()
                 if not busy or attempt + 1 >= attempts:
                     raise
-                time.sleep(
-                    self.settings.recall_side_effect_backoff_seconds * (attempt + 1)
-                )
+                time.sleep(self.settings.recall_side_effect_backoff_seconds * (attempt + 1))
         raise RuntimeError("unreachable recall side-effect retry state")
 
     @staticmethod
-    def _emit_failure(
-        operation: str, outcome: str, error: Exception, claim_count: int
-    ) -> None:
+    def _emit_failure(operation: str, outcome: str, error: Exception, claim_count: int) -> None:
         try:
             current_audit().emit(
                 "recall",
@@ -590,11 +529,7 @@ class RecallService:
         claim_repo = ClaimRepository(self.connection)
         claim_ids = [claim["id"] for claim in claims]
         all_evidence = self._batch_evidence(evidence_repo, claim_ids)
-        superseded_ids = [
-            claim["superseded_by_id"]
-            for claim in claims
-            if claim.get("superseded_by_id")
-        ]
+        superseded_ids = [claim["superseded_by_id"] for claim in claims if claim.get("superseded_by_id")]
         replacement_map = self._batch_replacements(claim_repo, superseded_ids)
         relations_map = self._batch_relations(claim_ids)
         rivals_map = self._batch_rivals(claims, namespace)
@@ -604,14 +539,11 @@ class RecallService:
             decoded = claim.get("value")
             text = (
                 decoded.get("old_value")
-                if isinstance(decoded, dict)
-                and decoded.get("_type") == "superseded_value"
+                if isinstance(decoded, dict) and decoded.get("_type") == "superseded_value"
                 else decoded
             )
             superseded_by_id = claim.get("superseded_by_id")
-            replacement = (
-                replacement_map.get(str(superseded_by_id)) if superseded_by_id else None
-            )
+            replacement = replacement_map.get(str(superseded_by_id)) if superseded_by_id else None
             result: dict[str, Any] = {
                 "type": "claim",
                 "memory_type": "claim",
@@ -679,9 +611,7 @@ class RecallService:
             claim_candidates=claim_candidates,
         )
         budget = token_budget or self.settings.packed_context_token_budget
-        packed, quotas, reflow = budget_pack_by_type(
-            candidates, selected_intent, budget
-        )
+        packed, quotas, reflow = budget_pack_by_type(candidates, selected_intent, budget)
         selected = packed[:limit] if context_mode == "packed" else candidates[:limit]
         results = [
             {
@@ -702,10 +632,7 @@ class RecallService:
         }
         tracer.trace.quota_tokens = quotas
         tracer.trace.reflow_tokens = reflow
-        selected_keys = {
-            (item.memory_type, item.memory_id): rank
-            for rank, item in enumerate(selected, 1)
-        }
+        selected_keys = {(item.memory_type, item.memory_id): rank for rank, item in enumerate(selected, 1)}
         tracer.trace.experience_candidates = [
             ExperienceCandidateTrace(
                 memory_type=item.memory_type,
@@ -714,9 +641,7 @@ class RecallService:
                 features=item.features,
                 final_rank=selected_keys.get((item.memory_type, item.memory_id)),
                 included=(item.memory_type, item.memory_id) in selected_keys,
-                filter_reasons=[]
-                if (item.memory_type, item.memory_id) in selected_keys
-                else ["limit_or_budget"],
+                filter_reasons=[] if (item.memory_type, item.memory_id) in selected_keys else ["limit_or_budget"],
             )
             for rank, item in enumerate(candidates, 1)
         ]
@@ -726,16 +651,13 @@ class RecallService:
             "policies": [item for item in results if item["memory_type"] == "policy"],
             "total": len(results),
             "query_id": query_id,
-            "answerability": self._answerability([], tracer)
-            if not results
-            else "supported",
+            "answerability": self._answerability([], tracer) if not results else "supported",
         }
         if context_mode == "packed":
             used = sum(max(1, (len(item.text) + 1) // 2) for item in selected)
             response["context"] = {
                 "context_items": [
-                    {"type": item.memory_type, "data": result}
-                    for item, result in zip(selected, results)
+                    {"type": item.memory_type, "data": result} for item, result in zip(selected, results)
                 ],
                 "used_tokens_estimate": used,
                 "truncated": len(selected) < len(candidates),
@@ -743,9 +665,7 @@ class RecallService:
                 "reflow_tokens": reflow,
             }
         if debug:
-            tracer.trace.phases.total_us = (
-                time.perf_counter_ns() - total_started
-            ) // 1000
+            tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
             response["search_trace"] = tracer.to_dict()
         return response
 
@@ -785,24 +705,12 @@ class RecallService:
         namespace: str,
     ) -> dict[str, list[dict[str, Any]]]:
         """批量加载 disputed claim 的同 namespace 冲突项并精确映射。"""
-        disputed_claims = [
-            claim
-            for claim in claims
-            if claim["status"] == "disputed" and claim.get("conflict_key")
-        ]
+        disputed_claims = [claim for claim in claims if claim["status"] == "disputed" and claim.get("conflict_key")]
         if not disputed_claims:
             return {}
-        unique_keys = list(
-            dict.fromkeys(claim["conflict_key"] for claim in disputed_claims)
-        )
-        rivals_by_key = ClaimRepository(self.connection).find_disputed_rivals(
-            unique_keys, namespace
-        )
+        unique_keys = list(dict.fromkeys(claim["conflict_key"] for claim in disputed_claims))
+        rivals_by_key = ClaimRepository(self.connection).find_disputed_rivals(unique_keys, namespace)
         return {
-            claim["id"]: [
-                rival
-                for rival in rivals_by_key[claim["conflict_key"]]
-                if rival["id"] != claim["id"]
-            ]
+            claim["id"]: [rival for rival in rivals_by_key[claim["conflict_key"]] if rival["id"] != claim["id"]]
             for claim in disputed_claims
         }

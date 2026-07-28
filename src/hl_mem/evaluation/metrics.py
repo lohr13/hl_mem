@@ -97,9 +97,7 @@ def temporal_correctness(
     correct = {"overall": 0, "valid_time": 0, "occurred_time": 0, "recorded_time": 0}
     recorded_checked = 0
     for result in results:
-        matching = [
-            gold_by_id[item] for item in _evidence_ids(result) if item in gold_by_id
-        ]
+        matching = [gold_by_id[item] for item in _evidence_ids(result) if item in gold_by_id]
         if not matching:
             continue
         checked += 1
@@ -108,24 +106,16 @@ def temporal_correctness(
         recorded_result = False
         recorded_required = False
         for gold in matching:
-            valid_ok = _within(
-                result.get("valid_from"), gold.valid_from, gold.valid_to
-            ) and _within(result.get("valid_to"), gold.valid_from, gold.valid_to)
+            valid_ok = _within(result.get("valid_from"), gold.valid_from, gold.valid_to) and _within(
+                result.get("valid_to"), gold.valid_from, gold.valid_to
+            )
             occurred_value = result.get("occurred_at") or result.get("observed_at")
-            occurred_ok = _point_within(
-                occurred_value, gold.occurred_start, gold.occurred_end
-            )
-            has_recorded_gold = (
-                gold.recorded_from is not None or gold.recorded_to is not None
-            )
+            occurred_ok = _point_within(occurred_value, gold.occurred_start, gold.occurred_end)
+            has_recorded_gold = gold.recorded_from is not None or gold.recorded_to is not None
             recorded_required = recorded_required or has_recorded_gold
             recorded_ok = not has_recorded_gold or (
-                _within(
-                    result.get("recorded_from"), gold.recorded_from, gold.recorded_to
-                )
-                and _within(
-                    result.get("recorded_to"), gold.recorded_from, gold.recorded_to
-                )
+                _within(result.get("recorded_from"), gold.recorded_from, gold.recorded_to)
+                and _within(result.get("recorded_to"), gold.recorded_from, gold.recorded_to)
             )
             valid_result = valid_result or valid_ok
             occurred_result = occurred_result or occurred_ok
@@ -143,11 +133,7 @@ def temporal_correctness(
         "overall": correct["overall"] / denominator if checked else 0.0,
         "valid_time": correct["valid_time"] / denominator if checked else 0.0,
         "occurred_time": correct["occurred_time"] / denominator if checked else 0.0,
-        "recorded_time": (
-            correct["recorded_time"] / recorded_checked
-            if recorded_checked
-            else "not_applicable"
-        ),
+        "recorded_time": (correct["recorded_time"] / recorded_checked if recorded_checked else "not_applicable"),
     }
 
 
@@ -162,9 +148,7 @@ def bootstrap_ci(
     if not 0.0 < confidence < 1.0:
         raise ValueError("confidence must be between 0 and 1")
     generator = random.Random(seed)
-    samples = sorted(
-        sum(generator.choice(values) for _ in values) / len(values) for _ in range(1000)
-    )
+    samples = sorted(sum(generator.choice(values) for _ in values) / len(values) for _ in range(1000))
     tail = (1.0 - confidence) / 2.0
     lower = samples[max(0, math.floor(tail * len(samples)))]
     upper = samples[min(len(samples) - 1, math.ceil((1.0 - tail) * len(samples)) - 1)]

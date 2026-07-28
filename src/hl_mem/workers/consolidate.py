@@ -49,9 +49,7 @@ class CandidatePair:
 class ConflictJudge(Protocol):
     """冲突分类器接口。"""
 
-    def judge(
-        self, left: dict[str, Any], right: dict[str, Any]
-    ) -> ConsolidationDecision: ...
+    def judge(self, left: dict[str, Any], right: dict[str, Any]) -> ConsolidationDecision: ...
 
 
 class LLMConflictJudge:
@@ -60,9 +58,7 @@ class LLMConflictJudge:
     def __init__(self, llm_client: LLMClient) -> None:
         self.llm_client = llm_client
 
-    def judge(
-        self, left: dict[str, Any], right: dict[str, Any]
-    ) -> ConsolidationDecision:
+    def judge(self, left: dict[str, Any], right: dict[str, Any]) -> ConsolidationDecision:
         """以严格 JSON 四分类判定 claim 对，失败最多重试三次。"""
         fields = (
             "id",
@@ -88,9 +84,7 @@ class LLMConflictJudge:
                         content="将两条事实分类为 contradiction、compatible、state_change 或 unrelated。"
                         "仅输出 JSON：kind, confidence, rationale, current_claim_id。",
                     ),
-                    LLMMessage(
-                        role="user", content=json.dumps(facts, ensure_ascii=False)
-                    ),
+                    LLMMessage(role="user", content=json.dumps(facts, ensure_ascii=False)),
                 ],
                 structured_output=StructuredOutputSpec(
                     name="consolidation_decision",
@@ -126,11 +120,7 @@ class LLMConflictJudge:
                 ),
             )
         )
-        data = (
-            response.content
-            if isinstance(response.content, dict)
-            else json.loads(response.content)
-        )
+        data = response.content if isinstance(response.content, dict) else json.loads(response.content)
         kind = data["kind"]
         if kind not in {"contradiction", "compatible", "state_change", "unrelated"}:
             raise ValueError(f"invalid consolidation decision: {kind}")
@@ -160,9 +150,7 @@ def enqueue_daily_consolidation(connection: Any, now: str, cron: str) -> bool:
 class ConflictConsolidator:
     """扫描灰区相似 claim 并以幂等、CAS 方式应用判定。"""
 
-    def __init__(
-        self, connection: Any, judge: ConflictJudge, confidence_threshold: float = 0.8
-    ) -> None:
+    def __init__(self, connection: Any, judge: ConflictJudge, confidence_threshold: float = 0.8) -> None:
         self.connection = connection
         self.judge = judge
         self.confidence_threshold = confidence_threshold
@@ -176,9 +164,7 @@ class ConflictConsolidator:
         scope: ConsolidationScope | None = None,
     ) -> list[CandidatePair]:
         """生成同命名空间、同主题或事实槽的灰区候选。"""
-        selected_scope = scope or ConsolidationScope(
-            namespace=namespace, max_pairs=batch_size
-        )
+        selected_scope = scope or ConsolidationScope(namespace=namespace, max_pairs=batch_size)
         rows = ClaimRepository(self.connection).list_active_for_consolidation(
             selected_scope.namespace,
             watermark,
@@ -188,21 +174,11 @@ class ConflictConsolidator:
         pairs: list[CandidatePair] = []
         for index, left in enumerate(rows):
             for right in rows[index + 1 :]:
-                same_slot = left.get("canonical_slot") and left.get(
-                    "canonical_slot"
-                ) == right.get("canonical_slot")
-                if not same_slot and left.get("subject_entity_id") != right.get(
-                    "subject_entity_id"
-                ):
+                same_slot = left.get("canonical_slot") and left.get("canonical_slot") == right.get("canonical_slot")
+                if not same_slot and left.get("subject_entity_id") != right.get("subject_entity_id"):
                     continue
-                similarity = cosine_similarity(
-                    left["embedding_dense"], right["embedding_dense"]
-                )
-                if (
-                    not selected_scope.similarity_threshold
-                    <= similarity
-                    < selected_scope.similarity_ceiling
-                ):
+                similarity = cosine_similarity(left["embedding_dense"], right["embedding_dense"])
+                if not selected_scope.similarity_threshold <= similarity < selected_scope.similarity_ceiling:
                     continue
                 pair_key = compute_claim_pair_key(left["id"], right["id"])
                 signature = "|".join(
@@ -218,9 +194,7 @@ class ConflictConsolidator:
                     (pair_key, signature),
                 ).fetchone()
                 if not reviewed:
-                    pairs.append(
-                        CandidatePair(left, right, similarity, pair_key, signature)
-                    )
+                    pairs.append(CandidatePair(left, right, similarity, pair_key, signature))
                 if len(pairs) >= selected_scope.max_pairs:
                     return pairs
         return pairs
@@ -268,9 +242,7 @@ class ConflictConsolidator:
                         "SELECT status FROM claims WHERE id IN (?,?)",
                         (pair.left["id"], pair.right["id"]),
                     ).fetchall()
-                    if len(current_rows) != 2 or any(
-                        row["status"] != "active" for row in current_rows
-                    ):
+                    if len(current_rows) != 2 or any(row["status"] != "active" for row in current_rows):
                         self.connection.rollback()
                         stats["cas_skipped"] += 1
                         continue
@@ -293,9 +265,7 @@ class ConflictConsolidator:
                             pair.pair_key,
                             pair.left["id"],
                             pair.right["id"],
-                            "manual_required"
-                            if decision.confidence < 0.9
-                            else "auto_resolved",
+                            "manual_required" if decision.confidence < 0.9 else "auto_resolved",
                             None,
                             decision.confidence,
                             decision.rationale,
@@ -328,9 +298,7 @@ class ConflictConsolidator:
 
     def _unchanged(self, pair: CandidatePair) -> bool:
         repository = ClaimRepository(self.connection)
-        return all(
-            repository.is_unchanged(original) for original in (pair.left, pair.right)
-        )
+        return all(repository.is_unchanged(original) for original in (pair.left, pair.right))
 
     def _record(
         self,
@@ -371,12 +339,7 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
         case = dict(row)
         left = repository.get_claim(case["left_claim_id"])
         right = repository.get_claim(case["right_claim_id"])
-        if (
-            not left
-            or not right
-            or left["status"] != "disputed"
-            or right["status"] != "disputed"
-        ):
+        if not left or not right or left["status"] != "disputed" or right["status"] != "disputed":
             continue
         authority = {"high": 3, "medium": 2, "low": 1}
         left_score = authority.get(left.get("source_authority", "medium"), 2)

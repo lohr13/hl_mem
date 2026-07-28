@@ -23,11 +23,7 @@ RESULT_LIMIT = 10
 
 def _load_cases() -> list[dict[str, Any]]:
     """读取中文 FTS JSONL 评测集。"""
-    return [
-        json.loads(line)
-        for line in DATASET_PATH.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in DATASET_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _claim_text(claim: dict[str, Any]) -> str:
@@ -48,9 +44,7 @@ def _is_relevant(case: dict[str, Any], results: list[dict[str, Any]]) -> bool:
     for result in results:
         subject = str(result.get("subject_entity_id", "")).casefold()
         text = _claim_text(result).casefold()
-        if subject in relevant_subjects or any(
-            keyword in text for keyword in expected_keywords
-        ):
+        if subject in relevant_subjects or any(keyword in text for keyword in expected_keywords):
             return True
     return False
 

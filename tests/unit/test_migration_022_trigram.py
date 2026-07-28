@@ -35,9 +35,7 @@ def _create_v021_database(path: Path) -> None:
         if int(migration.stem.split("_", maxsplit=1)[0]) > 21:
             continue
         connection.executescript(migration.read_text(encoding="utf-8"))
-        connection.execute(
-            "INSERT INTO schema_migrations(version) VALUES (?)", (migration.stem,)
-        )
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (migration.stem,))
     for claim_id, text in (
         ("claim-memory", "记忆系统架构设计"),
         ("claim-sqlite", "SQLite FTS5 trigram"),
@@ -84,10 +82,7 @@ def test_migration_022_upgrades_fts_to_trigram(
     assert set(schemas) == {"claims_fts", "claims_tags_fts"}
     assert all("tokenize='trigram'" in sql for sql in schemas.values())
     assert (
-        connection.execute(
-            "SELECT count(*) FROM claims_fts WHERE claims_fts MATCH '\"记忆系统\"'"
-        ).fetchone()[0]
-        == 1
+        connection.execute("SELECT count(*) FROM claims_fts WHERE claims_fts MATCH '\"记忆系统\"'").fetchone()[0] == 1
     )
     assert (
         connection.execute(
@@ -123,9 +118,7 @@ def test_schema_migrations_registered(
 ) -> None:
     """升级后 schema_migrations 记录 migration 022。"""
     _, connection = upgraded_database
-    row = connection.execute(
-        "SELECT version FROM schema_migrations WHERE version='022_fts_trigram'"
-    ).fetchone()
+    row = connection.execute("SELECT version FROM schema_migrations WHERE version='022_fts_trigram'").fetchone()
     assert row["version"] == "022_fts_trigram"
 
 

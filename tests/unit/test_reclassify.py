@@ -41,10 +41,7 @@ def test_reclassify_batches_updates_and_is_idempotent(tmp_path, monkeypatch):
 
     def fake_batch(_client, claims):
         calls.append(len(claims))
-        return [
-            {"id": claim["id"], "scope": "temporal", "importance": 0.8}
-            for claim in claims
-        ]
+        return [{"id": claim["id"], "scope": "temporal", "importance": 0.8} for claim in claims]
 
     monkeypatch.setattr("hl_mem.workers.reclassify.classify_batch", fake_batch)
     assert reclassify_claims(connection, fake_client, 5)["updated"] == 6

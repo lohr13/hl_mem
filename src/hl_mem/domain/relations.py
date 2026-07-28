@@ -107,9 +107,7 @@ def get_relations_batch(
             if extended:
                 relation.update(
                     seed_id=relation["derived_id"],
-                    neighbor_id=relation["evidence_id"]
-                    if relation["evidence_type"] == "claim"
-                    else None,
+                    neighbor_id=relation["evidence_id"] if relation["evidence_type"] == "claim" else None,
                     source="evidence_links",
                     confidence=float(relation.get("weight") or 1.0),
                 )
@@ -177,9 +175,7 @@ def walk_relation_graph(
     seeds = list(dict.fromkeys(seed_ids))
     if not seeds:
         return []
-    relations = [
-        RelationType(value).value for value in (allowed_relations or list(RelationType))
-    ]
+    relations = [RelationType(value).value for value in (allowed_relations or list(RelationType))]
     if not relations:
         return []
     seed_placeholders = ",".join("?" for _ in seeds)

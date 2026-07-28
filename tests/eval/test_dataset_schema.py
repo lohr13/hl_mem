@@ -68,9 +68,7 @@ def test_load_cases_validates_and_normalizes_jsonl(tmp_path: Path) -> None:
         ({"binding": {}}, "claim_keywords"),
     ],
 )
-def test_load_cases_rejects_invalid_rows(
-    tmp_path: Path, overrides: dict[str, object], message: str
-) -> None:
+def test_load_cases_rejects_invalid_rows(tmp_path: Path, overrides: dict[str, object], message: str) -> None:
     path = tmp_path / "cases.jsonl"
     _write_case(path, **overrides)
 

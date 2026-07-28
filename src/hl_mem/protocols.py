@@ -99,9 +99,7 @@ class ImageDescription:
 class ImageDescriberProtocol(Protocol):
     """把图片证据转换为 caption/OCR。"""
 
-    def describe(
-        self, image: ImagePart, *, timeout_seconds: float
-    ) -> ImageDescription: ...
+    def describe(self, image: ImagePart, *, timeout_seconds: float) -> ImageDescription: ...
 
 
 class ClaimRow(TypedDict, total=False):
@@ -196,9 +194,7 @@ class ExtractorProtocol(Protocol):
 class RerankerProtocol(Protocol):
     """召回重排组件协议。"""
 
-    def rerank(
-        self, query: str, documents: list[str], top_n: int = 20
-    ) -> list[tuple[int, float]]: ...
+    def rerank(self, query: str, documents: list[str], top_n: int = 20) -> list[tuple[int, float]]: ...
 
 
 class TextSearchBackend(Protocol):

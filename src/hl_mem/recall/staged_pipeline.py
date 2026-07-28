@@ -96,9 +96,7 @@ class RecallContext:
     fts: list[dict[str, Any]] = field(default_factory=list)
     dense: list[dict[str, Any]] = field(default_factory=list)
     tags: list[dict[str, Any]] = field(default_factory=list)
-    query_channels: list[tuple[str, list[dict[str, Any]], float, float]] = field(
-        default_factory=list
-    )
+    query_channels: list[tuple[str, list[dict[str, Any]], float, float]] = field(default_factory=list)
     fts_us: int = 0
     dense_us: int = 0
     tag_us: int = 0
@@ -162,9 +160,7 @@ def _visibility_filter_reason(
     return "not_visible_valid_time"
 
 
-def _preference_first(
-    claims: list[dict[str, Any]], limit: int, selected_intent: RecallIntent
-) -> list[dict[str, Any]]:
+def _preference_first(claims: list[dict[str, Any]], limit: int, selected_intent: RecallIntent) -> list[dict[str, Any]]:
     if selected_intent is not RecallIntent.PREFERENCE:
         return claims[:limit]
     preferences = [claim for claim in claims if _is_preference_claim(claim)]
@@ -173,9 +169,7 @@ def _preference_first(
     return (preferences[:reserved] + preferences[reserved:] + others)[:limit]
 
 
-def _rrf_scores(
-    channels: list[list[dict[str, Any]]], rank_constant: int
-) -> dict[str, float]:
+def _rrf_scores(channels: list[list[dict[str, Any]]], rank_constant: int) -> dict[str, float]:
     if rank_constant < 1:
         raise ValueError("rank_constant must be positive")
     scores: dict[str, float] = {}
@@ -187,34 +181,24 @@ def _rrf_scores(
 
 
 def _weighted_rrf_scores(
-    channels: Sequence[
-        tuple[list[dict[str, Any]], float] | tuple[list[dict[str, Any]], float, float]
-    ],
+    channels: Sequence[tuple[list[dict[str, Any]], float] | tuple[list[dict[str, Any]], float, float]],
     rank_constant: int,
 ) -> dict[str, float]:
     """按查询权重和通道权重计算 RRF，空通道不产生分数。"""
     scores: dict[str, float] = {}
     for entry in channels:
-        channel, query_weight, channel_weight = (
-            (*entry, 1.0) if len(entry) == 2 else entry
-        )
+        channel, query_weight, channel_weight = (*entry, 1.0) if len(entry) == 2 else entry
         for rank, item in enumerate(channel, 1):
             item_id = str(item["id"])
-            scores[item_id] = scores.get(
-                item_id, 0.0
-            ) + query_weight * channel_weight / (rank_constant + rank)
+            scores[item_id] = scores.get(item_id, 0.0) + query_weight * channel_weight / (rank_constant + rank)
     return scores
 
 
-def reciprocal_rank_fusion(
-    channels: list[list[dict[str, Any]]], rank_constant: int = RRF_K
-) -> list[dict[str, Any]]:
+def reciprocal_rank_fusion(channels: list[list[dict[str, Any]]], rank_constant: int = RRF_K) -> list[dict[str, Any]]:
     """使用唯一的 RRF 实现合并多个有序候选通道。"""
     scores = _rrf_scores(channels, rank_constant)
     items = {str(item["id"]): item for channel in channels for item in channel}
-    return sorted(
-        items.values(), key=lambda item: (-scores[str(item["id"])], str(item["id"]))
-    )
+    return sorted(items.values(), key=lambda item: (-scores[str(item["id"])], str(item["id"])))
 
 
 def hybrid_claims(
@@ -242,8 +226,7 @@ def hybrid_claims(
     tag_candidate_limit: int | None = None,
     weighted_queries: list[WeightedQuery] | None = None,
     query_blobs: list[bytes] | None = None,
-    low_recall_expander: Callable[[int], tuple[list[WeightedQuery], list[bytes]]]
-    | None = None,
+    low_recall_expander: Callable[[int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
 ) -> list[dict[str, Any]]:
     """协调候选收集、过滤评分、关系扩展、重排和结果收尾。"""
     state = _collect_candidates(
@@ -300,34 +283,19 @@ def _collect_candidates(
     tag_candidate_limit: int | None = None,
     weighted_queries: list[WeightedQuery] | None = None,
     query_blobs: list[bytes] | None = None,
-    low_recall_expander: Callable[[int], tuple[list[WeightedQuery], list[bytes]]]
-    | None = None,
+    low_recall_expander: Callable[[int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
 ) -> RecallContext:
     """仅执行 FTS 与向量检索，并建立统一时间快照。"""
     config = recall_config or RecallConfig()
     effective_floor = candidate_floor or config.candidate_floor
     candidate_limit = min(RECALL_VECTOR_SCAN_LIMIT, max(limit * 5, effective_floor))
     ranking_now = now or datetime.now(timezone.utc).isoformat()
-    selected_intent = (
-        RecallIntent(intent)
-        if intent
-        else route_recall_intent(query, as_of, ranking_now)
-    )
+    selected_intent = RecallIntent(intent) if intent else route_recall_intent(query, as_of, ranking_now)
     reference = as_of or ranking_now
     total_started = time.perf_counter_ns()
-    effective_tag_boost_enabled = (
-        config.tag_boost_enabled if tag_boost_enabled is None else tag_boost_enabled
-    )
-    effective_tag_channel_enabled = (
-        config.tag_channel_enabled
-        if tag_channel_enabled is None
-        else tag_channel_enabled
-    )
-    query_tags = (
-        extract_query_tags(query)
-        if effective_tag_boost_enabled or effective_tag_channel_enabled
-        else []
-    )
+    effective_tag_boost_enabled = config.tag_boost_enabled if tag_boost_enabled is None else tag_boost_enabled
+    effective_tag_channel_enabled = config.tag_channel_enabled if tag_channel_enabled is None else tag_channel_enabled
+    query_tags = extract_query_tags(query) if effective_tag_boost_enabled or effective_tag_channel_enabled else []
     query_slot_hints, hinted_tags = extract_query_slot_hints(query)
     query_tags = list(dict.fromkeys([*query_tags, *hinted_tags]))
 
@@ -376,12 +344,8 @@ def _collect_candidates(
         )
         if tracer is not None:
             legacy = weighted_queries is None
-            tracer.record_channel(
-                "fts" if legacy and index == 0 else f"{label}:fts", fts_results
-            )
-            tracer.record_channel(
-                "dense" if legacy and index == 0 else f"{label}:dense", dense_results
-            )
+            tracer.record_channel("fts" if legacy and index == 0 else f"{label}:fts", fts_results)
+            tracer.record_channel("dense" if legacy and index == 0 else f"{label}:dense", dense_results)
 
     collect_query(queries[0], blobs[0], 0)
     original_visible_count = len(
@@ -425,12 +389,8 @@ def _collect_candidates(
     if tracer is not None:
         tracer.trace.query_tags = query_tags
         tracer.trace.query_slot_hints = query_slot_hints
-        tracer.trace.tag_boost_applied = bool(
-            effective_tag_boost_enabled and query_tags
-        )
-        tracer.trace.tag_channel_applied = bool(
-            effective_tag_channel_enabled and query_tags and tag_results
-        )
+        tracer.trace.tag_boost_applied = bool(effective_tag_boost_enabled and query_tags)
+        tracer.trace.tag_channel_applied = bool(effective_tag_channel_enabled and query_tags and tag_results)
 
     return RecallContext(
         repo=repo,
@@ -449,20 +409,14 @@ def _collect_candidates(
         selected_intent=selected_intent,
         reference=reference,
         preference_boost=(
-            config.preference_recency_boost
-            if preference_recency_boost is None
-            else preference_recency_boost
+            config.preference_recency_boost if preference_recency_boost is None else preference_recency_boost
         ),
         query_tags=query_tags,
         query_slot_hints=query_slot_hints,
         tag_boost_enabled=effective_tag_boost_enabled,
-        tag_boost_weight=config.tag_boost_weight
-        if tag_boost_weight is None
-        else tag_boost_weight,
+        tag_boost_weight=config.tag_boost_weight if tag_boost_weight is None else tag_boost_weight,
         tag_channel_enabled=effective_tag_channel_enabled,
-        tag_channel_weight=config.tag_channel_weight
-        if tag_channel_weight is None
-        else tag_channel_weight,
+        tag_channel_weight=config.tag_channel_weight if tag_channel_weight is None else tag_channel_weight,
         tag_candidate_limit=effective_tag_candidate_limit,
         dedup_threshold=config.dedup_threshold,
         dedup_candidate_limit=config.dedup_candidate_limit,
@@ -482,41 +436,29 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
     started = time.perf_counter_ns()
     tracer = ctx.tracer
     visible: list[dict[str, Any]] = []
-    semantic_candidates = [
-        claim for _, channel, _, _ in ctx.query_channels for claim in channel
-    ]
+    semantic_candidates = [claim for _, channel, _, _ in ctx.query_channels for claim in channel]
     for claim in semantic_candidates + ctx.tags:
         if claim_is_visible(claim, ctx.reference, ctx.known_as_of, ctx.selected_intent):
             visible.append(claim)
         elif tracer is not None:
             tracer.record_filter(
                 str(claim["id"]),
-                _visibility_filter_reason(
-                    claim, ctx.reference, ctx.known_as_of, ctx.selected_intent
-                ),
+                _visibility_filter_reason(claim, ctx.reference, ctx.known_as_of, ctx.selected_intent),
             )
     by_id = {claim["id"]: claim for claim in visible}
     for claim_id, helpful_rate in ctx.repo.helpful_rates(list(by_id)).items():
         by_id[claim_id]["helpful_rate"] = helpful_rate
-    channels = [
-        (items, query_weight, channel_weight)
-        for _, items, query_weight, channel_weight in ctx.query_channels
-    ]
+    channels = [(items, query_weight, channel_weight) for _, items, query_weight, channel_weight in ctx.query_channels]
     if ctx.tag_channel_enabled and ctx.tags:
         channels.append((ctx.tags, 1.0, ctx.tag_channel_weight))
     scores = _weighted_rrf_scores(channels, RRF_K)
-    enabled_weight = sum(
-        query_weight * channel_weight
-        for _, _, query_weight, channel_weight in ctx.query_channels
-    )
+    enabled_weight = sum(query_weight * channel_weight for _, _, query_weight, channel_weight in ctx.query_channels)
     if ctx.tag_channel_enabled and ctx.tags:
         enabled_weight += ctx.tag_channel_weight
     normalization = enabled_weight / (RRF_K + 1)
     max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
     feature_by_id = {
-        claim_id: memory_features(
-            claim, scores[claim_id] / normalization, max_access, ctx.ranking_now
-        )
+        claim_id: memory_features(claim, scores[claim_id] / normalization, max_access, ctx.ranking_now)
         for claim_id, claim in by_id.items()
     }
     tag_boosts: dict[str, float] = {}
@@ -524,11 +466,7 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
         query_tag_set = set(ctx.query_tags)
         for claim_id, claim in by_id.items():
             overlap = query_tag_set.intersection(claim.get("topic_tags") or [])
-            weighted = sum(
-                TAG_INFO_WEIGHT.get(tag, 0.5)
-                for tag in overlap
-                if tag not in LOW_INFORMATION_TAGS
-            )
+            weighted = sum(TAG_INFO_WEIGHT.get(tag, 0.5) for tag in overlap if tag not in LOW_INFORMATION_TAGS)
             if weighted <= 0.0:
                 continue
             boost = min(weighted / len(query_tag_set), 1.0) * ctx.tag_boost_weight
@@ -541,15 +479,13 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
         + (
             0.05
             if any(
-                _slot_matches(str(by_id[claim_id].get("canonical_slot") or ""), hint)
-                for hint in ctx.query_slot_hints
+                _slot_matches(str(by_id[claim_id].get("canonical_slot") or ""), hint) for hint in ctx.query_slot_hints
             )
             else 0.0
         )
         + (
             ctx.preference_boost * features["recency"]
-            if ctx.selected_intent is RecallIntent.PREFERENCE
-            and _is_preference_claim(by_id[claim_id])
+            if ctx.selected_intent is RecallIntent.PREFERENCE and _is_preference_claim(by_id[claim_id])
             else 0.0
         )
         for claim_id, features in feature_by_id.items()
@@ -561,10 +497,7 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
     ctx.ranked_claims = _sort_pre_rank(by_id, feature_by_id, pre_scores)
     if tracer is not None:
         tracer.trace.slot_boost_applied = any(
-            any(
-                _slot_matches(str(claim.get("canonical_slot") or ""), hint)
-                for hint in ctx.query_slot_hints
-            )
+            any(_slot_matches(str(claim.get("canonical_slot") or ""), hint) for hint in ctx.query_slot_hints)
             for claim in by_id.values()
         )
         tracer.trace.tag_boost_applied = bool(tag_boosts)
@@ -601,10 +534,7 @@ def _expand_related(ctx: RecallContext) -> RecallContext:
     if ctx.relation_connection is None or config is None or not config.enabled:
         return ctx
     started = time.perf_counter_ns()
-    seeds = [
-        {**claim, "_semantic_score": ctx.feature_by_id[claim["id"]]["semantic"]}
-        for claim in ctx.ranked_claims
-    ]
+    seeds = [{**claim, "_semantic_score": ctx.feature_by_id[claim["id"]]["semantic"]} for claim in ctx.ranked_claims]
     expanded, metadata_items = expand_related_claims(
         ctx.relation_connection,
         ctx.repo,
@@ -615,25 +545,15 @@ def _expand_related(ctx: RecallContext) -> RecallContext:
         ctx.namespace,
         config,
     )
-    expanded_ids = [
-        str(claim["id"]) for claim in expanded if str(claim["id"]) not in ctx.by_id
-    ]
-    expanded_by_id = {
-        str(claim["id"]): claim
-        for claim in expanded
-        if str(claim["id"]) in expanded_ids
-    }
+    expanded_ids = [str(claim["id"]) for claim in expanded if str(claim["id"]) not in ctx.by_id]
+    expanded_by_id = {str(claim["id"]): claim for claim in expanded if str(claim["id"]) in expanded_ids}
     helpful_rates = ctx.repo.helpful_rates(expanded_ids)
     for claim_id, claim in expanded_by_id.items():
-        claim["helpful_rate"] = helpful_rates.get(
-            claim_id, claim.get("helpful_rate", 0.5)
-        )
+        claim["helpful_rate"] = helpful_rates.get(claim_id, claim.get("helpful_rate", 0.5))
         ctx.by_id[claim_id] = claim
     max_access = max((_access_count(claim) for claim in ctx.by_id.values()), default=0)
     for claim_id, claim in expanded_by_id.items():
-        ctx.feature_by_id[claim_id] = memory_features(
-            claim, claim["_semantic_score"], max_access, ctx.ranking_now
-        )
+        ctx.feature_by_id[claim_id] = memory_features(claim, claim["_semantic_score"], max_access, ctx.ranking_now)
         ctx.pre_scores[claim_id] = memory_score(ctx.feature_by_id[claim_id])
     if expanded_by_id:
         ctx.ranked_claims = _sort_pre_rank(ctx.by_id, ctx.feature_by_id, ctx.pre_scores)
@@ -705,35 +625,20 @@ def _rerank(ctx: RecallContext) -> RecallContext:
     else:
         reranked = returned
         last = getattr(reranker, "last_outcome", None)
-        result_status = (
-            getattr(last, "outcome", None)
-            or last
-            or ("empty" if not reranked else "success")
-        )
+        result_status = getattr(last, "outcome", None) or last or ("empty" if not reranked else "success")
     ctx.reranked = reranked
     if not reranked:
         ctx.outcome = "error_fallback" if result_status == "error" else "empty_fallback"
         if ctx.tracer is not None and ctx.outcome == "error_fallback":
-            ctx.tracer.trace.reranker_error_class = (
-                getattr(reranker, "last_error_class", None) or "RerankerError"
-            )
+            ctx.tracer.trace.reranker_error_class = getattr(reranker, "last_error_class", None) or "RerankerError"
         return ctx
 
-    valid = [
-        (candidates[index], score)
-        for index, score in reranked
-        if 0 <= index < len(candidates)
-    ]
+    valid = [(candidates[index], score) for index, score in reranked if 0 <= index < len(candidates)]
     ctx.valid_reranked = valid
     raw_scores = {claim["id"]: float(score) for claim, score in valid}
     if ctx.tracer is not None:
-        ctx.tracer.record_rerank(
-            [(str(claim["id"]), float(score)) for claim, score in valid]
-        )
-    rerank_scores = {
-        claim["id"]: blend_reranker_score(score, ctx.feature_by_id[claim["id"]])
-        for claim, score in valid
-    }
+        ctx.tracer.record_rerank([(str(claim["id"]), float(score)) for claim, score in valid])
+    rerank_scores = {claim["id"]: blend_reranker_score(score, ctx.feature_by_id[claim["id"]]) for claim, score in valid}
     ctx.rerank_scores = rerank_scores
     reranked_claims = sorted(
         (claim for claim, _ in valid),
@@ -748,9 +653,7 @@ def _rerank(ctx: RecallContext) -> RecallContext:
     if ctx.selected_intent is RecallIntent.PREFERENCE:
         reranked_ids = {claim["id"] for claim in reranked_claims}
         reranked_claims.extend(
-            claim
-            for claim in ranked_claims
-            if _is_preference_claim(claim) and claim["id"] not in reranked_ids
+            claim for claim in ranked_claims if _is_preference_claim(claim) and claim["id"] not in reranked_ids
         )
     ctx.ranked_result = reranked_claims
     ctx.outcome = "applied"
@@ -760,27 +663,15 @@ def _rerank(ctx: RecallContext) -> RecallContext:
 def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
     """执行截断、偏好保留、trace、审计和最终分数装配。"""
     for claim in ctx.ranked_result:
-        claim["_score"] = ctx.rerank_scores.get(
-            claim["id"], ctx.pre_scores[claim["id"]]
-        )
-        claim["_score_path"] = (
-            "reranker_applied"
-            if claim["id"] in ctx.rerank_scores
-            else "reranker_fallback"
-        )
+        claim["_score"] = ctx.rerank_scores.get(claim["id"], ctx.pre_scores[claim["id"]])
+        claim["_score_path"] = "reranker_applied" if claim["id"] in ctx.rerank_scores else "reranker_fallback"
         claim["_reranker_raw_score"] = next(
-            (
-                float(score)
-                for candidate, score in ctx.valid_reranked
-                if candidate["id"] == claim["id"]
-            ),
+            (float(score) for candidate, score in ctx.valid_reranked if candidate["id"] == claim["id"]),
             None,
         )
         claim["_pre_score"] = ctx.pre_scores[claim["id"]]
         claim["_features"] = dict(ctx.feature_by_id[claim["id"]])
-    folded = fold_similar_claims(
-        ctx.ranked_result, ctx.dedup_threshold, ctx.dedup_candidate_limit
-    )
+    folded = fold_similar_claims(ctx.ranked_result, ctx.dedup_threshold, ctx.dedup_candidate_limit)
     final = _preference_first(folded, ctx.limit, ctx.selected_intent)
     tracer = ctx.tracer
     if tracer is not None:
@@ -796,9 +687,7 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
                 tracer.record_filter(claim_id, "final_limit")
         tracer.record_final(final)
         tracer.trace.outcome = ctx.outcome
-        tracer.trace.phases.total_us = (
-            time.perf_counter_ns() - ctx.total_started
-        ) // 1000
+        tracer.trace.phases.total_us = (time.perf_counter_ns() - ctx.total_started) // 1000
     current_audit().emit(
         "recall",
         "ranked",
@@ -817,9 +706,7 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
             "query_tags": ctx.query_tags,
             "tag_boost_applied": bool(ctx.tag_boosts),
             "tag_boost": ctx.tag_boosts,
-            "tag_channel_applied": bool(
-                ctx.tag_channel_enabled and ctx.query_tags and ctx.tags
-            ),
+            "tag_channel_applied": bool(ctx.tag_channel_enabled and ctx.query_tags and ctx.tags),
             "rrf_ids": [item["id"] for item in ctx.ranked_claims],
             "returned_ids": [item["id"] for item in final],
             "weights": DEFAULT_WEIGHTS,
@@ -873,9 +760,7 @@ _PROTECTED_VALUE_PATTERN = re.compile(
 def _protected_value_tokens(claim: dict[str, Any]) -> tuple[str, ...]:
     """提取不得因向量相似而混同的数值、版本和路径标记。"""
     value = claim.get("value", claim.get("value_json"))
-    serialized = json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return tuple(sorted(_PROTECTED_VALUE_PATTERN.findall(serialized)))
 
 
@@ -886,11 +771,7 @@ def _valid_intervals_overlap(left: dict[str, Any], right: dict[str, Any]) -> boo
         if value in (None, ""):
             return None
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        return (
-            parsed.replace(tzinfo=timezone.utc)
-            if parsed.tzinfo is None
-            else parsed.astimezone(timezone.utc)
-        )
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
     left_start, left_end = parse(left.get("valid_from")), parse(left.get("valid_to"))
     right_start, right_end = (
@@ -904,9 +785,7 @@ def _valid_intervals_overlap(left: dict[str, Any], right: dict[str, Any]) -> boo
 
 def _fold_semantics_compatible(left: dict[str, Any], right: dict[str, Any]) -> bool:
     """仅允许保护值一致且有效时间重叠的 Claim 互相折叠。"""
-    return _protected_value_tokens(left) == _protected_value_tokens(
-        right
-    ) and _valid_intervals_overlap(left, right)
+    return _protected_value_tokens(left) == _protected_value_tokens(right) and _valid_intervals_overlap(left, right)
 
 
 def fold_similar_claims(
@@ -928,9 +807,7 @@ def fold_similar_claims(
         if (embedding := claim.get("embedding_dense")) is not None
     }
     kept: list[dict[str, Any]] = []
-    kept_candidates: dict[
-        tuple[Any, ...], list[tuple[dict[str, Any], tuple[float, ...]]]
-    ] = {}
+    kept_candidates: dict[tuple[Any, ...], list[tuple[dict[str, Any], tuple[float, ...]]]] = {}
     for claim in fold_candidates:
         bucket = _fold_bucket(claim)
         vector = decoded.get(str(claim["id"]))

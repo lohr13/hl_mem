@@ -162,12 +162,7 @@ class ExtractionRepairTest(unittest.TestCase):
 
         details = LLMExtractor._schema_error_details(captured.exception, invalid)
 
-        self.assertTrue(
-            any(
-                item["path"] == "entities" and item["invalid_value"] == "PostgreSQL"
-                for item in details
-            )
-        )
+        self.assertTrue(any(item["path"] == "entities" and item["invalid_value"] == "PostgreSQL" for item in details))
         self.assertTrue(
             any(
                 item["path"] == "sensitivity"
@@ -182,17 +177,13 @@ class ExtractionRepairTest(unittest.TestCase):
     ) -> None:
         client = _RetryClient()
 
-        LLMExtractor(client, ChunkingPolicy(10_000, 0, 2), schema_retries=1).extract(
-            "敏感信息"
-        )
+        LLMExtractor(client, ChunkingPolicy(10_000, 0, 2), schema_retries=1).extract("敏感信息")
 
         retry_prompt = client.requests[1].messages[1].content
         self.assertIn("<previous_invalid_json>", retry_prompt)
         self.assertIn('"sensitivity": "机密"', retry_prompt)
         self.assertIn('"invalid_value": "机密"', retry_prompt)
-        self.assertIn(
-            '"allowed_values": ["normal", "sensitive", "restricted"]', retry_prompt
-        )
+        self.assertIn('"allowed_values": ["normal", "sensitive", "restricted"]', retry_prompt)
 
 
 if __name__ == "__main__":

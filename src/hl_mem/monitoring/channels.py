@@ -21,9 +21,7 @@ class LogChannel:
     """结构化日志告警渠道。"""
 
     def send(self, subject: str, payload: dict[str, object]) -> None:
-        logging.getLogger("hl_mem.monitoring").warning(
-            "%s %s", subject, json.dumps(payload, ensure_ascii=False)
-        )
+        logging.getLogger("hl_mem.monitoring").warning("%s %s", subject, json.dumps(payload, ensure_ascii=False))
 
 
 class WebhookChannel:
@@ -34,9 +32,7 @@ class WebhookChannel:
         self.timeout_seconds = timeout_seconds
 
     def send(self, subject: str, payload: dict[str, object]) -> None:
-        response = httpx.post(
-            self.url, json={"subject": subject, **payload}, timeout=self.timeout_seconds
-        )
+        response = httpx.post(self.url, json={"subject": subject, **payload}, timeout=self.timeout_seconds)
         response.raise_for_status()
 
 

@@ -82,9 +82,7 @@ def test_neighbor_pool_is_namespace_isolated_prioritized_and_bounded(
     _insert_claim(connection, "entity", entities='["project:hl"]')
     _insert_claim(connection, "subject", subject="user")
     _insert_claim(connection, "foreign", "other", slot="choice.tool")
-    source = dict(
-        connection.execute("SELECT * FROM claims WHERE id='source'").fetchone()
-    )
+    source = dict(connection.execute("SELECT * FROM claims WHERE id='source'").fetchone())
     source.update(topic_tags=["python"], entities=["project:hl"])
     pool = build_neighbor_pool(connection, source, 3)
     assert [item["id"] for item in pool] == ["slot", "tag", "entity"]
@@ -94,9 +92,7 @@ def test_neighbor_pool_is_namespace_isolated_prioritized_and_bounded(
 def test_audit_records_proposal_without_writing_edge(connection) -> None:
     _insert_claim(connection, "source")
     _insert_claim(connection, "target")
-    proposal = RelationProposal(
-        "source", "target", "supports", 0.99, "evidence", (), "fake"
-    )
+    proposal = RelationProposal("source", "target", "supports", 0.99, "evidence", (), "fake")
     result = discover_relations(
         connection,
         FakeRelationDiscoverer([proposal]),
@@ -108,13 +104,8 @@ def test_audit_records_proposal_without_writing_edge(connection) -> None:
         conflict_confidence=0.8,
     )
     assert result["proposals"] == 1
-    assert (
-        connection.execute("SELECT count(*) FROM memory_relations").fetchone()[0] == 0
-    )
-    assert (
-        connection.execute("SELECT status FROM relation_proposals").fetchone()[0]
-        == "pending"
-    )
+    assert connection.execute("SELECT count(*) FROM memory_relations").fetchone()[0] == 0
+    assert connection.execute("SELECT status FROM relation_proposals").fetchone()[0] == "pending"
 
 
 def test_auto_applies_high_confidence_safe_edge_and_rejects_summary(connection) -> None:
@@ -136,17 +127,13 @@ def test_auto_applies_high_confidence_safe_edge_and_rejects_summary(connection) 
     )
     assert result["applied"] == 1
     assert result["rejected"] == 1
-    assert (
-        connection.execute("SELECT count(*) FROM memory_relations").fetchone()[0] == 1
-    )
+    assert connection.execute("SELECT count(*) FROM memory_relations").fetchone()[0] == 1
 
 
 def test_contradiction_reuses_pair_case_and_marks_claims_disputed(connection) -> None:
     _insert_claim(connection, "source")
     _insert_claim(connection, "target")
-    proposal = RelationProposal(
-        "source", "target", "contradicts", 0.9, "conflict", (), "fake"
-    )
+    proposal = RelationProposal("source", "target", "contradicts", 0.9, "conflict", (), "fake")
     for _ in range(2):
         discover_relations(
             connection,

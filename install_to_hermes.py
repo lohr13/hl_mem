@@ -49,9 +49,7 @@ def find_hermes_home(arg_override: str | Path | None) -> Path:
 
 def backup_existing(target_dir: Path) -> Path | None:
     """备份目标目录内已有的插件文件，并返回备份目录。"""
-    existing = [
-        target_dir / filename for filename in FILES if (target_dir / filename).is_file()
-    ]
+    existing = [target_dir / filename for filename in FILES if (target_dir / filename).is_file()]
     if not existing:
         return None
     timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -68,11 +66,7 @@ def backup_existing(target_dir: Path) -> Path | None:
 
 def install(target_dir: Path, dry_run: bool = False) -> Path | None:
     """备份并安装插件文件，复制后逐字节验证内容。"""
-    missing = [
-        str(SOURCE_DIR / filename)
-        for filename in FILES
-        if not (SOURCE_DIR / filename).is_file()
-    ]
+    missing = [str(SOURCE_DIR / filename) for filename in FILES if not (SOURCE_DIR / filename).is_file()]
     if missing:
         raise FileNotFoundError(f"Missing source files: {', '.join(missing)}")
     if dry_run:
@@ -85,9 +79,7 @@ def install(target_dir: Path, dry_run: bool = False) -> Path | None:
         destination = target_dir / filename
         shutil.copy2(source, destination)
         if source.read_bytes() != destination.read_bytes():
-            raise RuntimeError(
-                f"Verification failed after copying {filename} to {destination}"
-            )
+            raise RuntimeError(f"Verification failed after copying {filename} to {destination}")
     return backup_dir
 
 
@@ -110,24 +102,14 @@ def main(argv: list[str] | None = None) -> int:
         hermes_home = find_hermes_home(args.hermes_home)
         target_dir = hermes_home / "plugins" / "memory" / "hl_mem"
         if args.dry_run:
-            missing = [
-                SOURCE_DIR / filename
-                for filename in FILES
-                if not (SOURCE_DIR / filename).is_file()
-            ]
+            missing = [SOURCE_DIR / filename for filename in FILES if not (SOURCE_DIR / filename).is_file()]
             if missing:
-                raise FileNotFoundError(
-                    f"Missing source files: {', '.join(map(str, missing))}"
-                )
+                raise FileNotFoundError(f"Missing source files: {', '.join(map(str, missing))}")
             print(f"Dry run: would install {', '.join(FILES)}")
             print(f"Source: {SOURCE_DIR}")
             print(f"Target: {target_dir}")
-            existing = [
-                filename for filename in FILES if (target_dir / filename).is_file()
-            ]
-            print(
-                f"Backup: {'existing files would be backed up' if existing else 'not required'}"
-            )
+            existing = [filename for filename in FILES if (target_dir / filename).is_file()]
+            print(f"Backup: {'existing files would be backed up' if existing else 'not required'}")
             return 0
 
         print(f"Installing HL-Mem Hermes plugin to {target_dir}")

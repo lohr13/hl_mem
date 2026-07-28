@@ -141,11 +141,7 @@ class LLMRelationDiscoverer(RelationDiscoveryProtocol):
                 ),
             )
         )
-        decoded = (
-            response.content
-            if isinstance(response.content, dict)
-            else json.loads(response.content)
-        )
+        decoded = response.content if isinstance(response.content, dict) else json.loads(response.content)
         result: list[RelationProposal] = []
         for item in decoded.get("relations", [])[:max_proposals]:
             try:
@@ -156,9 +152,7 @@ class LLMRelationDiscoverer(RelationDiscoveryProtocol):
                         relation=str(item["relation"]),
                         confidence=float(item["confidence"]),
                         rationale=str(item["rationale"]),
-                        supporting_claim_ids=tuple(
-                            str(value) for value in item.get("supporting_ids", [])
-                        ),
+                        supporting_claim_ids=tuple(str(value) for value in item.get("supporting_ids", [])),
                         model=self.client.model,
                     )
                 )
@@ -253,10 +247,7 @@ def _validate_proposal(
         return "inactive_endpoint"
     if any(support_id not in claims for support_id in proposal.supporting_claim_ids):
         return "missing_support"
-    if any(
-        claims[support_id]["status"] not in {"active", "disputed"}
-        for support_id in proposal.supporting_claim_ids
-    ):
+    if any(claims[support_id]["status"] not in {"active", "disputed"} for support_id in proposal.supporting_claim_ids):
         return "inactive_support"
     return None
 
@@ -327,18 +318,12 @@ def discover_relations(
             "rejected": 0,
         }
     candidates = build_neighbor_pool(connection, source, pool_limit)
-    proposed = discoverer.propose(
-        _claim_row(source), candidates, max_proposals=max_proposals
-    )
+    proposed = discoverer.propose(_claim_row(source), candidates, max_proposals=max_proposals)
     ids = list(
         dict.fromkeys(
             [source["id"], *(item["id"] for item in candidates)]
             + [support for item in proposed for support in item.supporting_claim_ids]
-            + [
-                endpoint
-                for item in proposed
-                for endpoint in (item.from_claim_id, item.to_claim_id)
-            ]
+            + [endpoint for item in proposed for endpoint in (item.from_claim_id, item.to_claim_id)]
         )
     )
     repository = RelationProposalRepository(connection)
@@ -396,25 +381,13 @@ def discover_relations(
                 )
             elif proposal.relation == "summarizes":
                 decision_reason = "topic_summary_builder_only"
-            elif (
-                proposal.relation in AUTO_RELATIONS
-                and proposal.confidence >= auto_apply_confidence
-            ):
-                relation_id = _find_or_insert_relation(
-                    connection, proposal_id, proposal, now
-                )
+            elif proposal.relation in AUTO_RELATIONS and proposal.confidence >= auto_apply_confidence:
+                relation_id = _find_or_insert_relation(connection, proposal_id, proposal, now)
                 status, decision_reason = "applied", "auto_confidence_threshold"
                 counts["applied"] += 1
-            elif (
-                proposal.relation == "contradicts"
-                and proposal.confidence >= conflict_confidence
-            ):
-                pair_key = compute_claim_pair_key(
-                    proposal.from_claim_id, proposal.to_claim_id
-                )
-                row = connection.execute(
-                    "SELECT id FROM conflict_cases WHERE pair_key=?", (pair_key,)
-                ).fetchone()
+            elif proposal.relation == "contradicts" and proposal.confidence >= conflict_confidence:
+                pair_key = compute_claim_pair_key(proposal.from_claim_id, proposal.to_claim_id)
+                row = connection.execute("SELECT id FROM conflict_cases WHERE pair_key=?", (pair_key,)).fetchone()
                 conflict_case_id = str(row["id"]) if row else uuid.uuid4().hex
                 if row is None:
                     connection.execute(

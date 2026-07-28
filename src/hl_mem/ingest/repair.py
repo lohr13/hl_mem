@@ -125,9 +125,7 @@ def _emit_repair(
     )
 
 
-def _repair_entities(
-    container: dict[str, Any], path: str, provider: str, model: str
-) -> None:
+def _repair_entities(container: dict[str, Any], path: str, provider: str, model: str) -> None:
     """把单个实体字符串修复为 schema 要求的数组。"""
     original = container.get("entities")
     if not isinstance(original, str):
@@ -137,23 +135,15 @@ def _repair_entities(
     _emit_repair(path, original, repaired, "string_to_array", provider, model)
 
 
-def _repair_topic_tags(
-    claim: dict[str, Any], path: str, provider: str, model: str
-) -> None:
+def _repair_topic_tags(claim: dict[str, Any], path: str, provider: str, model: str) -> None:
     """把中文 topic tag 确定性映射为受控英文标签。"""
     original = claim.get("topic_tags")
-    tags = (
-        ([] if not original.strip() else [original])
-        if isinstance(original, str)
-        else original
-    )
+    tags = ([] if not original.strip() else [original]) if isinstance(original, str) else original
     if not isinstance(tags, list):
         return
     repaired = [
         (
-            TOPIC_TAG_ZH_TO_EN.get(
-                tag, tag.lower() if tag.lower() in ALLOWED_TOPIC_TAGS else tag
-            )
+            TOPIC_TAG_ZH_TO_EN.get(tag, tag.lower() if tag.lower() in ALLOWED_TOPIC_TAGS else tag)
             if isinstance(tag, str)
             else tag
         )
@@ -165,9 +155,7 @@ def _repair_topic_tags(
     _emit_repair(path, original, repaired, "topic_tag_mapping", provider, model)
 
 
-def _repair_enum(
-    container: dict[str, Any], field: str, path: str, provider: str, model: str
-) -> None:
+def _repair_enum(container: dict[str, Any], field: str, path: str, provider: str, model: str) -> None:
     """按白名单修复已知枚举的大小写或中文形式。"""
     original = container.get(field)
     if not isinstance(original, str):
@@ -179,9 +167,7 @@ def _repair_enum(
     _emit_repair(path, original, repaired, f"{field}_mapping", provider, model)
 
 
-def _repair_number(
-    container: dict[str, Any], field: str, path: str, provider: str, model: str
-) -> None:
+def _repair_number(container: dict[str, Any], field: str, path: str, provider: str, model: str) -> None:
     """把有限的合法数字字符串转换为浮点数，不修复越界值。"""
     original = container.get(field)
     if not isinstance(original, str):
@@ -211,9 +197,7 @@ def repair_extraction_json(
     claims = repaired.get("claims")
     if claims is None and repaired.get("should_memorize") is False:
         repaired["claims"] = []
-        _emit_repair(
-            "claims", None, [], "null_to_array_when_not_memorable", provider, model
-        )
+        _emit_repair("claims", None, [], "null_to_array_when_not_memorable", provider, model)
         return repaired
     if not isinstance(claims, list):
         return repaired
@@ -224,10 +208,6 @@ def repair_extraction_json(
         _repair_topic_tags(claim, f"claims.{index}.topic_tags", provider, model)
         _repair_enum(claim, "scope", f"claims.{index}.scope", provider, model)
         _repair_enum(claim, "volatility", f"claims.{index}.volatility", provider, model)
-        _repair_number(
-            claim, "importance", f"claims.{index}.importance", provider, model
-        )
-        _repair_number(
-            claim, "confidence", f"claims.{index}.confidence", provider, model
-        )
+        _repair_number(claim, "importance", f"claims.{index}.importance", provider, model)
+        _repair_number(claim, "confidence", f"claims.{index}.confidence", provider, model)
     return repaired

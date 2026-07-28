@@ -34,9 +34,7 @@ def test_runner_records_per_case_metrics_and_manifest(tmp_path: Path) -> None:
         forbidden_statuses=("disputed",),
     )
 
-    report = run_evaluation(
-        [case], lambda _case: {"results": [], "observations": []}, database_path
-    )
+    report = run_evaluation([case], lambda _case: {"results": [], "observations": []}, database_path)
     output = tmp_path / "report.json"
     write_report(report, output)
 

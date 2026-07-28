@@ -41,12 +41,7 @@ def test_cli_export_import_round_trip(tmp_path) -> None:
     assert export_database(source, archive) == 1
     target = tmp_path / "target.db"
     assert import_database(target, archive) == 1
-    assert (
-        Database(target)
-        .open()
-        .execute("SELECT content_json FROM events WHERE id='e1'")
-        .fetchone()[0]
-    )
+    assert Database(target).open().execute("SELECT content_json FROM events WHERE id='e1'").fetchone()[0]
 
 
 def test_cli_version(capsys: pytest.CaptureFixture[str]) -> None:

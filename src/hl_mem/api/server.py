@@ -60,9 +60,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.max_request_body = max_request_body
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """检查请求体声明长度，并继续处理未超限的请求。"""
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > self.max_request_body:
@@ -76,9 +74,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     database = Database(database_path or settings.database_path)
     embedder = components.make_embedder(settings)
     reranker = components.make_reranker(settings)
-    budget = TokenBudget(
-        settings.daily_token_limit, Path(database.path).with_suffix(".budget.db")
-    )
+    budget = TokenBudget(settings.daily_token_limit, Path(database.path).with_suffix(".budget.db"))
     audit = audit or NullAuditLogger()
 
     @asynccontextmanager
@@ -99,9 +95,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     )
     app.state.settings = settings
     app.state.audit = audit
-    app.add_middleware(
-        RequestSizeLimitMiddleware, max_request_body=settings.max_request_body
-    )
+    app.add_middleware(RequestSizeLimitMiddleware, max_request_body=settings.max_request_body)
 
     @app.exception_handler(NotFoundError)
     async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
@@ -109,9 +103,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
     @app.exception_handler(ValidationError)
-    async def validation_error_handler(
-        request: Request, exc: ValidationError
-    ) -> JSONResponse:
+    async def validation_error_handler(request: Request, exc: ValidationError) -> JSONResponse:
         """将应用验证异常映射为 HTTP 422。"""
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
@@ -137,13 +129,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             "status": "ok",
             "version": __version__,
             "embedder": "fake" if isinstance(embedder, FakeEmbedder) else "real",
-            "reranker": (
-                "off"
-                if reranker is None
-                else "fake"
-                if isinstance(reranker, FakeReranker)
-                else "real"
-            ),
+            "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
             "settings": settings.snapshot(),
             "components": components.component_health(),
             "llm_stats": {
@@ -162,11 +148,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
         key = idempotency_key or payload.idempotency_key
-        content = (
-            payload.content
-            if isinstance(payload.content, dict)
-            else {"text": payload.content}
-        )
+        content = payload.content if isinstance(payload.content, dict) else {"text": payload.content}
         content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
         event = payload.model_dump()
         service = IngestService(connection)
@@ -195,9 +177,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
         """提取候选 claims 与 token 用量，但不持久化记忆数据。"""
-        extractor = components.make_extractor(
-            settings, require_real=True, connection=connection
-        )
+        extractor = components.make_extractor(settings, require_real=True, connection=connection)
         return IngestService.dry_run_extract(
             extractor,
             payload.text,
@@ -224,18 +204,14 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         )
         return {"id": job_id}
 
-    @app.post(
-        "/v1/recall", response_model=RecallOutput, response_model_exclude_none=True
-    )
+    @app.post("/v1/recall", response_model=RecallOutput, response_model_exclude_none=True)
     def recall(
         payload: RecallInput,
         request: Request,
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
         query_id = request.headers.get("X-Request-ID") or new_id()
-        with audit_scope(
-            audit, trace_id=query_id, query_id=query_id, tenant_id="default"
-        ):
+        with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
             return RecallService(
                 connection,
                 embedder,
@@ -265,18 +241,14 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
     ) -> dict[str, Any]:
         episode_id = new_id()
         service = ExperienceService(connection)
-        service.create_episode(
-            episode_id, payload.goal, _now(), payload.session_id, payload.task_type
-        )
+        service.create_episode(episode_id, payload.goal, _now(), payload.session_id, payload.task_type)
         return service.get_episode(episode_id)
 
     @app.post("/v1/feedback")
     def post_feedback(
         payload: FeedbackInput, connection: sqlite3.Connection = Depends(get_connection)
     ) -> dict[str, Any]:
-        result: dict[str, Any] = ExperienceService(
-            connection, settings=settings
-        ).submit_retrieval_feedback(
+        result: dict[str, Any] = ExperienceService(connection, settings=settings).submit_retrieval_feedback(
             payload.feedback_id, payload.helpful, payload.task_outcome, _now()
         )
         correction = payload.correction
@@ -287,9 +259,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         event = {
             "idempotency_key": correction.idempotency_key,
             "tenant_id": "default",
-            "event_type": "feedback"
-            if correction.action == "retract"
-            else "correction",
+            "event_type": "feedback" if correction.action == "retract" else "correction",
             "actor_type": "user",
             "content": {
                 "memory_id": correction.memory_id,
@@ -298,16 +268,12 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             },
             "occurred_at": _now(),
         }
-        event_result = IngestService(connection).ingest_event(
-            event, correction.idempotency_key
-        )
+        event_result = IngestService(connection).ingest_event(event, correction.idempotency_key)
         if not event_result["created"]:
             correction_result = {"id": correction.memory_id, "idempotent": True}
         elif correction.action == "retract":
             try:
-                correction_result = ForgetService(connection).forget(
-                    correction.memory_id
-                )
+                correction_result = ForgetService(connection).forget(correction.memory_id)
             except NotFoundError as error:
                 raise HTTPException(404, str(error)) from error
         else:
@@ -358,9 +324,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                 commit=False,
             )
             if payload.reward is not None:
-                backprop_episode_reward(
-                    connection, episode_id, payload.reward, commit=False
-                )
+                backprop_episode_reward(connection, episode_id, payload.reward, commit=False)
                 updated = service.get_episode(episode_id)
             connection.commit()
             return updated
@@ -385,9 +349,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         return {"episodes": ExperienceService(connection).list_episodes(limit, status)}
 
     @app.get("/v1/episodes/{episode_id}")
-    def get_episode(
-        episode_id: str, connection: sqlite3.Connection = Depends(get_connection)
-    ) -> dict[str, Any]:
+    def get_episode(episode_id: str, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
         try:
             return ExperienceService(connection).get_episode(episode_id)
         except ValueError as error:
@@ -400,16 +362,12 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         return {"policies": ExperienceService(connection).list_policies(status)}
 
     @app.post("/v1/memories")
-    def save_memory(
-        payload: MemoryInput, connection: sqlite3.Connection = Depends(get_connection)
-    ) -> dict[str, str]:
+    def save_memory(payload: MemoryInput, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, str]:
         text = payload.text or payload.content
         if not text:
             raise HTTPException(422, "text or content is required")
         service = IngestService(connection)
-        result = service.save_explicit_memory(
-            text, payload.subject, payload.predicate, payload.qualifiers
-        )
+        result = service.save_explicit_memory(text, payload.subject, payload.predicate, payload.qualifiers)
         event_id = result["id"]
         content_json = json.dumps(
             {
@@ -439,9 +397,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         return result
 
     @app.delete("/v1/memories/{memory_id}")
-    def forget(
-        memory_id: str, connection: sqlite3.Connection = Depends(get_connection)
-    ) -> dict[str, Any]:
+    def forget(memory_id: str, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
         try:
             return ForgetService(connection).forget(memory_id)
         except ValueError as error:
@@ -458,9 +414,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
             "events": connection.execute("SELECT count(*) FROM events").fetchone()[0],
             "claims": connection.execute("SELECT count(*) FROM claims").fetchone()[0],
             "tokens_today": token_stats["used_tokens"],
-            "jobs_pending": connection.execute(
-                "SELECT count(*) FROM jobs WHERE status='pending'"
-            ).fetchone()[0],
+            "jobs_pending": connection.execute("SELECT count(*) FROM jobs WHERE status='pending'").fetchone()[0],
         }
 
     @app.get("/v1/jobs")

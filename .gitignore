@@ -10,6 +10,7 @@ build/
 hl_mem_test.db
 hl_mem_budget_test.json
 .env
+.env.bak*
 *.db
 *.db-*
 *.budget.json
@@ -17,6 +18,8 @@ var/*.db
 var/*.db-*
 var/*.db.cleanup_backup_*
 var/*.db.bak_*
+var/*.db.bak.*
+var/*.log
 tests/eval/reports/*.json
 evaluation/results/
 scripts/*.stdout.log
@@ -32,3 +35,5 @@ scripts/extraction_benchmark_results*.gold_eval.txt
 scripts/extraction_benchmark_results*.analysis.md
 scripts/extraction_benchmark_glm*.jsonl
 scripts/glm52_*.jsonl
+fix_env_ak.py
+test_hermes_ak.py

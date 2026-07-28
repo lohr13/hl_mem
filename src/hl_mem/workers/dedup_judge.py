@@ -22,9 +22,7 @@ class DedupJudge:
     def __init__(self, llm_client: LLMClient) -> None:
         self.llm_client = llm_client
 
-    def judge(
-        self, left: dict[str, Any], right: dict[str, Any]
-    ) -> tuple[str, float, str]:
+    def judge(self, left: dict[str, Any], right: dict[str, Any]) -> tuple[str, float, str]:
         """返回判定、置信度和简短理由。"""
         facts = {
             "left": {field: left.get(field) for field in self._FIELDS},
@@ -69,11 +67,7 @@ class DedupJudge:
                 ),
             )
         )
-        data = (
-            response.content
-            if isinstance(response.content, dict)
-            else json.loads(response.content)
-        )
+        data = response.content if isinstance(response.content, dict) else json.loads(response.content)
         decision = str(data.get("decision", ""))
         if decision not in {"equivalent", "distinct", "uncertain"}:
             raise ValueError(f"invalid dedup decision: {decision}")

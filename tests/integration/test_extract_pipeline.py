@@ -4,9 +4,7 @@ from hl_mem.api.server import create_app
 from hl_mem.workers.worker import Worker
 
 
-def test_fake_pipeline_filter_claim_evidence_recall_and_stats(
-    tmp_path, monkeypatch
-) -> None:
+def test_fake_pipeline_filter_claim_evidence_recall_and_stats(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HL_MEM_EXTRACTOR", "fake")
     app = create_app(tmp_path / "pipeline.db")
     with TestClient(app) as client:

@@ -121,9 +121,7 @@ class IngestService:
         if custom_instructions is not None:
             extraction_context["custom_instructions"] = custom_instructions
         claims = extractor.extract({"text": text}, extraction_context)
-        serialized_claims = [
-            asdict(claim) if is_dataclass(claim) else dict(claim) for claim in claims
-        ]
+        serialized_claims = [asdict(claim) if is_dataclass(claim) else dict(claim) for claim in claims]
         return {
             "claims": serialized_claims,
             "usage": {
@@ -144,9 +142,7 @@ class IngestService:
         timestamp = _now()
         content = event.get("content", {})
         content = content if isinstance(content, dict) else {"text": content}
-        stored_event = {
-            key: value for key, value in event.items() if key not in {"content", "id"}
-        }
+        stored_event = {key: value for key, value in event.items() if key not in {"content", "id"}}
         stored_event.update(
             id=event_id,
             idempotency_key=key,
@@ -157,15 +153,11 @@ class IngestService:
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             if key:
-                existing_id = EventRepository(
-                    self.connection
-                ).find_id_by_idempotency_key(key)
+                existing_id = EventRepository(self.connection).find_id_by_idempotency_key(key)
                 if existing_id:
                     self.connection.commit()
                     return {"id": existing_id, "created": False}
-            created = EventRepository(self.connection).insert_event(
-                stored_event, commit=False
-            )
+            created = EventRepository(self.connection).insert_event(stored_event, commit=False)
             if created:
                 self._queue_event(event_id, timestamp, commit=False)
             self.connection.commit()
@@ -313,9 +305,7 @@ class IngestService:
             if existing:
                 started = time.perf_counter_ns()
                 current = existing[0]
-                resolution = ConflictResolver().resolve(
-                    current, {**claim, "qualifiers": qualifiers}
-                )
+                resolution = ConflictResolver().resolve(current, {**claim, "qualifiers": qualifiers})
                 audit_events.append(
                     (
                         ("conflict", "resolved", resolution),
@@ -335,9 +325,7 @@ class IngestService:
                 )
                 if resolution == "entails":
                     _link_event(evidence, current["id"], event["id"], commit=False)
-                    _link_image_descriptions(
-                        evidence, current["id"], event, commit=False
-                    )
+                    _link_image_descriptions(evidence, current["id"], event, commit=False)
                     result_id = current["id"]
                     connection.commit()
                     emit_audit_events()
@@ -380,9 +368,7 @@ class IngestService:
                 )
                 if duplicate_id:
                     _link_event(evidence, duplicate_id, event["id"], commit=False)
-                    _link_image_descriptions(
-                        evidence, duplicate_id, event, commit=False
-                    )
+                    _link_image_descriptions(evidence, duplicate_id, event, commit=False)
                     result_id = duplicate_id
                     connection.commit()
                     emit_audit_events()
@@ -393,9 +379,7 @@ class IngestService:
                 winner = claims.find_by_fact_hash(namespace, claim["fact_hash"])
                 if winner:
                     _link_event(evidence, winner["id"], event["id"], commit=False)
-                    _link_image_descriptions(
-                        evidence, winner["id"], event, commit=False
-                    )
+                    _link_image_descriptions(evidence, winner["id"], event, commit=False)
                     result_id = winner["id"]
                 connection.commit()
                 emit_audit_events()
@@ -490,9 +474,7 @@ def _build_claim_drafts(
     canonical_attribute = validate_canonical_attribute(
         extracted.predicate, getattr(extracted, "canonical_attribute", None)
     )
-    predicate = predicate_for_canonical_attribute(
-        canonical_attribute, extracted.predicate
-    )
+    predicate = predicate_for_canonical_attribute(canonical_attribute, extracted.predicate)
     if predicate != extracted.predicate:
         current_audit().emit(
             "ingest",
@@ -518,9 +500,7 @@ def _build_claim_drafts(
             },
         )
     topic_tags = normalize_topic_tags(getattr(extracted, "topic_tags", None))
-    scope = (
-        extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
-    )
+    scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
     try:
         importance = min(1.0, max(0.0, float(extracted.importance)))
     except (TypeError, ValueError):
@@ -551,9 +531,7 @@ def _build_claim_drafts(
         "value": extracted.value,
         "canonical_attribute": canonical_attribute,
         "canonical_slot": canonical_slot,
-        "topic_tags_json": json.dumps(
-            topic_tags, ensure_ascii=False, separators=(",", ":")
-        ),
+        "topic_tags_json": json.dumps(topic_tags, ensure_ascii=False, separators=(",", ":")),
         "occurred_start": getattr(extracted, "occurred_start", None) or None,
         "occurred_end": getattr(extracted, "occurred_end", None) or None,
         "entities_json": (
@@ -575,9 +553,7 @@ def _build_claim_drafts(
             qualifiers,
         ),
         "conflict_key_version": 3,
-        "legacy_conflict_key": compute_legacy_conflict_key(
-            namespace, subject, predicate, qualifiers
-        ),
+        "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, predicate, qualifiers),
         "valid_from": observed_at,
         "recorded_from": recorded_from,
         "observed_at": observed_at,
@@ -589,15 +565,12 @@ def _build_claim_drafts(
         "importance": importance,
         "access_count": 0,
         "last_accessed_at": None,
-        "source_authority": authority
-        or ("low" if event.get("actor_type") == "assistant" else "medium"),
+        "source_authority": authority or ("low" if event.get("actor_type") == "assistant" else "medium"),
         "extractor_version": "llm-v1" if event.get("extractor") == "llm" else "fake-v1",
         "embedding_model": getattr(embedder, "model", "fake"),
         "embedding_dim": embedder.dim,
     }
-    claim["index_text"] = build_index_text(
-        {**claim, "topic_tags": topic_tags}, mode=index_text_mode
-    )
+    claim["index_text"] = build_index_text({**claim, "topic_tags": topic_tags}, mode=index_text_mode)
     claim["embedding_dense"] = embedder.embed_one(claim_text(claim))
     return _ClaimDraft(claim, qualifiers)
 
@@ -610,11 +583,7 @@ def _find_resolution(
     exact = claims.find_by_fact_hash(claim["namespace_key"], claim["fact_hash"])
     conflict_key = claim.get("conflict_key")
     exclusive = is_mutually_exclusive_attribute(claim.get("canonical_slot"))
-    existing = (
-        claims.find_by_conflict_key(conflict_key)
-        if conflict_key and exclusive and exact is None
-        else []
-    )
+    existing = claims.find_by_conflict_key(conflict_key) if conflict_key and exclusive and exact is None else []
     return exact, existing
 
 
@@ -623,9 +592,7 @@ def _persist_resolution(claims: ClaimRepository, claim: dict[str, Any]) -> bool:
     return claims.insert_claim(claim, commit=False)
 
 
-def _link_event(
-    repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = False
-) -> None:
+def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = False) -> None:
     repo.add_link(
         {
             "id": new_id(),

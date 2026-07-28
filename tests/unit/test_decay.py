@@ -78,10 +78,7 @@ def test_decay_access_count_bonus_extends_threshold(tmp_path):
         access_count=50,
     )
     decay_claims(connection2, NOW)
-    assert (
-        connection2.execute("SELECT status FROM claims WHERE id='c2'").fetchone()[0]
-        == "archived"
-    )
+    assert connection2.execute("SELECT status FROM claims WHERE id='c2'").fetchone()[0] == "archived"
 
 
 def test_decay_access_count_bonus_capped_at_365(tmp_path):
@@ -110,9 +107,7 @@ def test_decay_elapsed_linear_once_daily_and_floor(tmp_path):
         confidence=0.08,
     )
     assert decay_claims(connection, NOW) == {"decayed": 1, "archived": 0}
-    assert connection.execute("SELECT confidence FROM claims").fetchone()[
-        0
-    ] == pytest.approx(0.05)
+    assert connection.execute("SELECT confidence FROM claims").fetchone()[0] == pytest.approx(0.05)
     assert decay_claims(connection, "2026-07-21T12:00:00+00:00")["decayed"] == 0
 
 

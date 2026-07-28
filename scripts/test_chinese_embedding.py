@@ -58,9 +58,7 @@ for query in ["唇形同步", "配置", "hl_mem"]:
     print(f"\n--- '{query}' ---")
     try:
         blob = embedder.embed_one(query)
-        results = repo.search_claims_vector(
-            blob, 5, None, None, None, namespace="default"
-        )
+        results = repo.search_claims_vector(blob, 5, None, None, None, namespace="default")
         print(f"  Dense results: {len(results)}")
         for r in results[:3]:
             val = ""

@@ -43,9 +43,7 @@ class DashScopeReranker:
         self.last_error_class: str | None = None
         self.last_result = RerankResult()
 
-    def rerank(
-        self, query: str, documents: list[str], top_n: int = 20
-    ) -> list[tuple[int, float]]:
+    def rerank(self, query: str, documents: list[str], top_n: int = 20) -> list[tuple[int, float]]:
         """Return document indexes and relevance scores, or an empty list on failure."""
         if not documents:
             self.last_outcome, self.last_error_class = "empty", None
@@ -83,14 +81,10 @@ class DashScopeReranker:
             )
             raise
         results = response.json()["output"]["results"]
-        ranked = [
-            (int(item["index"]), float(item["relevance_score"])) for item in results
-        ]
+        ranked = [(int(item["index"]), float(item["relevance_score"])) for item in results]
         if any(index < 0 or index >= len(documents) for index, _ in ranked):
             self.last_outcome, self.last_error_class = "error", "InvalidResultIndex"
-            self.last_result = RerankResult(
-                [], self.last_outcome, self.last_error_class
-            )
+            self.last_result = RerankResult([], self.last_outcome, self.last_error_class)
             return []
         ranked = sorted(ranked, key=lambda item: item[1], reverse=True)
         self.last_outcome, self.last_error_class = (
@@ -99,9 +93,7 @@ class DashScopeReranker:
         )
         self.last_result = RerankResult(ranked, self.last_outcome)
         DEFAULT_PROVIDER_METRICS.record(
-            ProviderCall(
-                "reranker", "rerank", "success", (time.perf_counter() - started) * 1000
-            )
+            ProviderCall("reranker", "rerank", "success", (time.perf_counter() - started) * 1000)
         )
         return ranked
 
@@ -109,9 +101,7 @@ class DashScopeReranker:
 class FakeReranker:
     """Test stub: returns input order with decreasing fake scores."""
 
-    def rerank(
-        self, query: str, documents: list[str], top_n: int = 20
-    ) -> list[tuple[int, float]]:
+    def rerank(self, query: str, documents: list[str], top_n: int = 20) -> list[tuple[int, float]]:
         results = [(i, 1.0 - i * 0.01) for i in range(min(len(documents), top_n))]
         self.last_outcome = "success" if results else "empty"
         self.last_error_class = None
@@ -138,16 +128,13 @@ def make_reranker(
     if not settings.reranker_api_key:
         if settings.environment == "production" or not settings.allow_fake_fallback:
             raise ConfigurationError(
-                f"HL_MEM_RERANKER={settings.reranker_mode} but "
-                "RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
+                f"HL_MEM_RERANKER={settings.reranker_mode} but " "RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
             )
         return None
     registry = provider_types or RERANKER_PROVIDERS
     provider_type = registry.get(settings.reranker_provider)
     if provider_type is None:
-        raise ConfigurationError(
-            f"unsupported reranker provider: {settings.reranker_provider}"
-        )
+        raise ConfigurationError(f"unsupported reranker provider: {settings.reranker_provider}")
     try:
         return provider_type(
             settings.reranker_api_key,

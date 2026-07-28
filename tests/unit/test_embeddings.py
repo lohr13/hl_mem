@@ -27,24 +27,12 @@ def test_real_embedder_chunks_at_ten(monkeypatch) -> None:
             pass
 
         def json(self):
-            return {
-                "data": [
-                    {"index": i, "embedding": [1.0, 0.0]}
-                    for i in range(len(batches[-1]))
-                ]
-            }
+            return {"data": [{"index": i, "embedding": [1.0, 0.0]} for i in range(len(batches[-1]))]}
 
     def post(*args, **kwargs):
         batches.append(kwargs["json"]["input"])
         return Response()
 
     monkeypatch.setattr(httpx, "post", post)
-    assert (
-        len(
-            Embedder("key", "https://example.test", "model", 2).embed_batch(
-                [str(i) for i in range(11)]
-            )
-        )
-        == 11
-    )
+    assert len(Embedder("key", "https://example.test", "model", 2).embed_batch([str(i) for i in range(11)])) == 11
     assert [len(batch) for batch in batches] == [10, 1]

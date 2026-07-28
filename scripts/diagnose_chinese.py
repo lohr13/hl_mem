@@ -14,27 +14,21 @@ conn.row_factory = sqlite3.Row
 
 print("=== FTS raw test: 唇形 ===")
 try:
-    rows = conn.execute(
-        "SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("唇形",)
-    ).fetchall()
+    rows = conn.execute("SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("唇形",)).fetchall()
     print(f"FTS hits: {len(rows)}")
 except Exception as e:
     print(f"FTS error: {e}")
 
 print("\n=== FTS raw test: hl_mem ===")
 try:
-    rows = conn.execute(
-        "SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("hl_mem",)
-    ).fetchall()
+    rows = conn.execute("SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("hl_mem",)).fetchall()
     print(f"FTS hits: {len(rows)}")
 except Exception as e:
     print(f"FTS error: {e}")
 
 print("\n=== FTS raw test: Codex ===")
 try:
-    rows = conn.execute(
-        "SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("Codex",)
-    ).fetchall()
+    rows = conn.execute("SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("Codex",)).fetchall()
     print(f"FTS hits: {len(rows)}")
 except Exception as e:
     print(f"FTS error: {e}")
