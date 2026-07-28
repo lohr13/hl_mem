@@ -7,7 +7,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import replace
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -42,7 +42,7 @@ from .chunking import (
 )
 from .extractors import ExtractedClaim
 from .repair import repair_extraction_json
-from .schemas import ExtractionResponseSchema, extraction_response_json_schema
+from .schemas import ExtractionResponseSchema, TopicTag, extraction_response_json_schema
 
 LOGGER = logging.getLogger(__name__)
 
@@ -59,9 +59,15 @@ def _operational_slot_prompt() -> str:
 
 
 _OPERATIONAL_SLOT_PROMPT = _operational_slot_prompt()
-_TOPIC_TAG_PROMPT = "、".join(sorted(ALLOWED_TOPIC_TAGS))
+_TOPIC_TAG_PROMPT = "、".join(sorted(get_args(TopicTag)))
+_SCHEMA_ENUM_CONSTRAINTS = f"""【JSON 枚举与类型硬约束】
+- topic_tags 的每一项必须是以下 {len(get_args(TopicTag))} 个英文标签之一：{_TOPIC_TAG_PROMPT}
+- sensitivity 只能是英文字符串 'normal' / 'sensitive' / 'restricted'
+- 顶层 entities 必须是字符串数组；claim.entities 必须是字符串数组或 null
+"""
 
-SYSTEM_PROMPT = f"""你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。只提取事实，不判断是否与已有记忆冲突。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、canonical_attribute、canonical_slot、topic_tags、value、qualifiers、confidence、volatility、reason、occurred_start、occurred_end、entities。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
+SYSTEM_PROMPT = f"""{_SCHEMA_ENUM_CONSTRAINTS}
+你是长期记忆事实提取器。只提取用户值得长期记住的原子事实；忽略闲聊、寒暄和临时信息。只提取事实，不判断是否与已有记忆冲突。输出一个 JSON 对象，包含 claims、entities、should_memorize、sensitivity。每个 claim 包含 subject、predicate、canonical_attribute、canonical_slot、topic_tags、value、qualifiers、confidence、volatility、reason、occurred_start、occurred_end、entities。volatility 只能是 ephemeral（实时状态或临时数据）或 stable（偏好、配置和事实）。
 value 必须保持用户使用的原始语言：中文原文输出中文值，英文原文输出英文值，不要翻译。保留原文中的精确数字和日期，不得模糊化或改写。
 结合事件上下文中的 occurred_at 解析“今天”“明天”“下周”等相对时间，并在事实中输出对应的绝对日期。
 事实明确描述时间区间时，将起止时间分别写入 occurred_start 和 occurred_end；无法确定时返回 null。entities 列出该事实明确涉及的实体名，无法确定时返回 null。
@@ -121,7 +127,8 @@ confidence 只表示该 claim 本身的事实可信度。每条 claim 独立判�
   "should_memorize": true,
   "sensitivity": "normal"
 }}
-不要输出 JSON 以外的解释。"""
+不要输出 JSON 以外的解释。
+{_SCHEMA_ENUM_CONSTRAINTS}"""
 
 SYSTEM_PROMPT += """
 Every claim must also include scope and importance. Scope is independent from volatility.
@@ -150,6 +157,7 @@ scope 表示事实的有效期，不表示变化频率：
 “本次修复了 FTS5 查询” → temporal；“FTS5 查询会转义用户 token” → permanent。
 “端口固定为 8200” → permanent；“服务现在监听 8200” → temporal。
 """
+SYSTEM_PROMPT += f"\n{_SCHEMA_ENUM_CONSTRAINTS}"
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
 LOW_VALUE_HEALTH_STATES = frozenset({"ok", "running", "stopped", "健康", "正常"})
@@ -449,7 +457,11 @@ class LLMExtractor:
             try:
                 raw = self._parse_json(response.content)
                 previous_output_payload = raw
-                repaired = repair_extraction_json(raw)
+                repaired = repair_extraction_json(
+                    raw,
+                    provider=self.llm_client.provider.name,
+                    model=self.model,
+                )
                 self._repair_count += self._count_repairs(raw, repaired)
                 compatible = self._parse_legacy_defaults(repaired)
                 return ExtractionResponseSchema.model_validate(compatible)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from copy import deepcopy
 from typing import Any
@@ -89,7 +90,25 @@ ENUM_MAPPINGS: dict[str, dict[str, str]] = {
 }
 
 
-def _emit_repair(path: str, original: Any, repaired: Any, repair_type: str) -> None:
+_AUDIT_VALUE_MAX_LENGTH = 160
+
+
+def _audit_value(value: Any) -> str:
+    """序列化并截断审计值，避免把完整敏感内容写入日志。"""
+    serialized = json.dumps(value, ensure_ascii=False, default=str)
+    if len(serialized) <= _AUDIT_VALUE_MAX_LENGTH:
+        return serialized
+    return f"{serialized[:_AUDIT_VALUE_MAX_LENGTH]}…"
+
+
+def _emit_repair(
+    path: str,
+    original: Any,
+    repaired: Any,
+    repair_type: str,
+    provider: str,
+    model: str,
+) -> None:
     """为每个实际发生的确定性修复写入审计事件。"""
     current_audit().emit(
         "extract",
@@ -98,23 +117,25 @@ def _emit_repair(path: str, original: Any, repaired: Any, repair_type: str) -> N
         detail={
             "path": path,
             "repair_type": repair_type,
-            "original_value": original,
-            "repaired_value": repaired,
+            "provider": provider,
+            "model": model,
+            "original_value": _audit_value(original),
+            "repaired_value": _audit_value(repaired),
         },
     )
 
 
-def _repair_entities(container: dict[str, Any], path: str) -> None:
+def _repair_entities(container: dict[str, Any], path: str, provider: str, model: str) -> None:
     """把单个实体字符串修复为 schema 要求的数组。"""
     original = container.get("entities")
     if not isinstance(original, str):
         return
     repaired = [] if not original.strip() else [original]
     container["entities"] = repaired
-    _emit_repair(path, original, repaired, "string_to_array")
+    _emit_repair(path, original, repaired, "string_to_array", provider, model)
 
 
-def _repair_topic_tags(claim: dict[str, Any], path: str) -> None:
+def _repair_topic_tags(claim: dict[str, Any], path: str, provider: str, model: str) -> None:
     """把中文 topic tag 确定性映射为受控英文标签。"""
     original = claim.get("topic_tags")
     tags = ([] if not original.strip() else [original]) if isinstance(original, str) else original
@@ -131,10 +152,10 @@ def _repair_topic_tags(claim: dict[str, Any], path: str) -> None:
     if repaired == original:
         return
     claim["topic_tags"] = repaired
-    _emit_repair(path, original, repaired, "topic_tag_mapping")
+    _emit_repair(path, original, repaired, "topic_tag_mapping", provider, model)
 
 
-def _repair_enum(container: dict[str, Any], field: str, path: str) -> None:
+def _repair_enum(container: dict[str, Any], field: str, path: str, provider: str, model: str) -> None:
     """按白名单修复已知枚举的大小写或中文形式。"""
     original = container.get(field)
     if not isinstance(original, str):
@@ -143,10 +164,10 @@ def _repair_enum(container: dict[str, Any], field: str, path: str) -> None:
     if repaired is None or repaired == original:
         return
     container[field] = repaired
-    _emit_repair(path, original, repaired, f"{field}_mapping")
+    _emit_repair(path, original, repaired, f"{field}_mapping", provider, model)
 
 
-def _repair_number(container: dict[str, Any], field: str, path: str) -> None:
+def _repair_number(container: dict[str, Any], field: str, path: str, provider: str, model: str) -> None:
     """把有限的合法数字字符串转换为浮点数，不修复越界值。"""
     original = container.get(field)
     if not isinstance(original, str):
@@ -158,30 +179,35 @@ def _repair_number(container: dict[str, Any], field: str, path: str) -> None:
     if not math.isfinite(repaired) or not 0.0 <= repaired <= 1.0:
         return
     container[field] = repaired
-    _emit_repair(path, original, repaired, "numeric_string_to_float")
+    _emit_repair(path, original, repaired, "numeric_string_to_float", provider, model)
 
 
-def repair_extraction_json(raw: dict[str, Any]) -> dict[str, Any]:
+def repair_extraction_json(
+    raw: dict[str, Any],
+    *,
+    provider: str = "unknown",
+    model: str = "unknown",
+) -> dict[str, Any]:
     """修复已知的 qwen3.7-plus JSON 形态偏差，并保留未知非法值供严格校验拒绝。"""
     repaired = deepcopy(raw)
-    _repair_entities(repaired, "entities")
+    _repair_entities(repaired, "entities", provider, model)
 
-    _repair_enum(repaired, "sensitivity", "sensitivity")
+    _repair_enum(repaired, "sensitivity", "sensitivity", provider, model)
 
     claims = repaired.get("claims")
     if claims is None and repaired.get("should_memorize") is False:
         repaired["claims"] = []
-        _emit_repair("claims", None, [], "null_to_array_when_not_memorable")
+        _emit_repair("claims", None, [], "null_to_array_when_not_memorable", provider, model)
         return repaired
     if not isinstance(claims, list):
         return repaired
     for index, claim in enumerate(claims):
         if not isinstance(claim, dict):
             continue
-        _repair_entities(claim, f"claims.{index}.entities")
-        _repair_topic_tags(claim, f"claims.{index}.topic_tags")
-        _repair_enum(claim, "scope", f"claims.{index}.scope")
-        _repair_enum(claim, "volatility", f"claims.{index}.volatility")
-        _repair_number(claim, "importance", f"claims.{index}.importance")
-        _repair_number(claim, "confidence", f"claims.{index}.confidence")
+        _repair_entities(claim, f"claims.{index}.entities", provider, model)
+        _repair_topic_tags(claim, f"claims.{index}.topic_tags", provider, model)
+        _repair_enum(claim, "scope", f"claims.{index}.scope", provider, model)
+        _repair_enum(claim, "volatility", f"claims.{index}.volatility", provider, model)
+        _repair_number(claim, "importance", f"claims.{index}.importance", provider, model)
+        _repair_number(claim, "confidence", f"claims.{index}.confidence", provider, model)
     return repaired
