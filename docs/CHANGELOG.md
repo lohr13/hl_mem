@@ -1,5 +1,15 @@
 # HL-Mem 变更记录
 
+## v0.16.1 — 2026-07-28
+
+### Fixed
+
+- 精确化 trace observation 的 error 检测逻辑：改用行首模式匹配（Traceback / `Error:` / `FAILED`）与非零 exit_code 判断，不再因输出中包含 "error" 子串而误标。
+
+### Changed
+
+- 新增 `scripts/reclassify_predicates.py`：用 LLM 对历史 predicate="事实" 的 claims 重新分类，实际数据治理将"事实"占比从 52% 降至 14%。
+
 ## v0.16.0 — 2026-07-28
 
 ### Added
