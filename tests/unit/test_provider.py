@@ -1,6 +1,6 @@
 import httpx
 
-from hl_mem.adapters.hermes.provider import HLMemProvider
+from hl_mem.adapters.hermes.provider import HLMemProvider, _summarize_observation
 
 
 class Response:
@@ -42,6 +42,20 @@ class AsyncClient:
 class EpisodeResponse(Response):
     def json(self):
         return {"id": "episode-1"}
+
+
+def test_summarize_observation_detects_strong_error_signals() -> None:
+    assert _summarize_observation('{"exit_code": 0, "output": "completed"}').startswith("[success]")
+    assert _summarize_observation('{"exit_code": 1, "output": "stopped"}').startswith("[error]")
+    assert _summarize_observation("Traceback (most recent call last):\nValueError: invalid").startswith("[error]")
+    assert _summarize_observation("Error: something").startswith("[error]")
+
+
+def test_summarize_observation_ignores_ambiguous_error_text() -> None:
+    assert _summarize_observation("No errors found").startswith("[success]")
+    assert _summarize_observation("The error counter is informational").startswith("[success]")
+    assert _summarize_observation('{"result": "ok", "error_count": 0}').startswith("[success]")
+    assert _summarize_observation("") == ""
 
 
 def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:

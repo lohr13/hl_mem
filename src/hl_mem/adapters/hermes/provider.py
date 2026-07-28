@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
@@ -18,13 +19,22 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_TRACE_ACTION_LENGTH = 10_000
 MAX_TRACE_OBSERVATION_SUMMARY_LENGTH = 500
+_ERROR_PATTERNS = (
+    re.compile(r"^Traceback", re.MULTILINE),
+    re.compile(r"^Error:", re.MULTILINE),
+    re.compile(r"^FAILED\b", re.MULTILINE),
+    re.compile(r"\bException\b"),
+    re.compile(r"\b(?:[A-Za-z_]\w*)?Error\b(?:[ \t]+[^:\r\n]+)?:"),
+)
+_EXIT_CODE_PATTERN = re.compile(r'["\']?exit_code["\']?\s*[:=]\s*(-?\d+)')
 
 
 def _summarize_observation(raw: str) -> str:
     """生成结构化摘要替代完整原文。"""
     if not raw:
         return ""
-    is_error = any(marker in raw.lower() for marker in ["error", "traceback", "exception", "failed"])
+    exit_codes = (int(match.group(1)) for match in _EXIT_CODE_PATTERN.finditer(raw))
+    is_error = any(pattern.search(raw) for pattern in _ERROR_PATTERNS) or any(code != 0 for code in exit_codes)
     status = "error" if is_error else "success"
     summary = raw[:MAX_TRACE_OBSERVATION_SUMMARY_LENGTH].strip()
     return f"[{status}] {summary}"
