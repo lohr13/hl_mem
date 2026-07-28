@@ -56,11 +56,21 @@ def _reject_private_host(hostname: str) -> None:
         addresses = {ipaddress.ip_address(hostname)}
     except ValueError:
         try:
-            addresses = {ipaddress.ip_address(item[4][0]) for item in socket.getaddrinfo(hostname, 443)}
+            addresses = {
+                ipaddress.ip_address(item[4][0])
+                for item in socket.getaddrinfo(hostname, 443)
+            }
         except socket.gaierror as error:
-            raise ValueError(f"image URI host cannot be resolved: {hostname}") from error
-    if any(address.is_loopback or address.is_link_local or address.is_private for address in addresses):
-        raise ValueError("private, loopback, and link-local image URI hosts are forbidden")
+            raise ValueError(
+                f"image URI host cannot be resolved: {hostname}"
+            ) from error
+    if any(
+        address.is_loopback or address.is_link_local or address.is_private
+        for address in addresses
+    ):
+        raise ValueError(
+            "private, loopback, and link-local image URI hosts are forbidden"
+        )
 
 
 class DashScopeImageDescriber:
@@ -99,25 +109,36 @@ class DashScopeImageDescriber:
             except (binascii.Error, ValueError) as error:
                 raise ValueError("image base64_data is invalid") from error
             _validate_bytes(data, image.mime_type, self.max_bytes)
-            return f"data:{image.mime_type};base64,{image.base64_data}", hashlib.sha256(data).hexdigest()
+            return f"data:{image.mime_type};base64,{image.base64_data}", hashlib.sha256(
+                data
+            ).hexdigest()
         parsed = urlparse(image.uri or "")
         if parsed.scheme == "https":
             if not parsed.hostname:
                 raise ValueError("https image URI must include a host")
             _reject_private_host(parsed.hostname)
-            return image.uri or "", image.sha256 or hashlib.sha256((image.uri or "").encode()).hexdigest()
+            return image.uri or "", image.sha256 or hashlib.sha256(
+                (image.uri or "").encode()
+            ).hexdigest()
         if parsed.scheme == "file":
             if not self.allow_file_uris:
                 raise ValueError("file image URIs are disabled")
-            path = Path(unquote(parsed.path.lstrip("/") if parsed.netloc else parsed.path)).resolve()
-            if not any(path == root or root in path.parents for root in self.file_allow_roots):
+            path = Path(
+                unquote(parsed.path.lstrip("/") if parsed.netloc else parsed.path)
+            ).resolve()
+            if not any(
+                path == root or root in path.parents for root in self.file_allow_roots
+            ):
                 raise ValueError("file image URI is outside configured allow roots")
             data = path.read_bytes()
             guessed = mimetypes.guess_type(path.name)[0]
             if guessed != image.mime_type:
                 raise ValueError("file extension MIME does not match declared MIME")
             _validate_bytes(data, image.mime_type, self.max_bytes)
-            return f"data:{image.mime_type};base64,{base64.b64encode(data).decode()}", hashlib.sha256(data).hexdigest()
+            return (
+                f"data:{image.mime_type};base64,{base64.b64encode(data).decode()}",
+                hashlib.sha256(data).hexdigest(),
+            )
         raise ValueError("image URI scheme must be https or an allowed file URI")
 
     def describe(self, image: ImagePart, *, timeout_seconds: float) -> ImageDescription:
@@ -164,7 +185,9 @@ class DashScopeImageDescriber:
             "tokens": body.get("usage"),
             "latency_ms": (time.perf_counter() - started) * 1000,
         }
-        LOGGER.info("image description completed", extra={"image_trace": self.last_trace})
+        LOGGER.info(
+            "image description completed", extra={"image_trace": self.last_trace}
+        )
         return ImageDescription(
             caption=str(parsed.get("caption", ""))[: self.caption_max_chars],
             ocr_text=str(parsed.get("ocr_text", ""))[: self.ocr_max_chars],
@@ -196,5 +219,7 @@ class FakeImageDescriber:
             ocr_text="测试 OCR 文本",
             model=self.model,
             confidence=None,
-            locator=ImageLocator(image.uri, image.mime_type, sha256, image.page, image.region),
+            locator=ImageLocator(
+                image.uri, image.mime_type, sha256, image.page, image.region
+            ),
         )

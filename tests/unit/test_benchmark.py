@@ -43,8 +43,14 @@ def test_adapter_scopes_duplicate_message_ids_by_session(tmp_path: Path) -> None
                 {
                     "question_id": "duplicate",
                     "haystack_sessions": [
-                        {"session_id": "first", "messages": [{"message_id": "m1", "content": "one"}]},
-                        {"session_id": "second", "messages": [{"message_id": "m1", "content": "two"}]},
+                        {
+                            "session_id": "first",
+                            "messages": [{"message_id": "m1", "content": "one"}],
+                        },
+                        {
+                            "session_id": "second",
+                            "messages": [{"message_id": "m1", "content": "two"}],
+                        },
                     ],
                     "question": "which",
                     "answer_message_ids": ["second:m1"],
@@ -71,7 +77,10 @@ def test_adapter_synthesizes_update_and_expiry_checkpoints() -> None:
         checkpoint.expected_hidden_event_ids == ("lme:fixture-update:0:old",)
         for checkpoint in update.lifecycle_checkpoints
     )
-    assert any(checkpoint.worker_action == "expire_ttl" for checkpoint in expiry.lifecycle_checkpoints)
+    assert any(
+        checkpoint.worker_action == "expire_ttl"
+        for checkpoint in expiry.lifecycle_checkpoints
+    )
 
 
 def test_metrics_use_unique_evidence_ids_and_hand_calculated_values() -> None:
@@ -85,7 +94,9 @@ def test_metrics_use_unique_evidence_ids_and_hand_calculated_values() -> None:
     assert recall_at_k(results, {"a", "b"}, 1) == 0.5
     assert recall_at_k(results, {"a", "b"}, 10) == 1.0
     assert mrr(results, {"a", "b"}) == 1.0
-    assert math.isclose(ndcg_at_k(results, {"a", "b"}, 3), (1.0 + 0.5) / (1.0 + 1 / math.log2(3)))
+    assert math.isclose(
+        ndcg_at_k(results, {"a", "b"}, 3), (1.0 + 0.5) / (1.0 + 1 / math.log2(3))
+    )
     assert evidence_precision_recall(["a", "a", "x"], ["a", "b"]) == {
         "precision": 0.5,
         "recall": 0.5,
@@ -150,15 +161,21 @@ def test_temporal_correctness_marks_missing_recorded_gold_not_applicable() -> No
     assert result["overall"] == 1.0
 
 
-def test_runner_config_hash_is_stable_and_databases_are_isolated(tmp_path: Path, monkeypatch: object) -> None:
+def test_runner_config_hash_is_stable_and_databases_are_isolated(
+    tmp_path: Path, monkeypatch: object
+) -> None:
     """case 复用数据库或读取生产 DB、hash 含运行时间时应失败。"""
     production = tmp_path / "production.sqlite3"
     production.write_text("must not be opened", encoding="utf-8")
     monkeypatch.setenv("HL_MEM_DB_PATH", str(production))  # type: ignore[attr-defined]
     runner = BenchmarkRunner(limit=2)
 
-    first = runner.run(FIXTURE, "all", ("extraction",), tmp_path / "first", keep_db=True)
-    second = runner.run(FIXTURE, "all", ("extraction",), tmp_path / "second", keep_db=True)
+    first = runner.run(
+        FIXTURE, "all", ("extraction",), tmp_path / "first", keep_db=True
+    )
+    second = runner.run(
+        FIXTURE, "all", ("extraction",), tmp_path / "second", keep_db=True
+    )
 
     assert first["config_hash"] == second["config_hash"]
     assert len(list((tmp_path / "first" / "databases").glob("*.sqlite3"))) == 2
@@ -180,7 +197,9 @@ def test_reporting_markdown_is_rendered_from_json_values(tmp_path: Path) -> None
     }
 
     report_path = generate_json_report(result, tmp_path)
-    summary_path = generate_markdown_summary(json.loads(report_path.read_text(encoding="utf-8")), tmp_path)
+    summary_path = generate_markdown_summary(
+        json.loads(report_path.read_text(encoding="utf-8")), tmp_path
+    )
 
     assert json.loads(report_path.read_text(encoding="utf-8"))["schema_version"] == 1
     markdown = summary_path.read_text(encoding="utf-8")

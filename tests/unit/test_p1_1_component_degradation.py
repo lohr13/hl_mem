@@ -11,7 +11,9 @@ from hl_mem.errors import ConfigurationError
 from hl_mem.settings import Settings
 
 
-@pytest.mark.parametrize("factory_name", ("make_query_expander", "make_relation_discoverer"))
+@pytest.mark.parametrize(
+    "factory_name", ("make_query_expander", "make_relation_discoverer")
+)
 def test_configuration_error_degrades_only_when_explicitly_allowed(
     monkeypatch: pytest.MonkeyPatch,
     factory_name: str,
@@ -33,7 +35,9 @@ def test_configuration_error_degrades_only_when_explicitly_allowed(
     assert factory(settings) is None
     health = components.component_health()[factory_name.removeprefix("make_")]
     assert health == {
-        "requested_mode": "always" if factory_name == "make_query_expander" else "audit",
+        "requested_mode": "always"
+        if factory_name == "make_query_expander"
+        else "audit",
         "effective_mode": "off",
         "degradation_reason": "missing test key",
     }
@@ -45,7 +49,9 @@ def test_unexpected_component_initialization_errors_propagate(
     error_type: type[Exception],
 ) -> None:
     """编程错误和导入错误不得伪装成功能关闭。"""
-    settings = replace(Settings(), query_expansion_mode="always", allow_fake_fallback=True)
+    settings = replace(
+        Settings(), query_expansion_mode="always", allow_fake_fallback=True
+    )
 
     def fail_unexpected(*args: object, **kwargs: object) -> object:
         raise error_type("unexpected")
@@ -55,7 +61,9 @@ def test_unexpected_component_initialization_errors_propagate(
         components.make_query_expander(settings)
 
 
-def test_production_configuration_error_never_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_production_configuration_error_never_degrades(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """production 即使误配 fallback 也必须启动失败。"""
     settings = replace(
         Settings(),

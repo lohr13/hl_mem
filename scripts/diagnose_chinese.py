@@ -14,21 +14,27 @@ conn.row_factory = sqlite3.Row
 
 print("=== FTS raw test: 唇形 ===")
 try:
-    rows = conn.execute("SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("唇形",)).fetchall()
+    rows = conn.execute(
+        "SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("唇形",)
+    ).fetchall()
     print(f"FTS hits: {len(rows)}")
 except Exception as e:
     print(f"FTS error: {e}")
 
 print("\n=== FTS raw test: hl_mem ===")
 try:
-    rows = conn.execute("SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("hl_mem",)).fetchall()
+    rows = conn.execute(
+        "SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("hl_mem",)
+    ).fetchall()
     print(f"FTS hits: {len(rows)}")
 except Exception as e:
     print(f"FTS error: {e}")
 
 print("\n=== FTS raw test: Codex ===")
 try:
-    rows = conn.execute("SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("Codex",)).fetchall()
+    rows = conn.execute(
+        "SELECT id FROM claims_fts WHERE claims_fts MATCH ? LIMIT 3", ("Codex",)
+    ).fetchall()
     print(f"FTS hits: {len(rows)}")
 except Exception as e:
     print(f"FTS error: {e}")
@@ -64,6 +70,6 @@ for query in ["唇形同步", "代理配置", "记忆系统架构", "hl_mem"]:
             val = v.get("text", str(v))[:60] if isinstance(v, dict) else str(v)[:60]
         except Exception:
             pass
-        print(f"  {r['id'][:12]} {r.get('subject_entity_id','?')} | {val}")
+        print(f"  {r['id'][:12]} {r.get('subject_entity_id', '?')} | {val}")
 
 conn2.close()

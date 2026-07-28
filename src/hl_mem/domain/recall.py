@@ -36,15 +36,23 @@ def route_query(query: str, reference_time: str | None = None) -> QueryRoute:
     if any(word in lowered for word in INTENT_KEYWORDS_PROCEDURAL):
         return QueryRoute("procedure", ("procedure", "fts", "dense"), reference_time)
     if any(word in lowered for word in INTENT_KEYWORDS_HISTORICAL) or reference_time:
-        return QueryRoute("historical", ("temporal", "fact", "fts", "dense"), reference_time)
+        return QueryRoute(
+            "historical", ("temporal", "fact", "fts", "dense"), reference_time
+        )
     if any(word in lowered for word in INTENT_KEYWORDS_RELATIONAL):
-        return QueryRoute("relation", ("relation", "fact", "fts", "dense"), reference_time)
+        return QueryRoute(
+            "relation", ("relation", "fact", "fts", "dense"), reference_time
+        )
     if any(word in lowered for word in INTENT_KEYWORDS_ANALOGICAL):
-        return QueryRoute("similar_experience", ("episode", "fts", "dense"), reference_time)
+        return QueryRoute(
+            "similar_experience", ("episode", "fts", "dense"), reference_time
+        )
     return QueryRoute("current_state", ("fact", "fts", "dense"), reference_time)
 
 
-def route_recall_intent(query: str, as_of: str | None, now: str | None = None) -> RecallIntent:
+def route_recall_intent(
+    query: str, as_of: str | None, now: str | None = None
+) -> RecallIntent:
     """根据显式历史措辞或过去的 as_of 推断召回意图。"""
     lowered = query.casefold()
     if any(marker in query for marker in (*INTENT_KEYWORDS_AS_OF, "as_of")):
@@ -53,11 +61,16 @@ def route_recall_intent(query: str, as_of: str | None, now: str | None = None) -
         reference = parse_utc(now) if now else datetime.now(timezone.utc)
         if parse_utc(as_of) < reference:
             return RecallIntent.HISTORICAL
-    if any(marker in lowered for marker in (*INTENT_KEYWORDS_PREFERENCE, "preference", "prefer", "favorite")):
+    if any(
+        marker in lowered
+        for marker in (*INTENT_KEYWORDS_PREFERENCE, "preference", "prefer", "favorite")
+    ):
         return RecallIntent.PREFERENCE
     if any(marker in lowered for marker in TOOL_KEYWORDS):
         return RecallIntent.TOOL
-    if "上次" in lowered and any(marker in lowered for marker in PROCEDURE_ACTION_KEYWORDS):
+    if "上次" in lowered and any(
+        marker in lowered for marker in PROCEDURE_ACTION_KEYWORDS
+    ):
         return RecallIntent.PROCEDURE
     if any(marker in lowered for marker in PROCEDURE_KEYWORDS):
         return RecallIntent.PROCEDURE

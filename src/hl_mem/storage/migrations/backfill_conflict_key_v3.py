@@ -52,7 +52,12 @@ def backfill_conflict_keys_v3(connection: sqlite3.Connection) -> int:
                 "UPDATE claims SET legacy_conflict_key=COALESCE(legacy_conflict_key,conflict_key),"
                 "conflict_key=?,conflict_key_version=3 "
                 "WHERE id=? AND conflict_key_version=? AND conflict_key IS ?",
-                (key, claim["id"], claim["conflict_key_version"], claim["conflict_key"]),
+                (
+                    key,
+                    claim["id"],
+                    claim["conflict_key_version"],
+                    claim["conflict_key"],
+                ),
             )
             updated += cursor.rowcount
         connection.execute(

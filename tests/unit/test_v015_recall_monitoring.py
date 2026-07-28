@@ -14,7 +14,9 @@ from hl_mem.storage.database import Database
 
 
 def test_calibration_probability_orders_relevant_above_irrelevant() -> None:
-    model = fit_logistic([({"semantic": 0.9}, 1), ({"semantic": 0.1}, 0)], iterations=500)
+    model = fit_logistic(
+        [({"semantic": 0.9}, 1), ({"semantic": 0.1}, 0)], iterations=500
+    )
     assert model.predict({"semantic": 0.9}) > model.predict({"semantic": 0.1})
 
 
@@ -28,7 +30,10 @@ def test_claim_index_text_contains_slot_and_tags() -> None:
             "topic_tags": ["model", "implementation"],
         }
     )
-    assert text == "hl_mem embedding 模型 text-embedding-v4 2048维 config.model model implementation"
+    assert (
+        text
+        == "hl_mem embedding 模型 text-embedding-v4 2048维 config.model model implementation"
+    )
 
 
 @pytest.mark.parametrize(
@@ -78,7 +83,9 @@ def test_store_extracted_uses_selected_index_text_mode(tmp_path) -> None:
         index_text_mode="value_only",
     )
 
-    row = connection.execute("SELECT index_text,value_json FROM claims WHERE id=?", (result.claim_id,)).fetchone()
+    row = connection.execute(
+        "SELECT index_text,value_json FROM claims WHERE id=?", (result.claim_id,)
+    ).fetchone()
     assert row["index_text"] == "SQLite"
     assert json.loads(row["value_json"]) == "SQLite"
 
@@ -86,7 +93,11 @@ def test_store_extracted_uses_selected_index_text_mode(tmp_path) -> None:
 def test_provider_calls_persist_across_recorders(tmp_path) -> None:
     database = Database(tmp_path / "provider.db")
     connection = database.open()
-    PersistentProviderMetrics(connection).record(ProviderCall("llm", "extract", "success", 12.0, query_id="q1"))
-    row = connection.execute("SELECT provider_type,query_id FROM provider_calls").fetchone()
+    PersistentProviderMetrics(connection).record(
+        ProviderCall("llm", "extract", "success", 12.0, query_id="q1")
+    )
+    row = connection.execute(
+        "SELECT provider_type,query_id FROM provider_calls"
+    ).fetchone()
     assert tuple(row) == ("llm", "q1")
     database.close()

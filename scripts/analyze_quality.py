@@ -8,14 +8,18 @@ conn.row_factory = sqlite3.Row
 print("=" * 60)
 print("Claims by Status")
 print("=" * 60)
-for r in conn.execute("SELECT status, COUNT(*) as cnt FROM claims GROUP BY status ORDER BY cnt DESC"):
+for r in conn.execute(
+    "SELECT status, COUNT(*) as cnt FROM claims GROUP BY status ORDER BY cnt DESC"
+):
     print(f"  {r['status']}: {r['cnt']}")
 
 print()
 print("=" * 60)
 print("Claims by Scope")
 print("=" * 60)
-for r in conn.execute("SELECT scope, COUNT(*) as cnt FROM claims GROUP BY scope ORDER BY cnt DESC"):
+for r in conn.execute(
+    "SELECT scope, COUNT(*) as cnt FROM claims GROUP BY scope ORDER BY cnt DESC"
+):
     print(f"  {r['scope']}: {r['cnt']}")
 
 print()
@@ -30,11 +34,15 @@ for r in conn.execute(
 
 print()
 # fact.other ratio
-total_active = conn.execute("SELECT COUNT(*) FROM claims WHERE status='active'").fetchone()[0]
+total_active = conn.execute(
+    "SELECT COUNT(*) FROM claims WHERE status='active'"
+).fetchone()[0]
 fact_other = conn.execute(
     "SELECT COUNT(*) FROM claims WHERE status='active' AND canonical_attribute='fact.other'"
 ).fetchone()[0]
-print(f"fact.other ratio: {fact_other}/{total_active} = {fact_other/total_active*100:.1f}%")
+print(
+    f"fact.other ratio: {fact_other}/{total_active} = {fact_other / total_active * 100:.1f}%"
+)
 
 print()
 print("=" * 60)
@@ -87,7 +95,9 @@ for r in low:
         val = str(_json.loads(r["value_json"]))[:60] if r["value_json"] else ""
     except Exception:
         val = (r["value_json"] or "")[:60]
-    print(f"  [{r['importance']:.2f}] {r['subject_entity_id'] or 'NULL'} | {r['predicate']} | {val}")
+    print(
+        f"  [{r['importance']:.2f}] {r['subject_entity_id'] or 'NULL'} | {r['predicate']} | {val}"
+    )
 
 print(f"\n  Total low-importance active: {len(low)} (showing first 20)")
 
@@ -119,8 +129,12 @@ print()
 print("=" * 60)
 print("Expired/Superseded Claims Still Occupying Space")
 print("=" * 60)
-expired = conn.execute("SELECT COUNT(*) FROM claims WHERE status='expired'").fetchone()[0]
-superseded = conn.execute("SELECT COUNT(*) FROM claims WHERE status='superseded'").fetchone()[0]
+expired = conn.execute("SELECT COUNT(*) FROM claims WHERE status='expired'").fetchone()[
+    0
+]
+superseded = conn.execute(
+    "SELECT COUNT(*) FROM claims WHERE status='superseded'"
+).fetchone()[0]
 print(f"  expired: {expired}")
 print(f"  superseded: {superseded}")
 print(f"  total dead: {expired + superseded}")
@@ -129,9 +143,9 @@ print()
 print("=" * 60)
 print("Canonical Slot Coverage")
 print("=" * 60)
-with_slot = conn.execute("SELECT COUNT(*) FROM claims WHERE status='active' AND canonical_slot IS NOT NULL").fetchone()[
-    0
-]
+with_slot = conn.execute(
+    "SELECT COUNT(*) FROM claims WHERE status='active' AND canonical_slot IS NOT NULL"
+).fetchone()[0]
 print(f"  With slot: {with_slot}/{total_active} active")
 slot_dist = conn.execute(
     "SELECT canonical_slot, COUNT(*) as cnt FROM claims WHERE status='active' "

@@ -44,11 +44,19 @@ def _insert_claim(
     )
 
 
-def test_get_relations_batch_expands_memory_and_reverse_claim_evidence(tmp_path) -> None:
+def test_get_relations_batch_expands_memory_and_reverse_claim_evidence(
+    tmp_path,
+) -> None:
     database = Database(tmp_path / "relations.db")
     try:
         with database.connect() as connection:
-            for claim_id in ("seed", "memory-out", "memory-in", "evidence-out", "evidence-in"):
+            for claim_id in (
+                "seed",
+                "memory-out",
+                "memory-in",
+                "evidence-out",
+                "evidence-in",
+            ):
                 _insert_claim(connection, claim_id)
             connection.execute(
                 "INSERT INTO memory_relations(id,from_id,to_id,relation,confidence,evidence_json,created_at) "

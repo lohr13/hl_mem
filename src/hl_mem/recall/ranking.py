@@ -38,7 +38,9 @@ def memory_features(
 ) -> dict[str, float]:
     """把 Claim 转换为归一化的语义、时效、访问和质量特征。"""
     current = _parse_datetime(now) or datetime.now(timezone.utc)
-    observed = _parse_datetime(claim.get("observed_at")) or _parse_datetime(claim.get("recorded_from"))
+    observed = _parse_datetime(claim.get("observed_at")) or _parse_datetime(
+        claim.get("recorded_from")
+    )
     recency = 0.0
     if observed is not None:
         age_days = max(0.0, (current - observed).total_seconds() / 86400.0)
@@ -47,7 +49,11 @@ def memory_features(
         accesses = max(0, int(claim.get("access_count", 0)))
     except (TypeError, ValueError):
         accesses = 0
-    access_frequency = math.log1p(accesses) / math.log1p(max_access_count) if max_access_count > 0 else 0.0
+    access_frequency = (
+        math.log1p(accesses) / math.log1p(max_access_count)
+        if max_access_count > 0
+        else 0.0
+    )
     return {
         "semantic": _clamp(semantic_score),
         "recency": _clamp(recency),
@@ -58,9 +64,14 @@ def memory_features(
     }
 
 
-def memory_score(features: Mapping[str, float], weights: Mapping[str, float] = DEFAULT_WEIGHTS) -> float:
+def memory_score(
+    features: Mapping[str, float], weights: Mapping[str, float] = DEFAULT_WEIGHTS
+) -> float:
     """按冻结权重计算候选的多因子先验分数。"""
-    return sum(float(weight) * _clamp(features.get(name, 0.0)) for name, weight in weights.items())
+    return sum(
+        float(weight) * _clamp(features.get(name, 0.0))
+        for name, weight in weights.items()
+    )
 
 
 def blend_reranker_score(reranker_score: float, features: Mapping[str, float]) -> float:
@@ -68,7 +79,13 @@ def blend_reranker_score(reranker_score: float, features: Mapping[str, float]) -
     prior = (
         sum(
             DEFAULT_WEIGHTS[name] * _clamp(features.get(name, 0.0))
-            for name in ("recency", "access_frequency", "confidence", "importance", "utility")
+            for name in (
+                "recency",
+                "access_frequency",
+                "confidence",
+                "importance",
+                "utility",
+            )
         )
         / 0.35
     )

@@ -32,7 +32,10 @@ def _valid_response() -> dict[str, Any]:
 
 
 def test_valid_extraction_response_is_accepted() -> None:
-    assert ExtractionResponseSchema.model_validate(_valid_response()).claims[0].importance == 0.8
+    assert (
+        ExtractionResponseSchema.model_validate(_valid_response()).claims[0].importance
+        == 0.8
+    )
 
 
 @pytest.mark.parametrize(
@@ -44,7 +47,9 @@ def test_valid_extraction_response_is_accepted() -> None:
         (("claims",), {}),
     ],
 )
-def test_invalid_extraction_response_is_rejected(path: tuple[Any, ...], value: Any) -> None:
+def test_invalid_extraction_response_is_rejected(
+    path: tuple[Any, ...], value: Any
+) -> None:
     payload = _valid_response()
     target: Any = payload
     for part in path[:-1]:

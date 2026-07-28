@@ -6,7 +6,9 @@ import re
 
 from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS
 
-LOW_INFORMATION_TAGS = frozenset({"other", "fact", "state", "choice", "config", "plan", "preference"})
+LOW_INFORMATION_TAGS = frozenset(
+    {"other", "fact", "state", "choice", "config", "plan", "preference"}
+)
 
 CHINESE_TAG_MAP: tuple[tuple[str, str], ...] = (
     ("架构", "architecture"),
@@ -43,12 +45,18 @@ CHINESE_TAG_MAP: tuple[tuple[str, str], ...] = (
     ("解决", "resolution"),
 )
 
-TAG_INFO_WEIGHT = {tag: 1.0 for tag in ALLOWED_TOPIC_TAGS if tag not in LOW_INFORMATION_TAGS}
+TAG_INFO_WEIGHT = {
+    tag: 1.0 for tag in ALLOWED_TOPIC_TAGS if tag not in LOW_INFORMATION_TAGS
+}
 
 _SLOT_HINT_RULES: tuple[tuple[re.Pattern[str], str, tuple[str, ...]], ...] = (
     (re.compile(r"叫什么|姓名|名字|name", re.I), "identity.name", ("identity",)),
     (re.compile(r"GPU|显卡|内存|CPU|硬件", re.I), "config.hardware", ("hardware",)),
-    (re.compile(r"提取模型|embedding\s*模型|reranker\s*模型|模型", re.I), "config.model", ("model", "implementation")),
+    (
+        re.compile(r"提取模型|embedding\s*模型|reranker\s*模型|模型", re.I),
+        "config.model",
+        ("model", "implementation"),
+    ),
     (re.compile(r"代理|REDACTED_PROXY|网络", re.I), "config.network", ("connectivity",)),
     (re.compile(r"喜欢|偏好|习惯|趁手|顺手", re.I), "preference.*", ()),
 )

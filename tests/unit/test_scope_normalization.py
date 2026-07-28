@@ -41,16 +41,23 @@ def _normalize(
         ("Hermes 需要重启才能加载更新后的 adapter", "explicit_temporal_signal"),
     ],
 )
-def test_high_volatility_values_downgrade_permanent_scope(value: str, reason: str) -> None:
+def test_high_volatility_values_downgrade_permanent_scope(
+    value: str, reason: str
+) -> None:
     assert _normalize(value) == ("temporal", reason)
 
 
 def test_tool_and_quoted_reports_downgrade_permanent_scope() -> None:
-    assert _normalize("命令输出了一条快照", actor_type="tool", event_type="tool_result") == (
+    assert _normalize(
+        "命令输出了一条快照", actor_type="tool", event_type="tool_result"
+    ) == (
         "temporal",
         "tool_snapshot",
     )
-    assert _normalize("项目此前采用旧实现", source_kind="quoted_report") == ("temporal", "quoted_report")
+    assert _normalize("项目此前采用旧实现", source_kind="quoted_report") == (
+        "temporal",
+        "quoted_report",
+    )
 
 
 @pytest.mark.parametrize(

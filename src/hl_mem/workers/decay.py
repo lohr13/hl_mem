@@ -31,7 +31,11 @@ _ACCESS_BONUS_CAP = int(os.getenv("HL_MEM_ACCESS_BONUS_CAP", "365"))
 
 def _parse(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    return (
+        parsed.replace(tzinfo=timezone.utc)
+        if parsed.tzinfo is None
+        else parsed.astimezone(timezone.utc)
+    )
 
 
 def cleanup_stale_temporal_claims(
@@ -55,7 +59,9 @@ def cleanup_stale_temporal_claims(
         for row in rows:
             recorded_from = _parse(row["recorded_from"])
             attribute = str(row["canonical_attribute"] or "")
-            if attribute.startswith(("fact.decision", "fact.history", "fact.architecture")):
+            if attribute.startswith(
+                ("fact.decision", "fact.history", "fact.architecture")
+            ):
                 cursor = connection.execute(
                     "UPDATE claims SET scope=? WHERE id=? AND scope=? AND expires_at IS NULL AND status=? "
                     "AND canonical_attribute IS ? AND volatility=? AND recorded_from=?",
@@ -106,7 +112,10 @@ def decay_claims(
     day_start = reference.replace(hour=0, minute=0, second=0, microsecond=0)
     minimum = min(1.0, max(0.0, float(min_confidence)))
     policy = _load_policy()
-    feedback_mode = feedback_lifecycle_mode or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
+    feedback_mode = (
+        feedback_lifecycle_mode
+        or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
+    )
     decayed = archived = 0
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -114,7 +123,9 @@ def decay_claims(
             "SELECT applied_at FROM schema_migrations WHERE version='005_memory_management'"
         ).fetchone()
         migration_at = _parse(migration[0]) if migration else None
-        grace_until = migration_at + timedelta(days=rollout_grace_days) if migration_at else None
+        grace_until = (
+            migration_at + timedelta(days=rollout_grace_days) if migration_at else None
+        )
         rows = connection.execute(
             "SELECT c.id,c.scope,c.confidence,c.access_count,c.recorded_from,c.last_accessed_at,c.last_decayed_at,"
             "c.expires_at,c.status,COALESCE(u.retention_bonus_days,0) AS feedback_bonus "
@@ -163,7 +174,9 @@ def decay_claims(
                 continue
             if inactive_days <= decay_after:
                 continue
-            previous = _parse(claim["last_decayed_at"]) if claim["last_decayed_at"] else None
+            previous = (
+                _parse(claim["last_decayed_at"]) if claim["last_decayed_at"] else None
+            )
             if previous is not None and previous >= day_start:
                 continue
             decay_start = anchor + timedelta(days=decay_after)
@@ -172,9 +185,12 @@ def decay_claims(
             if elapsed_days <= 0:
                 continue
             daily_delta = (1.0 - minimum) / (archive_after - decay_after)
-            confidence = max(minimum, float(claim["confidence"] or 0.0) - daily_delta * elapsed_days)
+            confidence = max(
+                minimum, float(claim["confidence"] or 0.0) - daily_delta * elapsed_days
+            )
             cursor = connection.execute(
-                "UPDATE claims SET confidence=?,last_decayed_at=? " "WHERE id=? AND status IN ('active','disputed')",
+                "UPDATE claims SET confidence=?,last_decayed_at=? "
+                "WHERE id=? AND status IN ('active','disputed')",
                 (confidence, reference.isoformat(), claim["id"]),
             )
             decayed += cursor.rowcount

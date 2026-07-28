@@ -74,7 +74,9 @@ def backfill_claim_slots_v1(
         "conflict_key",
     }
     if missing := required - columns:
-        raise sqlite3.OperationalError(f"claims table is missing Phase 17 columns: {sorted(missing)}")
+        raise sqlite3.OperationalError(
+            f"claims table is missing Phase 17 columns: {sorted(missing)}"
+        )
 
     attempted = applied_count = cas_skipped = operational = null_slot = 0
     tag_counts: Counter[str] = Counter()
@@ -83,7 +85,11 @@ def backfill_claim_slots_v1(
         try:
             if apply:
                 connection.execute("BEGIN IMMEDIATE")
-            condition = "" if force else "AND canonical_slot IS NULL AND topic_tags_json IS NULL "
+            condition = (
+                ""
+                if force
+                else "AND canonical_slot IS NULL AND topic_tags_json IS NULL "
+            )
             rows = connection.execute(
                 "SELECT id,namespace_key,subject_entity_id,predicate,canonical_attribute,"
                 "canonical_slot,topic_tags_json,qualifiers_json,conflict_key "
@@ -151,10 +157,16 @@ def backfill_claim_slots_v1(
 def main(argv: Sequence[str] | None = None) -> int:
     """运行默认 dry-run 的命令行回填工具。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, default=default_database_path(), help="SQLite database path")
-    parser.add_argument("--apply", action="store_true", help="apply updates; default is dry-run")
     parser.add_argument(
-        "--force", action="store_true", help="explicitly overwrite rows that already have slot/tag values"
+        "--db", type=Path, default=default_database_path(), help="SQLite database path"
+    )
+    parser.add_argument(
+        "--apply", action="store_true", help="apply updates; default is dry-run"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="explicitly overwrite rows that already have slot/tag values",
     )
     parser.add_argument("--batch-size", type=int, default=100)
     args = parser.parse_args(argv)

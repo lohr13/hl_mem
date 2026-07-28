@@ -57,22 +57,44 @@ def test_decay_access_count_bonus_extends_threshold(tmp_path):
     """访问次数应延长 temporal 记忆的衰减阈值。"""
     connection = _decay_db(tmp_path)
     recorded = (datetime.fromisoformat(NOW) - timedelta(days=200)).isoformat()
-    _claim(connection, scope="temporal", recorded_from=recorded, last_accessed_at=recorded, access_count=50)
+    _claim(
+        connection,
+        scope="temporal",
+        recorded_from=recorded,
+        last_accessed_at=recorded,
+        access_count=50,
+    )
     decay_claims(connection, NOW)
     assert connection.execute("SELECT status FROM claims").fetchone()[0] == "active"
 
     connection2 = _decay_db(tmp_path)
     recorded2 = (datetime.fromisoformat(NOW) - timedelta(days=400)).isoformat()
-    _claim(connection2, "c2", scope="temporal", recorded_from=recorded2, last_accessed_at=recorded2, access_count=50)
+    _claim(
+        connection2,
+        "c2",
+        scope="temporal",
+        recorded_from=recorded2,
+        last_accessed_at=recorded2,
+        access_count=50,
+    )
     decay_claims(connection2, NOW)
-    assert connection2.execute("SELECT status FROM claims WHERE id='c2'").fetchone()[0] == "archived"
+    assert (
+        connection2.execute("SELECT status FROM claims WHERE id='c2'").fetchone()[0]
+        == "archived"
+    )
 
 
 def test_decay_access_count_bonus_capped_at_365(tmp_path):
     """访问奖励最多延长 365 天。"""
     connection = _decay_db(tmp_path)
     recorded = (datetime.fromisoformat(NOW) - timedelta(days=500)).isoformat()
-    _claim(connection, scope="temporal", recorded_from=recorded, last_accessed_at=recorded, access_count=1000)
+    _claim(
+        connection,
+        scope="temporal",
+        recorded_from=recorded,
+        last_accessed_at=recorded,
+        access_count=1000,
+    )
     decay_claims(connection, NOW)
     assert connection.execute("SELECT status FROM claims").fetchone()[0] == "active"
 
@@ -80,9 +102,17 @@ def test_decay_access_count_bonus_capped_at_365(tmp_path):
 def test_decay_elapsed_linear_once_daily_and_floor(tmp_path):
     connection = _decay_db(tmp_path)
     recorded = (datetime.fromisoformat(NOW) - timedelta(days=100)).isoformat()
-    _claim(connection, scope="temporal", recorded_from=recorded, last_accessed_at=recorded, confidence=0.08)
+    _claim(
+        connection,
+        scope="temporal",
+        recorded_from=recorded,
+        last_accessed_at=recorded,
+        confidence=0.08,
+    )
     assert decay_claims(connection, NOW) == {"decayed": 1, "archived": 0}
-    assert connection.execute("SELECT confidence FROM claims").fetchone()[0] == pytest.approx(0.05)
+    assert connection.execute("SELECT confidence FROM claims").fetchone()[
+        0
+    ] == pytest.approx(0.05)
     assert decay_claims(connection, "2026-07-21T12:00:00+00:00")["decayed"] == 0
 
 
@@ -112,5 +142,8 @@ def test_decay_rollout_grace_exempts_preexisting_unaccessed(tmp_path):
 
 def test_worker_decay_dispatch(tmp_path):
     worker = Worker(tmp_path / "worker.db", {"embedding_dim": 2})
-    assert dispatch_job(worker, {"job_type": "decay_access"}) == {"decayed": 0, "archived": 0}
+    assert dispatch_job(worker, {"job_type": "decay_access"}) == {
+        "decayed": 0,
+        "archived": 0,
+    }
     worker.database.close()

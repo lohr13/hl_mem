@@ -42,9 +42,19 @@ def cleanup(connection: sqlite3.Connection) -> CleanupResult:
                   SELECT 1 FROM claims AS claim WHERE claim.id = link.evidence_id
               )
             """).fetchall()
-        affected_claims = len({row["derived_id"] for row in dangling_links if row["derived_type"] == "claim"})
+        affected_claims = len(
+            {
+                row["derived_id"]
+                for row in dangling_links
+                if row["derived_type"] == "claim"
+            }
+        )
         affected_observations = len(
-            {row["derived_id"] for row in dangling_links if row["derived_type"] == "observation"}
+            {
+                row["derived_id"]
+                for row in dangling_links
+                if row["derived_type"] == "observation"
+            }
         )
 
         # 清理前确定恢复集合，避免仅有悬空来源的 observation 在删除链接后漏选。

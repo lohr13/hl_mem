@@ -44,7 +44,11 @@ def check_value(text: str, pattern: str, expected: str | int, label: str) -> lis
     if not matches:
         return [f"  {label}: reference not found (pattern: {pattern})"]
     expected_text = str(expected)
-    return [f"  {label}: found '{value}', expected '{expected_text}'" for value in matches if value != expected_text]
+    return [
+        f"  {label}: found '{value}', expected '{expected_text}'"
+        for value in matches
+        if value != expected_text
+    ]
 
 
 def latest_changelog_entry(changelog: str) -> tuple[str, str]:
@@ -73,30 +77,67 @@ def main() -> int:
 
         errors: list[str] = []
         if project_version != version:
-            errors.append(f"  pyproject.toml version: found '{project_version}', expected '{version}'")
-        errors += check_value(readme, r"shields\.io/badge/version-v?(\d+\.\d+\.\d+)-", version, "README badge version")
-        errors += check_value(readme, r"Current baseline:\s*v?(\d+\.\d+\.\d+)", version, "README body version")
-        errors += check_value(architecture, r"Document baseline:\s*v?(\d+\.\d+\.\d+)", version, "architecture baseline")
-        errors += check_value(handoff, r"\*\*版本\*\*[：:]\s*v?(\d+\.\d+\.\d+)", version, "HANDOFF version")
+            errors.append(
+                f"  pyproject.toml version: found '{project_version}', expected '{version}'"
+            )
         errors += check_value(
-            capability_matrix, r"基线[：:]\s*v?(\d+\.\d+\.\d+)", version, "capability matrix baseline"
+            readme,
+            r"shields\.io/badge/version-v?(\d+\.\d+\.\d+)-",
+            version,
+            "README badge version",
         )
         errors += check_value(
-            readme, r"Current baseline:.*?\b(\d+)\s+migrations\b", migration_count, "README migrations"
+            readme,
+            r"Current baseline:\s*v?(\d+\.\d+\.\d+)",
+            version,
+            "README body version",
         )
         errors += check_value(
-            architecture, r"\b(\d+)\s+immutable SQL migrations\b", migration_count, "architecture migrations"
+            architecture,
+            r"Document baseline:\s*v?(\d+\.\d+\.\d+)",
+            version,
+            "architecture baseline",
         )
-        errors += check_value(handoff, r"\b(\d+)\s+migrations\b", migration_count, "HANDOFF migrations")
+        errors += check_value(
+            handoff,
+            r"\*\*版本\*\*[：:]\s*v?(\d+\.\d+\.\d+)",
+            version,
+            "HANDOFF version",
+        )
+        errors += check_value(
+            capability_matrix,
+            r"基线[：:]\s*v?(\d+\.\d+\.\d+)",
+            version,
+            "capability matrix baseline",
+        )
+        errors += check_value(
+            readme,
+            r"Current baseline:.*?\b(\d+)\s+migrations\b",
+            migration_count,
+            "README migrations",
+        )
+        errors += check_value(
+            architecture,
+            r"\b(\d+)\s+immutable SQL migrations\b",
+            migration_count,
+            "architecture migrations",
+        )
+        errors += check_value(
+            handoff, r"\b(\d+)\s+migrations\b", migration_count, "HANDOFF migrations"
+        )
 
         headers = re.findall(r"^##\s+v?(\d+\.\d+\.\d+)\b", changelog, re.MULTILINE)
         duplicates = sorted({header for header in headers if headers.count(header) > 1})
         if duplicates:
-            errors.append(f"  CHANGELOG: duplicate version headers: {', '.join(duplicates)}")
+            errors.append(
+                f"  CHANGELOG: duplicate version headers: {', '.join(duplicates)}"
+            )
 
         latest_version, _ = latest_changelog_entry(changelog)
         if latest_version != version:
-            errors.append(f"  CHANGELOG latest version: found '{latest_version}', expected '{version}'")
+            errors.append(
+                f"  CHANGELOG latest version: found '{latest_version}', expected '{version}'"
+            )
     except (OSError, ValueError) as exc:
         print(f"Document consistency check failed:\n  {exc}")
         return 1

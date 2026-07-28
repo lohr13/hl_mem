@@ -16,7 +16,9 @@ class Variant:
 
 
 def run_ab(
-    cases: list[dict[str, Any]], variants: list[Variant], runner: Callable[[dict[str, Any], Variant], dict[str, float]]
+    cases: list[dict[str, Any]],
+    variants: list[Variant],
+    runner: Callable[[dict[str, Any], Variant], dict[str, float]],
 ) -> dict[str, dict[str, float]]:
     """执行共享数据集并按变体汇总数值指标均值。"""
     if len({variant.variable for variant in variants}) > 1:
@@ -25,5 +27,8 @@ def run_ab(
     for variant in variants:
         rows = [runner(case, variant) for case in cases]
         keys = {key for row in rows for key in row}
-        output[variant.name] = {key: sum(row.get(key, 0.0) for row in rows) / max(1, len(rows)) for key in keys}
+        output[variant.name] = {
+            key: sum(row.get(key, 0.0) for row in rows) / max(1, len(rows))
+            for key in keys
+        }
     return output

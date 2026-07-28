@@ -28,4 +28,6 @@ def test_derivation_transition_matrix_accepts_only_declared_edges() -> None:
     for source, target in DERIVATION_TRANSITIONS:
         assert_valid_derivation_transition(source, target)
     with pytest.raises(InvalidTransitionError):
-        assert_valid_derivation_transition(DerivationStatus.STALE, DerivationStatus.ARCHIVED)
+        assert_valid_derivation_transition(
+            DerivationStatus.STALE, DerivationStatus.ARCHIVED
+        )

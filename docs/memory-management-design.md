@@ -141,8 +141,10 @@ Parse the supplied `now` once (rather than calling `datetime.now()`), and derive
 ```python
 scope = extracted.scope if extracted.scope in {"temporal", "permanent"} else "permanent"
 expires_at = (
-    datetime.fromisoformat(now) + timedelta(days=ttl_days)
-).isoformat() if extracted.volatility == "ephemeral" and scope == "temporal" else None
+    (datetime.fromisoformat(now) + timedelta(days=ttl_days)).isoformat()
+    if extracted.volatility == "ephemeral" and scope == "temporal"
+    else None
+)
 ```
 
 The inserted claim adds:

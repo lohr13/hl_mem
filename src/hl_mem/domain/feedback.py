@@ -16,7 +16,9 @@ class BayesianUsefulnessPolicy:
 
     def __post_init__(self) -> None:
         if self.bonus_every <= 0 or self.bonus_days < 0 or self.max_bonus_days < 0:
-            raise ValueError("feedback bonus settings must be non-negative and bonus_every must be positive")
+            raise ValueError(
+                "feedback bonus settings must be non-negative and bonus_every must be positive"
+            )
 
     def evaluate(
         self,
@@ -27,7 +29,10 @@ class BayesianUsefulnessPolicy:
         outcome_count: int,
     ) -> tuple[float, int]:
         """返回平滑 usefulness 分数与仅由正证据产生的奖励天数。"""
-        if min(helpful_count, unhelpful_count, outcome_count) < 0 or not 0.0 <= success_sum <= outcome_count:
+        if (
+            min(helpful_count, unhelpful_count, outcome_count) < 0
+            or not 0.0 <= success_sum <= outcome_count
+        ):
             raise ValueError("feedback aggregates are outside their valid ranges")
         helpful_rate = (helpful_count + 2) / (helpful_count + unhelpful_count + 4)
         success_rate = (success_sum + 1) / (outcome_count + 2)

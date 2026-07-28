@@ -12,13 +12,19 @@ from hl_mem.recall.calibration import fit_logistic
 def main() -> None:
     """读取 JSONL 特征标注并保存逻辑回归模型。"""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--labels", type=Path, default=Path(__file__).parent / "labeling/recall_labels_v1.jsonl")
+    parser.add_argument(
+        "--labels",
+        type=Path,
+        default=Path(__file__).parent / "labeling/recall_labels_v1.jsonl",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     rows = []
     for line in args.labels.read_text(encoding="utf-8").splitlines():
         item = json.loads(line)
-        rows.append((item["features"], int(item["label"] in {"relevant", "partially_relevant"})))
+        rows.append(
+            (item["features"], int(item["label"] in {"relevant", "partially_relevant"}))
+        )
     fit_logistic(rows).save(args.output)
 
 

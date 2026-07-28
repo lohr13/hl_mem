@@ -18,10 +18,13 @@ def expire_claims(
 ) -> dict[str, int]:
     """过期 expires_at 已到达且仍处于 active 的 claim。"""
     reference = normalize_utc_iso(now or datetime.now(timezone.utc).isoformat(), "now")
-    candidate_cutoff = (datetime.fromisoformat(reference).astimezone(timezone.utc) + timedelta(days=180)).isoformat(
-        timespec="seconds"
+    candidate_cutoff = (
+        datetime.fromisoformat(reference).astimezone(timezone.utc) + timedelta(days=180)
+    ).isoformat(timespec="seconds")
+    mode = (
+        feedback_lifecycle_mode
+        or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
     )
-    mode = feedback_lifecycle_mode or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
     short_ttl_seconds = (
         slot_short_ttl_seconds
         if slot_short_ttl_seconds is not None
@@ -43,21 +46,42 @@ def expire_claims(
             if mode == "on" and row["bonus_days"] > 0:
                 effective = base + timedelta(days=row["bonus_days"])
                 if row["valid_to"]:
-                    effective = min(effective, datetime.fromisoformat(row["valid_to"].replace("Z", "+00:00")))
+                    effective = min(
+                        effective,
+                        datetime.fromisoformat(row["valid_to"].replace("Z", "+00:00")),
+                    )
                 if row["canonical_slot"] == "state.service_health":
-                    anchor = datetime.fromisoformat((row["observed_at"] or row["recorded_from"]).replace("Z", "+00:00"))
-                    effective = min(effective, anchor + timedelta(seconds=short_ttl_seconds))
+                    anchor = datetime.fromisoformat(
+                        (row["observed_at"] or row["recorded_from"]).replace(
+                            "Z", "+00:00"
+                        )
+                    )
+                    effective = min(
+                        effective, anchor + timedelta(seconds=short_ttl_seconds)
+                    )
             if effective <= datetime.fromisoformat(reference):
                 assert_transition(row["status"], "expired")
                 expired_claims.append(
-                    (row["id"], effective.isoformat(timespec="seconds"), row["expires_at"], row["valid_to"])
+                    (
+                        row["id"],
+                        effective.isoformat(timespec="seconds"),
+                        row["expires_at"],
+                        row["valid_to"],
+                    )
                 )
         cursor_count = 0
         for claim_id, effective_expire, expires_at, valid_to in expired_claims:
             cursor = connection.execute(
                 "UPDATE claims SET status='expired',valid_to=CASE WHEN valid_to IS NULL OR ?<valid_to "
                 "THEN ? ELSE valid_to END WHERE id=? AND status=? AND expires_at=? AND valid_to IS ?",
-                (effective_expire, effective_expire, claim_id, "active", expires_at, valid_to),
+                (
+                    effective_expire,
+                    effective_expire,
+                    claim_id,
+                    "active",
+                    expires_at,
+                    valid_to,
+                ),
             )
             cursor_count += cursor.rowcount
         connection.commit()

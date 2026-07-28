@@ -46,7 +46,10 @@ if str(SRC_ROOT) not in sys.path:
 
 from hl_mem.application.ingest import IngestService, claim_text  # noqa: E402
 from hl_mem.components import make_embedder, make_extractor  # noqa: E402
-from hl_mem.domain.claims.attributes import normalize_topic_tags, validate_slot_instance  # noqa: E402
+from hl_mem.domain.claims.attributes import (  # noqa: E402
+    normalize_topic_tags,
+    validate_slot_instance,
+)
 from hl_mem.domain.claims.claim import build_index_text  # noqa: E402
 from hl_mem.domain.claims.conflicts import compute_conflict_key  # noqa: E402
 from hl_mem.domain.entity import normalize_entity_id  # noqa: E402
@@ -76,7 +79,9 @@ def _pid_is_alive(pid: int) -> bool:
             import ctypes
 
             kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            handle = kernel32.OpenProcess(
+                0x1000, False, pid
+            )  # PROCESS_QUERY_LIMITED_INFORMATION
             if handle:
                 kernel32.CloseHandle(handle)
                 return True
@@ -131,7 +136,7 @@ def acquire_reextract_lock(project_root: Path) -> tuple[TextIO, Path]:
         # 锁已被占用 — 读取持有者 PID 以提供有用的错误信息
         lock_fd.close()
         holder_pid = _read_lock_pid(lock_path)
-        msg = f"[reextract] 另一个实例正在运行"
+        msg = "[reextract] 另一个实例正在运行"
         if holder_pid is not None:
             msg += f"（PID {holder_pid}）"
         msg += "，请等待其完成后再重试"
@@ -183,9 +188,15 @@ def load_project_env(path: Path) -> None:
 def parse_args() -> argparse.Namespace:
     """解析数据重提取命令行参数。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dry-run", action="store_true", help="仅提取并生成执行计划，不修改 claims")
-    parser.add_argument("--database", type=Path, help="数据库路径；默认读取 HL_MEM_DB_PATH/Settings")
-    parser.add_argument("--plan", type=Path, help="dry-run 计划路径；默认与数据库位于同一目录")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="仅提取并生成执行计划，不修改 claims"
+    )
+    parser.add_argument(
+        "--database", type=Path, help="数据库路径；默认读取 HL_MEM_DB_PATH/Settings"
+    )
+    parser.add_argument(
+        "--plan", type=Path, help="dry-run 计划路径；默认与数据库位于同一目录"
+    )
     parser.add_argument("--limit", type=int, help="最多处理的事件数")
     parser.add_argument(
         "--batch-size",
@@ -196,16 +207,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--progress-every",
         type=int,
-        default=int(os.getenv("HL_MEM_REEXTRACT_PROGRESS_EVERY", str(DEFAULT_PROGRESS_EVERY))),
+        default=int(
+            os.getenv("HL_MEM_REEXTRACT_PROGRESS_EVERY", str(DEFAULT_PROGRESS_EVERY))
+        ),
         help="每处理多少个事件输出一次进度",
     )
     args = parser.parse_args()
-    if args.batch_size < 1 or args.progress_every < 1 or (args.limit is not None and args.limit < 1):
+    if (
+        args.batch_size < 1
+        or args.progress_every < 1
+        or (args.limit is not None and args.limit < 1)
+    ):
         parser.error("--batch-size, --progress-every, and --limit must be positive")
     return args
 
 
-def iter_events(connection: sqlite3.Connection, batch_size: int) -> Iterator[dict[str, Any]]:
+def iter_events(
+    connection: sqlite3.Connection, batch_size: int
+) -> Iterator[dict[str, Any]]:
     """用 fetchmany 分批流式读取全部事件。"""
     cursor = connection.execute("SELECT * FROM events ORDER BY occurred_at,id")
     while rows := cursor.fetchmany(batch_size):
@@ -215,7 +234,9 @@ def iter_events(connection: sqlite3.Connection, batch_size: int) -> Iterator[dic
             yield event
 
 
-def extraction_context(connection: sqlite3.Connection, event: dict[str, Any]) -> dict[str, Any]:
+def extraction_context(
+    connection: sqlite3.Connection, event: dict[str, Any]
+) -> dict[str, Any]:
     """按在线 worker 契约构造事件时间锚点与最近会话上下文。"""
     context: dict[str, Any] = {"occurred_at": event["occurred_at"], "recent_events": []}
     if not event.get("session_id"):
@@ -226,7 +247,10 @@ def extraction_context(connection: sqlite3.Connection, event: dict[str, Any]) ->
         "ORDER BY occurred_at DESC,id DESC LIMIT 3",
         (event["session_id"], event["occurred_at"], event["occurred_at"], event["id"]),
     ).fetchall()
-    context["recent_events"] = [{**dict(row), "content": decode_json(row["content_json"])} for row in reversed(rows)]
+    context["recent_events"] = [
+        {**dict(row), "content": decode_json(row["content_json"])}
+        for row in reversed(rows)
+    ]
     return context
 
 
@@ -234,10 +258,15 @@ def claim_state_hash(connection: sqlite3.Connection) -> str:
     """计算重提取相关 claim 字段的稳定哈希，防止应用陈旧计划。"""
     digest = hashlib.sha256()
     rows = connection.execute(
-        "SELECT id,subject_entity_id,predicate,value_json,canonical_slot,topic_tags_json " "FROM claims ORDER BY id"
+        "SELECT id,subject_entity_id,predicate,value_json,canonical_slot,topic_tags_json "
+        "FROM claims ORDER BY id"
     )
     for row in rows:
-        digest.update(json.dumps(list(row), ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        digest.update(
+            json.dumps(list(row), ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        )
         digest.update(b"\n")
     return digest.hexdigest()
 
@@ -263,7 +292,9 @@ def find_matching_claim(
     return None
 
 
-def normalized_classification(extracted: ExtractedClaim) -> tuple[str | None, list[str]]:
+def normalized_classification(
+    extracted: ExtractedClaim,
+) -> tuple[str | None, list[str]]:
     """按持久化边界规则规范化 operational slot 与 topic tags。"""
     qualifiers = extracted.qualifiers or {}
     slot = validate_slot_instance(extracted.canonical_slot, qualifiers)
@@ -277,7 +308,11 @@ def classify_action(existing: dict[str, Any] | None, extracted: ExtractedClaim) 
         return "add"
     slot, tags = normalized_classification(extracted)
     old_tags = decode_json(existing.get("topic_tags_json") or "[]")
-    return "unchanged" if existing.get("canonical_slot") == slot and old_tags == tags else "update"
+    return (
+        "unchanged"
+        if existing.get("canonical_slot") == slot and old_tags == tags
+        else "update"
+    )
 
 
 def write_json_line(stream: TextIO, payload: dict[str, Any]) -> None:
@@ -296,7 +331,14 @@ def dry_run(
 ) -> dict[str, int]:
     """执行真实提取并生成不修改 claims 的可复用计划。"""
     extractor = make_extractor(settings, require_real=True, connection=connection)
-    counts = {"events": 0, "extracted": 0, "add": 0, "update": 0, "unchanged": 0, "errors": 0}
+    counts = {
+        "events": 0,
+        "extracted": 0,
+        "add": 0,
+        "update": 0,
+        "unchanged": 0,
+        "errors": 0,
+    }
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = plan_path.with_suffix(plan_path.suffix + ".tmp")
     with temporary_path.open("w", encoding="utf-8", newline="\n") as stream:
@@ -315,7 +357,9 @@ def dry_run(
                 break
             counts["events"] += 1
             try:
-                extracted_claims = extractor.extract(event["content"], extraction_context(connection, event))
+                extracted_claims = extractor.extract(
+                    event["content"], extraction_context(connection, event)
+                )
                 records: list[dict[str, Any]] = []
                 for extracted in extracted_claims:
                     existing = find_matching_claim(connection, event["id"], extracted)
@@ -329,7 +373,10 @@ def dry_run(
                             "claim": asdict(extracted),
                         }
                     )
-                write_json_line(stream, {"type": "event", "event_id": event["id"], "claims": records})
+                write_json_line(
+                    stream,
+                    {"type": "event", "event_id": event["id"], "claims": records},
+                )
             except Exception as error:  # 逐事件报告，最终以非零状态阻止应用不完整计划。
                 counts["errors"] += 1
                 write_json_line(
@@ -341,13 +388,18 @@ def dry_run(
                         "error": str(error),
                     },
                 )
-                if isinstance(error, httpx.HTTPStatusError) and error.response.status_code in {401, 403, 429}:
+                if isinstance(
+                    error, httpx.HTTPStatusError
+                ) and error.response.status_code in {401, 403, 429}:
                     raise RuntimeError(
                         f"LLM provider rejected extraction with HTTP {error.response.status_code}; "
                         "check credentials and quota before retrying"
                     ) from error
             if counts["events"] % progress_every == 0:
-                print(f"dry-run progress: {json.dumps(counts, ensure_ascii=False)}", flush=True)
+                print(
+                    f"dry-run progress: {json.dumps(counts, ensure_ascii=False)}",
+                    flush=True,
+                )
         write_json_line(stream, {"type": "summary", **counts})
     temporary_path.replace(plan_path)
     print(f"dry-run report: {json.dumps(counts, ensure_ascii=False)}")
@@ -362,7 +414,9 @@ def update_existing_claim(
     embedder: Any,
 ) -> bool:
     """原位更新分类与检索表示，不触碰证据、反馈和生命周期字段。"""
-    row = connection.execute("SELECT * FROM claims WHERE id=?", (existing_claim_id,)).fetchone()
+    row = connection.execute(
+        "SELECT * FROM claims WHERE id=?", (existing_claim_id,)
+    ).fetchone()
     if row is None:
         raise RuntimeError(f"planned claim disappeared: {existing_claim_id}")
     current = dict(row)
@@ -380,7 +434,9 @@ def update_existing_claim(
         "topic_tags": tags,
     }
     index_text = build_index_text(index_claim)
-    embedding_dense = embedder.embed_one(claim_text({**index_claim, "index_text": index_text}))
+    embedding_dense = embedder.embed_one(
+        claim_text({**index_claim, "index_text": index_text})
+    )
     conflict_key = compute_conflict_key(
         current["namespace_key"],
         current["subject_entity_id"],
@@ -416,21 +472,35 @@ def apply_plan(
     """校验并应用 dry-run 计划。"""
     if not plan_path.is_file():
         raise FileNotFoundError(f"dry-run plan not found: {plan_path}")
-    counts = {"events": 0, "extracted": 0, "add": 0, "update": 0, "unchanged": 0, "errors": 0}
+    counts = {
+        "events": 0,
+        "extracted": 0,
+        "add": 0,
+        "update": 0,
+        "unchanged": 0,
+        "errors": 0,
+    }
     embedder = make_embedder(settings)
     with plan_path.open("r", encoding="utf-8") as stream:
         header = json.loads(stream.readline())
-        if header.get("type") != "header" or header.get("schema_version") != PLAN_SCHEMA_VERSION:
+        if (
+            header.get("type") != "header"
+            or header.get("schema_version") != PLAN_SCHEMA_VERSION
+        ):
             raise RuntimeError("unsupported or malformed dry-run plan")
         if Path(header["database"]) != Path(settings.database_path).resolve():
             raise RuntimeError("dry-run plan targets a different database")
         if header.get("claim_state_hash") != claim_state_hash(connection):
-            raise RuntimeError("claim data changed after dry-run; generate a fresh plan")
+            raise RuntimeError(
+                "claim data changed after dry-run; generate a fresh plan"
+            )
         for line in stream:
             record = json.loads(line)
             if record["type"] == "summary":
                 if record.get("errors"):
-                    raise RuntimeError(f"dry-run had {record['errors']} extraction errors; refusing partial apply")
+                    raise RuntimeError(
+                        f"dry-run had {record['errors']} extraction errors; refusing partial apply"
+                    )
                 continue
             if record["type"] == "error":
                 continue
@@ -438,7 +508,9 @@ def apply_plan(
                 raise RuntimeError(f"unknown plan record type: {record['type']}")
             if limit is not None and counts["events"] >= limit:
                 continue
-            event_row = connection.execute("SELECT * FROM events WHERE id=?", (record["event_id"],)).fetchone()
+            event_row = connection.execute(
+                "SELECT * FROM events WHERE id=?", (record["event_id"],)
+            ).fetchone()
             if event_row is None:
                 raise RuntimeError(f"planned event disappeared: {record['event_id']}")
             event = dict(event_row)
@@ -451,7 +523,9 @@ def apply_plan(
                 if action == "unchanged":
                     counts["unchanged"] += 1
                 elif action == "update":
-                    changed = update_existing_claim(connection, item["existing_claim_id"], extracted, embedder)
+                    changed = update_existing_claim(
+                        connection, item["existing_claim_id"], extracted, embedder
+                    )
                     counts["update" if changed else "unchanged"] += 1
                 elif action == "add":
                     result = IngestService.store_extracted(
@@ -472,7 +546,10 @@ def apply_plan(
                 else:
                     raise RuntimeError(f"unknown planned action: {action}")
             if counts["events"] % progress_every == 0:
-                print(f"apply progress: {json.dumps(counts, ensure_ascii=False)}", flush=True)
+                print(
+                    f"apply progress: {json.dumps(counts, ensure_ascii=False)}",
+                    flush=True,
+                )
     print(f"apply report: {json.dumps(counts, ensure_ascii=False)}")
     return counts
 
@@ -488,15 +565,26 @@ def main() -> int:
     try:
         settings = Settings.from_env()
         if args.database is not None:
-            settings = Settings(**{**settings.__dict__, "database_path": str(args.database)})
+            settings = Settings(
+                **{**settings.__dict__, "database_path": str(args.database)}
+            )
             settings.validate()
         database_path = Path(settings.database_path)
-        plan_path = args.plan or database_path.with_name(f"{database_path.name}.reextract-plan.jsonl")
+        plan_path = args.plan or database_path.with_name(
+            f"{database_path.name}.reextract-plan.jsonl"
+        )
         database = Database(database_path)
         connection = database.open_worker()
         try:
             if args.dry_run:
-                counts = dry_run(connection, settings, plan_path, args.batch_size, args.progress_every, args.limit)
+                counts = dry_run(
+                    connection,
+                    settings,
+                    plan_path,
+                    args.batch_size,
+                    args.progress_every,
+                    args.limit,
+                )
                 return 1 if counts["errors"] else 0
             apply_plan(connection, settings, plan_path, args.progress_every, args.limit)
             return 0

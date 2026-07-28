@@ -32,7 +32,9 @@ def test_procedure_episode_feedback_reaches_usefulness(
     _configure_test_runtime(monkeypatch)
     app = create_app(tmp_path / "episode-feedback.db")
     with TestClient(app) as client:
-        created = client.post("/v1/episodes", json={"goal": "deploy literal service"}).json()
+        created = client.post(
+            "/v1/episodes", json={"goal": "deploy literal service"}
+        ).json()
         episode_id = created["id"]
         client.patch(
             f"/v1/episodes/{episode_id}",
@@ -42,16 +44,23 @@ def test_procedure_episode_feedback_reaches_usefulness(
             "/v1/recall",
             json={"query": "deploy literal service", "intent": "procedure", "limit": 5},
         ).json()
-        episode = next(item for item in recalled["results"] if item["memory_type"] == "episode")
+        episode = next(
+            item for item in recalled["results"] if item["memory_type"] == "episode"
+        )
         response = client.post(
             "/v1/feedback",
-            json={"feedback_id": episode["feedback_id"], "helpful": True, "task_outcome": 1.0},
+            json={
+                "feedback_id": episode["feedback_id"],
+                "helpful": True,
+                "task_outcome": 1.0,
+            },
         )
         assert response.status_code == 200
         row = (
             app.state.db.open()
             .execute(
-                "SELECT helpful_count,outcome_count FROM memory_usefulness " "WHERE memory_type=? AND memory_id=?",
+                "SELECT helpful_count,outcome_count FROM memory_usefulness "
+                "WHERE memory_type=? AND memory_id=?",
                 ("episode", episode_id),
             )
             .fetchone()
@@ -86,15 +95,26 @@ def test_api_feedback_bonus_flows_into_ttl_valid_to(
         for _ in range(3):
             recalled = client.post(
                 "/v1/recall",
-                json={"query": "service degraded", "limit": 1, "as_of": "2026-07-21T00:00:00+00:00"},
+                json={
+                    "query": "service degraded",
+                    "limit": 1,
+                    "as_of": "2026-07-21T00:00:00+00:00",
+                },
             ).json()
             client.post(
                 "/v1/feedback",
-                json={"feedback_id": recalled["results"][0]["feedback_id"], "helpful": True},
+                json={
+                    "feedback_id": recalled["results"][0]["feedback_id"],
+                    "helpful": True,
+                },
             )
 
-        assert expire_claims(connection, "2026-08-04T00:00:00+00:00", "on") == {"expired": 1}
-        row = connection.execute("SELECT valid_to FROM claims WHERE id=?", ("ttl-claim",)).fetchone()
+        assert expire_claims(connection, "2026-08-04T00:00:00+00:00", "on") == {
+            "expired": 1
+        }
+        row = connection.execute(
+            "SELECT valid_to FROM claims WHERE id=?", ("ttl-claim",)
+        ).fetchone()
         assert row["valid_to"] == "2026-08-03T00:00:00+00:00"
 
 
@@ -106,7 +126,9 @@ class _ArchivingDiscoverer:
 
     def propose(self, source_claim, candidates, *, max_proposals):
         del max_proposals
-        self.connection.execute("UPDATE claims SET status='archived' WHERE id=?", ("target",))
+        self.connection.execute(
+            "UPDATE claims SET status='archived' WHERE id=?", ("target",)
+        )
         self.connection.commit()
         return [
             RelationProposal(
@@ -121,7 +143,9 @@ class _ArchivingDiscoverer:
         ]
 
 
-def test_relation_discovery_rejects_endpoint_archived_during_proposal(tmp_path: Path) -> None:
+def test_relation_discovery_rejects_endpoint_archived_during_proposal(
+    tmp_path: Path,
+) -> None:
     """discover → archive endpoint → auto apply → rejected。"""
     database_path = tmp_path / "relation-stale.db"
     app = create_app(database_path)
@@ -145,7 +169,9 @@ def test_relation_discovery_rejects_endpoint_archived_during_proposal(tmp_path: 
         auto_apply_confidence=0.8,
         conflict_confidence=0.9,
     )
-    proposal = connection.execute("SELECT status,decision_reason FROM relation_proposals").fetchone()
+    proposal = connection.execute(
+        "SELECT status,decision_reason FROM relation_proposals"
+    ).fetchone()
     assert result["applied"] == 0
     assert tuple(proposal) == ("rejected", "stale-input")
     app.state.db.close()
@@ -187,5 +213,9 @@ def test_percent_query_only_returns_literal_procedure_match(
             "/v1/recall",
             json={"query": "%", "intent": "procedure", "limit": 10},
         ).json()
-        episode_ids = [item["id"] for item in recalled["results"] if item["memory_type"] == "episode"]
+        episode_ids = [
+            item["id"]
+            for item in recalled["results"]
+            if item["memory_type"] == "episode"
+        ]
         assert episode_ids == ["literal"]

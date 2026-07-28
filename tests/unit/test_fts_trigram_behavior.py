@@ -68,7 +68,9 @@ def test_short_query_returns_empty(claim_repository: ClaimRepository) -> None:
 
 
 @pytest.mark.parametrize("query", ["C++", "foo-bar"])
-def test_special_characters_quoted(claim_repository: ClaimRepository, query: str) -> None:
+def test_special_characters_quoted(
+    claim_repository: ClaimRepository, query: str
+) -> None:
     """FTS 特殊字符应被 phrase quoting 安全处理且不抛异常。"""
     assert _result_ids(claim_repository, query) == []
 

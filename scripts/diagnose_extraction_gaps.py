@@ -57,7 +57,9 @@ KEYWORD_DOMAINS: tuple[KeywordDomain, ...] = (
 
 def open_readonly_database(database_path: Path) -> sqlite3.Connection:
     """以 SQLite URI 只读模式打开数据库。"""
-    connection = sqlite3.connect(f"{database_path.resolve().as_uri()}?mode=ro", uri=True)
+    connection = sqlite3.connect(
+        f"{database_path.resolve().as_uri()}?mode=ro", uri=True
+    )
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -87,26 +89,37 @@ def diagnose_domains(
             "SELECT id,actor_type,session_id,event_type,content_json FROM events ORDER BY recorded_at,id"
         )
     )
-    claim_columns = {row["name"] for row in connection.execute("PRAGMA table_info(claims)")}
+    claim_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(claims)")
+    }
     selected_columns = ["id", "subject_entity_id", "predicate", "value_json"]
     if "index_text" in claim_columns:
         selected_columns.append("index_text")
-    claims = list(connection.execute(f"SELECT {','.join(selected_columns)} FROM claims"))
+    claims = list(
+        connection.execute(f"SELECT {','.join(selected_columns)} FROM claims")
+    )
     links = list(
         connection.execute(
-            "SELECT derived_id,evidence_id FROM evidence_links " "WHERE derived_type='claim' AND evidence_type='event'"
+            "SELECT derived_id,evidence_id FROM evidence_links "
+            "WHERE derived_type='claim' AND evidence_type='event'"
         )
     )
     claims_by_id = {str(row["id"]): row for row in claims}
     linked_claim_ids: dict[str, set[str]] = {}
     for link in links:
-        linked_claim_ids.setdefault(str(link["evidence_id"]), set()).add(str(link["derived_id"]))
+        linked_claim_ids.setdefault(str(link["evidence_id"]), set()).add(
+            str(link["derived_id"])
+        )
 
     event_filter = EventFilter()
     reports: list[DomainReport] = []
     for domain in domains:
-        matching_events = [row for row in events if _matches(str(row["content_json"]), domain.keywords)]
-        matching_claims = [row for row in claims if _matches(_claim_text(row), domain.keywords)]
+        matching_events = [
+            row for row in events if _matches(str(row["content_json"]), domain.keywords)
+        ]
+        matching_claims = [
+            row for row in claims if _matches(_claim_text(row), domain.keywords)
+        ]
         reasons: Counter[str] = Counter()
         samples: list[GapSample] = []
         for row in matching_events:
@@ -152,11 +165,15 @@ def _render_report(reports: Sequence[DomainReport]) -> str:
     ]
     for report in reports:
         coverage = f"{report.coverage:.1%}" if report.coverage is not None else "N/A"
-        lines.append(f"| {report.domain.name} | {report.event_hits} | {report.claim_hits} | {coverage} |")
+        lines.append(
+            f"| {report.domain.name} | {report.event_hits} | {report.claim_hits} | {coverage} |"
+        )
     lines.append("\n## 缺口样本")
     for report in reports:
         lines.append(f"\n### {report.domain.name}")
-        lines.append(f"EventFilter 判定：{json.dumps(report.filter_reasons, ensure_ascii=False, sort_keys=True)}")
+        lines.append(
+            f"EventFilter 判定：{json.dumps(report.filter_reasons, ensure_ascii=False, sort_keys=True)}"
+        )
         if not report.samples:
             lines.append("未发现无对应 claim 的 event 样本。")
             continue

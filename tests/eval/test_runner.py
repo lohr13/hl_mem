@@ -34,7 +34,9 @@ def test_runner_records_per_case_metrics_and_manifest(tmp_path: Path) -> None:
         forbidden_statuses=("disputed",),
     )
 
-    report = run_evaluation([case], lambda _case: {"results": [], "observations": []}, database_path)
+    report = run_evaluation(
+        [case], lambda _case: {"results": [], "observations": []}, database_path
+    )
     output = tmp_path / "report.json"
     write_report(report, output)
 
@@ -71,7 +73,9 @@ def test_latency_percentiles_handle_multiple_scores() -> None:
     assert compute_latency_percentiles(scores) == {"p50": 15.0, "p95": 28.5}
 
 
-def test_report_summary_separates_test_and_retrieval_metrics(capsys: pytest.CaptureFixture[str]) -> None:
+def test_report_summary_separates_test_and_retrieval_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     report = {
         "test_layer": {"passed": 2, "failed": 1, "skipped": 3},
         "metrics": {"recall_at_5": 0.5, "mrr": 0.25, "ndcg_at_10": 0.375},
@@ -86,7 +90,9 @@ def test_report_summary_separates_test_and_retrieval_metrics(capsys: pytest.Capt
     assert "Latency: p50=12.3ms, p95=56.8ms" in output
 
 
-def test_report_summary_prints_optional_scenarios_layer(capsys: pytest.CaptureFixture[str]) -> None:
+def test_report_summary_prints_optional_scenarios_layer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """报告包含 scenarios 统计时应单独输出行为场景层。"""
     report = {
         "test_layer": {"passed": 2, "failed": 0, "skipped": 0},

@@ -28,7 +28,13 @@ def _metric_rows(metrics: Mapping[str, Any]) -> list[tuple[str, str, str]]:
         for name, value in values.items():
             if isinstance(value, Mapping):
                 for nested_name, nested_value in value.items():
-                    rows.append((str(layer), f"{name}.{nested_name}", _format_value(nested_value)))
+                    rows.append(
+                        (
+                            str(layer),
+                            f"{name}.{nested_name}",
+                            _format_value(nested_value),
+                        )
+                    )
             else:
                 rows.append((str(layer), str(name), _format_value(value)))
     return rows
@@ -57,9 +63,18 @@ def generate_markdown_summary(result: Mapping[str, Any], output: Path) -> Path:
         "| --- | --- | ---: |",
     ]
     lines.extend(
-        f"| {layer} | {metric} | {value} |" for layer, metric, value in _metric_rows(result.get("metrics", {}))
+        f"| {layer} | {metric} | {value} |"
+        for layer, metric, value in _metric_rows(result.get("metrics", {}))
     )
-    lines.extend(["", "## Categories", "", "| Category | Layer | Metric | Value |", "| --- | --- | --- | ---: |"])
+    lines.extend(
+        [
+            "",
+            "## Categories",
+            "",
+            "| Category | Layer | Metric | Value |",
+            "| --- | --- | --- | ---: |",
+        ]
+    )
     for category, metrics in result.get("categories", {}).items():
         for layer, metric, value in _metric_rows(metrics):
             lines.append(f"| {category} | {layer} | {metric} | {value} |")
@@ -67,7 +82,9 @@ def generate_markdown_summary(result: Mapping[str, Any], output: Path) -> Path:
     lines.extend(["", "## Failed cases", ""])
     if failures:
         for case in failures:
-            lines.append(f"- `{case.get('case_id')}`: {'; '.join(map(str, case.get('errors', [])))}")
+            lines.append(
+                f"- `{case.get('case_id')}`: {'; '.join(map(str, case.get('errors', [])))}"
+            )
     else:
         lines.append("- None")
     output.mkdir(parents=True, exist_ok=True)

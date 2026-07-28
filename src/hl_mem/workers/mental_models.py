@@ -42,9 +42,13 @@ class DerivedMemoryMaintainer:
         if len(rows) != len(unique_ids):
             raise ValueError("all evidence claims must be active")
         watermark = max(row["recorded_from"] for row in rows)
-        existing = self.connection.execute("SELECT status FROM derivations WHERE id=?", (derivation_id,)).fetchone()
+        existing = self.connection.execute(
+            "SELECT status FROM derivations WHERE id=?", (derivation_id,)
+        ).fetchone()
         if existing is not None and existing["status"] != DerivationStatus.ACTIVE:
-            assert_valid_derivation_transition(existing["status"], DerivationStatus.ACTIVE)
+            assert_valid_derivation_transition(
+                existing["status"], DerivationStatus.ACTIVE
+            )
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             self.connection.execute(
@@ -125,7 +129,9 @@ class DerivedMemoryMaintainer:
             observation = builder.try_build(claims)
             if not observation:
                 continue
-            digest = hashlib.sha256(str(key_row["conflict_key"]).encode("utf-8")).hexdigest()[:24]
+            digest = hashlib.sha256(
+                str(key_row["conflict_key"]).encode("utf-8")
+            ).hexdigest()[:24]
             self.rebuild(
                 f"observation-{digest}",
                 "observation",
@@ -139,7 +145,9 @@ class DerivedMemoryMaintainer:
 
     def get(self, derivation_id: str) -> dict[str, Any]:
         """返回指定派生记忆。"""
-        row = self.connection.execute("SELECT * FROM derivations WHERE id=?", (derivation_id,)).fetchone()
+        row = self.connection.execute(
+            "SELECT * FROM derivations WHERE id=?", (derivation_id,)
+        ).fetchone()
         if not row:
             raise ValueError(f"derivation not found: {derivation_id}")
         return dict(row)

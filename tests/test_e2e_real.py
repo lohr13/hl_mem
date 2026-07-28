@@ -34,7 +34,9 @@ def _load_env(path: Path) -> None:
 
 
 @pytest.mark.real_api
-def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_real_llm_embedding_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """使用临时目录验证真实提取、向量化、写入与全文召回链路。"""
     project_root = Path(__file__).resolve().parent.parent
     _load_env(project_root / ".env")
@@ -56,7 +58,9 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     if missing:
         pytest.skip(f"缺少真实 API 配置: {', '.join(missing)}")
 
-    extractor = LLMExtractor(os.environ["LLM_API_KEY"], os.environ["LLM_BASE_URL"], os.environ["LLM_MODEL"])
+    extractor = LLMExtractor(
+        os.environ["LLM_API_KEY"], os.environ["LLM_BASE_URL"], os.environ["LLM_MODEL"]
+    )
     embedder = Embedder(
         os.environ["EMBEDDING_API_KEY"],
         os.environ["EMBEDDING_BASE_URL"],
@@ -65,12 +69,36 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     )
     budget = TokenBudget(daily_limit=500_000, path=budget_path)
     events = [
-        {"event_type": "message", "actor_type": "user", "content": {"text": "我们项目用PostgreSQL，主库在上海"}},
-        {"event_type": "message", "actor_type": "user", "content": {"text": "我喜欢深色模式，浅色太刺眼了"}},
-        {"event_type": "message", "actor_type": "user", "content": {"text": "服务器用的是Ubuntu 22.04"}},
-        {"event_type": "message", "actor_type": "user", "content": {"text": "现在改用浅色模式了，深色看不清代码"}},
-        {"event_type": "explicit_memory", "actor_type": "user", "content": {"text": "记住我的Git用户名是REDACTED_USER"}},
-        {"event_type": "message", "actor_type": "user", "content": {"text": "好的，没问题"}},
+        {
+            "event_type": "message",
+            "actor_type": "user",
+            "content": {"text": "我们项目用PostgreSQL，主库在上海"},
+        },
+        {
+            "event_type": "message",
+            "actor_type": "user",
+            "content": {"text": "我喜欢深色模式，浅色太刺眼了"},
+        },
+        {
+            "event_type": "message",
+            "actor_type": "user",
+            "content": {"text": "服务器用的是Ubuntu 22.04"},
+        },
+        {
+            "event_type": "message",
+            "actor_type": "user",
+            "content": {"text": "现在改用浅色模式了，深色看不清代码"},
+        },
+        {
+            "event_type": "explicit_memory",
+            "actor_type": "user",
+            "content": {"text": "记住我的Git用户名是REDACTED_USER"},
+        },
+        {
+            "event_type": "message",
+            "actor_type": "user",
+            "content": {"text": "好的，没问题"},
+        },
     ]
 
     database = Database(db_path)
@@ -81,7 +109,9 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
         for index, event_data in enumerate(events):
             now = datetime.now(timezone.utc).isoformat()
             event_id = uuid.uuid4().hex
-            content_json = json.dumps(event_data["content"], ensure_ascii=False, sort_keys=True)
+            content_json = json.dumps(
+                event_data["content"], ensure_ascii=False, sort_keys=True
+            )
             created = event_repo.insert_event(
                 {
                     "id": event_id,
@@ -111,7 +141,12 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
 
     worker = Worker(
         db_path,
-        {"extractor": extractor, "embedder": embedder, "budget": budget, "event_filter": EventFilter()},
+        {
+            "extractor": extractor,
+            "embedder": embedder,
+            "budget": budget,
+            "event_filter": EventFilter(),
+        },
     )
     try:
         for _ in range(len(events) + 3):
@@ -126,6 +161,11 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
         claim_repo = ClaimRepository(connection)
         assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] > 0
         assert claim_repo.search_claims_fts("PostgreSQL", 5)
-        assert connection.execute("SELECT count(*) FROM jobs WHERE status='pending'").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM jobs WHERE status='pending'"
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         verification_database.close()

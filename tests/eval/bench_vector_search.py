@@ -21,7 +21,9 @@ def _random_vector(dim: int = 2048) -> bytes:
     return struct.pack(f"{dim}f", *(random.gauss(0, 1) for _ in range(dim)))
 
 
-def _populate_claims(connection: sqlite3.Connection, count: int, dim: int = 2048) -> None:
+def _populate_claims(
+    connection: sqlite3.Connection, count: int, dim: int = 2048
+) -> None:
     """填充指定数量的 claims 用于基准测试。"""
     for i in range(count):
         connection.execute(
@@ -55,7 +57,9 @@ def test_vector_search_latency(scale: int, tmp_path: Path) -> None:
 
     for _ in range(20):
         start = time.perf_counter()
-        conn.execute("SELECT id FROM claims ORDER BY embedding_dense LIMIT 10").fetchall()
+        conn.execute(
+            "SELECT id FROM claims ORDER BY embedding_dense LIMIT 10"
+        ).fetchall()
         latencies.append((time.perf_counter() - start) * 1000)
 
     latencies.sort()

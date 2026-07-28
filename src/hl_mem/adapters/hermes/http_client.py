@@ -62,7 +62,9 @@ class HLMemHttpClient:
         """执行同步 POST 请求。"""
 
         def send_request() -> httpx.Response:
-            response = httpx.post(f"{self.daemon_url}{path}", json=payload, timeout=self.timeout)
+            response = httpx.post(
+                f"{self.daemon_url}{path}", json=payload, timeout=self.timeout
+            )
             response.raise_for_status()
             return response
 
@@ -96,7 +98,10 @@ class HLMemHttpClient:
             state = self._state_locked()
             if state == "open":
                 return
-            if self._probe_owner is not None and self._probe_owner != threading.get_ident():
+            if (
+                self._probe_owner is not None
+                and self._probe_owner != threading.get_ident()
+            ):
                 return
             self._failure_count = 0
             self._circuit_open_until = 0.0

@@ -30,7 +30,9 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     temporary_path.replace(path)
 
 
-def merge_results(target_path: Path, model: str, replacements: list[dict[str, Any]]) -> None:
+def merge_results(
+    target_path: Path, model: str, replacements: list[dict[str, Any]]
+) -> None:
     """用指定模型的新结果替换五模型产物中的同模型行。"""
     existing = [
         json.loads(line)
@@ -40,7 +42,9 @@ def merge_results(target_path: Path, model: str, replacements: list[dict[str, An
     replacement_by_event = {row["event_id"]: row for row in replacements}
     expected = sum(row["model"] == model for row in existing)
     if expected != len(replacement_by_event):
-        raise RuntimeError(f"{model} 替换数量不一致：existing={expected}, new={len(replacement_by_event)}")
+        raise RuntimeError(
+            f"{model} 替换数量不一致：existing={expected}, new={len(replacement_by_event)}"
+        )
     merged = [
         replacement_by_event[row["event_id"]] if row["model"] == model else row
         for row in existing
@@ -53,7 +57,11 @@ def main() -> None:
     args = parse_args()
     keys = benchmark.load_api_keys()
     benchmark.validate_credentials(keys)
-    config = next(config for config in benchmark.get_model_configs(keys) if config["model"] == args.model)
+    config = next(
+        config
+        for config in benchmark.get_model_configs(keys)
+        if config["model"] == args.model
+    )
     testset = benchmark.load_or_build_testset()
     fingerprint = benchmark.testset_fingerprint(testset)
     results: list[dict[str, Any]] = []
@@ -82,7 +90,9 @@ def main() -> None:
         benchmark.append_jsonl(args.output, result)
         if index % 10 == 0 or index == len(testset):
             errors = sum(item["extraction_error"] is not None for item in results)
-            print(f"[{index}/{len(testset)}] ok={index - errors} err={errors}", flush=True)
+            print(
+                f"[{index}/{len(testset)}] ok={index - errors} err={errors}", flush=True
+            )
 
     write_jsonl(args.output, results)
     if args.merge_into is not None:

@@ -26,11 +26,15 @@ def default_database_path() -> Path:
 class Database:
     """管理 SQLite 迁移、专用连接和请求级连接池。"""
 
-    def __init__(self, path: str | Path | None = None, pool_size: int | None = None) -> None:
+    def __init__(
+        self, path: str | Path | None = None, pool_size: int | None = None
+    ) -> None:
         self.path = str(Path(path) if path is not None else default_database_path())
         self.pool_size = pool_size or int(os.getenv("HL_MEM_DB_POOL_SIZE", "8"))
         self.connection: sqlite3.Connection | None = None
-        self._pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=self.pool_size)
+        self._pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(
+            maxsize=self.pool_size
+        )
         self._connections: set[sqlite3.Connection] = set()
         self._lock = threading.Lock()
         self._migrated = False
@@ -52,7 +56,9 @@ class Database:
             connection.row_factory = sqlite3.Row
             try:
                 if connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 0:
-                    has_tables = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone()
+                    has_tables = connection.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
+                    ).fetchone()
                     if not has_tables:
                         connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
                 connection.execute("PRAGMA journal_mode=WAL")
@@ -105,28 +111,42 @@ class Database:
             version = migration.stem
             try:
                 connection.execute("BEGIN IMMEDIATE")
-                if connection.execute("SELECT 1 FROM schema_migrations WHERE version=?", (version,)).fetchone():
+                if connection.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version=?", (version,)
+                ).fetchone():
                     connection.commit()
                     continue
                 statement = ""
-                for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
+                for line in migration.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
                     statement += line
                     if sqlite3.complete_statement(statement):
                         connection.execute(statement)
                         statement = ""
                 if statement.strip():
-                    raise sqlite3.OperationalError(f"incomplete SQL in migration {version}")
-                connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+                    raise sqlite3.OperationalError(
+                        f"incomplete SQL in migration {version}"
+                    )
+                connection.execute(
+                    "INSERT INTO schema_migrations(version) VALUES (?)", (version,)
+                )
                 connection.commit()
             except Exception:
                 if connection.in_transaction:
                     connection.rollback()
                 raise
-        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='006_canonical_attribute'").fetchone():
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version='006_canonical_attribute'"
+        ).fetchone():
             backfill_conflict_keys_v2(connection)
-        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='011_fact_hash_v2'").fetchone():
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version='011_fact_hash_v2'"
+        ).fetchone():
             backfill_fact_hash_v2(connection)
-        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='016_claim_slots_and_tags'").fetchone():
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version='016_claim_slots_and_tags'"
+        ).fetchone():
             backfill_conflict_keys_v3(connection)
 
     def close(self) -> None:

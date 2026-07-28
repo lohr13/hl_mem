@@ -43,10 +43,18 @@ def compute_conflict_key(
     if slot is None:
         return None
     canonical_namespace = unicodedata.normalize("NFKC", namespace).strip().casefold()
-    canonical_subject = re.sub(r"\s+", "", unicodedata.normalize("NFKC", subject)).casefold()
+    canonical_subject = re.sub(
+        r"\s+", "", unicodedata.normalize("NFKC", subject)
+    ).casefold()
     del predicate  # v3 由 slot 唯一决定冲突语义，predicate 不再隔离同一事实。
     raw = json.dumps(
-        ["v3", canonical_namespace, canonical_subject, slot, slot_qualifier_key(slot, qualifiers)],
+        [
+            "v3",
+            canonical_namespace,
+            canonical_subject,
+            slot,
+            slot_qualifier_key(slot, qualifiers),
+        ],
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -62,7 +70,11 @@ def compute_legacy_conflict_key(
 ) -> str:
     """复现 v1 算法，供迁移期审计和回滚使用。"""
     canonical_subject = re.sub(r"\s+", "", subject).casefold()
-    exclusive = {key: value for key, value in (qualifiers or {}).items() if key in EXCLUSIVE_QUALIFIERS}
+    exclusive = {
+        key: value
+        for key, value in (qualifiers or {}).items()
+        if key in EXCLUSIVE_QUALIFIERS
+    }
     raw = json.dumps(
         [namespace.casefold(), canonical_subject, predicate.casefold(), exclusive],
         ensure_ascii=False,
@@ -76,19 +88,26 @@ def _canonicalize_json(value: Any) -> Any:
     if isinstance(value, str):
         return unicodedata.normalize("NFKC", value).strip().casefold()
     if isinstance(value, dict):
-        return {str(key): _canonicalize_json(item) for key, item in sorted(value.items())}
+        return {
+            str(key): _canonicalize_json(item) for key, item in sorted(value.items())
+        }
     if isinstance(value, (list, tuple)):
         return [_canonicalize_json(item) for item in value]
     return value
 
 
-def slot_qualifier_key(canonical_slot: str | None, qualifiers: dict[str, Any] | None) -> dict[str, Any]:
+def slot_qualifier_key(
+    canonical_slot: str | None, qualifiers: dict[str, Any] | None
+) -> dict[str, Any]:
     """提取并规范化 slot 声明要求的 qualifier，供冲突与去重共享。"""
     slot = validate_slot_instance(canonical_slot, qualifiers)
     if slot is None:
         return {}
     values = qualifiers or {}
-    return {key: _canonicalize_json(values.get(key)) for key in SLOT_REGISTRY[slot].required_qualifiers}
+    return {
+        key: _canonicalize_json(values.get(key))
+        for key in SLOT_REGISTRY[slot].required_qualifiers
+    }
 
 
 class ConflictResolver:
@@ -116,7 +135,9 @@ class ConflictResolver:
         new_predicate = normalize_predicate(str(new.get("predicate", "")))
         if new_predicate in {PREDICATE_PREFERENCE, PREDICATE_STATE}:
             return "state_change"
-        if existing.get("source_authority", "medium") == new.get("source_authority", "medium"):
+        if existing.get("source_authority", "medium") == new.get(
+            "source_authority", "medium"
+        ):
             return "contradicts"
         return "uncertain"
 
@@ -141,4 +162,8 @@ class ConflictResolver:
                 qualifiers = json.loads(qualifiers)
             except json.JSONDecodeError:
                 qualifiers = {}
-        return bool(qualifiers.get("state_change") or qualifiers.get("current") or qualifiers.get("change"))
+        return bool(
+            qualifiers.get("state_change")
+            or qualifiers.get("current")
+            or qualifiers.get("change")
+        )

@@ -18,7 +18,11 @@ from hl_mem.lifecycle import (
 )
 from hl_mem.storage._shared import decode_json, encode_json, escape_like_pattern
 
-__all__ = ["ExperienceRepository", "InvalidStateTransitionError", "backprop_episode_reward"]
+__all__ = [
+    "ExperienceRepository",
+    "InvalidStateTransitionError",
+    "backprop_episode_reward",
+]
 
 if TYPE_CHECKING:
     from hl_mem.settings import Settings
@@ -38,14 +42,18 @@ def backprop_episode_reward(
 ) -> None:
     """将 Episode 奖励回传到其全部 Trace 的价值和优先级。"""
     _validate_reward(reward)
-    if not connection.execute("SELECT 1 FROM episodes WHERE id=?", (episode_id,)).fetchone():
+    if not connection.execute(
+        "SELECT 1 FROM episodes WHERE id=?", (episode_id,)
+    ).fetchone():
         raise ValueError(f"episode not found: {episode_id}")
     priority_delta = 0.1 if reward == 1.0 else (-0.1 if reward < 0.5 else 0.0)
     started_transaction = not connection.in_transaction
     if started_transaction:
         connection.execute("BEGIN IMMEDIATE")
     try:
-        connection.execute("UPDATE episodes SET reward=? WHERE id=?", (reward, episode_id))
+        connection.execute(
+            "UPDATE episodes SET reward=? WHERE id=?", (reward, episode_id)
+        )
         connection.execute(
             "UPDATE traces SET value=?,priority=min(1.0,max(0.0,priority+?)) WHERE episode_id=?",
             (reward, priority_delta, episode_id),
@@ -77,7 +85,9 @@ class ExperienceRepository:
         self.retire_after_failures = retire_after_failures
         self.settings = settings
 
-    def record_episode(self, episode_id: str, goal: str, status: str, reward: float, occurred_at: str) -> str:
+    def record_episode(
+        self, episode_id: str, goal: str, status: str, reward: float, occurred_at: str
+    ) -> str:
         """记录一次独立 Episode 并返回其 ID。"""
         try:
             assert_episode_transition(EpisodeStatus.RUNNING.value, status)
@@ -101,10 +111,20 @@ class ExperienceRepository:
         task_type: str | None = None,
     ) -> str:
         """创建一个待完成的 Episode。"""
-        scope = {key: value for key, value in {"session_id": session_id, "task_type": task_type}.items() if value}
+        scope = {
+            key: value
+            for key, value in {"session_id": session_id, "task_type": task_type}.items()
+            if value
+        }
         self.connection.execute(
             "INSERT INTO episodes(id,goal,status,started_at,scope_json) VALUES (?,?,?,?,?)",
-            (episode_id, goal, EpisodeStatus.RUNNING.value, started_at, encode_json(scope)),
+            (
+                episode_id,
+                goal,
+                EpisodeStatus.RUNNING.value,
+                started_at,
+                encode_json(scope),
+            ),
         )
         self.connection.commit()
         return episode_id
@@ -119,7 +139,9 @@ class ExperienceRepository:
         commit: bool = True,
     ) -> dict[str, Any]:
         """更新 Episode 的完成状态和结果。"""
-        row = self.connection.execute("SELECT status FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        row = self.connection.execute(
+            "SELECT status FROM episodes WHERE id=?", (episode_id,)
+        ).fetchone()
         if not row:
             raise ValueError(f"episode not found: {episode_id}")
         if reward is not None:
@@ -128,7 +150,11 @@ class ExperienceRepository:
             assert_episode_transition(row["status"], status)
         assignments: list[str] = []
         values: list[Any] = []
-        for column, value in (("status", status), ("reward", reward), ("outcome_summary", outcome_summary)):
+        for column, value in (
+            ("status", status),
+            ("reward", reward),
+            ("outcome_summary", outcome_summary),
+        ):
             if value is not None:
                 assignments.append(f"{column}=?")
                 values.append(value)
@@ -137,20 +163,26 @@ class ExperienceRepository:
             values.append(updated_at)
         if assignments:
             values.append(episode_id)
-            self.connection.execute(f"UPDATE episodes SET {','.join(assignments)} WHERE id=?", values)
+            self.connection.execute(
+                f"UPDATE episodes SET {','.join(assignments)} WHERE id=?", values
+            )
             if commit:
                 self.connection.commit()
         return self.get_episode(episode_id)
 
-    def list_episodes(self, limit: int = 20, status: str | None = None) -> list[dict[str, Any]]:
+    def list_episodes(
+        self, limit: int = 20, status: str | None = None
+    ) -> list[dict[str, Any]]:
         """按开始时间倒序列出 Episode。"""
         if status is None:
             rows = self.connection.execute(
-                "SELECT * FROM episodes ORDER BY started_at DESC,id DESC LIMIT ?", (limit,)
+                "SELECT * FROM episodes ORDER BY started_at DESC,id DESC LIMIT ?",
+                (limit,),
             ).fetchall()
         else:
             rows = self.connection.execute(
-                "SELECT * FROM episodes WHERE status=? ORDER BY started_at DESC,id DESC LIMIT ?", (status, limit)
+                "SELECT * FROM episodes WHERE status=? ORDER BY started_at DESC,id DESC LIMIT ?",
+                (status, limit),
             ).fetchall()
         result = [dict(row) for row in rows]
         for episode in result:
@@ -159,28 +191,45 @@ class ExperienceRepository:
         return result
 
     def add_trace(
-        self, episode_id: str, action: str, observation: str | None, error_signature: str | None, value: float
+        self,
+        episode_id: str,
+        action: str,
+        observation: str | None,
+        error_signature: str | None,
+        value: float,
     ) -> str:
         """向 Episode 追加一个有序 Trace。"""
         self.connection.execute("BEGIN IMMEDIATE")
-        episode = self.connection.execute("SELECT status FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        episode = self.connection.execute(
+            "SELECT status FROM episodes WHERE id=?", (episode_id,)
+        ).fetchone()
         if not episode:
             self.connection.rollback()
             raise ValueError(f"episode not found: {episode_id}")
         imported_episode = self.connection.execute(
-            "SELECT ended_at=started_at AND outcome_summary=status FROM episodes WHERE id=?", (episode_id,)
+            "SELECT ended_at=started_at AND outcome_summary=status FROM episodes WHERE id=?",
+            (episode_id,),
         ).fetchone()[0]
         if episode["status"] in TERMINAL_EPISODE_STATUSES and not imported_episode:
             self.connection.rollback()
             raise InvalidStateTransitionError("cannot add trace to terminal episode")
         sequence_no = self.connection.execute(
-            "SELECT coalesce(max(sequence_no),0)+1 FROM traces WHERE episode_id=?", (episode_id,)
+            "SELECT coalesce(max(sequence_no),0)+1 FROM traces WHERE episode_id=?",
+            (episode_id,),
         ).fetchone()[0]
         trace_id = _id()
         try:
             self.connection.execute(
                 "INSERT INTO traces(id,episode_id,sequence_no,action,observation,error_signature,value) VALUES (?,?,?,?,?,?,?)",
-                (trace_id, episode_id, sequence_no, action, observation, error_signature, value),
+                (
+                    trace_id,
+                    episode_id,
+                    sequence_no,
+                    action,
+                    observation,
+                    error_signature,
+                    value,
+                ),
             )
             self.connection.commit()
         except Exception:
@@ -190,7 +239,9 @@ class ExperienceRepository:
 
     def get_episode(self, episode_id: str) -> dict[str, Any]:
         """返回 Episode 及其按执行顺序排列的 Trace。"""
-        row = self.connection.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        row = self.connection.execute(
+            "SELECT * FROM episodes WHERE id=?", (episode_id,)
+        ).fetchone()
         if not row:
             raise ValueError(f"episode not found: {episode_id}")
         result = dict(row)
@@ -199,7 +250,8 @@ class ExperienceRepository:
         result["traces"] = [
             dict(item)
             for item in self.connection.execute(
-                "SELECT * FROM traces WHERE episode_id=? ORDER BY sequence_no", (episode_id,)
+                "SELECT * FROM traces WHERE episode_id=? ORDER BY sequence_no",
+                (episode_id,),
             ).fetchall()
         ]
         return result
@@ -237,7 +289,9 @@ class ExperienceRepository:
         )
         inserted = cursor.rowcount == 1
         if inserted and memory_type == "episode" and task_outcome is not None:
-            self.connection.execute("UPDATE episodes SET reward=? WHERE id=?", (task_outcome, memory_id))
+            self.connection.execute(
+                "UPDATE episodes SET reward=? WHERE id=?", (task_outcome, memory_id)
+            )
         if commit:
             self.connection.commit()
         return inserted
@@ -275,7 +329,9 @@ class ExperienceRepository:
             raise ValueError("task_outcome must be between 0 and 1")
         settings = self.settings or Settings()
         policy = BayesianUsefulnessPolicy(
-            settings.feedback_bonus_every, settings.feedback_bonus_days, settings.feedback_bonus_cap_days
+            settings.feedback_bonus_every,
+            settings.feedback_bonus_days,
+            settings.feedback_bonus_cap_days,
         )
         self.connection.execute("BEGIN IMMEDIATE")
         try:
@@ -341,13 +397,18 @@ class ExperienceRepository:
             raise ValueError("at least one supporting episode is required")
         placeholders = ",".join("?" for _ in unique_ids)
         rows = self.connection.execute(
-            f"SELECT id FROM episodes WHERE id IN ({placeholders}) AND status='success' AND reward>0", unique_ids
+            f"SELECT id FROM episodes WHERE id IN ({placeholders}) AND status='success' AND reward>0",
+            unique_ids,
         ).fetchall()
         valid_ids = [row[0] for row in rows]
         if len(valid_ids) != len(unique_ids):
             raise ValueError("all supporting episodes must be independent successes")
         policy_id = _id()
-        status = PolicyStatus.ACTIVE if len(valid_ids) >= self.min_support else PolicyStatus.CANDIDATE
+        status = (
+            PolicyStatus.ACTIVE
+            if len(valid_ids) >= self.min_support
+            else PolicyStatus.CANDIDATE
+        )
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             self.connection.execute(
@@ -374,18 +435,25 @@ class ExperienceRepository:
 
     def add_support(self, policy_id: str, episode_id: str) -> None:
         """为策略增加一条未重复的成功 Episode 证据。"""
-        policy = self.connection.execute("SELECT status,support FROM policies WHERE id=?", (policy_id,)).fetchone()
+        policy = self.connection.execute(
+            "SELECT status,support FROM policies WHERE id=?", (policy_id,)
+        ).fetchone()
         if not policy:
             raise ValueError(f"policy not found: {policy_id}")
         if policy["status"] == PolicyStatus.RETIRED:
             raise InvalidStateTransitionError("retired policy cannot accept support")
-        episode = self.connection.execute("SELECT status,reward FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        episode = self.connection.execute(
+            "SELECT status,reward FROM episodes WHERE id=?", (episode_id,)
+        ).fetchone()
         if not episode or episode["status"] != "success" or episode["reward"] <= 0:
             raise ValueError("supporting episode must be successful")
         before = self.connection.total_changes
         self._link_episode(policy_id, episode_id)
         if self.connection.total_changes > before:
-            if policy["status"] == PolicyStatus.CANDIDATE and policy["support"] + 1 >= self.min_support:
+            if (
+                policy["status"] == PolicyStatus.CANDIDATE
+                and policy["support"] + 1 >= self.min_support
+            ):
                 assert_valid_policy_transition(policy["status"], PolicyStatus.ACTIVE)
             self.connection.execute(
                 "UPDATE policies SET support=support+1,status=CASE WHEN support+1>=? THEN ? ELSE status END WHERE id=?",
@@ -393,9 +461,13 @@ class ExperienceRepository:
             )
         self.connection.commit()
 
-    def record_policy_outcome(self, policy_id: str, succeeded: bool, occurred_at: str) -> None:
+    def record_policy_outcome(
+        self, policy_id: str, succeeded: bool, occurred_at: str
+    ) -> None:
         """回写 Procedure 使用结果，并按可靠度激活或退休。"""
-        policy = self.connection.execute("SELECT status FROM policies WHERE id=?", (policy_id,)).fetchone()
+        policy = self.connection.execute(
+            "SELECT status FROM policies WHERE id=?", (policy_id,)
+        ).fetchone()
         if not policy:
             raise ValueError(f"policy not found: {policy_id}")
         if policy["status"] == PolicyStatus.RETIRED:
@@ -431,7 +503,9 @@ class ExperienceRepository:
 
     def get_policy(self, policy_id: str) -> dict[str, Any]:
         """返回策略记录。"""
-        row = self.connection.execute("SELECT * FROM policies WHERE id=?", (policy_id,)).fetchone()
+        row = self.connection.execute(
+            "SELECT * FROM policies WHERE id=?", (policy_id,)
+        ).fetchone()
         if not row:
             raise ValueError(f"policy not found: {policy_id}")
         result = dict(row)
@@ -453,14 +527,22 @@ class ExperienceRepository:
             policy["procedure"] = decode_json(policy["procedure"])
         return result
 
-    def list_active_policies(self, namespace: str, query: str, limit: int) -> list[dict[str, Any]]:
+    def list_active_policies(
+        self, namespace: str, query: str, limit: int
+    ) -> list[dict[str, Any]]:
         """按 namespace 和文本相关性有界查询可用策略。"""
         normalized_query = query.strip()
         pattern = f"%{escape_like_pattern(normalized_query)}%"
         query_filter = (
-            "AND (p.trigger LIKE ? ESCAPE '\\' OR p.procedure LIKE ? ESCAPE '\\') " if normalized_query else ""
+            "AND (p.trigger LIKE ? ESCAPE '\\' OR p.procedure LIKE ? ESCAPE '\\') "
+            if normalized_query
+            else ""
         )
-        parameters: tuple[Any, ...] = (namespace, pattern, pattern, limit) if normalized_query else (namespace, limit)
+        parameters: tuple[Any, ...] = (
+            (namespace, pattern, pattern, limit)
+            if normalized_query
+            else (namespace, limit)
+        )
         rows = self.connection.execute(
             "SELECT p.*,COALESCE(mu.usefulness_score,0.5) AS usefulness_score "
             "FROM policies p LEFT JOIN memory_usefulness mu "
@@ -474,7 +556,9 @@ class ExperienceRepository:
             policy["procedure"] = decode_json(policy["procedure"])
         return result
 
-    def list_success_episodes(self, namespace: str, query: str, limit: int) -> list[dict[str, Any]]:
+    def list_success_episodes(
+        self, namespace: str, query: str, limit: int
+    ) -> list[dict[str, Any]]:
         """有界查询 namespace 内与目标或结果相关的成功 Episode。"""
         normalized_query = query.strip()
         pattern = f"%{escape_like_pattern(normalized_query)}%"
@@ -483,7 +567,11 @@ class ExperienceRepository:
             if normalized_query
             else ""
         )
-        parameters: tuple[Any, ...] = (namespace, pattern, pattern, limit) if normalized_query else (namespace, limit)
+        parameters: tuple[Any, ...] = (
+            (namespace, pattern, pattern, limit)
+            if normalized_query
+            else (namespace, limit)
+        )
         rows = self.connection.execute(
             "SELECT * FROM episodes WHERE namespace_key=? AND status='success' "
             f"{query_filter}ORDER BY reward DESC,COALESCE(ended_at,started_at) DESC,id ASC LIMIT ?",
@@ -504,8 +592,14 @@ class ExperienceRepository:
         placeholders = ",".join("?" for _ in ids)
         normalized_query = query.strip()
         pattern = f"%{escape_like_pattern(normalized_query)}%"
-        action_order = "CASE WHEN t.action LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END," if normalized_query else ""
-        parameters: tuple[Any, ...] = (*ids, pattern, limit) if normalized_query else (*ids, limit)
+        action_order = (
+            "CASE WHEN t.action LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,"
+            if normalized_query
+            else ""
+        )
+        parameters: tuple[Any, ...] = (
+            (*ids, pattern, limit) if normalized_query else (*ids, limit)
+        )
         rows = self.connection.execute(
             f"SELECT t.*,e.reward AS parent_reward,e.status AS parent_status,e.ended_at "
             f"FROM traces t JOIN episodes e ON e.id=t.episode_id WHERE t.episode_id IN ({placeholders}) "

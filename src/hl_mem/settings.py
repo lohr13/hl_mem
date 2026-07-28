@@ -29,7 +29,9 @@ IndexTextMode = Literal["legacy", "value_only", "natural"]
 
 
 @overload
-def _env_choice(name: str, default: EmbedderMode, allowed: tuple[Literal["fake"], Literal["real"]]) -> EmbedderMode: ...
+def _env_choice(
+    name: str, default: EmbedderMode, allowed: tuple[Literal["fake"], Literal["real"]]
+) -> EmbedderMode: ...
 
 
 @overload
@@ -41,7 +43,9 @@ def _env_choice(
 
 
 @overload
-def _env_choice(name: str, default: RerankerProvider, allowed: tuple[Literal["dashscope"]]) -> RerankerProvider: ...
+def _env_choice(
+    name: str, default: RerankerProvider, allowed: tuple[Literal["dashscope"]]
+) -> RerankerProvider: ...
 
 
 @overload
@@ -88,7 +92,9 @@ def _env_choice(
 def _env_choice(
     name: str,
     default: LLMProvider,
-    allowed: tuple[Literal["dashscope"], Literal["zhipu"], Literal["openai_compatible"]],
+    allowed: tuple[
+        Literal["dashscope"], Literal["zhipu"], Literal["openai_compatible"]
+    ],
 ) -> LLMProvider: ...
 
 
@@ -304,20 +310,30 @@ class Settings:
         """从环境变量创建并校验不可变配置快照。"""
         try:
             environment = Environment(os.getenv("HL_MEM_ENV", "dev").lower())
-            vector_backend = VectorBackend(os.getenv("HL_MEM_VECTOR_BACKEND", "sqlite_scan"))
+            vector_backend = VectorBackend(
+                os.getenv("HL_MEM_VECTOR_BACKEND", "sqlite_scan")
+            )
         except ValueError as error:
             raise ConfigurationError(f"invalid enum configuration: {error}") from error
         production = environment is Environment.PRODUCTION
         settings = cls(
             environment=environment,
             database_path=os.getenv("HL_MEM_DB_PATH", "var/hl_mem.db"),
-            allow_fake_fallback=os.getenv("HL_MEM_ALLOW_FAKE_FALLBACK", "").lower() == "true",
-            embedder_mode=_env_choice("HL_MEM_EMBEDDER", "real" if production else "fake", ("fake", "real")),
+            allow_fake_fallback=os.getenv("HL_MEM_ALLOW_FAKE_FALLBACK", "").lower()
+            == "true",
+            embedder_mode=_env_choice(
+                "HL_MEM_EMBEDDER", "real" if production else "fake", ("fake", "real")
+            ),
             embedding_dim=int(os.getenv("EMBEDDING_DIM", "2048")),
             embedding_api_key=os.getenv("EMBEDDING_API_KEY"),
-            embedding_base_url=os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            embedding_base_url=os.getenv(
+                "EMBEDDING_BASE_URL",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
-            embedding_connect_timeout=float(os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")),
+            embedding_connect_timeout=float(
+                os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")
+            ),
             embedding_read_timeout=float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
             embedding_max_attempts=int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
             index_text_mode=_env_choice(
@@ -326,63 +342,142 @@ class Settings:
                 ("legacy", "value_only", "natural"),
             ),
             reranker_mode=_env_choice(
-                "HL_MEM_RERANKER", "real" if production else "off", ("off", "fake", "on", "real")
+                "HL_MEM_RERANKER",
+                "real" if production else "off",
+                ("off", "fake", "on", "real"),
             ),
-            reranker_provider=_env_choice("HL_MEM_RERANKER_PROVIDER", "dashscope", ("dashscope",)),
-            reranker_api_key=os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY"),
-            reranker_base_url=os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
+            reranker_provider=_env_choice(
+                "HL_MEM_RERANKER_PROVIDER", "dashscope", ("dashscope",)
+            ),
+            reranker_api_key=os.getenv("RERANKER_API_KEY")
+            or os.getenv("EMBEDDING_API_KEY"),
+            reranker_base_url=os.getenv(
+                "RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"
+            ),
             reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
-            relation_expansion_mode=_env_choice("HL_MEM_RELATION_EXPANSION", "off", ("off", "on")),
-            relation_expansion_max_depth=int(os.getenv("HL_MEM_RELATION_EXPANSION_MAX_DEPTH", "1")),
-            relation_discovery_mode=_env_choice("HL_MEM_RELATION_DISCOVERY_MODE", "audit", ("off", "audit", "auto")),
-            relation_discovery_pool_limit=int(os.getenv("HL_MEM_RELATION_DISCOVERY_POOL_LIMIT", "40")),
-            relation_discovery_max_proposals=int(os.getenv("HL_MEM_RELATION_DISCOVERY_MAX_PROPOSALS", "10")),
-            relation_auto_apply_confidence=float(os.getenv("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE", "0.90")),
-            relation_conflict_confidence=float(os.getenv("HL_MEM_RELATION_CONFLICT_CONFIDENCE", "0.80")),
-            packed_context_token_budget=int(os.getenv("HL_MEM_PACKED_CONTEXT_TOKEN_BUDGET", "2000")),
-            recall_candidate_floor=int(os.getenv("HL_MEM_RECALL_CANDIDATE_FLOOR", "50")),
-            recall_dedup_threshold=float(os.getenv("HL_MEM_RECALL_DEDUP_THRESHOLD", "0.95")),
-            recall_dedup_candidate_limit=int(os.getenv("HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT", "100")),
-            preference_recency_boost=float(os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")),
-            tag_boost_enabled=os.getenv("HL_MEM_TAG_BOOST_ENABLED", "true").lower() == "true",
+            relation_expansion_mode=_env_choice(
+                "HL_MEM_RELATION_EXPANSION", "off", ("off", "on")
+            ),
+            relation_expansion_max_depth=int(
+                os.getenv("HL_MEM_RELATION_EXPANSION_MAX_DEPTH", "1")
+            ),
+            relation_discovery_mode=_env_choice(
+                "HL_MEM_RELATION_DISCOVERY_MODE", "audit", ("off", "audit", "auto")
+            ),
+            relation_discovery_pool_limit=int(
+                os.getenv("HL_MEM_RELATION_DISCOVERY_POOL_LIMIT", "40")
+            ),
+            relation_discovery_max_proposals=int(
+                os.getenv("HL_MEM_RELATION_DISCOVERY_MAX_PROPOSALS", "10")
+            ),
+            relation_auto_apply_confidence=float(
+                os.getenv("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE", "0.90")
+            ),
+            relation_conflict_confidence=float(
+                os.getenv("HL_MEM_RELATION_CONFLICT_CONFIDENCE", "0.80")
+            ),
+            packed_context_token_budget=int(
+                os.getenv("HL_MEM_PACKED_CONTEXT_TOKEN_BUDGET", "2000")
+            ),
+            recall_candidate_floor=int(
+                os.getenv("HL_MEM_RECALL_CANDIDATE_FLOOR", "50")
+            ),
+            recall_dedup_threshold=float(
+                os.getenv("HL_MEM_RECALL_DEDUP_THRESHOLD", "0.95")
+            ),
+            recall_dedup_candidate_limit=int(
+                os.getenv("HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT", "100")
+            ),
+            preference_recency_boost=float(
+                os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")
+            ),
+            tag_boost_enabled=os.getenv("HL_MEM_TAG_BOOST_ENABLED", "true").lower()
+            == "true",
             tag_boost_weight=float(os.getenv("HL_MEM_TAG_BOOST_WEIGHT", "0.05")),
-            tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower() == "true",
+            tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower()
+            == "true",
             tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
             tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
-            query_expansion_mode=_env_choice("HL_MEM_QUERY_EXPANSION_MODE", "auto", ("off", "auto", "always")),
+            query_expansion_mode=_env_choice(
+                "HL_MEM_QUERY_EXPANSION_MODE", "auto", ("off", "auto", "always")
+            ),
             query_expansion_max=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX", "2")),
-            query_expansion_candidate_floor=int(os.getenv("HL_MEM_QUERY_EXPANSION_CANDIDATE_FLOOR", "8")),
-            query_expansion_token_ceiling=int(os.getenv("HL_MEM_QUERY_EXPANSION_TOKEN_CEILING", "256")),
-            query_expansion_timeout_seconds=float(os.getenv("HL_MEM_QUERY_EXPANSION_TIMEOUT_SECONDS", "2.0")),
+            query_expansion_candidate_floor=int(
+                os.getenv("HL_MEM_QUERY_EXPANSION_CANDIDATE_FLOOR", "8")
+            ),
+            query_expansion_token_ceiling=int(
+                os.getenv("HL_MEM_QUERY_EXPANSION_TOKEN_CEILING", "256")
+            ),
+            query_expansion_timeout_seconds=float(
+                os.getenv("HL_MEM_QUERY_EXPANSION_TIMEOUT_SECONDS", "2.0")
+            ),
             query_expansion_total_timeout_seconds=float(
                 os.getenv("HL_MEM_QUERY_EXPANSION_TOTAL_TIMEOUT_SECONDS", "3.0")
             ),
-            query_expansion_max_concurrency=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX_CONCURRENCY", "4")),
-            procedure_recall_mode=_env_choice("HL_MEM_PROCEDURE_RECALL_MODE", "keyword", ("off", "keyword", "auto")),
-            procedure_llm_threshold=float(os.getenv("HL_MEM_PROCEDURE_LLM_THRESHOLD", "0.80")),
-            procedure_router_timeout_seconds=float(os.getenv("HL_MEM_PROCEDURE_ROUTER_TIMEOUT_SECONDS", "1.5")),
-            procedure_candidate_limit=int(os.getenv("HL_MEM_PROCEDURE_CANDIDATE_LIMIT", "30")),
-            procedure_recent_outcome_window=int(os.getenv("HL_MEM_PROCEDURE_RECENT_OUTCOME_WINDOW", "20")),
-            procedure_outcome_half_life_days=int(os.getenv("HL_MEM_PROCEDURE_OUTCOME_HALF_LIFE_DAYS", "30")),
-            recall_side_effect_max_attempts=int(os.getenv("HL_MEM_RECALL_SIDE_EFFECT_MAX_ATTEMPTS", "3")),
-            recall_side_effect_backoff_seconds=float(os.getenv("HL_MEM_RECALL_SIDE_EFFECT_BACKOFF_SECONDS", "0.05")),
+            query_expansion_max_concurrency=int(
+                os.getenv("HL_MEM_QUERY_EXPANSION_MAX_CONCURRENCY", "4")
+            ),
+            procedure_recall_mode=_env_choice(
+                "HL_MEM_PROCEDURE_RECALL_MODE", "keyword", ("off", "keyword", "auto")
+            ),
+            procedure_llm_threshold=float(
+                os.getenv("HL_MEM_PROCEDURE_LLM_THRESHOLD", "0.80")
+            ),
+            procedure_router_timeout_seconds=float(
+                os.getenv("HL_MEM_PROCEDURE_ROUTER_TIMEOUT_SECONDS", "1.5")
+            ),
+            procedure_candidate_limit=int(
+                os.getenv("HL_MEM_PROCEDURE_CANDIDATE_LIMIT", "30")
+            ),
+            procedure_recent_outcome_window=int(
+                os.getenv("HL_MEM_PROCEDURE_RECENT_OUTCOME_WINDOW", "20")
+            ),
+            procedure_outcome_half_life_days=int(
+                os.getenv("HL_MEM_PROCEDURE_OUTCOME_HALF_LIFE_DAYS", "30")
+            ),
+            recall_side_effect_max_attempts=int(
+                os.getenv("HL_MEM_RECALL_SIDE_EFFECT_MAX_ATTEMPTS", "3")
+            ),
+            recall_side_effect_backoff_seconds=float(
+                os.getenv("HL_MEM_RECALL_SIDE_EFFECT_BACKOFF_SECONDS", "0.05")
+            ),
             vector_backend=vector_backend,
-            hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
-            hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
-            hermes_prefetch_cache_ttl_seconds=float(os.getenv("HL_MEM_HERMES_PREFETCH_CACHE_TTL_SECONDS", "300")),
-            policy_induction_lookback_days=int(os.getenv("HL_MEM_POLICY_INDUCTION_LOOKBACK_DAYS", "7")),
-            policy_induction_min_episodes=int(os.getenv("HL_MEM_POLICY_INDUCTION_MIN_EPISODES", "3")),
-            extractor_mode=_env_choice("HL_MEM_EXTRACTOR", "fake", ("fake", "real", "llm")),
+            hermes_circuit_failure_threshold=int(
+                os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")
+            ),
+            hermes_circuit_open_seconds=float(
+                os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")
+            ),
+            hermes_prefetch_cache_ttl_seconds=float(
+                os.getenv("HL_MEM_HERMES_PREFETCH_CACHE_TTL_SECONDS", "300")
+            ),
+            policy_induction_lookback_days=int(
+                os.getenv("HL_MEM_POLICY_INDUCTION_LOOKBACK_DAYS", "7")
+            ),
+            policy_induction_min_episodes=int(
+                os.getenv("HL_MEM_POLICY_INDUCTION_MIN_EPISODES", "3")
+            ),
+            extractor_mode=_env_choice(
+                "HL_MEM_EXTRACTOR", "fake", ("fake", "real", "llm")
+            ),
             extract_pre_filter=_parse_on_off(
                 os.getenv("HL_MEM_EXTRACT_PRE_FILTER", "off"),
                 "HL_MEM_EXTRACT_PRE_FILTER",
             ),
             llm_api_key=os.getenv("LLM_API_KEY"),
-            llm_base_url=os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
+            llm_base_url=os.getenv(
+                "LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"
+            ),
             llm_model=os.getenv("LLM_MODEL", "qwen3.7-plus"),
-            llm_provider=_env_choice("HL_MEM_LLM_PROVIDER", "dashscope", ("dashscope", "zhipu", "openai_compatible")),
+            llm_provider=_env_choice(
+                "HL_MEM_LLM_PROVIDER",
+                "dashscope",
+                ("dashscope", "zhipu", "openai_compatible"),
+            ),
             llm_structured_mode=_env_choice(
-                "HL_MEM_LLM_STRUCTURED_MODE", "auto", ("auto", "json_object", "json_schema")
+                "HL_MEM_LLM_STRUCTURED_MODE",
+                "auto",
+                ("auto", "json_object", "json_schema"),
             ),
             enable_llm_thinking=_parse_bool(
                 os.getenv("HL_MEM_LLM_ENABLE_THINKING", "false"),
@@ -391,64 +486,128 @@ class Settings:
             llm_timeout=float(os.getenv("LLM_TIMEOUT", "90")),
             llm_max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
             llm_schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
-            image_describer_mode=_env_choice("HL_MEM_IMAGE_DESCRIBER_MODE", "off", ("off", "on")),
-            image_describer_provider=_env_choice("HL_MEM_IMAGE_DESCRIBER_PROVIDER", "dashscope", ("dashscope",)),
-            image_describer_api_key=os.getenv("IMAGE_API_KEY") or os.getenv("LLM_API_KEY"),
-            image_describer_base_url=os.getenv(
-                "HL_MEM_IMAGE_DESCRIBER_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"
+            image_describer_mode=_env_choice(
+                "HL_MEM_IMAGE_DESCRIBER_MODE", "off", ("off", "on")
             ),
-            image_describer_model=os.getenv("HL_MEM_IMAGE_DESCRIBER_MODEL", "qwen3.7-plus"),
-            image_describer_timeout_seconds=float(os.getenv("HL_MEM_IMAGE_DESCRIBER_TIMEOUT_SECONDS", "20")),
+            image_describer_provider=_env_choice(
+                "HL_MEM_IMAGE_DESCRIBER_PROVIDER", "dashscope", ("dashscope",)
+            ),
+            image_describer_api_key=os.getenv("IMAGE_API_KEY")
+            or os.getenv("LLM_API_KEY"),
+            image_describer_base_url=os.getenv(
+                "HL_MEM_IMAGE_DESCRIBER_BASE_URL",
+                "https://coding.dashscope.aliyuncs.com/v1",
+            ),
+            image_describer_model=os.getenv(
+                "HL_MEM_IMAGE_DESCRIBER_MODEL", "qwen3.7-plus"
+            ),
+            image_describer_timeout_seconds=float(
+                os.getenv("HL_MEM_IMAGE_DESCRIBER_TIMEOUT_SECONDS", "20")
+            ),
             image_max_bytes=int(os.getenv("HL_MEM_IMAGE_MAX_BYTES", "10485760")),
             image_max_parts=int(os.getenv("HL_MEM_IMAGE_MAX_PARTS", "4")),
-            image_allow_file_uris=(os.getenv("HL_MEM_IMAGE_ALLOW_FILE_URIS", "false").lower() == "true"),
-            image_file_allow_roots=tuple(
-                part for part in os.getenv("HL_MEM_IMAGE_FILE_ALLOW_ROOTS", "").split(os.pathsep) if part
+            image_allow_file_uris=(
+                os.getenv("HL_MEM_IMAGE_ALLOW_FILE_URIS", "false").lower() == "true"
             ),
-            extraction_chunk_target_chars=int(os.getenv("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS", "12000")),
-            extraction_chunk_overlap_turns=int(os.getenv("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS", "2")),
-            extraction_max_split_depth=int(os.getenv("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH", "3")),
+            image_file_allow_roots=tuple(
+                part
+                for part in os.getenv("HL_MEM_IMAGE_FILE_ALLOW_ROOTS", "").split(
+                    os.pathsep
+                )
+                if part
+            ),
+            extraction_chunk_target_chars=int(
+                os.getenv("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS", "12000")
+            ),
+            extraction_chunk_overlap_turns=int(
+                os.getenv("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS", "2")
+            ),
+            extraction_max_split_depth=int(
+                os.getenv("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH", "3")
+            ),
             worker_poll_interval=float(os.getenv("HL_MEM_WORKER_POLL_INTERVAL", "2.0")),
-            worker_maintenance_interval=float(os.getenv("HL_MEM_WORKER_MAINTENANCE_INTERVAL", "600")),
+            worker_maintenance_interval=float(
+                os.getenv("HL_MEM_WORKER_MAINTENANCE_INTERVAL", "600")
+            ),
             worker_job_lease_minutes=int(os.getenv("HL_MEM_WORKER_LEASE_MINUTES", "5")),
             daily_token_limit=int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")),
             audit_retention_days=int(
-                os.getenv("HL_MEM_AUDIT_RETENTION_DAYS", os.getenv("HL_MEM_RETENTION_DAYS", "30"))
+                os.getenv(
+                    "HL_MEM_AUDIT_RETENTION_DAYS",
+                    os.getenv("HL_MEM_RETENTION_DAYS", "30"),
+                )
             ),
             retention_days=int(os.getenv("HL_MEM_RETENTION_DAYS", "30")),
             consolidate_cron=os.getenv("HL_MEM_CONSOLIDATE_CRON", "03:30"),
-            consolidate_batch_size=int(os.getenv("HL_MEM_CONSOLIDATE_BATCH_SIZE", "100")),
-            consolidate_confidence=float(os.getenv("HL_MEM_CONSOLIDATE_CONFIDENCE", "0.8")),
+            consolidate_batch_size=int(
+                os.getenv("HL_MEM_CONSOLIDATE_BATCH_SIZE", "100")
+            ),
+            consolidate_confidence=float(
+                os.getenv("HL_MEM_CONSOLIDATE_CONFIDENCE", "0.8")
+            ),
             dedup_enabled=os.getenv("HL_MEM_DEDUP_ENABLED", "true").lower() == "true",
             dedup_threshold=float(os.getenv("HL_MEM_DEDUP_THRESHOLD", "0.92")),
-            dedup_audit_only=os.getenv("HL_MEM_DEDUP_AUDIT_ONLY", "true").lower() == "true",
-            dedup_auto_merge_min_confidence=float(os.getenv("HL_MEM_DEDUP_AUTO_MERGE_MIN_CONFIDENCE", "0.98")),
+            dedup_audit_only=os.getenv("HL_MEM_DEDUP_AUDIT_ONLY", "true").lower()
+            == "true",
+            dedup_auto_merge_min_confidence=float(
+                os.getenv("HL_MEM_DEDUP_AUTO_MERGE_MIN_CONFIDENCE", "0.98")
+            ),
             dedup_scan_limit=int(os.getenv("HL_MEM_DEDUP_SCAN_LIMIT", "200")),
             dedup_cron=os.getenv("HL_MEM_DEDUP_CRON", "03:00"),
             induce_policies_cron=os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00"),
             reclassify_cron=os.getenv("HL_MEM_RECLASSIFY_CRON", "04:30"),
             memory_temporal_ttl_days=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS", "7")),
             temporal_ttl_days_low=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_LOW", "3")),
-            temporal_ttl_days_normal=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_NORMAL", "7")),
-            temporal_ttl_days_high=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_HIGH", "14")),
-            importance_low_threshold=float(os.getenv("HL_MEM_IMPORTANCE_LOW_THRESHOLD", "0.4")),
-            importance_high_threshold=float(os.getenv("HL_MEM_IMPORTANCE_HIGH_THRESHOLD", "0.7")),
-            importance_write_floor=float(os.getenv("HL_MEM_IMPORTANCE_WRITE_FLOOR", "0.2")),
-            slot_short_ttl_seconds=int(os.getenv("HL_MEM_SLOT_SHORT_TTL_SECONDS", "86400")),
-            ttl_backfill_batch_size=int(os.getenv("HL_MEM_TTL_BACKFILL_BATCH_SIZE", "100")),
-            ttl_backfill_grace_hours=int(os.getenv("HL_MEM_TTL_BACKFILL_GRACE_HOURS", "0")),
-            temporal_cleanup_age_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_AGE_DAYS", "30")),
-            temporal_cleanup_expiry_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_EXPIRY_DAYS", "90")),
-            feedback_lifecycle_mode=_env_choice("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe", ("off", "observe", "on")),
+            temporal_ttl_days_normal=int(
+                os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_NORMAL", "7")
+            ),
+            temporal_ttl_days_high=int(
+                os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_HIGH", "14")
+            ),
+            importance_low_threshold=float(
+                os.getenv("HL_MEM_IMPORTANCE_LOW_THRESHOLD", "0.4")
+            ),
+            importance_high_threshold=float(
+                os.getenv("HL_MEM_IMPORTANCE_HIGH_THRESHOLD", "0.7")
+            ),
+            importance_write_floor=float(
+                os.getenv("HL_MEM_IMPORTANCE_WRITE_FLOOR", "0.2")
+            ),
+            slot_short_ttl_seconds=int(
+                os.getenv("HL_MEM_SLOT_SHORT_TTL_SECONDS", "86400")
+            ),
+            ttl_backfill_batch_size=int(
+                os.getenv("HL_MEM_TTL_BACKFILL_BATCH_SIZE", "100")
+            ),
+            ttl_backfill_grace_hours=int(
+                os.getenv("HL_MEM_TTL_BACKFILL_GRACE_HOURS", "0")
+            ),
+            temporal_cleanup_age_days=int(
+                os.getenv("HL_MEM_TEMPORAL_CLEANUP_AGE_DAYS", "30")
+            ),
+            temporal_cleanup_expiry_days=int(
+                os.getenv("HL_MEM_TEMPORAL_CLEANUP_EXPIRY_DAYS", "90")
+            ),
+            feedback_lifecycle_mode=_env_choice(
+                "HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe", ("off", "observe", "on")
+            ),
             feedback_bonus_every=int(os.getenv("HL_MEM_FEEDBACK_BONUS_EVERY", "3")),
             feedback_bonus_days=int(os.getenv("HL_MEM_FEEDBACK_BONUS_DAYS", "14")),
-            feedback_bonus_cap_days=int(os.getenv("HL_MEM_FEEDBACK_BONUS_CAP_DAYS", "180")),
+            feedback_bonus_cap_days=int(
+                os.getenv("HL_MEM_FEEDBACK_BONUS_CAP_DAYS", "180")
+            ),
             feedback_min_samples=int(os.getenv("HL_MEM_FEEDBACK_MIN_SAMPLES", "3")),
-            max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
+            max_request_body=int(
+                os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))
+            ),
             alert_webhook_url=os.getenv("HL_MEM_ALERT_WEBHOOK_URL"),
             alert_dedupe_seconds=float(os.getenv("HL_MEM_ALERT_DEDUPE_SECONDS", "300")),
-            expansion_circuit_failure_threshold=int(os.getenv("HL_MEM_EXPANSION_CIRCUIT_FAILURE_THRESHOLD", "5")),
-            expansion_circuit_open_seconds=float(os.getenv("HL_MEM_EXPANSION_CIRCUIT_OPEN_SECONDS", "60")),
+            expansion_circuit_failure_threshold=int(
+                os.getenv("HL_MEM_EXPANSION_CIRCUIT_FAILURE_THRESHOLD", "5")
+            ),
+            expansion_circuit_open_seconds=float(
+                os.getenv("HL_MEM_EXPANSION_CIRCUIT_OPEN_SECONDS", "60")
+            ),
             smtp_host=os.getenv("HL_MEM_SMTP_HOST"),
             smtp_port=int(os.getenv("HL_MEM_SMTP_PORT", "25")),
             alert_email_from=os.getenv("HL_MEM_ALERT_EMAIL_FROM"),
@@ -474,7 +633,9 @@ class Settings:
     def validate(self) -> None:
         """校验生产环境所需的安全配置组合。"""
         if self.feedback_lifecycle_mode not in {"off", "observe", "on"}:
-            raise ConfigurationError("HL_MEM_FEEDBACK_LIFECYCLE_MODE must be 'off', 'observe', or 'on'")
+            raise ConfigurationError(
+                "HL_MEM_FEEDBACK_LIFECYCLE_MODE must be 'off', 'observe', or 'on'"
+            )
         if self.feedback_bonus_every <= 0:
             raise ConfigurationError("HL_MEM_FEEDBACK_BONUS_EVERY must be positive")
         if min(self.feedback_bonus_days, self.feedback_bonus_cap_days) < 0:
@@ -482,41 +643,68 @@ class Settings:
         if self.feedback_min_samples <= 0:
             raise ConfigurationError("HL_MEM_FEEDBACK_MIN_SAMPLES must be positive")
         if self.llm_provider not in {"dashscope", "zhipu", "openai_compatible"}:
-            raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
+            raise ConfigurationError(
+                "HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'"
+            )
         if self.llm_structured_mode not in {"auto", "json_object", "json_schema"}:
-            raise ConfigurationError("HL_MEM_LLM_STRUCTURED_MODE must be 'auto', 'json_object', or 'json_schema'")
+            raise ConfigurationError(
+                "HL_MEM_LLM_STRUCTURED_MODE must be 'auto', 'json_object', or 'json_schema'"
+            )
         if not isinstance(self.enable_llm_thinking, bool):
             raise ConfigurationError("HL_MEM_LLM_ENABLE_THINKING must be a boolean")
         if self.relation_expansion_mode not in {"off", "on"}:
             raise ConfigurationError("HL_MEM_RELATION_EXPANSION must be 'off' or 'on'")
         if self.relation_expansion_max_depth < 1:
-            raise ConfigurationError("HL_MEM_RELATION_EXPANSION_MAX_DEPTH must be at least 1")
+            raise ConfigurationError(
+                "HL_MEM_RELATION_EXPANSION_MAX_DEPTH must be at least 1"
+            )
         if self.relation_discovery_mode not in {"off", "audit", "auto"}:
-            raise ConfigurationError("HL_MEM_RELATION_DISCOVERY_MODE must be 'off', 'audit', or 'auto'")
-        if self.relation_discovery_pool_limit < 1 or self.relation_discovery_max_proposals < 1:
+            raise ConfigurationError(
+                "HL_MEM_RELATION_DISCOVERY_MODE must be 'off', 'audit', or 'auto'"
+            )
+        if (
+            self.relation_discovery_pool_limit < 1
+            or self.relation_discovery_max_proposals < 1
+        ):
             raise ConfigurationError("relation discovery limits must be positive")
         if not 0.0 <= self.relation_auto_apply_confidence <= 1.0:
-            raise ConfigurationError("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE must be between 0 and 1")
+            raise ConfigurationError(
+                "HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE must be between 0 and 1"
+            )
         if not 0.0 <= self.relation_conflict_confidence <= 1.0:
-            raise ConfigurationError("HL_MEM_RELATION_CONFLICT_CONFIDENCE must be between 0 and 1")
+            raise ConfigurationError(
+                "HL_MEM_RELATION_CONFLICT_CONFIDENCE must be between 0 and 1"
+            )
         if self.packed_context_token_budget < 1 or self.recall_candidate_floor < 1:
             raise ConfigurationError("recall budgets must be positive")
         if not 0.0 <= self.recall_dedup_threshold <= 1.0:
-            raise ConfigurationError("HL_MEM_RECALL_DEDUP_THRESHOLD must be between 0 and 1 (0 disables fold)")
+            raise ConfigurationError(
+                "HL_MEM_RECALL_DEDUP_THRESHOLD must be between 0 and 1 (0 disables fold)"
+            )
         if self.recall_dedup_candidate_limit < 1:
-            raise ConfigurationError("HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT must be positive")
+            raise ConfigurationError(
+                "HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT must be positive"
+            )
         if not 0.0 <= self.preference_recency_boost <= 1.0:
-            raise ConfigurationError("HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1")
+            raise ConfigurationError(
+                "HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1"
+            )
         if not 0.0 <= self.tag_boost_weight <= 1.0:
             raise ConfigurationError("HL_MEM_TAG_BOOST_WEIGHT must be between 0 and 1")
         if not 0.0 <= self.tag_channel_weight <= 1.0:
-            raise ConfigurationError("HL_MEM_TAG_CHANNEL_WEIGHT must be between 0 and 1")
+            raise ConfigurationError(
+                "HL_MEM_TAG_CHANNEL_WEIGHT must be between 0 and 1"
+            )
         if self.tag_candidate_limit < 1:
             raise ConfigurationError("HL_MEM_TAG_CANDIDATE_LIMIT must be positive")
         if self.query_expansion_mode not in {"off", "auto", "always"}:
-            raise ConfigurationError("HL_MEM_QUERY_EXPANSION_MODE must be 'off', 'auto', or 'always'")
+            raise ConfigurationError(
+                "HL_MEM_QUERY_EXPANSION_MODE must be 'off', 'auto', or 'always'"
+            )
         if not 0 <= self.query_expansion_max <= 2:
-            raise ConfigurationError("HL_MEM_QUERY_EXPANSION_MAX must be between 0 and 2")
+            raise ConfigurationError(
+                "HL_MEM_QUERY_EXPANSION_MAX must be between 0 and 2"
+            )
         if (
             min(
                 self.query_expansion_candidate_floor,
@@ -527,11 +715,17 @@ class Settings:
             )
             <= 0
         ):
-            raise ConfigurationError("query expansion budgets and timeouts must be positive")
+            raise ConfigurationError(
+                "query expansion budgets and timeouts must be positive"
+            )
         if self.procedure_recall_mode not in {"off", "keyword", "auto"}:
-            raise ConfigurationError("HL_MEM_PROCEDURE_RECALL_MODE must be 'off', 'keyword', or 'auto'")
+            raise ConfigurationError(
+                "HL_MEM_PROCEDURE_RECALL_MODE must be 'off', 'keyword', or 'auto'"
+            )
         if not 0.0 <= self.procedure_llm_threshold <= 1.0:
-            raise ConfigurationError("HL_MEM_PROCEDURE_LLM_THRESHOLD must be between 0 and 1")
+            raise ConfigurationError(
+                "HL_MEM_PROCEDURE_LLM_THRESHOLD must be between 0 and 1"
+            )
         if (
             min(
                 self.procedure_router_timeout_seconds,
@@ -541,49 +735,85 @@ class Settings:
             )
             <= 0
         ):
-            raise ConfigurationError("procedure recall limits and timeouts must be positive")
-        if self.recall_side_effect_max_attempts < 1 or self.recall_side_effect_backoff_seconds < 0:
-            raise ConfigurationError("recall side-effect attempts must be positive and backoff non-negative")
+            raise ConfigurationError(
+                "procedure recall limits and timeouts must be positive"
+            )
+        if (
+            self.recall_side_effect_max_attempts < 1
+            or self.recall_side_effect_backoff_seconds < 0
+        ):
+            raise ConfigurationError(
+                "recall side-effect attempts must be positive and backoff non-negative"
+            )
         if (
             self.hermes_circuit_failure_threshold < 1
             or self.hermes_circuit_open_seconds <= 0
             or self.hermes_prefetch_cache_ttl_seconds <= 0
         ):
-            raise ConfigurationError("Hermes circuit breaker and prefetch cache values must be positive")
-        if self.policy_induction_lookback_days < 1 or self.policy_induction_min_episodes < 1:
+            raise ConfigurationError(
+                "Hermes circuit breaker and prefetch cache values must be positive"
+            )
+        if (
+            self.policy_induction_lookback_days < 1
+            or self.policy_induction_min_episodes < 1
+        ):
             raise ConfigurationError("policy induction values must be positive")
         if self.llm_max_attempts < 1:
             raise ConfigurationError("LLM_MAX_ATTEMPTS must be at least 1")
         if self.llm_schema_retries < 0:
             raise ConfigurationError("HL_MEM_LLM_SCHEMA_RETRIES must be non-negative")
         if self.image_describer_mode not in {"off", "on"}:
-            raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_MODE must be 'off' or 'on'")
+            raise ConfigurationError(
+                "HL_MEM_IMAGE_DESCRIBER_MODE must be 'off' or 'on'"
+            )
         if self.image_describer_provider != "dashscope":
-            raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_PROVIDER must be 'dashscope'")
-        if self.image_max_bytes < 1 or self.image_max_parts < 1 or self.image_describer_timeout_seconds <= 0:
+            raise ConfigurationError(
+                "HL_MEM_IMAGE_DESCRIBER_PROVIDER must be 'dashscope'"
+            )
+        if (
+            self.image_max_bytes < 1
+            or self.image_max_parts < 1
+            or self.image_describer_timeout_seconds <= 0
+        ):
             raise ConfigurationError("image limits and timeout must be positive")
         if self.image_describer_mode == "on":
             if not self.image_describer_api_key:
-                raise ConfigurationError("IMAGE_API_KEY or LLM_API_KEY is required when image describer is on")
+                raise ConfigurationError(
+                    "IMAGE_API_KEY or LLM_API_KEY is required when image describer is on"
+                )
             if not self.image_describer_base_url.lower().startswith("https://"):
-                raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_BASE_URL must use HTTPS")
+                raise ConfigurationError(
+                    "HL_MEM_IMAGE_DESCRIBER_BASE_URL must use HTTPS"
+                )
             if not self.image_describer_model.strip():
-                raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_MODEL must not be empty")
+                raise ConfigurationError(
+                    "HL_MEM_IMAGE_DESCRIBER_MODEL must not be empty"
+                )
             if self.image_allow_file_uris and not self.image_file_allow_roots:
-                raise ConfigurationError("HL_MEM_IMAGE_FILE_ALLOW_ROOTS is required when file image URIs are enabled")
+                raise ConfigurationError(
+                    "HL_MEM_IMAGE_FILE_ALLOW_ROOTS is required when file image URIs are enabled"
+                )
         if not 0.0 <= self.dedup_threshold <= 1.0:
             raise ConfigurationError("HL_MEM_DEDUP_THRESHOLD must be between 0 and 1")
         if not self.dedup_threshold <= self.dedup_auto_merge_min_confidence <= 1.0:
-            raise ConfigurationError("HL_MEM_DEDUP_AUTO_MERGE_MIN_CONFIDENCE must be between dedup threshold and 1")
+            raise ConfigurationError(
+                "HL_MEM_DEDUP_AUTO_MERGE_MIN_CONFIDENCE must be between dedup threshold and 1"
+            )
         if self.dedup_scan_limit < 1:
             raise ConfigurationError("HL_MEM_DEDUP_SCAN_LIMIT must be positive")
         parse_daily_cron(self.dedup_cron, "HL_MEM_DEDUP_CRON")
         if self.extraction_chunk_target_chars < 1:
-            raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS must be positive")
+            raise ConfigurationError(
+                "HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS must be positive"
+            )
         if self.extraction_chunk_overlap_turns < 0:
-            raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS must be non-negative")
+            raise ConfigurationError(
+                "HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS must be non-negative"
+            )
         if self.extraction_max_split_depth < 0:
-            raise ConfigurationError("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH must be non-negative")
+            raise ConfigurationError(
+                "HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH must be non-negative"
+            )
         if (
             min(
                 self.temporal_ttl_days_low,
@@ -595,23 +825,37 @@ class Settings:
         ):
             raise ConfigurationError("TTL durations must be positive")
         if self.ttl_backfill_batch_size < 1 or self.ttl_backfill_grace_hours < 0:
-            raise ConfigurationError("TTL backfill batch size must be positive and grace hours non-negative")
+            raise ConfigurationError(
+                "TTL backfill batch size must be positive and grace hours non-negative"
+            )
         if min(self.temporal_cleanup_age_days, self.temporal_cleanup_expiry_days) < 1:
             raise ConfigurationError("temporal cleanup durations must be positive")
         if not (
-            0.0 <= self.importance_write_floor <= self.importance_low_threshold <= self.importance_high_threshold <= 1.0
+            0.0
+            <= self.importance_write_floor
+            <= self.importance_low_threshold
+            <= self.importance_high_threshold
+            <= 1.0
         ):
-            raise ConfigurationError("importance thresholds must be ordered between 0 and 1")
+            raise ConfigurationError(
+                "importance thresholds must be ordered between 0 and 1"
+            )
         if self.embedder_mode not in {"fake", "real"}:
             raise ConfigurationError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
         if self.index_text_mode not in {"legacy", "value_only", "natural"}:
-            raise ConfigurationError("HL_MEM_INDEX_TEXT_MODE must be 'legacy', 'value_only', or 'natural'")
+            raise ConfigurationError(
+                "HL_MEM_INDEX_TEXT_MODE must be 'legacy', 'value_only', or 'natural'"
+            )
         if self.reranker_mode not in {"off", "fake", "on", "real"}:
-            raise ConfigurationError("HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'")
+            raise ConfigurationError(
+                "HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'"
+            )
         if self.reranker_provider != "dashscope":
             raise ConfigurationError("HL_MEM_RERANKER_PROVIDER must be 'dashscope'")
         if self.extractor_mode not in {"fake", "real", "llm"}:
-            raise ConfigurationError("HL_MEM_EXTRACTOR must be 'fake', 'real', or 'llm'")
+            raise ConfigurationError(
+                "HL_MEM_EXTRACTOR must be 'fake', 'real', or 'llm'"
+            )
         if self.environment != Environment.PRODUCTION:
             return
         if self.embedder_mode != "real":
@@ -619,7 +863,9 @@ class Settings:
         if self.reranker_mode not in {"on", "real"}:
             raise ConfigurationError("HL_MEM_RERANKER must be enabled in production")
         if self.extractor_mode == "fake":
-            raise ConfigurationError("HL_MEM_EXTRACTOR must not be 'fake' in production")
+            raise ConfigurationError(
+                "HL_MEM_EXTRACTOR must not be 'fake' in production"
+            )
         if not self.llm_api_key:
             raise ConfigurationError("LLM_API_KEY is required in production")
         if not self.embedding_api_key:

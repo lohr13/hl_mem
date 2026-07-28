@@ -44,18 +44,28 @@ DEFAULT_TOLERANCES = {
 
 def load_cases(path: Path) -> list[dict[str, Any]]:
     """加载并校验 JSONL 冒烟用例。"""
-    cases = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    cases = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     if not 15 <= len(cases) <= 20:
-        raise ValueError(f"quality smoke dataset must contain 15-20 cases, got {len(cases)}")
+        raise ValueError(
+            f"quality smoke dataset must contain 15-20 cases, got {len(cases)}"
+        )
     required = {"id", "type", "input", "expected"}
     for index, case in enumerate(cases, 1):
         missing = required - case.keys()
         if missing:
-            raise ValueError(f"case {index} is missing fields: {', '.join(sorted(missing))}")
+            raise ValueError(
+                f"case {index} is missing fields: {', '.join(sorted(missing))}"
+            )
     return cases
 
 
-def seed_case(connection: Any, case: dict[str, Any], embedder: FakeEmbedder) -> dict[str, str]:
+def seed_case(
+    connection: Any, case: dict[str, Any], embedder: FakeEmbedder
+) -> dict[str, str]:
     """通过 FakeExtractor 和 FakeEmbedder 写入单个用例的记忆。"""
     extractor = FakeExtractor()
     claim_ids: dict[str, str] = {}
@@ -76,12 +86,20 @@ def seed_case(connection: Any, case: dict[str, Any], embedder: FakeEmbedder) -> 
         IngestService(connection).ingest_event(event, event["idempotency_key"])
         extracted = extractor.extract(event["content"])
         if len(extracted) != 1:
-            raise ValueError(f"case {case['id']} memory {event_id} must produce exactly one fake extraction")
-        stored = IngestService.store_extracted(connection, extracted[0], event, occurred_at, embedder)
+            raise ValueError(
+                f"case {case['id']} memory {event_id} must produce exactly one fake extraction"
+            )
+        stored = IngestService.store_extracted(
+            connection, extracted[0], event, occurred_at, embedder
+        )
         claim_ids[event_id] = stored.claim_id
         connection.execute(
             "UPDATE claims SET valid_from=?,valid_to=? WHERE id=?",
-            (memory.get("valid_from", occurred_at), memory.get("valid_to"), stored.claim_id),
+            (
+                memory.get("valid_from", occurred_at),
+                memory.get("valid_to"),
+                stored.claim_id,
+            ),
         )
         connection.commit()
     relation = case["input"].get("relation")
@@ -99,7 +117,9 @@ def seed_case(connection: Any, case: dict[str, Any], embedder: FakeEmbedder) -> 
 class FakeRelationDiscoverer:
     """按用例声明返回确定性关系提案，不调用 LLM 或网络。"""
 
-    def __init__(self, from_claim_id: str, to_claim_id: str, relation: str, confidence: float) -> None:
+    def __init__(
+        self, from_claim_id: str, to_claim_id: str, relation: str, confidence: float
+    ) -> None:
         self.from_claim_id = from_claim_id
         self.to_claim_id = to_claim_id
         self.relation = relation
@@ -114,7 +134,11 @@ class FakeRelationDiscoverer:
     ) -> list[RelationProposal]:
         """仅当声明的目标位于真实候选池时生成一条提案。"""
         candidate_ids = {str(candidate["id"]) for candidate in candidates}
-        if str(source_claim["id"]) != self.from_claim_id or self.to_claim_id not in candidate_ids or max_proposals < 1:
+        if (
+            str(source_claim["id"]) != self.from_claim_id
+            or self.to_claim_id not in candidate_ids
+            or max_proposals < 1
+        ):
             return []
         return [
             RelationProposal(
@@ -138,9 +162,18 @@ def run_case(case: dict[str, Any], database_path: Path) -> dict[str, Any]:
         claim_ids = seed_case(connection, case, embedder)
         if case["type"] == "relation_storage":
             relation = case["input"]["relation"]
-            actual = get_relations(connection, claim_ids[str(relation["from_event_id"])], direction="from")
-            passed = any(item["relation"] == case["expected"]["relation_type"] for item in actual)
-            return {"id": case["id"], "type": case["type"], "passed": passed, "relation_accuracy": float(passed)}
+            actual = get_relations(
+                connection, claim_ids[str(relation["from_event_id"])], direction="from"
+            )
+            passed = any(
+                item["relation"] == case["expected"]["relation_type"] for item in actual
+            )
+            return {
+                "id": case["id"],
+                "type": case["type"],
+                "passed": passed,
+                "relation_accuracy": float(passed),
+            }
         if case["type"] == "relation_discovery":
             relation = case["input"]["discovery"]
             from_claim_id = claim_ids[str(relation["from_event_id"])]
@@ -164,7 +197,12 @@ def run_case(case: dict[str, Any], database_path: Path) -> dict[str, Any]:
             passed = counts["applied"] == 1 and any(
                 item["relation"] == case["expected"]["relation_type"] for item in actual
             )
-            return {"id": case["id"], "type": case["type"], "passed": passed, "relation_accuracy": float(passed)}
+            return {
+                "id": case["id"],
+                "type": case["type"],
+                "passed": passed,
+                "relation_accuracy": float(passed),
+            }
 
         settings = Settings(embedder_mode="fake", embedding_dim=64, reranker_mode="off")
         response = RecallService(connection, embedder, settings=settings).recall(
@@ -181,7 +219,11 @@ def run_case(case: dict[str, Any], database_path: Path) -> dict[str, Any]:
         relevant_in_top_5 = sum(
             bool(
                 {
-                    str(item.get("event_id") or item.get("evidence_id") or item.get("id"))
+                    str(
+                        item.get("event_id")
+                        or item.get("evidence_id")
+                        or item.get("id")
+                    )
                     for item in result.get("evidence", [])
                 }
                 & set(expected_ids)
@@ -194,14 +236,22 @@ def run_case(case: dict[str, Any], database_path: Path) -> dict[str, Any]:
         rank_constraint_passed = True
         if case["type"] == "recall":
             if not isinstance(max_rank, int) or max_rank < 1:
-                raise ValueError(f"recall case {case['id']} must define a positive max_rank")
+                raise ValueError(
+                    f"recall case {case['id']} must define a positive max_rank"
+                )
             top_ranked_evidence = {
-                str(evidence.get("event_id") or evidence.get("evidence_id") or evidence.get("id"))
+                str(
+                    evidence.get("event_id")
+                    or evidence.get("evidence_id")
+                    or evidence.get("id")
+                )
                 for result in results[:max_rank]
                 for evidence in result.get("evidence", [])
             }
             rank_constraint_passed = set(expected_ids).issubset(top_ranked_evidence)
-        passed = not results if no_match else recall_10 == 1.0 and rank_constraint_passed
+        passed = (
+            not results if no_match else recall_10 == 1.0 and rank_constraint_passed
+        )
         item = {
             "id": case["id"],
             "type": case["type"],
@@ -238,7 +288,11 @@ def run_case(case: dict[str, Any], database_path: Path) -> dict[str, Any]:
 
 def aggregate(case_results: list[dict[str, Any]]) -> dict[str, float]:
     """聚合质量趋势所需的固定指标。"""
-    retrieval = [item for item in case_results if "recall_at_5" in item and item["type"] != "negative"]
+    retrieval = [
+        item
+        for item in case_results
+        if "recall_at_5" in item and item["type"] != "negative"
+    ]
 
     def average(key: str, items: list[dict[str, Any]]) -> float:
         values = [float(item[key]) for item in items if key in item]
@@ -279,14 +333,28 @@ def case_metrics(case_results: list[dict[str, Any]]) -> dict[str, dict[str, floa
         str(item["id"]): {
             key: float(value)
             for key, value in item.items()
-            if key not in {"id", "type", "passed", "returned_ids", "latency_ms", "max_rank", "rank_constraint_passed"}
+            if key
+            not in {
+                "id",
+                "type",
+                "passed",
+                "returned_ids",
+                "latency_ms",
+                "max_rank",
+                "rank_constraint_passed",
+            }
             and isinstance(value, (int, float))
         }
         for item in case_results
     }
 
 
-def write_baseline(path: Path, source_hash: str, metrics: dict[str, float], cases: dict[str, dict[str, float]]) -> None:
+def write_baseline(
+    path: Path,
+    source_hash: str,
+    metrics: dict[str, float],
+    cases: dict[str, dict[str, float]],
+) -> None:
     """显式写入当前 smoke 指标，作为后续质量退化门禁。"""
     payload = {
         "schema_version": 1,
@@ -296,7 +364,9 @@ def write_baseline(path: Path, source_hash: str, metrics: dict[str, float], case
         "tolerance_thresholds": DEFAULT_TOLERANCES,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def compare_baseline(
@@ -307,10 +377,16 @@ def compare_baseline(
 ) -> tuple[dict[str, Any], dict[str, float], dict[str, dict[str, float]], bool]:
     """比较聚合和逐用例指标；任何超出阈值的下降都会关闭门禁。"""
     baseline = json.loads(path.read_text(encoding="utf-8"))
-    tolerances = {key: float(value) for key, value in baseline["tolerance_thresholds"].items()}
+    tolerances = {
+        key: float(value) for key, value in baseline["tolerance_thresholds"].items()
+    }
     baseline_metrics = {key: float(value) for key, value in baseline["metrics"].items()}
-    aggregate_delta = {key: current_metrics[key] - value for key, value in baseline_metrics.items()}
-    aggregate_passed = all(delta >= -tolerances.get(key, 0.0) for key, delta in aggregate_delta.items())
+    aggregate_delta = {
+        key: current_metrics[key] - value for key, value in baseline_metrics.items()
+    }
+    aggregate_passed = all(
+        delta >= -tolerances.get(key, 0.0) for key, delta in aggregate_delta.items()
+    )
 
     expected_cases = baseline["expected_metrics_per_case"]
     cases_delta: dict[str, dict[str, float]] = {}
@@ -325,7 +401,12 @@ def compare_baseline(
         if any(delta < -tolerances.get(key, 0.0) for key, delta in deltas.items()):
             cases_passed = False
     hash_matches = baseline.get("dataset_hash") == source_hash
-    return baseline, aggregate_delta, cases_delta, bool(hash_matches and aggregate_passed and cases_passed)
+    return (
+        baseline,
+        aggregate_delta,
+        cases_delta,
+        bool(hash_matches and aggregate_passed and cases_passed),
+    )
 
 
 def main() -> int:
@@ -348,7 +429,10 @@ def main() -> int:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     metrics = aggregate(case_results)
     latencies = [float(item["latency_ms"]) for item in case_results]
-    latency = {"p50_ms": percentile(latencies, 0.5), "p90_ms": percentile(latencies, 0.9)}
+    latency = {
+        "p50_ms": percentile(latencies, 0.5),
+        "p90_ms": percentile(latencies, 0.9),
+    }
     per_case = case_metrics(case_results)
     source_hash = dataset_hash(args.dataset)
     if args.update_baseline:
@@ -378,7 +462,9 @@ def main() -> int:
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output = args.output_dir / f"smoke_{timestamp}.json"
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     print(
         json.dumps(
             {

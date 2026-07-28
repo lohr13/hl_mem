@@ -47,7 +47,9 @@ class _Repo:
     def search_claims_vector(self, *_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
         return self.dense
 
-    def search_claims_tags(self, query_tags: list[str], *_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+    def search_claims_tags(
+        self, query_tags: list[str], *_args: Any, **_kwargs: Any
+    ) -> list[dict[str, Any]]:
         self.tag_queries.append(query_tags)
         return self.tags
 

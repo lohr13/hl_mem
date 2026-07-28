@@ -31,14 +31,17 @@ def induce_policies(
         "ORDER BY started_at,id",
         (cutoff, now),
     ).fetchall()
-    clusters: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = defaultdict(list)
+    clusters: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = defaultdict(
+        list
+    )
     for row in rows:
         scope = json.loads(row["scope_json"] or "{}")
         task_type = str(scope.get("task_type") or "general")
         actions = tuple(
             trace["action"]
             for trace in connection.execute(
-                "SELECT action FROM traces WHERE episode_id=? ORDER BY sequence_no LIMIT 5", (row["id"],)
+                "SELECT action FROM traces WHERE episode_id=? ORDER BY sequence_no LIMIT 5",
+                (row["id"],),
             ).fetchall()
         )
         if actions:
@@ -55,10 +58,13 @@ def induce_policies(
         eligible += 1
         trigger = f"{task_type} {' '.join(actions)}"
         if connection.execute(
-            "SELECT 1 FROM policies WHERE namespace_key='default' AND trigger=?", (trigger,)
+            "SELECT 1 FROM policies WHERE namespace_key='default' AND trigger=?",
+            (trigger,),
         ).fetchone():
             continue
-        service.induce_policy(trigger, {"steps": list(actions)}, [item["id"] for item in episodes], now)
+        service.induce_policy(
+            trigger, {"steps": list(actions)}, [item["id"] for item in episodes], now
+        )
         induced += 1
     return {"clusters": eligible, "policies_induced": induced}
 

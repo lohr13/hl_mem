@@ -38,7 +38,10 @@ def _write_case(path: Path, **overrides: object) -> None:
         "expected_status_filter": "active",
         "expected_keywords": ["SQLite", "WAL"],
         "keyword_match": "all",
-        "binding": {"claim_keywords": ["SQLite", "WAL"], "evidence_keywords": ["数据库"]},
+        "binding": {
+            "claim_keywords": ["SQLite", "WAL"],
+            "evidence_keywords": ["数据库"],
+        },
         "forbidden_statuses": ["superseded", "expired", "disputed"],
     }
     case.update(overrides)
@@ -65,7 +68,9 @@ def test_load_cases_validates_and_normalizes_jsonl(tmp_path: Path) -> None:
         ({"binding": {}}, "claim_keywords"),
     ],
 )
-def test_load_cases_rejects_invalid_rows(tmp_path: Path, overrides: dict[str, object], message: str) -> None:
+def test_load_cases_rejects_invalid_rows(
+    tmp_path: Path, overrides: dict[str, object], message: str
+) -> None:
     path = tmp_path / "cases.jsonl"
     _write_case(path, **overrides)
 
@@ -93,8 +98,14 @@ def test_bind_cases_resolves_unique_claim_and_event_by_keywords(tmp_path: Path) 
             None,
         ),
     )
-    connection.execute("INSERT INTO events VALUES (?,?)", ("event-1", json.dumps({"text": "数据库使用 SQLite WAL"})))
-    connection.execute("INSERT INTO evidence_links VALUES (?,?,?,?)", ("claim", "claim-1", "event", "event-1"))
+    connection.execute(
+        "INSERT INTO events VALUES (?,?)",
+        ("event-1", json.dumps({"text": "数据库使用 SQLite WAL"})),
+    )
+    connection.execute(
+        "INSERT INTO evidence_links VALUES (?,?,?,?)",
+        ("claim", "claim-1", "event", "event-1"),
+    )
 
     bound = bind_cases(connection, load_cases(path))[0]
 
@@ -102,7 +113,9 @@ def test_bind_cases_resolves_unique_claim_and_event_by_keywords(tmp_path: Path) 
     assert bound.expected_evidence_event_ids == ("event-1",)
 
 
-def test_bind_cases_reports_missing_and_accepts_multiple_relevant_claims(tmp_path: Path) -> None:
+def test_bind_cases_reports_missing_and_accepts_multiple_relevant_claims(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "cases.jsonl"
     _write_case(path, binding={"claim_keywords": ["SQLite", "WAL"]})
     connection = _connection()
@@ -114,7 +127,19 @@ def test_bind_cases_reports_missing_and_accepts_multiple_relevant_claims(tmp_pat
     for claim_id in ("one", "two"):
         connection.execute(
             "INSERT INTO claims VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (claim_id, "hl_mem", "配置", '"SQLite WAL"', "{}", "active", 1.0, None, None, None, None),
+            (
+                claim_id,
+                "hl_mem",
+                "配置",
+                '"SQLite WAL"',
+                "{}",
+                "active",
+                1.0,
+                None,
+                None,
+                None,
+                None,
+            ),
         )
     assert bind_cases(connection, cases)[0].relevant_claim_ids == ("one", "two")
 

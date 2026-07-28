@@ -22,17 +22,51 @@ def test_episode_queries_do_not_expand_like_wildcards(tmp_path: Path) -> None:
         connection.executemany(
             "INSERT INTO episodes(id,goal,status,started_at,ended_at,reward) VALUES(?,?,?,?,?,?)",
             (
-                ("literal-percent", "deploy % service", "success", "2026-01-01", "2026-01-01", 1.0),
-                ("literal-underscore", "deploy _ service", "success", "2026-01-01", "2026-01-01", 1.0),
-                ("literal-slash", r"deploy \ service", "success", "2026-01-01", "2026-01-01", 1.0),
-                ("unrelated", "deploy any service", "success", "2026-01-01", "2026-01-01", 1.0),
+                (
+                    "literal-percent",
+                    "deploy % service",
+                    "success",
+                    "2026-01-01",
+                    "2026-01-01",
+                    1.0,
+                ),
+                (
+                    "literal-underscore",
+                    "deploy _ service",
+                    "success",
+                    "2026-01-01",
+                    "2026-01-01",
+                    1.0,
+                ),
+                (
+                    "literal-slash",
+                    r"deploy \ service",
+                    "success",
+                    "2026-01-01",
+                    "2026-01-01",
+                    1.0,
+                ),
+                (
+                    "unrelated",
+                    "deploy any service",
+                    "success",
+                    "2026-01-01",
+                    "2026-01-01",
+                    1.0,
+                ),
             ),
         )
         repository = ExperienceRepository(connection)
 
-        assert [row["id"] for row in repository.list_success_episodes("default", "%", 10)] == ["literal-percent"]
-        assert [row["id"] for row in repository.list_success_episodes("default", "_", 10)] == ["literal-underscore"]
-        assert [row["id"] for row in repository.list_success_episodes("default", "\\", 10)] == ["literal-slash"]
+        assert [
+            row["id"] for row in repository.list_success_episodes("default", "%", 10)
+        ] == ["literal-percent"]
+        assert [
+            row["id"] for row in repository.list_success_episodes("default", "_", 10)
+        ] == ["literal-underscore"]
+        assert [
+            row["id"] for row in repository.list_success_episodes("default", "\\", 10)
+        ] == ["literal-slash"]
         assert len(repository.list_success_episodes("default", "", 10)) == 4
     finally:
         database.close()

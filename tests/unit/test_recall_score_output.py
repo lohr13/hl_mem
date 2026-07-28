@@ -53,7 +53,9 @@ class _Reranker:
 class RecallScoreOutputTest(unittest.TestCase):
     """验证公开 score 使用管线的最终分数。"""
 
-    def test_claim_output_requires_positive_score_and_assembly_preserves_it(self) -> None:
+    def test_claim_output_requires_positive_score_and_assembly_preserves_it(
+        self,
+    ) -> None:
         claims = hybrid_claims(
             _Repo(),
             "查询",

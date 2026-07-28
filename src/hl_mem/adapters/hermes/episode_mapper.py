@@ -15,11 +15,19 @@ class EpisodeMapper:
         for message in messages:
             for call in message.get("tool_calls") or []:
                 function = call.get("function") or {}
-                structured.append({"id": str(call.get("id", "")), "action": str(function.get("name") or "tool")})
+                structured.append(
+                    {
+                        "id": str(call.get("id", "")),
+                        "action": str(function.get("name") or "tool"),
+                    }
+                )
         if structured:
             return structured
         return [
-            {"id": str(message.get("tool_call_id", index)), "action": str(message.get("name") or "tool")}
+            {
+                "id": str(message.get("tool_call_id", index)),
+                "action": str(message.get("name") or "tool"),
+            }
             for index, message in enumerate(messages)
             if message.get("role") == "tool"
         ]
@@ -28,7 +36,10 @@ class EpisodeMapper:
     def task_type(actions: list[str]) -> str:
         """根据工具名称推导 Episode 任务类型。"""
         lowered = [action.lower() for action in actions]
-        if any(any(marker in action for marker in ("terminal", "read_file", "patch")) for action in lowered):
+        if any(
+            any(marker in action for marker in ("terminal", "read_file", "patch"))
+            for action in lowered
+        ):
             return "coding"
         if any("web_search" in action for action in lowered):
             return "research"
@@ -37,6 +48,8 @@ class EpisodeMapper:
     @staticmethod
     def error_signature(observation: str | None) -> str | None:
         """从工具观察中提取有界错误签名。"""
-        if observation and any(marker in observation.lower() for marker in ("error", "failed", "exception")):
+        if observation and any(
+            marker in observation.lower() for marker in ("error", "failed", "exception")
+        ):
             return observation[:500]
         return None

@@ -144,7 +144,14 @@ _SLOT_DEFINITIONS = (
     _slot("state.connectivity", "状态", "连接状态"),
     _slot("state.job", "状态", "任务状态"),
     _slot("state.other", "状态", "其他状态", is_fallback=True),
-    _slot("identity.name", "身份", "用户名称", aliases=("name",), examples=("本地小马",), is_operational=True),
+    _slot(
+        "identity.name",
+        "身份",
+        "用户名称",
+        aliases=("name",),
+        examples=("本地小马",),
+        is_operational=True,
+    ),
     _slot("identity.role", "身份", "用户角色"),
     _slot("identity.contact", "身份", "联系方式"),
     _slot("identity.account", "身份", "账号"),
@@ -220,8 +227,12 @@ _SLOT_DEFINITIONS = (
     _slot("custom.unknown", "", "未知自定义属性", is_fallback=True),
 )
 
-SLOT_REGISTRY: dict[str, SlotDefinition] = {definition.name: definition for definition in _SLOT_DEFINITIONS}
-OPERATIONAL_SLOT_NAMES = tuple(definition.name for definition in _SLOT_DEFINITIONS if definition.is_operational)
+SLOT_REGISTRY: dict[str, SlotDefinition] = {
+    definition.name: definition for definition in _SLOT_DEFINITIONS
+}
+OPERATIONAL_SLOT_NAMES = tuple(
+    definition.name for definition in _SLOT_DEFINITIONS if definition.is_operational
+)
 
 ALLOWED_TOPIC_TAGS = frozenset(
     {
@@ -298,14 +309,27 @@ PREDICATE_NORMALIZE = {
 
 PREDICATE_ATTRIBUTE_MAP: dict[str, tuple[tuple[str, ...], str]] = {
     predicate: (
-        tuple(definition.name for definition in _SLOT_DEFINITIONS if definition.predicate == predicate),
+        tuple(
+            definition.name
+            for definition in _SLOT_DEFINITIONS
+            if definition.predicate == predicate
+        ),
         next(
             definition.name
             for definition in _SLOT_DEFINITIONS
             if definition.predicate == predicate and definition.is_fallback
         ),
     )
-    for predicate in ("偏好", "使用", "状态", "身份", "配置", "计划", "事实", "explicit_memory")
+    for predicate in (
+        "偏好",
+        "使用",
+        "状态",
+        "身份",
+        "配置",
+        "计划",
+        "事实",
+        "explicit_memory",
+    )
 }
 
 ATTRIBUTE_ALLOWLIST = frozenset(SLOT_REGISTRY)
@@ -317,7 +341,9 @@ ATTRIBUTE_ALIASES = {
 }
 
 MUTUALLY_EXCLUSIVE_SLOTS = frozenset(
-    definition.name for definition in _SLOT_DEFINITIONS if definition.participates_in_conflict
+    definition.name
+    for definition in _SLOT_DEFINITIONS
+    if definition.participates_in_conflict
 )
 
 ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
@@ -332,20 +358,52 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
         (("sqlite", "postgresql", "postgres", "mysql", "数据库"), "choice.database"),
         (("windows", "linux", "macos", "操作系统"), "choice.os"),
         (
-            ("gpt-", "glm-", "qwen", "claude", "gemini", "deepseek", "llama", "mistral", "model", "模型"),
+            (
+                "gpt-",
+                "glm-",
+                "qwen",
+                "claude",
+                "gemini",
+                "deepseek",
+                "llama",
+                "mistral",
+                "model",
+                "模型",
+            ),
             "choice.model",
         ),
         (("api", "sdk", "接口", "openai-compatible"), "choice.api"),
-        (("fastapi", "pytorch", "django", "flask", "pytest", "uvicorn", "框架"), "choice.framework"),
-        (("百炼", "dashscope", "智谱", "zhipu", "openai", "anthropic", "provider", "供应商"), "choice.provider"),
-        (("http", "https", "grpc", "websocket", "sse", "mcp", "协议"), "choice.protocol"),
+        (
+            ("fastapi", "pytorch", "django", "flask", "pytest", "uvicorn", "框架"),
+            "choice.framework",
+        ),
+        (
+            (
+                "百炼",
+                "dashscope",
+                "智谱",
+                "zhipu",
+                "openai",
+                "anthropic",
+                "provider",
+                "供应商",
+            ),
+            "choice.provider",
+        ),
+        (
+            ("http", "https", "grpc", "websocket", "sse", "mcp", "协议"),
+            "choice.protocol",
+        ),
         (("hl_mem", "memos", "memory system", "记忆系统"), "choice.memory_system"),
     ),
     "状态": (
         (("挂了", "健康", "正常", "ok"), "state.service_health"),
         (("进程", "运行中"), "state.process"),
         (("部署",), "state.deployment"),
-        (("passed", "failed", "pytest", "测试通过", "测试数", "测试"), "state.test_suite"),
+        (
+            ("passed", "failed", "pytest", "测试通过", "测试数", "测试"),
+            "state.test_suite",
+        ),
         (("超时", "不可达", "连接"), "state.connectivity"),
         (("任务", "job"), "state.job"),
     ),
@@ -386,10 +444,25 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
             ),
             "config.network",
         ),
-        (("路径", "目录", "文件", "path", ".py", ".toml", ".json", ".db"), "config.path"),
+        (
+            ("路径", "目录", "文件", "path", ".py", ".toml", ".json", ".db"),
+            "config.path",
+        ),
         (("端口", "port", "listen", "监听"), "config.port"),
         (("模型名", "model="), "config.model"),
-        (("百炼", "dashscope", "智谱", "zhipu", "openai", "anthropic", "provider", "供应商"), "config.provider"),
+        (
+            (
+                "百炼",
+                "dashscope",
+                "智谱",
+                "zhipu",
+                "openai",
+                "anthropic",
+                "provider",
+                "供应商",
+            ),
+            "config.provider",
+        ),
         (("路由", "直连"), "config.routing"),
         (("timeout", "超时"), "config.timeout"),
         (("cron", "定时", "schedule"), "config.schedule"),
@@ -414,17 +487,28 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     ),
 }
 
-_HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], str], ...]] = {
+_HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[
+    str, tuple[tuple[re.Pattern[str], str], ...]
+] = {
     "使用": (
         (
-            re.compile(r"(?i)(?:gpt-|glm-|qwen|claude|gemini|deepseek|llama|mistral|embedding|rerank)"),
+            re.compile(
+                r"(?i)(?:gpt-|glm-|qwen|claude|gemini|deepseek|llama|mistral|embedding|rerank)"
+            ),
             "choice.model",
         ),
         (
-            re.compile(r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"),
+            re.compile(
+                r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"
+            ),
             "choice.provider",
         ),
-        (re.compile(r"(?i)(?:openai-compatible|\b(?:http|https|grpc|websocket|sse|mcp)\b|协议)"), "choice.protocol"),
+        (
+            re.compile(
+                r"(?i)(?:openai-compatible|\b(?:http|https|grpc|websocket|sse|mcp)\b|协议)"
+            ),
+            "choice.protocol",
+        ),
     ),
     "配置": (
         (
@@ -456,17 +540,29 @@ _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], str]
             ),
             "config.port",
         ),
-        (re.compile(r"(?i)(?:\b(?:LLM_MODEL|EMBEDDING_MODEL|RERANKER_MODEL)\b|模型名|\bmodel\s*=)"), "config.model"),
         (
-            re.compile(r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"),
+            re.compile(
+                r"(?i)(?:\b(?:LLM_MODEL|EMBEDDING_MODEL|RERANKER_MODEL)\b|模型名|\bmodel\s*=)"
+            ),
+            "config.model",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"
+            ),
             "config.provider",
         ),
     ),
     "状态": (
-        (re.compile(r"(?i)(?:\bpassed\b|\bfailed\b|pytest|测试通过|测试数)"), "state.test_suite"),
+        (
+            re.compile(r"(?i)(?:\bpassed\b|\bfailed\b|pytest|测试通过|测试数)"),
+            "state.test_suite",
+        ),
         (re.compile(r"(?i)(?:部署|deployed|上线|发布)"), "state.deployment"),
     ),
-    "事实": ((re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),),
+    "事实": (
+        (re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),
+    ),
 }
 
 
@@ -486,7 +582,12 @@ def normalize_predicate(predicate: str) -> str:
 
 def normalize_canonical_attribute(attribute: str) -> str:
     """把 LLM 属性字符串归一化并应用受控别名。"""
-    normalized = unicodedata.normalize("NFKC", str(attribute)).strip().casefold().replace("-", "_")
+    normalized = (
+        unicodedata.normalize("NFKC", str(attribute))
+        .strip()
+        .casefold()
+        .replace("-", "_")
+    )
     normalized = re.sub(r"\s+", "", normalized)
     return ATTRIBUTE_ALIASES.get(normalized, normalized)
 
@@ -495,7 +596,11 @@ def predicate_for_canonical_attribute(attribute: str | None, llm_predicate: str)
     """按已注册 canonical attribute 投影 predicate，未知属性保留模型判断。"""
     normalized_attribute = normalize_canonical_attribute(attribute or "")
     definition = SLOT_REGISTRY.get(normalized_attribute)
-    if definition is None or normalized_attribute == "custom.unknown" or not definition.predicate:
+    if (
+        definition is None
+        or normalized_attribute == "custom.unknown"
+        or not definition.predicate
+    ):
         return normalize_predicate(llm_predicate)
     return definition.predicate
 
@@ -524,7 +629,9 @@ def validate_canonical_slot(slot: str | None) -> str | None:
     return normalized if definition is not None and definition.is_operational else None
 
 
-def validate_slot_instance(slot: str | None, qualifiers: dict[str, Any] | None) -> str | None:
+def validate_slot_instance(
+    slot: str | None, qualifiers: dict[str, Any] | None
+) -> str | None:
     """校验 operational slot 及其实例必需 qualifier，失败时降级为空 slot。"""
     normalized = validate_canonical_slot(slot)
     if normalized is None:
@@ -543,7 +650,10 @@ def normalize_topic_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
     """规范化、去重并过滤存储、统计与分类标签。"""
     if not tags:
         return []
-    normalized = (unicodedata.normalize("NFKC", str(tag)).strip().casefold().replace("-", "_") for tag in tags)
+    normalized = (
+        unicodedata.normalize("NFKC", str(tag)).strip().casefold().replace("-", "_")
+        for tag in tags
+    )
     return list(dict.fromkeys(tag for tag in normalized if tag in ALLOWED_TOPIC_TAGS))
 
 
@@ -558,7 +668,9 @@ def infer_canonical_attribute(
     mapping = PREDICATE_ATTRIBUTE_MAP.get(normalized_predicate)
     if mapping is None:
         return "custom.unknown"
-    text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}").casefold()
+    text = unicodedata.normalize(
+        "NFKC", f"{subject} {value} {qualifiers or {}}"
+    ).casefold()
     precise = _high_confidence_attribute(normalized_predicate, text)
     if precise is not None:
         return precise
@@ -584,17 +696,24 @@ def reconcile_canonical_attribute(
         return validated, "unknown_predicate"
 
     allowed, fallback = mapping
-    text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}").casefold()
+    text = unicodedata.normalize(
+        "NFKC", f"{subject} {value} {qualifiers or {}}"
+    ).casefold()
     precise = _high_confidence_attribute(normalized_predicate, text)
     if precise is not None and precise in allowed:
         return precise, "high_confidence_rule"
 
-    normalized_inferred = validate_canonical_attribute(normalized_predicate, inferred_attribute)
+    normalized_inferred = validate_canonical_attribute(
+        normalized_predicate, inferred_attribute
+    )
     if normalized_inferred in allowed and normalized_inferred != fallback:
         return normalized_inferred, "fallback_reconciled"
 
     normalized_llm_attribute = normalize_canonical_attribute(llm_attribute or "")
-    if normalized_llm_attribute in ATTRIBUTE_ALLOWLIST and normalized_llm_attribute != "custom.unknown":
+    if (
+        normalized_llm_attribute in ATTRIBUTE_ALLOWLIST
+        and normalized_llm_attribute != "custom.unknown"
+    ):
         return normalized_llm_attribute, "registered_attribute"
 
     if validated in {fallback, "custom.unknown"} and normalized_inferred in allowed:

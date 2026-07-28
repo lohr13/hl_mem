@@ -89,7 +89,11 @@ def test_client_records_success_span(tmp_path, monkeypatch) -> None:
             {
                 "id": "request-1",
                 "choices": [{"message": {"content": "{}"}}],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 1,
+                    "total_tokens": 3,
+                },
             }
         ),
     )
@@ -107,7 +111,11 @@ def test_client_records_success_span(tmp_path, monkeypatch) -> None:
     client.complete(_request())
 
     row = connection.execute("SELECT * FROM llm_call_spans").fetchone()
-    assert (row["status"], row["raw_request_id"], row["total_tokens"]) == ("success", "request-1", 3)
+    assert (row["status"], row["raw_request_id"], row["total_tokens"]) == (
+        "success",
+        "request-1",
+        3,
+    )
 
 
 def test_client_records_error_span(tmp_path, monkeypatch) -> None:

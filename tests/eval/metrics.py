@@ -62,7 +62,9 @@ def compute_binary_ndcg_at_10(relevant_ids: set[str], results: list[dict]) -> fl
 
 def _text(result: dict[str, Any]) -> str:
     value = result.get("text", "")
-    return json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    return (
+        json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    )
 
 
 def _temporal_violation(result: dict[str, Any], as_of: str | None) -> bool:
@@ -70,14 +72,26 @@ def _temporal_violation(result: dict[str, Any], as_of: str | None) -> bool:
         return False
     try:
         reference = datetime.fromisoformat(as_of)
-        valid_from = datetime.fromisoformat(result["valid_from"]) if result.get("valid_from") else None
-        valid_to = datetime.fromisoformat(result["valid_to"]) if result.get("valid_to") else None
+        valid_from = (
+            datetime.fromisoformat(result["valid_from"])
+            if result.get("valid_from")
+            else None
+        )
+        valid_to = (
+            datetime.fromisoformat(result["valid_to"])
+            if result.get("valid_to")
+            else None
+        )
     except (TypeError, ValueError):
         return True
-    return bool((valid_from and valid_from > reference) or (valid_to and valid_to <= reference))
+    return bool(
+        (valid_from and valid_from > reference) or (valid_to and valid_to <= reference)
+    )
 
 
-def evaluate_results(case: EvalCase, response: dict[str, Any], latency_ms: float = 0.0) -> QueryScore:
+def evaluate_results(
+    case: EvalCase, response: dict[str, Any], latency_ms: float = 0.0
+) -> QueryScore:
     """按样本标签评分一次结构化 recall 响应。"""
     results = response.get("results", [])
     if not isinstance(results, list):
@@ -93,31 +107,52 @@ def evaluate_results(case: EvalCase, response: dict[str, Any], latency_ms: float
         for link in item.get("evidence", [])
         if isinstance(link, dict) and link.get("type") == "event"
     }
-    text = " ".join(_text(item).casefold() for item in top_five if str(item.get("id")) in relevant)
+    text = " ".join(
+        _text(item).casefold() for item in top_five if str(item.get("id")) in relevant
+    )
     keyword_checks = [keyword.casefold() in text for keyword in case.expected_keywords]
     keyword_correct = (
-        (all(keyword_checks) if case.keyword_match == "all" else any(keyword_checks)) if keyword_checks else True
+        (all(keyword_checks) if case.keyword_match == "all" else any(keyword_checks))
+        if keyword_checks
+        else True
     )
     matched = [item for item in top_five if str(item.get("id")) in relevant]
     confidence_correct = all(
-        float(item.get("confidence", 0.0)) >= float(case.expected_min_confidence or 0.0) for item in matched
+        float(item.get("confidence", 0.0)) >= float(case.expected_min_confidence or 0.0)
+        for item in matched
     ) and (bool(matched) or case.expected_type == "empty")
-    stale = sum(str(item.get("status")) in case.forbidden_statuses for item in results if isinstance(item, dict))
-    temporal = sum(_temporal_violation(item, case.as_of) for item in results if isinstance(item, dict))
+    stale = sum(
+        str(item.get("status")) in case.forbidden_statuses
+        for item in results
+        if isinstance(item, dict)
+    )
+    temporal = sum(
+        _temporal_violation(item, case.as_of)
+        for item in results
+        if isinstance(item, dict)
+    )
     evidence_hits = len(expected_evidence.intersection(returned_evidence))
     evidence_score = (
-        evidence_hits / len(returned_evidence) if returned_evidence else (0.0 if expected_evidence else None)
+        evidence_hits / len(returned_evidence)
+        if returned_evidence
+        else (0.0 if expected_evidence else None)
     )
     is_empty = not results
     mrr = compute_mrr(relevant, results) if case.expected_type == "claim" else None
-    ndcg = compute_binary_ndcg_at_10(relevant, results) if case.expected_type == "claim" else None
+    ndcg = (
+        compute_binary_ndcg_at_10(relevant, results)
+        if case.expected_type == "claim"
+        else None
+    )
     return QueryScore(
         case_id=case.case_id,
         expected_type=case.expected_type,
         returned_count=len(results),
         relevant_count=len(relevant),
         relevant_hits=len(hit_ids),
-        recall_at_5=(1.0 if hit_ids else 0.0) if case.expected_type == "claim" else None,
+        recall_at_5=(1.0 if hit_ids else 0.0)
+        if case.expected_type == "claim"
+        else None,
         top_1_correct=(
             (1.0 if results and str(results[0].get("id")) in relevant else 0.0)
             if case.expected_type == "claim"
@@ -148,19 +183,28 @@ def aggregate_metrics(scores: list[QueryScore]) -> dict[str, float]:
     predicted_empty = [score for score in scores if score.is_empty_prediction]
     correct_empty = [score for score in empty if score.is_empty_prediction]
     returned = sum(score.returned_count for score in scores)
-    evidence_scores = [score.evidence_correct for score in scores if score.evidence_correct is not None]
+    evidence_scores = [
+        score.evidence_correct for score in scores if score.evidence_correct is not None
+    ]
     return {
         "recall_at_5": _average([float(score.recall_at_5) for score in answered]),
         "mrr": _average([float(score.mrr) for score in answered]),
         "ndcg_at_10": _average([float(score.ndcg_at_10) for score in answered]),
         "micro_recall": sum(score.relevant_hits for score in answered)
         / max(1, sum(score.relevant_count for score in answered)),
-        "top_1_correctness": _average([float(score.top_1_correct) for score in answered]),
+        "top_1_correctness": _average(
+            [float(score.top_1_correct) for score in answered]
+        ),
         "no_answer_precision": len(correct_empty) / max(1, len(predicted_empty)),
         "no_answer_recall": len(correct_empty) / max(1, len(empty)),
-        "stale_disputed_hit_rate": sum(score.stale_hits for score in scores) / max(1, returned),
+        "stale_disputed_hit_rate": sum(score.stale_hits for score in scores)
+        / max(1, returned),
         "evidence_correctness": _average([float(value) for value in evidence_scores]),
-        "missing_evidence_rate": sum(score.evidence_hits == 0 for score in answered) / max(1, len(answered)),
-        "temporal_validity_violation_rate": sum(score.temporal_violations for score in scores) / max(1, returned),
+        "missing_evidence_rate": sum(score.evidence_hits == 0 for score in answered)
+        / max(1, len(answered)),
+        "temporal_validity_violation_rate": sum(
+            score.temporal_violations for score in scores
+        )
+        / max(1, returned),
         "mean_latency_ms": _average([score.latency_ms for score in scores]),
     }

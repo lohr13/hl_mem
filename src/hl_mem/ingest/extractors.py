@@ -58,21 +58,31 @@ class FakeExtractor:
         for pattern, predicate in self.patterns:
             if match := pattern.search(text):
                 value = match.group(1).strip()
-                canonical_attribute = infer_canonical_attribute(predicate, "用户", value)
+                canonical_attribute = infer_canonical_attribute(
+                    predicate, "用户", value
+                )
                 qualifiers: dict[str, Any] = {"state_change": True}
                 if predicate == "service_status":
-                    qualifiers["service"] = value.removesuffix("现在挂了").strip() or "unknown"
+                    qualifiers["service"] = (
+                        value.removesuffix("现在挂了").strip() or "unknown"
+                    )
                 elif not text.startswith("现在"):
                     qualifiers = {}
                 results.append(
                     ExtractedClaim(
                         predicate=predicate,
                         value=value,
-                        volatility="ephemeral" if predicate == "service_status" else "stable",
+                        volatility="ephemeral"
+                        if predicate == "service_status"
+                        else "stable",
                         qualifiers=qualifiers,
-                        scope="temporal" if predicate == "service_status" else "permanent",
+                        scope="temporal"
+                        if predicate == "service_status"
+                        else "permanent",
                         canonical_attribute=canonical_attribute,
-                        canonical_slot=validate_slot_instance(canonical_attribute, qualifiers),
+                        canonical_slot=validate_slot_instance(
+                            canonical_attribute, qualifiers
+                        ),
                     )
                 )
                 break

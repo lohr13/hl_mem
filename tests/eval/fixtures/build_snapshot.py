@@ -19,7 +19,9 @@ def _hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def build_snapshot(source: str | Path, target: str | Path, manifest_path: str | Path) -> dict[str, Any]:
+def build_snapshot(
+    source: str | Path, target: str | Path, manifest_path: str | Path
+) -> dict[str, Any]:
     """使用 SQLite backup API 创建一致副本并输出不含原文的统计 manifest。"""
     source_path, target_path = Path(source).resolve(), Path(target).resolve()
     if not source_path.is_file():
@@ -27,24 +29,42 @@ def build_snapshot(source: str | Path, target: str | Path, manifest_path: str | 
     if source_path == target_path:
         raise ValueError("源数据库和快照目标不能相同")
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    source_connection = sqlite3.connect(f"file:{source_path.as_posix()}?mode=ro", uri=True)
+    source_connection = sqlite3.connect(
+        f"file:{source_path.as_posix()}?mode=ro", uri=True
+    )
     target_connection = sqlite3.connect(target_path)
     try:
         source_connection.backup(target_connection)
         target_connection.commit()
-        tables = {row[0] for row in target_connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = {
+            row[0]
+            for row in target_connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
         status_counts = (
-            dict(target_connection.execute("SELECT status,count(*) FROM claims GROUP BY status").fetchall())
+            dict(
+                target_connection.execute(
+                    "SELECT status,count(*) FROM claims GROUP BY status"
+                ).fetchall()
+            )
             if "claims" in tables
             else {}
         )
         versions = (
-            [row[0] for row in target_connection.execute("SELECT version FROM schema_migrations ORDER BY version")]
+            [
+                row[0]
+                for row in target_connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                )
+            ]
             if "schema_migrations" in tables
             else []
         )
         counts = {
-            table: target_connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
+            table: target_connection.execute(
+                f'SELECT count(*) FROM "{table}"'
+            ).fetchone()[0]
             for table in ("events", "claims")
             if table in tables
         }
@@ -62,7 +82,8 @@ def build_snapshot(source: str | Path, target: str | Path, manifest_path: str | 
     manifest_target = Path(manifest_path)
     manifest_target.parent.mkdir(parents=True, exist_ok=True)
     manifest_target.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
     return manifest
 

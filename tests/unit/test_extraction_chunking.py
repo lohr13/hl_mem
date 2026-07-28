@@ -62,7 +62,9 @@ def test_conversation_preserves_turns_and_overlap_is_context_only() -> None:
     assert detect_content_structure(content) is ContentStructure.CONVERSATION
     assert len(chunks) >= 2
     assert json.loads(chunks[0].text.splitlines()[0]) == content["messages"][0]
-    assert json.loads(chunks[1].context_prefix.splitlines()[-1]) in content["messages"][:2]
+    assert (
+        json.loads(chunks[1].context_prefix.splitlines()[-1]) in content["messages"][:2]
+    )
     assert chunks[1].context_prefix not in chunks[1].text
 
 
@@ -72,9 +74,9 @@ def test_jsonl_preserves_object_lines() -> None:
     chunks = split_extraction_content("\n".join(lines), ChunkingPolicy(60, 0, 2))
 
     assert chunks[0].structure is ContentStructure.JSONL
-    assert [json.loads(line) for chunk in chunks for line in chunk.text.splitlines()] == [
-        json.loads(line) for line in lines
-    ]
+    assert [
+        json.loads(line) for chunk in chunks for line in chunk.text.splitlines()
+    ] == [json.loads(line) for line in lines]
 
 
 def test_large_conversation_contains_each_turn_once_as_extractable_content() -> None:
@@ -85,7 +87,12 @@ def test_large_conversation_contains_each_turn_once_as_extractable_content() -> 
         ChunkingPolicy(250, 2, 3),
     )
 
-    extracted_turns = [json.loads(line) for chunk in chunks for line in chunk.text.splitlines() if line.strip()]
+    extracted_turns = [
+        json.loads(line)
+        for chunk in chunks
+        for line in chunk.text.splitlines()
+        if line.strip()
+    ]
     assert extracted_turns == turns
 
 

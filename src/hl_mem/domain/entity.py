@@ -68,13 +68,17 @@ def _load_aliases(path_value: str | Path) -> dict[str, str]:
         with path.open("r", encoding="utf-8") as handle:
             raw_aliases = json.load(handle)
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"failed to load entity aliases from {path}: {error}") from error
+        raise ValueError(
+            f"failed to load entity aliases from {path}: {error}"
+        ) from error
     return _normalize_aliases(raw_aliases)
 
 
 def load_entity_aliases(path: str | Path | None = None) -> dict[str, str]:
     """供基础设施层调用：从路径加载实体别名映射。"""
-    configured_path = path if path is not None else os.getenv("HL_MEM_ENTITY_ALIASES_PATH")
+    configured_path = (
+        path if path is not None else os.getenv("HL_MEM_ENTITY_ALIASES_PATH")
+    )
     if configured_path:
         return _load_aliases(configured_path)
     return _normalize_default_aliases()
@@ -86,7 +90,9 @@ def set_active_aliases(aliases: dict[str, str]) -> None:
     _active_aliases = aliases
 
 
-def normalize_entity_id(subject: str | None, aliases: dict[str, str] | None = None) -> str:
+def normalize_entity_id(
+    subject: str | None, aliases: dict[str, str] | None = None
+) -> str:
     """归一化实体标识，并应用显式或进程级别名映射。"""
     if subject is None:
         return "unknown"
@@ -117,6 +123,8 @@ def invalid_subject_reason(subject: str | None) -> str | None:
 
 def isolated_subject_id(*identity_parts: Any) -> str:
     """为无法归属到合法实体的 claim 生成稳定且互相隔离的主体标识。"""
-    payload = json.dumps(identity_parts, ensure_ascii=False, separators=(",", ":"), default=str)
+    payload = json.dumps(
+        identity_parts, ensure_ascii=False, separators=(",", ":"), default=str
+    )
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
     return f"unknown__{digest}"

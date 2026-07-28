@@ -32,14 +32,22 @@ class EventRepository:
         if "content" in stored:
             content_json = encode_json(stored.pop("content"), sort_keys=True)
             stored["content_json"] = content_json
-            stored.setdefault("content_hash", hashlib.sha256(content_json.encode()).hexdigest())
+            stored.setdefault(
+                "content_hash", hashlib.sha256(content_json.encode()).hexdigest()
+            )
         if "metadata" in stored:
-            stored["metadata_json"] = encode_json(stored.pop("metadata"), sort_keys=True)
+            stored["metadata_json"] = encode_json(
+                stored.pop("metadata"), sort_keys=True
+            )
         return insert_row(self.connection, "events", stored, commit)
 
     def get_event(self, event_id: str) -> dict[str, Any] | None:
         """按标识返回事件。"""
-        event = row_to_dict(self.connection.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone())
+        event = row_to_dict(
+            self.connection.execute(
+                "SELECT * FROM events WHERE id=?", (event_id,)
+            ).fetchone()
+        )
         if event is not None:
             event["content"] = decode_json(event["content_json"])
             if event.get("metadata_json") is not None:
@@ -48,7 +56,9 @@ class EventRepository:
 
     def find_id_by_idempotency_key(self, idempotency_key: str) -> str | None:
         """按幂等键返回已存在的事件标识。"""
-        row = self.connection.execute("SELECT id FROM events WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+        row = self.connection.execute(
+            "SELECT id FROM events WHERE idempotency_key=?", (idempotency_key,)
+        ).fetchone()
         return str(row["id"]) if row else None
 
     def insert_image_description_event(
@@ -62,14 +72,20 @@ class EventRepository:
         """幂等写入图片描述派生事件，并返回已存在或新建事件。"""
         image_hash = (
             description.locator.sha256
-            or hashlib.sha256((description.locator.uri or f"image-{image_index}").encode()).hexdigest()
+            or hashlib.sha256(
+                (description.locator.uri or f"image-{image_index}").encode()
+            ).hexdigest()
         )
-        idempotency_key = f"image-describe:{source_event['id']}:{image_hash}:{description.model}"
+        idempotency_key = (
+            f"image-describe:{source_event['id']}:{image_hash}:{description.model}"
+        )
         existing_id = self.find_id_by_idempotency_key(idempotency_key)
         if existing_id:
             existing = self.get_event(existing_id)
             if existing is None:
-                raise RuntimeError(f"idempotent image description event disappeared: {existing_id}")
+                raise RuntimeError(
+                    f"idempotent image description event disappeared: {existing_id}"
+                )
             return existing
         event_id = uuid.uuid4().hex
         event = {
@@ -99,10 +115,14 @@ class EventRepository:
         self.insert_event(event, commit=commit)
         stored = self.get_event(event_id)
         if stored is None:
-            raise RuntimeError(f"failed to read inserted image description event: {event_id}")
+            raise RuntimeError(
+                f"failed to read inserted image description event: {event_id}"
+            )
         return stored
 
-    def find_image_description(self, source_event_id: str, image_index: int, model: str) -> dict[str, Any] | None:
+    def find_image_description(
+        self, source_event_id: str, image_index: int, model: str
+    ) -> dict[str, Any] | None:
         """按来源、图片序号和模型查找可复用的派生描述事件。"""
         row = self.connection.execute(
             "SELECT id FROM events WHERE event_type='image_description' "
@@ -113,13 +133,21 @@ class EventRepository:
         ).fetchone()
         return self.get_event(str(row["id"])) if row else None
 
-    def get_recent_events(self, session_id: str, before: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    def get_recent_events(
+        self, session_id: str, before: dict[str, Any], limit: int
+    ) -> list[dict[str, Any]]:
         """返回游标之前的最近事件。"""
         rows = self.connection.execute(
             "SELECT * FROM events WHERE session_id=? AND "
             "(occurred_at<? OR (occurred_at=? AND id<?)) "
             "ORDER BY occurred_at DESC,id DESC LIMIT ?",
-            (session_id, before["occurred_at"], before["occurred_at"], before["id"], limit),
+            (
+                session_id,
+                before["occurred_at"],
+                before["occurred_at"],
+                before["id"],
+                limit,
+            ),
         ).fetchall()
         return [dict(row) for row in rows]
 

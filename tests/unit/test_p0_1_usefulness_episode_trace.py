@@ -49,8 +49,24 @@ def test_rebuild_all_includes_episode_and_trace_feedback(tmp_path: Path) -> None
             "id,query_id,memory_type,memory_id,used_by_model,helpful,created_at"
             ") VALUES(?,?,?,?,?,?,?)",
             (
-                ("feedback-episode", "query-1", "episode", "episode-1", 1, 1, "2026-01-01T00:00:00+00:00"),
-                ("feedback-trace", "query-1", "trace", "trace-1", 1, 1, "2026-01-01T00:00:00+00:00"),
+                (
+                    "feedback-episode",
+                    "query-1",
+                    "episode",
+                    "episode-1",
+                    1,
+                    1,
+                    "2026-01-01T00:00:00+00:00",
+                ),
+                (
+                    "feedback-trace",
+                    "query-1",
+                    "trace",
+                    "trace-1",
+                    1,
+                    1,
+                    "2026-01-01T00:00:00+00:00",
+                ),
             ),
         )
         repository = UsefulnessRepository(connection)

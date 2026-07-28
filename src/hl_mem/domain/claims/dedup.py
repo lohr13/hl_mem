@@ -38,7 +38,10 @@ class ClaimRepositoryProtocol(Protocol):
 
 class Deduplicator:
     def __init__(
-        self, claim_repo: ClaimRepositoryProtocol, embedder: Any, threshold: float = DEDUP_SEMANTIC_THRESHOLD
+        self,
+        claim_repo: ClaimRepositoryProtocol,
+        embedder: Any,
+        threshold: float = DEDUP_SEMANTIC_THRESHOLD,
     ) -> None:
         self.claim_repo, self.embedder, self.threshold = claim_repo, embedder, threshold
 
@@ -83,7 +86,9 @@ class Deduplicator:
         return None, "new"
 
     @classmethod
-    def _values_are_mutually_exclusive(cls, existing: dict[str, Any], new: dict[str, Any]) -> bool:
+    def _values_are_mutually_exclusive(
+        cls, existing: dict[str, Any], new: dict[str, Any]
+    ) -> bool:
         existing_slot = existing.get("canonical_slot")
         new_slot = new.get("canonical_slot")
         values_differ = cls._canonical_claim(existing) != cls._canonical_claim(new)
@@ -92,15 +97,24 @@ class Deduplicator:
             and isinstance(new_slot, str)
             and is_mutually_exclusive_attribute(existing_slot)
             and is_mutually_exclusive_attribute(new_slot)
-            and canonical_conflict_slot(existing_slot) == canonical_conflict_slot(new_slot)
+            and canonical_conflict_slot(existing_slot)
+            == canonical_conflict_slot(new_slot)
         )
         return values_differ and same_exclusive_slot
 
     @classmethod
     def _canonical_claim(cls, claim: dict[str, Any]) -> str:
         """规范化声明值，避免对仓储已解码的字符串再次 JSON 解码。"""
-        return json.dumps(claim.get("value"), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return json.dumps(
+            claim.get("value"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     @staticmethod
     def _text(claim: dict[str, Any]) -> str:
-        return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} " f"{claim.get('value', '')}"
+        return (
+            f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} "
+            f"{claim.get('value', '')}"
+        )

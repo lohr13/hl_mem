@@ -72,7 +72,9 @@ def test_scope_filters_by_tags(tmp_path) -> None:
     _claim(connection, "b", [0.8, 0.6], slot="fact.other", tags=["database", "python"])
     _claim(connection, "c", [0.8, 0.6], slot="fact.other", tags=["tooling"])
 
-    pairs = ConflictConsolidator(connection, _Judge()).scan_candidates(scope=ConsolidationScope(tag_filter=["python"]))
+    pairs = ConflictConsolidator(connection, _Judge()).scan_candidates(
+        scope=ConsolidationScope(tag_filter=["python"])
+    )
 
     assert _pair_ids(pairs) == {frozenset(("a", "b"))}
 
@@ -81,9 +83,13 @@ def test_scope_limits_max_pairs(tmp_path) -> None:
     connection = Database(tmp_path / "limit.db").open()
     _claim(connection, "a", [1.0, 0.0, 0.0], slot="fact.other", tags=["python"])
     _claim(connection, "b", [0.8, 0.6, 0.0], slot="fact.other", tags=["python"])
-    _claim(connection, "c", [0.8, 0.2666667, 0.5374838], slot="fact.other", tags=["python"])
+    _claim(
+        connection, "c", [0.8, 0.2666667, 0.5374838], slot="fact.other", tags=["python"]
+    )
 
-    pairs = ConflictConsolidator(connection, _Judge()).scan_candidates(scope=ConsolidationScope(max_pairs=2))
+    pairs = ConflictConsolidator(connection, _Judge()).scan_candidates(
+        scope=ConsolidationScope(max_pairs=2)
+    )
 
     assert len(pairs) == 2
 
@@ -93,7 +99,9 @@ def test_default_scope_matches_all(tmp_path) -> None:
     _claim(connection, "a", [1.0, 0.0], slot="fact.other", tags=["python"])
     _claim(connection, "b", [0.8, 0.6], slot="fact.other", tags=["tooling"])
 
-    pairs = ConflictConsolidator(connection, _Judge()).scan_candidates(scope=ConsolidationScope())
+    pairs = ConflictConsolidator(connection, _Judge()).scan_candidates(
+        scope=ConsolidationScope()
+    )
 
     assert _pair_ids(pairs) == {frozenset(("a", "b"))}
 
@@ -114,7 +122,9 @@ def test_consolidate_api_stores_scope_payload(tmp_path) -> None:
         job_id = response.json()["id"]
     database = Database(database_path)
     connection = database.open()
-    job = dict(connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+    job = dict(
+        connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+    )
 
     assert job["job_type"] == "consolidate_conflicts"
     assert json.loads(job["payload_json"]) == {

@@ -61,13 +61,17 @@ class AuditLogger:
     def _open(self) -> sqlite3.Connection:
         if self._connection is None:
             connection = sqlite3.connect(self.db_path, check_same_thread=False)
-            connection.execute(f"PRAGMA busy_timeout={max(0, int(self.busy_timeout_ms))}")
+            connection.execute(
+                f"PRAGMA busy_timeout={max(0, int(self.busy_timeout_ms))}"
+            )
             self._connection = connection
         return self._connection
 
     def _detail_json(self, detail: Mapping[str, Any] | None) -> str:
         value = dict(detail or {})
-        serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, default=_json_default)
+        serialized = json.dumps(
+            value, ensure_ascii=False, sort_keys=True, default=_json_default
+        )
         if len(serialized.encode("utf-8")) <= self.max_detail_bytes:
             return serialized
         compact = {"truncated": True, "original_bytes": len(serialized.encode("utf-8"))}
@@ -95,7 +99,9 @@ class AuditLogger:
         try:
             context = audit_context.get()
             values = dict(context)
-            values.update({key: value for key, value in dimensions.items() if value is not None})
+            values.update(
+                {key: value for key, value in dimensions.items() if value is not None}
+            )
             explicit = {
                 "trace_id": trace_id,
                 "tenant_id": tenant_id,
@@ -105,7 +111,9 @@ class AuditLogger:
                 "query_id": query_id,
                 "job_id": job_id,
             }
-            values.update({key: value for key, value in explicit.items() if value is not None})
+            values.update(
+                {key: value for key, value in explicit.items() if value is not None}
+            )
             trace = str(
                 values.get("trace_id")
                 or values.get("event_id")
@@ -148,11 +156,16 @@ class AuditLogger:
                 if self._connection is not None:
                     self._connection.rollback()
             except Exception as rollback_error:
-                self.last_error += f"; rollback {type(rollback_error).__name__}: " f"{_safe_error(rollback_error)}"
+                self.last_error += (
+                    f"; rollback {type(rollback_error).__name__}: "
+                    f"{_safe_error(rollback_error)}"
+                )
             return False
 
     @contextmanager
-    def span(self, phase: str, action: str, **dimensions: Any) -> Iterator[dict[str, Any]]:
+    def span(
+        self, phase: str, action: str, **dimensions: Any
+    ) -> Iterator[dict[str, Any]]:
         detail: dict[str, Any] = {}
         started = time.perf_counter_ns()
         try:
@@ -186,10 +199,14 @@ class AuditLogger:
         if self._last_cleanup_date == today:
             return True
         try:
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(days=retention_days)
+            ).isoformat()
             with self._lock:
                 connection = self._open()
-                connection.execute("DELETE FROM audit_log WHERE occurred_at < ?", (cutoff,))
+                connection.execute(
+                    "DELETE FROM audit_log WHERE occurred_at < ?", (cutoff,)
+                )
                 connection.commit()
                 connection.execute("PRAGMA incremental_vacuum")
             self._last_cleanup_date = today
@@ -200,7 +217,10 @@ class AuditLogger:
                 if self._connection is not None:
                     self._connection.rollback()
             except Exception as rollback_error:
-                self.last_error += f"; rollback {type(rollback_error).__name__}: " f"{_safe_error(rollback_error)}"
+                self.last_error += (
+                    f"; rollback {type(rollback_error).__name__}: "
+                    f"{_safe_error(rollback_error)}"
+                )
             return False
 
     def health(self) -> dict[str, int | bool | str | None]:
@@ -240,7 +260,13 @@ class NullAuditLogger:
         return False
 
     def health(self) -> dict[str, int | bool | str | None]:
-        return {"enabled": False, "emitted": 0, "written": 0, "dropped_count": 0, "last_error": None}
+        return {
+            "enabled": False,
+            "emitted": 0,
+            "written": 0,
+            "dropped_count": 0,
+            "last_error": None,
+        }
 
     def close(self) -> bool:
         return True
@@ -257,7 +283,9 @@ def current_audit() -> AuditLogger | NullAuditLogger:
 def audit_scope(logger: Any = None, **dimensions: Any) -> Iterator[None]:
     """Bind an audit logger and dimensions, restoring both ContextVar tokens."""
     merged = dict(audit_context.get())
-    merged.update({key: value for key, value in dimensions.items() if value is not None})
+    merged.update(
+        {key: value for key, value in dimensions.items() if value is not None}
+    )
     context_token = audit_context.set(merged)
     logger_token = _audit_logger.set(logger if logger is not None else current_audit())
     try:

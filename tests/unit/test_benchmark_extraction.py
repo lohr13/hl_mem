@@ -7,7 +7,9 @@ from pathlib import Path
 
 
 def _load_benchmark_module():
-    script_path = Path(__file__).resolve().parents[2] / "scripts" / "benchmark_extraction.py"
+    script_path = (
+        Path(__file__).resolve().parents[2] / "scripts" / "benchmark_extraction.py"
+    )
     spec = importlib.util.spec_from_file_location("benchmark_extraction", script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -15,7 +17,9 @@ def _load_benchmark_module():
     return module
 
 
-def test_load_api_keys_reads_zhipu_from_dotenv_and_dashscope_from_hermes(tmp_path, monkeypatch) -> None:
+def test_load_api_keys_reads_zhipu_from_dotenv_and_dashscope_from_hermes(
+    tmp_path, monkeypatch
+) -> None:
     benchmark = _load_benchmark_module()
     (tmp_path / ".env").write_text(
         "LLM_API_KEY=sk-sp-test\nLLM_BASE_URL=https://coding.dashscope.aliyuncs.com/v1\n",
@@ -24,7 +28,9 @@ def test_load_api_keys_reads_zhipu_from_dotenv_and_dashscope_from_hermes(tmp_pat
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.setattr(benchmark, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(benchmark, "HERMES_CONFIG_PATH", tmp_path / "missing-hermes-config.yaml")
+    monkeypatch.setattr(
+        benchmark, "HERMES_CONFIG_PATH", tmp_path / "missing-hermes-config.yaml"
+    )
 
     assert benchmark.load_api_keys() == {
         "zhipu": {
@@ -39,7 +45,10 @@ def test_benchmark_model_matrix_routes_glm52_to_zhipu() -> None:
     benchmark = _load_benchmark_module()
     keys = {
         "zhipu": {"key": "zhipu-test", "url": "https://open.bigmodel.cn/api/paas/v4"},
-        "dashscope": {"key": "sk-sp-test", "url": "https://coding.dashscope.aliyuncs.com/v1"},
+        "dashscope": {
+            "key": "sk-sp-test",
+            "url": "https://coding.dashscope.aliyuncs.com/v1",
+        },
     }
 
     configs = benchmark.get_model_configs(keys)

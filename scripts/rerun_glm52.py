@@ -15,9 +15,13 @@ import benchmark_extraction as benchmark
 def parse_args() -> argparse.Namespace:
     """解析 glm-5.2 专用重跑参数。"""
     parser = argparse.ArgumentParser(description="仅重跑 glm-5.2 提取 benchmark")
-    parser.add_argument("--limit", type=int, choices=range(1, benchmark.NUM_EVENTS + 1), required=True)
+    parser.add_argument(
+        "--limit", type=int, choices=range(1, benchmark.NUM_EVENTS + 1), required=True
+    )
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--gold", type=Path, help="按 Gold JSONL 中的 event_id 顺序精确选择事件")
+    parser.add_argument(
+        "--gold", type=Path, help="按 Gold JSONL 中的 event_id 顺序精确选择事件"
+    )
     parser.add_argument("--merge-into", type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--workers", type=int, choices=range(1, 9), default=1)
@@ -36,12 +40,21 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def merge_results(target_path: Path, glm_results: list[dict[str, Any]]) -> None:
     """用新 glm-5.2 行替换既有文件中的旧行，并保持原模型与事件顺序。"""
-    existing = [json.loads(line) for line in target_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    existing = [
+        json.loads(line)
+        for line in target_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     replacement_by_event = {row["event_id"]: row for row in glm_results}
-    merged = [replacement_by_event[row["event_id"]] if row["model"] == "glm-5.2" else row for row in existing]
+    merged = [
+        replacement_by_event[row["event_id"]] if row["model"] == "glm-5.2" else row
+        for row in existing
+    ]
     expected_replacements = sum(row["model"] == "glm-5.2" for row in existing)
     if expected_replacements != len(glm_results):
-        raise RuntimeError(f"glm-5.2 替换数量不一致：existing={expected_replacements}, new={len(glm_results)}")
+        raise RuntimeError(
+            f"glm-5.2 替换数量不一致：existing={expected_replacements}, new={len(glm_results)}"
+        )
     if len(merged) != len(existing):
         raise RuntimeError("合并后结果行数发生变化")
     write_jsonl(target_path, merged)
@@ -60,10 +73,14 @@ def main() -> None:
     full_testset = benchmark.load_or_build_testset()
     if args.gold is not None:
         gold_event_ids = [
-            json.loads(line)["event_id"] for line in args.gold.read_text(encoding="utf-8").splitlines() if line.strip()
+            json.loads(line)["event_id"]
+            for line in args.gold.read_text(encoding="utf-8").splitlines()
+            if line.strip()
         ][: args.limit]
         events_by_id = {event["id"]: event for event in full_testset}
-        missing = [event_id for event_id in gold_event_ids if event_id not in events_by_id]
+        missing = [
+            event_id for event_id in gold_event_ids if event_id not in events_by_id
+        ]
         if missing:
             raise RuntimeError(f"Gold 事件不在 benchmark 测试集中：{missing}")
         testset = [events_by_id[event_id] for event_id in gold_event_ids]
@@ -72,13 +89,19 @@ def main() -> None:
     fingerprint = benchmark.testset_fingerprint(testset)
     results: list[dict[str, Any]] = []
     if args.resume and args.output.is_file():
-        results = [json.loads(line) for line in args.output.read_text(encoding="utf-8").splitlines() if line.strip()]
+        results = [
+            json.loads(line)
+            for line in args.output.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
         results = [result for result in results if result["extraction_error"] is None]
         write_jsonl(args.output, results)
     elif args.output.exists():
         args.output.unlink()
     completed_event_ids = {result["event_id"] for result in results}
-    pending_events = [event for event in testset if event["id"] not in completed_event_ids]
+    pending_events = [
+        event for event in testset if event["id"] not in completed_event_ids
+    ]
 
     def extract_event(event: dict[str, Any]) -> dict[str, Any]:
         extractor = benchmark.make_extractor(config)
@@ -103,7 +126,9 @@ def main() -> None:
         }
 
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = {executor.submit(extract_event, event): event for event in pending_events}
+        futures = {
+            executor.submit(extract_event, event): event for event in pending_events
+        }
         for future in as_completed(futures):
             result = future.result()
             results.append(result)
@@ -113,7 +138,9 @@ def main() -> None:
                 f"claims={result['claims_count']} error={result['extraction_error']}"
             )
     if len(results) != len(testset):
-        raise RuntimeError(f"glm-5.2 结果数量错误：expected={len(testset)}, actual={len(results)}")
+        raise RuntimeError(
+            f"glm-5.2 结果数量错误：expected={len(testset)}, actual={len(results)}"
+        )
     event_order = {event["id"]: index for index, event in enumerate(testset)}
     results.sort(key=lambda result: event_order[result["event_id"]])
     write_jsonl(args.output, results)

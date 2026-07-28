@@ -244,11 +244,19 @@ Also in `src/hl_mem/api/server.py`, after `insert_event` and `_queue_event`, emi
 
 ```python
 audit.emit(
-    "ingest", "accepted", "queued" if created else "duplicate",
-    trace_id=event_id, event_id=event_id, tenant_id=payload.tenant_id,
-    detail={"event_type": payload.event_type, "actor_type": payload.actor_type,
-            "content_chars": len(content_json), "content_hash": event["content_hash"],
-            "sensitivity": payload.sensitivity},
+    "ingest",
+    "accepted",
+    "queued" if created else "duplicate",
+    trace_id=event_id,
+    event_id=event_id,
+    tenant_id=payload.tenant_id,
+    detail={
+        "event_type": payload.event_type,
+        "actor_type": payload.actor_type,
+        "content_chars": len(content_json),
+        "content_hash": event["content_hash"],
+        "sensitivity": payload.sensitivity,
+    },
 )
 ```
 
@@ -262,19 +270,30 @@ File: `src/hl_mem/workers/worker.py`, in `_extract`, time only the extractor cal
 
 ```python
 audit.emit(
-    "extraction", "evaluated", "claims" if extracted else "no_claims",
-    trace_id=event["id"], event_id=event["id"], job_id=job_id,
-    tenant_id=event.get("tenant_id", "default"), duration_us=extract_us,
+    "extraction",
+    "evaluated",
+    "claims" if extracted else "no_claims",
+    trace_id=event["id"],
+    event_id=event["id"],
+    job_id=job_id,
+    tenant_id=event.get("tenant_id", "default"),
+    duration_us=extract_us,
     detail={
         "extractor": type(self.extractor).__name__,
         "model": getattr(self.extractor, "model", None),
-        "extractor_version": "llm-v1" if isinstance(self.extractor, LLMExtractor) else "fake-v1",
-        "source_text_preview": preview(EventFilter._text(content), sensitivity=event.get("sensitivity")),
+        "extractor_version": "llm-v1"
+        if isinstance(self.extractor, LLMExtractor)
+        else "fake-v1",
+        "source_text_preview": preview(
+            EventFilter._text(content), sensitivity=event.get("sensitivity")
+        ),
         "source_content_hash": event.get("content_hash"),
         "source_chars": len(event["content_json"]),
         "context_event_ids": [item["id"] for item in recent],
         "claim_count": len(extracted),
-        "usage_tokens": self.extractor.last_usage_tokens if isinstance(self.extractor, LLMExtractor) else 0,
+        "usage_tokens": self.extractor.last_usage_tokens
+        if isinstance(self.extractor, LLMExtractor)
+        else 0,
         "claims": [claim_summary(item) for item in extracted],
     },
 )
@@ -288,8 +307,12 @@ Immediately after the current `estimate` and `can_spend` decision:
 
 ```python
 audit.emit(
-    "budget", "checked", "allow" if can_spend else "reject",
-    trace_id=event["id"], event_id=event["id"], job_id=job_id,
+    "budget",
+    "checked",
+    "allow" if can_spend else "reject",
+    trace_id=event["id"],
+    event_id=event["id"],
+    job_id=job_id,
     detail={"estimated_tokens": estimate, **self.budget.get_stats()},
 )
 ```
@@ -305,9 +328,14 @@ File: `src/hl_mem/api/pipeline.py`, add optional `audit` and `trace_id` paramete
 
 ```python
 audit.emit(
-    "dedup", "fact_hash_checked", "match" if exact else "new",
-    trace_id=trace_id, event_id=event["id"], claim_id=claim["id"],
-    related_claim_id=exact["id"] if exact else None, tenant_id=namespace,
+    "dedup",
+    "fact_hash_checked",
+    "match" if exact else "new",
+    trace_id=trace_id,
+    event_id=event["id"],
+    claim_id=claim["id"],
+    related_claim_id=exact["id"] if exact else None,
+    tenant_id=namespace,
     duration_us=fact_hash_us,
     detail={"fact_hash": claim["fact_hash"], "predicate": claim["predicate"]},
 )
@@ -321,14 +349,21 @@ all embeddings or all candidate values. Back in `store_extracted`, emit:
 
 ```python
 audit.emit(
-    "dedup", "semantic_checked", diagnostic["method"],  # exact|semantic|new
-    trace_id=trace_id, event_id=event["id"], claim_id=claim["id"],
-    related_claim_id=duplicate_id, tenant_id=namespace,
+    "dedup",
+    "semantic_checked",
+    diagnostic["method"],  # exact|semantic|new
+    trace_id=trace_id,
+    event_id=event["id"],
+    claim_id=claim["id"],
+    related_claim_id=duplicate_id,
+    tenant_id=namespace,
     duration_us=semantic_us,
-    detail={"candidate_count": diagnostic["candidate_count"],
-            "threshold": diagnostic["threshold"],
-            "matched_similarity": diagnostic.get("matched_similarity"),
-            "max_similarity": diagnostic.get("max_similarity")},
+    detail={
+        "candidate_count": diagnostic["candidate_count"],
+        "threshold": diagnostic["threshold"],
+        "matched_similarity": diagnostic.get("matched_similarity"),
+        "max_similarity": diagnostic.get("max_similarity"),
+    },
 )
 ```
 
@@ -344,18 +379,31 @@ File: `src/hl_mem/api/pipeline.py`, in `store_extracted`, time the current
 
 ```python
 audit.emit(
-    "conflict", "resolved", resolution,
-    trace_id=trace_id, event_id=event["id"], claim_id=claim["id"],
-    related_claim_id=existing[-1]["id"], tenant_id=namespace,
+    "conflict",
+    "resolved",
+    resolution,
+    trace_id=trace_id,
+    event_id=event["id"],
+    claim_id=claim["id"],
+    related_claim_id=existing[-1]["id"],
+    tenant_id=namespace,
     duration_us=resolve_us,
     detail={
-        "conflict_key": claim["conflict_key"], "candidate_count": len(existing),
-        "old": claim_summary(existing[-1]), "new": claim_summary(claim),
+        "conflict_key": claim["conflict_key"],
+        "candidate_count": len(existing),
+        "old": claim_summary(existing[-1]),
+        "new": claim_summary(claim),
         "old_status_before": existing[-1]["status"],
-        "new_status_after": {"entails": None, "state_change": "active",
-                             "contradicts": "disputed", "uncertain": "candidate"}.get(resolution),
-        "old_status_after": {"state_change": "superseded",
-                             "contradicts": "disputed"}.get(resolution, existing[-1]["status"]),
+        "new_status_after": {
+            "entails": None,
+            "state_change": "active",
+            "contradicts": "disputed",
+            "uncertain": "candidate",
+        }.get(resolution),
+        "old_status_after": {
+            "state_change": "superseded",
+            "contradicts": "disputed",
+        }.get(resolution, existing[-1]["status"]),
         "resolver_version": "deterministic-v1",
     },
 )
@@ -380,12 +428,19 @@ fallback/selection:
 
 ```python
 audit.emit(
-    "recall", "ranked", rerank_outcome,  # disabled|skipped|applied|empty_fallback|error_fallback
-    trace_id=trace_id or query_id, query_id=query_id, tenant_id=tenant_id,
+    "recall",
+    "ranked",
+    rerank_outcome,  # disabled|skipped|applied|empty_fallback|error_fallback
+    trace_id=trace_id or query_id,
+    query_id=query_id,
+    tenant_id=tenant_id,
     duration_us=total_us,
     detail={
-        "query_preview": preview(query), "query_hash": sha256_text(query),
-        "limit": limit, "as_of": as_of, "candidate_limit": candidate_limit,
+        "query_preview": preview(query),
+        "query_hash": sha256_text(query),
+        "limit": limit,
+        "as_of": as_of,
+        "candidate_limit": candidate_limit,
         "fts": rank_items(fts, score_name="bm25_unavailable"),
         "dense": rank_items(dense, include_similarity=True),
         "rrf": rank_items(ranked_claims, scores=scores),
@@ -394,9 +449,14 @@ audit.emit(
         "rank_change_count": rank_change_count,
         "top1_changed": rrf_ids[:1] != final_ids[:1],
         "mean_abs_rank_delta": mean_abs_rank_delta,
-        "timing_us": {"query_embedding": query_embed_us, "fts": fts_us,
-                      "dense_load_score_sort": dense_us, "rrf": rrf_us,
-                      "reranker": rerank_us, "response_hydration": hydrate_us},
+        "timing_us": {
+            "query_embedding": query_embed_us,
+            "fts": fts_us,
+            "dense_load_score_sort": dense_us,
+            "rrf": rrf_us,
+            "reranker": rerank_us,
+            "response_hydration": hydrate_us,
+        },
     },
 )
 ```
@@ -434,19 +494,35 @@ existing guarded update, then emit one summary plus one record per selected clai
 
 ```python
 audit.emit(
-    "ttl", "claim_expired", "expired",
-    trace_id=trace_id, claim_id=row["id"], tenant_id=row["namespace_key"],
-    detail={"expires_at": row["expires_at"], "observed_at": row["observed_at"],
-            "age_at_expiry_s": age_s, "conflict_key": row["conflict_key"],
-            "predicate": row["predicate"], "value_hash": sha256_text(row["value_json"]),
-            "value_preview": preview(row["value_json"]),
-            "evidence_count": row["evidence_count"],
-            "last_evidence_at": row["last_evidence_at"]},
+    "ttl",
+    "claim_expired",
+    "expired",
+    trace_id=trace_id,
+    claim_id=row["id"],
+    tenant_id=row["namespace_key"],
+    detail={
+        "expires_at": row["expires_at"],
+        "observed_at": row["observed_at"],
+        "age_at_expiry_s": age_s,
+        "conflict_key": row["conflict_key"],
+        "predicate": row["predicate"],
+        "value_hash": sha256_text(row["value_json"]),
+        "value_preview": preview(row["value_json"]),
+        "evidence_count": row["evidence_count"],
+        "last_evidence_at": row["last_evidence_at"],
+    },
 )
 audit.emit(
-    "ttl", "sweep", "success", trace_id=trace_id, duration_us=sweep_us,
-    detail={"eligible_count": len(rows), "updated_count": cursor.rowcount,
-            "reference": reference},
+    "ttl",
+    "sweep",
+    "success",
+    trace_id=trace_id,
+    duration_us=sweep_us,
+    detail={
+        "eligible_count": len(rows),
+        "updated_count": cursor.rowcount,
+        "reference": reference,
+    },
 )
 ```
 
@@ -467,18 +543,29 @@ File: `src/hl_mem/api/pipeline.py`, pass audit context from `store_extracted` in
 
 ```python
 audit.emit(
-    "observation", "build_attempted", "built" if built else skip_reason,
-    trace_id=trace_id, event_id=event_id, claim_id=new_claim_id,
-    tenant_id=tenant_id, duration_us=build_us,
-    detail={"conflict_key": conflict_key, "candidate_count": len(claims),
-            "active_count": active_count, "distinct_event_count": distinct_event_count,
-            "thresholds": {"min_proofs": builder.MIN_PROOFS,
-                           "min_sources": builder.MIN_SOURCES},
-            "claim_ids": [item["id"] for item in claims],
-            "observation_id": observation_id if built else None,
-            "body_preview": preview(built["body"]) if built else None,
-            "body_hash": sha256_text(built["body"]) if built else None,
-            "confidence": built["confidence"] if built else None},
+    "observation",
+    "build_attempted",
+    "built" if built else skip_reason,
+    trace_id=trace_id,
+    event_id=event_id,
+    claim_id=new_claim_id,
+    tenant_id=tenant_id,
+    duration_us=build_us,
+    detail={
+        "conflict_key": conflict_key,
+        "candidate_count": len(claims),
+        "active_count": active_count,
+        "distinct_event_count": distinct_event_count,
+        "thresholds": {
+            "min_proofs": builder.MIN_PROOFS,
+            "min_sources": builder.MIN_SOURCES,
+        },
+        "claim_ids": [item["id"] for item in claims],
+        "observation_id": observation_id if built else None,
+        "body_preview": preview(built["body"]) if built else None,
+        "body_hash": sha256_text(built["body"]) if built else None,
+        "confidence": built["confidence"] if built else None,
+    },
 )
 ```
 
@@ -499,14 +586,21 @@ lease succeeds. Emit after completion and after failure handling:
 
 ```python
 audit.emit(
-    "job", "dispatched", final_status,
-    trace_id=event_id_if_extract_else_job_id, event_id=event_id_if_extract,
-    job_id=job["id"], duration_us=job_us,
-    detail={"job_type": job["job_type"], "attempt": job["attempts"],
-            "queue_delay_us": iso_delta_us(job["created_at"], lease_started_at),
-            "result_claims": result.get("claims"),
-            "error_class": type(error).__name__ if error else None,
-            "error": safe_error(error)},
+    "job",
+    "dispatched",
+    final_status,
+    trace_id=event_id_if_extract_else_job_id,
+    event_id=event_id_if_extract,
+    job_id=job["id"],
+    duration_us=job_us,
+    detail={
+        "job_type": job["job_type"],
+        "attempt": job["attempts"],
+        "queue_delay_us": iso_delta_us(job["created_at"], lease_started_at),
+        "result_claims": result.get("claims"),
+        "error_class": type(error).__name__ if error else None,
+        "error": safe_error(error),
+    },
 )
 ```
 

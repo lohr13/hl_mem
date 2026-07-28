@@ -29,7 +29,10 @@ class OpenAICompatibleProvider:
         """构建 OpenAI-compatible 请求体。"""
         payload: dict[str, Any] = {
             "model": model,
-            "messages": [{"role": message.role, "content": message.content} for message in request.messages],
+            "messages": [
+                {"role": message.role, "content": message.content}
+                for message in request.messages
+            ],
         }
         spec = request.structured_output
         if spec is None:
@@ -68,7 +71,9 @@ class OpenAICompatibleProvider:
         if response is None or response.status_code not in {400, 422}:
             return False
         text = response.text.casefold()
-        return any(marker in text for marker in ("response_format", "json_schema", "strict"))
+        return any(
+            marker in text for marker in ("response_format", "json_schema", "strict")
+        )
 
 
 class DashScopeProvider(OpenAICompatibleProvider):
@@ -80,7 +85,9 @@ class DashScopeProvider(OpenAICompatibleProvider):
     def __init__(self, *, enable_thinking: bool = False) -> None:
         self.enable_thinking = enable_thinking
 
-    def build_payload(self, model: str, request: LLMRequest, mode: StructuredOutputMode) -> dict[str, Any]:
+    def build_payload(
+        self, model: str, request: LLMRequest, mode: StructuredOutputMode
+    ) -> dict[str, Any]:
         payload = super().build_payload(model, request, mode)
         payload["enable_thinking"] = self.enable_thinking
         return payload

@@ -49,7 +49,9 @@ class EvalCase:
 
 
 def _strings(value: Any, field: str, *, allow_empty: bool = True) -> tuple[str, ...]:
-    if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item.strip() for item in value
+    ):
         raise ValueError(f"{field} 必须是非空字符串数组")
     if not allow_empty and not value:
         raise ValueError(f"{field} 不得为空")
@@ -83,17 +85,30 @@ def _parse_case(raw: Any, line_number: int) -> EvalCase:
         if groups_raw is not None:
             if not isinstance(groups_raw, list) or not groups_raw:
                 raise ValueError(f"{case_id}: claim_keyword_groups 不得为空")
-            groups = tuple(_strings(group, "claim_keyword_groups", allow_empty=False) for group in groups_raw)
+            groups = tuple(
+                _strings(group, "claim_keyword_groups", allow_empty=False)
+                for group in groups_raw
+            )
         else:
-            groups = (_strings(binding_raw.get("claim_keywords"), "claim_keywords", allow_empty=False),)
+            groups = (
+                _strings(
+                    binding_raw.get("claim_keywords"),
+                    "claim_keywords",
+                    allow_empty=False,
+                ),
+            )
         binding = KeywordBinding(
             claim_keyword_groups=groups,
-            evidence_keywords=_strings(binding_raw.get("evidence_keywords", []), "evidence_keywords"),
+            evidence_keywords=_strings(
+                binding_raw.get("evidence_keywords", []), "evidence_keywords"
+            ),
         )
         if not keywords:
             raise ValueError(f"{case_id}: claim 样本 expected_keywords 不得为空")
     confidence = raw.get("expected_min_confidence")
-    if confidence is not None and (not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1):
+    if confidence is not None and (
+        not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1
+    ):
         raise ValueError(f"{case_id}: expected_min_confidence 必须在 0 到 1 之间")
     return EvalCase(
         case_id=case_id.strip(),
@@ -105,7 +120,9 @@ def _parse_case(raw: Any, line_number: int) -> EvalCase:
         expected_keywords=keywords,
         keyword_match=keyword_match,
         binding=binding,
-        forbidden_statuses=_strings(raw.get("forbidden_statuses", []), "forbidden_statuses"),
+        forbidden_statuses=_strings(
+            raw.get("forbidden_statuses", []), "forbidden_statuses"
+        ),
         as_of=raw.get("as_of"),
         known_as_of=raw.get("known_as_of"),
         notes=str(raw.get("notes", "")),
@@ -116,13 +133,17 @@ def load_cases(path: str | Path) -> list[EvalCase]:
     """读取 JSONL 数据集并执行严格的逐行校验。"""
     cases: list[EvalCase] = []
     seen: set[str] = set()
-    for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        Path(path).read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not line.strip():
             continue
         try:
             case = _parse_case(json.loads(line), line_number)
         except json.JSONDecodeError as error:
-            raise ValueError(f"第 {line_number} 行不是有效 JSON: {error.msg}") from error
+            raise ValueError(
+                f"第 {line_number} 行不是有效 JSON: {error.msg}"
+            ) from error
         if case.case_id in seen:
             raise ValueError(f"重复的 id: {case.case_id}")
         seen.add(case.case_id)
@@ -140,18 +161,27 @@ def _normalized_text(values: Iterable[Any]) -> str:
                 value = json.loads(value)
             except (json.JSONDecodeError, TypeError):
                 pass
-        rendered.append(json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value or ""))
+        rendered.append(
+            json.dumps(value, ensure_ascii=False)
+            if isinstance(value, (dict, list))
+            else str(value or "")
+        )
     return unicodedata.normalize("NFKC", " ".join(rendered)).casefold()
 
 
 def _matches(text: str, keywords: tuple[str, ...], mode: str = "all") -> bool:
-    checks = [unicodedata.normalize("NFKC", keyword).casefold() in text for keyword in keywords]
+    checks = [
+        unicodedata.normalize("NFKC", keyword).casefold() in text
+        for keyword in keywords
+    ]
     return all(checks) if mode == "all" else any(checks)
 
 
 def bind_cases(connection: sqlite3.Connection, cases: list[EvalCase]) -> list[EvalCase]:
     """按内容关键词把样本绑定到快照 claim 及其 event 证据。"""
-    claims = [dict(row) for row in connection.execute("SELECT * FROM claims ORDER BY id")]
+    claims = [
+        dict(row) for row in connection.execute("SELECT * FROM claims ORDER BY id")
+    ]
     bound: list[EvalCase] = []
     for case in cases:
         if case.expected_type == "empty":
@@ -176,7 +206,9 @@ def bind_cases(connection: sqlite3.Connection, cases: list[EvalCase]) -> list[Ev
                 )
             ]
             if not group_matches:
-                raise BindingError(f"{case.case_id}: 按 claim_keywords 未找到 claim，关键词组={group}")
+                raise BindingError(
+                    f"{case.case_id}: 按 claim_keywords 未找到 claim，关键词组={group}"
+                )
             matches_by_id.update((str(claim["id"]), claim) for claim in group_matches)
         claim_ids = tuple(sorted(matches_by_id))
         event_ids: tuple[str, ...] = ()
@@ -190,10 +222,21 @@ def bind_cases(connection: sqlite3.Connection, cases: list[EvalCase]) -> list[Ev
             selected = [
                 str(row["id"])
                 for row in rows
-                if _matches(_normalized_text((row["content_json"],)), case.binding.evidence_keywords)
+                if _matches(
+                    _normalized_text((row["content_json"],)),
+                    case.binding.evidence_keywords,
+                )
             ]
             if not selected:
-                raise BindingError(f"{case.case_id}: 已绑定 claim 但未找到匹配的 event 证据")
+                raise BindingError(
+                    f"{case.case_id}: 已绑定 claim 但未找到匹配的 event 证据"
+                )
             event_ids = tuple(selected)
-        bound.append(replace(case, relevant_claim_ids=claim_ids, expected_evidence_event_ids=event_ids))
+        bound.append(
+            replace(
+                case,
+                relevant_claim_ids=claim_ids,
+                expected_evidence_event_ids=event_ids,
+            )
+        )
     return bound

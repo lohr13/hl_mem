@@ -33,7 +33,16 @@ PROCEDURE_KEYWORDS = (
     "上次怎么",
     "照上次",
 )
-PROCEDURE_ACTION_KEYWORDS = ("做", "部署", "安装", "配置", "排障", "执行", "运行", "处理")
+PROCEDURE_ACTION_KEYWORDS = (
+    "做",
+    "部署",
+    "安装",
+    "配置",
+    "排障",
+    "执行",
+    "运行",
+    "处理",
+)
 
 # Predicate 分类（domain/claims/conflicts.py 使用）
 PREDICATE_PREFERENCE = "偏好"

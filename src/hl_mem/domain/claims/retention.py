@@ -84,6 +84,8 @@ def compute_expiration(
             reason = "valid_to_override"
 
     normalized_expiration = (
-        expires_at.astimezone(timezone.utc).isoformat(timespec="seconds") if expires_at is not None else None
+        expires_at.astimezone(timezone.utc).isoformat(timespec="seconds")
+        if expires_at is not None
+        else None
     )
     return normalized_expiration, reason

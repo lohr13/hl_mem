@@ -28,7 +28,9 @@ def main() -> None:
     else:
         print(rendered)
     if args.send_email:
-        if not all((settings.smtp_host, settings.alert_email_from, settings.alert_email_to)):
+        if not all(
+            (settings.smtp_host, settings.alert_email_from, settings.alert_email_to)
+        ):
             raise RuntimeError(
                 "email report requires HL_MEM_SMTP_HOST, HL_MEM_ALERT_EMAIL_FROM and HL_MEM_ALERT_EMAIL_TO"
             )

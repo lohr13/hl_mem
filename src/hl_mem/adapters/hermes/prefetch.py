@@ -44,21 +44,29 @@ class PrefetchCache:
                 )
                 payload = response.json()
                 rendered = "\n".join(
-                    str(item.get("text", "")) for item in payload.get("results", []) if item.get("text")
+                    str(item.get("text", ""))
+                    for item in payload.get("results", [])
+                    if item.get("text")
                 )
                 self.client.on_success()
             except Exception:
-                logger.warning("Hermes memory prefetch failed; using empty result", exc_info=True)
+                logger.warning(
+                    "Hermes memory prefetch failed; using empty result", exc_info=True
+                )
                 self.client.on_failure()
                 rendered = ""
             key = self._key(session_id, query)
             with self._lock:
-                self._values[key] = PrefetchEntry(rendered, time.monotonic() + self.ttl_seconds)
+                self._values[key] = PrefetchEntry(
+                    rendered, time.monotonic() + self.ttl_seconds
+                )
 
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
-            self._thread = threading.Thread(target=fetch, name="hl-mem-prefetch", daemon=True)
+            self._thread = threading.Thread(
+                target=fetch, name="hl-mem-prefetch", daemon=True
+            )
             self._thread.start()
 
     def get(self, session_id: str, query: str) -> str:

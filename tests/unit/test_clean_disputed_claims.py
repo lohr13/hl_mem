@@ -47,8 +47,18 @@ def _fixture(path: Path) -> sqlite3.Connection:
     _insert_claim(connection, "contested-b", "contested")
     _insert_claim(connection, "active-peer", "active-peer-key", status="active")
     _insert_claim(connection, "blocked-by-active", "active-peer-key")
-    _insert_claim(connection, "expired-validity", "expired-validity-key", valid_to="2026-07-21T00:00:00+00:00")
-    _insert_claim(connection, "expired-ttl", "expired-ttl-key", expires_at="2026-07-21T00:00:00+00:00")
+    _insert_claim(
+        connection,
+        "expired-validity",
+        "expired-validity-key",
+        valid_to="2026-07-21T00:00:00+00:00",
+    )
+    _insert_claim(
+        connection,
+        "expired-ttl",
+        "expired-ttl-key",
+        expires_at="2026-07-21T00:00:00+00:00",
+    )
     connection.execute(
         "INSERT INTO evidence_links(id,derived_type,derived_id,evidence_type,evidence_id,relation) "
         "VALUES ('e1','claim','eligible','event','event-1','supports')"
@@ -57,7 +67,9 @@ def _fixture(path: Path) -> sqlite3.Connection:
     return connection
 
 
-def test_build_plan_only_selects_current_disputed_without_live_peer(tmp_path: Path) -> None:
+def test_build_plan_only_selects_current_disputed_without_live_peer(
+    tmp_path: Path,
+) -> None:
     connection = _fixture(tmp_path / "plan.db")
 
     plan = build_plan(connection, now="2026-07-22T00:00:00+00:00")
@@ -73,8 +85,14 @@ def test_build_plan_only_selects_current_disputed_without_live_peer(tmp_path: Pa
 def test_apply_only_changes_status_and_preserves_evidence(tmp_path: Path) -> None:
     database_path = tmp_path / "apply.db"
     connection = _fixture(database_path)
-    before_claims = {row["id"]: dict(row) for row in connection.execute("SELECT * FROM claims ORDER BY id")}
-    before_evidence = [tuple(row) for row in connection.execute("SELECT * FROM evidence_links ORDER BY id")]
+    before_claims = {
+        row["id"]: dict(row)
+        for row in connection.execute("SELECT * FROM claims ORDER BY id")
+    }
+    before_evidence = [
+        tuple(row)
+        for row in connection.execute("SELECT * FROM evidence_links ORDER BY id")
+    ]
     plan = build_plan(connection, now="2026-07-22T00:00:00+00:00")
     connection.close()
     backup_path = tmp_path / "backup.db"
@@ -84,15 +102,24 @@ def test_apply_only_changes_status_and_preserves_evidence(tmp_path: Path) -> Non
     assert result.updated_count == 1
     applied = sqlite3.connect(database_path)
     applied.row_factory = sqlite3.Row
-    after_claims = {row["id"]: dict(row) for row in applied.execute("SELECT * FROM claims ORDER BY id")}
+    after_claims = {
+        row["id"]: dict(row)
+        for row in applied.execute("SELECT * FROM claims ORDER BY id")
+    }
     for claim_id, before in before_claims.items():
         expected = dict(before)
         if claim_id == "eligible":
             expected["status"] = "active"
         assert after_claims[claim_id] == expected
-    assert [tuple(row) for row in applied.execute("SELECT * FROM evidence_links ORDER BY id")] == before_evidence
+    assert [
+        tuple(row)
+        for row in applied.execute("SELECT * FROM evidence_links ORDER BY id")
+    ] == before_evidence
     backup = sqlite3.connect(backup_path)
-    assert backup.execute("SELECT status FROM claims WHERE id='eligible'").fetchone()[0] == "disputed"
+    assert (
+        backup.execute("SELECT status FROM claims WHERE id='eligible'").fetchone()[0]
+        == "disputed"
+    )
 
 
 def test_write_report_omits_claim_values(tmp_path: Path) -> None:

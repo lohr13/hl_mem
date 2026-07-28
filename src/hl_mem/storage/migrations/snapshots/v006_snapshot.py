@@ -124,7 +124,9 @@ PREDICATE_ATTRIBUTE_MAP: dict[str, tuple[tuple[str, ...], str]] = {
 }
 
 ATTRIBUTE_ALLOWLIST = frozenset(
-    attribute for attributes, _fallback in PREDICATE_ATTRIBUTE_MAP.values() for attribute in attributes
+    attribute
+    for attributes, _fallback in PREDICATE_ATTRIBUTE_MAP.values()
+    for attribute in attributes
 ) | {"custom.unknown"}
 
 ATTRIBUTE_ALIASES = {
@@ -156,20 +158,52 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
         (("sqlite", "postgresql", "postgres", "mysql", "数据库"), "choice.database"),
         (("windows", "linux", "macos", "操作系统"), "choice.os"),
         (
-            ("gpt-", "glm-", "qwen", "claude", "gemini", "deepseek", "llama", "mistral", "model", "模型"),
+            (
+                "gpt-",
+                "glm-",
+                "qwen",
+                "claude",
+                "gemini",
+                "deepseek",
+                "llama",
+                "mistral",
+                "model",
+                "模型",
+            ),
             "choice.model",
         ),
         (("api", "sdk", "接口", "openai-compatible"), "choice.api"),
-        (("fastapi", "pytorch", "django", "flask", "pytest", "uvicorn", "框架"), "choice.framework"),
-        (("百炼", "dashscope", "智谱", "zhipu", "openai", "anthropic", "provider", "供应商"), "choice.provider"),
-        (("http", "https", "grpc", "websocket", "sse", "mcp", "协议"), "choice.protocol"),
+        (
+            ("fastapi", "pytorch", "django", "flask", "pytest", "uvicorn", "框架"),
+            "choice.framework",
+        ),
+        (
+            (
+                "百炼",
+                "dashscope",
+                "智谱",
+                "zhipu",
+                "openai",
+                "anthropic",
+                "provider",
+                "供应商",
+            ),
+            "choice.provider",
+        ),
+        (
+            ("http", "https", "grpc", "websocket", "sse", "mcp", "协议"),
+            "choice.protocol",
+        ),
         (("hl_mem", "memos", "memory system", "记忆系统"), "choice.memory_system"),
     ),
     "状态": (
         (("挂了", "健康", "正常", "ok"), "state.service_health"),
         (("进程", "运行中"), "state.process"),
         (("部署",), "state.deployment"),
-        (("passed", "failed", "pytest", "测试通过", "测试数", "测试"), "state.test_suite"),
+        (
+            ("passed", "failed", "pytest", "测试通过", "测试数", "测试"),
+            "state.test_suite",
+        ),
         (("超时", "不可达", "连接"), "state.connectivity"),
         (("任务", "job"), "state.job"),
     ),
@@ -210,10 +244,25 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
             ),
             "config.network",
         ),
-        (("路径", "目录", "文件", "path", ".py", ".toml", ".json", ".db"), "config.path"),
+        (
+            ("路径", "目录", "文件", "path", ".py", ".toml", ".json", ".db"),
+            "config.path",
+        ),
         (("端口", "port", "listen", "监听"), "config.port"),
         (("模型名", "model="), "config.model"),
-        (("百炼", "dashscope", "智谱", "zhipu", "openai", "anthropic", "provider", "供应商"), "config.provider"),
+        (
+            (
+                "百炼",
+                "dashscope",
+                "智谱",
+                "zhipu",
+                "openai",
+                "anthropic",
+                "provider",
+                "供应商",
+            ),
+            "config.provider",
+        ),
         (("路由", "直连"), "config.routing"),
         (("timeout", "超时"), "config.timeout"),
         (("cron", "定时", "schedule"), "config.schedule"),
@@ -238,17 +287,28 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     ),
 }
 
-_HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], str], ...]] = {
+_HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[
+    str, tuple[tuple[re.Pattern[str], str], ...]
+] = {
     "使用": (
         (
-            re.compile(r"(?i)(?:gpt-|glm-|qwen|claude|gemini|deepseek|llama|mistral|embedding|rerank)"),
+            re.compile(
+                r"(?i)(?:gpt-|glm-|qwen|claude|gemini|deepseek|llama|mistral|embedding|rerank)"
+            ),
             "choice.model",
         ),
         (
-            re.compile(r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"),
+            re.compile(
+                r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"
+            ),
             "choice.provider",
         ),
-        (re.compile(r"(?i)(?:openai-compatible|\b(?:http|https|grpc|websocket|sse|mcp)\b|协议)"), "choice.protocol"),
+        (
+            re.compile(
+                r"(?i)(?:openai-compatible|\b(?:http|https|grpc|websocket|sse|mcp)\b|协议)"
+            ),
+            "choice.protocol",
+        ),
     ),
     "配置": (
         (
@@ -280,17 +340,29 @@ _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], str]
             ),
             "config.port",
         ),
-        (re.compile(r"(?i)(?:\b(?:LLM_MODEL|EMBEDDING_MODEL|RERANKER_MODEL)\b|模型名|\bmodel\s*=)"), "config.model"),
         (
-            re.compile(r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"),
+            re.compile(
+                r"(?i)(?:\b(?:LLM_MODEL|EMBEDDING_MODEL|RERANKER_MODEL)\b|模型名|\bmodel\s*=)"
+            ),
+            "config.model",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:百炼|dashscope|智谱|zhipu|openai|anthropic|\bprovider\b|供应商)"
+            ),
             "config.provider",
         ),
     ),
     "状态": (
-        (re.compile(r"(?i)(?:\bpassed\b|\bfailed\b|pytest|测试通过|测试数)"), "state.test_suite"),
+        (
+            re.compile(r"(?i)(?:\bpassed\b|\bfailed\b|pytest|测试通过|测试数)"),
+            "state.test_suite",
+        ),
         (re.compile(r"(?i)(?:部署|deployed|上线|发布)"), "state.deployment"),
     ),
-    "事实": ((re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),),
+    "事实": (
+        (re.compile(r"(?:已实现|新增|接入|支持|修复实现)"), "fact.implementation"),
+    ),
 }
 
 
@@ -310,7 +382,12 @@ def normalize_predicate(predicate: str) -> str:
 
 def normalize_canonical_attribute(attribute: str) -> str:
     """把 LLM 属性字符串归一化并应用受控别名。"""
-    normalized = unicodedata.normalize("NFKC", str(attribute)).strip().casefold().replace("-", "_")
+    normalized = (
+        unicodedata.normalize("NFKC", str(attribute))
+        .strip()
+        .casefold()
+        .replace("-", "_")
+    )
     normalized = re.sub(r"\s+", "", normalized)
     return ATTRIBUTE_ALIASES.get(normalized, normalized)
 
@@ -341,7 +418,9 @@ def infer_canonical_attribute(
     mapping = PREDICATE_ATTRIBUTE_MAP.get(normalized_predicate)
     if mapping is None:
         return "custom.unknown"
-    text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}").casefold()
+    text = unicodedata.normalize(
+        "NFKC", f"{subject} {value} {qualifiers or {}}"
+    ).casefold()
     precise = _high_confidence_attribute(normalized_predicate, text)
     if precise is not None:
         return precise
@@ -367,12 +446,16 @@ def reconcile_canonical_attribute(
         return validated, "unknown_predicate"
 
     allowed, fallback = mapping
-    text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}").casefold()
+    text = unicodedata.normalize(
+        "NFKC", f"{subject} {value} {qualifiers or {}}"
+    ).casefold()
     precise = _high_confidence_attribute(normalized_predicate, text)
     if precise is not None and precise in allowed:
         return precise, "high_confidence_rule"
 
-    normalized_inferred = validate_canonical_attribute(normalized_predicate, inferred_attribute)
+    normalized_inferred = validate_canonical_attribute(
+        normalized_predicate, inferred_attribute
+    )
     if validated in {fallback, "custom.unknown"} and normalized_inferred in allowed:
         return normalized_inferred, "fallback_reconciled"
     return validated, "llm_preserved"
@@ -406,9 +489,13 @@ def compute_conflict_key(
     if version != 2:
         raise ValueError("compute_conflict_key only supports version 2")
     canonical_namespace = unicodedata.normalize("NFKC", namespace).strip().casefold()
-    canonical_subject = re.sub(r"\s+", "", unicodedata.normalize("NFKC", subject)).casefold()
+    canonical_subject = re.sub(
+        r"\s+", "", unicodedata.normalize("NFKC", subject)
+    ).casefold()
     exclusive = {
-        key: _canonicalize_json(value) for key, value in (qualifiers or {}).items() if key in EXCLUSIVE_QUALIFIERS
+        key: _canonicalize_json(value)
+        for key, value in (qualifiers or {}).items()
+        if key in EXCLUSIVE_QUALIFIERS
     }
     slot = canonical_conflict_slot(normalize_canonical_attribute(canonical_attribute))
     raw = json.dumps(
@@ -428,7 +515,11 @@ def compute_legacy_conflict_key(
 ) -> str:
     """按 v006 冻结规则复现 v1 冲突键算法。"""
     canonical_subject = re.sub(r"\s+", "", subject).casefold()
-    exclusive = {key: value for key, value in (qualifiers or {}).items() if key in EXCLUSIVE_QUALIFIERS}
+    exclusive = {
+        key: value
+        for key, value in (qualifiers or {}).items()
+        if key in EXCLUSIVE_QUALIFIERS
+    }
     raw = json.dumps(
         [namespace.casefold(), canonical_subject, predicate.casefold(), exclusive],
         ensure_ascii=False,
@@ -442,7 +533,9 @@ def _canonicalize_json(value: Any) -> Any:
     if isinstance(value, str):
         return unicodedata.normalize("NFKC", value).strip().casefold()
     if isinstance(value, dict):
-        return {str(key): _canonicalize_json(item) for key, item in sorted(value.items())}
+        return {
+            str(key): _canonicalize_json(item) for key, item in sorted(value.items())
+        }
     if isinstance(value, (list, tuple)):
         return [_canonicalize_json(item) for item in value]
     return value

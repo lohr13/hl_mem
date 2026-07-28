@@ -50,7 +50,9 @@ def test_compare_index_text_modes_ranks_each_target() -> None:
 def test_open_readonly_database_rejects_writes(tmp_path: Path) -> None:
     """诊断连接必须由 SQLite 强制只读。"""
     database_path = tmp_path / "readonly.db"
-    sqlite3.connect(database_path).execute("CREATE TABLE sample(id INTEGER)").connection.close()
+    sqlite3.connect(database_path).execute(
+        "CREATE TABLE sample(id INTEGER)"
+    ).connection.close()
 
     connection = open_readonly_database(database_path)
 
@@ -89,8 +91,22 @@ def test_diagnose_domains_reports_coverage_and_uncovered_samples() -> None:
     connection.executemany(
         "INSERT INTO events VALUES (?,?,?,?,?,?)",
         [
-            ("e1", "user", "s1", "message", json.dumps({"text": "我在做 lip-rt 唇形同步"}), "2026-07-27T00:00:00Z"),
-            ("e2", "user", "s1", "message", json.dumps({"text": "MuseTalk 也是候选"}), "2026-07-27T00:00:01Z"),
+            (
+                "e1",
+                "user",
+                "s1",
+                "message",
+                json.dumps({"text": "我在做 lip-rt 唇形同步"}),
+                "2026-07-27T00:00:00Z",
+            ),
+            (
+                "e2",
+                "user",
+                "s1",
+                "message",
+                json.dumps({"text": "MuseTalk 也是候选"}),
+                "2026-07-27T00:00:01Z",
+            ),
         ],
     )
     connection.execute(

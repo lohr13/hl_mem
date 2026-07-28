@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 
-def evaluate(cases: list[dict[str, Any]], predictions: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def evaluate(
+    cases: list[dict[str, Any]], predictions: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
     """计算排序、no-answer、覆盖率、HTTP、延迟和降级指标。"""
     reciprocal_ranks: list[float] = []
     top1 = recall5 = answered = http_success = 0
@@ -20,7 +22,9 @@ def evaluate(cases: list[dict[str, Any]], predictions: dict[str, dict[str, Any]]
         prediction = predictions.get(case["id"], {})
         ids = list(prediction.get("result_ids", []))
         gold = set(case["gold_ids"])
-        rank = next((index for index, item_id in enumerate(ids, 1) if item_id in gold), 0)
+        rank = next(
+            (index for index, item_id in enumerate(ids, 1) if item_id in gold), 0
+        )
         reciprocal_ranks.append(1.0 / rank if rank else 0.0)
         top1 += bool(ids and ids[0] in gold)
         recall5 += bool(gold.intersection(ids[:5]))
@@ -39,7 +43,11 @@ def evaluate(cases: list[dict[str, Any]], predictions: dict[str, dict[str, Any]]
 
     def percentile(value: float) -> float:
         values = sorted(latencies)
-        return values[min(len(values) - 1, math.ceil(value * len(values)) - 1)] if values else 0.0
+        return (
+            values[min(len(values) - 1, math.ceil(value * len(values)) - 1)]
+            if values
+            else 0.0
+        )
 
     count = max(1, len(cases))
     return {
@@ -53,18 +61,32 @@ def evaluate(cases: list[dict[str, Any]], predictions: dict[str, dict[str, Any]]
         "p50_ms": percentile(0.50),
         "p95_ms": percentile(0.95),
         "p99_ms": percentile(0.99),
-        "degradation_rates": {key: value / count for key, value in degradations.items()},
+        "degradation_rates": {
+            key: value / count for key, value in degradations.items()
+        },
     }
 
 
 def main() -> None:
     """读取 JSONL 数据集及可选预测文件并打印 JSON 指标。"""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=Path, default=Path(__file__).parent / "datasets/recall_regression_v1.jsonl")
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=Path(__file__).parent / "datasets/recall_regression_v1.jsonl",
+    )
     parser.add_argument("--predictions", type=Path)
     args = parser.parse_args()
-    cases = [json.loads(line) for line in args.dataset.read_text(encoding="utf-8").splitlines() if line.strip()]
-    predictions = json.loads(args.predictions.read_text(encoding="utf-8")) if args.predictions else {}
+    cases = [
+        json.loads(line)
+        for line in args.dataset.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    predictions = (
+        json.loads(args.predictions.read_text(encoding="utf-8"))
+        if args.predictions
+        else {}
+    )
     print(json.dumps(evaluate(cases, predictions), ensure_ascii=False))
 
 

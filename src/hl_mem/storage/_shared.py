@@ -22,7 +22,12 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def insert_row(connection: sqlite3.Connection, table: str, data: dict[str, Any], commit: bool = False) -> bool:
+def insert_row(
+    connection: sqlite3.Connection,
+    table: str,
+    data: dict[str, Any],
+    commit: bool = False,
+) -> bool:
     """使用 INSERT OR IGNORE 写入一行并返回是否实际插入。"""
     columns = ", ".join(data)
     placeholders = ", ".join("?" for _ in data)
@@ -64,4 +69,7 @@ def sanitize_fts_query(query: str, *, tokenizer: str = "unicode61") -> str:
 def is_fts_syntax_error(error: sqlite3.OperationalError) -> bool:
     """仅识别由用户 MATCH 表达式触发的 FTS 语法错误。"""
     message = str(error).lower()
-    return any(marker in message for marker in ("fts5: syntax error", "malformed match", "unterminated string"))
+    return any(
+        marker in message
+        for marker in ("fts5: syntax error", "malformed match", "unterminated string")
+    )

@@ -21,13 +21,23 @@ def export_database(database_path: str | Path, output_path: str | Path) -> int:
     """将不可变事件按 JSONL 导出。"""
     database = Database(database_path)
     try:
-        rows = database.open().execute("SELECT * FROM events ORDER BY recorded_at,id").fetchall()
+        rows = (
+            database.open()
+            .execute("SELECT * FROM events ORDER BY recorded_at,id")
+            .fetchall()
+        )
     finally:
         database.close()
     with Path(output_path).open("w", encoding="utf-8") as stream:
-        stream.write(json.dumps({"type": "metadata", "format_version": EXPORT_FORMAT_VERSION}) + "\n")
+        stream.write(
+            json.dumps({"type": "metadata", "format_version": EXPORT_FORMAT_VERSION})
+            + "\n"
+        )
         for row in rows:
-            stream.write(json.dumps({"type": "event", "data": dict(row)}, ensure_ascii=False) + "\n")
+            stream.write(
+                json.dumps({"type": "event", "data": dict(row)}, ensure_ascii=False)
+                + "\n"
+            )
     return len(rows)
 
 
@@ -42,9 +52,13 @@ def import_database(database_path: str | Path, input_path: str | Path) -> int:
                 record: dict[str, Any] = json.loads(line)
                 if record.get("type") == "metadata":
                     if record.get("format_version") != EXPORT_FORMAT_VERSION:
-                        raise ValueError(f"unsupported archive format version: {record.get('format_version')}")
+                        raise ValueError(
+                            f"unsupported archive format version: {record.get('format_version')}"
+                        )
                     continue
-                if record.get("type") != "event" or not isinstance(record.get("data"), dict):
+                if record.get("type") != "event" or not isinstance(
+                    record.get("data"), dict
+                ):
                     raise ValueError("archive contains unsupported record")
                 imported += int(repository.insert_event(record["data"], commit=True))
         return imported
@@ -59,7 +73,8 @@ def list_conflicts(database_path: str | Path) -> list[dict[str, Any]]:
         rows = (
             database.open()
             .execute(
-                "SELECT * FROM conflict_cases WHERE status IN ('pending','manual_required') " "ORDER BY created_at,id"
+                "SELECT * FROM conflict_cases WHERE status IN ('pending','manual_required') "
+                "ORDER BY created_at,id"
             )
             .fetchall()
         )
@@ -68,7 +83,9 @@ def list_conflicts(database_path: str | Path) -> list[dict[str, Any]]:
         database.close()
 
 
-def resolve_conflict(database_path: str | Path, case_id: str, decision: str) -> dict[str, Any]:
+def resolve_conflict(
+    database_path: str | Path, case_id: str, decision: str
+) -> dict[str, Any]:
     """按人工决策收敛指定冲突案例。"""
     database = Database(database_path)
     connection = database.open()
@@ -103,7 +120,12 @@ def resolve_conflict(database_path: str | Path, case_id: str, decision: str) -> 
             (status, decision, resolved_at, case_id),
         )
         connection.commit()
-        return {"id": case_id, "status": status, "decision": decision, "resolved_at": resolved_at}
+        return {
+            "id": case_id,
+            "status": status,
+            "decision": decision,
+            "resolved_at": resolved_at,
+        }
     except Exception:
         connection.rollback()
         raise
@@ -127,9 +149,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     conflict_commands.add_parser("list")
     resolve = conflict_commands.add_parser("resolve")
     resolve.add_argument("case_id")
-    resolve.add_argument("decision", choices=("keep_left", "keep_right", "coexist", "reject"))
+    resolve.add_argument(
+        "decision", choices=("keep_left", "keep_right", "coexist", "reject")
+    )
     evaluation = commands.add_parser("eval")
-    evaluation.add_argument("--benchmark", choices=("longmemeval",), default="longmemeval")
+    evaluation.add_argument(
+        "--benchmark", choices=("longmemeval",), default="longmemeval"
+    )
     evaluation.add_argument("--subset", default="core")
     evaluation.add_argument("--source", type=Path, required=True)
     evaluation.add_argument("--output", type=Path, required=True)
@@ -173,7 +199,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         print(json.dumps(conflict_result, ensure_ascii=False, sort_keys=True))
         return
-    count = export_database(args.db, args.path) if args.command == "export" else import_database(args.db, args.path)
+    count = (
+        export_database(args.db, args.path)
+        if args.command == "export"
+        else import_database(args.db, args.path)
+    )
     print(json.dumps({"processed": count}))
 
 

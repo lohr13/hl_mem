@@ -10,8 +10,12 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 FORBIDDEN_IMPORTS: dict[str, frozenset[str]] = {
-    "core": frozenset({"ingest", "llm", "storage", "api", "workers", "recall", "application"}),
-    "domain": frozenset({"storage", "api", "workers", "recall", "ingest", "llm", "application"}),
+    "core": frozenset(
+        {"ingest", "llm", "storage", "api", "workers", "recall", "application"}
+    ),
+    "domain": frozenset(
+        {"storage", "api", "workers", "recall", "ingest", "llm", "application"}
+    ),
     "storage": frozenset({"api", "workers", "application"}),
     "application": frozenset({"api"}),
 }
@@ -67,7 +71,11 @@ def find_violations(source_root: Path) -> list[ImportViolation]:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for line, imported_module in imported_modules(tree, module):
                 parts = imported_module.split(".")
-                if len(parts) < 2 or parts[0] != "hl_mem" or parts[1] not in forbidden_layers:
+                if (
+                    len(parts) < 2
+                    or parts[0] != "hl_mem"
+                    or parts[1] not in forbidden_layers
+                ):
                     continue
                 violations.append(
                     ImportViolation(
@@ -99,7 +107,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     source_root = args.source_root.resolve()
     if not (source_root / "hl_mem").is_dir():
-        print(f"source root does not contain hl_mem package: {source_root}", file=sys.stderr)
+        print(
+            f"source root does not contain hl_mem package: {source_root}",
+            file=sys.stderr,
+        )
         return 2
 
     try:
@@ -111,7 +122,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if violations:
         for violation in violations:
             print(violation.render(source_root), file=sys.stderr)
-        print(f"import boundary check failed: {len(violations)} violation(s)", file=sys.stderr)
+        print(
+            f"import boundary check failed: {len(violations)} violation(s)",
+            file=sys.stderr,
+        )
         return 1
 
     print("import boundary check passed")

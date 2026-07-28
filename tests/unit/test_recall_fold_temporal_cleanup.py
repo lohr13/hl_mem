@@ -46,11 +46,21 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
         claims = [
             {"id": "vt-high", "_score": 0.9, "embedding_dense": vector},
             {"id": "vt-low", "_score": 0.7, "embedding_dense": vector},
-            {"id": "architecture-1", "_score": 0.8, "embedding_dense": pack_vector([0.0, 1.0])},
-            {"id": "architecture-2", "_score": 0.6, "embedding_dense": pack_vector([0.1, 0.9])},
+            {
+                "id": "architecture-1",
+                "_score": 0.8,
+                "embedding_dense": pack_vector([0.0, 1.0]),
+            },
+            {
+                "id": "architecture-2",
+                "_score": 0.6,
+                "embedding_dense": pack_vector([0.1, 0.9]),
+            },
         ]
         folded = fold_similar_claims(claims, 0.95)
-        self.assertEqual([claim["id"] for claim in folded], ["vt-high", "architecture-1"])
+        self.assertEqual(
+            [claim["id"] for claim in folded], ["vt-high", "architecture-1"]
+        )
 
     def test_fold_preserves_different_predicates_and_disputed_claims(self) -> None:
         """高相似向量不得隐藏相反 predicate 或 disputed 候选。"""
@@ -62,16 +72,38 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
             "embedding_dense": vector,
         }
         claims = [
-            {**base, "id": "likes", "predicate": "喜欢", "status": "active", "_score": 0.9},
-            {**base, "id": "dislikes", "predicate": "不喜欢", "status": "active", "_score": 0.8},
-            {**base, "id": "disputed", "predicate": "喜欢", "status": "disputed", "_score": 0.7},
+            {
+                **base,
+                "id": "likes",
+                "predicate": "喜欢",
+                "status": "active",
+                "_score": 0.9,
+            },
+            {
+                **base,
+                "id": "dislikes",
+                "predicate": "不喜欢",
+                "status": "active",
+                "_score": 0.8,
+            },
+            {
+                **base,
+                "id": "disputed",
+                "predicate": "喜欢",
+                "status": "disputed",
+                "_score": 0.7,
+            },
         ]
 
         folded = fold_similar_claims(claims, 0.95)
 
-        self.assertEqual([claim["id"] for claim in folded], ["likes", "dislikes", "disputed"])
+        self.assertEqual(
+            [claim["id"] for claim in folded], ["likes", "dislikes", "disputed"]
+        )
 
-    def test_fold_preserves_different_ports_qualifiers_and_disjoint_valid_times(self) -> None:
+    def test_fold_preserves_different_ports_qualifiers_and_disjoint_valid_times(
+        self,
+    ) -> None:
         """端口、限定条件或有效时间不兼容时，即使向量相同也不得折叠。"""
         vector = pack_vector([1.0, 0.0])
         base = {
@@ -125,7 +157,12 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
 
         self.assertEqual(
             [claim["id"] for claim in folded],
-            ["production-8200", "production-8080", "staging-8200", "production-8200-later"],
+            [
+                "production-8200",
+                "production-8080",
+                "staging-8200",
+                "production-8200-later",
+            ],
         )
 
     def test_fold_decodes_only_top_candidate_window_once_each(self) -> None:
@@ -192,13 +229,21 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
 
         class Reranker:
             def rerank(self, _query, documents, top_n=20):
-                return [(index, 1.0 - index * 0.1) for index in range(len(documents))][:top_n]
+                return [(index, 1.0 - index * 0.1) for index in range(len(documents))][
+                    :top_n
+                ]
 
         config = RecallConfig(dedup_threshold=0.95)
-        codex = hybrid_claims(Repo(), "Codex", vector, 10, None, Reranker(), recall_config=config)
-        architecture = hybrid_claims(Repo(), "hl_mem 架构", vector, 10, None, Reranker(), recall_config=config)
+        codex = hybrid_claims(
+            Repo(), "Codex", vector, 10, None, Reranker(), recall_config=config
+        )
+        architecture = hybrid_claims(
+            Repo(), "hl_mem 架构", vector, 10, None, Reranker(), recall_config=config
+        )
         self.assertLessEqual(sum("VT" in str(item["value"]) for item in codex), 1)
-        self.assertLessEqual(sum("application" in str(item["value"]) for item in architecture), 2)
+        self.assertLessEqual(
+            sum("application" in str(item["value"]) for item in architecture), 2
+        )
 
     def test_temporal_cleanup_sets_expiry_or_promotes_permanent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -212,11 +257,19 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
                 "scope": "temporal",
                 "volatility": "stable",
             }
-            repo.insert_claim({**base, "id": "state", "canonical_attribute": "state.service"})
-            repo.insert_claim({**base, "id": "decision", "canonical_attribute": "fact.decision"})
-            repo.insert_claim({**base, "id": "other", "canonical_attribute": "fact.capability"})
+            repo.insert_claim(
+                {**base, "id": "state", "canonical_attribute": "state.service"}
+            )
+            repo.insert_claim(
+                {**base, "id": "decision", "canonical_attribute": "fact.decision"}
+            )
+            repo.insert_claim(
+                {**base, "id": "other", "canonical_attribute": "fact.capability"}
+            )
 
-            result = cleanup_stale_temporal_claims(connection, "2026-07-26T00:00:00+00:00")
+            result = cleanup_stale_temporal_claims(
+                connection, "2026-07-26T00:00:00+00:00"
+            )
 
             self.assertEqual(result, {"expired_at_set": 1, "promoted": 1})
             state = connection.execute(
@@ -230,10 +283,14 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
             self.assertEqual(state, "2026-04-01T00:00:00+00:00")
             self.assertEqual(decision, "permanent")
             self.assertEqual(
-                connection.execute("SELECT expires_at FROM claims WHERE id=?", ("other",)).fetchone()[0],
+                connection.execute(
+                    "SELECT expires_at FROM claims WHERE id=?", ("other",)
+                ).fetchone()[0],
                 None,
             )
-            self.assertEqual(expire_claims(connection, "2026-07-26T00:00:00+00:00"), {"expired": 1})
+            self.assertEqual(
+                expire_claims(connection, "2026-07-26T00:00:00+00:00"), {"expired": 1}
+            )
             connection.close()
 
     def test_ttl_scan_uses_180_day_candidate_window(self) -> None:
@@ -247,9 +304,14 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
 
                 expire_claims(connection, "2026-07-26T00:00:00+00:00")
 
-                normalized = [" ".join(statement.split()).lower() for statement in statements]
+                normalized = [
+                    " ".join(statement.split()).lower() for statement in statements
+                ]
                 self.assertTrue(
-                    any("c.expires_at<='2027-01-22t00:00:00+00:00'" in statement for statement in normalized),
+                    any(
+                        "c.expires_at<='2027-01-22t00:00:00+00:00'" in statement
+                        for statement in normalized
+                    ),
                     normalized,
                 )
             finally:

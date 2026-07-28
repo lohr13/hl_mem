@@ -26,10 +26,17 @@ def test_span_recorder_records_success(tmp_path) -> None:
         trace_id="trace-1",
     )
 
-    row = connection.execute("SELECT * FROM llm_call_spans WHERE span_id=?", (span_id,)).fetchone()
+    row = connection.execute(
+        "SELECT * FROM llm_call_spans WHERE span_id=?", (span_id,)
+    ).fetchone()
     assert row["trace_id"] == "trace-1"
     assert row["status"] == "success"
-    assert (row["input_tokens"], row["output_tokens"], row["cached_tokens"], row["total_tokens"]) == (10, 4, 2, 14)
+    assert (
+        row["input_tokens"],
+        row["output_tokens"],
+        row["cached_tokens"],
+        row["total_tokens"],
+    ) == (10, 4, 2, 14)
 
 
 def test_span_recorder_records_error(tmp_path) -> None:
@@ -46,7 +53,9 @@ def test_span_recorder_records_error(tmp_path) -> None:
         error_class="RuntimeError",
     )
 
-    row = connection.execute("SELECT status,error_class FROM llm_call_spans WHERE span_id=?", (span_id,)).fetchone()
+    row = connection.execute(
+        "SELECT status,error_class FROM llm_call_spans WHERE span_id=?", (span_id,)
+    ).fetchone()
     assert tuple(row) == ("error", "RuntimeError")
 
 
@@ -96,5 +105,7 @@ def test_llm_span_stats_aggregation(tmp_path) -> None:
 def test_llm_span_migration_is_registered(tmp_path) -> None:
     """打开数据库应应用并注册 019 migration。"""
     connection = Database(tmp_path / "migration.db").open()
-    version = connection.execute("SELECT version FROM schema_migrations WHERE version='019_llm_call_spans'").fetchone()
+    version = connection.execute(
+        "SELECT version FROM schema_migrations WHERE version='019_llm_call_spans'"
+    ).fetchone()
     assert version is not None

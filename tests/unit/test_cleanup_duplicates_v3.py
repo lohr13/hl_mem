@@ -18,7 +18,9 @@ from scripts.cleanup_duplicates_v3 import cleanup_duplicates
 class CleanupDuplicatesV3Test(unittest.TestCase):
     """验证清理脚本的预览、安全备份与证据合并。"""
 
-    def test_dry_run_preserves_claims_and_execution_backs_up_and_merges_evidence(self) -> None:
+    def test_dry_run_preserves_claims_and_execution_backs_up_and_merges_evidence(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "memory.db"
             backup_path = Path(directory) / "memory.db.backup"
@@ -34,7 +36,9 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
                 "embedding_dense": pack_vector([1.0, 0.0]),
             }
             repo.insert_claim({**base, "id": "short", "value": "不要运行 pytest"})
-            repo.insert_claim({**base, "id": "long", "value": "工作流中不要运行 pytest"})
+            repo.insert_claim(
+                {**base, "id": "long", "value": "工作流中不要运行 pytest"}
+            )
             repo.insert_claim(
                 {
                     **base,
@@ -47,13 +51,27 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
                 "INSERT INTO evidence_links("
                 "id,derived_type,derived_id,evidence_type,evidence_id,relation"
                 ") VALUES (?,?,?,?,?,?)",
-                ("evidence-short", "claim", "short", "event", "event-short", "derived_from"),
+                (
+                    "evidence-short",
+                    "claim",
+                    "short",
+                    "event",
+                    "event-short",
+                    "derived_from",
+                ),
             )
             connection.execute(
                 "INSERT INTO evidence_links("
                 "id,derived_type,derived_id,evidence_type,evidence_id,relation"
                 ") VALUES (?,?,?,?,?,?)",
-                ("evidence-long", "claim", "long", "event", "event-short", "derived_from"),
+                (
+                    "evidence-long",
+                    "claim",
+                    "long",
+                    "event",
+                    "event-short",
+                    "derived_from",
+                ),
             )
             connection.commit()
             database.close()
@@ -67,7 +85,9 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
             self.assertTrue(backup_path.exists())
             check = sqlite3.connect(db_path)
             self.assertEqual(
-                check.execute("SELECT status FROM claims WHERE id=?", ("short",)).fetchone()[0],
+                check.execute(
+                    "SELECT status FROM claims WHERE id=?", ("short",)
+                ).fetchone()[0],
                 "superseded",
             )
             self.assertEqual(
@@ -110,7 +130,9 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
                 "embedding_dense": pack_vector([1.0, 0.0]),
             }
             repo.insert_claim({**base, "id": "short", "value": "不要运行 pytest"})
-            repo.insert_claim({**base, "id": "long", "value": "工作流中不要运行 pytest"})
+            repo.insert_claim(
+                {**base, "id": "long", "value": "工作流中不要运行 pytest"}
+            )
             database.close()
             backup_path.write_bytes(b"existing-backup")
 
@@ -135,7 +157,9 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
                 "embedding_dense": pack_vector([1.0, 0.0]),
             }
             repo.insert_claim({**base, "id": "short", "value": "不要运行 pytest"})
-            repo.insert_claim({**base, "id": "long", "value": "工作流中不要运行 pytest"})
+            repo.insert_claim(
+                {**base, "id": "long", "value": "工作流中不要运行 pytest"}
+            )
             database.close()
 
             def mutate_after_backup(source: Path, target: Path) -> None:
@@ -148,13 +172,18 @@ class CleanupDuplicatesV3Test(unittest.TestCase):
                 concurrent.commit()
                 concurrent.close()
 
-            with patch("scripts.cleanup_duplicates_v3._backup_database", side_effect=mutate_after_backup):
+            with patch(
+                "scripts.cleanup_duplicates_v3._backup_database",
+                side_effect=mutate_after_backup,
+            ):
                 with self.assertRaises(sqlite3.IntegrityError):
                     cleanup_duplicates(db_path, backup_path, dry_run=False)
 
             check = sqlite3.connect(db_path)
             self.assertEqual(
-                check.execute("SELECT status FROM claims WHERE id=?", ("short",)).fetchone()[0],
+                check.execute(
+                    "SELECT status FROM claims WHERE id=?", ("short",)
+                ).fetchone()[0],
                 "active",
             )
             check.close()

@@ -1,4 +1,3 @@
-
 from hl_mem.experience.service import ExperienceService
 from hl_mem.storage.database import Database
 from hl_mem.workers.induce_policies import (
@@ -8,7 +7,9 @@ from hl_mem.workers.induce_policies import (
 from hl_mem.workers.worker import Worker, dispatch_job
 
 
-def test_induce_policies_clusters_recent_successes_by_task_and_tool_sequence(tmp_path) -> None:
+def test_induce_policies_clusters_recent_successes_by_task_and_tool_sequence(
+    tmp_path,
+) -> None:
     connection = Database(tmp_path / "induce.db").open()
     service = ExperienceService(connection)
     for index in range(3):
@@ -37,8 +38,15 @@ def test_daily_policy_induction_is_idempotent_and_worker_dispatches(tmp_path) ->
     path = tmp_path / "worker.db"
     connection = Database(path).open()
 
-    assert enqueue_daily_policy_induction(connection, "2026-07-22T04:00:00+00:00", "03:30")
-    assert not enqueue_daily_policy_induction(connection, "2026-07-22T05:00:00+00:00", "03:30")
+    assert enqueue_daily_policy_induction(
+        connection, "2026-07-22T04:00:00+00:00", "03:30"
+    )
+    assert not enqueue_daily_policy_induction(
+        connection, "2026-07-22T05:00:00+00:00", "03:30"
+    )
 
     worker = Worker(path, {"embedding_dim": 2})
-    assert dispatch_job(worker, {"job_type": "induce_policies"}) == {"clusters": 0, "policies_induced": 0}
+    assert dispatch_job(worker, {"job_type": "induce_policies"}) == {
+        "clusters": 0,
+        "policies_induced": 0,
+    }

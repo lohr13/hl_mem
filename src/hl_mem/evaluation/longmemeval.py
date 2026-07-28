@@ -19,12 +19,24 @@ class LongMemEvalAdapter:
     FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
     def __init__(self, manifest_path: Path | None = None) -> None:
-        self.manifest_path = manifest_path or Path(__file__).parents[3] / "benchmarks" / "longmemeval" / "manifest.json"
+        self.manifest_path = (
+            manifest_path
+            or Path(__file__).parents[3]
+            / "benchmarks"
+            / "longmemeval"
+            / "manifest.json"
+        )
 
     @classmethod
     def from_fixture(cls, source: Path | None = None) -> Iterable[BenchmarkCase]:
         """加载仓库内不依赖网络和真实模型的小型 fixture。"""
-        fixture = source or Path(__file__).parents[3] / "tests" / "fixtures" / "longmemeval_small.json"
+        fixture = (
+            source
+            or Path(__file__).parents[3]
+            / "tests"
+            / "fixtures"
+            / "longmemeval_small.json"
+        )
         return cls().load(fixture, "all")
 
     def load(self, source: Path, subset: str) -> Iterable[BenchmarkCase]:
@@ -41,13 +53,20 @@ class LongMemEvalAdapter:
         raw = json.loads(source.read_text(encoding="utf-8"))
         records = raw.get("data", raw) if isinstance(raw, Mapping) else raw
         if not isinstance(records, list):
-            raise ValueError("LongMemEval source must be a JSON list or an object with a data list")
+            raise ValueError(
+                "LongMemEval source must be a JSON list or an object with a data list"
+            )
         allowed = self._subset_ids(subset)
         seen: set[str] = set()
         for record in records:
             if not isinstance(record, Mapping):
                 raise ValueError("LongMemEval cases must be JSON objects")
-            case_id = str(record.get("question_id") or record.get("case_id") or record.get("id") or "")
+            case_id = str(
+                record.get("question_id")
+                or record.get("case_id")
+                or record.get("id")
+                or ""
+            )
             if not case_id:
                 raise ValueError("LongMemEval case is missing question_id/case_id")
             if case_id in seen:
@@ -65,7 +84,11 @@ class LongMemEvalAdapter:
         if subset not in subsets:
             raise ValueError(f"unknown LongMemEval subset: {subset}")
         definition = subsets[subset]
-        ids = definition.get("ids", definition) if isinstance(definition, Mapping) else definition
+        ids = (
+            definition.get("ids", definition)
+            if isinstance(definition, Mapping)
+            else definition
+        )
         if not isinstance(ids, list) or any(not isinstance(item, str) for item in ids):
             raise ValueError(f"manifest subset {subset!r} must contain an ids list")
         if len(ids) != len(set(ids)):
@@ -82,7 +105,10 @@ class LongMemEvalAdapter:
             session_key = str(message["_session_key"])
             scoped_message_id = f"{session_key}:{message_id}"
             stable_id = f"lme:{case_id}:{scoped_message_id}"
-            occurred_at = self._timestamp(message) or (self.FALLBACK_EPOCH + timedelta(seconds=index)).isoformat()
+            occurred_at = (
+                self._timestamp(message)
+                or (self.FALLBACK_EPOCH + timedelta(seconds=index)).isoformat()
+            )
             role = str(message.get("role") or message.get("speaker") or "user").lower()
             actor_type = {"human": "user", "ai": "assistant"}.get(role, role)
             if actor_type not in {"user", "assistant", "system", "tool"}:
@@ -95,7 +121,9 @@ class LongMemEvalAdapter:
                     "event_type": "message",
                     "actor_type": actor_type,
                     "content": {
-                        "text": str(message.get("content") or message.get("text") or ""),
+                        "text": str(
+                            message.get("content") or message.get("text") or ""
+                        ),
                         "benchmark_locator": {
                             "case_id": case_id,
                             "session_id": session_key,
@@ -103,14 +131,18 @@ class LongMemEvalAdapter:
                         },
                     },
                     "occurred_at": occurred_at,
-                    "recorded_at": (self.FALLBACK_EPOCH + timedelta(seconds=index)).isoformat(),
+                    "recorded_at": (
+                        self.FALLBACK_EPOCH + timedelta(seconds=index)
+                    ).isoformat(),
                 }
             )
             id_map[scoped_message_id] = stable_id
             raw_by_id[scoped_message_id] = message
         stable_ids = [str(event["id"]) for event in events]
         if len(stable_ids) != len(set(stable_ids)):
-            raise ValueError(f"duplicate stable message id in LongMemEval case: {case_id}")
+            raise ValueError(
+                f"duplicate stable message id in LongMemEval case: {case_id}"
+            )
         message_counts: dict[str, int] = {}
         for message in messages:
             message_id = str(message.get("message_id") or message.get("id"))
@@ -121,7 +153,9 @@ class LongMemEvalAdapter:
                 id_map[message_id] = stable_id
                 raw_by_id[message_id] = raw_by_id[scoped_message_id]
         answer_ids = self._answer_ids(record)
-        gold_ids = tuple(dict.fromkeys(id_map[item] for item in answer_ids if item in id_map))
+        gold_ids = tuple(
+            dict.fromkeys(id_map[item] for item in answer_ids if item in id_map)
+        )
         gold_temporal_items: list[GoldTemporal] = []
         temporal_seen: set[str] = set()
         for message_id, event_id in id_map.items():
@@ -147,15 +181,24 @@ class LongMemEvalAdapter:
             gold_evidence_event_ids=gold_ids,
             gold_temporal=gold_temporal,
             lifecycle_checkpoints=checkpoints,
-            gold_answer=self._optional_string(record.get("answer") or record.get("gold_answer")),
+            gold_answer=self._optional_string(
+                record.get("answer") or record.get("gold_answer")
+            ),
             as_of=self._optional_string(record.get("as_of")),
             known_as_of=self._optional_string(record.get("known_as_of")),
-            category=str(record.get("category") or record.get("question_type") or "uncategorized"),
+            category=str(
+                record.get("category") or record.get("question_type") or "uncategorized"
+            ),
         )
 
     @staticmethod
     def _messages(record: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-        sessions = record.get("haystack_sessions") or record.get("sessions") or record.get("messages") or []
+        sessions = (
+            record.get("haystack_sessions")
+            or record.get("sessions")
+            or record.get("messages")
+            or []
+        )
         if not isinstance(sessions, Sequence) or isinstance(sessions, (str, bytes)):
             raise ValueError("LongMemEval sessions/messages must be a list")
         flattened: list[Mapping[str, Any]] = []
@@ -165,17 +208,26 @@ class LongMemEvalAdapter:
                 if isinstance(session, Mapping)
                 else str(session_index)
             )
-            items = session.get("messages", []) if isinstance(session, Mapping) else session
+            items = (
+                session.get("messages", []) if isinstance(session, Mapping) else session
+            )
             if isinstance(items, Mapping):
                 flattened.append({**items, "_session_key": session_key})
             elif isinstance(items, Sequence) and not isinstance(items, (str, bytes)):
-                flattened.extend({**item, "_session_key": session_key} for item in items if isinstance(item, Mapping))
+                flattened.extend(
+                    {**item, "_session_key": session_key}
+                    for item in items
+                    if isinstance(item, Mapping)
+                )
         return flattened
 
     @staticmethod
     def _answer_ids(record: Mapping[str, Any]) -> tuple[str, ...]:
         value = (
-            record.get("answer_message_ids") or record.get("gold_message_ids") or record.get("answer_session_ids") or ()
+            record.get("answer_message_ids")
+            or record.get("gold_message_ids")
+            or record.get("answer_session_ids")
+            or ()
         )
         if isinstance(value, (str, int)):
             return (str(value),)
@@ -184,7 +236,9 @@ class LongMemEvalAdapter:
     @staticmethod
     def _timestamp(message: Mapping[str, Any]) -> str | None:
         return LongMemEvalAdapter._optional_string(
-            message.get("timestamp") or message.get("date") or message.get("occurred_at")
+            message.get("timestamp")
+            or message.get("date")
+            or message.get("occurred_at")
         )
 
     @staticmethod
@@ -204,7 +258,9 @@ class LongMemEvalAdapter:
                 LifecycleCheckpoint(
                     at=latest,
                     known_as_of=None,
-                    expected_visible_event_ids=tuple(str(event["id"]) for event in events),
+                    expected_visible_event_ids=tuple(
+                        str(event["id"]) for event in events
+                    ),
                     expected_hidden_event_ids=(),
                     expected_status_by_event_id={},
                     worker_action=None,
@@ -212,7 +268,9 @@ class LongMemEvalAdapter:
             )
         for event, message in zip(events, messages, strict=True):
             if superseded := message.get("supersedes_message_id"):
-                old_id = id_map.get(f"{message['_session_key']}:{superseded}") or id_map.get(str(superseded))
+                old_id = id_map.get(
+                    f"{message['_session_key']}:{superseded}"
+                ) or id_map.get(str(superseded))
                 if old_id:
                     checkpoints.append(
                         LifecycleCheckpoint(
@@ -220,7 +278,10 @@ class LongMemEvalAdapter:
                             known_as_of=None,
                             expected_visible_event_ids=(str(event["id"]),),
                             expected_hidden_event_ids=(old_id,),
-                            expected_status_by_event_id={old_id: "superseded", str(event["id"]): "active"},
+                            expected_status_by_event_id={
+                                old_id: "superseded",
+                                str(event["id"]): "active",
+                            },
                             worker_action=None,
                         )
                     )

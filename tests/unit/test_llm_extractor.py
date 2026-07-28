@@ -92,7 +92,9 @@ def test_extract_metrics_count_schema_retries_and_repairs(caplog) -> None:
             super().__init__("")
             self.responses = iter(
                 [
-                    LLMResponse('{"claims":"invalid","should_memorize":true}', "stop", 3),
+                    LLMResponse(
+                        '{"claims":"invalid","should_memorize":true}', "stop", 3
+                    ),
                     LLMResponse(
                         '{"claims":[{"subject":"用户","predicate":"使用","value":"CUDA","qualifiers":{},'
                         '"topic_tags":["硬件"]}],"should_memorize":true,"sensitivity":"普通"}',
@@ -106,9 +108,13 @@ def test_extract_metrics_count_schema_retries_and_repairs(caplog) -> None:
             self.last_request = request
             return next(self.responses)
 
-    extractor = LLMExtractor(_SequenceClient(), ChunkingPolicy(10_000, 0, 2), schema_retries=1)
+    extractor = LLMExtractor(
+        _SequenceClient(), ChunkingPolicy(10_000, 0, 2), schema_retries=1
+    )
     with caplog.at_level(logging.DEBUG, logger="hl_mem.ingest.llm_extractor"):
-        extractor.extract("用户使用 CUDA", {"actor_type": "user", "session_id": "session-2"})
+        extractor.extract(
+            "用户使用 CUDA", {"actor_type": "user", "session_id": "session-2"}
+        )
 
     payload = json.loads(caplog.records[-1].message)
     assert payload["schema_retry_count"] == 1
@@ -132,7 +138,9 @@ def test_normalizes_predicate_and_preserves_chinese_value() -> None:
         '"value":"深色模式","qualifiers":{}}],"should_memorize":true}'
     )
     client = _FakeLLMClient(raw)
-    claim = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("我喜欢深色模式")[0]
+    claim = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract(
+        "我喜欢深色模式"
+    )[0]
     assert claim.predicate == "偏好"
     assert claim.value == "深色模式"
 
@@ -170,10 +178,18 @@ def test_prompt_requires_canonical_attribute() -> None:
 
 def test_claim_validates_canonical_attribute_against_predicate() -> None:
     valid = LLMExtractor._claim(
-        {"predicate": "偏好", "value": "Codex", "canonical_attribute": "preference.tool_choice"}
+        {
+            "predicate": "偏好",
+            "value": "Codex",
+            "canonical_attribute": "preference.tool_choice",
+        }
     )
-    invalid = LLMExtractor._claim({"predicate": "偏好", "value": "深色", "canonical_attribute": "invented.slot"})
-    wrong_domain = LLMExtractor._claim({"predicate": "偏好", "value": "深色", "canonical_attribute": "config.port"})
+    invalid = LLMExtractor._claim(
+        {"predicate": "偏好", "value": "深色", "canonical_attribute": "invented.slot"}
+    )
+    wrong_domain = LLMExtractor._claim(
+        {"predicate": "偏好", "value": "深色", "canonical_attribute": "config.port"}
+    )
     assert valid.canonical_attribute == "preference.tool_choice"
     # reconcile infers a valid attribute from "深色" content instead of returning custom.unknown
     assert invalid.canonical_attribute == "preference.ui_theme"

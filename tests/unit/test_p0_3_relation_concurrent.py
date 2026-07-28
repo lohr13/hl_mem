@@ -13,7 +13,9 @@ from hl_mem.workers.discover_relations import discover_relations
 class EndpointChangingDiscoverer:
     """在模型提案返回前模拟另一流程关闭端点。"""
 
-    def __init__(self, connection: sqlite3.Connection, endpoint_id: str, status: str) -> None:
+    def __init__(
+        self, connection: sqlite3.Connection, endpoint_id: str, status: str
+    ) -> None:
         self.connection = connection
         self.endpoint_id = endpoint_id
         self.status = status
@@ -27,7 +29,9 @@ class EndpointChangingDiscoverer:
     ) -> list[RelationProposal]:
         del max_proposals
         target_id = str(candidates[0]["id"])
-        self.connection.execute("UPDATE claims SET status=? WHERE id=?", (self.status, self.endpoint_id))
+        self.connection.execute(
+            "UPDATE claims SET status=? WHERE id=?", (self.status, self.endpoint_id)
+        )
         self.connection.commit()
         return [
             RelationProposal(
@@ -49,14 +53,32 @@ def _insert_claims(connection: sqlite3.Connection) -> None:
         "id,namespace_key,predicate,value_json,status,confidence,recorded_from"
         ") VALUES(?,?,?,?,?,?,?)",
         (
-            ("source", "default", "p", '"source"', "active", 1.0, "2026-01-01T00:00:00+00:00"),
-            ("target", "default", "p", '"target"', "active", 1.0, "2026-01-02T00:00:00+00:00"),
+            (
+                "source",
+                "default",
+                "p",
+                '"source"',
+                "active",
+                1.0,
+                "2026-01-01T00:00:00+00:00",
+            ),
+            (
+                "target",
+                "default",
+                "p",
+                '"target"',
+                "active",
+                1.0,
+                "2026-01-02T00:00:00+00:00",
+            ),
         ),
     )
     connection.commit()
 
 
-def _run_with_changed_endpoint(tmp_path: Path, endpoint_id: str, status: str) -> tuple[dict[str, int], sqlite3.Row]:
+def _run_with_changed_endpoint(
+    tmp_path: Path, endpoint_id: str, status: str
+) -> tuple[dict[str, int], sqlite3.Row]:
     database = Database(tmp_path / f"relation-{endpoint_id}-{status}.db")
     connection = database.open()
     try:

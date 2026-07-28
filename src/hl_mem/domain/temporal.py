@@ -30,7 +30,9 @@ def parse_utc(value: str) -> datetime:
 
 
 def _contains(start: str | None, end: str | None, point: datetime) -> bool:
-    return (start is None or parse_utc(start) <= point) and (end is None or point < parse_utc(end))
+    return (start is None or parse_utc(start) <= point) and (
+        end is None or point < parse_utc(end)
+    )
 
 
 def claim_is_visible(
@@ -44,7 +46,9 @@ def claim_is_visible(
     valid_point = parse_utc(valid_as_of)
     if not _contains(claim.get("valid_from"), claim.get("valid_to"), valid_point):
         return False
-    if known_as_of and not _contains(claim.get("recorded_from"), claim.get("recorded_to"), parse_utc(known_as_of)):
+    if known_as_of and not _contains(
+        claim.get("recorded_from"), claim.get("recorded_to"), parse_utc(known_as_of)
+    ):
         return False
     if selected_intent in {
         RecallIntent.CURRENT_STATE,

@@ -20,7 +20,9 @@ from hl_mem.ingest.llm_extractor import normalize_scope
 from hl_mem.settings import Settings
 
 RULES_VERSION = "normalize-scope-v1"
-QUOTED_REPORT_RE = re.compile(r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)")
+QUOTED_REPORT_RE = re.compile(
+    r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)"
+)
 REASON_PRIORITY = {
     "slot_short_ttl": 0,
     "health_check": 1,
@@ -63,19 +65,44 @@ def _retention_policy_from_env() -> TTLPolicy:
     """仅加载本脚本依赖的 TTL 环境变量，避免触发无关组件配置校验。"""
     defaults = TTLPolicy()
     policy = TTLPolicy(
-        temporal_ttl_days_low=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_LOW", str(defaults.temporal_ttl_days_low))),
-        temporal_ttl_days_normal=int(
-            os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_NORMAL", str(defaults.temporal_ttl_days_normal))
+        temporal_ttl_days_low=int(
+            os.getenv(
+                "HL_MEM_TEMPORAL_TTL_DAYS_LOW", str(defaults.temporal_ttl_days_low)
+            )
         ),
-        temporal_ttl_days_high=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_HIGH", str(defaults.temporal_ttl_days_high))),
+        temporal_ttl_days_normal=int(
+            os.getenv(
+                "HL_MEM_TEMPORAL_TTL_DAYS_NORMAL",
+                str(defaults.temporal_ttl_days_normal),
+            )
+        ),
+        temporal_ttl_days_high=int(
+            os.getenv(
+                "HL_MEM_TEMPORAL_TTL_DAYS_HIGH", str(defaults.temporal_ttl_days_high)
+            )
+        ),
         importance_low_threshold=float(
-            os.getenv("HL_MEM_IMPORTANCE_LOW_THRESHOLD", str(defaults.importance_low_threshold))
+            os.getenv(
+                "HL_MEM_IMPORTANCE_LOW_THRESHOLD",
+                str(defaults.importance_low_threshold),
+            )
         ),
         importance_high_threshold=float(
-            os.getenv("HL_MEM_IMPORTANCE_HIGH_THRESHOLD", str(defaults.importance_high_threshold))
+            os.getenv(
+                "HL_MEM_IMPORTANCE_HIGH_THRESHOLD",
+                str(defaults.importance_high_threshold),
+            )
         ),
-        importance_write_floor=float(os.getenv("HL_MEM_IMPORTANCE_WRITE_FLOOR", str(defaults.importance_write_floor))),
-        slot_short_ttl_seconds=int(os.getenv("HL_MEM_SLOT_SHORT_TTL_SECONDS", str(defaults.slot_short_ttl_seconds))),
+        importance_write_floor=float(
+            os.getenv(
+                "HL_MEM_IMPORTANCE_WRITE_FLOOR", str(defaults.importance_write_floor)
+            )
+        ),
+        slot_short_ttl_seconds=int(
+            os.getenv(
+                "HL_MEM_SLOT_SHORT_TTL_SECONDS", str(defaults.slot_short_ttl_seconds)
+            )
+        ),
         short_ttl_slots=defaults.short_ttl_slots,
     )
     if (
@@ -88,7 +115,12 @@ def _retention_policy_from_env() -> TTLPolicy:
         <= 0
     ):
         raise ValueError("TTL durations must be positive")
-    if not 0 <= policy.importance_low_threshold <= policy.importance_high_threshold <= 1:
+    if (
+        not 0
+        <= policy.importance_low_threshold
+        <= policy.importance_high_threshold
+        <= 1
+    ):
         raise ValueError("importance thresholds must satisfy 0 <= low <= high <= 1")
     return policy
 
@@ -114,12 +146,16 @@ def _claims_state_token(connection: sqlite3.Connection) -> str:
     digest = hashlib.sha256()
     cursor = connection.execute("SELECT * FROM claims ORDER BY id")
     for row in cursor:
-        digest.update(json.dumps(tuple(row), ensure_ascii=False, default=str).encode("utf-8"))
+        digest.update(
+            json.dumps(tuple(row), ensure_ascii=False, default=str).encode("utf-8")
+        )
         digest.update(b"\n")
     return digest.hexdigest()
 
 
-def _event_contexts(connection: sqlite3.Connection, claim_id: str) -> list[dict[str, str]]:
+def _event_contexts(
+    connection: sqlite3.Connection, claim_id: str
+) -> list[dict[str, str]]:
     rows = connection.execute(
         "SELECT e.actor_type,e.event_type,e.content_json "
         "FROM evidence_links AS link "
@@ -136,13 +172,17 @@ def _event_contexts(connection: sqlite3.Connection, claim_id: str) -> list[dict[
             {
                 "actor_type": str(row["actor_type"] or ""),
                 "event_type": str(row["event_type"] or ""),
-                "source_kind": "quoted_report" if QUOTED_REPORT_RE.search(str(text)) else "",
+                "source_kind": "quoted_report"
+                if QUOTED_REPORT_RE.search(str(text))
+                else "",
             }
         )
     return contexts or [{"actor_type": "", "event_type": "", "source_kind": ""}]
 
 
-def _classification(row: sqlite3.Row, connection: sqlite3.Connection) -> tuple[str, str]:
+def _classification(
+    row: sqlite3.Row, connection: sqlite3.Connection
+) -> tuple[str, str]:
     value = _decode_json(row["value_json"], row["value_json"])
     qualifiers = _decode_json(row["qualifiers_json"], {})
     if not isinstance(qualifiers, dict):
@@ -165,7 +205,9 @@ def _classification(row: sqlite3.Row, connection: sqlite3.Connection) -> tuple[s
     temporal_reasons = [reason for scope, reason in results if scope == "temporal"]
     if not temporal_reasons:
         return "permanent", results[0][1]
-    reason = min(temporal_reasons, key=lambda item: (REASON_PRIORITY.get(item, 99), item))
+    reason = min(
+        temporal_reasons, key=lambda item: (REASON_PRIORITY.get(item, 99), item)
+    )
     return "temporal", reason
 
 
@@ -189,7 +231,12 @@ def _expiration(row: sqlite3.Row, policy: TTLPolicy) -> tuple[str | None, str]:
     )
 
 
-def build_plan(connection: sqlite3.Connection, policy: TTLPolicy, *, generated_at: str | None = None) -> ScopePlan:
+def build_plan(
+    connection: sqlite3.Connection,
+    policy: TTLPolicy,
+    *,
+    generated_at: str | None = None,
+) -> ScopePlan:
     """读取 active permanent claim 并生成降级计划，不写数据库。"""
     connection.row_factory = sqlite3.Row
     counts = connection.execute(
@@ -198,7 +245,9 @@ def build_plan(connection: sqlite3.Connection, policy: TTLPolicy, *, generated_a
         "sum(status='active' AND scope='permanent') AS active_permanent "
         "FROM claims"
     ).fetchone()
-    rows = connection.execute("SELECT * FROM claims WHERE status='active' AND scope='permanent' ORDER BY id").fetchall()
+    rows = connection.execute(
+        "SELECT * FROM claims WHERE status='active' AND scope='permanent' ORDER BY id"
+    ).fetchall()
     changes: list[ScopeChange] = []
     for row in rows:
         normalized_scope, reason_code = _classification(row, connection)
@@ -276,12 +325,16 @@ def _audit_row(change: ScopeChange, occurred_at: str, trace_id: str) -> tuple[An
     )
 
 
-def apply_plan(connection: sqlite3.Connection, policy: TTLPolicy, expected_plan: ScopePlan) -> int:
+def apply_plan(
+    connection: sqlite3.Connection, policy: TTLPolicy, expected_plan: ScopePlan
+) -> int:
     """事务性重算计划、更新 scope/TTL，并写入逐条 audit log。"""
     connection.row_factory = sqlite3.Row
     connection.execute("BEGIN IMMEDIATE")
     try:
-        current_plan = build_plan(connection, policy, generated_at=expected_plan.generated_at)
+        current_plan = build_plan(
+            connection, policy, generated_at=expected_plan.generated_at
+        )
         if current_plan != expected_plan:
             raise RuntimeError("database changed since dry-run; apply aborted")
         occurred_at = _now_iso()
@@ -310,7 +363,9 @@ def apply_plan(connection: sqlite3.Connection, policy: TTLPolicy, expected_plan:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, default=Path(Settings().database_path))
-    parser.add_argument("--report", type=Path, default=Path("docs/SCOPE-RECLASSIFY-DRYRUN.md"))
+    parser.add_argument(
+        "--report", type=Path, default=Path("docs/SCOPE-RECLASSIFY-DRYRUN.md")
+    )
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--dry-run", action="store_true")
     modes.add_argument("--apply", action="store_true")

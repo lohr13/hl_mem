@@ -22,7 +22,9 @@ class DedupJudge:
     def __init__(self, llm_client: LLMClient) -> None:
         self.llm_client = llm_client
 
-    def judge(self, left: dict[str, Any], right: dict[str, Any]) -> tuple[str, float, str]:
+    def judge(
+        self, left: dict[str, Any], right: dict[str, Any]
+    ) -> tuple[str, float, str]:
         """返回判定、置信度和简短理由。"""
         facts = {
             "left": {field: left.get(field) for field in self._FIELDS},
@@ -39,15 +41,25 @@ class DedupJudge:
                             "日期或否定含义存在差异时必须返回 distinct。仅输出符合 schema 的 JSON。"
                         ),
                     ),
-                    LLMMessage(role="user", content=json.dumps(facts, ensure_ascii=False, sort_keys=True)),
+                    LLMMessage(
+                        role="user",
+                        content=json.dumps(facts, ensure_ascii=False, sort_keys=True),
+                    ),
                 ],
                 structured_output=StructuredOutputSpec(
                     name="cross_subject_dedup_decision",
                     schema={
                         "type": "object",
                         "properties": {
-                            "decision": {"type": "string", "enum": ["equivalent", "distinct", "uncertain"]},
-                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "decision": {
+                                "type": "string",
+                                "enum": ["equivalent", "distinct", "uncertain"],
+                            },
+                            "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                            },
                             "reason": {"type": "string"},
                         },
                         "required": ["decision", "confidence", "reason"],
@@ -57,7 +69,11 @@ class DedupJudge:
                 ),
             )
         )
-        data = response.content if isinstance(response.content, dict) else json.loads(response.content)
+        data = (
+            response.content
+            if isinstance(response.content, dict)
+            else json.loads(response.content)
+        )
         decision = str(data.get("decision", ""))
         if decision not in {"equivalent", "distinct", "uncertain"}:
             raise ValueError(f"invalid dedup decision: {decision}")

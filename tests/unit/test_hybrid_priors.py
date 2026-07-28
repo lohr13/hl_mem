@@ -41,29 +41,53 @@ def _claim(connection, claim_id="c", **values):
 def test_migration_defaults_and_index(tmp_path):
     connection = Database(tmp_path / "m.db").open()
     _claim(connection)
-    row = connection.execute("SELECT scope,access_count,last_accessed_at,last_decayed_at FROM claims").fetchone()
+    row = connection.execute(
+        "SELECT scope,access_count,last_accessed_at,last_decayed_at FROM claims"
+    ).fetchone()
     assert tuple(row) == ("permanent", 0, None, None)
-    assert connection.execute("SELECT 1 FROM sqlite_master WHERE name='idx_claims_decay'").fetchone()
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='idx_claims_decay'"
+    ).fetchone()
 
 
 def test_migration_constraints(tmp_path):
     connection = Database(tmp_path / "m.db").open()
     with pytest.raises(sqlite3.IntegrityError):
-        connection.execute("INSERT INTO claims(id,recorded_from,scope) VALUES ('bad-scope',?,?)", (NOW, "other"))
+        connection.execute(
+            "INSERT INTO claims(id,recorded_from,scope) VALUES ('bad-scope',?,?)",
+            (NOW, "other"),
+        )
     with pytest.raises(sqlite3.IntegrityError):
-        connection.execute("INSERT INTO claims(id,recorded_from,access_count) VALUES ('bad-count',?,-1)", (NOW,))
+        connection.execute(
+            "INSERT INTO claims(id,recorded_from,access_count) VALUES ('bad-count',?,-1)",
+            (NOW,),
+        )
 
 
 def test_narrowed_trigger_ignores_metadata_but_refreshes_text(tmp_path):
     connection = Database(tmp_path / "fts.db").open()
     _claim(connection)
     before = connection.total_changes
-    connection.execute("UPDATE claims SET access_count=1,confidence=.8,status='disputed' WHERE id='c'")
+    connection.execute(
+        "UPDATE claims SET access_count=1,confidence=.8,status='disputed' WHERE id='c'"
+    )
     # migration 018 tags FTS trigger adds extra changes on UPDATE
     assert connection.total_changes - before >= 1
-    connection.execute("UPDATE claims SET value_json='\"coffee\"',index_text='user likes coffee' WHERE id='c'")
-    assert connection.execute("SELECT count(*) FROM claims_fts WHERE claims_fts MATCH 'coffee'").fetchone()[0] == 1
-    assert connection.execute("SELECT count(*) FROM claims_fts WHERE claims_fts MATCH 'tea'").fetchone()[0] == 0
+    connection.execute(
+        "UPDATE claims SET value_json='\"coffee\"',index_text='user likes coffee' WHERE id='c'"
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM claims_fts WHERE claims_fts MATCH 'coffee'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM claims_fts WHERE claims_fts MATCH 'tea'"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.parametrize("query", ["[", "]", "(", ")", ":", "*", "^", '"', "   "])
@@ -79,7 +103,10 @@ def test_claim_fts_quoted_tokens_still_match_text(tmp_path):
     connection = Database(tmp_path / "fts-literal.db").open()
     _claim(connection)
 
-    assert [claim["id"] for claim in ClaimRepository(connection).search_claims_fts("likes tea")] == ["c"]
+    assert [
+        claim["id"]
+        for claim in ClaimRepository(connection).search_claims_fts("likes tea")
+    ] == ["c"]
 
 
 def test_extracted_fields_are_appended_defaults():
@@ -88,12 +115,16 @@ def test_extracted_fields_are_appended_defaults():
 
 
 def test_llm_claim_parses_and_clamps():
-    claim = LLMExtractor._claim({"value": "x", "scope": "temporal", "importance": 4, "confidence": -2})
+    claim = LLMExtractor._claim(
+        {"value": "x", "scope": "temporal", "importance": 4, "confidence": -2}
+    )
     assert (claim.scope, claim.importance, claim.confidence) == ("temporal", 1.0, 0.0)
 
 
 def test_llm_claim_invalid_defaults_and_prompt():
-    claim = LLMExtractor._claim({"value": "x", "scope": "bad", "importance": "bad", "confidence": None})
+    claim = LLMExtractor._claim(
+        {"value": "x", "scope": "bad", "importance": "bad", "confidence": None}
+    )
     assert (claim.scope, claim.importance, claim.confidence) == ("permanent", 0.5, 0.5)
     assert "independent from volatility" in SYSTEM_PROMPT
 
@@ -124,8 +155,12 @@ def test_llm_claim_projects_predicate_after_attribute_reconciliation():
 def test_ttl_matrix(tmp_path, volatility, scope, expires):
     connection = Database(tmp_path / f"{volatility}-{scope}.db").open()
     extracted = ExtractedClaim("p", "v", volatility=volatility, scope=scope)
-    claim_id = store_extracted(connection, extracted, {"id": "e", "actor_type": "user"}, NOW, FakeEmbedder(2)).claim_id
-    row = connection.execute("SELECT expires_at,scope,importance FROM claims WHERE id=?", (claim_id,)).fetchone()
+    claim_id = store_extracted(
+        connection, extracted, {"id": "e", "actor_type": "user"}, NOW, FakeEmbedder(2)
+    ).claim_id
+    row = connection.execute(
+        "SELECT expires_at,scope,importance FROM claims WHERE id=?", (claim_id,)
+    ).fetchone()
     assert tuple(row) == (expires, scope, 0.5)
 
 
@@ -153,8 +188,22 @@ def test_ranking_malformed_date_is_safe():
 
 
 def test_memory_score_exact_weights_and_semantic_dominates():
-    high_semantic = {"semantic": 1, "recency": 0, "access_frequency": 0, "confidence": 0, "importance": 0, "utility": 0}
-    priors = {"semantic": 0, "recency": 1, "access_frequency": 1, "confidence": 1, "importance": 1, "utility": 1}
+    high_semantic = {
+        "semantic": 1,
+        "recency": 0,
+        "access_frequency": 0,
+        "confidence": 0,
+        "importance": 0,
+        "utility": 0,
+    }
+    priors = {
+        "semantic": 0,
+        "recency": 1,
+        "access_frequency": 1,
+        "confidence": 1,
+        "importance": 1,
+        "utility": 1,
+    }
     assert memory_score(high_semantic) == pytest.approx(0.65)
     assert memory_score(priors) == pytest.approx(0.35)
 
@@ -173,13 +222,21 @@ def test_historical_helpful_rate_breaks_otherwise_equal_ranking(tmp_path):
     )
     connection.commit()
 
-    results = hybrid_claims(ClaimRepository(connection), "likes tea", pack_vector([1.0]), 2, None, now=NOW)
+    results = hybrid_claims(
+        ClaimRepository(connection), "likes tea", pack_vector([1.0]), 2, None, now=NOW
+    )
 
     assert [item["id"] for item in results] == ["helpful", "unhelpful"]
 
 
 def test_reranker_blend_clamps_and_uses_prior():
-    low = {"recency": 0, "access_frequency": 0, "confidence": 0, "importance": 0, "utility": 0}
+    low = {
+        "recency": 0,
+        "access_frequency": 0,
+        "confidence": 0,
+        "importance": 0,
+        "utility": 0,
+    }
     high = {key: 1 for key in low}
     assert blend_reranker_score(3, low) == 0.8
     assert blend_reranker_score(0.5, high) == pytest.approx(0.6)
@@ -189,9 +246,14 @@ def test_record_access_deduplicates_and_filters_status(tmp_path):
     connection = Database(tmp_path / "access.db").open()
     _claim(connection, "active")
     _claim(connection, "archived", status="archived")
-    assert ClaimRepository(connection).record_access(["active", "active", "archived"], NOW) == 1
+    assert (
+        ClaimRepository(connection).record_access(["active", "active", "archived"], NOW)
+        == 1
+    )
     assert tuple(
-        connection.execute("SELECT access_count,last_accessed_at FROM claims WHERE id='active'").fetchone()
+        connection.execute(
+            "SELECT access_count,last_accessed_at FROM claims WHERE id='active'"
+        ).fetchone()
     ) == (1, NOW)
 
 
@@ -199,12 +261,18 @@ def test_vector_search_is_bounded_and_sorted(tmp_path):
     connection = Database(tmp_path / "vector.db").open()
     _claim(connection, "opposite", embedding_dense=pack_vector([-1.0]))
     _claim(connection, "same", embedding_dense=pack_vector([1.0]))
-    assert [c["id"] for c in ClaimRepository(connection).search_claims_vector(pack_vector([1.0]), 1)] == ["same"]
+    assert [
+        c["id"]
+        for c in ClaimRepository(connection).search_claims_vector(pack_vector([1.0]), 1)
+    ] == ["same"]
 
 
 def test_hybrid_priors_break_semantic_tie():
     class Repo:
-        claims = [{"id": "low", "confidence": 0, "importance": 0}, {"id": "high", "confidence": 1, "importance": 1}]
+        claims = [
+            {"id": "low", "confidence": 0, "importance": 0},
+            {"id": "high", "confidence": 1, "importance": 1},
+        ]
 
         def search_claims_fts(self, *args, **kwargs):
             return self.claims
@@ -218,4 +286,7 @@ def test_hybrid_priors_break_semantic_tie():
         def helpful_rates(self, *args, **kwargs):
             return {}
 
-    assert hybrid_claims(Repo(), "q", pack_vector([1]), 2, None, now=NOW)[0]["id"] == "high"
+    assert (
+        hybrid_claims(Repo(), "q", pack_vector([1]), 2, None, now=NOW)[0]["id"]
+        == "high"
+    )

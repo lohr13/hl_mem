@@ -29,7 +29,12 @@ class Embedder:
         max_attempts: int = 3,
         client: httpx.Client | None = None,
     ) -> None:
-        self.api_key, self.base_url, self.model, self.dim = api_key, base_url.rstrip("/"), model, dim
+        self.api_key, self.base_url, self.model, self.dim = (
+            api_key,
+            base_url.rstrip("/"),
+            model,
+            dim,
+        )
         self.timeout = httpx.Timeout(read_timeout, connect=connect_timeout)
         self.max_attempts = max_attempts
         self._client = client
@@ -62,7 +67,11 @@ class Embedder:
 
         try:
             response = retry_http(send_request, max_attempts=self.max_attempts)
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as error:
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+        ) as error:
             DEFAULT_PROVIDER_METRICS.record(
                 ProviderCall(
                     "embedding",
@@ -80,9 +89,13 @@ class Embedder:
             raise ValueError("embedding response count does not match input count")
         blobs = [pack_vector(item["embedding"]) for item in data]
         if any(len(blob) != self.dim * 4 for blob in blobs):
-            raise ValueError("embedding response dimension does not match configured dimension")
+            raise ValueError(
+                "embedding response dimension does not match configured dimension"
+            )
         DEFAULT_PROVIDER_METRICS.record(
-            ProviderCall("embedding", "embed", "success", (time.perf_counter() - started) * 1000)
+            ProviderCall(
+                "embedding", "embed", "success", (time.perf_counter() - started) * 1000
+            )
         )
         return blobs
 
@@ -104,5 +117,7 @@ class FakeEmbedder:
 
     def embed_one(self, text: str) -> bytes:
         seed = hashlib.sha256(text.casefold().encode("utf-8")).digest()
-        values = [((seed[index % len(seed)] / 127.5) - 1.0) for index in range(self.dim)]
+        values = [
+            ((seed[index % len(seed)] / 127.5) - 1.0) for index in range(self.dim)
+        ]
         return pack_vector(values)

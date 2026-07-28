@@ -27,8 +27,14 @@ def cosine_similarity(query_blob: bytes, target_blob: bytes) -> float:
     target = unpack_vector(target_blob)
     if len(query) != len(target):
         raise ValueError("embedding dimensions differ")
-    denominator = math.sqrt(sum(value * value for value in query) * sum(value * value for value in target))
-    return sum(left * right for left, right in zip(query, target)) / denominator if denominator else 0.0
+    denominator = math.sqrt(
+        sum(value * value for value in query) * sum(value * value for value in target)
+    )
+    return (
+        sum(left * right for left, right in zip(query, target)) / denominator
+        if denominator
+        else 0.0
+    )
 
 
 def normalized_vector(blob: bytes) -> tuple[float, ...]:
@@ -40,7 +46,9 @@ def normalized_vector(blob: bytes) -> tuple[float, ...]:
     return tuple(value / norm for value in vector)
 
 
-def normalized_cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
+def normalized_cosine_similarity(
+    left: Sequence[float], right: Sequence[float]
+) -> float:
     """计算两个已归一化向量的点积相似度。"""
     if len(left) != len(right):
         raise ValueError("embedding dimensions differ")

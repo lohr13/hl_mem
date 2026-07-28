@@ -68,7 +68,11 @@ def test_provider_parses_response_metadata() -> None:
             "usage": {"total_tokens": 7},
         }
     )
-    assert (response.finish_reason, response.usage_total_tokens, response.raw_request_id) == (
+    assert (
+        response.finish_reason,
+        response.usage_total_tokens,
+        response.raw_request_id,
+    ) == (
         "stop",
         7,
         "request-1",
@@ -88,12 +92,18 @@ def test_provider_parses_token_breakdown() -> None:
             },
         }
     )
-    assert (response.input_tokens, response.output_tokens, response.cached_tokens) == (5, 3, 2)
+    assert (response.input_tokens, response.output_tokens, response.cached_tokens) == (
+        5,
+        3,
+        2,
+    )
 
 
 def test_only_explicit_structured_format_errors_are_unsupported() -> None:
     provider = OpenAICompatibleProvider()
     request = httpx.Request("POST", "https://example.test/chat/completions")
-    response = httpx.Response(400, request=request, text="response_format json_schema unsupported")
+    response = httpx.Response(
+        400, request=request, text="response_format json_schema unsupported"
+    )
     error = httpx.HTTPStatusError("bad request", request=request, response=response)
     assert provider.is_structured_mode_unsupported(error) is True

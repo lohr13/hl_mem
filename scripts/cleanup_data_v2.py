@@ -34,9 +34,15 @@ def main():
     print("=" * 60)
 
     # 0a. Count before
-    expired_cnt = conn.execute("SELECT COUNT(*) FROM claims WHERE status='expired'").fetchone()[0]
-    superseded_cnt = conn.execute("SELECT COUNT(*) FROM claims WHERE status='superseded'").fetchone()[0]
-    print(f"Before: expired={expired_cnt}, superseded={superseded_cnt}, total_dead={expired_cnt + superseded_cnt}")
+    expired_cnt = conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE status='expired'"
+    ).fetchone()[0]
+    superseded_cnt = conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE status='superseded'"
+    ).fetchone()[0]
+    print(
+        f"Before: expired={expired_cnt}, superseded={superseded_cnt}, total_dead={expired_cnt + superseded_cnt}"
+    )
 
     if not DRY_RUN:
         # Disable FK during cleanup (we'll clean in dependency order)
@@ -106,10 +112,18 @@ def main():
         conn.execute("PRAGMA foreign_keys = ON")
 
     # Verify
-    remaining_expired = conn.execute("SELECT COUNT(*) FROM claims WHERE status='expired'").fetchone()[0]
-    remaining_superseded = conn.execute("SELECT COUNT(*) FROM claims WHERE status='superseded'").fetchone()[0]
-    remaining_active = conn.execute("SELECT COUNT(*) FROM claims WHERE status='active'").fetchone()[0]
-    log(f"After: expired={remaining_expired}, superseded={remaining_superseded}, active={remaining_active}")
+    remaining_expired = conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE status='expired'"
+    ).fetchone()[0]
+    remaining_superseded = conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE status='superseded'"
+    ).fetchone()[0]
+    remaining_active = conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE status='active'"
+    ).fetchone()[0]
+    log(
+        f"After: expired={remaining_expired}, superseded={remaining_superseded}, active={remaining_active}"
+    )
 
     # ══════════════════════════════════════════════════════════════
     # P1: 重分类 fact.other
@@ -191,7 +205,18 @@ def main():
             "fact.decision",
         ),
         (
-            ["CLI", "--version", "healthz", "端点", "支持", "能力", "可以", "能够", "支持查询", "支持配置"],
+            [
+                "CLI",
+                "--version",
+                "healthz",
+                "端点",
+                "支持",
+                "能力",
+                "可以",
+                "能够",
+                "支持查询",
+                "支持配置",
+            ],
             "fact.capability",
         ),
         (
@@ -210,7 +235,10 @@ def main():
             ],
             "fact.issue",
         ),
-        (["接口", "REST", "API", "endpoint", "HTTP", "schema", "OpenAPI"], "fact.api_design"),
+        (
+            ["接口", "REST", "API", "endpoint", "HTTP", "schema", "OpenAPI"],
+            "fact.api_design",
+        ),
         (["worker", "异步", "队列", "job", "定时", "04:00"], "fact.worker"),
     ]
 
@@ -244,7 +272,11 @@ def main():
                 # Update topic_tags too
                 tags = []
                 try:
-                    tags = json.loads(row["topic_tags_json"]) if row["topic_tags_json"] else []
+                    tags = (
+                        json.loads(row["topic_tags_json"])
+                        if row["topic_tags_json"]
+                        else []
+                    )
                 except Exception:
                     pass
                 new_tags = list(set(tags + new_attr.split(".")[1:]))
@@ -253,7 +285,9 @@ def main():
                     (new_attr, json.dumps(new_tags), row["id"]),
                 )
 
-    print(f"Reclassified {sum(reclassified.values())} / {len(fact_others)} fact.other claims:")
+    print(
+        f"Reclassified {sum(reclassified.values())} / {len(fact_others)} fact.other claims:"
+    )
     for attr, cnt in reclassified.most_common():
         print(f"  → {attr}: {cnt}")
 
@@ -295,7 +329,12 @@ def main():
 
         # Sort: prefer 用户 > hl_mem > others; then by importance desc
         subject_priority = {"用户": 0, "hl_mem": 1, "Hermes": 2}
-        rows_info.sort(key=lambda x: (subject_priority.get(x["subject_entity_id"], 99), -x["importance"]))
+        rows_info.sort(
+            key=lambda x: (
+                subject_priority.get(x["subject_entity_id"], 99),
+                -x["importance"],
+            )
+        )
 
         keeper = rows_info[0]
         to_supersede = rows_info[1:]
@@ -382,7 +421,9 @@ def main():
     print("Final Statistics")
     print("=" * 60)
 
-    for r in conn.execute("SELECT status, COUNT(*) as cnt FROM claims GROUP BY status ORDER BY cnt DESC"):
+    for r in conn.execute(
+        "SELECT status, COUNT(*) as cnt FROM claims GROUP BY status ORDER BY cnt DESC"
+    ):
         print(f"  {r['status']}: {r['cnt']}")
 
     total = conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
@@ -399,12 +440,18 @@ def main():
     fact_other = conn.execute(
         "SELECT COUNT(*) FROM claims WHERE status='active' AND canonical_attribute='fact.other'"
     ).fetchone()[0]
-    total_active = conn.execute("SELECT COUNT(*) FROM claims WHERE status='active'").fetchone()[0]
+    total_active = conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE status='active'"
+    ).fetchone()[0]
     if total_active > 0:
-        print(f"\n  fact.other ratio: {fact_other}/{total_active} = {fact_other/total_active*100:.1f}%")
+        print(
+            f"\n  fact.other ratio: {fact_other}/{total_active} = {fact_other / total_active * 100:.1f}%"
+        )
 
     conn.close()
-    print(f"\n{'DRY RUN' if DRY_RUN else 'COMPLETED'} — backup at var/hl_mem_backup_*.db")
+    print(
+        f"\n{'DRY RUN' if DRY_RUN else 'COMPLETED'} — backup at var/hl_mem_backup_*.db"
+    )
 
 
 if __name__ == "__main__":

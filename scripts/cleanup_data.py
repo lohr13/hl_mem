@@ -90,14 +90,23 @@ def analyze(db: sqlite3.Connection) -> dict:
         "config.hardware",
     }
     for row in db.execute(
-        "SELECT id, canonical_attribute, conflict_key " "FROM claims WHERE status = 'disputed'"
+        "SELECT id, canonical_attribute, conflict_key "
+        "FROM claims WHERE status = 'disputed'"
     ).fetchall():
         d = dict(row)
         attr = d["canonical_attribute"]
         # Restore all disputed with generic attrs (they're all false disputes)
-        if attr in generic_attrs or ".other" in attr or attr.startswith("plan.") or attr.startswith("state."):
+        if (
+            attr in generic_attrs
+            or ".other" in attr
+            or attr.startswith("plan.")
+            or attr.startswith("state.")
+        ):
             actions["restore_disputed"].append(
-                (d["id"], f"generic attr '{attr}' = false dispute, ck={d['conflict_key'][:8]}")
+                (
+                    d["id"],
+                    f"generic attr '{attr}' = false dispute, ck={d['conflict_key'][:8]}",
+                )
             )
 
     # === 2. Expire stale temporal claims ===
@@ -138,7 +147,9 @@ def analyze(db: sqlite3.Connection) -> dict:
         if is_hindsight:
             actions["expire_stale"].append((d["id"], "hindsight reference (retired)"))
         elif is_stale and d["canonical_attribute"].startswith("state."):
-            actions["expire_stale"].append((d["id"], f"stale state snapshot: {text[:50]}"))
+            actions["expire_stale"].append(
+                (d["id"], f"stale state snapshot: {text[:50]}")
+            )
         elif is_stale and "test" in text:
             actions["expire_stale"].append((d["id"], f"stale test result: {text[:50]}"))
 
@@ -171,19 +182,31 @@ def analyze(db: sqlite3.Connection) -> dict:
             for s in seen:
                 if is_near_duplicate(c["text"], s["text"]):
                     # Keep higher confidence / more recent
-                    keep, drop = (s, c) if s["confidence"] >= c["confidence"] else (c, s)
+                    keep, drop = (
+                        (s, c) if s["confidence"] >= c["confidence"] else (c, s)
+                    )
                     if keep["id"] == s["id"]:
                         actions["dedup_supersede"].append(
-                            (s["id"], c["id"], f"dup of [{s['id'][:8]}]: {c['text'][:40]}")
+                            (
+                                s["id"],
+                                c["id"],
+                                f"dup of [{s['id'][:8]}]: {c['text'][:40]}",
+                            )
                         )
                     else:
                         # c should be kept, s should be superseded — but s was already seen
                         # Remove previous supersede if any, add reverse
                         actions["dedup_supersede"] = [
-                            (k, d2, r) for k, d2, r in actions["dedup_supersede"] if d2 != s["id"]
+                            (k, d2, r)
+                            for k, d2, r in actions["dedup_supersede"]
+                            if d2 != s["id"]
                         ]
                         actions["dedup_supersede"].append(
-                            (c["id"], s["id"], f"dup of [{c['id'][:8]}]: {s['text'][:40]}")
+                            (
+                                c["id"],
+                                s["id"],
+                                f"dup of [{c['id'][:8]}]: {s['text'][:40]}",
+                            )
                         )
                     is_dup = True
                     break
@@ -216,7 +239,9 @@ def analyze(db: sqlite3.Connection) -> dict:
             text = (d["value_json"] or "").lower()
 
         if any(kw.lower() in text for kw in completed_keywords):
-            actions["archive_completed"].append((d["id"], f"completed plan: {str(v)[:50]}"))
+            actions["archive_completed"].append(
+                (d["id"], f"completed plan: {str(v)[:50]}")
+            )
 
     return actions
 
@@ -224,19 +249,21 @@ def analyze(db: sqlite3.Connection) -> dict:
 def print_dry_run(actions: dict, db: sqlite3.Connection):
     """Print dry-run summary."""
     total = sum(len(v) for v in actions.values())
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"DRY RUN — {total} proposed changes")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     for op, items in actions.items():
         print(f"\n--- {op} ({len(items)}) ---")
         for item in items[:10]:  # Show first 10
             print(f"  {item}")
         if len(items) > 10:
-            print(f"  ... and {len(items)-10} more")
+            print(f"  ... and {len(items) - 10} more")
 
     # Summary stats
-    r = db.execute("SELECT status, COUNT(*) as c FROM claims GROUP BY status ORDER BY c DESC").fetchall()
+    r = db.execute(
+        "SELECT status, COUNT(*) as c FROM claims GROUP BY status ORDER BY c DESC"
+    ).fetchall()
     print("\n--- Current status distribution ---")
     for row in r:
         print(f"  {row['status']}: {row['c']}")
@@ -251,8 +278,12 @@ def print_dry_run(actions: dict, db: sqlite3.Connection):
     projected = dict(current)
 
     # Apply projected changes
-    projected["disputed"] = current.get("disputed", 0) - len(restore_ids - expire_ids - archive_ids - dedup_drop_ids)
-    projected["active"] = current.get("active", 0) + len(restore_ids & {x[0] for x in []})  # rough
+    projected["disputed"] = current.get("disputed", 0) - len(
+        restore_ids - expire_ids - archive_ids - dedup_drop_ids
+    )
+    projected["active"] = current.get("active", 0) + len(
+        restore_ids & {x[0] for x in []}
+    )  # rough
 
     print("\n--- Projected changes ---")
     print(f"  disputed → active: {len(restore_ids)}")
@@ -272,22 +303,34 @@ def execute_cleanup(db: sqlite3.Connection, actions: dict):
 
     # 1. Restore false disputed → active
     for claim_id, reason in actions["restore_disputed"]:
-        db.execute("UPDATE claims SET status = 'active' WHERE id = ? AND status = 'disputed'", (claim_id,))
+        db.execute(
+            "UPDATE claims SET status = 'active' WHERE id = ? AND status = 'disputed'",
+            (claim_id,),
+        )
         count += 1
 
     # 2. Expire stale temporal
     for claim_id, reason in actions["expire_stale"]:
-        db.execute("UPDATE claims SET status = 'expired', expires_at = ? WHERE id = ?", (now, claim_id))
+        db.execute(
+            "UPDATE claims SET status = 'expired', expires_at = ? WHERE id = ?",
+            (now, claim_id),
+        )
         count += 1
 
     # 3. Dedup supersede
     for keep_id, drop_id, reason in actions["dedup_supersede"]:
-        db.execute("UPDATE claims SET status = 'superseded', superseded_by_id = ? WHERE id = ?", (keep_id, drop_id))
+        db.execute(
+            "UPDATE claims SET status = 'superseded', superseded_by_id = ? WHERE id = ?",
+            (keep_id, drop_id),
+        )
         count += 1
 
     # 4. Archive completed plans
     for claim_id, reason in actions["archive_completed"]:
-        db.execute("UPDATE claims SET status = 'expired', expires_at = ? WHERE id = ?", (now, claim_id))
+        db.execute(
+            "UPDATE claims SET status = 'expired', expires_at = ? WHERE id = ?",
+            (now, claim_id),
+        )
         count += 1
 
     db.commit()
@@ -296,8 +339,12 @@ def execute_cleanup(db: sqlite3.Connection, actions: dict):
 
 def main():
     parser = argparse.ArgumentParser(description="hl_mem data cleanup")
-    parser.add_argument("--dry-run", action="store_true", default=True, help="Dry run (default)")
-    parser.add_argument("--execute", action="store_true", help="Actually execute changes")
+    parser.add_argument(
+        "--dry-run", action="store_true", default=True, help="Dry run (default)"
+    )
+    parser.add_argument(
+        "--execute", action="store_true", help="Actually execute changes"
+    )
     parser.add_argument("--db", type=Path, default=DB_PATH, help="Database path")
     args = parser.parse_args()
 
@@ -314,9 +361,12 @@ def main():
     print_dry_run(actions, db)
 
     if args.execute:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("BACKING UP DATABASE...")
-        backup_path = args.db.parent / f"hl_mem_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        backup_path = (
+            args.db.parent
+            / f"hl_mem_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        )
         shutil.copy2(str(args.db), str(backup_path))
         print(f"Backup: {backup_path}")
 
@@ -325,7 +375,9 @@ def main():
         print(f"Done! {count} changes applied.")
 
         # Final stats
-        r = db.execute("SELECT status, COUNT(*) as c FROM claims GROUP BY status ORDER BY c DESC").fetchall()
+        r = db.execute(
+            "SELECT status, COUNT(*) as c FROM claims GROUP BY status ORDER BY c DESC"
+        ).fetchall()
         print("\n--- Final status distribution ---")
         for row in r:
             print(f"  {row['status']}: {row['c']}")

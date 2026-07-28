@@ -41,7 +41,7 @@ for query in ["hl_mem", "唇形同步", "配置", "memory"]:
         vec = unpack_vector(blob)
         print(f"  Vector dim: {len(vec)}")
         print(f"  First 5: {vec[:5]}")
-        print(f"  Norm: {sum(v*v for v in vec)**0.5:.4f}")
+        print(f"  Norm: {sum(v * v for v in vec) ** 0.5:.4f}")
     except Exception as e:
         print(f"  ERROR: {type(e).__name__}: {e}")
 
@@ -58,7 +58,9 @@ for query in ["唇形同步", "配置", "hl_mem"]:
     print(f"\n--- '{query}' ---")
     try:
         blob = embedder.embed_one(query)
-        results = repo.search_claims_vector(blob, 5, None, None, None, namespace="default")
+        results = repo.search_claims_vector(
+            blob, 5, None, None, None, namespace="default"
+        )
         print(f"  Dense results: {len(results)}")
         for r in results[:3]:
             val = ""
@@ -67,7 +69,7 @@ for query in ["唇形同步", "配置", "hl_mem"]:
                 val = v.get("text", str(v))[:60] if isinstance(v, dict) else str(v)[:60]
             except Exception:
                 pass
-            print(f"    {r['id'][:12]} {r.get('subject_entity_id','?')} | {val}")
+            print(f"    {r['id'][:12]} {r.get('subject_entity_id', '?')} | {val}")
     except Exception as e:
         print(f"  ERROR: {type(e).__name__}: {e}")
 

@@ -47,7 +47,11 @@ def test_evaluate_results_scores_hit_content_status_and_evidence() -> None:
 
     assert score.recall_at_5 == 1.0
     assert score.top_1_correct == 1.0
-    assert score.keyword_correct and score.confidence_correct and score.evidence_correct == 1.0
+    assert (
+        score.keyword_correct
+        and score.confidence_correct
+        and score.evidence_correct == 1.0
+    )
     assert score.stale_hits == 0
     assert score.latency_ms == 12.5
 
@@ -57,9 +61,9 @@ def test_rank_metrics_use_relevant_result_positions() -> None:
     relevant = {"right", "other-right"}
 
     assert compute_mrr(relevant, results) == 0.5
-    assert compute_binary_ndcg_at_10(relevant, results) == (1.0 / 1.584962500721156 + 1.0 / 2.0) / (
-        1.0 + 1.0 / 1.584962500721156
-    )
+    assert compute_binary_ndcg_at_10(relevant, results) == (
+        1.0 / 1.584962500721156 + 1.0 / 2.0
+    ) / (1.0 + 1.0 / 1.584962500721156)
 
 
 def test_evaluate_results_populates_rank_metrics_only_for_claim_cases() -> None:
@@ -143,7 +147,17 @@ def test_aggregate_metrics_handles_answer_and_empty_cases() -> None:
             relevant_claim_ids=(),
             expected_evidence_event_ids=(),
         ),
-        {"results": [{"id": "noise", "status": "active", "text": "x", "confidence": 1.0, "evidence": []}]},
+        {
+            "results": [
+                {
+                    "id": "noise",
+                    "status": "active",
+                    "text": "x",
+                    "confidence": 1.0,
+                    "evidence": [],
+                }
+            ]
+        },
     )
 
     metrics = aggregate_metrics([answer, empty_true, empty_false])

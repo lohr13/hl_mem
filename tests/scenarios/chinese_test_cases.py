@@ -23,7 +23,11 @@ CHINESE_TEST_CASES = [
     {"input": "旧邮件写截止日是周三", "expected": "周三", "status": "superseded"},
     {"input": "记住测试环境不能发短信", "expected": "不能发短信", "status": "active"},
     {"input": "忘掉旧的测试账号", "expected": "测试账号", "status": "expired"},
-    {"input": "类似任务优先复用数据校验脚本", "expected": "校验脚本", "status": "active"},
+    {
+        "input": "类似任务优先复用数据校验脚本",
+        "expected": "校验脚本",
+        "status": "active",
+    },
     {"input": "那个服务是订单 API", "expected": "订单 API", "status": "active"},
     {"input": "订单 API 目前超时", "expected": "超时", "status": "expired"},
     {"input": "运维说节点有三台", "expected": "三台", "status": "disputed"},
@@ -37,7 +41,9 @@ CHINESE_TEST_CASES = [
 def test_chinese_memory_scenarios_have_complete_expectations() -> None:
     """每条中文记忆场景都应包含完整且有效的行为预期。"""
     assert len(CHINESE_TEST_CASES) == 30
-    assert all(set(case) == {"input", "expected", "status"} for case in CHINESE_TEST_CASES)
+    assert all(
+        set(case) == {"input", "expected", "status"} for case in CHINESE_TEST_CASES
+    )
     assert {case["status"] for case in CHINESE_TEST_CASES} == {
         "active",
         "disputed",

@@ -78,13 +78,15 @@ POLICY_TRANSITIONS: frozenset[tuple[PolicyStatus, PolicyStatus]] = frozenset(
 )
 
 
-DERIVATION_TRANSITIONS: frozenset[tuple[DerivationStatus, DerivationStatus]] = frozenset(
-    {
-        (DerivationStatus.ACTIVE, DerivationStatus.STALE),
-        (DerivationStatus.STALE, DerivationStatus.ACTIVE),
-        (DerivationStatus.ACTIVE, DerivationStatus.ARCHIVED),
-        (DerivationStatus.ARCHIVED, DerivationStatus.ACTIVE),
-    }
+DERIVATION_TRANSITIONS: frozenset[tuple[DerivationStatus, DerivationStatus]] = (
+    frozenset(
+        {
+            (DerivationStatus.ACTIVE, DerivationStatus.STALE),
+            (DerivationStatus.STALE, DerivationStatus.ACTIVE),
+            (DerivationStatus.ACTIVE, DerivationStatus.ARCHIVED),
+            (DerivationStatus.ARCHIVED, DerivationStatus.ACTIVE),
+        }
+    )
 )
 
 
@@ -111,9 +113,13 @@ def assert_transition(from_status: str, to_status: str) -> None:
     try:
         transition = (ClaimStatus(from_status), ClaimStatus(to_status))
     except ValueError as error:
-        raise InvalidTransitionError(f"invalid claim status transition: {from_status} -> {to_status}") from error
+        raise InvalidTransitionError(
+            f"invalid claim status transition: {from_status} -> {to_status}"
+        ) from error
     if transition not in ALLOWED_TRANSITIONS:
-        raise InvalidTransitionError(f"invalid claim status transition: {from_status} -> {to_status}")
+        raise InvalidTransitionError(
+            f"invalid claim status transition: {from_status} -> {to_status}"
+        )
 
 
 def assert_episode_transition(from_status: str, to_status: str) -> None:
@@ -121,9 +127,13 @@ def assert_episode_transition(from_status: str, to_status: str) -> None:
     try:
         transition = (EpisodeStatus(from_status), EpisodeStatus(to_status))
     except ValueError as error:
-        raise InvalidTransitionError(f"invalid episode status transition: {from_status} -> {to_status}") from error
+        raise InvalidTransitionError(
+            f"invalid episode status transition: {from_status} -> {to_status}"
+        ) from error
     if transition not in ALLOWED_EPISODE_TRANSITIONS:
-        raise InvalidTransitionError(f"invalid episode status transition: {from_status} -> {to_status}")
+        raise InvalidTransitionError(
+            f"invalid episode status transition: {from_status} -> {to_status}"
+        )
 
 
 def assert_valid_policy_transition(from_status: str, to_status: str) -> None:
@@ -131,9 +141,13 @@ def assert_valid_policy_transition(from_status: str, to_status: str) -> None:
     try:
         transition = (PolicyStatus(from_status), PolicyStatus(to_status))
     except ValueError as error:
-        raise InvalidTransitionError(f"invalid policy status transition: {from_status} -> {to_status}") from error
+        raise InvalidTransitionError(
+            f"invalid policy status transition: {from_status} -> {to_status}"
+        ) from error
     if transition not in POLICY_TRANSITIONS:
-        raise InvalidTransitionError(f"invalid policy status transition: {from_status} -> {to_status}")
+        raise InvalidTransitionError(
+            f"invalid policy status transition: {from_status} -> {to_status}"
+        )
 
 
 def assert_valid_derivation_transition(from_status: str, to_status: str) -> None:
@@ -141,6 +155,10 @@ def assert_valid_derivation_transition(from_status: str, to_status: str) -> None
     try:
         transition = (DerivationStatus(from_status), DerivationStatus(to_status))
     except ValueError as error:
-        raise InvalidTransitionError(f"invalid derivation status transition: {from_status} -> {to_status}") from error
+        raise InvalidTransitionError(
+            f"invalid derivation status transition: {from_status} -> {to_status}"
+        ) from error
     if transition not in DERIVATION_TRANSITIONS:
-        raise InvalidTransitionError(f"invalid derivation status transition: {from_status} -> {to_status}")
+        raise InvalidTransitionError(
+            f"invalid derivation status transition: {from_status} -> {to_status}"
+        )

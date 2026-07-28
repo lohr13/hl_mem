@@ -16,13 +16,17 @@ class RelationProposalRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    def insert_proposal(self, proposal: dict[str, Any], commit: bool = True) -> str | None:
+    def insert_proposal(
+        self, proposal: dict[str, Any], commit: bool = True
+    ) -> str | None:
         """插入本次运行的不可变提案；仅同一 run 的唯一键冲突返回 None。"""
         stored = dict(proposal)
         stored.setdefault("id", uuid.uuid4().hex)
         stored.setdefault("run_id", uuid.uuid4().hex)
         stored["supporting_claim_ids_json"] = json.dumps(
-            stored.pop("supporting_claim_ids", []), ensure_ascii=False, separators=(",", ":")
+            stored.pop("supporting_claim_ids", []),
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
         inserted = insert_row(self.connection, "relation_proposals", stored, commit)
         return str(stored["id"]) if inserted else None
@@ -42,7 +46,14 @@ class RelationProposalRepository:
         cursor = self.connection.execute(
             "UPDATE relation_proposals SET status=?,decision_reason=?,relation_id=?,conflict_case_id=?,decided_at=? "
             "WHERE id=?",
-            (status, decision_reason, relation_id, conflict_case_id, decided_at, proposal_id),
+            (
+                status,
+                decision_reason,
+                relation_id,
+                conflict_case_id,
+                decided_at,
+                proposal_id,
+            ),
         )
         if commit:
             self.connection.commit()
@@ -56,5 +67,7 @@ class RelationProposalRepository:
         ).fetchall()
         result = [dict(row) for row in rows]
         for proposal in result:
-            proposal["supporting_claim_ids"] = json.loads(proposal.pop("supporting_claim_ids_json"))
+            proposal["supporting_claim_ids"] = json.loads(
+                proposal.pop("supporting_claim_ids_json")
+            )
         return result

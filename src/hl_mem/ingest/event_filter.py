@@ -26,11 +26,15 @@ class EventFilter:
             except (json.JSONDecodeError, TypeError):
                 pass
         text = self._text(content).strip()
-        if event.get("actor_type") == "assistant" and self.acknowledgements.fullmatch(text):
+        if event.get("actor_type") == "assistant" and self.acknowledgements.fullmatch(
+            text
+        ):
             return False, "acknowledgement"
         if len(text) < 5:
             return False, "too_short"
-        if event.get("event_type") == "tool_result" and self._is_raw_output(content, text):
+        if event.get("event_type") == "tool_result" and self._is_raw_output(
+            content, text
+        ):
             return False, "raw_tool_output"
         if event.get("actor_type") == "assistant":
             if self._is_status_report(text):
@@ -40,12 +44,20 @@ class EventFilter:
     @staticmethod
     def _text(content: Any) -> str:
         if isinstance(content, dict):
-            return str(content.get("text", content.get("output", content.get("stdout", ""))))
+            return str(
+                content.get("text", content.get("output", content.get("stdout", "")))
+            )
         return str(content)
 
     @staticmethod
     def _is_raw_output(content: Any, text: str) -> bool:
-        if isinstance(content, dict) and set(content) - {"text", "output", "stdout", "stderr", "exit_code"}:
+        if isinstance(content, dict) and set(content) - {
+            "text",
+            "output",
+            "stdout",
+            "stderr",
+            "exit_code",
+        }:
             return False
         return bool(text)  # unstructured tool text is raw output by definition
 

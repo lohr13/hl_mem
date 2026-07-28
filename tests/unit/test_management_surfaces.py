@@ -27,14 +27,26 @@ def test_cli_export_import_round_trip(tmp_path) -> None:
     connection = Database(source).open()
     connection.execute(
         "INSERT INTO events(id,event_type,actor_type,content_json,occurred_at,recorded_at) VALUES (?,?,?,?,?,?)",
-        ("e1", "message", "user", json.dumps({"text": "中文"}, ensure_ascii=False), "2026-01-01", "2026-01-01"),
+        (
+            "e1",
+            "message",
+            "user",
+            json.dumps({"text": "中文"}, ensure_ascii=False),
+            "2026-01-01",
+            "2026-01-01",
+        ),
     )
     connection.commit()
     archive = tmp_path / "memory.jsonl"
     assert export_database(source, archive) == 1
     target = tmp_path / "target.db"
     assert import_database(target, archive) == 1
-    assert Database(target).open().execute("SELECT content_json FROM events WHERE id='e1'").fetchone()[0]
+    assert (
+        Database(target)
+        .open()
+        .execute("SELECT content_json FROM events WHERE id='e1'")
+        .fetchone()[0]
+    )
 
 
 def test_cli_version(capsys: pytest.CaptureFixture[str]) -> None:

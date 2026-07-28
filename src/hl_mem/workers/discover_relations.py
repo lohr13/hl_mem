@@ -41,7 +41,14 @@ _OUTPUT_SCHEMA: dict[str, Any] = {
                     "rationale": {"type": "string"},
                     "supporting_ids": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["from", "to", "relation", "confidence", "rationale", "supporting_ids"],
+                "required": [
+                    "from",
+                    "to",
+                    "relation",
+                    "confidence",
+                    "rationale",
+                    "supporting_ids",
+                ],
                 "additionalProperties": False,
             },
         }
@@ -122,7 +129,10 @@ class LLMRelationDiscoverer(RelationDiscoveryProtocol):
                             "关系仅限 about/follows/supports/contradicts/summarizes。返回 JSON 对象。"
                         ),
                     ),
-                    LLMMessage(role="user", content=json.dumps(payload, ensure_ascii=False, default=str)),
+                    LLMMessage(
+                        role="user",
+                        content=json.dumps(payload, ensure_ascii=False, default=str),
+                    ),
                 ],
                 structured_output=StructuredOutputSpec(
                     name="relation_proposals",
@@ -131,7 +141,11 @@ class LLMRelationDiscoverer(RelationDiscoveryProtocol):
                 ),
             )
         )
-        decoded = response.content if isinstance(response.content, dict) else json.loads(response.content)
+        decoded = (
+            response.content
+            if isinstance(response.content, dict)
+            else json.loads(response.content)
+        )
         result: list[RelationProposal] = []
         for item in decoded.get("relations", [])[:max_proposals]:
             try:
@@ -142,7 +156,9 @@ class LLMRelationDiscoverer(RelationDiscoveryProtocol):
                         relation=str(item["relation"]),
                         confidence=float(item["confidence"]),
                         rationale=str(item["rationale"]),
-                        supporting_claim_ids=tuple(str(value) for value in item.get("supporting_ids", [])),
+                        supporting_claim_ids=tuple(
+                            str(value) for value in item.get("supporting_ids", [])
+                        ),
                         model=self.client.model,
                     )
                 )
@@ -237,7 +253,10 @@ def _validate_proposal(
         return "inactive_endpoint"
     if any(support_id not in claims for support_id in proposal.supporting_claim_ids):
         return "missing_support"
-    if any(claims[support_id]["status"] not in {"active", "disputed"} for support_id in proposal.supporting_claim_ids):
+    if any(
+        claims[support_id]["status"] not in {"active", "disputed"}
+        for support_id in proposal.supporting_claim_ids
+    ):
         return "inactive_support"
     return None
 
@@ -291,21 +310,45 @@ def discover_relations(
 ) -> dict[str, int]:
     """发现、审计并按模式原子应用一批关系提案。"""
     if mode == "off":
-        return {"candidates": 0, "proposals": 0, "applied": 0, "conflicts": 0, "rejected": 0}
+        return {
+            "candidates": 0,
+            "proposals": 0,
+            "applied": 0,
+            "conflicts": 0,
+            "rejected": 0,
+        }
     source = ClaimRepository(connection).get_claim(claim_id)
     if source is None or source["status"] not in {"active", "disputed"}:
-        return {"candidates": 0, "proposals": 0, "applied": 0, "conflicts": 0, "rejected": 0}
+        return {
+            "candidates": 0,
+            "proposals": 0,
+            "applied": 0,
+            "conflicts": 0,
+            "rejected": 0,
+        }
     candidates = build_neighbor_pool(connection, source, pool_limit)
-    proposed = discoverer.propose(_claim_row(source), candidates, max_proposals=max_proposals)
+    proposed = discoverer.propose(
+        _claim_row(source), candidates, max_proposals=max_proposals
+    )
     ids = list(
         dict.fromkeys(
             [source["id"], *(item["id"] for item in candidates)]
             + [support for item in proposed for support in item.supporting_claim_ids]
-            + [endpoint for item in proposed for endpoint in (item.from_claim_id, item.to_claim_id)]
+            + [
+                endpoint
+                for item in proposed
+                for endpoint in (item.from_claim_id, item.to_claim_id)
+            ]
         )
     )
     repository = RelationProposalRepository(connection)
-    counts = {"candidates": len(candidates), "proposals": 0, "applied": 0, "conflicts": 0, "rejected": 0}
+    counts = {
+        "candidates": len(candidates),
+        "proposals": 0,
+        "applied": 0,
+        "conflicts": 0,
+        "rejected": 0,
+    }
     now = datetime.now(timezone.utc).isoformat()
     run_id = uuid.uuid4().hex
     connection.execute("BEGIN IMMEDIATE")
@@ -342,18 +385,36 @@ def discover_relations(
             if reason is not None:
                 decision_reason = (
                     "stale-input"
-                    if reason in {"missing_endpoint", "inactive_endpoint", "missing_support", "inactive_support"}
+                    if reason
+                    in {
+                        "missing_endpoint",
+                        "inactive_endpoint",
+                        "missing_support",
+                        "inactive_support",
+                    }
                     else reason
                 )
             elif proposal.relation == "summarizes":
                 decision_reason = "topic_summary_builder_only"
-            elif proposal.relation in AUTO_RELATIONS and proposal.confidence >= auto_apply_confidence:
-                relation_id = _find_or_insert_relation(connection, proposal_id, proposal, now)
+            elif (
+                proposal.relation in AUTO_RELATIONS
+                and proposal.confidence >= auto_apply_confidence
+            ):
+                relation_id = _find_or_insert_relation(
+                    connection, proposal_id, proposal, now
+                )
                 status, decision_reason = "applied", "auto_confidence_threshold"
                 counts["applied"] += 1
-            elif proposal.relation == "contradicts" and proposal.confidence >= conflict_confidence:
-                pair_key = compute_claim_pair_key(proposal.from_claim_id, proposal.to_claim_id)
-                row = connection.execute("SELECT id FROM conflict_cases WHERE pair_key=?", (pair_key,)).fetchone()
+            elif (
+                proposal.relation == "contradicts"
+                and proposal.confidence >= conflict_confidence
+            ):
+                pair_key = compute_claim_pair_key(
+                    proposal.from_claim_id, proposal.to_claim_id
+                )
+                row = connection.execute(
+                    "SELECT id FROM conflict_cases WHERE pair_key=?", (pair_key,)
+                ).fetchone()
                 conflict_case_id = str(row["id"]) if row else uuid.uuid4().hex
                 if row is None:
                     connection.execute(
@@ -386,7 +447,10 @@ def discover_relations(
                 if endpoint_update_failed:
                     status, decision_reason = "rejected", "stale-input"
                 else:
-                    status, decision_reason = "conflict_created", "contradiction_threshold"
+                    status, decision_reason = (
+                        "conflict_created",
+                        "contradiction_threshold",
+                    )
                     counts["conflicts"] += 1
             else:
                 decision_reason = "below_confidence_threshold"

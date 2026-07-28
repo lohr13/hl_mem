@@ -26,11 +26,18 @@ def test_concurrent_idempotent_event_write(tmp_path: Any) -> None:
         service = IngestService(connection)
         barrier.wait()
         results[index] = service.ingest_event(
-            {"event_type": "message", "actor_type": "user", "content": {"text": "test"}},
+            {
+                "event_type": "message",
+                "actor_type": "user",
+                "content": {"text": "test"},
+            },
             idempotency_key="same-key",
         )
 
-    threads = [threading.Thread(target=write, args=(index, database)) for index, database in enumerate(databases)]
+    threads = [
+        threading.Thread(target=write, args=(index, database))
+        for index, database in enumerate(databases)
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -86,7 +93,10 @@ def test_concurrent_claim_dedup(tmp_path: Any) -> None:
             FakeEmbedder(2048),
         ).claim_id
 
-    threads = [threading.Thread(target=store, args=(index, database)) for index, database in enumerate(databases)]
+    threads = [
+        threading.Thread(target=store, args=(index, database))
+        for index, database in enumerate(databases)
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -95,7 +105,8 @@ def test_concurrent_claim_dedup(tmp_path: Any) -> None:
     assert results[0] == results[1]
     connection = databases[0].open_worker()
     count = connection.execute(
-        "SELECT count(*) FROM claims " "WHERE subject_entity_id=? AND predicate=? AND status='active'",
+        "SELECT count(*) FROM claims "
+        "WHERE subject_entity_id=? AND predicate=? AND status='active'",
         ("user", "likes"),
     ).fetchone()[0]
     assert count == 1
@@ -131,7 +142,9 @@ def test_lease_token_prevents_old_worker_completion(tmp_path: Any) -> None:
     second_jobs = JobRepository(second_connection)
     assert second_jobs.lease_job("2999-01-01T00:00:00+00:00", now) is None
 
-    second_connection.execute("UPDATE jobs SET leased_until='2000-01-01T00:00:00+00:00' WHERE id='job-1'")
+    second_connection.execute(
+        "UPDATE jobs SET leased_until='2000-01-01T00:00:00+00:00' WHERE id='job-1'"
+    )
     second_connection.commit()
 
     second_lease = second_jobs.lease_job("2999-01-01T00:00:00+00:00", now)

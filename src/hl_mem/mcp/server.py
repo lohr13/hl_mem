@@ -105,11 +105,17 @@ class McpMemoryServer:
         else:
             from dataclasses import replace
 
-            resolved_settings = replace(Settings.from_env(), database_path=str(settings))
+            resolved_settings = replace(
+                Settings.from_env(), database_path=str(settings)
+            )
         self.database = Database(resolved_settings.database_path)
         self.settings = resolved_settings
         self.embedder = embedder or components.make_embedder(resolved_settings)
-        self.reranker = reranker if reranker is not None else components.make_reranker(resolved_settings)
+        self.reranker = (
+            reranker
+            if reranker is not None
+            else components.make_reranker(resolved_settings)
+        )
 
     def list_tools(self) -> tuple[str, ...]:
         """返回稳定的 MCP 工具名称。"""
@@ -181,10 +187,14 @@ class McpMemoryServer:
         if not feedback_id:
             raise ValueError("feedback_id is required")
         now = datetime.now(timezone.utc).isoformat()
-        result: dict[str, Any] = ExperienceService(connection, settings=self.settings).submit_retrieval_feedback(
+        result: dict[str, Any] = ExperienceService(
+            connection, settings=self.settings
+        ).submit_retrieval_feedback(
             feedback_id,
             bool(arguments["helpful"]),
-            float(arguments["task_outcome"]) if arguments.get("task_outcome") is not None else None,
+            float(arguments["task_outcome"])
+            if arguments.get("task_outcome") is not None
+            else None,
             now,
         )
         correction = arguments.get("correction")
@@ -194,7 +204,9 @@ class McpMemoryServer:
         action = str(correction.get("action", ""))
         key = str(correction.get("idempotency_key", ""))
         if not memory_id or action not in {"retract", "replace"} or not key:
-            raise ValueError("correction requires memory_id, retract|replace action, and idempotency_key")
+            raise ValueError(
+                "correction requires memory_id, retract|replace action, and idempotency_key"
+            )
         text = str(correction.get("corrected_text") or "")
         if action == "replace" and not text:
             raise ValueError("corrected_text is required for replace")
@@ -214,7 +226,10 @@ class McpMemoryServer:
         elif action == "retract":
             result["correction"] = ForgetService(connection).forget(memory_id)
         else:
-            result["correction"] = {"id": memory_id, "replacement_event_id": event["id"]}
+            result["correction"] = {
+                "id": memory_id,
+                "replacement_event_id": event["id"],
+            }
         return result
 
     @staticmethod
@@ -223,7 +238,11 @@ class McpMemoryServer:
         memory_id = str(arguments.get("id", ""))
         event = EventRepository(connection).get_event(memory_id)
         if event:
-            return {"type": "event", "id": memory_id, "evidence": [{"type": "event", "id": memory_id}]}
+            return {
+                "type": "event",
+                "id": memory_id,
+                "evidence": [{"type": "event", "id": memory_id}],
+            }
         claim = ClaimRepository(connection).get_claim(memory_id)
         if not claim:
             raise ValueError(f"memory not found: {memory_id}")

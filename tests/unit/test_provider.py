@@ -158,8 +158,14 @@ def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {"id": "call-1", "function": {"name": "read_file", "arguments": '{"path":"a.py"}'}},
-                {"id": "call-2", "function": {"name": "patch", "arguments": '{"path":"a.py"}'}},
+                {
+                    "id": "call-1",
+                    "function": {"name": "read_file", "arguments": '{"path":"a.py"}'},
+                },
+                {
+                    "id": "call-2",
+                    "function": {"name": "patch", "arguments": '{"path":"a.py"}'},
+                },
             ],
         },
         {"role": "tool", "tool_call_id": "call-1", "content": "file contents"},
@@ -173,7 +179,9 @@ def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
         messages=messages,
     )
 
-    episode_requests = [(url, payload) for url, payload in AsyncClient.requests if "/v1/episodes" in url]
+    episode_requests = [
+        (url, payload) for url, payload in AsyncClient.requests if "/v1/episodes" in url
+    ]
     assert episode_requests[0][1] == {
         "goal": "修复项目并部署",
         "session_id": "session-1",
@@ -211,12 +219,21 @@ def test_sync_turn_episode_failure_does_not_fail_event_sync(monkeypatch) -> None
     monkeypatch.setattr(httpx, "post", post)
     provider = HLMemProvider(timeout=2.0)
     messages = [
-        {"role": "assistant", "tool_calls": [{"id": "1", "function": {"name": "web_search"}}]},
-        {"role": "assistant", "tool_calls": [{"id": "2", "function": {"name": "web_search"}}]},
+        {
+            "role": "assistant",
+            "tool_calls": [{"id": "1", "function": {"name": "web_search"}}],
+        },
+        {
+            "role": "assistant",
+            "tool_calls": [{"id": "2", "function": {"name": "web_search"}}],
+        },
     ]
 
     provider.sync_turn("user request", "assistant response", messages=messages)
 
     assert provider._failure_count == 0
-    assert [payload["actor_type"] for _, payload in event_requests] == ["user", "assistant"]
+    assert [payload["actor_type"] for _, payload in event_requests] == [
+        "user",
+        "assistant",
+    ]
     assert EpisodeFailingClient.episode_attempts == 1

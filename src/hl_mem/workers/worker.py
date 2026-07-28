@@ -106,7 +106,10 @@ class Worker:
 
     def run_once(self) -> dict[str, Any]:
         now = _now()
-        lease = (datetime.now(timezone.utc) + timedelta(minutes=self.settings.worker_job_lease_minutes)).isoformat()
+        lease = (
+            datetime.now(timezone.utc)
+            + timedelta(minutes=self.settings.worker_job_lease_minutes)
+        ).isoformat()
         job = self.jobs.lease_job(lease, now)
         if not job:
             return {"status": "idle"}
@@ -123,7 +126,9 @@ class Worker:
             return {"status": "succeeded", "job_id": job["id"], **result}
         except Exception as error:
             self.jobs.fail_job(job["id"], str(error), _now(), lease_token)
-            current = self.connection.execute("SELECT status,attempts FROM jobs WHERE id=?", (job["id"],)).fetchone()
+            current = self.connection.execute(
+                "SELECT status,attempts FROM jobs WHERE id=?", (job["id"],)
+            ).fetchone()
             return {
                 "status": current["status"] if current else "unknown",
                 "job_id": job["id"],
@@ -133,7 +138,11 @@ class Worker:
 
     def run_forever(self, poll_interval: float | None = None) -> None:
         """持续处理任务并按统一配置执行维护调度。"""
-        effective_poll_interval = poll_interval if poll_interval is not None else self.settings.worker_poll_interval
+        effective_poll_interval = (
+            poll_interval
+            if poll_interval is not None
+            else self.settings.worker_poll_interval
+        )
         next_ttl = 0.0
         try:
             while True:
@@ -159,7 +168,10 @@ class Worker:
             feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
             slot_short_ttl_seconds=self.settings.slot_short_ttl_seconds,
         )
-        decay_claims(self.connection, feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode)
+        decay_claims(
+            self.connection,
+            feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
+        )
         maintenance_now = _now()
         maintainer = DerivedMemoryMaintainer(self.connection)
         maintainer.mark_stale_dependencies()
@@ -167,9 +179,17 @@ class Worker:
         auto_resolve_conflicts(self.connection, maintenance_now)
         from hl_mem.security.retention import purge_retained_events
 
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)).isoformat()
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)
+        ).isoformat()
         purge_retained_events(self.connection, "default", cutoff)
-        self.audit.cleanup(int(self.config.get("audit_retention_days", self.settings.audit_retention_days)))
+        self.audit.cleanup(
+            int(
+                self.config.get(
+                    "audit_retention_days", self.settings.audit_retention_days
+                )
+            )
+        )
         enqueue_daily_consolidation(
             self.connection,
             _now(),
@@ -192,7 +212,9 @@ class Worker:
             self.config.get("reclassify_cron", self.settings.reclassify_cron),
         )
 
-    def _extract(self, payload: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
+    def _extract(
+        self, payload: dict[str, Any], job_id: str | None = None
+    ) -> dict[str, Any]:
         events = EventRepository(self.connection)
         event = events.get_event(payload["event_id"])
         if not event:
@@ -239,11 +261,16 @@ class Worker:
                                 image,
                                 timeout_seconds=self.settings.image_describer_timeout_seconds,
                             )
-                            description_event = events.insert_image_description_event(event, image_index, result)
+                            description_event = events.insert_image_description_event(
+                                event, image_index, result
+                            )
                             description = description_event["content"]
                         locator = description["locator"]
                         uri_hash = (
-                            locator.get("sha256") or hashlib.sha256(str(locator.get("uri", "")).encode()).hexdigest()
+                            locator.get("sha256")
+                            or hashlib.sha256(
+                                str(locator.get("uri", "")).encode()
+                            ).hexdigest()
                         )
                         description_texts.append(
                             f'<image_evidence index="{image_index}" uri_hash="{uri_hash}">\n'
@@ -252,18 +279,29 @@ class Worker:
                         )
                         description_event_ids.append(description_event["id"])
                     except Exception as error:
-                        image_errors.append(f"image {image_index}: {type(error).__name__}: {error}")
+                        image_errors.append(
+                            f"image {image_index}: {type(error).__name__}: {error}"
+                        )
                         self.audit.emit(
                             "image_description",
                             "evaluated",
                             "error",
                             event_id=event["id"],
-                            detail={"image_index": image_index, "error_class": type(error).__name__},
+                            detail={
+                                "image_index": image_index,
+                                "error_class": type(error).__name__,
+                            },
                         )
             if description_texts:
-                textual = "\n".join(part.to_text() for part in parse_content(content) if part.to_text())
-                content = {"text": "\n".join(filter(None, [textual, *description_texts]))}
-            elif image_errors and not any(part.to_text() for part in parse_content(content)):
+                textual = "\n".join(
+                    part.to_text() for part in parse_content(content) if part.to_text()
+                )
+                content = {
+                    "text": "\n".join(filter(None, [textual, *description_texts]))
+                }
+            elif image_errors and not any(
+                part.to_text() for part in parse_content(content)
+            ):
                 raise RuntimeError("; ".join(image_errors))
             event["_image_description_event_ids"] = description_event_ids
             started = time.perf_counter_ns()
@@ -294,7 +332,9 @@ class Worker:
                         duration_us=(time.perf_counter_ns() - started) // 1000,
                         detail={
                             "error_class": type(error).__name__,
-                            "rule_version": str(getattr(self.pre_filter, "rule_version", "unknown")),
+                            "rule_version": str(
+                                getattr(self.pre_filter, "rule_version", "unknown")
+                            ),
                         },
                     )
                 else:
@@ -305,7 +345,9 @@ class Worker:
                         duration_us=(time.perf_counter_ns() - started) // 1000,
                         detail={
                             "reason": decision.reason,
-                            "rule_version": str(getattr(self.pre_filter, "rule_version", "unknown")),
+                            "rule_version": str(
+                                getattr(self.pre_filter, "rule_version", "unknown")
+                            ),
                             "event_type": event["event_type"],
                             "actor_type": event["actor_type"],
                             "content_chars": len(event["content_json"]),
@@ -347,13 +389,18 @@ class Worker:
                         )
                     ]
                 else:
-                    recent = events.get_recent_events(event["session_id"], event, 3) if event.get("session_id") else []
+                    recent = (
+                        events.get_recent_events(event["session_id"], event, 3)
+                        if event.get("session_id")
+                        else []
+                    )
                     event_context = {
                         "occurred_at": event["occurred_at"],
                         "actor_type": event.get("actor_type"),
                         "session_id": event.get("session_id"),
                         "recent_events": [
-                            {**item, "content": json.loads(item["content_json"])} for item in reversed(recent)
+                            {**item, "content": json.loads(item["content_json"])}
+                            for item in reversed(recent)
                         ],
                     }
                     extracted = (
@@ -381,7 +428,9 @@ class Worker:
                 duration_us=(time.perf_counter_ns() - started) // 1000,
                 detail={
                     "extractor": (
-                        "explicit_memory" if event["event_type"] == "explicit_memory" else type(self.extractor).__name__
+                        "explicit_memory"
+                        if event["event_type"] == "explicit_memory"
+                        else type(self.extractor).__name__
                     ),
                     "claim_count": len(extracted),
                     "context_event_ids": [item["id"] for item in recent],
@@ -415,7 +464,9 @@ class Worker:
                     index_text_mode=self.settings.index_text_mode,
                 )
                 if result.status == "skipped":
-                    rejections.append({"reason": result.reason, "predicate": claim.predicate})
+                    rejections.append(
+                        {"reason": result.reason, "predicate": claim.predicate}
+                    )
                 else:
                     stored += 1
             return {
@@ -426,18 +477,28 @@ class Worker:
             }
 
     def _make_extractor(self) -> Any:
-        return components.make_extractor(self.settings, connection=getattr(self, "connection", None))
+        return components.make_extractor(
+            self.settings, connection=getattr(self, "connection", None)
+        )
 
     def _make_embedder(self) -> Any:
         return components.make_embedder(self.settings)
 
     def _make_consolidator(self) -> ConflictConsolidator:
         """从环境配置构建冲突归并器。"""
-        judge = LLMConflictJudge(components.make_llm_client(self.settings, self.connection, operation="conflict"))
+        judge = LLMConflictJudge(
+            components.make_llm_client(
+                self.settings, self.connection, operation="conflict"
+            )
+        )
         return ConflictConsolidator(
             self.connection,
             judge,
-            float(self.config.get("consolidate_confidence", self.settings.consolidate_confidence)),
+            float(
+                self.config.get(
+                    "consolidate_confidence", self.settings.consolidate_confidence
+                )
+            ),
         )
 
 
@@ -481,7 +542,9 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
                 "max_pairs",
                 payload.get(
                     "limit",
-                    worker.config.get("consolidate_batch_size", worker.settings.consolidate_batch_size),
+                    worker.config.get(
+                        "consolidate_batch_size", worker.settings.consolidate_batch_size
+                    ),
                 ),
             )
         ),
@@ -493,7 +556,9 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
         int(
             payload.get(
                 "limit",
-                worker.config.get("consolidate_batch_size", worker.settings.consolidate_batch_size),
+                worker.config.get(
+                    "consolidate_batch_size", worker.settings.consolidate_batch_size
+                ),
             )
         ),
         payload.get("namespace", "default"),
@@ -519,7 +584,9 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     payload = json.loads(job["payload_json"] or "{}")
     return deduplicate_claims(
         worker.connection,
-        components.make_llm_client(worker.settings, worker.connection, operation="dedup"),
+        components.make_llm_client(
+            worker.settings, worker.connection, operation="dedup"
+        ),
         worker.embedder,
         namespace=str(payload.get("namespace", "default")),
         threshold=float(payload.get("threshold", worker.settings.dedup_threshold)),
@@ -538,11 +605,17 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 def _handle_discover_relations(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理单个新 Claim 的关系候选发现任务。"""
     payload = json.loads(job["payload_json"] or "{}")
-    discoverer = worker.config.get("relation_discoverer") or components.make_relation_discoverer(
-        worker.settings, worker.connection
-    )
+    discoverer = worker.config.get(
+        "relation_discoverer"
+    ) or components.make_relation_discoverer(worker.settings, worker.connection)
     if discoverer is None:
-        return {"candidates": 0, "proposals": 0, "applied": 0, "conflicts": 0, "rejected": 0}
+        return {
+            "candidates": 0,
+            "proposals": 0,
+            "applied": 0,
+            "conflicts": 0,
+            "rejected": 0,
+        }
     return discover_relations(
         worker.connection,
         discoverer,
@@ -555,7 +628,9 @@ def _handle_discover_relations(worker: Worker, job: dict[str, Any]) -> dict[str,
     )
 
 
-def _job_progress_callback(worker: Worker, job: dict[str, Any]) -> Callable[[str, int, int], None]:
+def _job_progress_callback(
+    worker: Worker, job: dict[str, Any]
+) -> Callable[[str, int, int], None]:
     """创建受 lease token 保护的任务进度回调。"""
 
     def update(stage: str, processed: int, total: int) -> None:
@@ -577,7 +652,9 @@ def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 
     return reclassify_claims(
         worker.connection,
-        components.make_llm_client(worker.settings, worker.connection, operation="other"),
+        components.make_llm_client(
+            worker.settings, worker.connection, operation="other"
+        ),
         policy=worker.settings.retention_policy(),
     )
 
@@ -586,7 +663,9 @@ def _handle_purge_retention(worker: Worker, job: dict[str, Any]) -> dict[str, An
     """处理事件保留清理任务。"""
     from hl_mem.security.retention import purge_retained_events
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=worker.settings.retention_days)).isoformat()
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=worker.settings.retention_days)
+    ).isoformat()
     return {"purged": purge_retained_events(worker.connection, "default", cutoff)}
 
 
@@ -626,7 +705,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.worker")
     parser.add_argument("command", choices=("run", "run-once", "status"))
     parser.add_argument("--db", default=settings.database_path)
-    parser.add_argument("--poll-interval", type=float, default=settings.worker_poll_interval)
+    parser.add_argument(
+        "--poll-interval", type=float, default=settings.worker_poll_interval
+    )
     args = parser.parse_args()
     if args.command == "status":
         database = Database(args.db)

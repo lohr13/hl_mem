@@ -42,7 +42,9 @@ class RankResult:
 
 BUILTIN_QUERIES: tuple[DiagnosticQuery, ...] = (
     DiagnosticQuery("用户的技术栈和工具", ("技术栈", "工具", "Python", "PyTorch")),
-    DiagnosticQuery("唇形同步项目", ("唇形同步", "lip-rt", "dhlive", "MuseTalk", "LatentSync")),
+    DiagnosticQuery(
+        "唇形同步项目", ("唇形同步", "lip-rt", "dhlive", "MuseTalk", "LatentSync")
+    ),
     DiagnosticQuery("数据清洗历史", ("数据清洗", "清洗")),
     DiagnosticQuery("GPU 硬件信息", ("GPU", "REDACTED_GPU", "CUDA")),
     DiagnosticQuery("hl_mem 服务配置", ("hl_mem", "配置", "端口")),
@@ -66,7 +68,9 @@ def _claim_search_text(claim: dict[str, Any]) -> str:
     return json.dumps(claim, ensure_ascii=False, default=str).casefold()
 
 
-def _select_target_claim(claims: Sequence[dict[str, Any]], diagnostic: DiagnosticQuery) -> str | None:
+def _select_target_claim(
+    claims: Sequence[dict[str, Any]], diagnostic: DiagnosticQuery
+) -> str | None:
     if diagnostic.target_claim_id is not None:
         return (
             diagnostic.target_claim_id
@@ -88,24 +92,38 @@ def compare_index_text_modes(
     embedder: EmbedderProtocol,
 ) -> list[RankResult]:
     """重算三种文本 embedding，并返回每条诊断查询的目标 dense 排名。"""
-    target_ids = {diagnostic.query: _select_target_claim(claims, diagnostic) for diagnostic in diagnostics}
-    query_vectors = {diagnostic.query: embedder.embed_one(diagnostic.query) for diagnostic in diagnostics}
+    target_ids = {
+        diagnostic.query: _select_target_claim(claims, diagnostic)
+        for diagnostic in diagnostics
+    }
+    query_vectors = {
+        diagnostic.query: embedder.embed_one(diagnostic.query)
+        for diagnostic in diagnostics
+    }
     results: list[RankResult] = []
     for mode in INDEX_TEXT_MODES:
         ranked_vectors = [
-            (str(claim["id"]), embedder.embed_one(build_index_text(claim, mode=mode))) for claim in claims
+            (str(claim["id"]), embedder.embed_one(build_index_text(claim, mode=mode)))
+            for claim in claims
         ]
         for diagnostic in diagnostics:
             target_id = target_ids[diagnostic.query]
             scores = sorted(
                 (
-                    (claim_id, cosine_similarity(query_vectors[diagnostic.query], vector))
+                    (
+                        claim_id,
+                        cosine_similarity(query_vectors[diagnostic.query], vector),
+                    )
                     for claim_id, vector in ranked_vectors
                 ),
                 key=lambda item: (-item[1], item[0]),
             )
             target = next(
-                ((rank, score) for rank, (claim_id, score) in enumerate(scores, start=1) if claim_id == target_id),
+                (
+                    (rank, score)
+                    for rank, (claim_id, score) in enumerate(scores, start=1)
+                    if claim_id == target_id
+                ),
                 None,
             )
             results.append(
@@ -130,7 +148,9 @@ def _load_diagnostics(path: Path | None) -> list[DiagnosticQuery]:
         DiagnosticQuery(
             query=str(item["query"]),
             target_terms=tuple(str(term) for term in item.get("target_terms", [])),
-            target_claim_id=str(item["target_claim_id"]) if item.get("target_claim_id") else None,
+            target_claim_id=str(item["target_claim_id"])
+            if item.get("target_claim_id")
+            else None,
         )
         for item in payload
     ]

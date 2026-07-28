@@ -27,7 +27,11 @@ def test_server_reranker_initialization_failure_falls_back(monkeypatch) -> None:
 
     monkeypatch.setenv("HL_MEM_RERANKER", "on")
     monkeypatch.setenv("RERANKER_API_KEY", "test-key")
-    monkeypatch.setattr(components, "Reranker", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")))
+    monkeypatch.setattr(
+        components,
+        "Reranker",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")),
+    )
 
     assert components.make_reranker(Settings.from_env()) is None
 
@@ -85,9 +89,13 @@ def test_pipeline_with_fake_reranker_reorders() -> None:
     class ReverseReranker:
         def rerank(self, query, documents, top_n=20):
             assert "中文" in " ".join(documents)
-            return [(index, float(index)) for index in range(len(documents) - 1, -1, -1)][:top_n]
+            return [
+                (index, float(index)) for index in range(len(documents) - 1, -1, -1)
+            ][:top_n]
 
-    result = hybrid_claims(Repo(), "查询", pack_vector([1.0]), 2, None, ReverseReranker())
+    result = hybrid_claims(
+        Repo(), "查询", pack_vector([1.0]), 2, None, ReverseReranker()
+    )
     assert [claim["id"] for claim in result] == ["third", "second"]
 
 
@@ -146,7 +154,9 @@ def test_pipeline_reranker_exception_falls_back_to_rrf() -> None:
         def rerank(self, query, documents, top_n=20):
             raise httpx.ConnectError("unavailable")
 
-    result = hybrid_claims(Repo(), "query", pack_vector([1.0]), 2, None, FailedReranker())
+    result = hybrid_claims(
+        Repo(), "query", pack_vector([1.0]), 2, None, FailedReranker()
+    )
     assert result
     assert [claim["id"] for claim in result] == ["first", "second"]
 
@@ -156,5 +166,7 @@ def test_pipeline_reranker_failure_falls_back_to_rrf() -> None:
         def rerank(self, query, documents, top_n=20):
             return []
 
-    result = hybrid_claims(Repo(), "查询", pack_vector([1.0]), 2, None, FailedReranker())
+    result = hybrid_claims(
+        Repo(), "查询", pack_vector([1.0]), 2, None, FailedReranker()
+    )
     assert [claim["id"] for claim in result] == ["first", "second"]

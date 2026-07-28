@@ -15,8 +15,12 @@ from hl_mem.storage.database import Database
 def pytest_addoption(parser: pytest.Parser) -> None:
     """注册快照和报告路径选项。"""
     group = parser.getgroup("hl-mem-eval")
-    group.addoption("--eval-db", action="store", default=None, help="只读评测源 SQLite 快照")
-    group.addoption("--eval-report", action="store", default=None, help="评测 JSON 报告输出路径")
+    group.addoption(
+        "--eval-db", action="store", default=None, help="只读评测源 SQLite 快照"
+    )
+    group.addoption(
+        "--eval-report", action="store", default=None, help="评测 JSON 报告输出路径"
+    )
 
 
 @pytest.fixture
@@ -44,7 +48,9 @@ def eval_database_path(pytestconfig: pytest.Config, tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def eval_client(eval_database_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def eval_client(
+    eval_database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
     """创建不访问外部 API 的确定性 FastAPI 客户端。"""
     monkeypatch.setenv("HL_MEM_EMBEDDER", "fake")
     monkeypatch.setenv("HL_MEM_RERANKER", "off")

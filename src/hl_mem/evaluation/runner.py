@@ -67,7 +67,9 @@ class BenchmarkRunner:
         selected_layers = tuple(dict.fromkeys(layers))
         unknown = set(selected_layers) - self.SUPPORTED_LAYERS
         if unknown:
-            raise ValueError(f"unsupported benchmark layers: {', '.join(sorted(unknown))}")
+            raise ValueError(
+                f"unsupported benchmark layers: {', '.join(sorted(unknown))}"
+            )
         source = source.resolve()
         output = output.resolve()
         cases = list(self.adapter.load(source, subset))
@@ -84,7 +86,9 @@ class BenchmarkRunner:
         try:
             for case in cases:
                 database_path = database_root / f"{_safe_name(case.case_id)}.sqlite3"
-                case_results.append(self._run_case(case, selected_layers, database_path))
+                case_results.append(
+                    self._run_case(case, selected_layers, database_path)
+                )
             result = {
                 "schema_version": 1,
                 "benchmark": "longmemeval",
@@ -131,11 +135,17 @@ class BenchmarkRunner:
         try:
             self._ingest_case(connection, case)
             if "extraction" in layers:
-                result["metrics"]["extraction"] = self._extraction_metrics(connection, case)
+                result["metrics"]["extraction"] = self._extraction_metrics(
+                    connection, case
+                )
             if "retrieval" in layers:
-                result["metrics"]["retrieval"] = self._retrieval_metrics(connection, case)
+                result["metrics"]["retrieval"] = self._retrieval_metrics(
+                    connection, case
+                )
             if "lifecycle" in layers:
-                result["metrics"]["lifecycle"] = self._lifecycle_metrics(connection, case)
+                result["metrics"]["lifecycle"] = self._lifecycle_metrics(
+                    connection, case
+                )
         except Exception as error:
             result["errors"].append(f"{type(error).__name__}: {error}")
         finally:
@@ -149,7 +159,9 @@ class BenchmarkRunner:
             service.ingest_event(event)
             content = event.get("content", {})
             if not isinstance(content, (str, dict)):
-                raise TypeError(f"benchmark event content must be text or an object, got {type(content).__name__}")
+                raise TypeError(
+                    f"benchmark event content must be text or an object, got {type(content).__name__}"
+                )
             for extracted in self.extractor.extract(content):
                 IngestService.store_extracted(
                     connection,
@@ -160,29 +172,47 @@ class BenchmarkRunner:
                 )
 
     @staticmethod
-    def _claims_and_evidence(connection: Any) -> tuple[list[dict[str, Any]], dict[str, set[str]]]:
-        claims = [dict(row) for row in connection.execute("SELECT * FROM claims ORDER BY recorded_from,id")]
+    def _claims_and_evidence(
+        connection: Any,
+    ) -> tuple[list[dict[str, Any]], dict[str, set[str]]]:
+        claims = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM claims ORDER BY recorded_from,id"
+            )
+        ]
         evidence_by_claim: dict[str, set[str]] = defaultdict(set)
         for row in connection.execute(
-            "SELECT derived_id,evidence_id FROM evidence_links " "WHERE derived_type='claim' AND evidence_type='event'"
+            "SELECT derived_id,evidence_id FROM evidence_links "
+            "WHERE derived_type='claim' AND evidence_type='event'"
         ):
             evidence_by_claim[row["derived_id"]].add(row["evidence_id"])
         return claims, evidence_by_claim
 
-    def _extraction_metrics(self, connection: Any, case: BenchmarkCase) -> dict[str, Any]:
+    def _extraction_metrics(
+        self, connection: Any, case: BenchmarkCase
+    ) -> dict[str, Any]:
         claims, evidence = self._claims_and_evidence(connection)
         extracted_ids = {event_id for ids in evidence.values() for event_id in ids}
-        evidence_scores = evidence_precision_recall(extracted_ids, case.gold_evidence_event_ids)
+        evidence_scores = evidence_precision_recall(
+            extracted_ids, case.gold_evidence_event_ids
+        )
         gold_yield = len(extracted_ids & set(case.gold_evidence_event_ids))
         return {
             **evidence_scores,
-            "claim_yield": gold_yield / len(case.gold_evidence_event_ids) if case.gold_evidence_event_ids else 0.0,
+            "claim_yield": gold_yield / len(case.gold_evidence_event_ids)
+            if case.gold_evidence_event_ids
+            else 0.0,
             "claims": len(claims),
             "judge": "not_run",
         }
 
-    def _retrieval_metrics(self, connection: Any, case: BenchmarkCase) -> dict[str, Any]:
-        response = RecallService(connection, self.embedder, settings=self.settings).recall(
+    def _retrieval_metrics(
+        self, connection: Any, case: BenchmarkCase
+    ) -> dict[str, Any]:
+        response = RecallService(
+            connection, self.embedder, settings=self.settings
+        ).recall(
             case.query,
             limit=10,
             as_of=case.as_of,
@@ -203,7 +233,9 @@ class BenchmarkRunner:
             "judge": "not_run",
         }
 
-    def _lifecycle_metrics(self, connection: Any, case: BenchmarkCase) -> dict[str, Any]:
+    def _lifecycle_metrics(
+        self, connection: Any, case: BenchmarkCase
+    ) -> dict[str, Any]:
         claims, evidence = self._claims_and_evidence(connection)
         assertions: list[dict[str, Any]] = []
         for checkpoint in case.lifecycle_checkpoints:
@@ -227,7 +259,9 @@ class BenchmarkRunner:
                     status_by_event[event_id] = claim["status"]
             expected_visible = set(checkpoint.expected_visible_event_ids)
             expected_hidden = set(checkpoint.expected_hidden_event_ids)
-            visibility_ok = expected_visible <= actual_visible and not (expected_hidden & actual_visible)
+            visibility_ok = expected_visible <= actual_visible and not (
+                expected_hidden & actual_visible
+            )
             status_ok = all(
                 status_by_event.get(event_id) == status
                 for event_id, status in checkpoint.expected_status_by_event_id.items()
@@ -251,7 +285,9 @@ class BenchmarkRunner:
             "assertions": assertions,
         }
 
-    def _config_payload(self, source_hash: str, subset: str, git_revision: str) -> dict[str, Any]:
+    def _config_payload(
+        self, source_hash: str, subset: str, git_revision: str
+    ) -> dict[str, Any]:
         snapshot = self.settings.snapshot()
         whitelist = {
             key: snapshot[key]
@@ -278,11 +314,15 @@ class BenchmarkRunner:
         }
 
     @staticmethod
-    def _aggregate(case_results: Sequence[Mapping[str, Any]], layers: Iterable[str]) -> dict[str, Any]:
+    def _aggregate(
+        case_results: Sequence[Mapping[str, Any]], layers: Iterable[str]
+    ) -> dict[str, Any]:
         aggregated: dict[str, Any] = {}
         for layer in layers:
             layer_metrics = [
-                case["metrics"][layer] for case in case_results if not case["errors"] and layer in case["metrics"]
+                case["metrics"][layer]
+                for case in case_results
+                if not case["errors"] and layer in case["metrics"]
             ]
             names = sorted(
                 {
@@ -294,7 +334,9 @@ class BenchmarkRunner:
             )
             values: dict[str, Any] = {}
             for name in names:
-                samples = [float(metrics[name]) for metrics in layer_metrics if name in metrics]
+                samples = [
+                    float(metrics[name]) for metrics in layer_metrics if name in metrics
+                ]
                 values[name] = mean(samples) if samples else 0.0
                 if name in {"f1", "recall_at_5", "accuracy"}:
                     interval = bootstrap_ci(samples, seed=BenchmarkRunner.SEED)
@@ -313,11 +355,16 @@ class BenchmarkRunner:
         grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
         for case in case_results:
             grouped[str(case["category"])].append(case)
-        return {category: cls._aggregate(cases, layers) for category, cases in sorted(grouped.items())}
+        return {
+            category: cls._aggregate(cases, layers)
+            for category, cases in sorted(grouped.items())
+        }
 
 
 def _canonical_json(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _sha256_file(path: Path) -> str:
@@ -340,4 +387,7 @@ def _git_revision() -> str:
 
 
 def _safe_name(value: str) -> str:
-    return "".join(character if character.isalnum() or character in "-_." else "_" for character in value)
+    return "".join(
+        character if character.isalnum() or character in "-_." else "_"
+        for character in value
+    )

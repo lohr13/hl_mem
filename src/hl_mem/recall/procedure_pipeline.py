@@ -28,7 +28,9 @@ class MemoryCandidate:
 
 
 def _tokens(text: str) -> set[str]:
-    return {token for token in re.findall(r"[\w\u4e00-\u9fff]+", text.casefold()) if token}
+    return {
+        token for token in re.findall(r"[\w\u4e00-\u9fff]+", text.casefold()) if token
+    }
 
 
 def _match(query: str, text: str) -> float:
@@ -53,7 +55,10 @@ def _bounded(value: object, default: float = 0.0) -> float:
 def _recency(value: object, half_life_days: int) -> float:
     if not value:
         return 0.0
-    age = max(0.0, (datetime.now(timezone.utc) - parse_utc(str(value))).total_seconds() / 86400)
+    age = max(
+        0.0,
+        (datetime.now(timezone.utc) - parse_utc(str(value))).total_seconds() / 86400,
+    )
     return float(0.5 ** (age / half_life_days))
 
 
@@ -87,10 +92,14 @@ def recall_procedure(
     normalized_query = query.strip()
     pattern = f"%{escape_like_pattern(normalized_query)}%"
     outcome_filter = (
-        "AND (goal LIKE ? ESCAPE '\\' OR COALESCE(outcome_summary,'') LIKE ? ESCAPE '\\') " if normalized_query else ""
+        "AND (goal LIKE ? ESCAPE '\\' OR COALESCE(outcome_summary,'') LIKE ? ESCAPE '\\') "
+        if normalized_query
+        else ""
     )
     outcome_parameters: tuple[object, ...] = (
-        (namespace, pattern, pattern, recent_outcome_window) if normalized_query else (namespace, recent_outcome_window)
+        (namespace, pattern, pattern, recent_outcome_window)
+        if normalized_query
+        else (namespace, recent_outcome_window)
     )
     outcome_rows = repository.connection.execute(
         "SELECT status,COALESCE(ended_at,started_at) AS occurred_at FROM episodes "
@@ -143,7 +152,10 @@ def recall_procedure(
                 str(item["id"]),
                 text,
                 score,
-                tuple(policy_evidence.get(str(item["id"])) or ({"type": "policy", "id": str(item["id"])},)),
+                tuple(
+                    policy_evidence.get(str(item["id"]))
+                    or ({"type": "policy", "id": str(item["id"])},)
+                ),
                 features,
             )
         )
@@ -153,7 +165,9 @@ def recall_procedure(
             "text_match": _match(query, text),
             "reward": _bounded(item.get("reward")),
             "recent_outcome": recent_outcome,
-            "recency": _recency(item.get("ended_at") or item.get("started_at"), outcome_half_life_days),
+            "recency": _recency(
+                item.get("ended_at") or item.get("started_at"), outcome_half_life_days
+            ),
         }
         score = (
             0.35 * features["text_match"]
@@ -193,12 +207,18 @@ def recall_procedure(
                 score,
                 (
                     {"type": "trace", "id": str(item["id"])},
-                    {"type": "episode", "id": str(item["episode_id"]), "relation": "parent"},
+                    {
+                        "type": "episode",
+                        "id": str(item["episode_id"]),
+                        "relation": "parent",
+                    },
                 ),
                 features,
             )
         )
     result.extend(claim_candidates or [])
     type_order = {"policy": 0, "episode": 1, "trace": 2, "claim": 3}
-    result.sort(key=lambda item: (type_order[item.memory_type], -item.score, item.memory_id))
+    result.sort(
+        key=lambda item: (type_order[item.memory_type], -item.score, item.memory_id)
+    )
     return result[: max(limit, 1) * 4]

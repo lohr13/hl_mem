@@ -45,7 +45,9 @@ def test_benchmark_records_complete_claim_and_schema_paths() -> None:
         last_input_tokens=10,
         last_output_tokens=5,
         last_usage_tokens=15,
-        _last_schema_errors=[{"loc": ("claims", 0, "scope"), "type": "literal_error", "input": "forever"}],
+        _last_schema_errors=[
+            {"loc": ("claims", 0, "scope"), "type": "literal_error", "input": "forever"}
+        ],
     )
 
     result = benchmark.run_single_extraction(extractor, "我喜欢深色模式", {})
@@ -83,7 +85,9 @@ def test_http_response_body_is_redacted_and_truncated() -> None:
 def test_gold_dataset_has_20_records_and_all_categories() -> None:
     records = [
         json.loads(line)
-        for line in (PROJECT_ROOT / "scripts" / "gold_dataset.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (PROJECT_ROOT / "scripts" / "gold_dataset.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
 
@@ -96,12 +100,21 @@ def test_gold_dataset_has_20_records_and_all_categories() -> None:
         "chat_confirm",
         "long_content",
     }
-    assert all(record["gold_claims"] or not record["should_memorize"] for record in records)
+    assert all(
+        record["gold_claims"] or not record["should_memorize"] for record in records
+    )
 
 
 def test_gold_evaluator_matches_semantically_equivalent_values() -> None:
     evaluator = _load_script("eval_against_gold")
-    gold = [{"subject": "hl_mem", "predicate": "配置", "value": "NO_PROXY 包含 aliyuncs.com", "scope": "permanent"}]
+    gold = [
+        {
+            "subject": "hl_mem",
+            "predicate": "配置",
+            "value": "NO_PROXY 包含 aliyuncs.com",
+            "scope": "permanent",
+        }
+    ]
     predicted = [
         {
             "subject": "hl_mem",

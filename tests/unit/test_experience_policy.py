@@ -1,4 +1,3 @@
-
 from hl_mem.experience.service import ExperienceService, backprop_episode_reward
 from hl_mem.storage.database import Database
 
@@ -6,7 +5,12 @@ from hl_mem.storage.database import Database
 def test_schema_embeds_procedure_in_policy_without_procedures_table(tmp_path) -> None:
     connection = Database(tmp_path / "experience.db").open()
 
-    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
     columns = {row[1] for row in connection.execute("PRAGMA table_info(policies)")}
 
     assert {"episodes", "traces", "policies", "retrieval_feedback"} <= tables
@@ -14,15 +18,23 @@ def test_schema_embeds_procedure_in_policy_without_procedures_table(tmp_path) ->
     assert {"procedure", "procedure_status", "reliability"} <= columns
 
 
-def test_policy_requires_independent_successes_then_retires_after_failures(tmp_path) -> None:
+def test_policy_requires_independent_successes_then_retires_after_failures(
+    tmp_path,
+) -> None:
     connection = Database(tmp_path / "lifecycle.db").open()
     service = ExperienceService(connection, min_support=2, retire_after_failures=2)
-    first = service.record_episode("e1", "发布服务", "success", 1.0, "2026-01-01T00:00:00Z")
+    first = service.record_episode(
+        "e1", "发布服务", "success", 1.0, "2026-01-01T00:00:00Z"
+    )
     service.add_trace(first, "运行测试", "通过", None, 1.0)
-    policy_id = service.induce_policy("发布服务", {"steps": ["运行测试", "发布"]}, [first], "2026-01-01T01:00:00Z")
+    policy_id = service.induce_policy(
+        "发布服务", {"steps": ["运行测试", "发布"]}, [first], "2026-01-01T01:00:00Z"
+    )
     assert service.get_policy(policy_id)["status"] == "candidate"
 
-    second = service.record_episode("e2", "发布服务", "success", 1.0, "2026-01-02T00:00:00Z")
+    second = service.record_episode(
+        "e2", "发布服务", "success", 1.0, "2026-01-02T00:00:00Z"
+    )
     service.add_support(policy_id, second)
     policy = service.get_policy(policy_id)
     assert policy["status"] == "active"
@@ -41,8 +53,15 @@ def test_policy_requires_independent_successes_then_retires_after_failures(tmp_p
 def test_policy_steps_link_to_supporting_episodes(tmp_path) -> None:
     connection = Database(tmp_path / "evidence.db").open()
     service = ExperienceService(connection, min_support=2)
-    episodes = [service.record_episode(f"e{i}", "修复故障", "success", 1.0, f"2026-01-0{i}T00:00:00Z") for i in (1, 2)]
-    policy_id = service.induce_policy("修复故障", {"steps": ["检查日志"]}, episodes, "2026-01-03T00:00:00Z")
+    episodes = [
+        service.record_episode(
+            f"e{i}", "修复故障", "success", 1.0, f"2026-01-0{i}T00:00:00Z"
+        )
+        for i in (1, 2)
+    ]
+    policy_id = service.induce_policy(
+        "修复故障", {"steps": ["检查日志"]}, episodes, "2026-01-03T00:00:00Z"
+    )
 
     links = connection.execute(
         "SELECT evidence_id FROM evidence_links WHERE derived_type='policy' AND derived_id=?",
@@ -56,9 +75,25 @@ def test_feedback_updates_episode_reward_and_is_idempotent(tmp_path) -> None:
     service = ExperienceService(connection)
     service.record_episode("e1", "修复测试", "success", 0.0, "2026-01-01T00:00:00Z")
 
-    assert service.record_feedback("feedback-1", "query-1", "episode", "e1", True, True, 0.8, "2026-01-02T00:00:00Z")
+    assert service.record_feedback(
+        "feedback-1",
+        "query-1",
+        "episode",
+        "e1",
+        True,
+        True,
+        0.8,
+        "2026-01-02T00:00:00Z",
+    )
     assert not service.record_feedback(
-        "feedback-1", "query-1", "episode", "e1", True, True, 0.8, "2026-01-02T00:00:00Z"
+        "feedback-1",
+        "query-1",
+        "episode",
+        "e1",
+        True,
+        True,
+        0.8,
+        "2026-01-02T00:00:00Z",
     )
     assert service.get_episode("e1")["reward"] == 0.8
 
@@ -89,4 +124,7 @@ def test_episode_returns_ordered_trace(tmp_path) -> None:
     service.add_trace("e1", "测试", "通过", None, 0.5)
     service.add_trace("e1", "部署", "完成", None, 1.0)
 
-    assert [item["action"] for item in service.get_episode("e1")["traces"]] == ["测试", "部署"]
+    assert [item["action"] for item in service.get_episode("e1")["traces"]] == [
+        "测试",
+        "部署",
+    ]
