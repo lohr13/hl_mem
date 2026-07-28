@@ -53,6 +53,32 @@ def test_store_claim_with_entities(tmp_path) -> None:
     assert claim["entities"] == ["Alice", "hl_mem"]
 
 
+def test_invalid_subject_uses_legal_entity_replacement(tmp_path) -> None:
+    """写入边界应使用 claim entities 中首个合法实体替换文件名 subject。"""
+    connection = Database(tmp_path / "subject-replacement.db").open()
+    claim_id = _store(
+        connection,
+        ExtractedClaim("事实", "hl_mem 使用 SQLite", subject="server.py", entities=["ALL_PROXY", "hl_mem 项目"]),
+    )
+
+    claim = ClaimRepository(connection).get_claim(claim_id)
+
+    assert claim["subject_entity_id"] == "hl_mem"
+
+
+def test_invalid_subject_without_replacement_uses_unknown_subject(tmp_path) -> None:
+    """没有合法 entity 候选时应显式降级为 unknown_subject。"""
+    connection = Database(tmp_path / "unknown-subject.db").open()
+    claim_id = _store(
+        connection,
+        ExtractedClaim("事实", "环境变量已配置", subject="ALL_PROXY", entities=["server.py"]),
+    )
+
+    claim = ClaimRepository(connection).get_claim(claim_id)
+
+    assert claim["subject_entity_id"] == "unknown_subject"
+
+
 def test_recall_returns_temporal_entities(tmp_path) -> None:
     connection = Database(tmp_path / "recall.db").open()
     _store(

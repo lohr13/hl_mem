@@ -32,7 +32,7 @@ from hl_mem.domain.claims.retention import (
     normalize_utc_iso,
 )
 from hl_mem.domain.constants import DEFAULT_SUBJECT
-from hl_mem.domain.entity import normalize_entity_id
+from hl_mem.domain.entity import invalid_subject_reason, normalize_entity_id
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol
@@ -438,7 +438,28 @@ def _build_claim_drafts(
     # NOTE: tenant_id/namespace 当前是单租户部署中的软标签，不是隔离边界。
     # 多租户需要未来引入统一 NamespaceContext 并贯穿后台任务与存储访问。
     namespace = event.get("tenant_id", "default")
-    subject = normalize_entity_id(extracted.subject)
+    original_subject = extracted.subject
+    subject = normalize_entity_id(original_subject)
+    invalid_reason = invalid_subject_reason(original_subject)
+    replacement: str | None = None
+    if invalid_reason is not None:
+        for entity in getattr(extracted, "entities", None) or []:
+            candidate = normalize_entity_id(entity)
+            if invalid_subject_reason(entity) is None:
+                replacement = candidate
+                break
+        subject = replacement or "unknown_subject"
+        current_audit().emit(
+            "ingest",
+            "subject_guard",
+            "replaced" if replacement else "downgraded",
+            detail={
+                "original_subject": original_subject,
+                "normalized_subject": normalize_entity_id(original_subject),
+                "replacement_subject": subject,
+                "reason_code": invalid_reason,
+            },
+        )
     qualifiers = extracted.qualifiers or {}
     canonical_attribute = validate_canonical_attribute(
         extracted.predicate, getattr(extracted, "canonical_attribute", None)

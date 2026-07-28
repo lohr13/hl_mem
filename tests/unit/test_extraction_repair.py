@@ -77,6 +77,54 @@ class ExtractionRepairTest(unittest.TestCase):
 
         self.assertEqual(repaired["claims"][0]["topic_tags"], ["未知标签"])
 
+    def test_repairs_topic_tag_string_to_array(self) -> None:
+        raw = {"claims": [{"topic_tags": "Config"}]}
+
+        repaired = repair_extraction_json(raw)
+
+        self.assertEqual(repaired["claims"][0]["topic_tags"], ["config"])
+
+    def test_repairs_empty_strings_to_empty_arrays(self) -> None:
+        raw = {"claims": [{"entities": "", "topic_tags": ""}], "entities": ""}
+
+        repaired = repair_extraction_json(raw)
+
+        self.assertEqual(repaired["entities"], [])
+        self.assertEqual(repaired["claims"][0]["entities"], [])
+        self.assertEqual(repaired["claims"][0]["topic_tags"], [])
+
+    def test_repairs_known_enum_mappings(self) -> None:
+        raw = {
+            "claims": [{"scope": "永久", "volatility": "Stable"}],
+            "sensitivity": "Restricted",
+        }
+
+        repaired = repair_extraction_json(raw)
+
+        self.assertEqual(repaired["sensitivity"], "restricted")
+        self.assertEqual(repaired["claims"][0]["scope"], "permanent")
+        self.assertEqual(repaired["claims"][0]["volatility"], "stable")
+
+    def test_repairs_numeric_strings(self) -> None:
+        raw = {"claims": [{"importance": "0.8", "confidence": "0.9"}]}
+
+        repaired = repair_extraction_json(raw)
+
+        self.assertEqual(repaired["claims"][0]["importance"], 0.8)
+        self.assertEqual(repaired["claims"][0]["confidence"], 0.9)
+
+    def test_repairs_null_claims_to_empty_array(self) -> None:
+        repaired = repair_extraction_json({"claims": None})
+
+        self.assertEqual(repaired["claims"], [])
+
+    def test_json_code_fence_is_cleaned_by_existing_parser(self) -> None:
+        raw = '```json\n{"claims": [], "entities": [], "should_memorize": false}\n```'
+
+        parsed = LLMExtractor._parse_json(raw)
+
+        self.assertEqual(parsed["claims"], [])
+
     def test_prompt_contains_explicit_constraints_and_complete_example(self) -> None:
         self.assertIn("sensitivity 只能是以下三个英文值", SYSTEM_PROMPT)
         self.assertIn("entities 必须是 JSON 数组", SYSTEM_PROMPT)

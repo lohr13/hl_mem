@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from typing import Any
 
+from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS
 from hl_mem.observability.audit import current_audit
 
 TOPIC_TAG_ZH_TO_EN: dict[str, str] = {
@@ -65,6 +67,27 @@ SENSITIVITY_ZH_TO_EN: dict[str, str] = {
     "严格限制": "restricted",
 }
 
+ENUM_MAPPINGS: dict[str, dict[str, str]] = {
+    "sensitivity": {
+        **SENSITIVITY_ZH_TO_EN,
+        "Normal": "normal",
+        "Sensitive": "sensitive",
+        "Restricted": "restricted",
+    },
+    "scope": {
+        "Permanent": "permanent",
+        "Temporal": "temporal",
+        "永久": "permanent",
+        "临时": "temporal",
+    },
+    "volatility": {
+        "Stable": "stable",
+        "Ephemeral": "ephemeral",
+        "稳定": "stable",
+        "短暂": "ephemeral",
+    },
+}
+
 
 def _emit_repair(path: str, original: Any, repaired: Any, repair_type: str) -> None:
     """为每个实际发生的确定性修复写入审计事件。"""
@@ -86,7 +109,7 @@ def _repair_entities(container: dict[str, Any], path: str) -> None:
     original = container.get("entities")
     if not isinstance(original, str):
         return
-    repaired = [original]
+    repaired = [] if not original.strip() else [original]
     container["entities"] = repaired
     _emit_repair(path, original, repaired, "string_to_array")
 
@@ -94,14 +117,48 @@ def _repair_entities(container: dict[str, Any], path: str) -> None:
 def _repair_topic_tags(claim: dict[str, Any], path: str) -> None:
     """把中文 topic tag 确定性映射为受控英文标签。"""
     original = claim.get("topic_tags")
-    tags = [original] if isinstance(original, str) else original
+    tags = ([] if not original.strip() else [original]) if isinstance(original, str) else original
     if not isinstance(tags, list):
         return
-    repaired = [TOPIC_TAG_ZH_TO_EN.get(tag, tag) if isinstance(tag, str) else tag for tag in tags]
+    repaired = [
+        (
+            TOPIC_TAG_ZH_TO_EN.get(tag, tag.lower() if tag.lower() in ALLOWED_TOPIC_TAGS else tag)
+            if isinstance(tag, str)
+            else tag
+        )
+        for tag in tags
+    ]
     if repaired == original:
         return
     claim["topic_tags"] = repaired
     _emit_repair(path, original, repaired, "topic_tag_mapping")
+
+
+def _repair_enum(container: dict[str, Any], field: str, path: str) -> None:
+    """按白名单修复已知枚举的大小写或中文形式。"""
+    original = container.get(field)
+    if not isinstance(original, str):
+        return
+    repaired = ENUM_MAPPINGS[field].get(original)
+    if repaired is None or repaired == original:
+        return
+    container[field] = repaired
+    _emit_repair(path, original, repaired, f"{field}_mapping")
+
+
+def _repair_number(container: dict[str, Any], field: str, path: str) -> None:
+    """把有限的合法数字字符串转换为浮点数，不修复越界值。"""
+    original = container.get(field)
+    if not isinstance(original, str):
+        return
+    try:
+        repaired = float(original)
+    except ValueError:
+        return
+    if not math.isfinite(repaired) or not 0.0 <= repaired <= 1.0:
+        return
+    container[field] = repaired
+    _emit_repair(path, original, repaired, "numeric_string_to_float")
 
 
 def repair_extraction_json(raw: dict[str, Any]) -> dict[str, Any]:
@@ -109,13 +166,13 @@ def repair_extraction_json(raw: dict[str, Any]) -> dict[str, Any]:
     repaired = deepcopy(raw)
     _repair_entities(repaired, "entities")
 
-    sensitivity = repaired.get("sensitivity")
-    normalized_sensitivity = SENSITIVITY_ZH_TO_EN.get(sensitivity) if isinstance(sensitivity, str) else None
-    if normalized_sensitivity is not None:
-        repaired["sensitivity"] = normalized_sensitivity
-        _emit_repair("sensitivity", sensitivity, normalized_sensitivity, "sensitivity_mapping")
+    _repair_enum(repaired, "sensitivity", "sensitivity")
 
     claims = repaired.get("claims")
+    if claims is None:
+        repaired["claims"] = []
+        _emit_repair("claims", None, [], "null_to_array")
+        return repaired
     if not isinstance(claims, list):
         return repaired
     for index, claim in enumerate(claims):
@@ -123,4 +180,8 @@ def repair_extraction_json(raw: dict[str, Any]) -> dict[str, Any]:
             continue
         _repair_entities(claim, f"claims.{index}.entities")
         _repair_topic_tags(claim, f"claims.{index}.topic_tags")
+        _repair_enum(claim, "scope", f"claims.{index}.scope")
+        _repair_enum(claim, "volatility", f"claims.{index}.volatility")
+        _repair_number(claim, "importance", f"claims.{index}.importance")
+        _repair_number(claim, "confidence", f"claims.{index}.confidence")
     return repaired

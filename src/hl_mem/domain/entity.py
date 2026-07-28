@@ -12,6 +12,11 @@ from typing import Any
 DEFAULT_ENTITY_ALIASES: dict[str, str] = {
     "hlmem": "hl_mem",
     "hl_mem": "hl_mem",
+    "hl_mem 项目": "hl_mem",
+    "hl_mem项目": "hl_mem",
+    "hl_mem 服务": "hl_mem",
+    "hl_mem_plugin": "hl_mem",
+    "hl-mem": "hl_mem",
     "hermes-agent": "Hermes",
     "hermes 插件": "Hermes",
     "hermes memory": "Hermes",
@@ -22,6 +27,9 @@ DEFAULT_ENTITY_ALIASES: dict[str, str] = {
 }
 
 _active_aliases: dict[str, str] | None = None
+_FILE_SUBJECT_PATTERN = re.compile(r"(?i)^.+\.py$")
+_PASCAL_CASE_SUBJECT_PATTERN = re.compile(r"^(?:[A-Z][a-z0-9]+){2,}$")
+_ENVIRONMENT_VARIABLE_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 
 
 def _normalize_text(value: Any, *, casefold: bool) -> str:
@@ -86,3 +94,21 @@ def normalize_entity_id(subject: str | None, aliases: dict[str, str] | None = No
         return "unknown"
     alias_map = aliases or _active_aliases or _normalize_default_aliases()
     return alias_map.get(normalized, normalized)
+
+
+def invalid_subject_reason(subject: str | None) -> str | None:
+    """判断候选是否属于不允许作为顶层 subject 的技术标识。"""
+    if subject is None:
+        return "empty"
+    normalized = _normalize_text(subject, casefold=False)
+    if not normalized:
+        return "empty"
+    if "/" in normalized or "\\" in normalized:
+        return "path"
+    if _FILE_SUBJECT_PATTERN.fullmatch(normalized):
+        return "filename"
+    if _ENVIRONMENT_VARIABLE_PATTERN.fullmatch(normalized):
+        return "environment_variable"
+    if _PASCAL_CASE_SUBJECT_PATTERN.fullmatch(normalized):
+        return "class_name"
+    return None
