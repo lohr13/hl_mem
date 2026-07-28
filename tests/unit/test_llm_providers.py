@@ -38,6 +38,28 @@ def test_dashscope_and_zhipu_default_to_json_object_capability() -> None:
     assert ZhipuProvider().capabilities.json_schema_strict is False
 
 
+def test_dashscope_provider_disables_thinking_in_payload_by_default() -> None:
+    payload = DashScopeProvider().build_payload(
+        "qwen3.7-plus",
+        _request(),
+        StructuredOutputMode.JSON_OBJECT,
+    )
+
+    assert payload["enable_thinking"] is False
+    assert "extra_body" not in payload
+
+
+def test_dashscope_provider_can_enable_thinking_in_payload() -> None:
+    payload = DashScopeProvider(enable_thinking=True).build_payload(
+        "qwen3.7-plus",
+        _request(),
+        StructuredOutputMode.JSON_OBJECT,
+    )
+
+    assert payload["enable_thinking"] is True
+    assert "extra_body" not in payload
+
+
 def test_provider_parses_response_metadata() -> None:
     response = OpenAICompatibleProvider().parse_response(
         {

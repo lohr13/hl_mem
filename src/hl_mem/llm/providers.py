@@ -77,6 +77,14 @@ class DashScopeProvider(OpenAICompatibleProvider):
     name = "dashscope"
     capabilities = LLMCapabilities(json_object=True, json_schema_strict=False)
 
+    def __init__(self, *, enable_thinking: bool = False) -> None:
+        self.enable_thinking = enable_thinking
+
+    def build_payload(self, model: str, request: LLMRequest, mode: StructuredOutputMode) -> dict[str, Any]:
+        payload = super().build_payload(model, request, mode)
+        payload["enable_thinking"] = self.enable_thinking
+        return payload
+
 
 class ZhipuProvider(OpenAICompatibleProvider):
     """智谱 GLM OpenAI-compatible adapter。"""

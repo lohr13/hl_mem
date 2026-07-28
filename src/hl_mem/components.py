@@ -102,11 +102,16 @@ def make_llm_client(
     provider_type = provider_types.get(settings.llm_provider)
     if provider_type is None:
         raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
+    provider = (
+        DashScopeProvider(enable_thinking=settings.enable_llm_thinking)
+        if provider_type is DashScopeProvider
+        else provider_type()
+    )
     return LLMClient(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         model=settings.llm_model,
-        provider=provider_type(),
+        provider=provider,
         timeout=httpx.Timeout(settings.llm_timeout),
         max_attempts=settings.llm_max_attempts,
         span_recorder=LLMSpanRecorder(connection) if connection is not None else None,

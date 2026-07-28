@@ -133,6 +133,16 @@ def _parse_on_off(value: str, variable_name: str) -> bool:
     return normalized == "on"
 
 
+def _parse_bool(value: str, variable_name: str) -> bool:
+    """解析显式布尔环境变量，同时兼容 true/false 与 on/off。"""
+    normalized = value.strip().lower()
+    if normalized in {"true", "on"}:
+        return True
+    if normalized in {"false", "off"}:
+        return False
+    raise ConfigurationError(f"{variable_name} must be 'true' or 'false'")
+
+
 class Environment(StrEnum):
     """支持的部署环境。"""
 
@@ -226,6 +236,7 @@ class Settings:
     llm_model: str = "qwen3.7-plus"
     llm_provider: LLMProvider = "dashscope"
     llm_structured_mode: StructuredOutputModeName = "auto"
+    enable_llm_thinking: bool = False
     llm_timeout: float = 90.0
     llm_max_attempts: int = 3
     llm_schema_retries: int = 2
@@ -373,6 +384,10 @@ class Settings:
             llm_structured_mode=_env_choice(
                 "HL_MEM_LLM_STRUCTURED_MODE", "auto", ("auto", "json_object", "json_schema")
             ),
+            enable_llm_thinking=_parse_bool(
+                os.getenv("HL_MEM_LLM_ENABLE_THINKING", "false"),
+                "HL_MEM_LLM_ENABLE_THINKING",
+            ),
             llm_timeout=float(os.getenv("LLM_TIMEOUT", "90")),
             llm_max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
             llm_schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
@@ -470,6 +485,8 @@ class Settings:
             raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
         if self.llm_structured_mode not in {"auto", "json_object", "json_schema"}:
             raise ConfigurationError("HL_MEM_LLM_STRUCTURED_MODE must be 'auto', 'json_object', or 'json_schema'")
+        if not isinstance(self.enable_llm_thinking, bool):
+            raise ConfigurationError("HL_MEM_LLM_ENABLE_THINKING must be a boolean")
         if self.relation_expansion_mode not in {"off", "on"}:
             raise ConfigurationError("HL_MEM_RELATION_EXPANSION must be 'off' or 'on'")
         if self.relation_expansion_max_depth < 1:
@@ -651,6 +668,7 @@ class Settings:
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,
+            "enable_llm_thinking": self.enable_llm_thinking,
             "image_describer_mode": self.image_describer_mode,
             "image_describer_provider": self.image_describer_provider,
             "image_describer_model": self.image_describer_model,

@@ -15,7 +15,7 @@ def _load_benchmark_module():
     return module
 
 
-def test_load_api_keys_reads_dashscope_credentials_only_from_dotenv(tmp_path, monkeypatch) -> None:
+def test_load_api_keys_reads_zhipu_from_dotenv_and_dashscope_from_hermes(tmp_path, monkeypatch) -> None:
     benchmark = _load_benchmark_module()
     (tmp_path / ".env").write_text(
         "LLM_API_KEY=sk-sp-test\nLLM_BASE_URL=https://coding.dashscope.aliyuncs.com/v1\n",
@@ -24,18 +24,23 @@ def test_load_api_keys_reads_dashscope_credentials_only_from_dotenv(tmp_path, mo
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.setattr(benchmark, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(benchmark, "HERMES_CONFIG_PATH", tmp_path / "missing-hermes-config.yaml")
 
     assert benchmark.load_api_keys() == {
-        "dashscope": {
+        "zhipu": {
             "key": "sk-sp-test",
             "url": "https://coding.dashscope.aliyuncs.com/v1",
-        }
+        },
+        "dashscope": {"key": None, "url": None},
     }
 
 
-def test_all_five_benchmark_models_use_dashscope_credentials() -> None:
+def test_benchmark_model_matrix_routes_glm52_to_zhipu() -> None:
     benchmark = _load_benchmark_module()
-    keys = {"dashscope": {"key": "sk-sp-test", "url": "https://coding.dashscope.aliyuncs.com/v1"}}
+    keys = {
+        "zhipu": {"key": "zhipu-test", "url": "https://open.bigmodel.cn/api/paas/v4"},
+        "dashscope": {"key": "sk-sp-test", "url": "https://coding.dashscope.aliyuncs.com/v1"},
+    }
 
     configs = benchmark.get_model_configs(keys)
 
@@ -47,9 +52,13 @@ def test_all_five_benchmark_models_use_dashscope_credentials() -> None:
         "qwen3.7-plus",
         "qwen3.6-plus",
     ]
-    assert all(config["provider"] == "dashscope" for config in configs)
-    assert all(config["api_key"] == keys["dashscope"]["key"] for config in configs)
-    assert all(config["base_url"] == keys["dashscope"]["url"] for config in configs)
+    assert configs[0]["provider"] == "zhipu"
+    assert configs[0]["api_key"] == keys["zhipu"]["key"]
+    assert configs[0]["base_url"] == keys["zhipu"]["url"]
+    assert all(config["provider"] == "dashscope" for config in configs[1:])
+    assert all(config["api_key"] == keys["dashscope"]["key"] for config in configs[1:])
+    assert all(config["base_url"] == keys["dashscope"]["url"] for config in configs[1:])
+    assert all(config["enable_thinking"] is False for config in configs)
 
 
 def test_make_extractor_disables_dashscope_thinking() -> None:
@@ -59,6 +68,7 @@ def test_make_extractor_disables_dashscope_thinking() -> None:
         "provider": "dashscope",
         "api_key": "sk-sp-test",
         "base_url": "https://coding.dashscope.aliyuncs.com/v1",
+        "enable_thinking": False,
     }
 
     extractor = benchmark.make_extractor(config)

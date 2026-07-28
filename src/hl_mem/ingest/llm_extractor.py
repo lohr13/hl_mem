@@ -23,6 +23,7 @@ from hl_mem.domain.claims.attributes import (
     reconcile_canonical_attribute,
     validate_slot_instance,
 )
+from hl_mem.domain.entity import invalid_subject_reason, normalize_entity_id
 from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import (
@@ -652,7 +653,33 @@ class LLMExtractor:
         value = ALIASES.get(value.casefold(), value)
         predicate = str(item.get("predicate", "事实")).strip()
         predicate = normalize_predicate(predicate)
-        subject = str(item.get("subject", "用户"))
+        original_subject = str(item.get("subject", "用户"))
+        subject = normalize_entity_id(original_subject)
+        entities = list(item.get("entities") or [])
+        invalid_reason = invalid_subject_reason(original_subject)
+        if invalid_reason is not None:
+            replacement = next(
+                (
+                    normalize_entity_id(entity)
+                    for entity in entities
+                    if invalid_subject_reason(entity) is None
+                ),
+                None,
+            )
+            subject = replacement or "unknown_subject"
+            if original_subject not in entities:
+                entities.append(original_subject)
+            current_audit().emit(
+                "extract",
+                "subject_guard",
+                "replaced" if replacement else "downgraded",
+                detail={
+                    "original_subject": original_subject,
+                    "normalized_subject": normalize_entity_id(original_subject),
+                    "replacement_subject": subject,
+                    "reason_code": invalid_reason,
+                },
+            )
         qualifiers = item.get("qualifiers") or {}
         inferred_attribute = infer_canonical_attribute(predicate, subject, value, qualifiers)
         canonical_attribute, _attribute_reason = reconcile_canonical_attribute(
@@ -704,5 +731,5 @@ class LLMExtractor:
             topic_tags=normalize_topic_tags(item.get("topic_tags")),
             occurred_start=item.get("occurred_start"),
             occurred_end=item.get("occurred_end"),
-            entities=item.get("entities"),
+            entities=entities or None,
         )

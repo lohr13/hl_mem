@@ -515,9 +515,15 @@ def run_benchmark(mode: str, *, resume: bool) -> tuple[list[dict[str, Any]], dic
             "completed_at": None,
             "git_commit": git_commit_sha(),
             "models": list(MODELS),
-            "provider": "dashscope",
-            "endpoint_host": urlparse(str(keys["dashscope"]["url"])).netloc,
-            "enable_thinking": False,
+            "model_configs": [
+                {
+                    "model": config["model"],
+                    "provider": config["provider"],
+                    "endpoint_host": urlparse(str(config["base_url"])).netloc,
+                    "enable_thinking": config["enable_thinking"],
+                }
+                for config in configs
+            ],
             "event_count": len(testset),
             "expected_call_count": len(testset) * len(MODELS),
             "testset_fingerprint": fingerprint,
