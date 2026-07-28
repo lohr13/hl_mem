@@ -17,7 +17,7 @@ class AsyncClient:
     error = None
 
     def __init__(self, **kwargs):
-        assert kwargs["timeout"] == 2.0
+        self.timeout = kwargs["timeout"]
 
     async def __aenter__(self):
         return self
@@ -81,6 +81,23 @@ def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:
         ),
     ]
     assert provider._failure_count == 0
+
+
+def test_provider_uses_configurable_default_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("HL_MEM_TIMEOUT", "25")
+
+    provider = HLMemProvider()
+
+    assert provider.timeout == 25.0
+    assert provider._client.timeout == 25.0
+
+
+def test_provider_defaults_to_long_recall_timeout(monkeypatch) -> None:
+    monkeypatch.delenv("HL_MEM_TIMEOUT", raising=False)
+
+    provider = HLMemProvider()
+
+    assert provider.timeout == 30.0
 
 
 def test_sync_hooks_open_circuit_after_repeated_http_failures(monkeypatch) -> None:
@@ -191,6 +208,34 @@ def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
     assert episode_requests[-1][0].endswith("/v1/episodes/episode-1")
     assert episode_requests[-1][1]["status"] == "success"
     assert episode_requests[-1][1]["reward"] == 0.8
+
+
+def test_sync_turn_truncates_trace_fields_to_api_limits(monkeypatch) -> None:
+    AsyncClient.calls = 0
+    AsyncClient.requests = []
+    AsyncClient.error = None
+    monkeypatch.setattr(httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: Response())
+    provider = HLMemProvider(timeout=2.0)
+    long_action = "a" * 10_001
+    long_observation = "o" * 50_001
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "call-1", "function": {"name": long_action}},
+                {"id": "call-2", "function": {"name": "patch"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call-1", "content": long_observation},
+        {"role": "tool", "tool_call_id": "call-2", "content": "patched"},
+    ]
+
+    provider.sync_turn("task", "done", messages=messages)
+
+    traces = [payload for url, payload in AsyncClient.requests if url.endswith("/traces")]
+    assert len(traces[0]["action"]) == 10_000
+    assert len(traces[0]["observation"]) == 50_000
 
 
 def test_sync_turn_episode_failure_does_not_fail_event_sync(monkeypatch) -> None:

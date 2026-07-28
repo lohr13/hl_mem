@@ -15,6 +15,10 @@ from hl_mem.settings import Settings
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TIMEOUT_SECONDS = 30.0
+MAX_TRACE_ACTION_LENGTH = 10_000
+MAX_TRACE_OBSERVATION_LENGTH = 50_000
+
 
 class HLMemProvider:
     """Hermes 兼容协调层；HTTP、缓存与 Episode 映射委托给独立组件。"""
@@ -23,18 +27,23 @@ class HLMemProvider:
         self,
         db_path: str | None = None,
         daemon_url: str | None = None,
-        timeout: float = 2.0,
+        timeout: float | None = None,
     ) -> None:
         settings = Settings.from_env()
         self.db_path = db_path
         configured_daemon_url = daemon_url or os.getenv("HL_MEM_URL", "http://127.0.0.1:8200")
         if configured_daemon_url is None:
             raise ValueError("daemon URL must be configured")
+        configured_timeout = (
+            timeout if timeout is not None else float(os.getenv("HL_MEM_TIMEOUT", str(DEFAULT_TIMEOUT_SECONDS)))
+        )
+        if configured_timeout <= 0:
+            raise ValueError("timeout must be positive")
         self.daemon_url = configured_daemon_url.rstrip("/")
-        self.timeout = timeout
+        self.timeout = configured_timeout
         self._client = HLMemHttpClient(
             self.daemon_url,
-            timeout,
+            configured_timeout,
             settings.hermes_circuit_failure_threshold,
             settings.hermes_circuit_open_seconds,
         )
@@ -233,8 +242,8 @@ class HLMemProvider:
                 client,
                 f"/v1/episodes/{episode_id}/traces",
                 {
-                    "action": call["action"],
-                    "observation": observation,
+                    "action": call["action"][:MAX_TRACE_ACTION_LENGTH],
+                    "observation": (observation[:MAX_TRACE_OBSERVATION_LENGTH] if observation is not None else None),
                     "error_signature": error_signature,
                     "value": 0.0 if error_signature else 1.0,
                 },
