@@ -173,10 +173,7 @@ class QueryExpander:
                 f"同一会话的先行文本（仅用于消解指代）：\n{rendered}\n"
                 "只能使用这些文本中明确存在的事实，不得推断或新增事实。\n"
             )
-        user = (
-            f"{context_text}原查询：{query}\n召回意图：{intent.value}\n"
-            f"最多输出 {max_expansions} 条："
-        )
+        user = f"{context_text}原查询：{query}\n召回意图：{intent.value}\n" f"最多输出 {max_expansions} 条："
         return LLMRequest(
             messages=[LLMMessage("system", system), LLMMessage("user", user)],
             structured_output=StructuredOutputSpec(

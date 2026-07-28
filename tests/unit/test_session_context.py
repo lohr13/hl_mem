@@ -136,7 +136,9 @@ def test_missing_session_and_context_read_failure_fall_back(tmp_path, monkeypatc
         service = RecallService(connection, FakeEmbedder(4), settings=settings, query_expander=QueryExpander(client))
         service.recall("之前讨论的那个方案")
         service.recall("之前讨论的那个方案", session_id="unknown")
-        monkeypatch.setattr(EventRepository, "get_recent_events", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError()))
+        monkeypatch.setattr(
+            EventRepository, "get_recent_events", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError())
+        )
         service.recall("之前讨论的那个方案", session_id="broken")
 
     assert client.requests == []

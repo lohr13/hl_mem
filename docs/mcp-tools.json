@@ -25,6 +25,9 @@
         },
         "query": {
           "type": "string"
+        },
+        "session_id": {
+          "type": "string"
         }
       },
       "required": [

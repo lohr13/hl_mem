@@ -130,7 +130,7 @@ def _env_choice(
 def _env_choice(
     name: str,
     default: IndexTextMode,
-    allowed: tuple[Literal["legacy"], Literal["value_only"], Literal["natural"]],
+    allowed: tuple[Literal["legacy"], Literal["value_only"], Literal["natural"], Literal["answerable"]],
 ) -> IndexTextMode: ...
 
 

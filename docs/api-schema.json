@@ -146,13 +146,42 @@
             ],
             "title": "Replacement"
           },
+          "reranker_raw_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Raw Score"
+          },
           "score": {
             "title": "Score",
             "type": "number"
           },
+          "score_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Path"
+          },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
           },
           "text": {
             "title": "Text"
@@ -185,8 +214,7 @@
         "required": [
           "id",
           "text",
-          "score",
-          "status"
+          "score"
         ],
         "title": "ClaimOutput",
         "type": "object"
@@ -857,6 +885,17 @@
       "RecallOutput": {
         "description": "REST 与 MCP 共享应用服务返回的召回契约。",
         "properties": {
+          "answerability": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answerability"
+          },
           "context": {
             "anyOf": [
               {
@@ -960,7 +999,7 @@
           "observation": {
             "anyOf": [
               {
-                "maxLength": 50000,
+                "maxLength": 1000,
                 "type": "string"
               },
               {

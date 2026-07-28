@@ -173,7 +173,8 @@ def enforce_relevance(
                 0.0,
                 (previous_decision.evidence_score - decision.evidence_score) / denominator,
             )
-            candidate.relative_drop = relative_drop
+            if candidate is not None:
+                candidate.relative_drop = relative_drop
             if relative_drop > relative_drop_threshold:
                 tracer.record_filter(claim_id, "relative_score_drop")
                 break
