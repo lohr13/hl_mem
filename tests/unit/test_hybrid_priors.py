@@ -61,7 +61,7 @@ def test_narrowed_trigger_ignores_metadata_but_refreshes_text(tmp_path):
     connection.execute("UPDATE claims SET access_count=1,confidence=.8,status='disputed' WHERE id='c'")
     # migration 018 tags FTS trigger adds extra changes on UPDATE
     assert connection.total_changes - before >= 1
-    connection.execute("UPDATE claims SET value_json='\"coffee\"' WHERE id='c'")
+    connection.execute("UPDATE claims SET value_json='\"coffee\"',index_text='user likes coffee' WHERE id='c'")
     assert connection.execute("SELECT count(*) FROM claims_fts WHERE claims_fts MATCH 'coffee'").fetchone()[0] == 1
     assert connection.execute("SELECT count(*) FROM claims_fts WHERE claims_fts MATCH 'tea'").fetchone()[0] == 0
 

@@ -71,8 +71,8 @@ def test_recall_records_impressions_and_feedback_updates_them(tmp_path) -> None:
     with TestClient(app) as client:
         connection = app.state.db.open()
         connection.execute(
-            "INSERT INTO claims(id,status,subject_entity_id,predicate,value_json,recorded_from) "
-            "VALUES ('claim-1','active','user','likes','\"tea\"','2026-07-22T00:00:00+00:00')"
+            "INSERT INTO claims(id,status,subject_entity_id,predicate,value_json,index_text,recorded_from) "
+            "VALUES ('claim-1','active','user','likes','\"tea\"','user likes tea','2026-07-22T00:00:00+00:00')"
         )
         connection.commit()
 

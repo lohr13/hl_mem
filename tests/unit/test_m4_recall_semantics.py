@@ -4,13 +4,9 @@ import json
 
 import pytest
 
-from hl_mem.domain.recall import (
-    RecallIntent,
-    claim_is_visible,
-    parse_utc,
-    route_recall_intent,
-)
-from hl_mem.ingest.embedder import pack_vector
+from hl_mem.core.vector import pack_vector
+from hl_mem.domain.recall import route_recall_intent
+from hl_mem.domain.temporal import RecallIntent, claim_is_visible, parse_utc
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.ttl import expire_claims

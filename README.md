@@ -43,7 +43,9 @@ request contracts.
 ## Features
 
 - **Memory correctness — Stable:** idempotent event ingestion, atomic writes, exact/semantic deduplication, deterministic
-  conflict rules, and LLM-assisted gray-zone consolidation.
+  conflict rules, LLM-assisted gray-zone consolidation, and auditable extraction governance. Governance includes
+  deterministic scope downgrades, predicate projection from canonical attributes, invalid-subject isolation, and bounded
+  structured-output repair.
 - **Temporal knowledge — Stable:** valid time and recorded time, evidence lineage, entity normalization, and explicit
   forgetting with stale propagation.
 - **Retrieval — Stable:** Chinese-aware FTS5, dense vectors, RRF fusion, multi-factor ranking, optional reranking, relation
@@ -52,7 +54,23 @@ request contracts.
   logs, and online backups.
 - **Agent experience — Stable:** Episodes, Traces, rewards, Policies/Procedures, and derived Observations.
 - **Interfaces — Stable/Beta:** FastAPI REST and Hermes Provider are stable; the five-tool MCP surface is beta.
-- **Evaluation — Stable:** offline extraction/retrieval/lifecycle metrics and a LongMemEval adapter.
+- **Evaluation — Stable:** offline extraction/retrieval/lifecycle metrics, recall diagnostics, controlled index-text A/B,
+  cross-model extraction benchmarks, and a LongMemEval adapter.
+
+## Key Configuration
+
+The complete, versioned template is [`.env.example`](.env.example). Settings added for the current extraction and recall
+governance work include:
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `HL_MEM_LLM_ENABLE_THINKING` | unset | Provider-neutral boolean override; unset omits the payload field. |
+| `HL_MEM_INDEX_TEXT_MODE` | `legacy` | Claim embedding/FTS text: `legacy`, `value_only`, or `natural`. |
+| `HL_MEM_LLM_STRUCTURED_MODE` | `json_object` | Structured extraction mode. |
+| `HL_MEM_LLM_SCHEMA_RETRIES` | `2` | Bounded retries after deterministic JSON repair/schema validation. |
+| `HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS` | `12000` | Target size for structure-aware extraction chunks. |
+| `HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS` | `2` | Conversation-turn overlap between chunks. |
+| `HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH` | `3` | Maximum recursive split depth after truncation. |
 
 ## Architecture Overview
 
@@ -121,7 +139,7 @@ selection guidance.
 - Multi-tenancy
 - PostgreSQL storage adapter (behind protocol boundary)
 
-Current baseline: v0.15.0, 32 migrations. Detailed maturity claims live in the
+Current baseline: v0.15.0, 33 migrations. Detailed maturity claims live in the
 [capability matrix](docs/capability-matrix.md).
 
 ## 中文

@@ -1,5 +1,23 @@
 # HL-Mem 变更记录
 
+## Unreleased — 2026-07-28
+
+### Added
+
+- 新增召回诊断、`index_text` 三模式 A/B、provider 调用观测与跨模型结构化提取 benchmark。
+- 新增 `HL_MEM_LLM_ENABLE_THINKING`、`HL_MEM_INDEX_TEXT_MODE`、结构化输出重试与提取分块配置。
+- 新增可审计的 scope 降级、canonical attribute → predicate 投影、subject 守卫与扩展 JSON repair。
+
+### Fixed
+
+- 修复 claim 独立索引文本上线后，仓储兼容写入未生成 `index_text` 导致 FTS 漏召回的问题。
+- 将 claim FTS 更新触发器收窄到 `index_text`，避免访问计数、状态和标签更新造成无关索引写放大。
+- 更新领域分层重构后的单元测试导入路径。
+
+### Documentation
+
+- 更新 README、配置模板、架构与交接状态；将已完成的 benchmark/research/task 过程文档移入历史归档。
+
 ## v0.15.0 — 2026-07-26
 
 - Provider diagnostics, safe answerability shadow gating, and bounded expansion deadlines.

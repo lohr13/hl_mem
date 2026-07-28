@@ -34,6 +34,9 @@ reference while integrating; consult Design, Proposals, and Research when evalua
 - [Handoff Status](HANDOFF.md)
 - [Historical Archive](archive/)
 
+日期化的审计与 benchmark 结果可暂留在文档根目录作为当前运行证据；已完成的执行计划、研究草稿和 Codex
+任务说明应移入 `archive/tasks/` 或 `archive/research/`，不作为当前行为的规范来源。
+
 ## Maintenance Rules
 
 - Update `CHANGELOG.md` for release-level changes and `HANDOFF.md` for current operational status.

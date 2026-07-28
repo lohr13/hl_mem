@@ -3,8 +3,8 @@ import struct
 import httpx
 import pytest
 
-from hl_mem.core.vector import cosine_similarity
-from hl_mem.ingest.embedder import Embedder, FakeEmbedder, pack_vector, unpack_vector
+from hl_mem.core.vector import cosine_similarity, pack_vector, unpack_vector
+from hl_mem.ingest.embedder import Embedder, FakeEmbedder
 
 
 def test_fake_dimension_and_vector_round_trip() -> None:

@@ -101,7 +101,7 @@ src/hl_mem/
 │   ├── jobs.py               # Durable job queue
 │   ├── relation_proposals.py # Auditable relation candidates
 │   ├── usefulness.py         # Feedback usefulness aggregation
-│   └── migrations/           # 32 immutable SQL migrations (001-032)
+│   └── migrations/           # 33 immutable SQL migrations (001-033)
 ├── workers/
 │   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
 │   ├── ttl.py                # Importance-aware expiry
@@ -151,6 +151,9 @@ Client
   → idempotent Event insert + durable extract_event Job
   → Worker lease and EventFilter / optional deterministic pre-filter
   → LLM extraction with preceding context and temporal anchoring
+  → deterministic JSON repair + schema validation + bounded retry
+  → subject guard / scope normalization / canonical predicate projection
+  → index_text construction (legacy / value_only / natural)
   → fact_hash v2 exact deduplication
   → canonical attribute + conflict_key deterministic conflict resolution
   → LLM four-way consolidation for gray-zone conflicts
@@ -163,6 +166,13 @@ Client
 The Claim mutation sequence—status update, Claim insert, supersede operation, and evidence link—runs in one
 `BEGIN IMMEDIATE` transaction. External calls use configured timeouts and retries; errors are recorded rather than
 silently swallowed. Idempotent retries return the original Event instead of duplicating work.
+
+The extraction output is governed before persistence: invalid or shared placeholder subjects are rebound to a valid
+canonical entity when possible and otherwise isolated per event; canonical attributes project their registered
+predicate; and high-confidence runtime, test, or version signals can downgrade an LLM-proposed permanent scope to
+temporal. Each decision emits an audit reason code. Deterministic JSON repair runs before a bounded schema retry and its
+repair count is exposed to diagnostics. Claim FTS and dense embeddings consume the persisted `index_text`; changing
+`HL_MEM_INDEX_TEXT_MODE` therefore supports controlled representation A/B without changing the rest of recall.
 
 Observation and Mental Model derivation is a separate maintenance path, not part of the Claim write transaction. The
 mental-model worker evaluates active evidence after ingestion and writes or refreshes derivations when its evidence rules

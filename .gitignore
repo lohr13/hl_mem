@@ -19,3 +19,16 @@ var/*.db.cleanup_backup_*
 var/*.db.bak_*
 tests/eval/reports/*.json
 evaluation/results/
+scripts/*.stdout.log
+scripts/*.stderr.log
+scripts/*.pid
+scripts/*.lock
+scripts/*artifacts.txt
+scripts/*.partial.jsonl
+scripts/benchmark_runs/
+scripts/extraction_benchmark_results*.jsonl
+scripts/extraction_benchmark_results*.manifest.json
+scripts/extraction_benchmark_results*.gold_eval.txt
+scripts/extraction_benchmark_results*.analysis.md
+scripts/extraction_benchmark_glm*.jsonl
+scripts/glm52_*.jsonl

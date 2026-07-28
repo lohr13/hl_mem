@@ -1,6 +1,6 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-07-26 · v0.15.0
+> 最后更新：2026-07-28 · v0.15.0（未发布治理修订）
 
 ## 当前状态
 
@@ -8,10 +8,20 @@
 - **版本**：v0.15.0
 - **阶段**：v0.15.0
 - **服务**：FastAPI on port 8200；LLM/Embedding/Reranker 均通过 `.env` 配置（见 `.env.example`），当前部署使用 glm-5.2 + text-embedding-v4 (2048d) + gte-rerank-v2
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），32 migrations，约 403 active / 514 total claims
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），33 migrations；实时数据量以 `/healthz` 和只读审计为准
 - **FTS**：trigram（claims/tags），unicode61（events）
 
 ## 已完成
+
+### 2026-07-28 提取与召回治理
+
+- scope：LLM 给出 `permanent` 后仍经过确定性语义规则复核；运行态、测试结果、版本态等可降级为 `temporal`，并记录原因码。
+- predicate：canonical attribute 完成协调后反向投影 canonical predicate，避免属性与 predicate 漂移。
+- subject：无效、共享占位或代词主体优先替换为有效实体，否则生成事件隔离 subject，防止跨事件污染。
+- repair：结构化输出先做确定性 JSON repair 和兼容字段补齐，再进入有界 schema retry；repair 数量进入诊断信息。
+- recall：claim 使用独立 `index_text`，支持 `legacy` / `value_only` / `natural` 对照；provider 调用、扩展路径与 score trace 可观测。
+- benchmark：已具备固定测试集、manifest、断点恢复、gold evaluation 和多模型横评脚本；运行产物不纳入源码版本控制。
+- P0：完成数据清洗只读审计与治理后召回实测；报告保留在 `docs/`，执行型计划和研究草稿归档。
 
 ### 核心功能
 

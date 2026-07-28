@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import cosine_similarity
+from hl_mem.domain.claims.claim import build_index_text
 from hl_mem.domain.claims.conflicts import slot_qualifier_key
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.errors import ValidationError
@@ -44,6 +45,13 @@ class ClaimRepository:
             stored["value_json"] = encode_json(stored.pop("value"), sort_keys=True)
         if "qualifiers" in stored:
             stored["qualifiers_json"] = encode_json(stored.pop("qualifiers"), sort_keys=True)
+        if "index_text" not in stored:
+            index_claim = dict(claim)
+            if "value" not in index_claim and stored.get("value_json") is not None:
+                index_claim["value"] = decode_json(stored["value_json"])
+            if "topic_tags" not in index_claim and stored.get("topic_tags_json") is not None:
+                index_claim["topic_tags"] = decode_json(stored["topic_tags_json"])
+            stored["index_text"] = build_index_text(index_claim)
         return insert_row(self.connection, "claims", stored, commit)
 
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:

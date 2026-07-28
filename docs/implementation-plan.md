@@ -1,6 +1,6 @@
 # HL-Mem 已完成里程碑与路线图
 
-> 基线：v0.13.1（2026-07-26）。发布历史和逐版本测试基线以 [CHANGELOG](CHANGELOG.md) 为准，能力成熟度以
+> 基线：v0.15.0 + 2026-07-28 未发布治理修订。发布历史和逐版本测试基线以 [CHANGELOG](CHANGELOG.md) 为准，能力成熟度以
 > [Capability Matrix](capability-matrix.md) 为准。
 
 HL-Mem 已完成最初 Phase 0–6 的建设目标。本文不再作为待实现任务单，而是记录已交付里程碑与后续演进方向。
