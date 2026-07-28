@@ -29,7 +29,7 @@ if str(SRC_ROOT) not in sys.path:
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.providers import DashScopeProvider
+from hl_mem.llm.providers import DashScopeProvider, ZhipuProvider
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.storage._shared import decode_json
 
@@ -38,6 +38,9 @@ TESTSET_PATH = PROJECT_ROOT / "scripts" / "extraction_testset.jsonl"
 RESULTS_PATH = PROJECT_ROOT / "scripts" / "extraction_benchmark_results.jsonl"
 RUNS_ROOT = PROJECT_ROOT / "scripts" / "benchmark_runs"
 LOCK_PATH = PROJECT_ROOT / "scripts" / ".benchmark_extraction.lock"
+HERMES_CONFIG_PATH = Path(
+    os.getenv("HERMES_CONFIG_PATH", str(Path(os.environ["LOCALAPPDATA"]) / "hermes" / "config.yaml"))
+)
 NUM_EVENTS = 50
 VALIDATION_EVENTS = 3
 MODELS = ("glm-5.2", "glm-5", "glm-4.7", "qwen3.7-plus", "qwen3.6-plus")
@@ -98,8 +101,8 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
 
 
 def load_api_keys() -> dict[str, dict[str, str | None]]:
-    """从环境变量或 .env 加载百炼凭据。"""
-    dashscope: dict[str, str | None] = {
+    """从环境变量或 .env 加载智谱凭据，并从 Hermes 配置加载百炼凭据。"""
+    zhipu: dict[str, str | None] = {
         "key": os.getenv("LLM_API_KEY"),
         "url": os.getenv("LLM_BASE_URL"),
     }
@@ -107,24 +110,59 @@ def load_api_keys() -> dict[str, dict[str, str | None]]:
     if env_path.is_file():
         for raw_line in env_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
-            if dashscope["key"] is None and line.startswith("LLM_API_KEY="):
-                dashscope["key"] = line.split("=", 1)[1].strip()
-            elif dashscope["url"] is None and line.startswith("LLM_BASE_URL="):
-                dashscope["url"] = line.split("=", 1)[1].strip()
-    return {"dashscope": dashscope}
+            if zhipu["key"] is None and line.startswith("LLM_API_KEY="):
+                zhipu["key"] = line.split("=", 1)[1].strip()
+            elif zhipu["url"] is None and line.startswith("LLM_BASE_URL="):
+                zhipu["url"] = line.split("=", 1)[1].strip()
+    return {"zhipu": zhipu, "dashscope": read_hermes_dashscope_config(HERMES_CONFIG_PATH)}
+
+
+def read_hermes_dashscope_config(path: Path) -> dict[str, str | None]:
+    """从 Hermes YAML 配置的 providers.dashscope 节读取百炼凭据。"""
+    credentials: dict[str, str | None] = {"key": None, "url": None}
+    if not path.is_file():
+        return credentials
+
+    in_providers = False
+    in_dashscope = False
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip())
+        if indent == 0:
+            in_providers = stripped == "providers:"
+            in_dashscope = False
+        elif in_providers and indent == 2:
+            in_dashscope = stripped == "dashscope:"
+        elif in_dashscope and indent == 4 and ":" in stripped:
+            name, value = stripped.split(":", 1)
+            normalized_value = value.strip().strip("'\"")
+            if name == "api_key":
+                credentials["key"] = normalized_value
+            elif name == "base_url":
+                credentials["url"] = normalized_value
+    return credentials
 
 
 def validate_credentials(keys: dict[str, dict[str, str | None]]) -> None:
-    """拒绝非百炼 Coding Plan 的 key 或 endpoint。"""
-    key = keys["dashscope"]["key"]
-    base_url = keys["dashscope"]["url"]
-    if not key or not key.startswith("sk-sp"):
+    """拒绝缺失凭据或错误的 provider endpoint。"""
+    dashscope_key = keys["dashscope"]["key"]
+    dashscope_url = keys["dashscope"]["url"]
+    zhipu_key = keys["zhipu"]["key"]
+    zhipu_url = keys["zhipu"]["url"]
+    if not dashscope_key or not dashscope_key.startswith("sk-sp"):
         raise RuntimeError("LLM_API_KEY 缺失或不是 sk-sp 百炼 Coding Plan key")
-    if not base_url:
-        raise RuntimeError("LLM_BASE_URL 缺失")
-    parsed = urlparse(base_url)
-    if parsed.scheme != "https" or parsed.netloc != "coding.dashscope.aliyuncs.com":
-        raise RuntimeError(f"LLM_BASE_URL 不是百炼 Coding Plan 端点：host={parsed.netloc!r}")
+    if not dashscope_url:
+        raise RuntimeError("百炼 LLM_BASE_URL 缺失")
+    dashscope_host = urlparse(dashscope_url).netloc
+    if dashscope_host != "coding.dashscope.aliyuncs.com":
+        raise RuntimeError(f"百炼端点错误：host={dashscope_host!r}")
+    if not zhipu_key or not zhipu_url:
+        raise RuntimeError("智谱 LLM_API_KEY 或 LLM_BASE_URL 缺失")
+    zhipu_host = urlparse(zhipu_url).netloc
+    if zhipu_host != "open.bigmodel.cn":
+        raise RuntimeError(f"智谱端点错误：host={zhipu_host!r}")
 
 
 def build_testset() -> list[dict[str, Any]]:
@@ -211,15 +249,14 @@ def load_or_build_testset() -> list[dict[str, Any]]:
 
 
 def get_model_configs(keys: dict[str, dict[str, str | None]]) -> list[dict[str, Any]]:
-    """返回全部使用百炼端点的五模型配置。"""
-    credentials = keys["dashscope"]
+    """返回 glm-5.2 走智谱、其余四模型走百炼的配置。"""
     return [
         {
             "name": model,
-            "provider": "dashscope",
+            "provider": "zhipu" if model == "glm-5.2" else "dashscope",
             "model": model,
-            "api_key": credentials["key"],
-            "base_url": credentials["url"],
+            "api_key": keys["zhipu" if model == "glm-5.2" else "dashscope"]["key"],
+            "base_url": keys["zhipu" if model == "glm-5.2" else "dashscope"]["url"],
             "enable_thinking": False,
         }
         for model in MODELS
@@ -228,7 +265,11 @@ def get_model_configs(keys: dict[str, dict[str, str | None]]) -> list[dict[str, 
 
 def make_extractor(config: dict[str, Any]) -> LLMExtractor:
     """按模型配置构造使用统一提取策略的 extractor。"""
-    provider = DashScopeProvider(enable_thinking=False)
+    provider = (
+        ZhipuProvider()
+        if config["provider"] == "zhipu"
+        else DashScopeProvider(enable_thinking=config["enable_thinking"])
+    )
 
     client = LLMClient(
         api_key=config["api_key"],
@@ -284,6 +325,7 @@ def run_single_extraction(extractor: LLMExtractor, content: str, context: dict[s
                     {
                         "subject": claim.subject,
                         "predicate": claim.predicate,
+                        "value": claim.value,
                         "scope": claim.scope,
                         "importance": claim.importance,
                     }
