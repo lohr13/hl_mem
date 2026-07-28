@@ -3,14 +3,21 @@
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
+import msvcrt
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 from collections import Counter
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+from urllib.parse import urlparse
 
 import httpx
 
@@ -29,8 +36,65 @@ from hl_mem.storage._shared import decode_json
 DB_PATH = PROJECT_ROOT / "var" / "hl_mem.db"
 TESTSET_PATH = PROJECT_ROOT / "scripts" / "extraction_testset.jsonl"
 RESULTS_PATH = PROJECT_ROOT / "scripts" / "extraction_benchmark_results.jsonl"
+RUNS_ROOT = PROJECT_ROOT / "scripts" / "benchmark_runs"
+LOCK_PATH = PROJECT_ROOT / "scripts" / ".benchmark_extraction.lock"
 NUM_EVENTS = 50
+VALIDATION_EVENTS = 3
 MODELS = ("glm-5.2", "glm-5", "glm-4.7", "qwen3.7-plus", "qwen3.6-plus")
+RUN_FILE_NAMES = ("manifest.json", "testset.jsonl", "results.partial.jsonl", "results.jsonl")
+
+
+@contextmanager
+def exclusive_run_lock(path: Path = LOCK_PATH) -> Iterator[None]:
+    """使用 Windows 文件锁阻止 benchmark 并发运行。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = path.open("a+", encoding="utf-8")
+    try:
+        lock_file.seek(0)
+        try:
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as error:
+            raise RuntimeError(f"已有 benchmark 进程持有独占锁：{path}") from error
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(f"pid={os.getpid()} started_at={datetime.now(timezone.utc).isoformat()}\n")
+        lock_file.flush()
+        yield
+    finally:
+        try:
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        finally:
+            lock_file.close()
+
+
+def prepare_run_paths(mode: str, *, resume: bool) -> dict[str, Path]:
+    """隔离 validation/full 产物，新运行开始前清理该模式全部旧文件。"""
+    run_dir = RUNS_ROOT / mode
+    run_dir.mkdir(parents=True, exist_ok=True)
+    paths = {name: run_dir / name for name in RUN_FILE_NAMES}
+    if resume:
+        if not paths["manifest.json"].is_file():
+            raise RuntimeError(f"无法续跑：缺少 {paths['manifest.json']}")
+    else:
+        for path in paths.values():
+            path.unlink(missing_ok=True)
+    return paths
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    """原子写入 JSON 文件。"""
+    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
+    temporary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary_path.replace(path)
+
+
+def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    """追加一条结果并强制刷盘，以便失败后续跑。"""
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        output.flush()
+        os.fsync(output.fileno())
 
 
 def load_api_keys() -> dict[str, dict[str, str | None]]:
@@ -47,8 +111,20 @@ def load_api_keys() -> dict[str, dict[str, str | None]]:
                 dashscope["key"] = line.split("=", 1)[1].strip()
             elif dashscope["url"] is None and line.startswith("LLM_BASE_URL="):
                 dashscope["url"] = line.split("=", 1)[1].strip()
-    dashscope["url"] = dashscope["url"] or "https://coding.dashscope.aliyuncs.com/v1"
     return {"dashscope": dashscope}
+
+
+def validate_credentials(keys: dict[str, dict[str, str | None]]) -> None:
+    """拒绝非百炼 Coding Plan 的 key 或 endpoint。"""
+    key = keys["dashscope"]["key"]
+    base_url = keys["dashscope"]["url"]
+    if not key or not key.startswith("sk-sp"):
+        raise RuntimeError("LLM_API_KEY 缺失或不是 sk-sp 百炼 Coding Plan key")
+    if not base_url:
+        raise RuntimeError("LLM_BASE_URL 缺失")
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https" or parsed.netloc != "coding.dashscope.aliyuncs.com":
+        raise RuntimeError(f"LLM_BASE_URL 不是百炼 Coding Plan 端点：host={parsed.netloc!r}")
 
 
 def build_testset() -> list[dict[str, Any]]:
@@ -185,7 +261,7 @@ def run_single_extraction(extractor: LLMExtractor, content: str, context: dict[s
         "total_tokens": 0,
         "extraction_error": None,
         "http_status_code": None,
-        "http_response_body": None,
+        "http_response_body_200": None,
         "claims_data": [],
     }
     try:
@@ -215,14 +291,26 @@ def run_single_extraction(extractor: LLMExtractor, content: str, context: dict[s
                 ],
             }
         )
-    except httpx.HTTPStatusError as error:
-        metrics["extraction_error"] = f"{type(error).__name__}: {str(error)[:200]}"
-        metrics["http_status_code"] = error.response.status_code
-        metrics["http_response_body"] = error.response.text[:500]
     except Exception as error:
         metrics["extraction_error"] = f"{type(error).__name__}: {str(error)[:200]}"
+        http_error = find_http_status_error(error)
+        if http_error is not None:
+            metrics["http_status_code"] = http_error.response.status_code
+            metrics["http_response_body_200"] = http_error.response.text[:200]
     metrics["latency_ms"] = round((time.perf_counter() - started) * 1000)
     return metrics
+
+
+def find_http_status_error(error: BaseException) -> httpx.HTTPStatusError | None:
+    """沿异常因果链提取被包装的 HTTPStatusError。"""
+    visited: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in visited:
+        if isinstance(current, httpx.HTTPStatusError):
+            return current
+        visited.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def print_summary(results: list[dict[str, Any]]) -> None:
@@ -275,33 +363,117 @@ def print_summary(results: list[dict[str, Any]]) -> None:
         print(f"  {model}: {', '.join(f'{name}({count})' for name, count in stats[model]['top_predicates'])}")
 
 
-def main() -> None:
-    """执行完整五模型 benchmark，并将结果写入时间戳文件。"""
-    print("=" * 70)
-    print("  hl_mem 提取质量横评 — 5 模型对比")
-    print("=" * 70)
+def parse_args() -> argparse.Namespace:
+    """解析运行模式；validation 必须先于 full 人工执行。"""
+    parser = argparse.ArgumentParser(description="hl_mem 五模型结构化提取 benchmark")
+    parser.add_argument("--mode", choices=("validation", "full"), required=True)
+    parser.add_argument("--resume", action="store_true", help="保留同一 run 已有数据并从断点继续")
+    return parser.parse_args()
+
+
+def testset_fingerprint(testset: list[dict[str, Any]]) -> str:
+    """计算测试集内容 SHA-256。"""
+    payload = json.dumps(testset, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def git_commit_sha() -> str:
+    """返回运行时 Git commit。"""
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def load_partial_results(path: Path, run_id: str, fingerprint: str) -> list[dict[str, Any]]:
+    """只加载同一 run_id 与测试集指纹的断点结果。"""
+    if not path.is_file():
+        return []
+    unique: dict[tuple[str, str], dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        result = json.loads(line)
+        if result.get("run_id") == run_id and result.get("testset_fingerprint") == fingerprint:
+            unique.setdefault((result["model"], result["event_id"]), result)
+    return list(unique.values())
+
+
+def assert_full_is_unlocked() -> None:
+    """要求最近一次隔离预验证完整且零错误，才允许正式运行。"""
+    manifest_path = RUNS_ROOT / "validation" / "manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError("正式 benchmark 前必须先运行 --mode validation")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        manifest.get("status") != "completed"
+        or manifest.get("actual_call_count") != VALIDATION_EVENTS * len(MODELS)
+        or manifest.get("error_count") != 0
+    ):
+        raise RuntimeError("最近一次预验证未完整通过，禁止正式 benchmark")
+
+
+def run_benchmark(mode: str, *, resume: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """执行一个隔离且可续跑的 validation/full run。"""
+    if mode == "full" and not resume:
+        assert_full_is_unlocked()
+    paths = prepare_run_paths(mode, resume=resume)
     keys = load_api_keys()
+    validate_credentials(keys)
     configs = get_model_configs(keys)
-    missing = [config["provider"] for config in configs if not config["api_key"] or not config["base_url"]]
-    if missing:
-        raise RuntimeError(f"以下 provider 缺少凭据: {sorted(set(missing))}")
-    print("\n凭据: dashscope=✓")
-    print(f"模型: {[config['model'] for config in configs]}")
+    full_testset = load_or_build_testset()
+    testset = full_testset[:VALIDATION_EVENTS] if mode == "validation" else full_testset
+    expected_events = VALIDATION_EVENTS if mode == "validation" else NUM_EVENTS
+    if len(testset) != expected_events:
+        raise RuntimeError(f"测试集数量错误：expected={expected_events}, actual={len(testset)}")
+    fingerprint = testset_fingerprint(testset)
 
-    testset = load_or_build_testset()
-    print(f"\n[1/3] 测试集: {len(testset)} 条")
-    for category, count in Counter(event["category"] for event in testset).most_common():
-        print(f"  {category}: {count}")
+    if resume:
+        manifest = json.loads(paths["manifest.json"].read_text(encoding="utf-8"))
+        if manifest["testset_fingerprint"] != fingerprint:
+            raise RuntimeError("无法续跑：测试集指纹与 manifest 不一致")
+    else:
+        started_at = datetime.now(timezone.utc)
+        manifest = {
+            "run_id": f"{mode}-{started_at.strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}",
+            "mode": mode,
+            "status": "running",
+            "started_at": started_at.isoformat(),
+            "completed_at": None,
+            "git_commit": git_commit_sha(),
+            "models": list(MODELS),
+            "provider": "dashscope",
+            "endpoint_host": urlparse(str(keys["dashscope"]["url"])).netloc,
+            "enable_thinking": False,
+            "event_count": len(testset),
+            "expected_call_count": len(testset) * len(MODELS),
+            "testset_fingerprint": fingerprint,
+            "schema_retries": 2,
+            "chunking_policy": {"target_chars": 12000, "overlap_turns": 2, "max_split_depth": 3},
+        }
+        write_json_atomic(paths["manifest.json"], manifest)
+        paths["testset.jsonl"].write_text(
+            "\n".join(json.dumps(event, ensure_ascii=False) for event in testset) + "\n",
+            encoding="utf-8",
+        )
 
-    RESULTS_PATH.unlink(missing_ok=True)
-    results_path = RESULTS_PATH
-    results: list[dict[str, Any]] = []
-    print(f"\n[2/3] 运行 {len(testset)} events × {len(configs)} models")
+    results = load_partial_results(paths["results.partial.jsonl"], manifest["run_id"], fingerprint)
+    completed = {(result["model"], result["event_id"]) for result in results}
+    print(f"run_id={manifest['run_id']} completed={len(completed)}/{manifest['expected_call_count']}")
     for config in configs:
         print(f"\n  ── {config['model']} ──")
         extractor = make_extractor(config)
         for index, event in enumerate(testset, start=1):
+            result_key = (config["model"], event["id"])
+            if result_key in completed:
+                continue
             result = {
+                "run_id": manifest["run_id"],
+                "testset_fingerprint": fingerprint,
                 "model": config["model"],
                 "provider": config["provider"],
                 "enable_thinking": config["enable_thinking"],
@@ -314,18 +486,55 @@ def main() -> None:
                     {"session_id": event["session_id"], "actor": event["actor_type"]},
                 ),
             }
+            append_jsonl(paths["results.partial.jsonl"], result)
             results.append(result)
-            with results_path.open("a", encoding="utf-8") as output:
-                output.write(json.dumps(result, ensure_ascii=False) + "\n")
+            completed.add(result_key)
             if index % 10 == 0 or index == len(testset):
                 model_results = [item for item in results if item["model"] == config["model"]]
                 errors = sum(item["extraction_error"] is not None for item in model_results)
                 print(f"    [{index}/{len(testset)}] ok={len(model_results) - errors} err={errors}")
 
-    print("\n[3/3] 汇总对比")
-    print_summary(results)
-    print(f"\n原始结果: {results_path}")
-    print(f"测试集: {TESTSET_PATH}")
+    expected_keys = {(model, event["id"]) for model in MODELS for event in testset}
+    actual_keys = {(result["model"], result["event_id"]) for result in results}
+    if actual_keys != expected_keys or len(results) != len(expected_keys):
+        raise RuntimeError(
+            f"结果完整性失败：expected={len(expected_keys)}, actual={len(results)}, "
+            f"missing={len(expected_keys - actual_keys)}, extra={len(actual_keys - expected_keys)}"
+        )
+    event_order = {event["id"]: index for index, event in enumerate(testset)}
+    results.sort(key=lambda result: (MODELS.index(result["model"]), event_order[result["event_id"]]))
+    paths["results.jsonl"].write_text(
+        "\n".join(json.dumps(result, ensure_ascii=False) for result in results) + "\n",
+        encoding="utf-8",
+    )
+    manifest["status"] = "completed"
+    manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
+    manifest["actual_call_count"] = len(results)
+    manifest["error_count"] = sum(result["extraction_error"] is not None for result in results)
+    write_json_atomic(paths["manifest.json"], manifest)
+    return results, manifest
+
+
+def assert_validation_passed(results: list[dict[str, Any]], manifest: dict[str, Any]) -> None:
+    """确认 15 次预验证全部连通、无错误且延迟合理。"""
+    if len(results) != VALIDATION_EVENTS * len(MODELS) or manifest["actual_call_count"] != 15:
+        raise RuntimeError("预验证结果不完整")
+    errors = [result for result in results if result["extraction_error"]]
+    if errors:
+        raise RuntimeError(f"预验证存在 {len(errors)} 个错误，禁止进入正式 benchmark")
+    if any(result["latency_ms"] > 120_000 for result in results):
+        raise RuntimeError("预验证存在超过 120 秒的调用，禁止进入正式 benchmark")
+
+
+def main() -> None:
+    """执行指定模式；预验证失败时保持结果并返回非零状态。"""
+    args = parse_args()
+    with exclusive_run_lock():
+        results, manifest = run_benchmark(args.mode, resume=args.resume)
+        if args.mode == "validation":
+            assert_validation_passed(results, manifest)
+        print_summary(results)
+        print(f"\n结果目录: {RUNS_ROOT / args.mode}")
 
 
 if __name__ == "__main__":
