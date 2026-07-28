@@ -15,45 +15,31 @@ def _load_benchmark_module():
     return module
 
 
-def test_load_api_keys_reads_zhipu_from_dotenv_and_dashscope_from_hermes(tmp_path, monkeypatch) -> None:
+def test_load_api_keys_reads_dashscope_credentials_only_from_dotenv(tmp_path, monkeypatch) -> None:
     benchmark = _load_benchmark_module()
     (tmp_path / ".env").write_text(
-        "LLM_API_KEY=sk-zhipu-test\nLLM_BASE_URL=https://open.bigmodel.cn/api/coding/paas/v4\n",
+        "LLM_API_KEY=sk-sp-test\nLLM_BASE_URL=https://coding.dashscope.aliyuncs.com/v1\n",
         encoding="utf-8",
     )
-    hermes_path = tmp_path / "config.yaml"
-    hermes_path.write_text(
-        "providers:\n"
-        "  dashscope:\n"
-        "    api_key: sk-dashscope-test\n"
-        "    base_url: https://coding.dashscope.aliyuncs.com/v1\n",
-        encoding="utf-8",
-    )
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.setattr(benchmark, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(benchmark, "HERMES_CONFIG_PATH", hermes_path)
 
     assert benchmark.load_api_keys() == {
-        "zhipu": {
-            "key": "sk-zhipu-test",
-            "url": "https://open.bigmodel.cn/api/coding/paas/v4",
-        },
         "dashscope": {
-            "key": "sk-dashscope-test",
+            "key": "sk-sp-test",
             "url": "https://coding.dashscope.aliyuncs.com/v1",
-        },
+        }
     }
 
 
-def test_benchmark_models_use_provider_specific_credentials() -> None:
+def test_all_five_benchmark_models_use_dashscope_credentials() -> None:
     benchmark = _load_benchmark_module()
-    keys = {
-        "zhipu": {"key": "sk-zhipu-test", "url": "https://open.bigmodel.cn/api/coding/paas/v4"},
-        "dashscope": {"key": "sk-dashscope-test", "url": "https://coding.dashscope.aliyuncs.com/v1"},
-    }
+    keys = {"dashscope": {"key": "sk-sp-test", "url": "https://coding.dashscope.aliyuncs.com/v1"}}
 
     configs = benchmark.get_model_configs(keys)
 
-    assert benchmark.NUM_EVENTS == 20
+    assert benchmark.NUM_EVENTS == 50
     assert [config["model"] for config in configs] == [
         "glm-5.2",
         "glm-5",
@@ -61,9 +47,9 @@ def test_benchmark_models_use_provider_specific_credentials() -> None:
         "qwen3.7-plus",
         "qwen3.6-plus",
     ]
-    assert [config["provider"] for config in configs] == ["zhipu", "zhipu", "zhipu", "dashscope", "dashscope"]
-    assert all(config["api_key"] == keys[config["provider"]]["key"] for config in configs)
-    assert all(config["base_url"] == keys[config["provider"]]["url"] for config in configs)
+    assert all(config["provider"] == "dashscope" for config in configs)
+    assert all(config["api_key"] == keys["dashscope"]["key"] for config in configs)
+    assert all(config["base_url"] == keys["dashscope"]["url"] for config in configs)
 
 
 def test_make_extractor_disables_dashscope_thinking() -> None:
@@ -78,18 +64,3 @@ def test_make_extractor_disables_dashscope_thinking() -> None:
     extractor = benchmark.make_extractor(config)
 
     assert extractor.llm_client.provider.enable_thinking is False
-
-
-def test_make_extractor_uses_plain_zhipu_provider() -> None:
-    benchmark = _load_benchmark_module()
-    config = {
-        "model": "glm-5.2",
-        "provider": "zhipu",
-        "api_key": "sk-zhipu-test",
-        "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
-    }
-
-    extractor = benchmark.make_extractor(config)
-
-    assert extractor.llm_client.provider.name == "zhipu"
-    assert not hasattr(extractor.llm_client.provider, "enable_thinking")
