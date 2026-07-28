@@ -50,6 +50,23 @@ def test_episode_api_returns_not_found(tmp_path) -> None:
         assert client.post("/v1/episodes/missing/traces", json={"action": "test"}).status_code == 404
 
 
+def test_trace_observation_rejects_more_than_1000_characters(tmp_path) -> None:
+    with TestClient(create_app(tmp_path / "trace-limit.db")) as client:
+        episode_id = client.post("/v1/episodes", json={"goal": "test limit"}).json()["id"]
+
+        accepted = client.post(
+            f"/v1/episodes/{episode_id}/traces",
+            json={"action": "test", "observation": "o" * 1000},
+        )
+        rejected = client.post(
+            f"/v1/episodes/{episode_id}/traces",
+            json={"action": "test", "observation": "o" * 1001},
+        )
+
+        assert accepted.status_code == 200
+        assert rejected.status_code == 422
+
+
 def test_policy_api_and_recall_attach_active_policies_for_task_queries(
     tmp_path,
 ) -> None:

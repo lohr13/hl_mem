@@ -204,13 +204,13 @@ def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
     }
     traces = [payload for url, payload in episode_requests if url.endswith("/traces")]
     assert [trace["action"] for trace in traces] == ["read_file", "patch"]
-    assert [trace["observation"] for trace in traces] == ["file contents", "patched"]
+    assert [trace["observation"] for trace in traces] == ["[success] file contents", "[success] patched"]
     assert episode_requests[-1][0].endswith("/v1/episodes/episode-1")
     assert episode_requests[-1][1]["status"] == "success"
     assert episode_requests[-1][1]["reward"] == 0.8
 
 
-def test_sync_turn_truncates_trace_fields_to_api_limits(monkeypatch) -> None:
+def test_sync_turn_summarizes_long_observation(monkeypatch) -> None:
     AsyncClient.calls = 0
     AsyncClient.requests = []
     AsyncClient.error = None
@@ -218,7 +218,7 @@ def test_sync_turn_truncates_trace_fields_to_api_limits(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: Response())
     provider = HLMemProvider(timeout=2.0)
     long_action = "a" * 10_001
-    long_observation = "o" * 50_001
+    long_observation = "o" * 60_000
     messages = [
         {
             "role": "assistant",
@@ -235,7 +235,58 @@ def test_sync_turn_truncates_trace_fields_to_api_limits(monkeypatch) -> None:
 
     traces = [payload for url, payload in AsyncClient.requests if url.endswith("/traces")]
     assert len(traces[0]["action"]) == 10_000
-    assert len(traces[0]["observation"]) == 50_000
+    assert traces[0]["observation"] == f"[success] {'o' * 500}"
+    assert len(traces[0]["observation"]) == 510
+
+
+def test_sync_turn_marks_error_observation(monkeypatch) -> None:
+    AsyncClient.calls = 0
+    AsyncClient.requests = []
+    AsyncClient.error = None
+    monkeypatch.setattr(httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: Response())
+    provider = HLMemProvider(timeout=2.0)
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "call-1", "function": {"name": "test"}},
+                {"id": "call-2", "function": {"name": "patch"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call-1", "content": "FAILED: command returned exit code 1"},
+        {"role": "tool", "tool_call_id": "call-2", "content": "patched"},
+    ]
+
+    provider.sync_turn("task", "done", messages=messages)
+
+    traces = [payload for url, payload in AsyncClient.requests if url.endswith("/traces")]
+    assert traces[0]["observation"] == "[error] FAILED: command returned exit code 1"
+
+
+def test_sync_turn_preserves_short_observation_content(monkeypatch) -> None:
+    AsyncClient.calls = 0
+    AsyncClient.requests = []
+    AsyncClient.error = None
+    monkeypatch.setattr(httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: Response())
+    provider = HLMemProvider(timeout=2.0)
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "call-1", "function": {"name": "test"}},
+                {"id": "call-2", "function": {"name": "patch"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call-1", "content": "3 passed"},
+        {"role": "tool", "tool_call_id": "call-2", "content": "patched"},
+    ]
+
+    provider.sync_turn("task", "done", messages=messages)
+
+    traces = [payload for url, payload in AsyncClient.requests if url.endswith("/traces")]
+    assert traces[0]["observation"] == "[success] 3 passed"
 
 
 def test_sync_turn_episode_failure_does_not_fail_event_sync(monkeypatch) -> None:

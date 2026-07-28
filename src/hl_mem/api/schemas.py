@@ -141,7 +141,7 @@ class TraceInput(BaseModel):
     """追加 Episode Trace 的请求。"""
 
     action: str = Field(min_length=1, max_length=10000)
-    observation: str | None = Field(default=None, max_length=50000)
+    observation: str | None = Field(default=None, max_length=1000)
     error_signature: str | None = Field(default=None, max_length=500)
     value: float = 0.0
 

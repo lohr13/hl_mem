@@ -17,7 +17,17 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_TRACE_ACTION_LENGTH = 10_000
-MAX_TRACE_OBSERVATION_LENGTH = 50_000
+MAX_TRACE_OBSERVATION_SUMMARY_LENGTH = 500
+
+
+def _summarize_observation(raw: str) -> str:
+    """生成结构化摘要替代完整原文。"""
+    if not raw:
+        return ""
+    is_error = any(marker in raw.lower() for marker in ["error", "traceback", "exception", "failed"])
+    status = "error" if is_error else "success"
+    summary = raw[:MAX_TRACE_OBSERVATION_SUMMARY_LENGTH].strip()
+    return f"[{status}] {summary}"
 
 
 class HLMemProvider:
@@ -243,7 +253,7 @@ class HLMemProvider:
                 f"/v1/episodes/{episode_id}/traces",
                 {
                     "action": call["action"][:MAX_TRACE_ACTION_LENGTH],
-                    "observation": (observation[:MAX_TRACE_OBSERVATION_LENGTH] if observation is not None else None),
+                    "observation": _summarize_observation(observation) if observation is not None else None,
                     "error_signature": error_signature,
                     "value": 0.0 if error_signature else 1.0,
                 },
