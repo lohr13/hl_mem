@@ -230,6 +230,7 @@ class LLMExtractor:
         self._repair_count = 0
         self._llm_call_count = 0
         self._memorize_decisions: list[tuple[bool, str]] = []
+        self._last_schema_errors: list[dict[str, Any]] = []
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
         """同步分块提取事实，并在输出截断时递归二分恢复。"""
@@ -240,6 +241,7 @@ class LLMExtractor:
         self._repair_count = 0
         self._llm_call_count = 0
         self._memorize_decisions = []
+        self._last_schema_errors = []
         event_context = context or {}
         chunks = split_extraction_content(content, self.chunking_policy)
         chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
@@ -391,6 +393,8 @@ class LLMExtractor:
                 compatible = self._parse_legacy_defaults(repaired)
                 return ExtractionResponseSchema.model_validate(compatible)
             except (PydanticValidationError, ValueError) as error:
+                if isinstance(error, PydanticValidationError):
+                    self._last_schema_errors.extend(error.errors())
                 if self._looks_like_truncated_json(response.content):
                     raise LLMOutputTruncatedError(
                         f"LLM output appears truncated: provider={self.llm_client.provider.name}, model={self.model}"

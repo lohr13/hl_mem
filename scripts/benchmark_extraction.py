@@ -8,6 +8,7 @@ import hashlib
 import json
 import msvcrt
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -302,7 +303,8 @@ def run_single_extraction(extractor: LLMExtractor, content: str, context: dict[s
         "total_tokens": 0,
         "extraction_error": None,
         "http_status_code": None,
-        "http_response_body_200": None,
+        "http_response_body": None,
+        "schema_error_paths": None,
         "claims_data": [],
     }
     try:
@@ -328,6 +330,13 @@ def run_single_extraction(extractor: LLMExtractor, content: str, context: dict[s
                         "value": claim.value,
                         "scope": claim.scope,
                         "importance": claim.importance,
+                        "canonical_attribute": claim.canonical_attribute,
+                        "canonical_slot": claim.canonical_slot,
+                        "topic_tags": claim.topic_tags,
+                        "confidence": claim.confidence,
+                        "volatility": claim.volatility,
+                        "qualifiers": claim.qualifiers,
+                        "reason": claim.reason,
                     }
                     for claim in claims
                 ],
@@ -338,9 +347,27 @@ def run_single_extraction(extractor: LLMExtractor, content: str, context: dict[s
         http_error = find_http_status_error(error)
         if http_error is not None:
             metrics["http_status_code"] = http_error.response.status_code
-            metrics["http_response_body_200"] = http_error.response.text[:200]
+            metrics["http_response_body"] = sanitize_http_response_body(http_error.response.text)
+    schema_error_paths = [
+        ".".join(str(part) for part in error.get("loc", ()))
+        for error in getattr(extractor, "_last_schema_errors", [])
+        if error.get("loc")
+    ]
+    metrics["schema_error_paths"] = schema_error_paths or None
     metrics["latency_ms"] = round((time.perf_counter() - started) * 1000)
     return metrics
+
+
+def sanitize_http_response_body(body: str) -> str:
+    """脱敏并截断 HTTP 错误响应，避免 benchmark 产物泄露凭据。"""
+    sanitized = re.sub(r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?bearer\s+)[^\s,\"']+", r"\1[REDACTED]", body)
+    sanitized = re.sub(
+        r"(?i)((?:api[_-]?key|access[_-]?token|secret)[\"']?\s*[:=]\s*[\"']?)[^\s,\"']+",
+        r"\1[REDACTED]",
+        sanitized,
+    )
+    sanitized = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-[REDACTED]", sanitized)
+    return sanitized[:500]
 
 
 def find_http_status_error(error: BaseException) -> httpx.HTTPStatusError | None:
