@@ -66,6 +66,7 @@ def main() -> int:
         project_version = get_project_version()
         migration_count = get_migration_count()
         readme = read("README.md")
+        readme_en = read("README_EN.md")
         architecture = read("docs/architecture.md")
         handoff = read("docs/HANDOFF.md")
         capability_matrix = read("docs/capability-matrix.md")
@@ -81,8 +82,14 @@ def main() -> int:
             "README badge version",
         )
         errors += check_value(
+            readme_en,
+            r"The current baseline is\s+v?(\d+\.\d+\.\d+)",
+            version,
+            "README_EN body version",
+        )
+        errors += check_value(
             readme,
-            r"Current baseline:\s*v?(\d+\.\d+\.\d+)",
+            r"当前基线为\s*v?(\d+\.\d+\.\d+)",
             version,
             "README body version",
         )
@@ -105,8 +112,14 @@ def main() -> int:
             "capability matrix baseline",
         )
         errors += check_value(
+            readme_en,
+            r"The current baseline is.*?\b(\d+)\s+immutable\b.*?\bmigrations\b",
+            migration_count,
+            "README_EN migrations",
+        )
+        errors += check_value(
             readme,
-            r"Current baseline:.*?\b(\d+)\s+migrations\b",
+            r"当前基线为.*?共\s*(\d+)\s*个.*?Migration",
             migration_count,
             "README migrations",
         )

@@ -44,6 +44,9 @@ build-backend = "hatchling.build"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette\\.testclient` is deprecated; install `httpx2` instead\\.:starlette.exceptions.StarletteDeprecationWarning",
+]
 markers = [
     "benchmark: performance benchmarks excluded from default test discovery by file naming",
     "eval: offline evaluation tests that report metrics without enforcing quality thresholds",

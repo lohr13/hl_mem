@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import msvcrt
 import os
 import re
 import sqlite3
@@ -21,6 +20,16 @@ from typing import Any, Iterator
 from urllib.parse import urlparse
 
 import httpx
+
+# Cross-platform file locking support
+try:
+    import fcntl
+
+    _LOCK_IMPL = "fcntl"
+except ImportError:
+    import msvcrt
+
+    _LOCK_IMPL = "msvcrt"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -42,7 +51,7 @@ LOCK_PATH = PROJECT_ROOT / "scripts" / ".benchmark_extraction.lock"
 HERMES_CONFIG_PATH = Path(
     os.getenv(
         "HERMES_CONFIG_PATH",
-        str(Path(os.environ["LOCALAPPDATA"]) / "hermes" / "config.yaml"),
+        str(Path(os.getenv("LOCALAPPDATA", Path.home())) / "hermes" / "config.yaml"),
     )
 )
 NUM_EVENTS = 50
@@ -58,13 +67,16 @@ RUN_FILE_NAMES = (
 
 @contextmanager
 def exclusive_run_lock(path: Path = LOCK_PATH) -> Iterator[None]:
-    """使用 Windows 文件锁阻止 benchmark 并发运行。"""
+    """使用跨平台文件锁阻止 benchmark 并发运行。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = path.open("a+", encoding="utf-8")
     try:
         lock_file.seek(0)
         try:
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            if _LOCK_IMPL == "fcntl":
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError as error:
             raise RuntimeError(f"已有 benchmark 进程持有独占锁：{path}") from error
         lock_file.seek(0)
@@ -74,8 +86,11 @@ def exclusive_run_lock(path: Path = LOCK_PATH) -> Iterator[None]:
         yield
     finally:
         try:
-            lock_file.seek(0)
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            if _LOCK_IMPL == "fcntl":
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            else:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
         finally:
             lock_file.close()
 

@@ -73,14 +73,15 @@ def test_api_feedback_bonus_flows_into_ttl_valid_to(
     with TestClient(app) as client:
         connection = app.state.db.open()
         connection.execute(
-            "INSERT INTO claims(id,status,subject_entity_id,predicate,value_json,recorded_from,scope,expires_at) "
-            "VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO claims(id,status,subject_entity_id,predicate,value_json,index_text,recorded_from,scope,expires_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
             (
                 "ttl-claim",
                 "active",
                 "service",
                 "state",
                 '"degraded"',
+                "service state degraded",
                 "2026-07-01T00:00:00+00:00",
                 "temporal",
                 "2026-07-20T00:00:00+00:00",
@@ -93,7 +94,7 @@ def test_api_feedback_bonus_flows_into_ttl_valid_to(
                 json={
                     "query": "service degraded",
                     "limit": 1,
-                    "as_of": "2026-07-21T00:00:00+00:00",
+                    "as_of": "2026-07-19T00:00:00+00:00",
                 },
             ).json()
             client.post(
