@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -112,3 +113,10 @@ def invalid_subject_reason(subject: str | None) -> str | None:
     if _PASCAL_CASE_SUBJECT_PATTERN.fullmatch(normalized):
         return "class_name"
     return None
+
+
+def isolated_subject_id(*identity_parts: Any) -> str:
+    """为无法归属到合法实体的 claim 生成稳定且互相隔离的主体标识。"""
+    payload = json.dumps(identity_parts, ensure_ascii=False, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f"unknown__{digest}"

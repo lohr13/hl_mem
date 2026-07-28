@@ -32,7 +32,7 @@ from hl_mem.domain.claims.retention import (
     normalize_utc_iso,
 )
 from hl_mem.domain.constants import DEFAULT_SUBJECT
-from hl_mem.domain.entity import invalid_subject_reason, normalize_entity_id
+from hl_mem.domain.entity import invalid_subject_reason, isolated_subject_id, normalize_entity_id
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol
@@ -448,16 +448,19 @@ def _build_claim_drafts(
             if invalid_subject_reason(entity) is None:
                 replacement = candidate
                 break
-        subject = replacement or "unknown_subject"
+        subject = replacement or isolated_subject_id(
+            event.get("id"), original_subject, extracted.predicate, extracted.value
+        )
         current_audit().emit(
             "ingest",
             "subject_guard",
-            "replaced" if replacement else "downgraded",
+            "replaced" if replacement else "isolated",
             detail={
                 "original_subject": original_subject,
                 "normalized_subject": normalize_entity_id(original_subject),
                 "replacement_subject": subject,
                 "reason_code": invalid_reason,
+                "isolation_reason": None if replacement else "invalid_subject_isolated",
             },
         )
     qualifiers = extracted.qualifiers or {}

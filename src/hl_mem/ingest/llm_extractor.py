@@ -23,7 +23,7 @@ from hl_mem.domain.claims.attributes import (
     reconcile_canonical_attribute,
     validate_slot_instance,
 )
-from hl_mem.domain.entity import invalid_subject_reason, normalize_entity_id
+from hl_mem.domain.entity import invalid_subject_reason, isolated_subject_id, normalize_entity_id
 from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import (
@@ -659,25 +659,22 @@ class LLMExtractor:
         invalid_reason = invalid_subject_reason(original_subject)
         if invalid_reason is not None:
             replacement = next(
-                (
-                    normalize_entity_id(entity)
-                    for entity in entities
-                    if invalid_subject_reason(entity) is None
-                ),
+                (normalize_entity_id(entity) for entity in entities if invalid_subject_reason(entity) is None),
                 None,
             )
-            subject = replacement or "unknown_subject"
+            subject = replacement or isolated_subject_id(original_subject, predicate, value)
             if original_subject not in entities:
                 entities.append(original_subject)
             current_audit().emit(
                 "extract",
                 "subject_guard",
-                "replaced" if replacement else "downgraded",
+                "replaced" if replacement else "isolated",
                 detail={
                     "original_subject": original_subject,
                     "normalized_subject": normalize_entity_id(original_subject),
                     "replacement_subject": subject,
                     "reason_code": invalid_reason,
+                    "isolation_reason": None if replacement else "invalid_subject_isolated",
                 },
             )
         qualifiers = item.get("qualifiers") or {}

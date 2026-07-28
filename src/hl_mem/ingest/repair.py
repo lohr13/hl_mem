@@ -169,9 +169,9 @@ def repair_extraction_json(raw: dict[str, Any]) -> dict[str, Any]:
     _repair_enum(repaired, "sensitivity", "sensitivity")
 
     claims = repaired.get("claims")
-    if claims is None:
+    if claims is None and repaired.get("should_memorize") is False:
         repaired["claims"] = []
-        _emit_repair("claims", None, [], "null_to_array")
+        _emit_repair("claims", None, [], "null_to_array_when_not_memorable")
         return repaired
     if not isinstance(claims, list):
         return repaired

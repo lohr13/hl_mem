@@ -66,8 +66,8 @@ def test_invalid_subject_uses_legal_entity_replacement(tmp_path) -> None:
     assert claim["subject_entity_id"] == "hl_mem"
 
 
-def test_invalid_subject_without_replacement_uses_unknown_subject(tmp_path) -> None:
-    """没有合法 entity 候选时应显式降级为 unknown_subject。"""
+def test_invalid_subject_without_replacement_uses_isolated_subject(tmp_path) -> None:
+    """没有合法 entity 候选时应使用 event 绑定的隔离主体。"""
     connection = Database(tmp_path / "unknown-subject.db").open()
     claim_id = _store(
         connection,
@@ -76,7 +76,20 @@ def test_invalid_subject_without_replacement_uses_unknown_subject(tmp_path) -> N
 
     claim = ClaimRepository(connection).get_claim(claim_id)
 
-    assert claim["subject_entity_id"] == "unknown_subject"
+    assert claim["subject_entity_id"].startswith("unknown__")
+    assert claim["subject_entity_id"] != "unknown_subject"
+
+
+def test_invalid_subjects_from_different_events_are_isolated(tmp_path) -> None:
+    """持久化兜底守卫不得让不同事件的非法主体共享标识。"""
+    connection = Database(tmp_path / "isolated-subjects.db").open()
+    first_id = _store(connection, ExtractedClaim("事实", "第一条配置", subject="ALL_PROXY"))
+    second_id = _store(connection, ExtractedClaim("事实", "第二条配置", subject="HTTP_PROXY"))
+
+    first = ClaimRepository(connection).get_claim(first_id)
+    second = ClaimRepository(connection).get_claim(second_id)
+
+    assert first["subject_entity_id"] != second["subject_entity_id"]
 
 
 def test_recall_returns_temporal_entities(tmp_path) -> None:

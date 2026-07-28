@@ -113,10 +113,25 @@ class ExtractionRepairTest(unittest.TestCase):
         self.assertEqual(repaired["claims"][0]["importance"], 0.8)
         self.assertEqual(repaired["claims"][0]["confidence"], 0.9)
 
-    def test_repairs_null_claims_to_empty_array(self) -> None:
-        repaired = repair_extraction_json({"claims": None})
+    def test_repairs_null_claims_when_should_not_memorize(self) -> None:
+        repaired = repair_extraction_json({"claims": None, "should_memorize": False})
 
         self.assertEqual(repaired["claims"], [])
+
+    def test_preserves_null_claims_when_should_memorize(self) -> None:
+        repaired = repair_extraction_json({"claims": None, "should_memorize": True})
+
+        self.assertIsNone(repaired["claims"])
+
+    def test_preserves_null_claims_without_should_memorize(self) -> None:
+        repaired = repair_extraction_json({"claims": None})
+
+        self.assertIsNone(repaired["claims"])
+
+    def test_preserves_missing_claims(self) -> None:
+        repaired = repair_extraction_json({"should_memorize": True})
+
+        self.assertNotIn("claims", repaired)
 
     def test_json_code_fence_is_cleaned_by_existing_parser(self) -> None:
         raw = '```json\n{"claims": [], "entities": [], "should_memorize": false}\n```'
