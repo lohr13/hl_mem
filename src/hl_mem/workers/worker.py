@@ -353,7 +353,16 @@ class Worker:
                         )
                     ]
                 else:
-                    recent = events.get_recent_events(event["session_id"], event, 3) if event.get("session_id") else []
+                    recent = (
+                        events.get_recent_events(
+                            str(event.get("tenant_id") or "default"),
+                            event["session_id"],
+                            event,
+                            3,
+                        )
+                        if event.get("session_id")
+                        else []
+                    )
                     event_context = {
                         "occurred_at": event["occurred_at"],
                         "actor_type": event.get("actor_type"),

@@ -21,11 +21,13 @@ ExtractorMode = Literal["fake", "real", "llm"]
 LLMProvider = Literal["dashscope", "zhipu", "openai_compatible"]
 StructuredOutputModeName = Literal["auto", "json_object", "json_schema"]
 QueryExpansionMode = Literal["off", "auto", "always"]
+QueryContextMode = Literal["off", "coreference"]
 ProcedureRecallMode = Literal["off", "keyword", "auto"]
 FeedbackLifecycleMode = Literal["off", "observe", "on"]
+RelevanceGateMode = Literal["off", "observe", "enforce"]
 ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
-IndexTextMode = Literal["legacy", "value_only", "natural"]
+IndexTextMode = Literal["legacy", "value_only", "natural", "answerable"]
 
 
 @overload
@@ -71,6 +73,14 @@ def _env_choice(
 @overload
 def _env_choice(
     name: str,
+    default: QueryContextMode,
+    allowed: tuple[Literal["off"], Literal["coreference"]],
+) -> QueryContextMode: ...
+
+
+@overload
+def _env_choice(
+    name: str,
     default: ProcedureRecallMode,
     allowed: tuple[Literal["off"], Literal["keyword"], Literal["auto"]],
 ) -> ProcedureRecallMode: ...
@@ -106,6 +116,14 @@ def _env_choice(
     default: FeedbackLifecycleMode,
     allowed: tuple[Literal["off"], Literal["observe"], Literal["on"]],
 ) -> FeedbackLifecycleMode: ...
+
+
+@overload
+def _env_choice(
+    name: str,
+    default: RelevanceGateMode,
+    allowed: tuple[Literal["off"], Literal["observe"], Literal["enforce"]],
+) -> RelevanceGateMode: ...
 
 
 @overload
@@ -181,6 +199,9 @@ class Settings:
     embedding_read_timeout: float = 30.0
     embedding_max_attempts: int = 3
     index_text_mode: IndexTextMode = "legacy"
+    index_backfill_batch_size: int = 100
+    index_backfill_max_attempts: int = 3
+    index_text_version: str = "v1"
     reranker_mode: RerankerMode = "off"
     reranker_provider: RerankerProvider = "dashscope"
     reranker_api_key: str | None = None
@@ -199,6 +220,12 @@ class Settings:
     recall_candidate_floor: int = 50
     recall_dedup_threshold: float = 0.95
     recall_dedup_candidate_limit: int = 100
+    relevance_gate_mode: RelevanceGateMode = "off"
+    relevance_reranker_floor: float = 0.4
+    relevance_dense_floor: float = 0.3
+    relevance_relative_drop: float = 0.15
+    relevance_keep_top1: bool = True
+    relevance_intents: tuple[str, ...] = ("current_state",)
     preference_recency_boost: float = 0.12
     tag_boost_enabled: bool = True
     tag_boost_weight: float = 0.05
@@ -206,7 +233,6 @@ class Settings:
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
     # query_expansion: auto 仅在短查询或指代查询时触发 LLM 改写，提升 recall
-    # from_env 默认 auto，Settings() 默认 off（测试安全）
     query_expansion_mode: QueryExpansionMode = "off"
     query_expansion_max: int = 2
     query_expansion_candidate_floor: int = 8
@@ -214,6 +240,9 @@ class Settings:
     query_expansion_timeout_seconds: float = 2.0
     query_expansion_total_timeout_seconds: float = 3.0
     query_expansion_max_concurrency: int = 4
+    query_context_mode: QueryContextMode = "off"
+    query_context_max_events: int = 5
+    query_context_token_budget: int = 256
     # procedure_recall: keyword 为纯确定性路由，仅 TOOL/PROCEDURE intent 进入 Experience pipeline
     procedure_recall_mode: ProcedureRecallMode = "keyword"
     procedure_llm_threshold: float = 0.80
@@ -224,6 +253,7 @@ class Settings:
     recall_side_effect_max_attempts: int = 3
     recall_side_effect_backoff_seconds: float = 0.05
     vector_backend: VectorBackend = VectorBackend.SQLITE_SCAN
+    vector_batch_size: int = 512
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
     hermes_prefetch_cache_ttl_seconds: float = 300.0
@@ -326,8 +356,11 @@ class Settings:
             index_text_mode=_env_choice(
                 "HL_MEM_INDEX_TEXT_MODE",
                 "legacy",
-                ("legacy", "value_only", "natural"),
+                ("legacy", "value_only", "natural", "answerable"),
             ),
+            index_backfill_batch_size=int(os.getenv("HL_MEM_INDEX_BACKFILL_BATCH_SIZE", "100")),
+            index_backfill_max_attempts=int(os.getenv("HL_MEM_INDEX_BACKFILL_MAX_ATTEMPTS", "3")),
+            index_text_version=os.getenv("HL_MEM_INDEX_TEXT_VERSION", "v1"),
             reranker_mode=_env_choice(
                 "HL_MEM_RERANKER",
                 "real" if production else "off",
@@ -348,13 +381,30 @@ class Settings:
             recall_candidate_floor=int(os.getenv("HL_MEM_RECALL_CANDIDATE_FLOOR", "50")),
             recall_dedup_threshold=float(os.getenv("HL_MEM_RECALL_DEDUP_THRESHOLD", "0.95")),
             recall_dedup_candidate_limit=int(os.getenv("HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT", "100")),
+            relevance_gate_mode=_env_choice(
+                "HL_MEM_RELEVANCE_GATE_MODE",
+                "off",
+                ("off", "observe", "enforce"),
+            ),
+            relevance_reranker_floor=float(os.getenv("HL_MEM_RELEVANCE_RERANKER_FLOOR", "0.4")),
+            relevance_dense_floor=float(os.getenv("HL_MEM_RELEVANCE_DENSE_FLOOR", "0.3")),
+            relevance_relative_drop=float(os.getenv("HL_MEM_RELEVANCE_RELATIVE_DROP", "0.15")),
+            relevance_keep_top1=_parse_bool(
+                os.getenv("HL_MEM_RELEVANCE_KEEP_TOP1", "true"),
+                "HL_MEM_RELEVANCE_KEEP_TOP1",
+            ),
+            relevance_intents=tuple(
+                item.strip().lower()
+                for item in os.getenv("HL_MEM_RELEVANCE_INTENTS", "current_state").split(",")
+                if item.strip()
+            ),
             preference_recency_boost=float(os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")),
             tag_boost_enabled=os.getenv("HL_MEM_TAG_BOOST_ENABLED", "true").lower() == "true",
             tag_boost_weight=float(os.getenv("HL_MEM_TAG_BOOST_WEIGHT", "0.05")),
             tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower() == "true",
             tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
             tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
-            query_expansion_mode=_env_choice("HL_MEM_QUERY_EXPANSION_MODE", "auto", ("off", "auto", "always")),
+            query_expansion_mode=_env_choice("HL_MEM_QUERY_EXPANSION_MODE", "off", ("off", "auto", "always")),
             query_expansion_max=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX", "2")),
             query_expansion_candidate_floor=int(os.getenv("HL_MEM_QUERY_EXPANSION_CANDIDATE_FLOOR", "8")),
             query_expansion_token_ceiling=int(os.getenv("HL_MEM_QUERY_EXPANSION_TOKEN_CEILING", "256")),
@@ -363,6 +413,13 @@ class Settings:
                 os.getenv("HL_MEM_QUERY_EXPANSION_TOTAL_TIMEOUT_SECONDS", "3.0")
             ),
             query_expansion_max_concurrency=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX_CONCURRENCY", "4")),
+            query_context_mode=_env_choice(
+                "HL_MEM_QUERY_CONTEXT_MODE",
+                "off",
+                ("off", "coreference"),
+            ),
+            query_context_max_events=int(os.getenv("HL_MEM_QUERY_CONTEXT_MAX_EVENTS", "5")),
+            query_context_token_budget=int(os.getenv("HL_MEM_QUERY_CONTEXT_TOKEN_BUDGET", "256")),
             procedure_recall_mode=_env_choice("HL_MEM_PROCEDURE_RECALL_MODE", "keyword", ("off", "keyword", "auto")),
             procedure_llm_threshold=float(os.getenv("HL_MEM_PROCEDURE_LLM_THRESHOLD", "0.80")),
             procedure_router_timeout_seconds=float(os.getenv("HL_MEM_PROCEDURE_ROUTER_TIMEOUT_SECONDS", "1.5")),
@@ -372,6 +429,7 @@ class Settings:
             recall_side_effect_max_attempts=int(os.getenv("HL_MEM_RECALL_SIDE_EFFECT_MAX_ATTEMPTS", "3")),
             recall_side_effect_backoff_seconds=float(os.getenv("HL_MEM_RECALL_SIDE_EFFECT_BACKOFF_SECONDS", "0.05")),
             vector_backend=vector_backend,
+            vector_batch_size=int(os.getenv("HL_MEM_VECTOR_BATCH_SIZE", "512")),
             hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
             hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
             hermes_prefetch_cache_ttl_seconds=float(os.getenv("HL_MEM_HERMES_PREFETCH_CACHE_TTL_SECONDS", "300")),
@@ -520,6 +578,29 @@ class Settings:
             raise ConfigurationError("HL_MEM_RECALL_DEDUP_THRESHOLD must be between 0 and 1 (0 disables fold)")
         if self.recall_dedup_candidate_limit < 1:
             raise ConfigurationError("HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT must be positive")
+        if self.relevance_gate_mode not in {"off", "observe", "enforce"}:
+            raise ConfigurationError("HL_MEM_RELEVANCE_GATE_MODE must be 'off', 'observe', or 'enforce'")
+        relevance_thresholds = {
+            "HL_MEM_RELEVANCE_RERANKER_FLOOR": self.relevance_reranker_floor,
+            "HL_MEM_RELEVANCE_DENSE_FLOOR": self.relevance_dense_floor,
+            "HL_MEM_RELEVANCE_RELATIVE_DROP": self.relevance_relative_drop,
+        }
+        for variable_name, value in relevance_thresholds.items():
+            if not 0.0 <= value <= 1.0:
+                raise ConfigurationError(f"{variable_name} must be between 0 and 1")
+        if not isinstance(self.relevance_keep_top1, bool):
+            raise ConfigurationError("HL_MEM_RELEVANCE_KEEP_TOP1 must be a boolean")
+        allowed_relevance_intents = {
+            "current_state",
+            "preference",
+            "historical",
+            "tool",
+            "procedure",
+        }
+        if not self.relevance_intents or any(
+            intent not in allowed_relevance_intents for intent in self.relevance_intents
+        ):
+            raise ConfigurationError("HL_MEM_RELEVANCE_INTENTS must contain comma-separated recall intents")
         if not 0.0 <= self.preference_recency_boost <= 1.0:
             raise ConfigurationError("HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1")
         if not 0.0 <= self.tag_boost_weight <= 1.0:
@@ -530,6 +611,8 @@ class Settings:
             raise ConfigurationError("HL_MEM_TAG_CANDIDATE_LIMIT must be positive")
         if self.query_expansion_mode not in {"off", "auto", "always"}:
             raise ConfigurationError("HL_MEM_QUERY_EXPANSION_MODE must be 'off', 'auto', or 'always'")
+        if self.query_context_mode not in {"off", "coreference"}:
+            raise ConfigurationError("HL_MEM_QUERY_CONTEXT_MODE must be 'off' or 'coreference'")
         if not 0 <= self.query_expansion_max <= 2:
             raise ConfigurationError("HL_MEM_QUERY_EXPANSION_MAX must be between 0 and 2")
         if (
@@ -539,6 +622,8 @@ class Settings:
                 self.query_expansion_timeout_seconds,
                 self.query_expansion_total_timeout_seconds,
                 self.query_expansion_max_concurrency,
+                self.query_context_max_events,
+                self.query_context_token_budget,
             )
             <= 0
         ):
@@ -559,6 +644,8 @@ class Settings:
             raise ConfigurationError("procedure recall limits and timeouts must be positive")
         if self.recall_side_effect_max_attempts < 1 or self.recall_side_effect_backoff_seconds < 0:
             raise ConfigurationError("recall side-effect attempts must be positive and backoff non-negative")
+        if self.vector_batch_size < 1:
+            raise ConfigurationError("HL_MEM_VECTOR_BATCH_SIZE must be positive")
         if (
             self.hermes_circuit_failure_threshold < 1
             or self.hermes_circuit_open_seconds <= 0
@@ -619,8 +706,14 @@ class Settings:
             raise ConfigurationError("importance thresholds must be ordered between 0 and 1")
         if self.embedder_mode not in {"fake", "real"}:
             raise ConfigurationError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
-        if self.index_text_mode not in {"legacy", "value_only", "natural"}:
-            raise ConfigurationError("HL_MEM_INDEX_TEXT_MODE must be 'legacy', 'value_only', or 'natural'")
+        if self.index_text_mode not in {"legacy", "value_only", "natural", "answerable"}:
+            raise ConfigurationError(
+                "HL_MEM_INDEX_TEXT_MODE must be 'legacy', 'value_only', 'natural', or 'answerable'"
+            )
+        if self.index_backfill_batch_size < 1 or self.index_backfill_max_attempts < 1:
+            raise ConfigurationError("index backfill batch size and max attempts must be positive")
+        if not self.index_text_version.strip():
+            raise ConfigurationError("HL_MEM_INDEX_TEXT_VERSION must not be empty")
         if self.reranker_mode not in {"off", "fake", "on", "real"}:
             raise ConfigurationError("HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'")
         if self.reranker_provider != "dashscope":
@@ -651,8 +744,17 @@ class Settings:
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
             "index_text_mode": self.index_text_mode,
+            "index_backfill_batch_size": self.index_backfill_batch_size,
+            "index_backfill_max_attempts": self.index_backfill_max_attempts,
+            "index_text_version": self.index_text_version,
             "reranker_mode": self.reranker_mode,
             "reranker_provider": self.reranker_provider,
+            "relevance_gate_mode": self.relevance_gate_mode,
+            "relevance_reranker_floor": self.relevance_reranker_floor,
+            "relevance_dense_floor": self.relevance_dense_floor,
+            "relevance_relative_drop": self.relevance_relative_drop,
+            "relevance_keep_top1": self.relevance_keep_top1,
+            "relevance_intents": list(self.relevance_intents),
             "relation_expansion_mode": self.relation_expansion_mode,
             "relation_expansion_max_depth": self.relation_expansion_max_depth,
             "relation_discovery_mode": self.relation_discovery_mode,
@@ -670,6 +772,9 @@ class Settings:
             "query_expansion_timeout_seconds": self.query_expansion_timeout_seconds,
             "query_expansion_total_timeout_seconds": self.query_expansion_total_timeout_seconds,
             "query_expansion_max_concurrency": self.query_expansion_max_concurrency,
+            "query_context_mode": self.query_context_mode,
+            "query_context_max_events": self.query_context_max_events,
+            "query_context_token_budget": self.query_context_token_budget,
             "procedure_recall_mode": self.procedure_recall_mode,
             "procedure_llm_threshold": self.procedure_llm_threshold,
             "procedure_router_timeout_seconds": self.procedure_router_timeout_seconds,
@@ -679,6 +784,7 @@ class Settings:
             "recall_side_effect_max_attempts": self.recall_side_effect_max_attempts,
             "recall_side_effect_backoff_seconds": self.recall_side_effect_backoff_seconds,
             "vector_backend": self.vector_backend,
+            "vector_batch_size": self.vector_batch_size,
             "extract_pre_filter": self.extract_pre_filter,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,

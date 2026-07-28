@@ -20,6 +20,11 @@ class CandidateTrace:
     tag_boost: float = 0.0
     rerank_rank: int | None = None
     rerank_score: float | None = None
+    relevance_decision: str | None = None
+    relevance_reason: str | None = None
+    score_path: str | None = None
+    evidence_score: float | None = None
+    relative_drop: float | None = None
     final_rank: int | None = None
     included: bool = False
     filter_reasons: list[str] = field(default_factory=list)
@@ -109,6 +114,9 @@ class SearchTrace:
     expansion_trigger: str | None = None
     expansions: list[QueryExpansionTrace] = field(default_factory=list)
     expansion_total_tokens: int = 0
+    context_event_count: int = 0
+    context_truncated: bool = False
+    context_hash: str | None = None
     intent_source: str = "fallback"
     experience_candidates: list[ExperienceCandidateTrace] = field(default_factory=list)
     candidate_counts: dict[str, int] = field(default_factory=dict)
@@ -195,6 +203,16 @@ class SearchTracer:
                 candidate.rerank_rank = rank
                 candidate.rerank_score = float(score)
 
+    def record_relevance(self, claim_id: str, decision: Any) -> None:
+        """记录 observe relevance 判定，不改变候选状态。"""
+        candidate = self._candidate(str(claim_id))
+        if candidate is not None:
+            candidate.relevance_decision = str(decision.decision)
+            candidate.relevance_reason = str(decision.reason)
+            candidate.score_path = str(decision.score_path)
+            candidate.evidence_score = decision.evidence_score
+            candidate.relative_drop = decision.relative_drop
+
     def record_relation_path(self, claim_id: str, path: dict[str, Any]) -> None:
         """记录关系扩展候选的一跳来源，不包含 claim 正文。"""
         candidate = self._candidate(str(claim_id))
@@ -206,6 +224,7 @@ class SearchTracer:
         final_ids = {str(claim["id"]) for claim in claims}
         for candidate in self.trace.candidates.values():
             candidate.included = candidate.claim_id in final_ids
+            candidate.final_rank = None
         for rank, claim in enumerate(claims, 1):
             final_candidate = self._candidate(str(claim["id"]), preserve=True)
             if final_candidate is not None:
@@ -214,7 +233,19 @@ class SearchTracer:
 
     def to_dict(self) -> dict[str, Any]:
         """返回不含查询明文、claim value 或密钥的 JSON 兼容字典。"""
-        return asdict(self.trace)
+        payload = asdict(self.trace)
+        relevance_fields = {
+            "relevance_decision",
+            "relevance_reason",
+            "score_path",
+            "evidence_score",
+            "relative_drop",
+        }
+        for candidate in payload["candidates"].values():
+            for field_name in relevance_fields:
+                if candidate[field_name] is None:
+                    del candidate[field_name]
+        return payload
 
     @classmethod
     def vector_search_metrics(cls) -> dict[str, int]:

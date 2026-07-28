@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
-from hl_mem.core.vector import cosine_similarity
+from hl_mem.core.vector import batch_cosine_similarity, cosine_similarity
 from hl_mem.domain.claims.claim import build_index_text
 from hl_mem.domain.claims.conflicts import slot_qualifier_key
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
@@ -35,8 +35,11 @@ class SupersedeResult:
 class ClaimRepository:
     """封装 Claim 持久化、时间可见检索、状态更新与去重查询。"""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, vector_batch_size: int = 512) -> None:
         self.connection = connection
+        if vector_batch_size < 1:
+            raise ValueError("vector_batch_size must be positive")
+        self.vector_batch_size = vector_batch_size
 
     def insert_claim(self, claim: dict[str, Any], commit: bool = True) -> bool:
         """编码结构化字段并幂等写入一条 Claim。"""
@@ -291,11 +294,15 @@ class ClaimRepository:
         """对可见 Claim 执行本地余弦全量扫描并截断。"""
         # A 100k x 2048 float32 full scan is about 819 MB; indexed retrieval must
         # be reconsidered before deployments approach that scale.
-        return sorted(
-            self.list_embedded(as_of, intent, known_as_of, namespace),
-            key=lambda claim: cosine_similarity(query_blob, claim["embedding_dense"]),
-            reverse=True,
-        )[:limit]
+        claims = self.list_embedded(as_of, intent, known_as_of, namespace)
+        scores = batch_cosine_similarity(
+            query_blob,
+            [claim["embedding_dense"] for claim in claims],
+            self.vector_batch_size,
+        )
+        scored_claims = [(claim, score, index) for index, (claim, score) in enumerate(zip(claims, scores))]
+        scored_claims.sort(key=lambda item: (-item[1], item[2], str(item[0]["id"])))
+        return [claim for claim, _, _ in scored_claims[:limit]]
 
     def search(
         self,

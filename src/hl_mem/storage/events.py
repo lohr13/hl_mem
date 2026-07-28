@@ -113,13 +113,20 @@ class EventRepository:
         ).fetchone()
         return self.get_event(str(row["id"])) if row else None
 
-    def get_recent_events(self, session_id: str, before: dict[str, Any], limit: int) -> list[dict[str, Any]]:
-        """返回游标之前的最近事件。"""
+    def get_recent_events(
+        self,
+        namespace: str,
+        session_id: str,
+        before: dict[str, Any],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """返回指定 tenant namespace 和会话中、游标之前的最近事件。"""
         rows = self.connection.execute(
-            "SELECT * FROM events WHERE session_id=? AND "
+            "SELECT * FROM events WHERE tenant_id=? AND session_id=? AND "
             "(occurred_at<? OR (occurred_at=? AND id<?)) "
             "ORDER BY occurred_at DESC,id DESC LIMIT ?",
             (
+                namespace,
                 session_id,
                 before["occurred_at"],
                 before["occurred_at"],

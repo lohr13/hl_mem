@@ -74,7 +74,7 @@ class ClaimOutput(BaseModel):
     text: Any
     score: float
     features: dict[str, float] = Field(default_factory=dict)
-    status: str
+    status: str | None = None
     confidence: float | None = None
     canonical_attribute: str | None = Field(
         default=None,
@@ -90,6 +90,8 @@ class ClaimOutput(BaseModel):
     replacement: dict[str, Any] | None = None
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     feedback_id: str | None = None
+    score_path: str | None = None
+    reranker_raw_score: float | None = None
     relations: list[dict[str, Any]] = Field(default_factory=list)
     conflicts: list[dict[str, Any]] | None = None
 
@@ -115,6 +117,7 @@ class RecallOutput(BaseModel):
     policies: list[dict[str, Any]]
     total: int
     query_id: str | None = None
+    answerability: str | None = None
     context: dict[str, Any] | None = None
     search_trace: dict[str, Any] | None = None
 

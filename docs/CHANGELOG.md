@@ -1,5 +1,59 @@
 # HL-Mem 变更记录
 
+## v0.17.0 (2026-07-29)
+
+### Recall Pipeline Improvements
+
+#### A: Evaluation Infrastructure
+- Expanded recall evaluation dataset from 50 to 80 cases with 7 slice categories
+- Added eval_runner.py for Recall@K, MRR, nDCG@5, Top-3 precision, latency metrics
+- Added gate_check.py for release quality gating
+- Versioned baseline tracking (baseline_v1.json)
+
+#### E: NumPy Batch Cosine
+- Replaced pure-Python cosine loop with NumPy batch matrix computation
+- 100-500x faster dense vector scanning, same exact results
+- Added vector_batch_size setting (default 512) for memory control
+- Added numpy>=2.0 as runtime dependency
+
+#### B: Relevance Gate (observe + enforce)
+- New HL_MEM_RELEVANCE_GATE_MODE=off|observe|enforce (default off)
+- observe: computes per-candidate relevance diagnostics without truncation
+- enforce: truncates low-relevance tail for current_state intent (whitelist)
+- Per-candidate score_path and reranker_raw_score in API response
+- answerability field promoted to API schema
+
+#### C: Answerable Index Text
+- New index_text mode "answerable": subject + readable label + value
+- Template from SLOT_REGISTRY, deterministic, no LLM
+- CLI: python -m hl_mem.cli backfill-index-text --dry-run
+- Safe compare-and-set backfill with cursor resume
+
+#### D: Session-Aware Coreference Resolution
+- session_id now flows from API through to QueryExpander
+- coreference queries use session context for disambiguation
+- Fixed: get_recent_events() now filters by namespace (tenant_id)
+- Fixed: Settings.from_env() default query_expansion_mode unified to off
+- New: HL_MEM_QUERY_CONTEXT_MODE=off|coreference (default off)
+
+### Bug Fixes
+- session_id was defined in RecallInput but never passed to RecallService
+- get_recent_events() lacked namespace isolation (tenant_id filter)
+- Settings.from_env() implicitly defaulted to query_expansion_mode=auto
+
+### Dependencies
+- Added numpy>=2.0
+
+## Unreleased
+
+### Fixed
+
+- 行为兼容修正：未设置 `HL_MEM_QUERY_EXPANSION_MODE` 时现在与 `Settings` 默认值一致为 `off`；需要旧隐式行为的部署可显式设置为 `auto`。
+
+### Added
+
+- 新增默认关闭的会话感知指代查询改写，并按 namespace/session 隔离读取最小文本上下文。
+
 ## v0.16.1 — 2026-07-28
 
 ### Fixed

@@ -68,10 +68,10 @@ class QueryExpander:
         if mode == "always":
             return "always"
         normalized = unicodedata.normalize("NFKC", query).strip()
-        if len(normalized) < 10:
-            return "short_query"
         if any(term in normalized for term in _COREFERENCE_TERMS):
             return "coreference"
+        if len(normalized) < 10:
+            return "short_query"
         if candidate_count is not None and candidate_count < candidate_floor:
             return "low_recall"
         return None
@@ -85,6 +85,7 @@ class QueryExpander:
         timeout_seconds: float = 2.0,
         token_ceiling: int = 256,
         source: str | None = None,
+        session_context: tuple[tuple[str, str], ...] = (),
     ) -> QueryExpansionResult:
         """执行一次有超时和 token 上限保护的结构化改写。"""
         started = time.perf_counter()
@@ -92,7 +93,7 @@ class QueryExpander:
             return self._empty(started, "empty")
         if not self._circuit.allow():
             return self._empty(started, "circuit_open", error_class="circuit_open")
-        request = self._request(query, intent, max_expansions)
+        request = self._request(query, intent, max_expansions, session_context)
         if not self._capacity.acquire(blocking=False):
             return self._empty(started, "concurrency_limit")
         deadline = time.monotonic() + timeout_seconds
@@ -155,12 +156,27 @@ class QueryExpander:
         )
 
     @staticmethod
-    def _request(query: str, intent: RecallIntent, max_expansions: int) -> LLMRequest:
+    def _request(
+        query: str,
+        intent: RecallIntent,
+        max_expansions: int,
+        session_context: tuple[tuple[str, str], ...] = (),
+    ) -> LLMRequest:
         system = (
             "你是查询改写器。仅输出 JSON。生成语义等价、便于记忆检索的查询。"
             "禁止添加人物、时间、namespace 或原查询未给出的事实；不得改变查询意图和约束。"
         )
-        user = f"原查询：{query}\n召回意图：{intent.value}\n最多输出 {max_expansions} 条："
+        context_text = ""
+        if session_context:
+            rendered = "\n".join(f"{role}: {text}" for role, text in session_context)
+            context_text = (
+                f"同一会话的先行文本（仅用于消解指代）：\n{rendered}\n"
+                "只能使用这些文本中明确存在的事实，不得推断或新增事实。\n"
+            )
+        user = (
+            f"{context_text}原查询：{query}\n召回意图：{intent.value}\n"
+            f"最多输出 {max_expansions} 条："
+        )
         return LLMRequest(
             messages=[LLMMessage("system", system), LLMMessage("user", user)],
             structured_output=StructuredOutputSpec(

@@ -232,6 +232,7 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
                 token_budget=payload.token_budget,
                 context_mode=payload.context_mode,
                 namespace=payload.namespace,
+                session_id=payload.session_id,
                 debug=payload.debug,
             )
 

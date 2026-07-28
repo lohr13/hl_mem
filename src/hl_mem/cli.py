@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from hl_mem import __version__
+from hl_mem.components import make_embedder
 from hl_mem.evaluation.runner import BenchmarkRunner
+from hl_mem.settings import Settings
 from hl_mem.storage.database import Database, default_database_path
 from hl_mem.storage.events import EventRepository
+from hl_mem.workers.backfill_index_text import backfill_index_text
 
 EXPORT_FORMAT_VERSION = "1"
 
@@ -145,7 +148,29 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     evaluation.add_argument("--limit", type=int)
     evaluation.add_argument("--keep-db", action="store_true")
+    backfill = commands.add_parser("backfill-index-text")
+    backfill.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    backfill.add_argument("--dry-run", action="store_true")
+    backfill.add_argument("--cursor")
     args = parser.parse_args(argv)
+    if args.command == "backfill-index-text":
+        settings = Settings.from_env()
+        database = Database(args.db)
+        try:
+            result = backfill_index_text(
+                database.open(),
+                make_embedder(settings),
+                mode=settings.index_text_mode,
+                version=settings.index_text_version,
+                batch_size=settings.index_backfill_batch_size,
+                max_attempts=settings.index_backfill_max_attempts,
+                dry_run=args.dry_run,
+                cursor=args.cursor,
+            )
+        finally:
+            database.close()
+        print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
+        return
     if args.command == "eval":
         if args.limit is not None and args.limit < 1:
             parser.error("--limit must be positive")

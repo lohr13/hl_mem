@@ -15,7 +15,7 @@ def test_new_feature_modes_use_literal_annotations() -> None:
     assert hints["feedback_lifecycle_mode"] == Literal["off", "observe", "on"]
     assert hints["image_describer_mode"] == Literal["off", "on"]
     assert hints["image_describer_provider"] == Literal["dashscope"]
-    assert hints["index_text_mode"] == Literal["legacy", "value_only", "natural"]
+    assert hints["index_text_mode"] == Literal["legacy", "value_only", "natural", "answerable"]
 
 
 def test_index_text_mode_defaults_to_legacy_and_reads_environment(monkeypatch) -> None:

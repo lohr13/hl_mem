@@ -157,10 +157,10 @@ def test_empty_case_does_not_require_binding(tmp_path: Path) -> None:
     assert bound.relevant_claim_ids == ()
 
 
-def test_recall_v2_dataset_contains_declared_50_cases() -> None:
+def test_recall_v2_dataset_contains_declared_80_cases() -> None:
     path = Path(__file__).parent / "datasets" / "recall_v2.jsonl"
 
     cases = load_cases(path)
 
-    assert len(cases) == 50
-    assert len({case.case_id for case in cases}) == 50
+    assert len(cases) == 80
+    assert len({case.case_id for case in cases}) == 80

@@ -34,6 +34,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                     "known_as_of": {"type": "string"},
                     "intent": {"type": "string"},
                     "namespace": {"type": "string"},
+                    "session_id": {"type": "string"},
                     "debug": {"type": "boolean"},
                 },
                 "required": ["query"],
@@ -161,6 +162,7 @@ class McpMemoryServer:
             arguments.get("known_as_of"),
             arguments.get("query_id"),
             namespace=str(arguments.get("namespace", "default")),
+            session_id=arguments.get("session_id"),
             debug=bool(arguments.get("debug", False)),
         )
 

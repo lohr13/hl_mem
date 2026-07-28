@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import sqlite3
 import threading
@@ -25,6 +26,11 @@ from hl_mem.recall.procedure_pipeline import MemoryCandidate, recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
+from hl_mem.recall.relevance import (
+    enforce_relevance,
+    evaluate_relevance,
+    should_enforce_relevance,
+)
 from hl_mem.recall.trace import (
     ExperienceCandidateTrace,
     QueryExpansionTrace,
@@ -34,6 +40,7 @@ from hl_mem.recall.trace import (
 )
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import DerivationRepository, EvidenceRepository
 
 LOGGER = logging.getLogger(__name__)
@@ -76,6 +83,51 @@ def budget_pack(items: list[dict[str, Any]], token_budget: int) -> list[dict[str
         if used >= token_budget:
             break
     return packed
+
+
+def _session_context(
+    connection: sqlite3.Connection,
+    namespace: str,
+    session_id: str,
+    *,
+    max_events: int,
+    token_budget: int,
+) -> tuple[tuple[tuple[str, str], ...], bool, str | None]:
+    """读取并按粗略 token 预算装入同命名空间会话的用户/助手文本。"""
+    before = {"occurred_at": "\U0010ffff", "id": "\U0010ffff"}
+    events = EventRepository(connection).get_recent_events(
+        namespace,
+        session_id,
+        before,
+        max_events + 1,
+    )
+    truncated = len(events) > max_events
+    selected: list[tuple[str, str]] = []
+    used = 0
+    for event in events[:max_events]:
+        role = str(event.get("actor_type") or "")
+        if role not in {"user", "assistant"}:
+            continue
+        try:
+            content = json.loads(str(event.get("content_json") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        text = content if isinstance(content, str) else content.get("text") if isinstance(content, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            continue
+        normalized = text.strip()
+        cost = max(1, (len(normalized) + 1) // 2)
+        if used + cost > token_budget:
+            truncated = True
+            break
+        selected.append((role, normalized))
+        used += cost
+    selected.reverse()
+    context = tuple(selected)
+    if not context:
+        return (), truncated, None
+    serialized = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+    return context, truncated, hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def budget_pack_by_type(
@@ -159,6 +211,7 @@ class RecallService:
         token_budget: int | None = None,
         context_mode: str | None = None,
         namespace: str = "default",
+        session_id: str | None = None,
         debug: bool = False,
     ) -> dict[str, Any]:
         """执行混合召回并返回 claim、策略、证据及查询标识。"""
@@ -236,11 +289,30 @@ class RecallService:
                 "low_recall": "llm_low_recall",
                 "always": "llm_short",
             }.get(trigger, "llm_short")
+            tracer.trace.expansion_trigger = trigger
             if self.query_expander is None or time.monotonic() >= expansion_deadline:
-                tracer.trace.expansion_trigger = trigger
                 tracer.trace.expansions.append(QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout"))
                 return [], []
-            tracer.trace.expansion_trigger = trigger
+            session_context: tuple[tuple[str, str], ...] = ()
+            if trigger == "coreference" and self.settings.query_context_mode == "coreference":
+                if not session_id:
+                    return [], []
+                try:
+                    session_context, context_truncated, context_hash = _session_context(
+                        self.connection,
+                        namespace,
+                        session_id,
+                        max_events=self.settings.query_context_max_events,
+                        token_budget=self.settings.query_context_token_budget,
+                    )
+                except Exception as error:
+                    LOGGER.warning("session context read failed: %s", type(error).__name__)
+                    return [], []
+                tracer.trace.context_event_count = len(session_context)
+                tracer.trace.context_truncated = context_truncated
+                tracer.trace.context_hash = context_hash
+                if not session_context or time.monotonic() >= expansion_deadline:
+                    return [], []
             remaining = max(0.001, expansion_deadline - time.monotonic())
             result = self.query_expander.expand(
                 query,
@@ -249,6 +321,7 @@ class RecallService:
                 timeout_seconds=min(self.settings.query_expansion_timeout_seconds, remaining),
                 token_ceiling=self.settings.query_expansion_token_ceiling,
                 source=trigger,
+                session_context=session_context,
             )
             tracer.trace.expansion_total_tokens += result.input_tokens + result.output_tokens
             if not result.expansions:
@@ -303,7 +376,7 @@ class RecallService:
                 return expand_for(trigger) if trigger is not None else ([], [])
 
         claims = hybrid_claims(
-            ClaimRepository(self.connection),
+            ClaimRepository(self.connection, vector_batch_size=self.settings.vector_batch_size),
             query,
             query_blobs[0],
             limit,
@@ -336,6 +409,30 @@ class RecallService:
             ),
             low_recall_expander=low_recall_expander,
         )
+        enforce_enabled = False
+        if self.settings.relevance_gate_mode in {"observe", "enforce"}:
+            enforce_enabled = should_enforce_relevance(
+                self.settings.relevance_gate_mode,
+                selected_intent.value,
+                self.settings.relevance_intents,
+            )
+            if enforce_enabled:
+                claims = enforce_relevance(
+                    claims,
+                    tracer,
+                    reranker_floor=self.settings.relevance_reranker_floor,
+                    dense_floor=self.settings.relevance_dense_floor,
+                    relative_drop_threshold=self.settings.relevance_relative_drop,
+                    keep_top1=self.settings.relevance_keep_top1,
+                )
+            else:
+                evaluate_relevance(
+                    [str(claim["id"]) for claim in claims],
+                    tracer,
+                    reranker_floor=self.settings.relevance_reranker_floor,
+                    dense_floor=self.settings.relevance_dense_floor,
+                    relative_drop_threshold=self.settings.relevance_relative_drop,
+                )
         self._record_access(claims)
         assembly_started = time.perf_counter_ns()
         results = self._assemble_results(claims, namespace)
@@ -370,7 +467,11 @@ class RecallService:
             "policies": policies,
             "total": len(results),
             "query_id": query_id,
-            "answerability": self._answerability(claims, tracer),
+            "answerability": self._answerability(
+                claims,
+                tracer,
+                relevance_enforced=enforce_enabled,
+            ),
         }
         if context_mode == "packed":
             response["context"] = self._assemble_context(
@@ -385,13 +486,21 @@ class RecallService:
         return response
 
     @staticmethod
-    def _answerability(claims: list[dict[str, Any]], tracer: SearchTracer) -> str:
-        """按组合证据规则给出 shadow answerability，不截断候选结果。"""
+    def _answerability(
+        claims: list[dict[str, Any]],
+        tracer: SearchTracer,
+        *,
+        relevance_enforced: bool = False,
+    ) -> str:
+        """按最终候选及 relevance gate 结果给出 answerability。"""
         if not claims:
             tracer.trace.answerability = "no_evidence"
             return "no_evidence"
         top = claims[0]
         trace = tracer.trace.candidates.get(str(top["id"]))
+        if relevance_enforced and (trace is None or trace.relevance_decision != "relevant"):
+            tracer.trace.answerability = "low_confidence"
+            return "low_confidence"
         fts_hit = bool(trace and "fts" in trace.channels)
         dense_score = float(trace.channel_scores.get("dense", 0.0)) if trace else 0.0
         slot = str(top.get("canonical_slot") or "")
@@ -421,7 +530,7 @@ class RecallService:
             + [{"type": "observation", "data": item, "priority": 1} for item in observations]
             + [{"type": "policy", "data": item, "priority": 0} for item in policies]
         )
-        all_items.sort(key=lambda item: (-item["priority"] if isinstance(item.get("priority"), int) else 0))
+        all_items.sort(key=lambda item: -item["priority"] if isinstance(item.get("priority"), int) else 0)
         packed = budget_pack(all_items, token_budget)
         used = 0
         for item in packed:
