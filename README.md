@@ -5,166 +5,151 @@
 [![Version: 0.16.0](https://img.shields.io/badge/version-0.16.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
-> Local-first, evidence-driven long-term memory for AI agents. / 面向 AI Agent 的本地优先、证据驱动长期记忆。
+[中文](#中文) | [English](README_EN.md)
 
-## What is HL-Mem?
+<a id="中文"></a>
 
-HL-Mem turns agent events into persistent, structured memories that remain explainable and correct over time. Unlike a
-plain vector store, it combines event sourcing, dual-temporal facts, evidence chains, lifecycle governance, and a separate
-experience channel—all on SQLite, with no external database service.
+## 中文
 
-## Quickstart
+HL-Mem 是面向 AI Agent 的本地优先、证据驱动长期记忆系统。它不只是向量数据库：系统把不可变事件提取为带证据链的结构化 Claim，以有效时间和记录时间描述事实变化，并通过独立的 Experience 通道保存 Episode、Trace 和可复用 Policy。默认使用 SQLite WAL、FTS5 和向量 BLOB，无需部署外部数据库服务。
 
-Requirements: Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+## 安装
+
+要求 Python 3.11+。推荐使用 [uv](https://docs.astral.sh/uv/)：
 
 ```bash
-# 1. Install
 git clone git@github.com:REDACTED_USER/hl_mem.git
 cd hl_mem
 uv sync
+```
 
-# 2. Configure providers
+也可以使用 pip 安装当前仓库：
+
+```bash
+python -m pip install .
+```
+
+开发环境可使用 `uv sync --dev` 或 `python -m pip install -e .`；运行测试所需的开发依赖以 `uv.lock` 为准。
+
+## 快速开始
+
+### 1. 配置服务
+
+复制环境变量模板，并填写 LLM、Embedding，以及启用重排时所需的 API key：
+
+```bash
 cp .env.example .env
-# Edit .env and add the required LLM and embedding API keys.
+```
 
-# 3. Start API + worker (default: http://127.0.0.1:8200)
+`.env.example` 是完整、带版本的配置目录。不要提交包含真实密钥的 `.env`。
+
+### 2. 启动服务
+
+```bash
 uv run python start_server.py
+```
 
-# 4. Store and recall a memory
+API 和后台 Worker 默认随服务启动，监听 `http://127.0.0.1:8200`。写入并召回一条记忆：
+
+```bash
 curl -X POST http://127.0.0.1:8200/v1/memories -H "Content-Type: application/json" \
   -d '{"text":"Alice prefers dark mode","subject":"Alice"}'
+
 curl -X POST http://127.0.0.1:8200/v1/recall -H "Content-Type: application/json" \
   -d '{"query":"What does Alice prefer?","limit":5}'
 ```
 
-See the [configuration template](.env.example) and [API reference](docs/api.md) for production options and complete
-request contracts.
+完整请求契约见 [API 文档](docs/api.md)。
 
-## Features
+### 3. 集成 Hermes
 
-- **Memory correctness — Stable:** idempotent event ingestion, atomic writes, exact/semantic deduplication, deterministic
-  conflict rules, LLM-assisted gray-zone consolidation, and auditable extraction governance. Governance includes
-  deterministic scope downgrades, predicate projection from canonical attributes, invalid-subject isolation, and bounded
-  structured-output repair.
-- **Temporal knowledge — Stable:** valid time and recorded time, evidence lineage, entity normalization, and explicit
-  forgetting with stale propagation.
-- **Retrieval — Stable:** Chinese-aware FTS5, dense vectors, RRF fusion, multi-factor ranking, optional reranking, relation
-  expansion, query expansion, and token-budgeted context packing.
-- **Lifecycle — Stable:** importance-aware TTL, confidence decay, archival, reclassification, feedback usefulness, audit
-  logs, and online backups.
-- **Agent experience — Stable:** Episodes, Traces, rewards, Policies/Procedures, and derived Observations.
-- **Interfaces — Stable/Beta:** FastAPI REST and Hermes Provider are stable; the five-tool MCP surface is beta.
-- **Evaluation — Stable:** offline extraction/retrieval/lifecycle metrics, recall diagnostics, controlled index-text A/B,
-  cross-model extraction benchmarks, and a LongMemEval adapter.
+先启动 HL-Mem，再将仓库内的 MemoryProvider 部署到 Hermes：
 
-## Key Configuration
-
-The complete, versioned template is [`.env.example`](.env.example). Settings added for the current extraction and recall
-governance work include:
-
-| Variable | Default | Purpose |
-|---|---:|---|
-| `HL_MEM_LLM_ENABLE_THINKING` | unset | Provider-neutral boolean override; unset omits the payload field. |
-| `HL_MEM_INDEX_TEXT_MODE` | `legacy` | Claim embedding/FTS text: `legacy`, `value_only`, or `natural`. |
-| `HL_MEM_LLM_STRUCTURED_MODE` | `json_object` | Structured extraction mode. |
-| `HL_MEM_LLM_SCHEMA_RETRIES` | `2` | Bounded retries after deterministic JSON repair/schema validation. |
-| `HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS` | `12000` | Target size for structure-aware extraction chunks. |
-| `HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS` | `2` | Conversation-turn overlap between chunks. |
-| `HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH` | `3` | Maximum recursive split depth after truncation. |
-
-## Architecture Overview
-
-```text
-REST / MCP / Hermes → Application services → Domain + ingest/recall/workers → SQLite WAL + FTS5 + vectors
+```bash
+uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 ```
 
-The fact channel turns immutable events into evidence-backed Claims and Observations. The experience channel records
-Episodes and Traces, then derives reusable Policies. See [Architecture](docs/architecture.md) for the module map, write and
-recall pipelines, data model, and component boundaries.
+安装后重启 Hermes。适配器通过 HTTP 调用本地 HL-Mem 服务，并提供超时、熔断、预取及 Episode/Trace 同步；服务不可用时会降级，不阻断 Agent 主任务。
 
-## Documentation
+## 关键配置
 
-| Guide | Contents |
+以下是提取和召回主路径中的常用配置；完整列表、密钥来源和实验开关见 [`.env.example`](.env.example)。
+
+| 配置项 | 默认值 | 说明 |
+|---|---:|---|
+| `HL_MEM_ENV` | `dev` | 运行环境：`dev` 或 `production` |
+| `HL_MEM_DB_PATH` | `var/hl_mem.db` | SQLite 数据库路径 |
+| `HL_MEM_EXTRACTOR` | `llm`（模板） | 提取器：`fake` 或 `llm` |
+| `HL_MEM_EMBEDDER` | `real`（模板） | 向量化：`fake` 或 `real` |
+| `HL_MEM_RERANKER` | `on` | 重排：`off`、`fake`、`on` 或 `real` |
+| `HL_MEM_LLM_PROVIDER` | `dashscope` | LLM Provider：`dashscope`、`zhipu` 或 `openai_compatible` |
+| `HL_MEM_LLM_ENABLE_THINKING` | 未设置 | 可选布尔覆盖；未设置时不向 Provider 发送该字段 |
+| `HL_MEM_LLM_STRUCTURED_MODE` | `json_object` | 结构化输出：`auto`、`json_object` 或 `json_schema` |
+| `HL_MEM_LLM_SCHEMA_RETRIES` | `2` | JSON 修复或 Schema 校验失败后的最大重试次数 |
+| `HL_MEM_INDEX_TEXT_MODE` | `legacy` | FTS/Embedding 索引文本：`legacy`、`value_only` 或 `natural` |
+| `HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS` | `12000` | 结构感知提取分块的目标字符数 |
+| `HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS` | `2` | 相邻对话分块的重叠轮数 |
+| `HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH` | `3` | 截断后递归拆分的最大深度 |
+| `HL_MEM_QUERY_EXPANSION_MODE` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
+| `HL_MEM_RELATION_DISCOVERY_MODE` | `audit` | 关系发现：`off`、`audit` 或 `auto` |
+| `HL_MEM_TAG_CHANNEL_ENABLED` | `false` | 是否启用独立 Tag 检索通道 |
+
+生产模式会校验真实 Embedder、启用的 Reranker 和非 Fake Extractor。配置语义以 [Settings](src/hl_mem/settings.py) 与 [配置模板](.env.example) 为准。
+
+## 能力概览
+
+- **记忆正确性**：幂等事件摄入、事务原子写入、精确/语义去重、确定性冲突规则和 LLM 灰区归并。
+- **提取治理**：确定性的 scope 降级、从规范属性执行 predicate 投影、subject 守卫隔离无效主体，以及有界结构化输出修复。
+- **时间与证据**：有效时间与记录时间双时间模型、证据链、实体归一化、显式遗忘和 stale 传播。
+- **混合召回**：中文 FTS5、稠密向量、RRF 融合、多因子排序、可选 Reranker、关系/查询扩展和按 Token 预算打包上下文。
+- **生命周期**：importance 联动 TTL、置信度衰减、归档、重分类、反馈效用、审计日志和在线备份。
+- **经验通道**：Episode、Trace、Reward、Policy/Procedure 和派生 Observation。
+- **接口**：FastAPI REST 与 Hermes Provider 为稳定主路径；五工具 MCP 接口处于 Beta。
+- **评测**：离线提取/召回/生命周期指标、召回诊断、索引文本受控 A/B、跨模型提取 Benchmark 和 LongMemEval 适配器。
+
+能力成熟度、默认开关和证据见 [能力矩阵](docs/capability-matrix.md)，架构与数据流见 [架构文档](docs/architecture.md)。
+
+## 项目状态
+
+- **Stable**：事件与证据链、原子写入、LLM 提取、Embedding、FTS + Dense + RRF、双时间过滤、TTL/衰减/归档、冲突与去重、REST、Hermes、备份与审计。
+- **Beta**：多查询召回、关系候选发现、反馈驱动维护、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
+- **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
+
+当前基线为 v0.16.0，共 33 个不可变、仅向前执行的 Migration。
+
+## 文档
+
+| 文档 | 内容 |
 |---|---|
-| [Documentation index](docs/README.md) | Navigation for all maintained documentation |
-| [Architecture](docs/architecture.md) | Layers, module tree, pipelines, storage, and lifecycle |
-| [API reference](docs/api.md) | REST endpoints and request conventions |
-| [Compatibility policy](docs/compatibility.md) | Versioning and public contract guarantees |
-| [Configuration](.env.example) | Runtime settings and provider options |
-| [Capability matrix](docs/capability-matrix.md) | Maturity, defaults, and evidence |
-| [Competitor comparison](docs/research/competitor-comparison.md) | Detailed Mem0, Zep, LangMem, and Letta comparison |
-| [Changelog](docs/CHANGELOG.md) | Release history |
+| [文档索引](docs/README.md) | 所有维护中文档的导航 |
+| [架构](docs/architecture.md) | 分层、模块、写入/召回管线、存储和生命周期 |
+| [API](docs/api.md) | REST 端点和请求约定 |
+| [兼容性策略](docs/compatibility.md) | 版本和公共契约保证 |
+| [能力矩阵](docs/capability-matrix.md) | 成熟度、默认值和验证证据 |
+| [变更日志](docs/CHANGELOG.md) | 发布历史 |
 
-## Comparison
+## Contributing / 贡献指南
 
-| Project | Strength | HL-Mem difference |
-|---|---|---|
-| Mem0 | Lightweight, LLM-driven extraction | Adds dual time, evidence chains, and slot + tag classification |
-| Zep | Temporal knowledge graph | Runs local-first on SQLite + FTS5 without an external database service |
-| LangMem | Profile/collection memory model | Uses slots for conflict, TTL, and dedup; open multi-value tags for retrieval |
-| Letta/ADEPT | Long-term memory inside autonomous agents | Focuses on memory infrastructure and decouples the agent through adapters |
+欢迎通过 Issue 报告缺陷或提出功能建议。提交前请搜索是否已有同类 Issue，并附上复现步骤、预期行为、实际行为、环境信息和必要日志。Pull Request 应聚焦单一改动，说明动机与验证结果，并在行为或公共契约变化时同步更新测试和文档。
 
-See the [full architectural comparison](docs/research/competitor-comparison.md) for deployment models, trade-offs, and
-selection guidance.
-
-## Project Status
-
-### Stable (default-on, regression-tested)
-
-- Event ingestion, evidence chains, atomic writes
-- LLM extraction, embedding, FTS + Dense + RRF hybrid recall
-- Dual-temporal filtering, TTL, decay, archival, explicit forgetting
-- Three-layer dedup + conflict detection
-- REST API, Hermes Provider, online backup, audit logs
-
-### Beta (usable with safe defaults, needs more observation)
-
-- Multi-query recall (default: auto)
-- Relation candidate discovery (default: audit)
-- Feedback-driven maintenance (default: observe)
-- Semantic dedup (default: audit)
-- MCP Server (5 tools)
-- Benchmark suite + LongMemEval adapter
-
-### Experimental (opt-in only)
-
-- Image evidence (default: off)
-- Extraction pre-filter (default: off)
-- Independent tag channel (default: off)
-- PostgreSQL connectivity probe (no storage semantics)
-
-### Planned
-
-- Mental model reasoning enhancements
-- Multi-tenancy
-- PostgreSQL storage adapter (behind protocol boundary)
-
-Current baseline: v0.16.0, 33 migrations. Detailed maturity claims live in the
-[capability matrix](docs/capability-matrix.md).
-
-## 中文
-
-HL-Mem 是面向 AI Agent 的本地优先长期记忆系统。它不只是向量库：系统将不可变事件提取为带证据链的结构化
-Claim，以有效时间与记录时间描述事实变化，并通过独立的 Experience 通道保存 Episode、Trace 与可复用策略。
-默认存储为 SQLite WAL + FTS5 + 向量 BLOB，无需部署外部数据库服务。
-
-### 快速开始
+开发环境与检查命令：
 
 ```bash
 git clone git@github.com:REDACTED_USER/hl_mem.git
 cd hl_mem
-uv sync
-cp .env.example .env       # 填写 LLM 与 Embedding API key
-uv run python start_server.py
+uv sync --dev
+uv run pytest tests/unit/ -q --tb=short
+uv run black --check src tests
+uv run isort --check-only src tests
+uv run ruff check src tests
 ```
 
-服务默认监听 `http://127.0.0.1:8200`。使用方式见上方 Quickstart；完整配置、接口与架构分别见
-[`.env.example`](.env.example)、[API 文档](docs/api.md) 和[架构文档](docs/architecture.md)。
+提交信息使用英文，格式为 `type(scope): description`，其中 `type` 可选 `feat`、`fix`、`refactor`、`test`、`docs` 或 `chore`。
 
-核心能力包括：幂等且事务原子的写入、三层去重与冲突处理、双时间模型、证据链、中文全文与向量融合召回、
-可选重排、importance 联动 TTL、反馈驱动维护、显式遗忘、审计与备份。当前 REST/Hermes 主路径稳定，MCP
-工具面为 Beta；详细成熟度以[能力矩阵](docs/capability-matrix.md)为准。
+**English:** Please search existing issues before opening one and include reproduction steps, expected/actual behavior, environment details, and relevant logs. Keep each PR focused, explain the motivation and validation, update tests/docs when contracts change, set up with `uv sync --dev`, and run the checks above.
 
-## License
+## License / 许可证
 
-[Apache License 2.0](LICENSE)
+本项目采用 [Apache License 2.0](LICENSE)。你可以在许可证条款允许的范围内使用、修改和分发本项目，并须保留所要求的版权及许可证声明。
+
+**English:** Licensed under the [Apache License 2.0](LICENSE). You may use, modify, and distribute this project subject to its terms, including the required notices.
