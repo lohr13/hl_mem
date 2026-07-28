@@ -552,7 +552,12 @@ def run_benchmark(mode: str, *, resume: bool) -> tuple[list[dict[str, Any]], dic
                 **run_single_extraction(
                     extractor,
                     event["content"],
-                    {"session_id": event["session_id"], "actor": event["actor_type"]},
+                    {
+                        "session_id": event["session_id"],
+                        "actor": event["actor_type"],
+                        "actor_type": event["actor_type"],
+                        "source_kind": event["category"],
+                    },
                 ),
             }
             append_jsonl(paths["results.partial.jsonl"], result)

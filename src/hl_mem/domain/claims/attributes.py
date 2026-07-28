@@ -491,6 +491,15 @@ def normalize_canonical_attribute(attribute: str) -> str:
     return ATTRIBUTE_ALIASES.get(normalized, normalized)
 
 
+def predicate_for_canonical_attribute(attribute: str | None, llm_predicate: str) -> str:
+    """按已注册 canonical attribute 投影 predicate，未知属性保留模型判断。"""
+    normalized_attribute = normalize_canonical_attribute(attribute or "")
+    definition = SLOT_REGISTRY.get(normalized_attribute)
+    if definition is None or normalized_attribute == "custom.unknown" or not definition.predicate:
+        return normalize_predicate(llm_predicate)
+    return definition.predicate
+
+
 def validate_canonical_attribute(predicate: str, attribute: str | None) -> str:
     """校验属性是否属于 predicate 的允许集合，否则确定性回退。"""
     normalized_predicate = normalize_predicate(predicate)
@@ -581,6 +590,13 @@ def reconcile_canonical_attribute(
         return precise, "high_confidence_rule"
 
     normalized_inferred = validate_canonical_attribute(normalized_predicate, inferred_attribute)
+    if normalized_inferred in allowed and normalized_inferred != fallback:
+        return normalized_inferred, "fallback_reconciled"
+
+    normalized_llm_attribute = normalize_canonical_attribute(llm_attribute or "")
+    if normalized_llm_attribute in ATTRIBUTE_ALLOWLIST and normalized_llm_attribute != "custom.unknown":
+        return normalized_llm_attribute, "registered_attribute"
+
     if validated in {fallback, "custom.unknown"} and normalized_inferred in allowed:
         return normalized_inferred, "fallback_reconciled"
     return validated, "llm_preserved"

@@ -6,6 +6,8 @@ from hl_mem.domain.claims.attributes import (
     canonical_conflict_slot,
     infer_canonical_attribute,
     is_mutually_exclusive_attribute,
+    predicate_for_canonical_attribute,
+    reconcile_canonical_attribute,
     validate_canonical_attribute,
 )
 
@@ -32,6 +34,39 @@ def test_mapping_declares_only_allowlisted_attributes() -> None:
     for allowed, fallback in PREDICATE_ATTRIBUTE_MAP.values():
         assert set(allowed) <= ATTRIBUTE_ALLOWLIST
         assert fallback in ATTRIBUTE_ALLOWLIST
+
+
+@pytest.mark.parametrize(
+    ("attribute", "llm_predicate", "expected"),
+    [
+        ("preference.response_style", "事实", "偏好"),
+        ("identity.role", "事实", "身份"),
+        ("config.port", "事实", "配置"),
+        ("state.process", "事实", "状态"),
+        ("plan.goal", "事实", "计划"),
+        ("choice.tool", "事实", "使用"),
+        ("fact.capability", "配置", "事实"),
+        ("memory.explicit", "事实", "explicit_memory"),
+        ("custom.unknown", "计划", "计划"),
+        ("invented.slot", "配置", "配置"),
+    ],
+)
+def test_predicate_is_projected_from_registered_attribute(
+    attribute: str,
+    llm_predicate: str,
+    expected: str,
+) -> None:
+    assert predicate_for_canonical_attribute(attribute, llm_predicate) == expected
+
+
+def test_reconcile_accepts_registered_cross_family_attribute_without_content_conflict() -> None:
+    assert reconcile_canonical_attribute(
+        predicate="事实",
+        llm_attribute="config.port",
+        inferred_attribute="fact.other",
+        subject="hl_mem",
+        value="hl_mem 端口为 8200",
+    ) == ("config.port", "registered_attribute")
 
 
 def test_attribute_validation_rejects_unknown_or_wrong_predicate_attribute() -> None:

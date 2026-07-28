@@ -98,6 +98,19 @@ def test_llm_claim_invalid_defaults_and_prompt():
     assert "independent from volatility" in SYSTEM_PROMPT
 
 
+def test_llm_claim_projects_predicate_after_attribute_reconciliation():
+    claim = LLMExtractor._claim(
+        {
+            "subject": "hl_mem",
+            "predicate": "事实",
+            "canonical_attribute": "config.port",
+            "value": "hl_mem 端口为 8200",
+        }
+    )
+    assert claim.canonical_attribute == "config.port"
+    assert claim.predicate == "配置"
+
+
 @pytest.mark.parametrize(
     ("volatility", "scope", "expires"),
     [

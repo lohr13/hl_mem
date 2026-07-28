@@ -14,6 +14,7 @@ from typing import Any
 from hl_mem.domain.claims.attributes import (
     is_mutually_exclusive_attribute,
     normalize_topic_tags,
+    predicate_for_canonical_attribute,
     validate_canonical_attribute,
     validate_slot_instance,
 )
@@ -442,6 +443,19 @@ def _build_claim_drafts(
     canonical_attribute = validate_canonical_attribute(
         extracted.predicate, getattr(extracted, "canonical_attribute", None)
     )
+    predicate = predicate_for_canonical_attribute(canonical_attribute, extracted.predicate)
+    if predicate != extracted.predicate:
+        current_audit().emit(
+            "ingest",
+            "predicate_normalized",
+            "changed",
+            detail={
+                "llm_predicate": extracted.predicate,
+                "normalized_predicate": predicate,
+                "canonical_attribute": canonical_attribute,
+                "reason_code": "canonical_attribute_projection",
+            },
+        )
     requested_slot = getattr(extracted, "canonical_slot", None)
     canonical_slot = validate_slot_instance(requested_slot, qualifiers)
     if requested_slot and canonical_slot is None:
@@ -457,7 +471,7 @@ def _build_claim_drafts(
         importance = min(1.0, max(0.0, float(extracted.importance)))
     except (TypeError, ValueError):
         importance = 0.5
-    protected = extracted.predicate == "explicit_memory" or canonical_attribute in {
+    protected = predicate == "explicit_memory" or canonical_attribute in {
         "memory.explicit",
         "identity.name",
     }
@@ -479,7 +493,7 @@ def _build_claim_drafts(
         "id": new_id(),
         "namespace_key": namespace,
         "subject_entity_id": subject,
-        "predicate": extracted.predicate,
+        "predicate": predicate,
         "value": extracted.value,
         "canonical_attribute": canonical_attribute,
         "canonical_slot": canonical_slot,
@@ -491,17 +505,17 @@ def _build_claim_drafts(
             if getattr(extracted, "entities", None)
             else None
         ),
-        "fact_hash": compute_fact_hash(subject, extracted.predicate, extracted.value),
+        "fact_hash": compute_fact_hash(subject, predicate, extracted.value),
         "qualifiers": qualifiers,
         "conflict_key": compute_conflict_key(
             namespace,
             subject,
-            extracted.predicate,
+            predicate,
             canonical_slot,
             qualifiers,
         ),
         "conflict_key_version": 3,
-        "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, extracted.predicate, qualifiers),
+        "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, predicate, qualifiers),
         "valid_from": observed_at,
         "recorded_from": recorded_from,
         "observed_at": observed_at,

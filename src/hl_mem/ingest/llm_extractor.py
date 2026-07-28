@@ -19,6 +19,7 @@ from hl_mem.domain.claims.attributes import (
     infer_canonical_attribute,
     normalize_predicate,
     normalize_topic_tags,
+    predicate_for_canonical_attribute,
     reconcile_canonical_attribute,
     validate_slot_instance,
 )
@@ -154,7 +155,7 @@ LOW_VALUE_HEALTH_STATES = frozenset({"ok", "running", "stopped", "健康", "正�
 NUMERIC_OR_VERSION_RE = re.compile(r"[0-9.]+")
 _TEMPORAL_SCOPE_RE = re.compile(
     r"(?i)(?:"
-    r"\bdeadline\b|截止|临时|本次|这次|当前运行|本轮|某次运行|"
+    r"\bdeadline\b|截止|临时|本次|这次|当前运行|本轮|某次运行|需要重启|重启后生效|"
     r"\b(?:passed|failed)\b|测试(?:数量|数|通过|失败|结果)|构建(?:结果|成功|失败)|"
     r"版本(?:查询|结果)|\bversion\s+(?:query|result)\b|评分|得分|行数|"
     r"\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?\s*(?:至|到|~)\s*"
@@ -165,6 +166,31 @@ _TEMPORAL_SCOPE_RE = re.compile(
 _PERMANENT_SCOPE_RE = re.compile(
     r"(?i)(?:长期|永久|始终|固定(?:配置|为)|设计原则|长期约束|必须记住|记住这个|explicit memory)"
 )
+_HEALTH_CHECK_RE = re.compile(
+    r"(?i)(?:\bhealthz\b|\bhealth\s*check\b|健康(?:检查|状态)|" r"\b(?:ok|healthy|unhealthy|success|successful)\b)"
+)
+_RUNTIME_CONFIGURATION_RE = re.compile(
+    r"(?i)(?:\b(?:HTTP_PROXY|HTTPS_PROXY|NO_PROXY)\b|"
+    r"\b(?:proxy|代理)(?:配置|环境变量|端口)?\b|"
+    r"\b(?:codex|claude|gemini|qwen|glm|python|uv)(?:\.exe)?\s+(?:CLI\s+)?(?:路径|path)\b|"
+    r"(?:本次|这次|本轮|当前运行).{0,24}(?:模型|model)|"
+    r"(?:监听|运行于|bound to).{0,12}(?:端口|port))"
+)
+_TOOL_SNAPSHOT_RE = re.compile(
+    r"(?i)(?:\bv?\d+\.\d+(?:\.\d+){0,2}\b|"
+    r"\b\d+\s+(?:passed|failed|skipped|tests?)\b|"
+    r"\b(?:passed|failed|skipped)\s*[:=]?\s*\d+\b|"
+    r"测试(?:数量|总数|通过|失败|结果)|运行结果|执行结果|"
+    r"\b(?:running|stopped|exited|completed)\b|进程(?:状态|已启动|已停止)|"
+    r"审查(?:问题|缺陷|发现)|review (?:issue|finding))"
+)
+_QUOTED_REPORT_RE = re.compile(r"(?i)(?:quoted|historical|history|report|snapshot|引用|历史|报告|快照)")
+_DURABLE_SCOPE_ATTRIBUTES = frozenset(
+    {
+        *(name for name in SLOT_REGISTRY if name.startswith(("identity.", "preference.", "config."))),
+        "memory.explicit",
+    }
+)
 
 
 def normalize_scope(
@@ -174,22 +200,49 @@ def normalize_scope(
     subject: str,
     value: Any,
     qualifiers: dict[str, Any] | None = None,
+    *,
+    canonical_attribute: str | None = None,
+    actor_type: str | None = None,
+    event_type: str | None = None,
+    source_kind: str | None = None,
 ) -> tuple[str, str]:
     """根据高置信语义规则规范 scope，并返回可审计的原因码。"""
     scope = llm_scope if llm_scope in {"temporal", "permanent"} else "permanent"
     normalized_predicate = normalize_predicate(predicate)
     text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}")
+    source = unicodedata.normalize("NFKC", f"{actor_type or ''} {event_type or ''} {source_kind or ''}").casefold()
 
+    if scope != "permanent":
+        return scope, "llm_preserved"
+    if canonical_attribute in _DURABLE_SCOPE_ATTRIBUTES and not _RUNTIME_CONFIGURATION_RE.search(text):
+        return "permanent", "durable_attribute"
+    slot_definition = SLOT_REGISTRY.get(canonical_slot) if canonical_slot else None
+    if slot_definition is not None and slot_definition.ttl_class == "short":
+        return "temporal", "slot_short_ttl"
+    if _HEALTH_CHECK_RE.search(text):
+        return "temporal", "health_check"
+    if _RUNTIME_CONFIGURATION_RE.search(text):
+        return "temporal", "runtime_configuration"
+    if _QUOTED_REPORT_RE.search(source):
+        return "temporal", "quoted_report"
+    if (
+        actor_type == "tool"
+        or event_type in {"tool_result", "status_report"}
+        or source_kind
+        in {
+            "tool_result",
+            "status_report",
+        }
+    ):
+        return "temporal", "tool_snapshot"
+    if _TOOL_SNAPSHOT_RE.search(text):
+        return "temporal", "tool_snapshot"
     if _TEMPORAL_SCOPE_RE.search(text):
         return "temporal", "explicit_temporal_signal"
     if _PERMANENT_SCOPE_RE.search(text):
         return "permanent", "explicit_permanent_signal"
-    slot_definition = SLOT_REGISTRY.get(canonical_slot) if canonical_slot else None
-    if slot_definition is not None:
-        if slot_definition.ttl_class == "short":
-            return "temporal", "slot_short_ttl"
-        if slot_definition.ttl_class == "none":
-            return "permanent", "slot_no_ttl"
+    if slot_definition is not None and slot_definition.ttl_class == "none":
+        return "permanent", "slot_no_ttl"
     if normalized_predicate in {"身份", "偏好", "explicit_memory"}:
         return "permanent", "durable_predicate"
     return scope, "llm_preserved"
@@ -311,6 +364,9 @@ class LLMExtractor:
         reasons = sorted({item.reason for item in result.claims if item.reason})
         self._memorize_decisions.append((True, "；".join(reasons) or "should_memorize=true"))
         parsed: list[ExtractedClaim] = []
+        source_kind = str(event_context.get("source_kind") or event_context.get("category") or "")
+        if re.search(r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)", chunk.text):
+            source_kind = "quoted_report"
         for item in result.claims:
             claim = self._claim(item.model_dump())
             normalized_scope, reason_code = normalize_scope(
@@ -320,6 +376,10 @@ class LLMExtractor:
                 claim.subject,
                 claim.value,
                 claim.qualifiers,
+                canonical_attribute=claim.canonical_attribute,
+                actor_type=str(event_context.get("actor_type") or event_context.get("actor") or ""),
+                event_type=str(event_context.get("event_type") or ""),
+                source_kind=source_kind,
             )
             current_audit().emit(
                 "extract",
@@ -603,6 +663,21 @@ class LLMExtractor:
             value=value,
             qualifiers=qualifiers,
         )
+        projected_predicate = predicate_for_canonical_attribute(canonical_attribute, predicate)
+        current_audit().emit(
+            "extract",
+            "predicate_normalized",
+            "changed" if projected_predicate != predicate else "preserved",
+            detail={
+                "llm_predicate": predicate,
+                "normalized_predicate": projected_predicate,
+                "canonical_attribute": canonical_attribute,
+                "reason_code": (
+                    "canonical_attribute_projection" if projected_predicate != predicate else "llm_preserved"
+                ),
+            },
+        )
+        predicate = projected_predicate
         volatility = item.get("volatility", "stable")
         scope = item.get("scope", "permanent")
         scope = scope if scope in {"temporal", "permanent"} else "permanent"

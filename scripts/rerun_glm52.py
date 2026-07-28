@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="仅重跑 glm-5.2 提取 benchmark")
     parser.add_argument("--limit", type=int, choices=range(1, benchmark.NUM_EVENTS + 1), required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--gold", type=Path, help="按 Gold JSONL 中的 event_id 顺序精确选择事件")
     parser.add_argument("--merge-into", type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--workers", type=int, choices=range(1, 9), default=1)
@@ -50,13 +51,25 @@ def main() -> None:
     """执行 glm-5.2 专用重跑。"""
     args = parse_args()
     keys = benchmark.load_api_keys()
-    benchmark.validate_credentials(keys)
+    if not keys["zhipu"]["key"] or not keys["zhipu"]["url"]:
+        raise RuntimeError("智谱 LLM_API_KEY 或 LLM_BASE_URL 缺失")
     config = benchmark.get_model_configs(keys)[0]
     if config["model"] != "glm-5.2" or config["provider"] != "zhipu":
         raise RuntimeError(f"glm-5.2 路由错误：{config}")
 
-    testset = benchmark.load_or_build_testset()[: args.limit]
-    fingerprint = benchmark.testset_fingerprint(benchmark.load_or_build_testset())
+    full_testset = benchmark.load_or_build_testset()
+    if args.gold is not None:
+        gold_event_ids = [
+            json.loads(line)["event_id"] for line in args.gold.read_text(encoding="utf-8").splitlines() if line.strip()
+        ][: args.limit]
+        events_by_id = {event["id"]: event for event in full_testset}
+        missing = [event_id for event_id in gold_event_ids if event_id not in events_by_id]
+        if missing:
+            raise RuntimeError(f"Gold 事件不在 benchmark 测试集中：{missing}")
+        testset = [events_by_id[event_id] for event_id in gold_event_ids]
+    else:
+        testset = full_testset[: args.limit]
+    fingerprint = benchmark.testset_fingerprint(testset)
     results: list[dict[str, Any]] = []
     if args.resume and args.output.is_file():
         results = [json.loads(line) for line in args.output.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -79,7 +92,12 @@ def main() -> None:
             **benchmark.run_single_extraction(
                 extractor,
                 event["content"],
-                {"session_id": event["session_id"], "actor": event["actor_type"]},
+                {
+                    "session_id": event["session_id"],
+                    "actor": event["actor_type"],
+                    "actor_type": event["actor_type"],
+                    "source_kind": event["category"],
+                },
             ),
             "testset_fingerprint": fingerprint,
         }
