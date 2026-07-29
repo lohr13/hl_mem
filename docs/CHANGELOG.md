@@ -1,5 +1,15 @@
 # HL-Mem 变更记录
 
+## v0.17.3 (2026-07-29)
+
+### Bug Fixes
+- **SQLite busy_timeout**: increased from 5s to 30s to prevent "database is locked" errors on slow disk IO
+- Added configurable `HL_MEM_DB_BUSY_TIMEOUT_SECONDS` environment variable (default 30)
+- Applied to both migration and regular connections
+
+### Tests
+- New test verifying busy_timeout configuration is applied correctly
+
 ## v0.17.2 (2026-07-29)
 
 ### Extraction Prompt Optimization
