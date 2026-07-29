@@ -34,6 +34,17 @@ def test_database_open_returns_independent_connections(tmp_path) -> None:
         database.close()
 
 
+def test_database_open_sets_busy_timeout(monkeypatch, tmp_path) -> None:
+    """数据库连接必须采用配置的锁等待超时。"""
+    monkeypatch.setenv("HL_MEM_DB_BUSY_TIMEOUT_SECONDS", "30")
+    database = Database(tmp_path / "busy-timeout.db")
+    connection = database.open()
+    try:
+        assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 30_000
+    finally:
+        database.close()
+
+
 def test_concurrent_database_instances_apply_migrations_once(tmp_path) -> None:
     """不同 Database 实例并发启动时迁移版本检查与执行必须原子化。"""
     path = tmp_path / "concurrent-migration.db"

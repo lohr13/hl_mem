@@ -276,7 +276,7 @@ wheels = [
 
 [[package]]
 name = "hl-mem"
-version = "0.16.1"
+version = "0.17.2"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

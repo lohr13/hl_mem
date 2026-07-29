@@ -29,6 +29,8 @@ class Database:
     def __init__(self, path: str | Path | None = None, pool_size: int | None = None) -> None:
         self.path = str(Path(path) if path is not None else default_database_path())
         self.pool_size = pool_size or int(os.getenv("HL_MEM_DB_POOL_SIZE", "8"))
+        self.busy_timeout_seconds = float(os.getenv("HL_MEM_DB_BUSY_TIMEOUT_SECONDS", "30"))
+        self.busy_timeout_ms = int(self.busy_timeout_seconds * 1000)
         self.connection: sqlite3.Connection | None = None
         self._pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=self.pool_size)
         self._connections: set[sqlite3.Connection] = set()
@@ -36,10 +38,14 @@ class Database:
         self._migrated = False
 
     def _new_connection(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, check_same_thread=False)
+        connection = sqlite3.connect(
+            self.path,
+            timeout=self.busy_timeout_seconds,
+            check_same_thread=False,
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
         with self._lock:
             self._connections.add(connection)
         return connection
@@ -48,7 +54,7 @@ class Database:
         with self._lock:
             if self._migrated:
                 return
-            connection = sqlite3.connect(self.path)
+            connection = sqlite3.connect(self.path, timeout=self.busy_timeout_seconds)
             connection.row_factory = sqlite3.Row
             try:
                 if connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 0:
@@ -57,7 +63,7 @@ class Database:
                         connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
                 connection.execute("PRAGMA journal_mode=WAL")
                 connection.execute("PRAGMA foreign_keys=ON")
-                connection.execute("PRAGMA busy_timeout=5000")
+                connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
                 self._migrate(connection)
                 self._migrated = True
             finally:
