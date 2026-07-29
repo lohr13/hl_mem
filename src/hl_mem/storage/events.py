@@ -119,20 +119,32 @@ class EventRepository:
         session_id: str,
         before: dict[str, Any],
         limit: int,
+        actor_types: tuple[str, ...] | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """返回指定 tenant namespace 和会话中、游标之前的最近事件。"""
+        actor_filter = ""
+        parameters: list[Any] = [
+            namespace,
+            session_id,
+            before["occurred_at"],
+            before["occurred_at"],
+            before["id"],
+        ]
+        if actor_types:
+            placeholders = ",".join("?" for _ in actor_types)
+            actor_filter = f"AND actor_type IN ({placeholders}) "
+            parameters.extend(actor_types)
+        user_filter = ""
+        if user_id is not None:
+            user_filter = "AND user_id=? "
+            parameters.append(user_id)
+        parameters.append(limit)
         rows = self.connection.execute(
             "SELECT * FROM events WHERE tenant_id=? AND session_id=? AND "
             "(occurred_at<? OR (occurred_at=? AND id<?)) "
-            "ORDER BY occurred_at DESC,id DESC LIMIT ?",
-            (
-                namespace,
-                session_id,
-                before["occurred_at"],
-                before["occurred_at"],
-                before["id"],
-                limit,
-            ),
+            f"{actor_filter}{user_filter}ORDER BY occurred_at DESC,id DESC LIMIT ?",
+            parameters,
         ).fetchall()
         return [dict(row) for row in rows]
 

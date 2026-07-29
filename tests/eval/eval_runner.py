@@ -104,6 +104,7 @@ def _score(row: dict[str, Any], response: dict[str, Any], latency_ms: float, top
     returned_ids = [str(item.get("id")) for item in results if isinstance(item, dict)]
     relevant = set(row["expected_claim_ids"]) | set(row["equivalent_ids"])
     forbidden = set(row["forbidden_ids"])
+    answerability = str(response.get("answerability") or "supported")
     answerable = row["slice"] != "no_answer" and bool(relevant)
     ranks = [index + 1 for index, claim_id in enumerate(returned_ids) if claim_id in relevant]
     hits5 = [int(claim_id in relevant) for claim_id in returned_ids[:5]]
@@ -119,7 +120,11 @@ def _score(row: dict[str, Any], response: dict[str, Any], latency_ms: float, top
         "mrr": (1.0 / min(ranks) if ranks else 0.0) if answerable else None,
         "ndcg_at_5": (_dcg(hits5) / _dcg(ideal) if ideal else 0.0) if answerable else None,
         "top_3_precision": (sum(claim_id in relevant for claim_id in returned_ids[:3]) / 3.0) if answerable else None,
-        "predicted_no_answer": not returned_ids,
+        "predicted_no_answer": answerability == "no_evidence",
+        "low_confidence": answerability == "low_confidence",
+        "answerability": answerability,
+        "min_relevance": row["min_relevance"],
+        "min_relevance_diagnostic": "not yet used for scoring",
         "forbidden_hits": sorted(forbidden.intersection(returned_ids)),
         "latency_ms": latency_ms,
         "http_status": int(response.pop("_http_status", 200)),
@@ -215,6 +220,7 @@ def run(snapshot: Path, dataset: Path, top_k: int) -> dict[str, Any]:
         "slices": {name: {"count": len(items), "metrics": _metrics(items)} for name, items in sorted(slices.items())},
         "latency_ms": {"p50": _percentile(latencies, 0.50), "p95": _percentile(latencies, 0.95)},
         "http_success_rate": sum(score["http_status"] == 200 for score in scores) / len(scores),
+        "total_forbidden_hits": sum(len(score["forbidden_hits"]) for score in scores),
         "queries": scores,
     }
 

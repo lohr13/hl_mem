@@ -6,10 +6,12 @@ import hashlib
 import json
 import math
 import sqlite3
+import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from hl_mem.domain.claims.claim import IndexTextMode, build_index_text
+from hl_mem.llm.client import classify_provider_error
 from hl_mem.protocols import EmbedderProtocol
 
 
@@ -29,6 +31,8 @@ class IndexBackfillSummary:
     provider_requests: int = 0
     estimated_provider_items: int = 0
     estimated_provider_requests: int = 0
+    model_version_reembedded: int = 0
+    last_error_class: str | None = None
     next_cursor: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +43,17 @@ class IndexBackfillSummary:
 def _text_hash(text: str | None) -> str:
     """计算稳定的 UTF-8 文本摘要。"""
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def _provider_error_class(error: Exception) -> str:
+    """沿异常链提取稳定的 provider 错误分类。"""
+    current: BaseException | None = error
+    while isinstance(current, Exception):
+        error_class, _, _ = classify_provider_error(current)
+        if error_class in {"http_timeout", "rate_limit", "upstream"}:
+            return error_class
+        current = current.__cause__ or current.__context__
+    return type(error).__name__
 
 
 def _claim_for_index(row: sqlite3.Row) -> dict[str, Any]:
@@ -78,7 +93,8 @@ def backfill_index_text(
 
     while True:
         rows = connection.execute(
-            "SELECT id,subject_entity_id,predicate,value_json,canonical_slot,topic_tags_json,index_text "
+            "SELECT id,subject_entity_id,predicate,value_json,canonical_slot,topic_tags_json,index_text,"
+            "embedding_model,embedding_dim "
             "FROM claims WHERE status='active' AND id>? ORDER BY id LIMIT ?",
             (current_cursor, batch_size),
         ).fetchall()
@@ -89,10 +105,14 @@ def backfill_index_text(
         pending: list[tuple[sqlite3.Row, str]] = []
         for row in rows:
             target = build_index_text(_claim_for_index(row), mode=mode)
-            if _text_hash(row["index_text"]) == _text_hash(target):
+            text_changed = _text_hash(row["index_text"]) != _text_hash(target)
+            model_changed = row["embedding_model"] != embedder.model or row["embedding_dim"] != embedder.dim
+            if not text_changed and not model_changed:
                 summary.skipped += 1
             else:
                 pending.append((row, target))
+                if model_changed:
+                    summary.model_version_reembedded += 1
         if not pending:
             continue
         estimated_requests = math.ceil(len(pending) / max_embed_batch)
@@ -109,9 +129,14 @@ def backfill_index_text(
             try:
                 embeddings = embedder.embed_batch([target for _, target in pending])
                 break
-            except Exception:
-                if attempt == max_attempts:
+            except Exception as error:
+                error_class = _provider_error_class(error)
+                summary.last_error_class = error_class
+                recoverable = error_class in {"http_timeout", "rate_limit", "upstream"}
+                if attempt == max_attempts or not recoverable:
                     summary.failed += len(pending)
+                    break
+                time.sleep(attempt * 2)
         if embeddings is None:
             continue
         if len(embeddings) != len(pending):
@@ -127,7 +152,8 @@ def backfill_index_text(
                     "UPDATE claims SET index_text=?,embedding_dense=?,embedding_model=?,embedding_dim=? "
                     "WHERE id=? AND status='active' "
                     "AND subject_entity_id IS ? AND predicate IS ? AND value_json IS ? "
-                    "AND canonical_slot IS ? AND topic_tags_json IS ? AND index_text IS ?",
+                    "AND canonical_slot IS ? AND topic_tags_json IS ? AND index_text IS ? "
+                    "AND embedding_model IS ?",
                     (
                         target,
                         embedding,
@@ -140,6 +166,7 @@ def backfill_index_text(
                         row["canonical_slot"],
                         row["topic_tags_json"],
                         row["index_text"],
+                        row["embedding_model"],
                     ),
                 )
                 if result.rowcount == 1:
@@ -149,7 +176,8 @@ def backfill_index_text(
             connection.commit()
             summary.backfilled += applied
             summary.skipped += skipped
-        except Exception:
+        except Exception as error:
             connection.rollback()
             summary.failed += len(pending)
+            summary.last_error_class = type(error).__name__
     return summary

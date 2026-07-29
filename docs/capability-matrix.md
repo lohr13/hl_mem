@@ -1,6 +1,6 @@
 # HL-Mem 能力成熟度矩阵
 
-> 基线：v0.17.0。默认模式取自部署入口 `Settings.from_env()`；`Settings()` / `Settings.for_test()` 的测试默认值可能不同。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
+> 基线：v0.17.1。默认模式取自部署入口 `Settings.from_env()`；`Settings()` / `Settings.for_test()` 的测试默认值可能不同。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
 
 ## 成熟度定义
 

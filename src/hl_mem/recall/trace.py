@@ -28,6 +28,7 @@ class CandidateTrace:
     final_rank: int | None = None
     included: bool = False
     filter_reasons: list[str] = field(default_factory=list)
+    relevance_reasons: list[str] = field(default_factory=list)
     relation_paths: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -117,6 +118,7 @@ class SearchTrace:
     context_event_count: int = 0
     context_truncated: bool = False
     context_hash: str | None = None
+    context_outcome: str | None = None
     intent_source: str = "fallback"
     experience_candidates: list[ExperienceCandidateTrace] = field(default_factory=list)
     candidate_counts: dict[str, int] = field(default_factory=dict)
@@ -178,6 +180,12 @@ class SearchTracer:
         candidate = self._candidate(str(claim_id))
         if candidate is not None and reason not in candidate.filter_reasons:
             candidate.filter_reasons.append(reason)
+
+    def record_relevance_reason(self, claim_id: str, reason: str) -> None:
+        """为候选追加 relevance observe 诊断原因。"""
+        candidate = self._candidate(str(claim_id))
+        if candidate is not None and reason not in candidate.relevance_reasons:
+            candidate.relevance_reasons.append(reason)
 
     def record_pre_rank(self, claims: list[dict[str, Any]], scores: dict[str, float]) -> None:
         """记录融合及多因子先验排序。"""
@@ -245,6 +253,8 @@ class SearchTracer:
             for field_name in relevance_fields:
                 if candidate[field_name] is None:
                     del candidate[field_name]
+            if not candidate["relevance_reasons"]:
+                del candidate["relevance_reasons"]
         return payload
 
     @classmethod

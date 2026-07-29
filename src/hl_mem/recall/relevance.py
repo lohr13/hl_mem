@@ -36,7 +36,10 @@ def _fallback_decision(trace: CandidateTrace, dense_floor: float) -> RelevanceDe
     """按通道证据组合评估 reranker fallback 候选。"""
     channels = set(trace.channels)
     dense_score = trace.channel_scores.get("dense")
-    if len(channels) >= 2:
+    multi_channel_supported = "dense" not in channels or (
+        dense_score is not None and dense_score >= dense_floor
+    )
+    if len(channels) >= 2 and multi_channel_supported:
         return RelevanceDecision("relevant", "multi_channel_hit", "reranker_fallback", dense_score)
     if "fts" in channels and dense_score is not None and dense_score >= dense_floor:
         return RelevanceDecision("relevant", "fts_dense_supported", "reranker_fallback", dense_score)
@@ -47,6 +50,28 @@ def _fallback_decision(trace: CandidateTrace, dense_floor: float) -> RelevanceDe
     ):
         return RelevanceDecision("borderline", "below_dense_floor", "reranker_fallback", dense_score)
     return RelevanceDecision("irrelevant", "below_dense_floor", "reranker_fallback", dense_score)
+
+
+def _compute_relative_drops(
+    claim_ids: list[str],
+    decisions: dict[str, RelevanceDecision],
+) -> dict[str, float]:
+    """计算同一评分路径中所有相邻候选的相对分数降幅。"""
+    drops: dict[str, float] = {}
+    for previous_id, current_id in zip(claim_ids, claim_ids[1:]):
+        previous = decisions.get(previous_id)
+        current = decisions.get(current_id)
+        if (
+            previous is None
+            or current is None
+            or previous.score_path != current.score_path
+            or previous.evidence_score is None
+            or current.evidence_score is None
+        ):
+            continue
+        denominator = max(abs(previous.evidence_score), 1e-12)
+        drops[current_id] = max(0.0, (previous.evidence_score - current.evidence_score) / denominator)
+    return drops
 
 
 def _candidate_decision(
@@ -82,6 +107,7 @@ def evaluate_relevance(
     reranker_floor: float,
     dense_floor: float,
     relative_drop_threshold: float,
+    record_filters: bool = False,
 ) -> dict[str, RelevanceDecision]:
     """按当前结果顺序计算诊断，不修改候选、分数或排序。"""
     decisions: dict[str, RelevanceDecision] = {}
@@ -93,34 +119,27 @@ def evaluate_relevance(
         decisions[claim_id] = decision
         tracer.record_relevance(claim_id, decision)
         if decision.decision != "relevant":
-            tracer.record_filter(claim_id, decision.reason)
+            recorder = tracer.record_filter if record_filters else tracer.record_relevance_reason
+            recorder(claim_id, decision.reason)
 
-    if len(claim_ids) >= 2:
-        top = decisions.get(claim_ids[0])
-        second = decisions.get(claim_ids[1])
-        if (
-            top is not None
-            and second is not None
-            and top.score_path == second.score_path
-            and top.evidence_score is not None
-            and second.evidence_score is not None
-        ):
-            denominator = max(abs(top.evidence_score), 1e-12)
-            relative_drop = max(0.0, (top.evidence_score - second.evidence_score) / denominator)
-            tracer.trace.candidates[claim_ids[1]].relative_drop = relative_drop
-            decisions[claim_ids[1]] = RelevanceDecision(
-                second.decision,
-                second.reason,
-                second.score_path,
-                second.evidence_score,
-                relative_drop,
-            )
-            if relative_drop >= relative_drop_threshold:
-                tracer.record_filter(claim_ids[1], "relative_score_drop")
+    for claim_id, relative_drop in _compute_relative_drops(claim_ids, decisions).items():
+        decision = decisions[claim_id]
+        tracer.trace.candidates[claim_id].relative_drop = relative_drop
+        decisions[claim_id] = RelevanceDecision(
+            decision.decision,
+            decision.reason,
+            decision.score_path,
+            decision.evidence_score,
+            relative_drop,
+        )
+        if relative_drop >= relative_drop_threshold:
+            recorder = tracer.record_filter if record_filters else tracer.record_relevance_reason
+            recorder(claim_id, "relative_score_drop")
 
     if decisions and not any(item.decision == "relevant" for item in decisions.values()):
         for claim_id in decisions:
-            tracer.record_filter(claim_id, "query_no_evidence")
+            recorder = tracer.record_filter if record_filters else tracer.record_relevance_reason
+            recorder(claim_id, "query_no_evidence")
     return decisions
 
 
@@ -141,9 +160,10 @@ def enforce_relevance(
         reranker_floor=reranker_floor,
         dense_floor=dense_floor,
         relative_drop_threshold=relative_drop_threshold,
+        record_filters=True,
     )
     retained: list[dict[str, Any]] = []
-    previous_decision: RelevanceDecision | None = None
+    relative_drops = _compute_relative_drops(claim_ids, decisions)
 
     for index, claim in enumerate(claims):
         claim_id = claim_ids[index]
@@ -156,31 +176,17 @@ def enforce_relevance(
 
         if index == 0 and keep_top1:
             retained.append(claim)
-            previous_decision = decision
             continue
 
         if decision.decision != "relevant":
             break
 
-        if (
-            previous_decision is not None
-            and previous_decision.score_path == decision.score_path
-            and previous_decision.evidence_score is not None
-            and decision.evidence_score is not None
-        ):
-            denominator = max(abs(previous_decision.evidence_score), 1e-12)
-            relative_drop = max(
-                0.0,
-                (previous_decision.evidence_score - decision.evidence_score) / denominator,
-            )
-            if candidate is not None:
-                candidate.relative_drop = relative_drop
-            if relative_drop > relative_drop_threshold:
-                tracer.record_filter(claim_id, "relative_score_drop")
-                break
+        relative_drop = relative_drops.get(claim_id)
+        if relative_drop is not None and relative_drop >= relative_drop_threshold:
+            tracer.record_filter(claim_id, "relative_score_drop")
+            break
 
         retained.append(claim)
-        previous_decision = decision
 
     tracer.record_final(retained)
     return retained

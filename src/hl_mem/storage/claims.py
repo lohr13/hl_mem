@@ -294,15 +294,30 @@ class ClaimRepository:
         """对可见 Claim 执行本地余弦全量扫描并截断。"""
         # A 100k x 2048 float32 full scan is about 819 MB; indexed retrieval must
         # be reconsidered before deployments approach that scale.
-        claims = self.list_embedded(as_of, intent, known_as_of, namespace)
-        scores = batch_cosine_similarity(
-            query_blob,
-            [claim["embedding_dense"] for claim in claims],
-            self.vector_batch_size,
+        reference = as_of or datetime.now(timezone.utc).isoformat()
+        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
+        cursor = self.connection.execute(
+            f"SELECT * FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
+            "AND namespace_key=? "
+            "AND (valid_from IS NULL OR valid_from<=?) AND (valid_to IS NULL OR valid_to>?)",
+            (namespace, reference, reference),
         )
-        scored_claims = [(claim, score, index) for index, (claim, score) in enumerate(zip(claims, scores))]
-        scored_claims.sort(key=lambda item: (-item[1], item[2], str(item[0]["id"])))
-        return [claim for claim, _, _ in scored_claims[:limit]]
+        scored_claims: list[tuple[dict[str, Any], float]] = []
+        while rows := cursor.fetchmany(self.vector_batch_size):
+            claims = [
+                claim
+                for claim in self._decode_rows(rows)
+                if claim_is_visible(claim, reference, known_as_of, selected_intent)
+            ]
+            scores = batch_cosine_similarity(
+                query_blob,
+                [claim["embedding_dense"] for claim in claims],
+                self.vector_batch_size,
+            )
+            scored_claims.extend(zip(claims, scores))
+        scored_claims.sort(key=lambda item: (-item[1], str(item[0]["id"])))
+        return [claim for claim, _ in scored_claims[:limit]]
 
     def search(
         self,

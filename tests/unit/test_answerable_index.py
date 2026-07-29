@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import httpx
 import pytest
 
+import hl_mem.workers.backfill_index_text as backfill_module
 from hl_mem.domain.claims.claim import build_index_text
 from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.embedder import FakeEmbedder
@@ -104,6 +106,119 @@ def test_backfill_is_idempotent(tmp_path) -> None:
     assert first.backfilled == 1
     assert second.backfilled == 0
     assert second.skipped == 1
+
+
+def test_backfill_reembeds_when_model_or_dimension_changes(tmp_path) -> None:
+    """索引文本未变时，模型或维度变化仍触发重新 embedding。"""
+    connection = Database(tmp_path / "model-change.db").open()
+    _insert_claim(connection)
+    backfill_index_text(
+        connection, FakeEmbedder(8), mode="answerable", version="v1", batch_size=100, max_attempts=1
+    )
+
+    changed = FakeEmbedder(16)
+    changed.model = "fake-v2"
+    result = backfill_index_text(
+        connection, changed, mode="answerable", version="v2", batch_size=100, max_attempts=1
+    )
+    row = connection.execute(
+        "SELECT embedding_model,embedding_dim FROM claims WHERE id='claim-1'"
+    ).fetchone()
+
+    assert result.backfilled == 1
+    assert result.model_version_reembedded == 1
+    assert tuple(row) == ("fake-v2", 16)
+
+
+def test_backfill_cas_rejects_concurrent_model_change(tmp_path) -> None:
+    """embedding 期间模型字段被并发修改时，CAS 不得覆盖新值。"""
+    connection = Database(tmp_path / "model-cas.db").open()
+    _insert_claim(connection)
+
+    class ConcurrentModelEmbedder(FakeEmbedder):
+        """在 provider 调用期间模拟并发模型更新。"""
+
+        def embed_batch(self, texts: list[str]) -> list[bytes]:
+            connection.execute(
+                "UPDATE claims SET embedding_model='concurrent-model' WHERE id='claim-1'"
+            )
+            connection.commit()
+            return super().embed_batch(texts)
+
+    result = backfill_index_text(
+        connection,
+        ConcurrentModelEmbedder(8),
+        mode="answerable",
+        version="v1",
+        batch_size=100,
+        max_attempts=1,
+    )
+
+    assert result.backfilled == 0
+    assert result.skipped == 1
+    assert connection.execute(
+        "SELECT embedding_model FROM claims WHERE id='claim-1'"
+    ).fetchone()[0] == "concurrent-model"
+
+
+def test_backfill_retries_only_recoverable_errors_with_backoff(tmp_path, monkeypatch) -> None:
+    """可恢复 provider 错误按 attempt 退避重试，并记录最后异常分类。"""
+    connection = Database(tmp_path / "retry.db").open()
+    _insert_claim(connection)
+    sleeps: list[int] = []
+
+    class FlakyEmbedder(FakeEmbedder):
+        """首次超时、随后成功的测试 embedder。"""
+
+        def __init__(self) -> None:
+            super().__init__(8)
+            self.calls = 0
+
+        def embed_batch(self, texts: list[str]) -> list[bytes]:
+            self.calls += 1
+            if self.calls == 1:
+                raise httpx.ReadTimeout("temporary timeout")
+            return super().embed_batch(texts)
+
+    embedder = FlakyEmbedder()
+    monkeypatch.setattr(backfill_module.time, "sleep", sleeps.append)
+    result = backfill_index_text(
+        connection, embedder, mode="answerable", version="v1", batch_size=100, max_attempts=3
+    )
+
+    assert result.backfilled == 1
+    assert result.last_error_class == "http_timeout"
+    assert embedder.calls == 2
+    assert sleeps == [2]
+
+
+def test_backfill_does_not_retry_nonrecoverable_error(tmp_path, monkeypatch) -> None:
+    """非可恢复异常直接失败且不执行退避。"""
+    connection = Database(tmp_path / "no-retry.db").open()
+    _insert_claim(connection)
+    sleeps: list[int] = []
+
+    class InvalidEmbedder(FakeEmbedder):
+        """始终抛出输入错误的测试 embedder。"""
+
+        def __init__(self) -> None:
+            super().__init__(8)
+            self.calls = 0
+
+        def embed_batch(self, texts: list[str]) -> list[bytes]:
+            self.calls += 1
+            raise ValueError("invalid embedding input")
+
+    embedder = InvalidEmbedder()
+    monkeypatch.setattr(backfill_module.time, "sleep", sleeps.append)
+    result = backfill_index_text(
+        connection, embedder, mode="answerable", version="v1", batch_size=100, max_attempts=3
+    )
+
+    assert result.failed == 1
+    assert result.last_error_class == "ValueError"
+    assert embedder.calls == 1
+    assert sleeps == []
 
 
 def test_index_backfill_settings_validation() -> None:

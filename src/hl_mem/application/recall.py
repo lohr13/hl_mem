@@ -92,7 +92,7 @@ def _session_context(
     *,
     max_events: int,
     token_budget: int,
-) -> tuple[tuple[tuple[str, str], ...], bool, str | None]:
+) -> tuple[tuple[tuple[str, str], ...], bool, str | None, str]:
     """读取并按粗略 token 预算装入同命名空间会话的用户/助手文本。"""
     before = {"occurred_at": "\U0010ffff", "id": "\U0010ffff"}
     events = EventRepository(connection).get_recent_events(
@@ -100,6 +100,7 @@ def _session_context(
         session_id,
         before,
         max_events + 1,
+        ("user", "assistant"),
     )
     truncated = len(events) > max_events
     selected: list[tuple[str, str]] = []
@@ -119,15 +120,15 @@ def _session_context(
         cost = max(1, (len(normalized) + 1) // 2)
         if used + cost > token_budget:
             truncated = True
-            break
+            continue
         selected.append((role, normalized))
         used += cost
     selected.reverse()
     context = tuple(selected)
     if not context:
-        return (), truncated, None
+        return (), truncated, None, "empty"
     serialized = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-    return context, truncated, hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return context, truncated, hashlib.sha256(serialized.encode("utf-8")).hexdigest(), "ok"
 
 
 def budget_pack_by_type(
@@ -294,11 +295,16 @@ class RecallService:
                 tracer.trace.expansions.append(QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout"))
                 return [], []
             session_context: tuple[tuple[str, str], ...] = ()
+            tracer.trace.context_outcome = "disabled"
             if trigger == "coreference" and self.settings.query_context_mode == "coreference":
                 if not session_id:
+                    tracer.trace.context_outcome = "missing_session"
+                    return [], []
+                if time.monotonic() >= expansion_deadline:
+                    tracer.trace.context_outcome = "deadline_exhausted"
                     return [], []
                 try:
-                    session_context, context_truncated, context_hash = _session_context(
+                    session_context, context_truncated, context_hash, context_outcome = _session_context(
                         self.connection,
                         namespace,
                         session_id,
@@ -307,11 +313,16 @@ class RecallService:
                     )
                 except Exception as error:
                     LOGGER.warning("session context read failed: %s", type(error).__name__)
+                    tracer.trace.context_outcome = "read_error"
                     return [], []
                 tracer.trace.context_event_count = len(session_context)
                 tracer.trace.context_truncated = context_truncated
                 tracer.trace.context_hash = context_hash
-                if not session_context or time.monotonic() >= expansion_deadline:
+                tracer.trace.context_outcome = context_outcome
+                if not session_context:
+                    return [], []
+                if time.monotonic() >= expansion_deadline:
+                    tracer.trace.context_outcome = "deadline_exhausted"
                     return [], []
             remaining = max(0.001, expansion_deadline - time.monotonic())
             result = self.query_expander.expand(

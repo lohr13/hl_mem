@@ -50,19 +50,23 @@ def test_batch_rejects_invalid_dimensions(query: bytes, targets: list[bytes], me
         batch_cosine_similarity(query, targets)
 
 
-def test_vector_search_preserves_original_order_for_tied_scores(tmp_path) -> None:
-    """并列分数使用候选原顺序稳定排序。"""
+def test_vector_search_uses_claim_id_for_tied_scores(tmp_path) -> None:
+    """并列分数使用 claim_id 进行确定性排序。"""
     connection = Database(tmp_path / "stable-vector.db").open()
     repository = ClaimRepository(connection, vector_batch_size=1)
-    claims = [
-        {"id": "claim-b", "embedding_dense": pack_vector([1.0, 0.0])},
-        {"id": "claim-a", "embedding_dense": pack_vector([2.0, 0.0])},
-    ]
-    repository.list_embedded = lambda *_args, **_kwargs: claims  # type: ignore[method-assign]
+    base = {
+        "namespace_key": "default",
+        "subject_entity_id": "subject",
+        "predicate": "fact",
+        "recorded_from": "2026-01-01T00:00:00+00:00",
+        "status": "active",
+    }
+    repository.insert_claim({**base, "id": "claim-b", "value": "b", "embedding_dense": pack_vector([1.0, 0.0])})
+    repository.insert_claim({**base, "id": "claim-a", "value": "a", "embedding_dense": pack_vector([2.0, 0.0])})
 
     assert [claim["id"] for claim in repository.search_claims_vector(pack_vector([1.0, 0.0]))] == [
-        "claim-b",
         "claim-a",
+        "claim-b",
     ]
 
 

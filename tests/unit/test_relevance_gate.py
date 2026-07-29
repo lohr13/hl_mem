@@ -66,7 +66,10 @@ def test_observe_mode_does_not_truncate_or_reorder_results() -> None:
 
     assert claims == before
     assert [claim["id"] for claim in claims] == ["claim-1", "claim-2", "claim-3"]
-    assert all(candidate["relevance_decision"] == "relevant" for candidate in tracer.to_dict()["candidates"].values())
+    assert all(
+        candidate["relevance_decision"] == "irrelevant"
+        for candidate in tracer.to_dict()["candidates"].values()
+    )
 
 
 def test_reranker_applied_uses_only_raw_reranker_floor() -> None:
@@ -86,13 +89,14 @@ def test_reranker_applied_uses_only_raw_reranker_floor() -> None:
     assert decisions["high"].decision == "relevant"
     assert decisions["near"].decision == "borderline"
     assert decisions["low"].decision == "irrelevant"
-    assert "below_reranker_floor" in tracer.to_dict()["candidates"]["low"]["filter_reasons"]
+    assert "below_reranker_floor" in tracer.to_dict()["candidates"]["low"]["relevance_reasons"]
+    assert tracer.to_dict()["candidates"]["low"]["filter_reasons"] == []
 
 
 def test_reranker_fallback_uses_channel_evidence() -> None:
-    """fallback 路径接受 FTS+dense 达标或任意多通道命中。"""
+    """fallback 路径要求包含 dense 的多通道候选仍达到 dense floor。"""
     tracer = _tracer()
-    tracer.record_channel("fts", [{"id": "combined"}, {"id": "multi"}, {"id": "weak"}])
+    tracer.record_channel("fts", [{"id": "combined"}, {"id": "multi"}, {"id": "fts-tag"}, {"id": "weak"}])
     tracer.record_channel(
         "dense",
         [
@@ -101,10 +105,10 @@ def test_reranker_fallback_uses_channel_evidence() -> None:
             {"id": "weak", "_score": 0.1},
         ],
     )
-    tracer.record_channel("tag", [{"id": "multi"}])
+    tracer.record_channel("tag", [{"id": "multi"}, {"id": "fts-tag"}])
 
     decisions = evaluate_relevance(
-        ["combined", "multi", "weak"],
+        ["combined", "multi", "fts-tag", "weak"],
         tracer,
         reranker_floor=0.4,
         dense_floor=0.3,
@@ -112,8 +116,29 @@ def test_reranker_fallback_uses_channel_evidence() -> None:
     )
 
     assert decisions["combined"].decision == "relevant"
-    assert decisions["multi"].decision == "relevant"
-    assert decisions["weak"].decision == "relevant"
+    assert decisions["multi"].decision == "irrelevant"
+    assert decisions["fts-tag"].decision == "relevant"
+    assert decisions["weak"].decision == "irrelevant"
+
+
+def test_observe_records_relative_drop_for_every_adjacent_candidate() -> None:
+    """observe 为全部同路径相邻候选记录相对降幅，并统一使用包含阈值。"""
+    tracer = _tracer()
+    claims = [{"id": "top"}, {"id": "middle"}, {"id": "tail"}]
+    tracer.record_channel("fts", claims)
+    tracer.record_rerank([("top", 1.0), ("middle", 0.8), ("tail", 0.4)])
+
+    decisions = evaluate_relevance(
+        [str(claim["id"]) for claim in claims],
+        tracer,
+        reranker_floor=0.3,
+        dense_floor=0.3,
+        relative_drop_threshold=0.5,
+    )
+
+    assert decisions["middle"].relative_drop == pytest.approx(0.2)
+    assert decisions["tail"].relative_drop == pytest.approx(0.5)
+    assert "relative_score_drop" in tracer.to_dict()["candidates"]["tail"]["relevance_reasons"]
 
 
 def test_fallback_fts_only_candidate_is_irrelevant_without_dense_evidence() -> None:
@@ -130,10 +155,11 @@ def test_fallback_fts_only_candidate_is_irrelevant_without_dense_evidence() -> N
     )
 
     assert decisions["fts-only"].decision == "irrelevant"
-    assert tracer.to_dict()["candidates"]["fts-only"]["filter_reasons"] == [
+    assert tracer.to_dict()["candidates"]["fts-only"]["relevance_reasons"] == [
         "below_dense_floor",
         "query_no_evidence",
     ]
+    assert tracer.to_dict()["candidates"]["fts-only"]["filter_reasons"] == []
 
 
 @pytest.mark.parametrize(
@@ -258,6 +284,25 @@ def test_enforce_truncates_at_relative_score_drop() -> None:
 
     assert [item["id"] for item in retained] == ["top"]
     assert "relative_score_drop" in tracer.to_dict()["candidates"]["drop"]["filter_reasons"]
+
+
+def test_enforce_truncates_when_relative_drop_equals_threshold() -> None:
+    """相邻降幅恰好等于阈值时也执行截断。"""
+    tracer = _tracer()
+    claims = [{"id": "top"}, {"id": "drop"}]
+    tracer.record_channel("fts", claims)
+    tracer.record_rerank([("top", 1.0), ("drop", 0.5)])
+
+    retained = enforce_relevance(
+        claims,
+        tracer,
+        reranker_floor=0.4,
+        dense_floor=0.3,
+        relative_drop_threshold=0.5,
+        keep_top1=True,
+    )
+
+    assert [item["id"] for item in retained] == ["top"]
 
 
 def test_enforce_top1_without_basic_signal_returns_empty() -> None:

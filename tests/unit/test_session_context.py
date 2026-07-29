@@ -36,6 +36,7 @@ def _insert_message(
     namespace: str,
     session_id: str,
     text: str,
+    actor_type: str = "user",
 ) -> None:
     """插入一条会话消息。"""
     repository.insert_event(
@@ -44,7 +45,7 @@ def _insert_message(
             "tenant_id": namespace,
             "session_id": session_id,
             "event_type": "message",
-            "actor_type": "user",
+            "actor_type": actor_type,
             "content_json": json.dumps(
                 {"text": text, "internal": "不得进入 prompt"},
                 ensure_ascii=False,
@@ -87,7 +88,7 @@ def test_session_context_isolated_and_contains_only_text(tmp_path) -> None:
         _insert_message(repository, "event-1", "alpha", "same", "alpha 文本")
         _insert_message(repository, "event-2", "beta", "same", "beta 文本")
 
-        context, truncated, context_hash = _session_context(
+        context, truncated, context_hash, outcome = _session_context(
             connection,
             "alpha",
             "same",
@@ -98,7 +99,51 @@ def test_session_context_isolated_and_contains_only_text(tmp_path) -> None:
     assert context == (("user", "alpha 文本"),)
     assert truncated is False
     assert context_hash is not None and len(context_hash) == 64
+    assert outcome == "ok"
     assert "internal" not in json.dumps(context, ensure_ascii=False)
+
+
+def test_session_context_filters_roles_before_limit(tmp_path) -> None:
+    """system/tool 事件不得占用最近对话的 LIMIT。"""
+    database = Database(tmp_path / "context-roles.db")
+    with database.connect() as connection:
+        repository = EventRepository(connection)
+        _insert_message(repository, "event-1", "alpha", "same", "有效消息")
+        _insert_message(repository, "event-2", "alpha", "same", "工具消息", "tool")
+        _insert_message(repository, "event-3", "alpha", "same", "系统消息", "system")
+
+        context, truncated, _, outcome = _session_context(
+            connection,
+            "alpha",
+            "same",
+            max_events=1,
+            token_budget=256,
+        )
+
+    assert context == (("user", "有效消息"),)
+    assert truncated is False
+    assert outcome == "ok"
+
+
+def test_session_context_skips_oversized_message_and_keeps_earlier_short_message(tmp_path) -> None:
+    """最近消息超预算时继续尝试装入更早的短消息。"""
+    database = Database(tmp_path / "context-budget.db")
+    with database.connect() as connection:
+        repository = EventRepository(connection)
+        _insert_message(repository, "event-1", "alpha", "same", "短消息")
+        _insert_message(repository, "event-2", "alpha", "same", "超长" * 100)
+
+        context, truncated, _, outcome = _session_context(
+            connection,
+            "alpha",
+            "same",
+            max_events=2,
+            token_budget=10,
+        )
+
+    assert context == (("user", "短消息"),)
+    assert truncated is True
+    assert outcome == "ok"
 
 
 def test_coreference_context_reaches_expander_but_not_trace(tmp_path, monkeypatch) -> None:
@@ -123,6 +168,7 @@ def test_coreference_context_reaches_expander_but_not_trace(tmp_path, monkeypatc
     trace = response["search_trace"]
     assert "讨论生产环境部署方案" in prompt
     assert trace["context_event_count"] == 1
+    assert trace["context_outcome"] == "ok"
     assert len(trace["context_hash"]) == 64
     assert "讨论生产环境部署方案" not in json.dumps(trace, ensure_ascii=False)
 

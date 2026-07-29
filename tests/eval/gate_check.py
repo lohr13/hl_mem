@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-GATED_METRICS = ("mrr", "recall_at_5", "no_answer_precision")
+GATED_METRICS = ("mrr", "recall_at_5", "no_answer_precision", "no_answer_recall")
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -27,6 +27,14 @@ def check(report: dict[str, Any], baseline: dict[str, Any], tolerance: float, sl
         failures.append("数据集哈希与 baseline 不一致")
     if report.get("artifacts", {}).get("snapshot_sha256") != baseline.get("snapshot_sha256"):
         failures.append("snapshot 哈希与 baseline 不一致")
+    if report.get("case_count") != baseline.get("case_count"):
+        failures.append("case_count 与 baseline 不一致")
+    if report.get("slice_counts") != baseline.get("slice_counts"):
+        failures.append("slice 分布与 baseline 不一致")
+    if int(report.get("total_forbidden_hits", 0)) > 0:
+        failures.append("存在 forbidden hits")
+    if float(report.get("http_success_rate", 0.0)) < 1.0:
+        failures.append("http_success_rate 低于 1.0")
     for metric in GATED_METRICS:
         current = float(report["metrics"][metric])
         reference = float(baseline["metrics"][metric])

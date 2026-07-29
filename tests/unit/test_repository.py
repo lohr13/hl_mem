@@ -56,6 +56,37 @@ def test_get_recent_events_uses_session_time_and_id_boundary(tmp_path) -> None:
     database.close()
 
 
+def test_get_recent_events_optionally_filters_user_id(tmp_path) -> None:
+    """传入 user_id 时只返回该用户的会话事件。"""
+    database = Database(tmp_path / "recent-user.db")
+    repository = EventRepository(database.open())
+    for event_id, user_id in (("a", "user-1"), ("b", "user-2")):
+        repository.insert_event(
+            {
+                "id": event_id,
+                "tenant_id": "default",
+                "user_id": user_id,
+                "session_id": "shared",
+                "event_type": "message",
+                "actor_type": "user",
+                "content_json": "{}",
+                "occurred_at": "2026-07-21T10:00:01+00:00" if event_id == "b" else "2026-07-21T10:00:00+00:00",
+                "recorded_at": "2026-07-21T10:00:00+00:00",
+            }
+        )
+
+    recent = repository.get_recent_events(
+        "default",
+        "shared",
+        {"id": "z", "occurred_at": "2026-07-22T00:00:00+00:00"},
+        10,
+        user_id="user-1",
+    )
+
+    assert [event["id"] for event in recent] == ["a"]
+    database.close()
+
+
 def test_database_path_defaults_to_var_and_allows_environment_override(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("HL_MEM_DB_PATH", raising=False)
     assert Path(Database().path).as_posix().endswith("/var/hl_mem.db")

@@ -1,5 +1,26 @@
 # HL-Mem 变更记录
 
+## v0.17.1 (2026-07-29)
+
+### Code Review Fixes (13 items)
+
+#### P1 fixes
+- Multi-channel fallback now enforces dense_floor when dense channel is present
+- Session context SQL filters by actor_type before LIMIT
+- Backfill CAS includes embedding_model and dimension; version tracks re-embedding
+- Observe/enforce relative-drop computation unified (shared function, >= threshold)
+- Observe mode writes relevance_reasons instead of filter_reasons (trace semantic fix)
+- Eval runner consumes answerability for no-answer detection
+- Gate check validates forbidden_hits, http_success_rate, no_answer_recall, slice coverage
+- Session context get_recent_events() adds optional user_id parameter (defensive)
+
+#### P2 fixes
+- Context budget skips oversized messages instead of breaking
+- Context outcome structured in trace (ok/empty/missing_session/read_error/deadline_exhausted)
+- Batch cosine streaming via fetchmany (reduces peak memory)
+- Vector sort key uses claim_id for deterministic tie-break
+- Backfill retry adds backoff and error classification
+
 ## v0.17.0 (2026-07-29)
 
 ### Recall Pipeline Improvements
