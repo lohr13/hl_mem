@@ -1,5 +1,24 @@
 # HL-Mem 变更记录
 
+## v0.17.2 (2026-07-29)
+
+### Extraction Prompt Optimization
+
+Rewrote SYSTEM_PROMPT with structured 10-section design based on industry research (Mem0/Letta/Zep/LangMem/Cognee):
+
+- **Four-gate admission**: evidence gate, future utility gate, temporal gate, distinctiveness gate
+- **Speech act classification**: asserted/committed admitted; proposed/hypothetical/procedural/phatic rejected
+- **Discrete confidence anchors**: 0.98/0.90/0.75/0.55 (no arbitrary decimals)
+- **Scope x volatility four-quadrant**: replaces single "one year" criterion
+- **3 positive + 3 negative few-shot examples**: covering different confidence levels
+- **Tightened predicates**: reviews/suggestions/hypotheses cannot use fact predicate
+- **Process noise rejection**: execution status, CI snapshots, duration estimates
+
+### Validation
+- 7/7 dry-run extraction tests correct (3 noise rejected, 4 valid extracted)
+- Confidence distribution now differentiated (0.98 vs 0.90 vs 0.75)
+- 605 tests passed, 0 failed
+
 ## v0.17.1 (2026-07-29)
 
 ### Code Review Fixes (13 items)

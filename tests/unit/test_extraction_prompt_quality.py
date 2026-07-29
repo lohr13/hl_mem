@@ -38,8 +38,13 @@ class ExtractionPromptQualityTest(unittest.TestCase):
     def test_prompt_keeps_confidence_independent_from_memory_deduplication(
         self,
     ) -> None:
-        self.assertIn("每条 claim 独立判断事实可信度", SYSTEM_PROMPT)
-        self.assertIn("不要猜测它与已有记忆的关系", SYSTEM_PROMPT)
+        self.assertIn("不判断它们是否与已有记忆冲突", SYSTEM_PROMPT)
+        self.assertIn(
+            "confidence 只表示当前 evidence 是否足以支持 claim 的内容和归因",
+            SYSTEM_PROMPT,
+        )
+        self.assertIn("不表示 importance", SYSTEM_PROMPT)
+        self.assertIn("与已有记忆是否一致", SYSTEM_PROMPT)
         self.assertNotIn("已有事实的补充或改写", SYSTEM_PROMPT)
         self.assertNotIn("confidence 降到 0.5 以下", SYSTEM_PROMPT)
 

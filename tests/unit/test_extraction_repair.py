@@ -145,10 +145,16 @@ class ExtractionRepairTest(unittest.TestCase):
         self.assertEqual(parsed["claims"], [])
 
     def test_prompt_contains_explicit_constraints_and_complete_example(self) -> None:
-        self.assertIn("sensitivity 只能是以下三个英文值", SYSTEM_PROMPT)
-        self.assertIn("entities 必须是 JSON 数组", SYSTEM_PROMPT)
-        self.assertIn('"should_memorize": true', SYSTEM_PROMPT)
-        self.assertIn('"topic_tags": ["preference", "behavior"]', SYSTEM_PROMPT)
+        self.assertIn(
+            "sensitivity 只能是英文字符串 'normal' / 'sensitive' / 'restricted'",
+            SYSTEM_PROMPT,
+        )
+        self.assertIn("顶层 entities 必须是字符串数组", SYSTEM_PROMPT)
+        self.assertIn("claim.entities 必须是字符串数组或 null", SYSTEM_PROMPT)
+        self.assertIn("should_memorize = (claims 非空)", SYSTEM_PROMPT)
+        self.assertIn("每个 claim 必须包含 subject、predicate、canonical_attribute", SYSTEM_PROMPT)
+        self.assertIn("topic_tags 必须是 JSON 数组", SYSTEM_PROMPT)
+        self.assertIn("所有 claim 字段和 enum 必须符合 schema", SYSTEM_PROMPT)
 
     def test_schema_error_details_include_invalid_and_allowed_values(self) -> None:
         invalid = {
