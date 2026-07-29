@@ -19,6 +19,13 @@ SOURCE_DIR = REPO_ROOT / "src" / "hl_mem" / "adapters" / "hermes" / "plugin"
 FILES = ("__init__.py", "plugin.yaml")
 
 
+def is_hermes_home(path: Path) -> bool:
+    """检查路径是否具有 Hermes 根目录的标志。"""
+    return (path / "plugins").is_dir() or any(
+        (path / marker).exists() for marker in ("hermes.py", "cli.py", "pyproject.toml", "config.yaml")
+    )
+
+
 def find_hermes_home(arg_override: str | Path | None) -> Path:
     """按参数、环境变量和常见目录的优先级定位 Hermes 根目录。"""
     if arg_override:
@@ -27,9 +34,9 @@ def find_hermes_home(arg_override: str | Path | None) -> Path:
     if environment_home:
         base = Path(environment_home).expanduser().resolve()
         agent_dir = base / "hermes-agent"
-        if (agent_dir / "plugins" / "memory").exists():
+        if is_hermes_home(agent_dir):
             return agent_dir
-        if (base / "plugins" / "memory").exists():
+        if is_hermes_home(base):
             return base
         return base
     candidates = [
@@ -39,9 +46,9 @@ def find_hermes_home(arg_override: str | Path | None) -> Path:
     ]
     for candidate in candidates:
         agent_dir = candidate / "hermes-agent"
-        if (agent_dir / "plugins" / "memory").exists():
+        if is_hermes_home(agent_dir):
             return agent_dir.resolve()
-        if (candidate / "plugins" / "memory").exists():
+        if is_hermes_home(candidate):
             return candidate.resolve()
     tried = ", ".join(str(candidate) for candidate in candidates)
     raise RuntimeError(f"Cannot find HERMES_HOME. Tried: {tried}")
@@ -100,14 +107,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parse_args(argv)
         hermes_home = find_hermes_home(args.hermes_home)
-        target_dir = hermes_home / "plugins" / "memory" / "hl_mem"
+        target_dir = (hermes_home / "plugins" / "hl_mem").resolve()
+        legacy_dir = (hermes_home / "plugins" / "memory" / "hl_mem").resolve()
+        if legacy_dir.exists():
+            print(
+                f"Migration notice: legacy plugin found at {legacy_dir}; "
+                f"after installation, remove or archive it and use {target_dir}"
+            )
         if args.dry_run:
             missing = [SOURCE_DIR / filename for filename in FILES if not (SOURCE_DIR / filename).is_file()]
             if missing:
                 raise FileNotFoundError(f"Missing source files: {', '.join(map(str, missing))}")
             print(f"Dry run: would install {', '.join(FILES)}")
             print(f"Source: {SOURCE_DIR}")
-            print(f"Target: {target_dir}")
+            print(f"Target (absolute): {target_dir}")
             existing = [filename for filename in FILES if (target_dir / filename).is_file()]
             print(f"Backup: {'existing files would be backed up' if existing else 'not required'}")
             return 0
@@ -116,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         backup_dir = install(target_dir)
         print("Installation succeeded")
         print(f"Installed: {', '.join(FILES)}")
-        print(f"Target: {target_dir}")
+        print(f"Target (absolute): {target_dir}")
         print(f"Backup: {backup_dir if backup_dir else 'not required'}")
         print("Verification: source and installed files match")
         return 0

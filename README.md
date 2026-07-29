@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.17.3](https://img.shields.io/badge/version-0.17.3-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.17.4](https://img.shields.io/badge/version-0.17.4-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -15,7 +15,17 @@ HL-Mem 是面向 AI Agent 的本地优先、证据驱动长期记忆系统。它
 
 ## 安装
 
-要求 Python 3.11+。推荐使用 [uv](https://docs.astral.sh/uv/)：
+### 前置条件
+
+- Python 3.11 或更高版本。
+- 推荐安装 [uv](https://docs.astral.sh/uv/)；也可使用 pip。
+- SQLite 必须包含 FTS5（Python 官方发行版通常已包含）。
+- 使用真实提取、Embedding 或 Reranker 时，需要对应服务的 API key。
+- 集成 Hermes 时，需要可写的 Hermes 根目录及重启 Hermes 的权限。
+
+### 本地安装
+
+推荐使用 uv：
 
 ```bash
 git clone git@github.com:REDACTED_USER/hl_mem.git
@@ -30,6 +40,43 @@ python -m pip install .
 ```
 
 开发环境可使用 `uv sync --dev` 或 `python -m pip install -e .`；运行测试所需的开发依赖以 `uv.lock` 为准。
+
+安装和配置后可运行只读诊断：
+
+```bash
+uv run hl-mem doctor
+```
+
+### Linux / systemd 部署
+
+将下列模板保存为 `/etc/systemd/system/hl-mem.service`，并将 `<HL_MEM_DIR>`、`<RUN_USER>` 替换为实际值：
+
+```ini
+[Unit]
+Description=HL-Mem local memory service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<RUN_USER>
+WorkingDirectory=<HL_MEM_DIR>
+ExecStart=<HL_MEM_DIR>/.venv/bin/python <HL_MEM_DIR>/start_server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`start_server.py` 会从项目根目录加载 `.env`。安装并启动服务：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now hl-mem
+sudo systemctl status hl-mem
+```
 
 ## 快速开始
 
@@ -63,13 +110,43 @@ curl -X POST http://127.0.0.1:8200/v1/recall -H "Content-Type: application/json"
 
 ### 3. 集成 Hermes
 
-先启动 HL-Mem，再将仓库内的 MemoryProvider 部署到 Hermes：
+启动顺序必须是：先启动 HL-Mem 并确认健康检查通过，再安装插件，最后重启 Hermes：
 
 ```bash
+curl --fail http://127.0.0.1:8200/healthz
 uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
+# 使用 Hermes 自己的服务管理方式重启 Hermes
 ```
 
-安装后重启 Hermes。适配器通过 HTTP 调用本地 HL-Mem 服务，并提供超时、熔断、预取及 Episode/Trace 同步；服务不可用时会降级，不阻断 Agent 主任务。
+安装脚本的目标路径是 `<HERMES_HOME>/plugins/hl_mem/`。安装后必须重启 Hermes，让插件扫描器重新加载。适配器通过 HTTP 调用本地 HL-Mem 服务，并提供超时、熔断、预取及 Episode/Trace 同步；服务不可用时会降级，不阻断 Agent 主任务。
+
+### 三步验证清单
+
+1. 验证 HL-Mem 服务健康：
+
+   ```bash
+   curl --fail http://127.0.0.1:8200/healthz
+   ```
+
+2. 发起一次召回并确认返回 JSON：
+
+   ```bash
+   curl --fail -X POST http://127.0.0.1:8200/v1/recall \
+     -H "Content-Type: application/json" \
+     -d '{"query":"What does Alice prefer?","limit":5}'
+   ```
+
+3. 检查 Hermes Agent 日志是否加载并调用 HL-Mem：
+
+   ```bash
+   grep -iE "hl[_-]mem|memory provider" <HERMES_HOME>/agent.log
+   ```
+
+### 常见问题排查
+
+- Hermes 扫描不到插件：确认文件位于 `<HERMES_HOME>/plugins/hl_mem/`，不要放在旧路径 `<HERMES_HOME>/plugins/memory/hl_mem/`；修正后重启 Hermes。
+- 服务启动失败或 FTS 异常：运行 `uv run hl-mem doctor`，根据逐项 `OK/WARN/FAIL` 结果检查数据库、migration、密钥与端口。
+- `healthz` 正常但 Hermes 无召回：先确认 Hermes 是在 HL-Mem 启动后重启的，再检查 `agent.log` 和插件目录权限。
 
 ## 关键配置
 
@@ -115,7 +192,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.17.3，共 33 个不可变、仅向前执行的 Migration。
+当前基线为 v0.17.4，共 34 个不可变、仅向前执行的 Migration。
 
 ## 文档
 

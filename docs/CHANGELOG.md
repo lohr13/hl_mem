@@ -1,5 +1,18 @@
 # HL-Mem 变更记录
 
+## v0.17.4 (2026-07-29)
+
+### Bug Fixes
+- Fixed an FTS column-name mismatch that caused rebuild failures (migration 034)
+- Changed the `install_to_hermes.py` plugin path from `plugins/memory/` to `plugins/hl_mem/`
+
+### Features
+- Added the `hl_mem doctor` diagnostic command with 9 checks
+- Added `.env` placeholder validation so production mode rejects fake keys
+
+### Documentation
+- Improved the README installation section with a systemd template, three-step verification, and FAQ
+
 ## v0.17.3 (2026-07-29)
 
 ### Bug Fixes

@@ -11,6 +11,7 @@ from typing import Any
 
 from hl_mem import __version__
 from hl_mem.components import make_embedder
+from hl_mem.doctor import main as doctor_main
 from hl_mem.evaluation.runner import BenchmarkRunner
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database, default_database_path
@@ -152,7 +153,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     backfill.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     backfill.add_argument("--dry-run", action="store_true")
     backfill.add_argument("--cursor")
+    doctor = commands.add_parser("doctor")
+    doctor.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    doctor.add_argument("--env-file", type=Path)
     args = parser.parse_args(argv)
+    if args.command == "doctor":
+        doctor_args = ["--db", str(args.db)]
+        if args.env_file is not None:
+            doctor_args.extend(["--env-file", str(args.env_file)])
+        raise SystemExit(doctor_main(doctor_args))
     if args.command == "backfill-index-text":
         settings = Settings.from_env()
         database = Database(args.db)

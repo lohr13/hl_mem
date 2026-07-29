@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal, overload
@@ -173,6 +174,22 @@ class VectorBackend(StrEnum):
     """支持的向量检索后端。"""
 
     SQLITE_SCAN = "sqlite_scan"
+
+
+def is_placeholder_secret(value: str | None) -> bool:
+    """判断密钥是否为空或仍为常见占位符。"""
+    if value is None:
+        return True
+    normalized = value.strip().lower()
+    if not normalized:
+        return True
+    if normalized in {"xxx", "your-key", "your_key", "changeme", "change-me"}:
+        return True
+    if normalized.startswith("<") and normalized.endswith(">"):
+        return True
+    return bool(re.fullmatch(r"(?:sk-)?x{3,}", normalized)) or (
+        normalized.startswith("sk-") and normalized.endswith("xxx")
+    )
 
 
 def parse_daily_cron(value: str, variable_name: str) -> int:
@@ -367,7 +384,7 @@ class Settings:
                 ("off", "fake", "on", "real"),
             ),
             reranker_provider=_env_choice("HL_MEM_RERANKER_PROVIDER", "dashscope", ("dashscope",)),
-            reranker_api_key=os.getenv("RERANKER_API_KEY") or os.getenv("EMBEDDING_API_KEY"),
+            reranker_api_key=os.getenv("RERANKER_API_KEY"),
             reranker_base_url=os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
             reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
             relation_expansion_mode=_env_choice("HL_MEM_RELATION_EXPANSION", "off", ("off", "on")),
@@ -545,7 +562,24 @@ class Settings:
         )
 
     def validate(self) -> None:
-        """校验生产环境所需的安全配置组合。"""
+        """校验配置组合以及已启用组件的密钥。"""
+        if self.environment != Environment.TEST:
+            required_secrets: dict[str, str | None] = {}
+            if self.extractor_mode == "llm":
+                required_secrets["LLM_API_KEY"] = self.llm_api_key
+            if self.embedder_mode == "real":
+                required_secrets["EMBEDDING_API_KEY"] = self.embedding_api_key
+            if self.reranker_mode == "on":
+                required_secrets["RERANKER_API_KEY"] = self.reranker_api_key
+            invalid_secrets = [name for name, value in required_secrets.items() if is_placeholder_secret(value)]
+            if invalid_secrets:
+                message = (
+                    "placeholder or empty secret configured for enabled component(s): "
+                    f"{', '.join(invalid_secrets)}; replace each value with a real API key"
+                )
+                if self.environment == Environment.PRODUCTION:
+                    raise ConfigurationError(message)
+                warnings.warn(message, UserWarning, stacklevel=2)
         if self.feedback_lifecycle_mode not in {"off", "observe", "on"}:
             raise ConfigurationError("HL_MEM_FEEDBACK_LIFECYCLE_MODE must be 'off', 'observe', or 'on'")
         if self.feedback_bonus_every <= 0:
@@ -728,10 +762,12 @@ class Settings:
             raise ConfigurationError("HL_MEM_RERANKER must be enabled in production")
         if self.extractor_mode == "fake":
             raise ConfigurationError("HL_MEM_EXTRACTOR must not be 'fake' in production")
-        if not self.llm_api_key:
+        if self.extractor_mode == "llm" and is_placeholder_secret(self.llm_api_key):
             raise ConfigurationError("LLM_API_KEY is required in production")
-        if not self.embedding_api_key:
+        if self.embedder_mode == "real" and is_placeholder_secret(self.embedding_api_key):
             raise ConfigurationError("EMBEDDING_API_KEY is required in production")
+        if self.reranker_mode == "on" and is_placeholder_secret(self.reranker_api_key):
+            raise ConfigurationError("RERANKER_API_KEY is required in production")
 
     def _validate(self) -> None:
         """兼容旧调用方，委托公开配置校验入口。"""
