@@ -66,10 +66,7 @@ def test_observe_mode_does_not_truncate_or_reorder_results() -> None:
 
     assert claims == before
     assert [claim["id"] for claim in claims] == ["claim-1", "claim-2", "claim-3"]
-    assert all(
-        candidate["relevance_decision"] == "irrelevant"
-        for candidate in tracer.to_dict()["candidates"].values()
-    )
+    assert all(candidate["relevance_decision"] == "irrelevant" for candidate in tracer.to_dict()["candidates"].values())
 
 
 def test_reranker_applied_uses_only_raw_reranker_floor() -> None:

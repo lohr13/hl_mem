@@ -36,9 +36,7 @@ def _fallback_decision(trace: CandidateTrace, dense_floor: float) -> RelevanceDe
     """按通道证据组合评估 reranker fallback 候选。"""
     channels = set(trace.channels)
     dense_score = trace.channel_scores.get("dense")
-    multi_channel_supported = "dense" not in channels or (
-        dense_score is not None and dense_score >= dense_floor
-    )
+    multi_channel_supported = "dense" not in channels or (dense_score is not None and dense_score >= dense_floor)
     if len(channels) >= 2 and multi_channel_supported:
         return RelevanceDecision("relevant", "multi_channel_hit", "reranker_fallback", dense_score)
     if "fts" in channels and dense_score is not None and dense_score >= dense_floor:

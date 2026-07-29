@@ -112,18 +112,12 @@ def test_backfill_reembeds_when_model_or_dimension_changes(tmp_path) -> None:
     """索引文本未变时，模型或维度变化仍触发重新 embedding。"""
     connection = Database(tmp_path / "model-change.db").open()
     _insert_claim(connection)
-    backfill_index_text(
-        connection, FakeEmbedder(8), mode="answerable", version="v1", batch_size=100, max_attempts=1
-    )
+    backfill_index_text(connection, FakeEmbedder(8), mode="answerable", version="v1", batch_size=100, max_attempts=1)
 
     changed = FakeEmbedder(16)
     changed.model = "fake-v2"
-    result = backfill_index_text(
-        connection, changed, mode="answerable", version="v2", batch_size=100, max_attempts=1
-    )
-    row = connection.execute(
-        "SELECT embedding_model,embedding_dim FROM claims WHERE id='claim-1'"
-    ).fetchone()
+    result = backfill_index_text(connection, changed, mode="answerable", version="v2", batch_size=100, max_attempts=1)
+    row = connection.execute("SELECT embedding_model,embedding_dim FROM claims WHERE id='claim-1'").fetchone()
 
     assert result.backfilled == 1
     assert result.model_version_reembedded == 1
@@ -139,9 +133,7 @@ def test_backfill_cas_rejects_concurrent_model_change(tmp_path) -> None:
         """在 provider 调用期间模拟并发模型更新。"""
 
         def embed_batch(self, texts: list[str]) -> list[bytes]:
-            connection.execute(
-                "UPDATE claims SET embedding_model='concurrent-model' WHERE id='claim-1'"
-            )
+            connection.execute("UPDATE claims SET embedding_model='concurrent-model' WHERE id='claim-1'")
             connection.commit()
             return super().embed_batch(texts)
 
@@ -156,9 +148,9 @@ def test_backfill_cas_rejects_concurrent_model_change(tmp_path) -> None:
 
     assert result.backfilled == 0
     assert result.skipped == 1
-    assert connection.execute(
-        "SELECT embedding_model FROM claims WHERE id='claim-1'"
-    ).fetchone()[0] == "concurrent-model"
+    assert (
+        connection.execute("SELECT embedding_model FROM claims WHERE id='claim-1'").fetchone()[0] == "concurrent-model"
+    )
 
 
 def test_backfill_retries_only_recoverable_errors_with_backoff(tmp_path, monkeypatch) -> None:
@@ -182,9 +174,7 @@ def test_backfill_retries_only_recoverable_errors_with_backoff(tmp_path, monkeyp
 
     embedder = FlakyEmbedder()
     monkeypatch.setattr(backfill_module.time, "sleep", sleeps.append)
-    result = backfill_index_text(
-        connection, embedder, mode="answerable", version="v1", batch_size=100, max_attempts=3
-    )
+    result = backfill_index_text(connection, embedder, mode="answerable", version="v1", batch_size=100, max_attempts=3)
 
     assert result.backfilled == 1
     assert result.last_error_class == "http_timeout"
@@ -211,9 +201,7 @@ def test_backfill_does_not_retry_nonrecoverable_error(tmp_path, monkeypatch) -> 
 
     embedder = InvalidEmbedder()
     monkeypatch.setattr(backfill_module.time, "sleep", sleeps.append)
-    result = backfill_index_text(
-        connection, embedder, mode="answerable", version="v1", batch_size=100, max_attempts=3
-    )
+    result = backfill_index_text(connection, embedder, mode="answerable", version="v1", batch_size=100, max_attempts=3)
 
     assert result.failed == 1
     assert result.last_error_class == "ValueError"
