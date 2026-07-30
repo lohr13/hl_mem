@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.17.4
-- Updated: 2026-07-26
+- Document baseline: v0.18.0
+- Updated: 2026-07-30
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -87,7 +87,7 @@ src/hl_mem/
 │   ├── observation.py        # Derived-memory assembly
 │   ├── ranking.py            # Multi-factor ranking
 │   ├── relation_expansion.py # One-hop relation expansion
-│   ├── reranker.py           # Optional reranking (model configured via .env)
+│   ├── reranker.py           # Optional reranking (model configured via TOML)
 │   ├── staged_pipeline.py    # FTS + dense + optional tag channel and RRF
 │   └── trace.py              # SearchTrace diagnostics and metrics
 ├── security/                 # Retention and content policy
@@ -115,11 +115,12 @@ src/hl_mem/
 │   └── induce_policies.py    # Experience-to-Policy induction
 ├── components.py             # Central component factories and health state
 ├── config.py                 # Shared constants
+├── config_loader.py          # Strict TOML + four-secret configuration loader
 ├── errors.py                 # Application exception family
 ├── http_utils.py             # Retry and timeout utilities
 ├── lifecycle.py              # Central state-transition guards
 ├── protocols.py              # Backend and component protocols
-├── settings.py               # Environment-backed settings and validation
+├── settings.py               # Settings schema, defaults, metadata, and validation
 └── cli.py                    # Maintenance, backup, import/export, evaluation CLI
 ```
 
@@ -172,7 +173,7 @@ canonical entity when possible and otherwise isolated per event; canonical attri
 predicate; and high-confidence runtime, test, or version signals can downgrade an LLM-proposed permanent scope to
 temporal. Each decision emits an audit reason code. Deterministic JSON repair runs before a bounded schema retry and its
 repair count is exposed to diagnostics. Claim FTS and dense embeddings consume the persisted `index_text`; changing
-`HL_MEM_INDEX_TEXT_MODE` therefore supports controlled representation A/B without changing the rest of recall.
+`index.text_mode` therefore supports controlled representation A/B without changing the rest of recall.
 
 Observation and Mental Model derivation is a separate maintenance path, not part of the Claim write transaction. The
 mental-model worker evaluates active evidence after ingestion and writes or refreshes derivations when its evidence rules
@@ -190,7 +191,7 @@ POST /v1/recall
   → FTS5 BM25 + dense cosine + optional tag candidates
   → reciprocal-rank fusion (RRF)
   → recency + importance + access + scope + helpfulness scoring
-  → optional reranking (model configured via .env)
+  → optional reranking (model configured via TOML)
   → relation, Observation, and Experience expansion
   → token-budget and cross-type quota packing
   → evidence-aware Context Packet + optional SearchTrace
@@ -251,27 +252,25 @@ Workers use durable jobs with leases, heartbeat, stage, and processed/total prog
 automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. `/healthz`, `/v1/stats`,
 offline evaluation, and the LongMemEval adapter provide operational and quality visibility.
 
-All runtime paths, provider models, credentials, timeouts, and feature modes come from settings/environment variables. Image
-file inputs remain disabled unless explicitly enabled and constrained to configured allow-roots. PostgreSQL is only an
+All runtime paths, provider models, timeouts, and feature modes come from one validated `Settings` snapshot loaded from
+`hl_mem.toml`. Only four provider credentials come from `.env` or same-named process environment variables. Image file
+inputs remain disabled unless explicitly enabled and constrained to configured allow-roots. PostgreSQL is only an
 experimental connectivity probe and does not implement HL-Mem storage semantics.
 
 ### Development and deployment commands
 
-The combined launcher loads `.env` and starts both the API and Worker:
+The combined launcher loads and validates `hl_mem.toml` plus the optional `.env` once, then injects the same immutable
+`Settings` snapshot into the API and Worker:
 
 ```bash
 uv run python start_server.py
 ```
 
-For split-process operation, start them separately:
+The loader resolves both files from the process current working directory. `hl_mem.toml` is mandatory, so service managers
+must set their working directory to the deployment directory that contains it. Real components are enabled explicitly by
+TOML mode and require their independent keys; there is no environment-based production profile or automatic fake fallback.
 
-```bash
-uv run uvicorn hl_mem.api.server:app --host 127.0.0.1 --port 8200
-uv run python -m hl_mem.workers.worker run
-```
-
-On Windows, `start_production.bat` enables production mode and requires real embedding and reranking providers. Install the
-Hermes adapter with `uv run python install_to_hermes.py --hermes-home <HERMES_HOME>`, then restart Hermes.
+Install the Hermes adapter with `uv run python install_to_hermes.py --hermes-home <HERMES_HOME>`, then restart Hermes.
 
 The offline suite uses fake providers; the real-provider script requires configured credentials:
 

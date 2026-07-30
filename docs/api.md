@@ -1,15 +1,16 @@
 # HL-Mem REST API
 
-HL-Mem exposes a FastAPI application with 16 routes. Start the service with `uv run python start_server.py`; the default
-development address is `http://127.0.0.1:8200`. Interactive OpenAPI documentation is available at `/docs` while the
-service is running.
+HL-Mem exposes a FastAPI application with 16 routes. From a working directory containing the required `hl_mem.toml`,
+start the service with `uv run python start_server.py`; the default address is `http://127.0.0.1:8200`. Interactive
+OpenAPI documentation is available at `/docs` while the service is running.
 
 ## Conventions
 
 - Request and response bodies use JSON unless noted otherwise.
 - `POST /v1/events` accepts `Idempotency-Key`; the body-level `idempotency_key` is used when the header is absent.
 - Validation failures return `422`, missing resources return `404`, and invalid state transitions return `409`.
-- Provider credentials, timeouts, models, database path, and feature modes are configured through [`.env.example`](../.env.example).
+- Timeouts, models, database paths, and feature modes come from `hl_mem.toml`; provider credentials come only from the
+  optional `.env` or same-named process environment variables. See the [configuration reference](configuration.md).
 - Recall is scoped to a `namespace` and can filter both valid time (`as_of`) and recorded time (`known_as_of`).
 
 ## Endpoints

@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.17.4](https://img.shields.io/badge/version-0.17.4-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.18.0](https://img.shields.io/badge/version-0.18.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -70,7 +70,8 @@ TimeoutStopSec=30
 WantedBy=multi-user.target
 ```
 
-`start_server.py` 会从项目根目录加载 `.env`。安装并启动服务：
+`start_server.py` 从进程当前工作目录加载必需的 `hl_mem.toml` 和可选的 `.env`。因此 systemd 的
+`WorkingDirectory` 必须指向放置这两个文件的部署目录；缺少 `hl_mem.toml` 时服务不会启动。安装并启动服务：
 
 ```bash
 sudo systemctl daemon-reload
@@ -82,13 +83,16 @@ sudo systemctl status hl-mem
 
 ### 1. 配置服务
 
-复制环境变量模板，并填写 LLM、Embedding，以及启用重排时所需的 API key：
+复制 TOML 配置和密钥模板：
 
 ```bash
+cp config.example.toml hl_mem.toml
 cp .env.example .env
 ```
 
-`.env.example` 是完整、带版本的配置目录。不要提交包含真实密钥的 `.env`。
+`config.example.toml` 只列常用参数，并显式写入推荐的真实能力模式；这些推荐值不是代码默认值。根据启用的组件填写
+`.env` 中的独立密钥，或将不需要的组件 mode 改回安全默认值。不要提交包含真实密钥的 `.env`。所有 TOML 字段见
+[配置参考](docs/configuration.md)。
 
 ### 2. 启动服务
 
@@ -150,28 +154,24 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 
 ## 关键配置
 
-以下是提取和召回主路径中的常用配置；完整列表、密钥来源和实验开关见 [`.env.example`](.env.example)。
+非敏感配置只从当前工作目录的 `hl_mem.toml` 读取；密钥只从 `.env` 或同名进程环境变量读取。常用键如下，完整列表见
+[配置参考](docs/configuration.md)。
 
-| 配置项 | 默认值 | 说明 |
+| TOML 键 | 代码默认值 | 说明 |
 |---|---:|---|
-| `HL_MEM_ENV` | `dev` | 运行环境：`dev` 或 `production` |
-| `HL_MEM_DB_PATH` | `var/hl_mem.db` | SQLite 数据库路径 |
-| `HL_MEM_EXTRACTOR` | `llm`（模板） | 提取器：`fake` 或 `llm` |
-| `HL_MEM_EMBEDDER` | `real`（模板） | 向量化：`fake` 或 `real` |
-| `HL_MEM_RERANKER` | `on` | 重排：`off`、`fake`、`on` 或 `real` |
-| `HL_MEM_LLM_PROVIDER` | `dashscope` | LLM Provider：`dashscope`、`zhipu` 或 `openai_compatible` |
-| `HL_MEM_LLM_ENABLE_THINKING` | 未设置 | 可选布尔覆盖；未设置时不向 Provider 发送该字段 |
-| `HL_MEM_LLM_STRUCTURED_MODE` | `json_object` | 结构化输出：`auto`、`json_object` 或 `json_schema` |
-| `HL_MEM_LLM_SCHEMA_RETRIES` | `2` | JSON 修复或 Schema 校验失败后的最大重试次数 |
-| `HL_MEM_INDEX_TEXT_MODE` | `legacy` | FTS/Embedding 索引文本：`legacy`、`value_only` 或 `natural` |
-| `HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS` | `12000` | 结构感知提取分块的目标字符数 |
-| `HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS` | `2` | 相邻对话分块的重叠轮数 |
-| `HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH` | `3` | 截断后递归拆分的最大深度 |
-| `HL_MEM_QUERY_EXPANSION_MODE` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
-| `HL_MEM_RELATION_DISCOVERY_MODE` | `audit` | 关系发现：`off`、`audit` 或 `auto` |
-| `HL_MEM_TAG_CHANNEL_ENABLED` | `false` | 是否启用独立 Tag 检索通道 |
+| `database.path` | `var/hl_mem.db` | SQLite 数据库路径 |
+| `extraction.mode` | `fake` | 提取器：`fake`、`real` 或 `llm` |
+| `embedding.mode` | `fake` | 向量化：`fake` 或 `real` |
+| `reranker.mode` | `off` | 重排：`off`、`fake`、`on` 或 `real` |
+| `image_describer.mode` | `off` | 图片描述：`off` 或 `on` |
+| `llm.provider` | `dashscope` | `dashscope`、`zhipu` 或 `openai_compatible` |
+| `llm.structured_mode` | `json_object` | `auto`、`json_object` 或 `json_schema` |
+| `index.text_mode` | `legacy` | `legacy`、`value_only`、`natural` 或 `answerable` |
+| `recall.query_expansion_mode` | `off` | 多查询召回：`off`、`auto` 或 `always` |
+| `relation.discovery_mode` | `off` | 关系发现：`off`、`audit` 或 `auto` |
+| `recall.tag_channel_enabled` | `false` | 是否启用独立 Tag 检索通道 |
 
-生产模式会校验真实 Embedder、启用的 Reranker 和非 Fake Extractor。配置语义以 [Settings](src/hl_mem/settings.py) 与 [配置模板](.env.example) 为准。
+真实组件必须在 TOML 中显式启用并提供各自密钥；失败时不会自动切换为 fake。任意 `HL_MEM_*` 环境变量都不再参与配置。
 
 ## 能力概览
 
@@ -192,13 +192,14 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.17.4，共 34 个不可变、仅向前执行的 Migration。
+当前基线为 v0.18.0，共 34 个不可变、仅向前执行的 Migration。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
 | [文档索引](docs/README.md) | 所有维护中文档的导航 |
+| [配置参考](docs/configuration.md) | TOML 键、默认值、允许值与密钥边界 |
 | [架构](docs/architecture.md) | 分层、模块、写入/召回管线、存储和生命周期 |
 | [API](docs/api.md) | REST 端点和请求约定 |
 | [兼容性策略](docs/compatibility.md) | 版本和公共契约保证 |

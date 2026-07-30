@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.17.4](https://img.shields.io/badge/version-0.17.4-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.18.0](https://img.shields.io/badge/version-0.18.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -35,13 +35,17 @@ For development, use `uv sync --dev` or `python -m pip install -e .`. The locked
 
 ### 1. Configure the service
 
-Copy the environment template and add the API keys required by the LLM, embedding provider, and optional reranker:
+Copy the TOML configuration and secret templates:
 
 ```bash
+cp config.example.toml hl_mem.toml
 cp .env.example .env
 ```
 
-`.env.example` is the complete, versioned configuration catalog. Do not commit real secrets in `.env`.
+`hl_mem.toml` is required in the process working directory. `config.example.toml` contains common settings and explicitly
+enables recommended real capabilities; those values are not code defaults. Add each enabled component's independent key
+to `.env`, or switch unused modes back to their safe defaults. Do not commit real secrets. See the
+[configuration reference](docs/configuration.md) for every TOML key.
 
 ### 2. Start the service
 
@@ -73,28 +77,21 @@ Restart Hermes after installation. The adapter calls the local HL-Mem service ov
 
 ## Key Configuration
 
-These are the main extraction and recall settings. See [`.env.example`](.env.example) for the complete catalog, provider credentials, and experimental flags.
+Non-secret settings come only from `hl_mem.toml`; secrets come only from `.env` or same-named process environment
+variables. Common keys are listed below.
 
-| Variable | Default | Purpose |
+| TOML key | Code default | Purpose |
 |---|---:|---|
-| `HL_MEM_ENV` | `dev` | Runtime environment: `dev` or `production` |
-| `HL_MEM_DB_PATH` | `var/hl_mem.db` | SQLite database path |
-| `HL_MEM_EXTRACTOR` | `llm` (template) | Extractor mode: `fake` or `llm` |
-| `HL_MEM_EMBEDDER` | `real` (template) | Embedding mode: `fake` or `real` |
-| `HL_MEM_RERANKER` | `on` | Reranking: `off`, `fake`, `on`, or `real` |
-| `HL_MEM_LLM_PROVIDER` | `dashscope` | `dashscope`, `zhipu`, or `openai_compatible` |
-| `HL_MEM_LLM_ENABLE_THINKING` | unset | Optional boolean override; when unset, the provider field is omitted |
-| `HL_MEM_LLM_STRUCTURED_MODE` | `json_object` | `auto`, `json_object`, or `json_schema` |
-| `HL_MEM_LLM_SCHEMA_RETRIES` | `2` | Maximum retries after JSON repair or schema validation fails |
-| `HL_MEM_INDEX_TEXT_MODE` | `legacy` | FTS/embedding text: `legacy`, `value_only`, or `natural` |
-| `HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS` | `12000` | Target size for structure-aware extraction chunks |
-| `HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS` | `2` | Conversation-turn overlap between chunks |
-| `HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH` | `3` | Maximum recursive split depth after truncation |
-| `HL_MEM_QUERY_EXPANSION_MODE` | `auto` | Multi-query recall: `off`, `auto`, or `always` |
-| `HL_MEM_RELATION_DISCOVERY_MODE` | `audit` | Relation discovery: `off`, `audit`, or `auto` |
-| `HL_MEM_TAG_CHANNEL_ENABLED` | `false` | Enable the independent tag retrieval channel |
+| `database.path` | `var/hl_mem.db` | SQLite database path |
+| `extraction.mode` | `fake` | `fake`, `real`, or `llm` |
+| `embedding.mode` | `fake` | `fake` or `real` |
+| `reranker.mode` | `off` | `off`, `fake`, `on`, or `real` |
+| `image_describer.mode` | `off` | `off` or `on` |
+| `recall.query_expansion_mode` | `off` | `off`, `auto`, or `always` |
+| `relation.discovery_mode` | `off` | `off`, `audit`, or `auto` |
 
-Production mode requires a real embedder, an enabled reranker, and a non-fake extractor. [Settings](src/hl_mem/settings.py) and the [configuration template](.env.example) define the authoritative behavior.
+Real components must be enabled explicitly and supplied with their own key; there is no automatic fake fallback.
+`HL_MEM_*` environment variables no longer participate in configuration.
 
 ## Capabilities
 
@@ -115,13 +112,14 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.17.4 with 34 immutable, forward-only migrations.
+The current baseline is v0.18.0 with 34 immutable, forward-only migrations.
 
 ## Documentation
 
 | Guide | Contents |
 |---|---|
 | [Documentation index](docs/README.md) | Navigation for maintained documentation |
+| [Configuration reference](docs/configuration.md) | TOML keys, defaults, allowed values, and secret boundary |
 | [Architecture](docs/architecture.md) | Layers, modules, pipelines, storage, and lifecycle |
 | [API reference](docs/api.md) | REST endpoints and request conventions |
 | [Compatibility policy](docs/compatibility.md) | Versioning and public contract guarantees |

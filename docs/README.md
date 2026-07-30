@@ -6,7 +6,9 @@ Maintained documentation for HL-Mem. Historical task specifications, reviews, an
 ## Getting Started
 
 - [Quickstart](../README.md#quickstart)
-- [Configuration template](../.env.example)
+- [Configuration reference](configuration.md)
+- [TOML configuration template](../config.example.toml)
+- [Secret template](../.env.example)
 - [Architecture Overview](architecture.md)
 
 Recommended reading order: start with the root Quickstart, then read Architecture and the Capability Matrix. Use the API

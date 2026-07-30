@@ -1,13 +1,13 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-07-29 · v0.17.4
+> 最后更新：2026-07-30 · v0.18.0
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.17.4
-- **阶段**：v0.17.4
-- **服务**：FastAPI on port 8200；LLM/Embedding/Reranker 均通过 `.env` 配置（见 `.env.example`），当前部署使用 glm-5.2 + text-embedding-v4 (2048d) + gte-rerank-v2
+- **版本**：v0.18.0
+- **阶段**：v0.18.0
+- **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），34 migrations；实时数据量以 `/healthz` 和只读审计为准
 - **FTS**：trigram（claims/tags），unicode61（events）
 
@@ -26,7 +26,7 @@
 ### 核心功能
 
 - 3 种记忆类型（event + claim + observation）
-- LLM 提取（前序上下文 + 时间锚定 + ADD-only）+ Embedding + Reranker（模型和维度均由 `.env` 配置）
+- LLM 提取（前序上下文 + 时间锚定 + ADD-only）+ Embedding + Reranker（模型和维度由 TOML 配置）
 - 三层去重：fact_hash v2 → conflict_key（白名单互斥）→ semantic (best-match, 0.82)
 - 冲突检测：确定性 ConflictResolver（5 slots）+ LLM ConflictConsolidator（灰区）
 - 数据质量：实体归一化 + canonical attribute reconcile + scope 后置规则 + TTL policy

@@ -1,5 +1,20 @@
 # HL-Mem 变更记录
 
+## v0.18.0 (2026-07-30)
+
+### Breaking Changes
+
+- 非敏感运行配置改为单一 TOML 配置源。所有正式入口默认从进程当前工作目录读取 `hl_mem.toml`；文件缺失、未知表或键、类型错误都会直接阻止启动。
+- 删除运行环境 profile、`Settings.from_env()`、fake 自动回退以及全部 `HL_MEM_*` 配置变量。未在 TOML 中列出的字段使用 `Settings` 的静态安全默认值。
+- `.env` 和进程环境现在只识别 `LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`；图片描述器不再复用 LLM 密钥。
+- 提取、Embedding、Reranker、图片描述器的代码默认模式分别为 `fake`、`fake`、`off`、`off`。真实能力必须在 TOML 中显式启用并提供各自密钥。
+
+### Configuration and Startup
+
+- 新增 `config.example.toml` 常用配置模板和由 `Settings` metadata 生成的完整配置参考 `docs/configuration.md`。
+- `start_server.py` 在组件创建前只加载、校验一次配置，并向 API 与 Worker 注入同一个不可变 `Settings` 快照。
+- 升级步骤：复制 `config.example.toml` 为 `hl_mem.toml`，复制 `.env.example` 为 `.env`，填写已启用组件的密钥，并确保 systemd `WorkingDirectory` 指向这两个文件所在目录。
+
 ## v0.17.4 (2026-07-29)
 
 ### Bug Fixes

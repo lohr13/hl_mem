@@ -1,0 +1,72 @@
+# HL-Mem 常用配置示例。
+# 未列出的字段使用代码默认值；完整字段见 docs/configuration.md。
+# 复制为当前工作目录下的 hl_mem.toml 后再启动服务。
+
+[database]
+path = "var/hl_mem.db"
+pool_size = 8
+busy_timeout_seconds = 30
+
+[llm]
+provider = "dashscope"
+base_url = "https://coding.dashscope.aliyuncs.com/v1"
+model = "glm-5.2"
+structured_mode = "json_object"
+timeout = 90
+max_attempts = 3
+
+[embedding]
+# 推荐启用值（不是代码默认值；代码默认 mode = "fake"）。
+mode = "real"
+model = "text-embedding-v4"
+dim = 2048
+
+[reranker]
+# 推荐启用值（不是代码默认值；代码默认 mode = "off"）。
+mode = "on"
+base_url = "https://dashscope.aliyuncs.com"
+model = "gte-rerank-v2"
+
+[image_describer]
+# 推荐启用值（不是代码默认值；代码默认 mode = "off"）。
+mode = "on"
+provider = "dashscope"
+base_url = "https://coding.dashscope.aliyuncs.com/v1"
+model = "qwen3.7-plus"
+timeout_seconds = 20.0
+
+[extraction]
+# 推荐启用值（不是代码默认值；代码默认 mode = "fake"）。
+mode = "llm"
+pre_filter = false
+chunk_target_chars = 12000
+
+[recall]
+default_limit = 20
+vector_scan_limit = 200
+packed_context_token_budget = 2000
+query_expansion_mode = "off"
+tag_channel_enabled = false
+
+[dedup]
+enabled = true
+threshold = 0.92
+audit_only = true
+
+[retention]
+temporal_ttl_days_low = 3
+temporal_ttl_days_normal = 7
+temporal_ttl_days_high = 14
+
+[worker]
+poll_interval = 2.0
+maintenance_interval = 600
+job_lease_minutes = 5
+
+[relation]
+discovery_mode = "off"
+
+[hermes]
+enabled = false
+url = "http://127.0.0.1:8200"
+timeout = 30

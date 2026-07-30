@@ -1,0 +1,293 @@
+#!/usr/bin/env python
+"""Generate docs/configuration.md from the Settings configuration metadata."""
+
+from __future__ import annotations
+
+import sys
+import types
+from dataclasses import Field, fields
+from enum import StrEnum
+from pathlib import Path
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+
+from hl_mem import __version__  # noqa: E402
+from hl_mem.config_loader import load_settings  # noqa: E402
+from hl_mem.settings import Settings  # noqa: E402
+
+CONSTRAINTS = {
+    "database.pool_size": ">= 1",
+    "database.busy_timeout_seconds": ">= 1",
+    "entity.aliases_path": "非空字符串；可省略",
+    "index.backfill_batch_size": ">= 1",
+    "index.backfill_max_attempts": ">= 1",
+    "index.text_version": "非空字符串",
+    "relation.expansion_max_depth": ">= 1",
+    "relation.discovery_pool_limit": ">= 1",
+    "relation.discovery_max_proposals": ">= 1",
+    "relation.auto_apply_confidence": "0.0 - 1.0",
+    "relation.conflict_confidence": "0.0 - 1.0",
+    "recall.default_limit": "1 - 100",
+    "recall.vector_scan_limit": ">= 1",
+    "recall.packed_context_token_budget": ">= 1",
+    "recall.candidate_floor": ">= 1",
+    "recall.dedup_threshold": "0.0 - 1.0；0 关闭折叠",
+    "recall.dedup_candidate_limit": ">= 1",
+    "recall.relevance_reranker_floor": "0.0 - 1.0",
+    "recall.relevance_dense_floor": "0.0 - 1.0",
+    "recall.relevance_relative_drop": "0.0 - 1.0",
+    "recall.relevance_intents": ("非空数组；元素为 current_state、preference、historical、tool、procedure"),
+    "recall.preference_recency_boost": "0.0 - 1.0",
+    "recall.tag_boost_weight": "0.0 - 1.0",
+    "recall.tag_channel_weight": "0.0 - 1.0",
+    "recall.tag_candidate_limit": ">= 1",
+    "recall.query_expansion_max": "0 - 2",
+    "recall.query_expansion_candidate_floor": "> 0",
+    "recall.query_expansion_token_ceiling": "> 0",
+    "recall.query_expansion_timeout_seconds": "> 0",
+    "recall.query_expansion_total_timeout_seconds": "> 0",
+    "recall.query_expansion_max_concurrency": "> 0",
+    "recall.query_context_max_events": "> 0",
+    "recall.query_context_token_budget": "> 0",
+    "recall.procedure_llm_threshold": "0.0 - 1.0",
+    "recall.procedure_router_timeout_seconds": "> 0",
+    "recall.procedure_candidate_limit": "> 0",
+    "recall.procedure_recent_outcome_window": "> 0",
+    "recall.procedure_outcome_half_life_days": "> 0",
+    "recall.side_effect_max_attempts": ">= 1",
+    "recall.side_effect_backoff_seconds": ">= 0",
+    "recall.vector_batch_size": ">= 1",
+    "recall.feedback_min_samples": ">= 1",
+    "recall.expansion_circuit_failure_threshold": ">= 1",
+    "recall.expansion_circuit_open_seconds": "> 0",
+    "hermes.timeout": ">= 1",
+    "hermes.home": "非空字符串；可省略",
+    "hermes.circuit_failure_threshold": ">= 1",
+    "hermes.circuit_open_seconds": "> 0",
+    "hermes.prefetch_cache_ttl_seconds": "> 0",
+    "llm.model": "非空字符串",
+    "llm.timeout": "> 0",
+    "llm.max_attempts": ">= 1",
+    "llm.schema_retries": ">= 0",
+    "image_describer.timeout_seconds": "> 0",
+    "image_describer.max_bytes": ">= 1",
+    "image_describer.max_parts": ">= 1",
+    "extraction.chunk_target_chars": ">= 1",
+    "extraction.chunk_overlap_turns": ">= 0",
+    "extraction.max_split_depth": ">= 0",
+    "dedup.threshold": "0.0 - 1.0",
+    "dedup.auto_merge_min_confidence": "dedup.threshold - 1.0",
+    "dedup.scan_limit": ">= 1",
+    "dedup.cron": "HH:MM（00:00 - 23:59）",
+    "retention.temporal_ttl_days_low": ">= 1",
+    "retention.temporal_ttl_days_normal": ">= 1",
+    "retention.temporal_ttl_days_high": ">= 1",
+    "retention.importance_low_threshold": "见字段联动约束",
+    "retention.importance_high_threshold": "见字段联动约束",
+    "retention.importance_write_floor": "见字段联动约束",
+    "retention.slot_short_ttl_seconds": ">= 1",
+    "retention.ttl_backfill_batch_size": ">= 1",
+    "retention.ttl_backfill_grace_hours": ">= 0",
+    "retention.temporal_cleanup_age_days": ">= 1",
+    "retention.temporal_cleanup_expiry_days": ">= 1",
+    "retention.decay_temporal_days": ">= 1；不得大于 archive_temporal_days",
+    "retention.archive_temporal_days": ">= 1",
+    "retention.decay_permanent_days": ">= 1；不得大于 archive_permanent_days",
+    "retention.archive_permanent_days": ">= 1",
+    "retention.access_bonus_every": ">= 1",
+    "retention.access_bonus_days": ">= 0",
+    "retention.access_bonus_cap_days": ">= 0",
+    "retention.decay_rollout_grace_days": ">= 1",
+    "retention.decay_min_confidence": "0.0 - 1.0",
+    "retention.feedback_bonus_every": "> 0",
+    "retention.feedback_bonus_days": ">= 0",
+    "retention.feedback_bonus_cap_days": ">= 0",
+    "worker.policy_induction_lookback_days": ">= 1",
+    "worker.policy_induction_min_episodes": ">= 1",
+}
+
+
+def render_type(annotation: Any) -> str:
+    """Return the TOML-facing type name for one Settings annotation."""
+    origin = get_origin(annotation)
+    arguments = get_args(annotation)
+    if origin is Literal:
+        return render_type(type(arguments[0]))
+    if origin is tuple:
+        item_type = render_type(arguments[0]) if arguments else "值"
+        return f"{item_type} 数组"
+    if origin in {types.UnionType, Union}:
+        non_none = [item for item in arguments if item is not type(None)]
+        if len(non_none) == 1:
+            return render_type(non_none[0])
+        return " / ".join(render_type(item) for item in non_none)
+    if isinstance(annotation, type) and issubclass(annotation, StrEnum):
+        return "字符串"
+    return {
+        str: "字符串",
+        int: "整数",
+        float: "数值",
+        bool: "布尔值",
+    }.get(annotation, str(annotation))
+
+
+def render_default(value: Any) -> str:
+    """Render a Settings default as its TOML equivalent."""
+    if value is None:
+        return "未设置"
+    if isinstance(value, StrEnum):
+        value = value.value
+    if isinstance(value, str):
+        return f'`"{value}"`'
+    if isinstance(value, bool):
+        return "`true`" if value else "`false`"
+    if isinstance(value, tuple):
+        items = ", ".join(f'"{item}"' for item in value)
+        return f"`[{items}]`"
+    return f"`{value}`"
+
+
+def render_choices(annotation: Any) -> str | None:
+    """Extract enum choices directly from the Settings annotation."""
+    origin = get_origin(annotation)
+    if origin is Literal:
+        return "、".join(f"`{value}`" for value in get_args(annotation))
+    if isinstance(annotation, type) and issubclass(annotation, StrEnum):
+        return "、".join(f"`{item.value}`" for item in annotation)
+    return None
+
+
+def render_allowed(settings_field: Field[Any], annotation: Any) -> str:
+    """Describe allowed values, adding Settings.validate ranges where present."""
+    key_path = str(settings_field.metadata["toml"])
+    if key_path in CONSTRAINTS:
+        return CONSTRAINTS[key_path]
+    choices = render_choices(annotation)
+    if choices is not None:
+        return choices
+    origin = get_origin(annotation)
+    arguments = get_args(annotation)
+    optional = origin in {types.UnionType, Union} and type(None) in arguments
+    if annotation is bool:
+        return "`true`、`false`"
+    if optional:
+        return f"{render_type(annotation)}；可省略"
+    return f"任意{render_type(annotation)}"
+
+
+def generate() -> str:
+    """Build the complete reference from Settings metadata."""
+    annotations = get_type_hints(Settings)
+    toml_fields = sorted(
+        (item for item in fields(Settings) if "toml" in item.metadata),
+        key=lambda item: str(item.metadata["toml"]),
+    )
+    secret_fields = sorted(
+        (item for item in fields(Settings) if "secret_env" in item.metadata),
+        key=lambda item: str(item.metadata["secret_env"]),
+    )
+
+    lines = [
+        "# HL-Mem 配置参考",
+        "",
+        f"HL-Mem {__version__} 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。",
+        "`Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。",
+        "",
+        "## 加载规则",
+        "",
+        "- 默认读取当前工作目录的 `hl_mem.toml`；文件缺失、TOML 语法错误、未知表、未知键或类型错误都会阻止启动。",
+        "- `.env` 也是相对当前工作目录读取，但可以缺失。进程环境中的同名密钥覆盖 `.env`。",
+        "- 除四个密钥外，环境变量不参与配置；所有 `HL_MEM_*` 变量均被忽略。",
+        "- TOML 使用原生类型；仅允许数组转换为 tuple、字符串转换为枚举。密钥不得写入 TOML。",
+        "- 可从 [`config.example.toml`](../config.example.toml) 复制常用配置；该示例显式启用真实能力，推荐值不等于代码默认值。",
+        "",
+        "```bash",
+        "cp config.example.toml hl_mem.toml",
+        "cp .env.example .env",
+        "uv run hl-mem doctor",
+        "uv run python start_server.py",
+        "```",
+        "",
+        "## 密钥",
+        "",
+        "| 环境变量 | Settings 字段 | 需要提供的条件 |",
+        "|---|---|---|",
+    ]
+    secret_requirements = {
+        "LLM_API_KEY": "extraction 非 fake、query expansion 非 off 或 relation discovery 非 off",
+        "EMBEDDING_API_KEY": "embedding.mode = real",
+        "RERANKER_API_KEY": "reranker.mode = on 或 real",
+        "IMAGE_API_KEY": "image_describer.mode = on",
+    }
+    for item in secret_fields:
+        name = str(item.metadata["secret_env"])
+        lines.append(f"| `{name}` | `{item.name}` | {secret_requirements[name]} |")
+
+    lines.extend(
+        [
+            "",
+            "空值和常见占位值（如 `xxx`、`changeme`、`<key>`）不能用于已启用的真实组件；图片密钥不回退到 LLM 密钥。",
+            "",
+            "## TOML 键",
+            "",
+            "“允许值”来自字段注解及 `Settings.validate()`；标为“任意”的字段当前只做 TOML 原生类型校验。",
+        ]
+    )
+
+    current_table = ""
+    for item in toml_fields:
+        key_path = str(item.metadata["toml"])
+        table = key_path.split(".", 1)[0]
+        if table != current_table:
+            current_table = table
+            lines.extend(
+                [
+                    "",
+                    f"### `[{table}]`",
+                    "",
+                    "| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |",
+                    "|---|---|---|---|---|",
+                ]
+            )
+        annotation = annotations[item.name]
+        lines.append(
+            f"| `{key_path}` | {render_type(annotation)} | {render_default(item.default)} | "
+            f"{render_allowed(item, annotation)} | `{item.name}` |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## 字段联动",
+            "",
+            "- `retention.importance_write_floor <= retention.importance_low_threshold <= "
+            "retention.importance_high_threshold`，且三者都在 `0.0 - 1.0`。",
+            "- `retention.decay_temporal_days <= retention.archive_temporal_days`；"
+            "`retention.decay_permanent_days <= retention.archive_permanent_days`。",
+            "- `dedup.auto_merge_min_confidence` 不得低于 `dedup.threshold`。",
+            '- `image_describer.mode = "on"` 时，base URL 必须使用 HTTPS，模型名不能为空；'
+            "若同时允许 `file:` URI，`file_allow_roots` 不能为空。",
+            "- `hermes.enabled = true` 时，`hermes.url` 不能为空。",
+            "",
+            "权威实现见 [`src/hl_mem/settings.py`](../src/hl_mem/settings.py) 和 "
+            "[`src/hl_mem/config_loader.py`](../src/hl_mem/config_loader.py)。",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    load_settings(
+        ROOT / "config.example.toml",
+        ROOT / ".env.example",
+        environ={
+            "LLM_API_KEY": "sk-reference-llm",
+            "EMBEDDING_API_KEY": "sk-reference-embedding",
+            "RERANKER_API_KEY": "sk-reference-reranker",
+            "IMAGE_API_KEY": "sk-reference-image",
+        },
+    )
+    (ROOT / "docs" / "configuration.md").write_text(generate(), encoding="utf-8")
