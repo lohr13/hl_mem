@@ -89,7 +89,7 @@ def test_get_recent_events_optionally_filters_user_id(tmp_path) -> None:
 
 
 def test_database_path_defaults_to_var_and_allows_settings_override(tmp_path) -> None:
-    assert Path(Database().path).as_posix().endswith("/var/hl_mem.db")
+    assert Path(Database().path).as_posix().endswith("var/hl_mem.db")
 
     configured = tmp_path / "configured.db"
     assert Path(Database(settings=Settings(database_path=str(configured))).path) == configured

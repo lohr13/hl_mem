@@ -29,7 +29,7 @@ def test_missing_default_and_explicit_config_fail(tmp_path: Path, monkeypatch: p
 def test_empty_toml_uses_static_defaults(tmp_path: Path) -> None:
     config_path = _write(tmp_path / "empty.toml")
 
-    assert load_settings(config_path, environ={}) == Settings()
+    assert load_settings(config_path, tmp_path / ".env", environ={}) == Settings()
 
 
 def test_loads_native_types_tuple_and_string_enum(tmp_path: Path) -> None:
