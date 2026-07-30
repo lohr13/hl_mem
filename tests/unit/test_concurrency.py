@@ -17,29 +17,37 @@ def store_extracted(conn, claim, event, now, embedder, **kw):
 def test_concurrent_idempotent_event_write(tmp_path: Any) -> None:
     """两个线程写入相同幂等键时只创建一个事件。"""
     database_path = tmp_path / "concurrent.db"
-    databases = [Database(database_path), Database(database_path)]
-    barrier = threading.Barrier(2)
+    databases = [Database(database_path, busy_timeout_seconds=5) for _ in range(2)]
+    barrier = threading.Barrier(2, timeout=10.0)
     results: list[dict[str, Any] | None] = [None, None]
+    errors: list[Exception] = []
 
     def write(index: int, database: Database) -> None:
-        connection = database.open()
-        service = IngestService(connection)
-        barrier.wait()
-        results[index] = service.ingest_event(
-            {
-                "event_type": "message",
-                "actor_type": "user",
-                "content": {"text": "test"},
-            },
-            idempotency_key="same-key",
-        )
+        try:
+            connection = database.open()
+            service = IngestService(connection)
+            barrier.wait()
+            results[index] = service.ingest_event(
+                {
+                    "event_type": "message",
+                    "actor_type": "user",
+                    "content": {"text": "test"},
+                },
+                idempotency_key="same-key",
+            )
+        except Exception as error:
+            errors.append(error)
 
-    threads = [threading.Thread(target=write, args=(index, database)) for index, database in enumerate(databases)]
+    threads = [
+        threading.Thread(target=write, args=(index, database), daemon=True) for index, database in enumerate(databases)
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=15.0)
 
+    assert not [thread.name for thread in threads if thread.is_alive()], "concurrent event threads did not finish"
+    assert errors == []
     assert results[0] is not None
     assert results[1] is not None
     assert results[0]["id"] == results[1]["id"]
@@ -57,45 +65,53 @@ def test_concurrent_idempotent_event_write(tmp_path: Any) -> None:
 def test_concurrent_claim_dedup(tmp_path: Any) -> None:
     """两个线程写入相同事实哈希时只创建一个活跃 claim。"""
     database_path = tmp_path / "dedup.db"
-    databases = [Database(database_path), Database(database_path)]
+    databases = [Database(database_path, busy_timeout_seconds=5) for _ in range(2)]
     for database in databases:
         database.open_worker()
-    barrier = threading.Barrier(2)
+    barrier = threading.Barrier(2, timeout=10.0)
     results: list[str | None] = [None, None]
+    errors: list[Exception] = []
 
     def store(index: int, database: Database) -> None:
-        connection = database.open_worker()
-        extracted = ExtractedClaim(
-            predicate="likes",
-            value="coffee",
-            confidence=0.9,
-            volatility="stable",
-            subject="user",
-            qualifiers={},
-            scope="permanent",
-            importance=0.8,
-            canonical_attribute=None,
-        )
-        event = {
-            "id": f"event-{index}",
-            "actor_type": "user",
-            "occurred_at": "2026-01-01T00:00:00+00:00",
-        }
-        barrier.wait()
-        results[index] = store_extracted(
-            connection,
-            extracted,
-            event,
-            "2026-01-01T00:00:00+00:00",
-            FakeEmbedder(2048),
-        ).claim_id
+        try:
+            connection = database.open_worker()
+            extracted = ExtractedClaim(
+                predicate="likes",
+                value="coffee",
+                confidence=0.9,
+                volatility="stable",
+                subject="user",
+                qualifiers={},
+                scope="permanent",
+                importance=0.8,
+                canonical_attribute=None,
+            )
+            event = {
+                "id": f"event-{index}",
+                "actor_type": "user",
+                "occurred_at": "2026-01-01T00:00:00+00:00",
+            }
+            barrier.wait()
+            results[index] = store_extracted(
+                connection,
+                extracted,
+                event,
+                "2026-01-01T00:00:00+00:00",
+                FakeEmbedder(2048),
+            ).claim_id
+        except Exception as error:
+            errors.append(error)
 
-    threads = [threading.Thread(target=store, args=(index, database)) for index, database in enumerate(databases)]
+    threads = [
+        threading.Thread(target=store, args=(index, database), daemon=True) for index, database in enumerate(databases)
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=15.0)
 
+    assert not [thread.name for thread in threads if thread.is_alive()], "concurrent claim threads did not finish"
+    assert errors == []
     assert results[0] == results[1]
     connection = databases[0].open_worker()
     count = connection.execute(

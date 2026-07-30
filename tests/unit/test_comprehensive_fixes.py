@@ -58,11 +58,12 @@ def test_concurrent_database_instances_apply_migrations_once(tmp_path) -> None:
         finally:
             database.close()
 
-    threads = [threading.Thread(target=open_database) for _ in range(2)]
+    threads = [threading.Thread(target=open_database, daemon=True) for _ in range(2)]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=60.0)
+    assert not [thread.name for thread in threads if thread.is_alive()], "concurrent migration threads did not finish"
     assert errors == []
     with sqlite3.connect(path) as connection:
         versions = connection.execute("SELECT version,count(*) FROM schema_migrations GROUP BY version").fetchall()
