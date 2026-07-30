@@ -107,7 +107,16 @@ def _score(row: dict[str, Any], response: dict[str, Any], latency_ms: float, top
     answerability = str(response.get("answerability") or "supported")
     answerable = row["slice"] != "no_answer" and bool(relevant)
     ranks = [index + 1 for index, claim_id in enumerate(returned_ids) if claim_id in relevant]
-    hits5 = [int(claim_id in relevant) for claim_id in returned_ids[:5]]
+    top_1_hits = relevant.intersection(returned_ids[:1])
+    top_3_hits = relevant.intersection(returned_ids[:3])
+    top_5_hits = relevant.intersection(returned_ids[:5])
+    seen_relevant: set[str] = set()
+    hits5: list[int] = []
+    for claim_id in returned_ids[:5]:
+        is_new_hit = claim_id in relevant and claim_id not in seen_relevant
+        hits5.append(int(is_new_hit))
+        if is_new_hit:
+            seen_relevant.add(claim_id)
     ideal = [1] * min(len(relevant), 5)
     return {
         "id": row["id"],
@@ -115,11 +124,13 @@ def _score(row: dict[str, Any], response: dict[str, Any], latency_ms: float, top
         "answerable": answerable,
         "expected_claim_ids": sorted(relevant),
         "returned_ids": returned_ids[:top_k],
-        "recall_at_1": float(bool(returned_ids[:1] and returned_ids[0] in relevant)) if answerable else None,
-        "recall_at_5": float(bool(relevant.intersection(returned_ids[:5]))) if answerable else None,
+        "hit_at_1": float(bool(top_1_hits)) if answerable else None,
+        "hit_at_5": float(bool(top_5_hits)) if answerable else None,
+        "recall_at_1": len(top_1_hits) / len(relevant) if answerable else None,
+        "recall_at_5": len(top_5_hits) / len(relevant) if answerable else None,
         "mrr": (1.0 / min(ranks) if ranks else 0.0) if answerable else None,
         "ndcg_at_5": (_dcg(hits5) / _dcg(ideal) if ideal else 0.0) if answerable else None,
-        "top_3_precision": (sum(claim_id in relevant for claim_id in returned_ids[:3]) / 3.0) if answerable else None,
+        "precision_at_3": len(top_3_hits) / 3.0 if answerable else None,
         "predicted_no_answer": answerability == "no_evidence",
         "low_confidence": answerability == "low_confidence",
         "answerability": answerability,
@@ -142,13 +153,16 @@ def _metrics(items: list[dict[str, Any]]) -> dict[str, float]:
     predicted_no_answer = [item for item in items if item["predicted_no_answer"]]
     true_no_answer = [item for item in actual_no_answer if item["predicted_no_answer"]]
     return {
+        "hit_at_1": _average(items, "hit_at_1"),
+        "hit_at_5": _average(items, "hit_at_5"),
         "recall_at_1": _average(items, "recall_at_1"),
         "recall_at_5": _average(items, "recall_at_5"),
         "mrr": _average(items, "mrr"),
         "ndcg_at_5": _average(items, "ndcg_at_5"),
-        "top_3_precision": _average(items, "top_3_precision"),
+        "precision_at_3": _average(items, "precision_at_3"),
         "no_answer_precision": len(true_no_answer) / len(predicted_no_answer) if predicted_no_answer else 0.0,
         "no_answer_recall": len(true_no_answer) / len(actual_no_answer) if actual_no_answer else 0.0,
+        "low_confidence_rate": sum(item["low_confidence"] for item in items) / len(items) if items else 0.0,
     }
 
 
@@ -199,7 +213,7 @@ def run(snapshot: Path, dataset: Path, top_k: int) -> dict[str, Any]:
         slices[score["slice"]].append(score)
     latencies = [float(score["latency_ms"]) for score in scores]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "artifacts": {
             "dataset_sha256": _sha256(dataset),
@@ -227,15 +241,20 @@ def run(snapshot: Path, dataset: Path, top_k: int) -> dict[str, Any]:
 
 def _print_summary(report: dict[str, Any], baseline: dict[str, Any] | None) -> None:
     metrics = report["metrics"]
+    if baseline and baseline.get("status") == "ready":
+        if baseline.get("schema_version") != report.get("schema_version"):
+            raise ValueError("baseline schema_version 与报告不一致；请按新指标语义重建 baseline")
     print(f"Cases: {report['case_count']} | slices: {report['slice_counts']}")
     print(
+        f"Hit@1={metrics['hit_at_1']:.4f} Hit@5={metrics['hit_at_5']:.4f} "
         f"Recall@1={metrics['recall_at_1']:.4f} Recall@5={metrics['recall_at_5']:.4f} "
         f"MRR={metrics['mrr']:.4f} nDCG@5={metrics['ndcg_at_5']:.4f} "
-        f"Top-3 precision={metrics['top_3_precision']:.4f}"
+        f"Precision@3={metrics['precision_at_3']:.4f}"
     )
     print(
         f"No-answer precision={metrics['no_answer_precision']:.4f} "
         f"recall={metrics['no_answer_recall']:.4f} | "
+        f"low-confidence rate={metrics['low_confidence_rate']:.4f} | "
         f"latency p50={report['latency_ms']['p50']:.1f}ms p95={report['latency_ms']['p95']:.1f}ms"
     )
     if baseline and baseline.get("status") == "ready":
