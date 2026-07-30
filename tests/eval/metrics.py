@@ -132,12 +132,8 @@ def evaluate_results(case: EvalCase, response: dict[str, Any], latency_ms: float
         relevant_hits=len(top_5_hits),
         hit_at_1=float(bool(top_1_hits)) if case.expected_type == "claim" else None,
         hit_at_5=float(bool(top_5_hits)) if case.expected_type == "claim" else None,
-        recall_at_1=(len(top_1_hits) / len(relevant) if relevant else 0.0)
-        if case.expected_type == "claim"
-        else None,
-        recall_at_5=(len(top_5_hits) / len(relevant) if relevant else 0.0)
-        if case.expected_type == "claim"
-        else None,
+        recall_at_1=(len(top_1_hits) / len(relevant) if relevant else 0.0) if case.expected_type == "claim" else None,
+        recall_at_5=(len(top_5_hits) / len(relevant) if relevant else 0.0) if case.expected_type == "claim" else None,
         precision_at_3=len(top_3_hits) / 3.0 if case.expected_type == "claim" else None,
         top_1_correct=float(bool(top_1_hits)) if case.expected_type == "claim" else None,
         keyword_correct=keyword_correct,

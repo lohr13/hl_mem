@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 import time
 from collections import Counter, defaultdict
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
@@ -19,6 +20,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.settings import Settings
 from tests.eval.dataset import bind_cases, load_cases
 
 DEFAULT_DATASET = Path(__file__).parent / "datasets" / "recall_v2.jsonl"
@@ -33,6 +35,30 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256_utf8_lf(path: Path) -> str:
+    """计算与工作区换行风格无关的 UTF-8/LF 内容摘要。"""
+    text = path.read_text(encoding="utf-8")
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _fixture_metadata(snapshot: Path) -> dict[str, str]:
+    """读取可选的非生产 CI fixture 标识。"""
+    connection = sqlite3.connect(f"file:{snapshot.resolve().as_posix()}?mode=ro", uri=True)
+    try:
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='eval_fixture_metadata'"
+        ).fetchone()
+        if not exists:
+            return {}
+        return {
+            str(key): str(value)
+            for key, value in connection.execute("SELECT key,value FROM eval_fixture_metadata ORDER BY key")
+        }
+    finally:
+        connection.close()
 
 
 def _load_rows(path: Path) -> list[dict[str, Any]]:
@@ -174,7 +200,12 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[max(0, math.ceil(percentile * len(ordered)) - 1)]
 
 
-def run(snapshot: Path, dataset: Path, top_k: int) -> dict[str, Any]:
+def run(
+    snapshot: Path,
+    dataset: Path,
+    top_k: int,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """在临时数据库上运行评测，保证源 snapshot 只读。"""
     rows = _load_rows(dataset)
     _resolve_ids(snapshot, dataset, rows)
@@ -182,12 +213,14 @@ def run(snapshot: Path, dataset: Path, top_k: int) -> dict[str, Any]:
     if unresolved:
         raise ValueError(f"可回答样例缺少固定 claim ID/binding: {', '.join(unresolved)}")
     snapshot_hash = _sha256(snapshot)
+    fixture_metadata = _fixture_metadata(snapshot)
     scores: list[dict[str, Any]] = []
     reranker_paths: Counter[str] = Counter()
     with tempfile.TemporaryDirectory(prefix="hl-mem-recall-eval-") as temporary_directory:
         working = Path(temporary_directory) / "snapshot.db"
         shutil.copy2(snapshot, working)
-        with TestClient(create_app(working)) as client:
+        runtime_settings = replace(settings or Settings(), database_path=str(working))
+        with TestClient(create_app(runtime_settings)) as client:
             health = client.get("/healthz").json()
             for row in rows:
                 payload = {
@@ -212,15 +245,19 @@ def run(snapshot: Path, dataset: Path, top_k: int) -> dict[str, Any]:
     for score in scores:
         slices[score["slice"]].append(score)
     latencies = [float(score["latency_ms"]) for score in scores]
+    artifacts: dict[str, Any] = {
+        "dataset_sha256": _sha256_utf8_lf(dataset),
+        "dataset_sha256_algorithm": "sha256-utf8-lf-v1",
+        "snapshot_sha256": snapshot_hash,
+        "dataset": str(dataset.resolve()),
+        "snapshot": str(snapshot.resolve()),
+    }
+    if fixture_metadata:
+        artifacts["fixture"] = fixture_metadata
     return {
         "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "artifacts": {
-            "dataset_sha256": _sha256(dataset),
-            "snapshot_sha256": snapshot_hash,
-            "dataset": str(dataset.resolve()),
-            "snapshot": str(snapshot.resolve()),
-        },
+        "artifacts": artifacts,
         "config": {
             "top_k": top_k,
             "embedder": health.get("embedder", "unknown"),

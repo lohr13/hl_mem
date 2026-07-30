@@ -60,6 +60,18 @@ jobs:
       - run: uv sync --frozen
       - run: uv run --frozen python scripts/run_quality_smoke.py
 
+  recall-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - name: Run offline recall contract and fixture gate
+        run: uv run --frozen python -m tests.eval.ci_gate
+
   format:
     runs-on: ubuntu-latest
     steps:

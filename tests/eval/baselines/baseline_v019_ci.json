@@ -1,0 +1,77 @@
+{
+  "schema_version": 2,
+  "status": "ci_fixture",
+  "description": "Deterministic v0.18.0 legacy control generated from the synthetic recall-v019 CI snapshot fixture.",
+  "warning": "not valid for release decisions; regenerate with real providers in Phase 2",
+  "dataset_sha256": "e115d969c2ef76b7187ec357295d77d60e2b0958320b6d1806027191c2a7afb6",
+  "dataset_sha256_algorithm": "sha256-utf8-lf-v1",
+  "fixture_id": "recall-v019-ci-v1",
+  "fixture_sha256": "97fbf27321943e074e7769189399bb57c76611baffaaacb31d033c76b50c0357",
+  "case_count": 80,
+  "slice_counts": {
+    "broad_topic": 7,
+    "coreference": 4,
+    "exact_entity": 20,
+    "historical": 14,
+    "no_answer": 25,
+    "preference": 10
+  },
+  "config": {
+    "top_k": 5,
+    "embedding": {
+      "provider": "fake",
+      "model": "fake",
+      "dim": 2048
+    },
+    "extractor": {
+      "provider": "fake",
+      "model": "fake-v1"
+    },
+    "reranker": {
+      "mode": "off",
+      "model": "gte-rerank-v2"
+    },
+    "index_text_mode": "legacy"
+  },
+  "metrics": {
+    "recall_at_5": 0.6590909090909091,
+    "mrr": 0.9545454545454546,
+    "precision_at_3": 0.3333333333333333,
+    "no_answer_precision": 0.0,
+    "no_answer_recall": 0.0,
+    "hit_at_5": 0.9636363636363636,
+    "low_confidence_rate": 0.35
+  },
+  "slices": {
+    "historical": {
+      "count": 14,
+      "metrics": {
+        "recall_at_5": 0.6607142857142857,
+        "mrr": 0.9642857142857143,
+        "precision_at_3": 0.3333333333333333,
+        "no_answer_precision": 0.0,
+        "no_answer_recall": 0.0
+      }
+    },
+    "preference": {
+      "count": 10,
+      "metrics": {
+        "recall_at_5": 0.65,
+        "mrr": 1.0,
+        "precision_at_3": 0.36666666666666664,
+        "no_answer_precision": 0.0,
+        "no_answer_recall": 0.0
+      }
+    },
+    "no_answer": {
+      "count": 25,
+      "metrics": {
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "precision_at_3": 0.0,
+        "no_answer_precision": 0.0,
+        "no_answer_recall": 0.0
+      }
+    }
+  }
+}
