@@ -5,25 +5,32 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from hl_mem import __version__
 from hl_mem.components import make_embedder
+from hl_mem.config_loader import load_settings
 from hl_mem.doctor import main as doctor_main
 from hl_mem.evaluation.runner import BenchmarkRunner
 from hl_mem.settings import Settings
-from hl_mem.storage.database import Database, default_database_path
+from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.workers.backfill_index_text import backfill_index_text
 
 EXPORT_FORMAT_VERSION = "1"
 
 
-def export_database(database_path: str | Path, output_path: str | Path) -> int:
+def export_database(
+    database_path: str | Path,
+    output_path: str | Path,
+    *,
+    settings: Settings | None = None,
+) -> int:
     """将不可变事件按 JSONL 导出。"""
-    database = Database(database_path)
+    database = Database(database_path, settings=settings)
     try:
         rows = database.open().execute("SELECT * FROM events ORDER BY recorded_at,id").fetchall()
     finally:
@@ -35,9 +42,14 @@ def export_database(database_path: str | Path, output_path: str | Path) -> int:
     return len(rows)
 
 
-def import_database(database_path: str | Path, input_path: str | Path) -> int:
+def import_database(
+    database_path: str | Path,
+    input_path: str | Path,
+    *,
+    settings: Settings | None = None,
+) -> int:
     """幂等导入 JSONL 事件档案。"""
-    database = Database(database_path)
+    database = Database(database_path, settings=settings)
     try:
         repository = EventRepository(database.open())
         imported = 0
@@ -56,9 +68,13 @@ def import_database(database_path: str | Path, input_path: str | Path) -> int:
         database.close()
 
 
-def list_conflicts(database_path: str | Path) -> list[dict[str, Any]]:
+def list_conflicts(
+    database_path: str | Path,
+    *,
+    settings: Settings | None = None,
+) -> list[dict[str, Any]]:
     """列出等待人工审核的冲突案例。"""
-    database = Database(database_path)
+    database = Database(database_path, settings=settings)
     try:
         rows = (
             database.open()
@@ -72,9 +88,15 @@ def list_conflicts(database_path: str | Path) -> list[dict[str, Any]]:
         database.close()
 
 
-def resolve_conflict(database_path: str | Path, case_id: str, decision: str) -> dict[str, Any]:
+def resolve_conflict(
+    database_path: str | Path,
+    case_id: str,
+    decision: str,
+    *,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
     """按人工决策收敛指定冲突案例。"""
-    database = Database(database_path)
+    database = Database(database_path, settings=settings)
     connection = database.open()
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -124,7 +146,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     """运行导入或导出管理命令。"""
     parser = argparse.ArgumentParser(prog="hl-mem")
     parser.add_argument("--version", action="version", version=f"hl_mem {__version__}")
-    parser.add_argument("--db", type=Path, default=default_database_path())
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--db", type=Path)
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("export", "import"):
         command = commands.add_parser(name)
@@ -155,16 +179,24 @@ def main(argv: Sequence[str] | None = None) -> None:
     backfill.add_argument("--cursor")
     doctor = commands.add_parser("doctor")
     doctor.add_argument("--db", type=Path, default=argparse.SUPPRESS)
-    doctor.add_argument("--env-file", type=Path)
+    doctor.add_argument("--config", type=Path, default=argparse.SUPPRESS)
+    doctor.add_argument("--env-file", type=Path, default=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.command == "doctor":
-        doctor_args = ["--db", str(args.db)]
+        doctor_args: list[str] = []
+        if args.db is not None:
+            doctor_args.extend(["--db", str(args.db)])
+        if args.config is not None:
+            doctor_args.extend(["--config", str(args.config)])
         if args.env_file is not None:
             doctor_args.extend(["--env-file", str(args.env_file)])
         raise SystemExit(doctor_main(doctor_args))
+    settings = load_settings(args.config, args.env_file)
+    if args.db is not None:
+        settings = replace(settings, database_path=str(args.db))
+    database_path = Path(settings.database_path)
     if args.command == "backfill-index-text":
-        settings = Settings.from_env()
-        database = Database(args.db)
+        database = Database(settings=settings)
         try:
             result = backfill_index_text(
                 database.open(),
@@ -184,7 +216,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.limit is not None and args.limit < 1:
             parser.error("--limit must be positive")
         layers = tuple(item.strip() for item in args.layers.split(",") if item.strip())
-        benchmark_result = BenchmarkRunner(limit=args.limit).run(
+        benchmark_result = BenchmarkRunner(settings=settings, limit=args.limit).run(
             source=args.source,
             subset=args.subset,
             layers=layers,
@@ -206,13 +238,22 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if args.command == "conflicts":
         conflict_result: Any = (
-            list_conflicts(args.db)
+            list_conflicts(database_path, settings=settings)
             if args.conflict_command == "list"
-            else resolve_conflict(args.db, args.case_id, args.decision)
+            else resolve_conflict(
+                database_path,
+                args.case_id,
+                args.decision,
+                settings=settings,
+            )
         )
         print(json.dumps(conflict_result, ensure_ascii=False, sort_keys=True))
         return
-    count = export_database(args.db, args.path) if args.command == "export" else import_database(args.db, args.path)
+    count = (
+        export_database(database_path, args.path, settings=settings)
+        if args.command == "export"
+        else import_database(database_path, args.path, settings=settings)
+    )
     print(json.dumps({"processed": count}))
 
 

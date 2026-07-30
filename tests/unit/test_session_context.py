@@ -211,10 +211,8 @@ def test_context_mode_off_does_not_read_events(tmp_path, monkeypatch) -> None:
     assert len(client.requests) == 1
 
 
-def test_settings_query_context_defaults_and_environment(monkeypatch) -> None:
-    monkeypatch.delenv("HL_MEM_QUERY_EXPANSION_MODE", raising=False)
-    monkeypatch.delenv("HL_MEM_QUERY_CONTEXT_MODE", raising=False)
-    settings = Settings.from_env()
+def test_settings_query_context_defaults() -> None:
+    settings = Settings()
 
     assert settings.query_expansion_mode == "off"
     assert settings.query_context_mode == "off"

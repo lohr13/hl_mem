@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import unicodedata
 from pathlib import Path
@@ -74,9 +73,8 @@ def _load_aliases(path_value: str | Path) -> dict[str, str]:
 
 def load_entity_aliases(path: str | Path | None = None) -> dict[str, str]:
     """供基础设施层调用：从路径加载实体别名映射。"""
-    configured_path = path if path is not None else os.getenv("HL_MEM_ENTITY_ALIASES_PATH")
-    if configured_path:
-        return _load_aliases(configured_path)
+    if path is not None:
+        return _load_aliases(path)
     return _normalize_default_aliases()
 
 

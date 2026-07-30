@@ -62,6 +62,7 @@ class RecallConfig:
     preference_recency_boost: float = 1.0
     dedup_threshold: float = 0.0
     dedup_candidate_limit: int = 100
+    feedback_min_samples: int = field(default_factory=lambda: Settings().feedback_min_samples)
 
 
 @dataclass
@@ -94,6 +95,7 @@ class RecallContext:
     tag_candidate_limit: int = 20
     dedup_threshold: float = 0.0
     dedup_candidate_limit: int = 100
+    feedback_min_samples: int = 3
     fts: list[dict[str, Any]] = field(default_factory=list)
     dense: list[dict[str, Any]] = field(default_factory=list)
     tags: list[dict[str, Any]] = field(default_factory=list)
@@ -421,6 +423,7 @@ def _collect_candidates(
         tag_candidate_limit=effective_tag_candidate_limit,
         dedup_threshold=config.dedup_threshold,
         dedup_candidate_limit=config.dedup_candidate_limit,
+        feedback_min_samples=config.feedback_min_samples,
         fts=fts,
         dense=dense,
         tags=tag_results,
@@ -447,7 +450,10 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
                 _visibility_filter_reason(claim, ctx.reference, ctx.known_as_of, ctx.selected_intent),
             )
     by_id = {claim["id"]: claim for claim in visible}
-    for claim_id, helpful_rate in ctx.repo.helpful_rates(list(by_id)).items():
+    for claim_id, helpful_rate in ctx.repo.helpful_rates(
+        list(by_id),
+        ctx.feedback_min_samples,
+    ).items():
         by_id[claim_id]["helpful_rate"] = helpful_rate
     channels = [(items, query_weight, channel_weight) for _, items, query_weight, channel_weight in ctx.query_channels]
     if ctx.tag_channel_enabled and ctx.tags:
@@ -548,7 +554,7 @@ def _expand_related(ctx: RecallContext) -> RecallContext:
     )
     expanded_ids = [str(claim["id"]) for claim in expanded if str(claim["id"]) not in ctx.by_id]
     expanded_by_id = {str(claim["id"]): claim for claim in expanded if str(claim["id"]) in expanded_ids}
-    helpful_rates = ctx.repo.helpful_rates(expanded_ids)
+    helpful_rates = ctx.repo.helpful_rates(expanded_ids, ctx.feedback_min_samples)
     for claim_id, claim in expanded_by_id.items():
         claim["helpful_rate"] = helpful_rates.get(claim_id, claim.get("helpful_rate", 0.5))
         ctx.by_id[claim_id] = claim

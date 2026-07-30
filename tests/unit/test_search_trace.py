@@ -46,7 +46,7 @@ class _Repo:
     def search_claims_vector(self, *_args, **_kwargs):
         return list(reversed(self.claims))
 
-    def helpful_rates(self, _claim_ids):
+    def helpful_rates(self, _claim_ids, _min_samples):
         return {}
 
 

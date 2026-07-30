@@ -15,6 +15,7 @@ from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import Embedder
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.llm_extractor import LLMExtractor
+from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
@@ -134,13 +135,11 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
         database.close()
 
     worker = Worker(
-        db_path,
-        {
-            "extractor": extractor,
-            "embedder": embedder,
-            "budget": budget,
-            "event_filter": EventFilter(),
-        },
+        Settings(database_path=str(db_path), extractor_mode="real"),
+        extractor=extractor,
+        embedder=embedder,
+        budget=budget,
+        event_filter=EventFilter(),
     )
     try:
         for _ in range(len(events) + 3):

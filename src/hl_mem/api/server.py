@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
@@ -68,10 +69,12 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def create_app(database_path: str | Path | None = None, audit: Any = None) -> FastAPI:
-    """按环境配置组装数据库、应用服务、审计和全部 REST 路由。"""
-    settings = Settings.from_env()
-    database = Database(database_path or settings.database_path)
+def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
+    """使用已加载的统一配置组装数据库、应用服务、审计和全部 REST 路由。"""
+    if not isinstance(settings, Settings):
+        settings = replace(Settings(), database_path=str(settings))
+    components.initialize_process(settings)
+    database = Database(settings=settings)
     embedder = components.make_embedder(settings)
     reranker = components.make_reranker(settings)
     budget = TokenBudget(settings.daily_token_limit, Path(database.path).with_suffix(".budget.db"))
@@ -426,6 +429,3 @@ def create_app(database_path: str | Path | None = None, audit: Any = None) -> Fa
         return {**repository.counts(), "jobs": repository.list_jobs()}
 
     return app
-
-
-app = create_app()

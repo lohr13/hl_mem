@@ -37,7 +37,12 @@ def test_expired_active_claims_are_expired(tmp_path) -> None:
         }
     )
     # Both past claims should expire now (regardless of volatility)
-    assert expire_claims(connection, "2026-06-01T00:00:00+00:00") == {"expired": 2}
+    assert expire_claims(
+        connection,
+        "2026-06-01T00:00:00+00:00",
+        feedback_lifecycle_mode="observe",
+        slot_short_ttl_seconds=86400,
+    ) == {"expired": 2}
     statuses = {row["id"]: row["status"] for row in connection.execute("SELECT id,status FROM claims").fetchall()}
     assert statuses == {
         "past_ephemeral": "expired",

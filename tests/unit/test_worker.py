@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 
 import hl_mem.workers.worker as worker_module
+from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
@@ -40,10 +41,11 @@ def test_run_once_extracts_and_completes(tmp_path) -> None:
     path = tmp_path / "worker.db"
     connection = Database(path).open()
     queue(connection)
-    result = Worker(path, {"embedding_dim": 8}).run_once()
+    settings = Settings(database_path=str(path), embedding_dim=8)
+    result = Worker(settings).run_once()
     assert result["status"] == "succeeded" and result["claims"] == 1
     # Run again to process any relation-discovery job queued after extraction
-    Worker(path, {"embedding_dim": 8}).run_once()
+    Worker(settings).run_once()
     assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] >= 1
     assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
 
@@ -57,7 +59,10 @@ def test_failure_retries_then_becomes_dead(tmp_path) -> None:
     path = tmp_path / "failure.db"
     connection = Database(path).open()
     queue(connection, max_attempts=2)
-    worker = Worker(path, {"extractor": BrokenExtractor(), "embedding_dim": 8})
+    worker = Worker(
+        Settings(database_path=str(path), embedding_dim=8),
+        extractor=BrokenExtractor(),
+    )
     assert worker.run_once()["status"] == "pending"
     assert worker.run_once()["status"] == "dead"
 

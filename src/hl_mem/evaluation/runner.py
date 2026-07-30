@@ -119,7 +119,7 @@ class BenchmarkRunner:
         layers: Sequence[str],
         database_path: Path,
     ) -> dict[str, Any]:
-        database = Database(database_path)
+        database = Database(database_path, settings=self.settings)
         connection = database.open()
         result: dict[str, Any] = {
             "case_id": case.case_id,
@@ -210,9 +210,28 @@ class BenchmarkRunner:
         assertions: list[dict[str, Any]] = []
         for checkpoint in case.lifecycle_checkpoints:
             if checkpoint.worker_action == "expire_ttl":
-                expire_claims(connection, checkpoint.at)
+                expire_claims(
+                    connection,
+                    checkpoint.at,
+                    feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
+                    slot_short_ttl_seconds=self.settings.slot_short_ttl_seconds,
+                )
             elif checkpoint.worker_action == "decay_access":
-                decay_claims(connection, checkpoint.at)
+                decay_claims(
+                    connection,
+                    checkpoint.at,
+                    temporal_decay_days=self.settings.decay_temporal_days,
+                    temporal_archive_days=self.settings.archive_temporal_days,
+                    permanent_decay_days=self.settings.decay_permanent_days,
+                    permanent_archive_days=self.settings.archive_permanent_days,
+                    access_bonus_every=self.settings.access_bonus_every,
+                    access_bonus_days=self.settings.access_bonus_days,
+                    access_bonus_cap_days=self.settings.access_bonus_cap_days,
+                    rollout_grace_days=self.settings.decay_rollout_grace_days,
+                    min_confidence=self.settings.decay_min_confidence,
+                    feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
+                    feedback_bonus_cap_days=self.settings.feedback_bonus_cap_days,
+                )
             claims, evidence = self._claims_and_evidence(connection)
             actual_visible: set[str] = set()
             status_by_event: dict[str, str] = {}

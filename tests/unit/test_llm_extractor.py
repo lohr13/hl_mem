@@ -155,11 +155,10 @@ def test_llm_client_has_configured_retry() -> None:
     assert client.max_attempts == 3
 
 
-def test_timeout_reads_from_env(monkeypatch) -> None:
-    monkeypatch.setenv("LLM_TIMEOUT", "60")
+def test_timeout_is_configurable() -> None:
     from hl_mem.settings import Settings
 
-    settings = Settings.from_env()
+    settings = Settings(llm_timeout=60.0)
     assert settings.llm_timeout == 60.0
 
 

@@ -91,14 +91,12 @@ def test_large_batch_does_not_crash() -> None:
     assert len(scores) == len(targets)
 
 
-def test_vector_batch_size_settings_contract(monkeypatch) -> None:
-    """批大小应从环境读取、进入快照并拒绝非正整数。"""
-    monkeypatch.setenv("HL_MEM_VECTOR_BATCH_SIZE", "64")
-    settings = Settings.from_env()
+def test_vector_batch_size_settings_contract() -> None:
+    """批大小应进入快照并拒绝非正整数。"""
+    settings = Settings(vector_batch_size=64)
 
     assert settings.vector_batch_size == 64
     assert settings.snapshot()["vector_batch_size"] == 64
 
-    monkeypatch.setenv("HL_MEM_VECTOR_BATCH_SIZE", "0")
     with pytest.raises(ConfigurationError, match="HL_MEM_VECTOR_BATCH_SIZE must be positive"):
-        Settings.from_env()
+        Settings(vector_batch_size=0).validate()

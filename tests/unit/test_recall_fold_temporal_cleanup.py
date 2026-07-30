@@ -249,7 +249,12 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
             repo.insert_claim({**base, "id": "decision", "canonical_attribute": "fact.decision"})
             repo.insert_claim({**base, "id": "other", "canonical_attribute": "fact.capability"})
 
-            result = cleanup_stale_temporal_claims(connection, "2026-07-26T00:00:00+00:00")
+            result = cleanup_stale_temporal_claims(
+                connection,
+                "2026-07-26T00:00:00+00:00",
+                age_days=30,
+                expiry_days=90,
+            )
 
             self.assertEqual(result, {"expired_at_set": 1, "promoted": 1})
             state = connection.execute(
@@ -266,7 +271,15 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
                 connection.execute("SELECT expires_at FROM claims WHERE id=?", ("other",)).fetchone()[0],
                 None,
             )
-            self.assertEqual(expire_claims(connection, "2026-07-26T00:00:00+00:00"), {"expired": 1})
+            self.assertEqual(
+                expire_claims(
+                    connection,
+                    "2026-07-26T00:00:00+00:00",
+                    feedback_lifecycle_mode="observe",
+                    slot_short_ttl_seconds=86400,
+                ),
+                {"expired": 1},
+            )
             connection.close()
 
     def test_ttl_scan_uses_180_day_candidate_window(self) -> None:
@@ -278,7 +291,12 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
                 statements: list[str] = []
                 connection.set_trace_callback(statements.append)
 
-                expire_claims(connection, "2026-07-26T00:00:00+00:00")
+                expire_claims(
+                    connection,
+                    "2026-07-26T00:00:00+00:00",
+                    feedback_lifecycle_mode="observe",
+                    slot_short_ttl_seconds=86400,
+                )
 
                 normalized = [" ".join(statement.split()).lower() for statement in statements]
                 self.assertTrue(
@@ -362,6 +380,8 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
                 result = cleanup_stale_temporal_claims(
                     _BeforeBeginConnection(cleanup_connection, reclassify),
                     "2026-07-26T00:00:00+00:00",
+                    age_days=30,
+                    expiry_days=90,
                 )
 
                 row = cleanup_connection.execute(

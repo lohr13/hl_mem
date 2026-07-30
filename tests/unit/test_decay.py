@@ -7,12 +7,26 @@ from datetime import datetime, timedelta
 import pytest
 
 from hl_mem.ingest.embedder import pack_vector
+from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.decay import decay_claims
 from hl_mem.workers.worker import Worker, dispatch_job
 
 NOW = "2026-07-21T00:00:00+00:00"
+DECAY_ARGS = {
+    "temporal_decay_days": 90,
+    "temporal_archive_days": 180,
+    "permanent_decay_days": 180,
+    "permanent_archive_days": 365,
+    "access_bonus_every": 10,
+    "access_bonus_days": 30,
+    "access_bonus_cap_days": 365,
+    "rollout_grace_days": 7,
+    "min_confidence": 0.05,
+    "feedback_lifecycle_mode": "observe",
+    "feedback_bonus_cap_days": 180,
+}
 
 
 def _claim(connection, claim_id="c", **values):
@@ -49,7 +63,7 @@ def test_decay_boundaries(tmp_path, scope, days, expected):
     connection = _decay_db(tmp_path)
     recorded = (datetime.fromisoformat(NOW) - timedelta(days=days)).isoformat()
     _claim(connection, scope=scope, recorded_from=recorded, last_accessed_at=recorded)
-    decay_claims(connection, NOW)
+    decay_claims(connection, NOW, **DECAY_ARGS)
     assert connection.execute("SELECT status FROM claims").fetchone()[0] == expected
 
 
@@ -64,7 +78,7 @@ def test_decay_access_count_bonus_extends_threshold(tmp_path):
         last_accessed_at=recorded,
         access_count=50,
     )
-    decay_claims(connection, NOW)
+    decay_claims(connection, NOW, **DECAY_ARGS)
     assert connection.execute("SELECT status FROM claims").fetchone()[0] == "active"
 
     connection2 = _decay_db(tmp_path)
@@ -77,7 +91,7 @@ def test_decay_access_count_bonus_extends_threshold(tmp_path):
         last_accessed_at=recorded2,
         access_count=50,
     )
-    decay_claims(connection2, NOW)
+    decay_claims(connection2, NOW, **DECAY_ARGS)
     assert connection2.execute("SELECT status FROM claims WHERE id='c2'").fetchone()[0] == "archived"
 
 
@@ -92,7 +106,7 @@ def test_decay_access_count_bonus_capped_at_365(tmp_path):
         last_accessed_at=recorded,
         access_count=1000,
     )
-    decay_claims(connection, NOW)
+    decay_claims(connection, NOW, **DECAY_ARGS)
     assert connection.execute("SELECT status FROM claims").fetchone()[0] == "active"
 
 
@@ -106,9 +120,9 @@ def test_decay_elapsed_linear_once_daily_and_floor(tmp_path):
         last_accessed_at=recorded,
         confidence=0.08,
     )
-    assert decay_claims(connection, NOW) == {"decayed": 1, "archived": 0}
+    assert decay_claims(connection, NOW, **DECAY_ARGS) == {"decayed": 1, "archived": 0}
     assert connection.execute("SELECT confidence FROM claims").fetchone()[0] == pytest.approx(0.05)
-    assert decay_claims(connection, "2026-07-21T12:00:00+00:00")["decayed"] == 0
+    assert decay_claims(connection, "2026-07-21T12:00:00+00:00", **DECAY_ARGS)["decayed"] == 0
 
 
 def test_decay_archive_keeps_evidence_and_clears_embedding(tmp_path):
@@ -120,7 +134,7 @@ def test_decay_archive_keeps_evidence_and_clears_embedding(tmp_path):
         "VALUES ('l','claim','c','event','e','derived_from')"
     )
     connection.commit()
-    decay_claims(connection, NOW)
+    decay_claims(connection, NOW, **DECAY_ARGS)
     row = connection.execute("SELECT status,embedding_dense FROM claims").fetchone()
     assert tuple(row) == ("archived", None)
     assert connection.execute("SELECT count(*) FROM evidence_links").fetchone()[0] == 1
@@ -132,11 +146,11 @@ def test_decay_rollout_grace_exempts_preexisting_unaccessed(tmp_path):
         "UPDATE schema_migrations SET applied_at='2026-07-20 00:00:00' WHERE version='005_memory_management'"
     )
     _claim(connection, recorded_from="2020-01-01T00:00:00+00:00", last_accessed_at=None)
-    assert decay_claims(connection, NOW)["archived"] == 0
+    assert decay_claims(connection, NOW, **DECAY_ARGS)["archived"] == 0
 
 
 def test_worker_decay_dispatch(tmp_path):
-    worker = Worker(tmp_path / "worker.db", {"embedding_dim": 2})
+    worker = Worker(Settings(database_path=str(tmp_path / "worker.db"), embedding_dim=2))
     assert dispatch_job(worker, {"job_type": "decay_access"}) == {
         "decayed": 0,
         "archived": 0,

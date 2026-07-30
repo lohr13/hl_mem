@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal, overload
+from typing import Any, Literal
 
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.errors import ConfigurationError
@@ -27,137 +26,6 @@ RelevanceGateMode = Literal["off", "observe", "enforce"]
 ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
 IndexTextMode = Literal["legacy", "value_only", "natural", "answerable"]
-
-
-@overload
-def _env_choice(name: str, default: EmbedderMode, allowed: tuple[Literal["fake"], Literal["real"]]) -> EmbedderMode: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: RerankerMode,
-    allowed: tuple[Literal["off"], Literal["fake"], Literal["on"], Literal["real"]],
-) -> RerankerMode: ...
-
-
-@overload
-def _env_choice(name: str, default: RerankerProvider, allowed: tuple[Literal["dashscope"]]) -> RerankerProvider: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: RelationExpansionMode,
-    allowed: tuple[Literal["off"], Literal["on"]],
-) -> RelationExpansionMode: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: RelationDiscoveryMode,
-    allowed: tuple[Literal["off"], Literal["audit"], Literal["auto"]],
-) -> RelationDiscoveryMode: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: QueryExpansionMode,
-    allowed: tuple[Literal["off"], Literal["auto"], Literal["always"]],
-) -> QueryExpansionMode: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: QueryContextMode,
-    allowed: tuple[Literal["off"], Literal["coreference"]],
-) -> QueryContextMode: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: ProcedureRecallMode,
-    allowed: tuple[Literal["off"], Literal["keyword"], Literal["auto"]],
-) -> ProcedureRecallMode: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: ExtractorMode,
-    allowed: tuple[Literal["fake"], Literal["real"], Literal["llm"]],
-) -> ExtractorMode: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: LLMProvider,
-    allowed: tuple[Literal["dashscope"], Literal["zhipu"], Literal["openai_compatible"]],
-) -> LLMProvider: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: StructuredOutputModeName,
-    allowed: tuple[Literal["auto"], Literal["json_object"], Literal["json_schema"]],
-) -> StructuredOutputModeName: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: FeedbackLifecycleMode,
-    allowed: tuple[Literal["off"], Literal["observe"], Literal["on"]],
-) -> FeedbackLifecycleMode: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: RelevanceGateMode,
-    allowed: tuple[Literal["off"], Literal["observe"], Literal["enforce"]],
-) -> RelevanceGateMode: ...
-
-
-@overload
-def _env_choice(
-    name: str,
-    default: IndexTextMode,
-    allowed: tuple[Literal["legacy"], Literal["value_only"], Literal["natural"], Literal["answerable"]],
-) -> IndexTextMode: ...
-
-
-def _env_choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
-    """读取、规范化并校验枚举型环境变量。"""
-    value = os.getenv(name, default).strip().lower()
-    if value not in allowed:
-        choices = ", ".join(repr(item) for item in allowed)
-        raise ConfigurationError(f"{name} must be one of: {choices}")
-    return value
-
-
-def _parse_on_off(value: str, variable_name: str) -> bool:
-    """严格解析 on/off 环境变量。"""
-    normalized = value.strip().lower()
-    if normalized not in {"on", "off"}:
-        raise ConfigurationError(f"{variable_name} must be 'on' or 'off'")
-    return normalized == "on"
-
-
-def _parse_bool(value: str, variable_name: str) -> bool:
-    """解析显式布尔环境变量，同时兼容 true/false 与 on/off。"""
-    normalized = value.strip().lower()
-    if normalized in {"true", "on"}:
-        return True
-    if normalized in {"false", "off"}:
-        return False
-    raise ConfigurationError(f"{variable_name} must be 'true' or 'false'")
 
 
 class VectorBackend(StrEnum):
@@ -194,359 +62,408 @@ def parse_daily_cron(value: str, variable_name: str) -> int:
 class Settings:
     """全局非敏感配置快照。"""
 
-    database_path: str = "var/hl_mem.db"
-    database_pool_size: int = 8
-    database_busy_timeout_seconds: int = 30
-    entity_aliases_path: str | None = None
-    embedder_mode: EmbedderMode = "fake"
-    embedding_dim: int = 2048
-    embedding_api_key: str | None = None
-    embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    embedding_model: str = "text-embedding-v4"
-    embedding_connect_timeout: float = 5.0
-    embedding_read_timeout: float = 30.0
-    embedding_max_attempts: int = 3
-    index_text_mode: IndexTextMode = "legacy"
-    index_backfill_batch_size: int = 100
-    index_backfill_max_attempts: int = 3
-    index_text_version: str = "v1"
-    reranker_mode: RerankerMode = "off"
-    reranker_provider: RerankerProvider = "dashscope"
-    reranker_api_key: str | None = None
-    reranker_base_url: str = "https://dashscope.aliyuncs.com"
-    reranker_model: str = "gte-rerank-v2"
-    relation_expansion_mode: RelationExpansionMode = "off"
-    relation_expansion_max_depth: int = 1
+    database_path: str = field(default="var/hl_mem.db", metadata={"toml": "database.path"})
+    database_pool_size: int = field(default=8, metadata={"toml": "database.pool_size"})
+    database_busy_timeout_seconds: int = field(
+        default=30,
+        metadata={"toml": "database.busy_timeout_seconds"},
+    )
+    entity_aliases_path: str | None = field(default=None, metadata={"toml": "entity.aliases_path"})
+    embedder_mode: EmbedderMode = field(default="fake", metadata={"toml": "embedding.mode"})
+    embedding_dim: int = field(default=2048, metadata={"toml": "embedding.dim"})
+    embedding_api_key: str | None = field(
+        default=None,
+        repr=False,
+        metadata={"secret_env": "EMBEDDING_API_KEY"},
+    )
+    embedding_base_url: str = field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        metadata={"toml": "embedding.base_url"},
+    )
+    embedding_model: str = field(default="text-embedding-v4", metadata={"toml": "embedding.model"})
+    embedding_connect_timeout: float = field(
+        default=5.0,
+        metadata={"toml": "embedding.connect_timeout"},
+    )
+    embedding_read_timeout: float = field(default=30.0, metadata={"toml": "embedding.read_timeout"})
+    embedding_max_attempts: int = field(default=3, metadata={"toml": "embedding.max_attempts"})
+    index_text_mode: IndexTextMode = field(default="legacy", metadata={"toml": "index.text_mode"})
+    index_backfill_batch_size: int = field(default=100, metadata={"toml": "index.backfill_batch_size"})
+    index_backfill_max_attempts: int = field(
+        default=3,
+        metadata={"toml": "index.backfill_max_attempts"},
+    )
+    index_text_version: str = field(default="v1", metadata={"toml": "index.text_version"})
+    reranker_mode: RerankerMode = field(default="off", metadata={"toml": "reranker.mode"})
+    reranker_provider: RerankerProvider = field(
+        default="dashscope",
+        metadata={"toml": "reranker.provider"},
+    )
+    reranker_api_key: str | None = field(
+        default=None,
+        repr=False,
+        metadata={"secret_env": "RERANKER_API_KEY"},
+    )
+    reranker_base_url: str = field(
+        default="https://dashscope.aliyuncs.com",
+        metadata={"toml": "reranker.base_url"},
+    )
+    reranker_model: str = field(default="gte-rerank-v2", metadata={"toml": "reranker.model"})
+    relation_expansion_mode: RelationExpansionMode = field(
+        default="off",
+        metadata={"toml": "relation.expansion_mode"},
+    )
+    relation_expansion_max_depth: int = field(
+        default=1,
+        metadata={"toml": "relation.expansion_max_depth"},
+    )
     # relation_discovery: audit 只记录候选 proposal，不自动写入关系边
-    relation_discovery_mode: RelationDiscoveryMode = "off"
-    relation_discovery_pool_limit: int = 40
-    relation_discovery_max_proposals: int = 10
-    relation_auto_apply_confidence: float = 0.90
-    relation_conflict_confidence: float = 0.80
-    recall_default_limit: int = 20
-    recall_vector_scan_limit: int = 200
-    packed_context_token_budget: int = 2000
-    recall_candidate_floor: int = 50
-    recall_dedup_threshold: float = 0.95
-    recall_dedup_candidate_limit: int = 100
-    relevance_gate_mode: RelevanceGateMode = "off"
-    relevance_reranker_floor: float = 0.4
-    relevance_dense_floor: float = 0.3
-    relevance_relative_drop: float = 0.15
-    relevance_keep_top1: bool = True
-    relevance_intents: tuple[str, ...] = ("current_state",)
-    preference_recency_boost: float = 0.12
-    tag_boost_enabled: bool = True
-    tag_boost_weight: float = 0.05
-    tag_channel_enabled: bool = False
-    tag_channel_weight: float = 0.15
-    tag_candidate_limit: int = 20
+    relation_discovery_mode: RelationDiscoveryMode = field(
+        default="off",
+        metadata={"toml": "relation.discovery_mode"},
+    )
+    relation_discovery_pool_limit: int = field(
+        default=40,
+        metadata={"toml": "relation.discovery_pool_limit"},
+    )
+    relation_discovery_max_proposals: int = field(
+        default=10,
+        metadata={"toml": "relation.discovery_max_proposals"},
+    )
+    relation_auto_apply_confidence: float = field(
+        default=0.90,
+        metadata={"toml": "relation.auto_apply_confidence"},
+    )
+    relation_conflict_confidence: float = field(
+        default=0.80,
+        metadata={"toml": "relation.conflict_confidence"},
+    )
+    recall_default_limit: int = field(default=20, metadata={"toml": "recall.default_limit"})
+    recall_vector_scan_limit: int = field(default=200, metadata={"toml": "recall.vector_scan_limit"})
+    packed_context_token_budget: int = field(
+        default=2000,
+        metadata={"toml": "recall.packed_context_token_budget"},
+    )
+    recall_candidate_floor: int = field(default=50, metadata={"toml": "recall.candidate_floor"})
+    recall_dedup_threshold: float = field(default=0.95, metadata={"toml": "recall.dedup_threshold"})
+    recall_dedup_candidate_limit: int = field(
+        default=100,
+        metadata={"toml": "recall.dedup_candidate_limit"},
+    )
+    relevance_gate_mode: RelevanceGateMode = field(
+        default="off",
+        metadata={"toml": "recall.relevance_gate_mode"},
+    )
+    relevance_reranker_floor: float = field(
+        default=0.4,
+        metadata={"toml": "recall.relevance_reranker_floor"},
+    )
+    relevance_dense_floor: float = field(
+        default=0.3,
+        metadata={"toml": "recall.relevance_dense_floor"},
+    )
+    relevance_relative_drop: float = field(
+        default=0.15,
+        metadata={"toml": "recall.relevance_relative_drop"},
+    )
+    relevance_keep_top1: bool = field(default=True, metadata={"toml": "recall.relevance_keep_top1"})
+    relevance_intents: tuple[str, ...] = field(
+        default=("current_state",),
+        metadata={"toml": "recall.relevance_intents"},
+    )
+    preference_recency_boost: float = field(
+        default=0.12,
+        metadata={"toml": "recall.preference_recency_boost"},
+    )
+    tag_boost_enabled: bool = field(default=True, metadata={"toml": "recall.tag_boost_enabled"})
+    tag_boost_weight: float = field(default=0.05, metadata={"toml": "recall.tag_boost_weight"})
+    tag_channel_enabled: bool = field(default=False, metadata={"toml": "recall.tag_channel_enabled"})
+    tag_channel_weight: float = field(default=0.15, metadata={"toml": "recall.tag_channel_weight"})
+    tag_candidate_limit: int = field(default=20, metadata={"toml": "recall.tag_candidate_limit"})
     # query_expansion: auto 仅在短查询或指代查询时触发 LLM 改写，提升 recall
-    query_expansion_mode: QueryExpansionMode = "off"
-    query_expansion_max: int = 2
-    query_expansion_candidate_floor: int = 8
-    query_expansion_token_ceiling: int = 256
-    query_expansion_timeout_seconds: float = 2.0
-    query_expansion_total_timeout_seconds: float = 3.0
-    query_expansion_max_concurrency: int = 4
-    query_context_mode: QueryContextMode = "off"
-    query_context_max_events: int = 5
-    query_context_token_budget: int = 256
+    query_expansion_mode: QueryExpansionMode = field(
+        default="off",
+        metadata={"toml": "recall.query_expansion_mode"},
+    )
+    query_expansion_max: int = field(default=2, metadata={"toml": "recall.query_expansion_max"})
+    query_expansion_candidate_floor: int = field(
+        default=8,
+        metadata={"toml": "recall.query_expansion_candidate_floor"},
+    )
+    query_expansion_token_ceiling: int = field(
+        default=256,
+        metadata={"toml": "recall.query_expansion_token_ceiling"},
+    )
+    query_expansion_timeout_seconds: float = field(
+        default=2.0,
+        metadata={"toml": "recall.query_expansion_timeout_seconds"},
+    )
+    query_expansion_total_timeout_seconds: float = field(
+        default=3.0,
+        metadata={"toml": "recall.query_expansion_total_timeout_seconds"},
+    )
+    query_expansion_max_concurrency: int = field(
+        default=4,
+        metadata={"toml": "recall.query_expansion_max_concurrency"},
+    )
+    query_context_mode: QueryContextMode = field(default="off", metadata={"toml": "recall.query_context_mode"})
+    query_context_max_events: int = field(
+        default=5,
+        metadata={"toml": "recall.query_context_max_events"},
+    )
+    query_context_token_budget: int = field(
+        default=256,
+        metadata={"toml": "recall.query_context_token_budget"},
+    )
     # procedure_recall: keyword 为纯确定性路由，仅 TOOL/PROCEDURE intent 进入 Experience pipeline
-    procedure_recall_mode: ProcedureRecallMode = "keyword"
-    procedure_llm_threshold: float = 0.80
-    procedure_router_timeout_seconds: float = 1.5
-    procedure_candidate_limit: int = 30
-    procedure_recent_outcome_window: int = 20
-    procedure_outcome_half_life_days: int = 30
-    recall_side_effect_max_attempts: int = 3
-    recall_side_effect_backoff_seconds: float = 0.05
-    vector_backend: VectorBackend = VectorBackend.SQLITE_SCAN
-    vector_batch_size: int = 512
-    hermes_enabled: bool = False
-    hermes_url: str = "http://127.0.0.1:8200"
-    hermes_timeout: int = 30
-    hermes_home: str | None = None
-    hermes_circuit_failure_threshold: int = 5
-    hermes_circuit_open_seconds: float = 60.0
-    hermes_prefetch_cache_ttl_seconds: float = 300.0
-    policy_induction_lookback_days: int = 7
-    policy_induction_min_episodes: int = 3
-    extractor_mode: ExtractorMode = "fake"
-    extract_pre_filter: bool = False
-    llm_api_key: str | None = None
-    llm_base_url: str = "https://coding.dashscope.aliyuncs.com/v1"
-    llm_model: str = "glm-5.2"
-    llm_provider: LLMProvider = "dashscope"
-    llm_structured_mode: StructuredOutputModeName = "json_object"
-    enable_llm_thinking: bool = False
-    llm_timeout: float = 90.0
-    llm_max_attempts: int = 3
-    llm_schema_retries: int = 2
-    # image_describer: 当前没有图片输入源；接入视觉 API 后可通过 HL_MEM_IMAGE_DESCRIBER_MODE=on 开启
-    image_describer_mode: ImageDescriberMode = "off"
-    image_describer_provider: ImageDescriberProvider = "dashscope"
-    image_describer_api_key: str | None = None
-    image_describer_base_url: str = "https://coding.dashscope.aliyuncs.com/v1"
-    image_describer_model: str = "qwen3.7-plus"
-    image_describer_timeout_seconds: float = 20.0
-    image_max_bytes: int = 10485760
-    image_max_parts: int = 4
-    image_allow_file_uris: bool = False
-    image_file_allow_roots: tuple[str, ...] = ()
-    extraction_chunk_target_chars: int = 12000
-    extraction_chunk_overlap_turns: int = 2
-    extraction_max_split_depth: int = 3
-    worker_poll_interval: float = 2.0
-    worker_maintenance_interval: float = 600.0
-    worker_job_lease_minutes: int = 5
-    daily_token_limit: int = 500000
-    audit_retention_days: int = 30
-    retention_days: int = 30
-    consolidate_cron: str = "03:30"
-    consolidate_batch_size: int = 100
-    consolidate_confidence: float = 0.8
-    dedup_enabled: bool = True
-    dedup_threshold: float = 0.92
-    dedup_audit_only: bool = True
-    dedup_auto_merge_min_confidence: float = 0.98
-    dedup_scan_limit: int = 200
-    dedup_cron: str = "03:00"
-    induce_policies_cron: str = "04:00"
-    reclassify_cron: str = "04:30"
-    memory_temporal_ttl_days: int = 7
-    temporal_ttl_days_low: int = 3
-    temporal_ttl_days_normal: int = 7
-    temporal_ttl_days_high: int = 14
-    importance_low_threshold: float = 0.4
-    importance_high_threshold: float = 0.7
-    importance_write_floor: float = 0.2
-    slot_short_ttl_seconds: int = 86400
-    ttl_backfill_batch_size: int = 100
-    ttl_backfill_grace_hours: int = 0
-    temporal_cleanup_age_days: int = 30
-    temporal_cleanup_expiry_days: int = 90
-    decay_temporal_days: int = 7
-    archive_temporal_days: int = 30
-    decay_permanent_days: int = 90
-    archive_permanent_days: int = 180
-    access_bonus_every: int = 5
-    access_bonus_days: int = 1
-    access_bonus_cap_days: int = 30
-    decay_rollout_grace_days: int = 7
-    decay_min_confidence: float = 0.05
+    procedure_recall_mode: ProcedureRecallMode = field(
+        default="keyword",
+        metadata={"toml": "recall.procedure_mode"},
+    )
+    procedure_llm_threshold: float = field(
+        default=0.80,
+        metadata={"toml": "recall.procedure_llm_threshold"},
+    )
+    procedure_router_timeout_seconds: float = field(
+        default=1.5,
+        metadata={"toml": "recall.procedure_router_timeout_seconds"},
+    )
+    procedure_candidate_limit: int = field(
+        default=30,
+        metadata={"toml": "recall.procedure_candidate_limit"},
+    )
+    procedure_recent_outcome_window: int = field(
+        default=20,
+        metadata={"toml": "recall.procedure_recent_outcome_window"},
+    )
+    procedure_outcome_half_life_days: int = field(
+        default=30,
+        metadata={"toml": "recall.procedure_outcome_half_life_days"},
+    )
+    recall_side_effect_max_attempts: int = field(
+        default=3,
+        metadata={"toml": "recall.side_effect_max_attempts"},
+    )
+    recall_side_effect_backoff_seconds: float = field(
+        default=0.05,
+        metadata={"toml": "recall.side_effect_backoff_seconds"},
+    )
+    vector_backend: VectorBackend = field(
+        default=VectorBackend.SQLITE_SCAN,
+        metadata={"toml": "recall.vector_backend"},
+    )
+    vector_batch_size: int = field(default=512, metadata={"toml": "recall.vector_batch_size"})
+    hermes_enabled: bool = field(default=False, metadata={"toml": "hermes.enabled"})
+    hermes_url: str = field(default="http://127.0.0.1:8200", metadata={"toml": "hermes.url"})
+    hermes_timeout: int = field(default=30, metadata={"toml": "hermes.timeout"})
+    hermes_home: str | None = field(default=None, metadata={"toml": "hermes.home"})
+    hermes_circuit_failure_threshold: int = field(
+        default=5,
+        metadata={"toml": "hermes.circuit_failure_threshold"},
+    )
+    hermes_circuit_open_seconds: float = field(
+        default=60.0,
+        metadata={"toml": "hermes.circuit_open_seconds"},
+    )
+    hermes_prefetch_cache_ttl_seconds: float = field(
+        default=300.0,
+        metadata={"toml": "hermes.prefetch_cache_ttl_seconds"},
+    )
+    policy_induction_lookback_days: int = field(
+        default=7,
+        metadata={"toml": "worker.policy_induction_lookback_days"},
+    )
+    policy_induction_min_episodes: int = field(
+        default=3,
+        metadata={"toml": "worker.policy_induction_min_episodes"},
+    )
+    extractor_mode: ExtractorMode = field(default="fake", metadata={"toml": "extraction.mode"})
+    extract_pre_filter: bool = field(default=False, metadata={"toml": "extraction.pre_filter"})
+    llm_api_key: str | None = field(
+        default=None,
+        repr=False,
+        metadata={"secret_env": "LLM_API_KEY"},
+    )
+    llm_base_url: str = field(
+        default="https://coding.dashscope.aliyuncs.com/v1",
+        metadata={"toml": "llm.base_url"},
+    )
+    llm_model: str = field(default="glm-5.2", metadata={"toml": "llm.model"})
+    llm_provider: LLMProvider = field(default="dashscope", metadata={"toml": "llm.provider"})
+    llm_structured_mode: StructuredOutputModeName = field(
+        default="json_object",
+        metadata={"toml": "llm.structured_mode"},
+    )
+    enable_llm_thinking: bool = field(default=False, metadata={"toml": "llm.enable_thinking"})
+    llm_timeout: float = field(default=90.0, metadata={"toml": "llm.timeout"})
+    llm_max_attempts: int = field(default=3, metadata={"toml": "llm.max_attempts"})
+    llm_schema_retries: int = field(default=2, metadata={"toml": "llm.schema_retries"})
+    image_describer_mode: ImageDescriberMode = field(
+        default="off",
+        metadata={"toml": "image_describer.mode"},
+    )
+    image_describer_provider: ImageDescriberProvider = field(
+        default="dashscope",
+        metadata={"toml": "image_describer.provider"},
+    )
+    image_describer_api_key: str | None = field(
+        default=None,
+        repr=False,
+        metadata={"secret_env": "IMAGE_API_KEY"},
+    )
+    image_describer_base_url: str = field(
+        default="https://coding.dashscope.aliyuncs.com/v1",
+        metadata={"toml": "image_describer.base_url"},
+    )
+    image_describer_model: str = field(
+        default="qwen3.7-plus",
+        metadata={"toml": "image_describer.model"},
+    )
+    image_describer_timeout_seconds: float = field(
+        default=20.0,
+        metadata={"toml": "image_describer.timeout_seconds"},
+    )
+    image_max_bytes: int = field(default=10485760, metadata={"toml": "image_describer.max_bytes"})
+    image_max_parts: int = field(default=4, metadata={"toml": "image_describer.max_parts"})
+    image_allow_file_uris: bool = field(
+        default=False,
+        metadata={"toml": "image_describer.allow_file_uris"},
+    )
+    image_file_allow_roots: tuple[str, ...] = field(
+        default=(),
+        metadata={"toml": "image_describer.file_allow_roots"},
+    )
+    extraction_chunk_target_chars: int = field(
+        default=12000,
+        metadata={"toml": "extraction.chunk_target_chars"},
+    )
+    extraction_chunk_overlap_turns: int = field(
+        default=2,
+        metadata={"toml": "extraction.chunk_overlap_turns"},
+    )
+    extraction_max_split_depth: int = field(
+        default=3,
+        metadata={"toml": "extraction.max_split_depth"},
+    )
+    worker_poll_interval: float = field(default=2.0, metadata={"toml": "worker.poll_interval"})
+    worker_maintenance_interval: float = field(
+        default=600.0,
+        metadata={"toml": "worker.maintenance_interval"},
+    )
+    worker_job_lease_minutes: int = field(default=5, metadata={"toml": "worker.job_lease_minutes"})
+    daily_token_limit: int = field(default=500000, metadata={"toml": "worker.daily_token_limit"})
+    audit_retention_days: int = field(default=30, metadata={"toml": "worker.audit_retention_days"})
+    retention_days: int = field(default=30, metadata={"toml": "retention.event_days"})
+    consolidate_cron: str = field(default="03:30", metadata={"toml": "worker.consolidate_cron"})
+    consolidate_batch_size: int = field(default=100, metadata={"toml": "worker.consolidate_batch_size"})
+    consolidate_confidence: float = field(
+        default=0.8,
+        metadata={"toml": "worker.consolidate_confidence"},
+    )
+    dedup_enabled: bool = field(default=True, metadata={"toml": "dedup.enabled"})
+    dedup_threshold: float = field(default=0.92, metadata={"toml": "dedup.threshold"})
+    dedup_audit_only: bool = field(default=True, metadata={"toml": "dedup.audit_only"})
+    dedup_auto_merge_min_confidence: float = field(
+        default=0.98,
+        metadata={"toml": "dedup.auto_merge_min_confidence"},
+    )
+    dedup_scan_limit: int = field(default=200, metadata={"toml": "dedup.scan_limit"})
+    dedup_cron: str = field(default="03:00", metadata={"toml": "dedup.cron"})
+    induce_policies_cron: str = field(default="04:00", metadata={"toml": "worker.induce_policies_cron"})
+    reclassify_cron: str = field(default="04:30", metadata={"toml": "worker.reclassify_cron"})
+    memory_temporal_ttl_days: int = field(
+        default=7,
+        metadata={"toml": "retention.temporal_ttl_days"},
+    )
+    temporal_ttl_days_low: int = field(
+        default=3,
+        metadata={"toml": "retention.temporal_ttl_days_low"},
+    )
+    temporal_ttl_days_normal: int = field(
+        default=7,
+        metadata={"toml": "retention.temporal_ttl_days_normal"},
+    )
+    temporal_ttl_days_high: int = field(
+        default=14,
+        metadata={"toml": "retention.temporal_ttl_days_high"},
+    )
+    importance_low_threshold: float = field(
+        default=0.4,
+        metadata={"toml": "retention.importance_low_threshold"},
+    )
+    importance_high_threshold: float = field(
+        default=0.7,
+        metadata={"toml": "retention.importance_high_threshold"},
+    )
+    importance_write_floor: float = field(
+        default=0.2,
+        metadata={"toml": "retention.importance_write_floor"},
+    )
+    slot_short_ttl_seconds: int = field(
+        default=86400,
+        metadata={"toml": "retention.slot_short_ttl_seconds"},
+    )
+    ttl_backfill_batch_size: int = field(
+        default=100,
+        metadata={"toml": "retention.ttl_backfill_batch_size"},
+    )
+    ttl_backfill_grace_hours: int = field(
+        default=0,
+        metadata={"toml": "retention.ttl_backfill_grace_hours"},
+    )
+    temporal_cleanup_age_days: int = field(
+        default=30,
+        metadata={"toml": "retention.temporal_cleanup_age_days"},
+    )
+    temporal_cleanup_expiry_days: int = field(
+        default=90,
+        metadata={"toml": "retention.temporal_cleanup_expiry_days"},
+    )
+    decay_temporal_days: int = field(default=7, metadata={"toml": "retention.decay_temporal_days"})
+    archive_temporal_days: int = field(default=30, metadata={"toml": "retention.archive_temporal_days"})
+    decay_permanent_days: int = field(default=90, metadata={"toml": "retention.decay_permanent_days"})
+    archive_permanent_days: int = field(
+        default=180,
+        metadata={"toml": "retention.archive_permanent_days"},
+    )
+    access_bonus_every: int = field(default=5, metadata={"toml": "retention.access_bonus_every"})
+    access_bonus_days: int = field(default=1, metadata={"toml": "retention.access_bonus_days"})
+    access_bonus_cap_days: int = field(default=30, metadata={"toml": "retention.access_bonus_cap_days"})
+    decay_rollout_grace_days: int = field(
+        default=7,
+        metadata={"toml": "retention.decay_rollout_grace_days"},
+    )
+    decay_min_confidence: float = field(
+        default=0.05,
+        metadata={"toml": "retention.decay_min_confidence"},
+    )
     # feedback_lifecycle: observe 只聚合 usefulness，不影响 TTL/decay；观察稳定后可切换为 on
-    feedback_lifecycle_mode: FeedbackLifecycleMode = "observe"
-    feedback_bonus_every: int = 3
-    feedback_bonus_days: int = 14
-    feedback_bonus_cap_days: int = 180
-    feedback_min_samples: int = 3
-    max_request_body: int = 2 * 1024 * 1024
-    alert_webhook_url: str | None = None
-    alert_dedupe_seconds: float = 300.0
-    expansion_circuit_failure_threshold: int = 5
-    expansion_circuit_open_seconds: float = 60.0
-    smtp_host: str | None = None
-    smtp_port: int = 25
-    alert_email_from: str | None = None
-    alert_email_to: str | None = None
-
-    @classmethod
-    def from_env(cls) -> "Settings":
-        """从环境变量创建并校验不可变配置快照。"""
-        try:
-            vector_backend = VectorBackend(os.getenv("HL_MEM_VECTOR_BACKEND", "sqlite_scan"))
-        except ValueError as error:
-            raise ConfigurationError(f"invalid enum configuration: {error}") from error
-        settings = cls(
-            database_path=os.getenv("HL_MEM_DB_PATH", "var/hl_mem.db"),
-            embedder_mode=_env_choice("HL_MEM_EMBEDDER", "fake", ("fake", "real")),
-            embedding_dim=int(os.getenv("EMBEDDING_DIM", "2048")),
-            embedding_api_key=os.getenv("EMBEDDING_API_KEY"),
-            embedding_base_url=os.getenv(
-                "EMBEDDING_BASE_URL",
-                "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            ),
-            embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
-            embedding_connect_timeout=float(os.getenv("EMBEDDING_CONNECT_TIMEOUT", "5")),
-            embedding_read_timeout=float(os.getenv("EMBEDDING_READ_TIMEOUT", "30")),
-            embedding_max_attempts=int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
-            index_text_mode=_env_choice(
-                "HL_MEM_INDEX_TEXT_MODE",
-                "legacy",
-                ("legacy", "value_only", "natural", "answerable"),
-            ),
-            index_backfill_batch_size=int(os.getenv("HL_MEM_INDEX_BACKFILL_BATCH_SIZE", "100")),
-            index_backfill_max_attempts=int(os.getenv("HL_MEM_INDEX_BACKFILL_MAX_ATTEMPTS", "3")),
-            index_text_version=os.getenv("HL_MEM_INDEX_TEXT_VERSION", "v1"),
-            reranker_mode=_env_choice(
-                "HL_MEM_RERANKER",
-                "off",
-                ("off", "fake", "on", "real"),
-            ),
-            reranker_provider=_env_choice("HL_MEM_RERANKER_PROVIDER", "dashscope", ("dashscope",)),
-            reranker_api_key=os.getenv("RERANKER_API_KEY"),
-            reranker_base_url=os.getenv("RERANKER_BASE_URL", "https://dashscope.aliyuncs.com"),
-            reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
-            relation_expansion_mode=_env_choice("HL_MEM_RELATION_EXPANSION", "off", ("off", "on")),
-            relation_expansion_max_depth=int(os.getenv("HL_MEM_RELATION_EXPANSION_MAX_DEPTH", "1")),
-            relation_discovery_mode=_env_choice("HL_MEM_RELATION_DISCOVERY_MODE", "off", ("off", "audit", "auto")),
-            relation_discovery_pool_limit=int(os.getenv("HL_MEM_RELATION_DISCOVERY_POOL_LIMIT", "40")),
-            relation_discovery_max_proposals=int(os.getenv("HL_MEM_RELATION_DISCOVERY_MAX_PROPOSALS", "10")),
-            relation_auto_apply_confidence=float(os.getenv("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE", "0.90")),
-            relation_conflict_confidence=float(os.getenv("HL_MEM_RELATION_CONFLICT_CONFIDENCE", "0.80")),
-            packed_context_token_budget=int(os.getenv("HL_MEM_PACKED_CONTEXT_TOKEN_BUDGET", "2000")),
-            recall_candidate_floor=int(os.getenv("HL_MEM_RECALL_CANDIDATE_FLOOR", "50")),
-            recall_dedup_threshold=float(os.getenv("HL_MEM_RECALL_DEDUP_THRESHOLD", "0.95")),
-            recall_dedup_candidate_limit=int(os.getenv("HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT", "100")),
-            relevance_gate_mode=_env_choice(
-                "HL_MEM_RELEVANCE_GATE_MODE",
-                "off",
-                ("off", "observe", "enforce"),
-            ),
-            relevance_reranker_floor=float(os.getenv("HL_MEM_RELEVANCE_RERANKER_FLOOR", "0.4")),
-            relevance_dense_floor=float(os.getenv("HL_MEM_RELEVANCE_DENSE_FLOOR", "0.3")),
-            relevance_relative_drop=float(os.getenv("HL_MEM_RELEVANCE_RELATIVE_DROP", "0.15")),
-            relevance_keep_top1=_parse_bool(
-                os.getenv("HL_MEM_RELEVANCE_KEEP_TOP1", "true"),
-                "HL_MEM_RELEVANCE_KEEP_TOP1",
-            ),
-            relevance_intents=tuple(
-                item.strip().lower()
-                for item in os.getenv("HL_MEM_RELEVANCE_INTENTS", "current_state").split(",")
-                if item.strip()
-            ),
-            preference_recency_boost=float(os.getenv("HL_MEM_PREFERENCE_RECENCY_BOOST", "0.12")),
-            tag_boost_enabled=os.getenv("HL_MEM_TAG_BOOST_ENABLED", "true").lower() == "true",
-            tag_boost_weight=float(os.getenv("HL_MEM_TAG_BOOST_WEIGHT", "0.05")),
-            tag_channel_enabled=os.getenv("HL_MEM_TAG_CHANNEL_ENABLED", "false").lower() == "true",
-            tag_channel_weight=float(os.getenv("HL_MEM_TAG_CHANNEL_WEIGHT", "0.15")),
-            tag_candidate_limit=int(os.getenv("HL_MEM_TAG_CANDIDATE_LIMIT", "20")),
-            query_expansion_mode=_env_choice("HL_MEM_QUERY_EXPANSION_MODE", "off", ("off", "auto", "always")),
-            query_expansion_max=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX", "2")),
-            query_expansion_candidate_floor=int(os.getenv("HL_MEM_QUERY_EXPANSION_CANDIDATE_FLOOR", "8")),
-            query_expansion_token_ceiling=int(os.getenv("HL_MEM_QUERY_EXPANSION_TOKEN_CEILING", "256")),
-            query_expansion_timeout_seconds=float(os.getenv("HL_MEM_QUERY_EXPANSION_TIMEOUT_SECONDS", "2.0")),
-            query_expansion_total_timeout_seconds=float(
-                os.getenv("HL_MEM_QUERY_EXPANSION_TOTAL_TIMEOUT_SECONDS", "3.0")
-            ),
-            query_expansion_max_concurrency=int(os.getenv("HL_MEM_QUERY_EXPANSION_MAX_CONCURRENCY", "4")),
-            query_context_mode=_env_choice(
-                "HL_MEM_QUERY_CONTEXT_MODE",
-                "off",
-                ("off", "coreference"),
-            ),
-            query_context_max_events=int(os.getenv("HL_MEM_QUERY_CONTEXT_MAX_EVENTS", "5")),
-            query_context_token_budget=int(os.getenv("HL_MEM_QUERY_CONTEXT_TOKEN_BUDGET", "256")),
-            procedure_recall_mode=_env_choice("HL_MEM_PROCEDURE_RECALL_MODE", "keyword", ("off", "keyword", "auto")),
-            procedure_llm_threshold=float(os.getenv("HL_MEM_PROCEDURE_LLM_THRESHOLD", "0.80")),
-            procedure_router_timeout_seconds=float(os.getenv("HL_MEM_PROCEDURE_ROUTER_TIMEOUT_SECONDS", "1.5")),
-            procedure_candidate_limit=int(os.getenv("HL_MEM_PROCEDURE_CANDIDATE_LIMIT", "30")),
-            procedure_recent_outcome_window=int(os.getenv("HL_MEM_PROCEDURE_RECENT_OUTCOME_WINDOW", "20")),
-            procedure_outcome_half_life_days=int(os.getenv("HL_MEM_PROCEDURE_OUTCOME_HALF_LIFE_DAYS", "30")),
-            recall_side_effect_max_attempts=int(os.getenv("HL_MEM_RECALL_SIDE_EFFECT_MAX_ATTEMPTS", "3")),
-            recall_side_effect_backoff_seconds=float(os.getenv("HL_MEM_RECALL_SIDE_EFFECT_BACKOFF_SECONDS", "0.05")),
-            vector_backend=vector_backend,
-            vector_batch_size=int(os.getenv("HL_MEM_VECTOR_BATCH_SIZE", "512")),
-            hermes_circuit_failure_threshold=int(os.getenv("HL_MEM_HERMES_CIRCUIT_FAILURE_THRESHOLD", "5")),
-            hermes_circuit_open_seconds=float(os.getenv("HL_MEM_HERMES_CIRCUIT_OPEN_SECONDS", "60")),
-            hermes_prefetch_cache_ttl_seconds=float(os.getenv("HL_MEM_HERMES_PREFETCH_CACHE_TTL_SECONDS", "300")),
-            policy_induction_lookback_days=int(os.getenv("HL_MEM_POLICY_INDUCTION_LOOKBACK_DAYS", "7")),
-            policy_induction_min_episodes=int(os.getenv("HL_MEM_POLICY_INDUCTION_MIN_EPISODES", "3")),
-            extractor_mode=_env_choice("HL_MEM_EXTRACTOR", "fake", ("fake", "real", "llm")),
-            extract_pre_filter=_parse_on_off(
-                os.getenv("HL_MEM_EXTRACT_PRE_FILTER", "off"),
-                "HL_MEM_EXTRACT_PRE_FILTER",
-            ),
-            llm_api_key=os.getenv("LLM_API_KEY"),
-            llm_base_url=os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
-            llm_model=os.getenv("LLM_MODEL", "glm-5.2"),
-            llm_provider=_env_choice(
-                "HL_MEM_LLM_PROVIDER",
-                "dashscope",
-                ("dashscope", "zhipu", "openai_compatible"),
-            ),
-            llm_structured_mode=_env_choice(
-                "HL_MEM_LLM_STRUCTURED_MODE",
-                "json_object",
-                ("auto", "json_object", "json_schema"),
-            ),
-            enable_llm_thinking=_parse_bool(
-                os.getenv("HL_MEM_LLM_ENABLE_THINKING", "false"),
-                "HL_MEM_LLM_ENABLE_THINKING",
-            ),
-            llm_timeout=float(os.getenv("LLM_TIMEOUT", "90")),
-            llm_max_attempts=int(os.getenv("LLM_MAX_ATTEMPTS", "3")),
-            llm_schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
-            image_describer_mode=_env_choice("HL_MEM_IMAGE_DESCRIBER_MODE", "off", ("off", "on")),
-            image_describer_provider=_env_choice("HL_MEM_IMAGE_DESCRIBER_PROVIDER", "dashscope", ("dashscope",)),
-            image_describer_api_key=os.getenv("IMAGE_API_KEY"),
-            image_describer_base_url=os.getenv(
-                "HL_MEM_IMAGE_DESCRIBER_BASE_URL",
-                "https://coding.dashscope.aliyuncs.com/v1",
-            ),
-            image_describer_model=os.getenv("HL_MEM_IMAGE_DESCRIBER_MODEL", "qwen3.7-plus"),
-            image_describer_timeout_seconds=float(os.getenv("HL_MEM_IMAGE_DESCRIBER_TIMEOUT_SECONDS", "20")),
-            image_max_bytes=int(os.getenv("HL_MEM_IMAGE_MAX_BYTES", "10485760")),
-            image_max_parts=int(os.getenv("HL_MEM_IMAGE_MAX_PARTS", "4")),
-            image_allow_file_uris=(os.getenv("HL_MEM_IMAGE_ALLOW_FILE_URIS", "false").lower() == "true"),
-            image_file_allow_roots=tuple(
-                part for part in os.getenv("HL_MEM_IMAGE_FILE_ALLOW_ROOTS", "").split(os.pathsep) if part
-            ),
-            extraction_chunk_target_chars=int(os.getenv("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS", "12000")),
-            extraction_chunk_overlap_turns=int(os.getenv("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS", "2")),
-            extraction_max_split_depth=int(os.getenv("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH", "3")),
-            worker_poll_interval=float(os.getenv("HL_MEM_WORKER_POLL_INTERVAL", "2.0")),
-            worker_maintenance_interval=float(os.getenv("HL_MEM_WORKER_MAINTENANCE_INTERVAL", "600")),
-            worker_job_lease_minutes=int(os.getenv("HL_MEM_WORKER_LEASE_MINUTES", "5")),
-            daily_token_limit=int(os.getenv("HL_MEM_DAILY_TOKEN_LIMIT", "500000")),
-            audit_retention_days=int(
-                os.getenv(
-                    "HL_MEM_AUDIT_RETENTION_DAYS",
-                    os.getenv("HL_MEM_RETENTION_DAYS", "30"),
-                )
-            ),
-            retention_days=int(os.getenv("HL_MEM_RETENTION_DAYS", "30")),
-            consolidate_cron=os.getenv("HL_MEM_CONSOLIDATE_CRON", "03:30"),
-            consolidate_batch_size=int(os.getenv("HL_MEM_CONSOLIDATE_BATCH_SIZE", "100")),
-            consolidate_confidence=float(os.getenv("HL_MEM_CONSOLIDATE_CONFIDENCE", "0.8")),
-            dedup_enabled=os.getenv("HL_MEM_DEDUP_ENABLED", "true").lower() == "true",
-            dedup_threshold=float(os.getenv("HL_MEM_DEDUP_THRESHOLD", "0.92")),
-            dedup_audit_only=os.getenv("HL_MEM_DEDUP_AUDIT_ONLY", "true").lower() == "true",
-            dedup_auto_merge_min_confidence=float(os.getenv("HL_MEM_DEDUP_AUTO_MERGE_MIN_CONFIDENCE", "0.98")),
-            dedup_scan_limit=int(os.getenv("HL_MEM_DEDUP_SCAN_LIMIT", "200")),
-            dedup_cron=os.getenv("HL_MEM_DEDUP_CRON", "03:00"),
-            induce_policies_cron=os.getenv("HL_MEM_INDUCE_POLICIES_CRON", "04:00"),
-            reclassify_cron=os.getenv("HL_MEM_RECLASSIFY_CRON", "04:30"),
-            memory_temporal_ttl_days=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS", "7")),
-            temporal_ttl_days_low=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_LOW", "3")),
-            temporal_ttl_days_normal=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_NORMAL", "7")),
-            temporal_ttl_days_high=int(os.getenv("HL_MEM_TEMPORAL_TTL_DAYS_HIGH", "14")),
-            importance_low_threshold=float(os.getenv("HL_MEM_IMPORTANCE_LOW_THRESHOLD", "0.4")),
-            importance_high_threshold=float(os.getenv("HL_MEM_IMPORTANCE_HIGH_THRESHOLD", "0.7")),
-            importance_write_floor=float(os.getenv("HL_MEM_IMPORTANCE_WRITE_FLOOR", "0.2")),
-            slot_short_ttl_seconds=int(os.getenv("HL_MEM_SLOT_SHORT_TTL_SECONDS", "86400")),
-            ttl_backfill_batch_size=int(os.getenv("HL_MEM_TTL_BACKFILL_BATCH_SIZE", "100")),
-            ttl_backfill_grace_hours=int(os.getenv("HL_MEM_TTL_BACKFILL_GRACE_HOURS", "0")),
-            temporal_cleanup_age_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_AGE_DAYS", "30")),
-            temporal_cleanup_expiry_days=int(os.getenv("HL_MEM_TEMPORAL_CLEANUP_EXPIRY_DAYS", "90")),
-            feedback_lifecycle_mode=_env_choice("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe", ("off", "observe", "on")),
-            feedback_bonus_every=int(os.getenv("HL_MEM_FEEDBACK_BONUS_EVERY", "3")),
-            feedback_bonus_days=int(os.getenv("HL_MEM_FEEDBACK_BONUS_DAYS", "14")),
-            feedback_bonus_cap_days=int(os.getenv("HL_MEM_FEEDBACK_BONUS_CAP_DAYS", "180")),
-            feedback_min_samples=int(os.getenv("HL_MEM_FEEDBACK_MIN_SAMPLES", "3")),
-            max_request_body=int(os.getenv("HL_MEM_MAX_REQUEST_BODY", str(2 * 1024 * 1024))),
-            alert_webhook_url=os.getenv("HL_MEM_ALERT_WEBHOOK_URL"),
-            alert_dedupe_seconds=float(os.getenv("HL_MEM_ALERT_DEDUPE_SECONDS", "300")),
-            expansion_circuit_failure_threshold=int(os.getenv("HL_MEM_EXPANSION_CIRCUIT_FAILURE_THRESHOLD", "5")),
-            expansion_circuit_open_seconds=float(os.getenv("HL_MEM_EXPANSION_CIRCUIT_OPEN_SECONDS", "60")),
-            smtp_host=os.getenv("HL_MEM_SMTP_HOST"),
-            smtp_port=int(os.getenv("HL_MEM_SMTP_PORT", "25")),
-            alert_email_from=os.getenv("HL_MEM_ALERT_EMAIL_FROM"),
-            alert_email_to=os.getenv("HL_MEM_ALERT_EMAIL_TO"),
-        )
-        settings.validate()
-        return settings
+    feedback_lifecycle_mode: FeedbackLifecycleMode = field(
+        default="observe",
+        metadata={"toml": "retention.feedback_lifecycle_mode"},
+    )
+    feedback_bonus_every: int = field(default=3, metadata={"toml": "retention.feedback_bonus_every"})
+    feedback_bonus_days: int = field(default=14, metadata={"toml": "retention.feedback_bonus_days"})
+    feedback_bonus_cap_days: int = field(
+        default=180,
+        metadata={"toml": "retention.feedback_bonus_cap_days"},
+    )
+    feedback_min_samples: int = field(default=3, metadata={"toml": "recall.feedback_min_samples"})
+    max_request_body: int = field(default=2 * 1024 * 1024, metadata={"toml": "server.max_request_body"})
+    alert_webhook_url: str | None = field(default=None, metadata={"toml": "alert.webhook_url"})
+    alert_dedupe_seconds: float = field(default=300.0, metadata={"toml": "alert.dedupe_seconds"})
+    expansion_circuit_failure_threshold: int = field(
+        default=5,
+        metadata={"toml": "recall.expansion_circuit_failure_threshold"},
+    )
+    expansion_circuit_open_seconds: float = field(
+        default=60.0,
+        metadata={"toml": "recall.expansion_circuit_open_seconds"},
+    )
+    smtp_host: str | None = field(default=None, metadata={"toml": "alert.smtp_host"})
+    smtp_port: int = field(default=25, metadata={"toml": "alert.smtp_port"})
+    alert_email_from: str | None = field(default=None, metadata={"toml": "alert.email_from"})
+    alert_email_to: str | None = field(default=None, metadata={"toml": "alert.email_to"})
 
     @classmethod
     def for_test(cls) -> "Settings":

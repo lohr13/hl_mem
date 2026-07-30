@@ -185,16 +185,16 @@ def test_relevance_settings_snapshot_contains_non_sensitive_values() -> None:
     assert snapshot["relevance_intents"] == ["current_state"]
 
 
-def test_relevance_settings_are_loaded_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """环境变量可显式开启 observe 并覆盖全部阈值。"""
-    monkeypatch.setenv("HL_MEM_RELEVANCE_GATE_MODE", "observe")
-    monkeypatch.setenv("HL_MEM_RELEVANCE_RERANKER_FLOOR", "0.45")
-    monkeypatch.setenv("HL_MEM_RELEVANCE_DENSE_FLOOR", "0.35")
-    monkeypatch.setenv("HL_MEM_RELEVANCE_RELATIVE_DROP", "0.2")
-    monkeypatch.setenv("HL_MEM_RELEVANCE_KEEP_TOP1", "false")
-    monkeypatch.setenv("HL_MEM_RELEVANCE_INTENTS", "current_state, preference")
-
-    settings = Settings.from_env()
+def test_relevance_settings_are_explicitly_configurable() -> None:
+    """统一配置可显式开启 observe 并覆盖全部阈值。"""
+    settings = Settings(
+        relevance_gate_mode="observe",
+        relevance_reranker_floor=0.45,
+        relevance_dense_floor=0.35,
+        relevance_relative_drop=0.2,
+        relevance_keep_top1=False,
+        relevance_intents=("current_state", "preference"),
+    )
 
     assert settings.relevance_gate_mode == "observe"
     assert settings.relevance_reranker_floor == 0.45

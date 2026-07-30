@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -13,19 +12,14 @@ from hl_mem.lifecycle import assert_transition
 def expire_claims(
     connection: sqlite3.Connection,
     now: str | None = None,
-    feedback_lifecycle_mode: str | None = None,
-    slot_short_ttl_seconds: int | None = None,
+    *,
+    feedback_lifecycle_mode: str,
+    slot_short_ttl_seconds: int,
 ) -> dict[str, int]:
     """过期 expires_at 已到达且仍处于 active 的 claim。"""
     reference = normalize_utc_iso(now or datetime.now(timezone.utc).isoformat(), "now")
     candidate_cutoff = (datetime.fromisoformat(reference).astimezone(timezone.utc) + timedelta(days=180)).isoformat(
         timespec="seconds"
-    )
-    mode = feedback_lifecycle_mode or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
-    short_ttl_seconds = (
-        slot_short_ttl_seconds
-        if slot_short_ttl_seconds is not None
-        else int(os.getenv("HL_MEM_SLOT_SHORT_TTL_SECONDS", "86400"))
     )
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -40,7 +34,7 @@ def expire_claims(
         for row in rows:
             base = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
             effective = base
-            if mode == "on" and row["bonus_days"] > 0:
+            if feedback_lifecycle_mode == "on" and row["bonus_days"] > 0:
                 effective = base + timedelta(days=row["bonus_days"])
                 if row["valid_to"]:
                     effective = min(
@@ -49,7 +43,7 @@ def expire_claims(
                     )
                 if row["canonical_slot"] == "state.service_health":
                     anchor = datetime.fromisoformat((row["observed_at"] or row["recorded_from"]).replace("Z", "+00:00"))
-                    effective = min(effective, anchor + timedelta(seconds=short_ttl_seconds))
+                    effective = min(effective, anchor + timedelta(seconds=slot_short_ttl_seconds))
             if effective <= datetime.fromisoformat(reference):
                 assert_transition(row["status"], "expired")
                 expired_claims.append(

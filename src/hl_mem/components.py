@@ -8,6 +8,7 @@ from typing import Literal
 
 import httpx
 
+from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
 from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.embedder import Embedder, FakeEmbedder
@@ -44,6 +45,11 @@ _EXTRACTOR_REGISTRY: dict[str, str] = {
 
 Reranker = DashScopeReranker
 _COMPONENT_HEALTH: dict[str, dict[str, str | None]] = {}
+
+
+def initialize_process(settings: Settings) -> None:
+    """执行显式且幂等的进程级初始化。"""
+    set_active_aliases(load_entity_aliases(settings.entity_aliases_path))
 
 
 def component_health() -> dict[str, dict[str, str | None]]:

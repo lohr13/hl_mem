@@ -94,7 +94,12 @@ def test_ttl_closes_valid_interval_but_remains_historically_visible(tmp_path) ->
         scope="temporal",
         expires_at="2026-01-20T00:00:00Z",
     )
-    assert expire_claims(connection, "2026-01-21T00:00:00Z") == {"expired": 1}
+    assert expire_claims(
+        connection,
+        "2026-01-21T00:00:00Z",
+        feedback_lifecycle_mode="observe",
+        slot_short_ttl_seconds=86400,
+    ) == {"expired": 1}
     claim = ClaimRepository(connection).get_claim("old")
     assert claim["valid_to"] == "2026-01-20T00:00:00+00:00"
     assert claim_is_visible(claim, "2026-01-19T00:00:00Z", None, RecallIntent.HISTORICAL)

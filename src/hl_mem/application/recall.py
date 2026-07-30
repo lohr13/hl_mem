@@ -411,6 +411,7 @@ class RecallService:
                 preference_recency_boost=self.settings.preference_recency_boost,
                 dedup_threshold=self.settings.recall_dedup_threshold,
                 dedup_candidate_limit=self.settings.recall_dedup_candidate_limit,
+                feedback_min_samples=self.settings.feedback_min_samples,
             ),
             relation_connection=self.connection,
             relation_config=self.relation_config,

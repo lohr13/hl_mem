@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import queue
 import sqlite3
 import threading
@@ -10,26 +9,36 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from hl_mem.settings import Settings
 from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
 from hl_mem.storage.migrations.backfill_conflict_key_v3 import backfill_conflict_keys_v3
 from hl_mem.storage.migrations.fact_hash_v2 import backfill_fact_hash_v2
 
 
-def default_database_path() -> Path:
-    """返回环境变量配置或项目 var 目录下的默认数据库路径。"""
-    configured = os.getenv("HL_MEM_DB_PATH")
-    if configured:
-        return Path(configured)
-    return Path(__file__).resolve().parents[3] / "var" / "hl_mem.db"
+def default_database_path(settings: Settings | None = None) -> Path:
+    """返回 Settings 中声明的数据库路径。"""
+    return Path((settings or Settings()).database_path)
 
 
 class Database:
     """管理 SQLite 迁移、专用连接和请求级连接池。"""
 
-    def __init__(self, path: str | Path | None = None, pool_size: int | None = None) -> None:
-        self.path = str(Path(path) if path is not None else default_database_path())
-        self.pool_size = pool_size or int(os.getenv("HL_MEM_DB_POOL_SIZE", "8"))
-        self.busy_timeout_seconds = float(os.getenv("HL_MEM_DB_BUSY_TIMEOUT_SECONDS", "30"))
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        pool_size: int | None = None,
+        busy_timeout_seconds: float | None = None,
+        *,
+        settings: Settings | None = None,
+    ) -> None:
+        resolved_settings = settings or Settings()
+        self.path = str(Path(path) if path is not None else default_database_path(resolved_settings))
+        self.pool_size = pool_size if pool_size is not None else resolved_settings.database_pool_size
+        self.busy_timeout_seconds = (
+            busy_timeout_seconds
+            if busy_timeout_seconds is not None
+            else float(resolved_settings.database_busy_timeout_seconds)
+        )
         self.busy_timeout_ms = int(self.busy_timeout_seconds * 1000)
         self.connection: sqlite3.Connection | None = None
         self._pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=self.pool_size)

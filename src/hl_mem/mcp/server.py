@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -100,17 +101,14 @@ class McpMemoryServer:
         embedder: Any = None,
         reranker: Any = None,
     ) -> None:
-        """使用统一配置创建 MCP 服务，并兼容旧的数据库路径入口。"""
-        if isinstance(settings, Settings):
-            resolved_settings = settings
-        else:
-            from dataclasses import replace
-
-            resolved_settings = replace(Settings.from_env(), database_path=str(settings))
-        self.database = Database(resolved_settings.database_path)
-        self.settings = resolved_settings
-        self.embedder = embedder or components.make_embedder(resolved_settings)
-        self.reranker = reranker if reranker is not None else components.make_reranker(resolved_settings)
+        """使用已加载的统一配置创建 MCP 服务。"""
+        if not isinstance(settings, Settings):
+            settings = replace(Settings(), database_path=str(settings))
+        components.initialize_process(settings)
+        self.database = Database(settings=settings)
+        self.settings = settings
+        self.embedder = embedder or components.make_embedder(settings)
+        self.reranker = reranker if reranker is not None else components.make_reranker(settings)
 
     def list_tools(self) -> tuple[str, ...]:
         """返回稳定的 MCP 工具名称。"""

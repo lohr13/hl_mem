@@ -34,10 +34,9 @@ def test_database_open_returns_independent_connections(tmp_path) -> None:
         database.close()
 
 
-def test_database_open_sets_busy_timeout(monkeypatch, tmp_path) -> None:
+def test_database_open_sets_busy_timeout(tmp_path) -> None:
     """数据库连接必须采用配置的锁等待超时。"""
-    monkeypatch.setenv("HL_MEM_DB_BUSY_TIMEOUT_SECONDS", "30")
-    database = Database(tmp_path / "busy-timeout.db")
+    database = Database(tmp_path / "busy-timeout.db", busy_timeout_seconds=30)
     connection = database.open()
     try:
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 30_000
@@ -135,7 +134,6 @@ def test_worker_real_extractor_fails_without_key() -> None:
     """真实 Worker 提取器缺少密钥时不得静默降级。"""
     worker = Worker.__new__(Worker)
     worker.settings = Settings(extractor_mode="real")
-    worker.config = {}
     with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
         worker._make_extractor()
 
@@ -144,16 +142,18 @@ def test_worker_fake_extractor_is_safe_default() -> None:
     """静态默认配置允许 Worker 使用 FakeExtractor。"""
     worker = Worker.__new__(Worker)
     worker.settings = Settings(extractor_mode="fake")
-    worker.config = {}
 
     assert isinstance(worker._make_extractor(), FakeExtractor)
 
 
-def test_health_reports_fake_components(tmp_path, monkeypatch) -> None:
+def test_health_reports_fake_components(tmp_path) -> None:
     """健康检查暴露当前模型组件是否为降级实现。"""
-    monkeypatch.setenv("HL_MEM_EMBEDDER", "fake")
-    monkeypatch.setenv("HL_MEM_RERANKER", "fake")
-    with TestClient(server.create_app(tmp_path / "health.db")) as client:
+    settings = Settings(
+        database_path=str(tmp_path / "health.db"),
+        embedder_mode="fake",
+        reranker_mode="fake",
+    )
+    with TestClient(server.create_app(settings)) as client:
         body = client.get("/healthz").json()
     assert body["embedder"] == "fake"
     assert body["reranker"] == "fake"

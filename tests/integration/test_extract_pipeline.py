@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.settings import Settings
 from hl_mem.workers.worker import Worker
 
 
@@ -18,8 +19,8 @@ def test_fake_pipeline_filter_claim_evidence_recall_and_stats(tmp_path, monkeypa
             },
         )
         assert response.status_code == 200
-        assert Worker(tmp_path / "pipeline.db").run_once()["status"] == "succeeded"
-        Worker(tmp_path / "pipeline.db").run_once()  # process relation-discovery job
+        assert Worker(app.state.settings).run_once()["status"] == "succeeded"
+        Worker(app.state.settings).run_once()  # process relation-discovery job
         recall = client.post("/v1/recall", json={"query": "PostgreSQL"}).json()
         assert recall["total"] == 1
         assert recall["results"][0]["evidence"]
@@ -41,14 +42,19 @@ def test_filter_skips_extraction_and_job(tmp_path, monkeypatch) -> None:
                 "content": {"text": "command output"},
             },
         )
-        assert Worker(tmp_path / "filtered.db").run_once()["claims"] == 0
+        assert Worker(app.state.settings).run_once()["claims"] == 0
         assert client.get("/v1/stats").json()["jobs_pending"] == 0
 
 
 def test_exhausted_budget_leaves_job_pending(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HL_MEM_EXTRACTOR", "fake")
     monkeypatch.setenv("HL_MEM_DAILY_TOKEN_LIMIT", "0")
-    app = create_app(tmp_path / "exhausted.db")
+    app = create_app(
+        Settings(
+            database_path=str(tmp_path / "exhausted.db"),
+            daily_token_limit=0,
+        )
+    )
     with TestClient(app) as client:
         client.post("/v1/events", json={"content": {"text": "用户使用 PostgreSQL"}})
         stats = client.get("/v1/stats").json()

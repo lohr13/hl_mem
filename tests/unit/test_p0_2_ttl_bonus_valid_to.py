@@ -75,8 +75,18 @@ def test_bonus_delays_expiration_and_valid_to_uses_effective_time(
             bonus_days=14,
         )
 
-        assert expire_claims(connection, "2026-01-20T00:00:00+00:00", "on") == {"expired": 0}
-        assert expire_claims(connection, "2026-01-25T00:00:00+00:00", "on") == {"expired": 1}
+        assert expire_claims(
+            connection,
+            "2026-01-20T00:00:00+00:00",
+            feedback_lifecycle_mode="on",
+            slot_short_ttl_seconds=86400,
+        ) == {"expired": 0}
+        assert expire_claims(
+            connection,
+            "2026-01-25T00:00:00+00:00",
+            feedback_lifecycle_mode="on",
+            slot_short_ttl_seconds=86400,
+        ) == {"expired": 1}
         row = connection.execute("SELECT status,valid_to FROM claims WHERE id=?", ("bonus",)).fetchone()
         assert row["status"] == "expired"
         assert row["valid_to"] == "2026-01-24T00:00:00+00:00"
@@ -99,7 +109,12 @@ def test_short_ttl_slot_still_caps_feedback_bonus(tmp_path: Path, monkeypatch: p
             observed_at="2026-01-01T00:00:00+00:00",
         )
 
-        assert expire_claims(connection, "2026-01-03T00:00:00+00:00", "on") == {"expired": 1}
+        assert expire_claims(
+            connection,
+            "2026-01-03T00:00:00+00:00",
+            feedback_lifecycle_mode="on",
+            slot_short_ttl_seconds=86400,
+        ) == {"expired": 1}
         row = connection.execute("SELECT valid_to FROM claims WHERE id=?", ("short",)).fetchone()
         assert row["valid_to"] == "2026-01-02T00:00:00+00:00"
     finally:
@@ -132,7 +147,8 @@ def test_concurrent_bonus_committed_before_write_lock_prevents_expiration(
         result = expire_claims(
             _BeforeBeginConnection(expiration_connection, add_bonus),
             "2026-01-20T00:00:00+00:00",
-            "on",
+            feedback_lifecycle_mode="on",
+            slot_short_ttl_seconds=86400,
         )
 
         row = expiration_connection.execute(

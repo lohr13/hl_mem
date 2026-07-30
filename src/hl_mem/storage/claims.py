@@ -373,14 +373,11 @@ class ClaimRepository:
             self.connection.rollback()
             raise
 
-    def helpful_rates(self, claim_ids: list[str], min_samples: int | None = None) -> dict[str, float]:
+    def helpful_rates(self, claim_ids: list[str], min_samples: int) -> dict[str, float]:
         """批量返回平滑 usefulness；无样本保持 0.5 prior。"""
-        import os
-
         unique_ids = list(dict.fromkeys(claim_ids))
         if not unique_ids:
             return {}
-        threshold = min_samples or int(os.getenv("HL_MEM_FEEDBACK_MIN_SAMPLES", "3"))
         placeholders = ",".join("?" for _ in unique_ids)
         rows = self.connection.execute(
             "SELECT c.id AS memory_id,COALESCE(u.helpful_count,0) AS helpful_count,"
@@ -392,7 +389,7 @@ class ClaimRepository:
         return {
             row["memory_id"]: (
                 float(row["usefulness_score"])
-                if row["helpful_count"] + row["unhelpful_count"] >= threshold
+                if row["helpful_count"] + row["unhelpful_count"] >= min_samples
                 else (row["helpful_count"] + 2) / (row["helpful_count"] + row["unhelpful_count"] + 4)
             )
             for row in rows

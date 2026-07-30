@@ -2,31 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from hl_mem.lifecycle import assert_transition
-
-
-def _load_policy() -> dict[str, tuple[int, int]]:
-    """从环境变量加载记忆衰减与归档边界。"""
-    temporal_decay = int(os.getenv("HL_MEM_DECAY_TEMPORAL_DAYS", "90"))
-    temporal_archive = int(os.getenv("HL_MEM_DECAY_TEMPORAL_ARCHIVE", "180"))
-    permanent_decay = int(os.getenv("HL_MEM_DECAY_PERMANENT_DAYS", "180"))
-    permanent_archive = int(os.getenv("HL_MEM_DECAY_PERMANENT_ARCHIVE", "365"))
-    return {
-        "temporal": (temporal_decay, temporal_archive),
-        "permanent": (permanent_decay, permanent_archive),
-    }
-
-
-# Access-frequency decay bonus: every ACCESS_BONUS_EVERY hits adds
-# ACCESS_BONUS_DAYS to both decay_after and archive_after, capped at
-# ACCESS_BONUS_CAP.  A frequently-recalled memory decays slower.
-_ACCESS_BONUS_EVERY = int(os.getenv("HL_MEM_ACCESS_BONUS_EVERY", "10"))
-_ACCESS_BONUS_DAYS = int(os.getenv("HL_MEM_ACCESS_BONUS_DAYS", "30"))
-_ACCESS_BONUS_CAP = int(os.getenv("HL_MEM_ACCESS_BONUS_CAP", "365"))
 
 
 def _parse(value: str) -> datetime:
@@ -37,8 +16,9 @@ def _parse(value: str) -> datetime:
 def cleanup_stale_temporal_claims(
     connection: sqlite3.Connection,
     now: str | None = None,
-    age_days: int = 30,
-    expiry_days: int = 90,
+    *,
+    age_days: int,
+    expiry_days: int,
 ) -> dict[str, int]:
     """在写事务快照内保守清理缺少 expires_at 的稳定 temporal Claim。"""
     reference = _parse(now) if now else datetime.now(timezone.utc)
@@ -97,16 +77,27 @@ def cleanup_stale_temporal_claims(
 def decay_claims(
     connection: sqlite3.Connection,
     now: str | None = None,
-    rollout_grace_days: int = 7,
-    min_confidence: float = 0.05,
-    feedback_lifecycle_mode: str | None = None,
+    *,
+    temporal_decay_days: int,
+    temporal_archive_days: int,
+    permanent_decay_days: int,
+    permanent_archive_days: int,
+    access_bonus_every: int,
+    access_bonus_days: int,
+    access_bonus_cap_days: int,
+    rollout_grace_days: int,
+    min_confidence: float,
+    feedback_lifecycle_mode: str,
+    feedback_bonus_cap_days: int,
 ) -> dict[str, int]:
     """Linearly decay inactive claims and archive them at scope-specific boundaries."""
     reference = _parse(now) if now else datetime.now(timezone.utc)
     day_start = reference.replace(hour=0, minute=0, second=0, microsecond=0)
     minimum = min(1.0, max(0.0, float(min_confidence)))
-    policy = _load_policy()
-    feedback_mode = feedback_lifecycle_mode or os.getenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "observe").lower()
+    policy = {
+        "temporal": (temporal_decay_days, temporal_archive_days),
+        "permanent": (permanent_decay_days, permanent_archive_days),
+    }
     decayed = archived = 0
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -138,16 +129,16 @@ def decay_claims(
                 0
                 if claim.get("expires_at")
                 else min(
-                    access_count // _ACCESS_BONUS_EVERY * _ACCESS_BONUS_DAYS,
-                    _ACCESS_BONUS_CAP,
+                    access_count // access_bonus_every * access_bonus_days,
+                    access_bonus_cap_days,
                 )
             )
             decay_after += bonus
             archive_after += bonus
-            if feedback_mode == "on":
+            if feedback_lifecycle_mode == "on":
                 feedback_bonus = min(
                     int(claim.get("feedback_bonus") or 0),
-                    int(os.getenv("HL_MEM_FEEDBACK_BONUS_CAP_DAYS", "180")),
+                    feedback_bonus_cap_days,
                 )
                 decay_after += feedback_bonus
                 archive_after += feedback_bonus

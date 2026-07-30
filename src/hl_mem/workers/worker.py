@@ -6,12 +6,14 @@ import argparse
 import hashlib
 import json
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from hl_mem import components
 from hl_mem.application.ingest import IngestService
+from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.attributes import infer_canonical_attribute
 from hl_mem.domain.consolidation_scope import ConsolidationScope
 from hl_mem.domain.content import ImagePart, parse_content
@@ -43,6 +45,8 @@ from hl_mem.workers.rebuild_usefulness import rebuild_usefulness
 from hl_mem.workers.scheduling import enqueue_daily_job
 from hl_mem.workers.ttl import expire_claims
 
+_UNSET = object()
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -68,41 +72,48 @@ class Worker:
 
     def __init__(
         self,
-        settings: Settings | str | Path,
-        config: dict[str, Any] | None = None,
+        settings: Settings,
+        *,
+        event_filter: Any = None,
+        pre_filter: Any = None,
+        extractor: Any = None,
+        image_describer: Any = _UNSET,
+        embedder: Any = None,
+        budget: Any = None,
+        audit_logger: Any = None,
+        consolidator: Any = None,
+        relation_discoverer: Any = None,
     ) -> None:
-        if isinstance(settings, Settings):
-            self.settings = settings
-            self.db_path = Path(settings.database_path)
-        else:
-            self.settings = Settings.from_env()
-            self.db_path = Path(settings)
-        self.config = config or {}
+        self.settings = settings
+        self.db_path = Path(settings.database_path)
         self.dedup_scheduled_minutes = parse_daily_cron(
-            str(self.config.get("dedup_cron", self.settings.dedup_cron)),
+            self.settings.dedup_cron,
             "HL_MEM_DEDUP_CRON",
         )
-        self.database = Database(self.db_path)
+        self.database = Database(settings=settings)
         self.connection = self.database.open_worker()
         self.jobs = JobRepository(self.connection)
-        self.filter = self.config.get("event_filter") or EventFilter()
-        self.pre_filter = self.config.get("pre_filter") or ExtractionPreFilter()
-        self.extractor = self.config.get("extractor") or self._make_extractor()
-        self.image_describer = self.config.get("image_describer")
-        if "image_describer" not in self.config:
-            self.image_describer = components.make_image_describer(self.settings)
-        self.embedder = self.config.get("embedder") or self._make_embedder()
-        self.budget = self.config.get("budget") or TokenBudget(
-            int(self.config.get("daily_token_limit", self.settings.daily_token_limit)),
+        self.filter = event_filter or EventFilter()
+        self.pre_filter = pre_filter or ExtractionPreFilter()
+        self.extractor = extractor or self._make_extractor()
+        self.image_describer = (
+            image_describer
+            if image_describer is not _UNSET
+            else components.make_image_describer(self.settings)
+        )
+        self.embedder = embedder or self._make_embedder()
+        self.budget = budget or TokenBudget(
+            self.settings.daily_token_limit,
             self.db_path.with_suffix(".budget.db"),
         )
-        configured_audit = self.config.get("audit")
-        if configured_audit is not None:
-            self.audit = configured_audit
+        if audit_logger is not None:
+            self.audit = audit_logger
         elif self.settings.extract_pre_filter:
             self.audit = AuditLogger(self.db_path)
         else:
             self.audit = NullAuditLogger()
+        self.consolidator = consolidator
+        self.relation_discoverer = relation_discoverer
 
     def run_once(self) -> dict[str, Any]:
         now = _now()
@@ -161,7 +172,17 @@ class Worker:
         )
         decay_claims(
             self.connection,
+            temporal_decay_days=self.settings.decay_temporal_days,
+            temporal_archive_days=self.settings.archive_temporal_days,
+            permanent_decay_days=self.settings.decay_permanent_days,
+            permanent_archive_days=self.settings.archive_permanent_days,
+            access_bonus_every=self.settings.access_bonus_every,
+            access_bonus_days=self.settings.access_bonus_days,
+            access_bonus_cap_days=self.settings.access_bonus_cap_days,
+            rollout_grace_days=self.settings.decay_rollout_grace_days,
+            min_confidence=self.settings.decay_min_confidence,
             feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
+            feedback_bonus_cap_days=self.settings.feedback_bonus_cap_days,
         )
         maintenance_now = _now()
         maintainer = DerivedMemoryMaintainer(self.connection)
@@ -172,11 +193,11 @@ class Worker:
 
         cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)).isoformat()
         purge_retained_events(self.connection, "default", cutoff)
-        self.audit.cleanup(int(self.config.get("audit_retention_days", self.settings.audit_retention_days)))
+        self.audit.cleanup(self.settings.audit_retention_days)
         enqueue_daily_consolidation(
             self.connection,
             _now(),
-            self.config.get("consolidate_cron", self.settings.consolidate_cron),
+            self.settings.consolidate_cron,
         )
         if self.settings.dedup_enabled:
             enqueue_daily_deduplication(
@@ -187,12 +208,12 @@ class Worker:
         enqueue_daily_policy_induction(
             self.connection,
             _now(),
-            self.config.get("induce_policies_cron", self.settings.induce_policies_cron),
+            self.settings.induce_policies_cron,
         )
         enqueue_daily_reclassify(
             self.connection,
             _now(),
-            self.config.get("reclassify_cron", self.settings.reclassify_cron),
+            self.settings.reclassify_cron,
         )
 
     def _extract(self, payload: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
@@ -452,7 +473,7 @@ class Worker:
         return ConflictConsolidator(
             self.connection,
             judge,
-            float(self.config.get("consolidate_confidence", self.settings.consolidate_confidence)),
+            self.settings.consolidate_confidence,
         )
 
 
@@ -474,7 +495,17 @@ def _handle_decay(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理访问衰减任务。"""
     return decay_claims(
         worker.connection,
+        temporal_decay_days=worker.settings.decay_temporal_days,
+        temporal_archive_days=worker.settings.archive_temporal_days,
+        permanent_decay_days=worker.settings.decay_permanent_days,
+        permanent_archive_days=worker.settings.archive_permanent_days,
+        access_bonus_every=worker.settings.access_bonus_every,
+        access_bonus_days=worker.settings.access_bonus_days,
+        access_bonus_cap_days=worker.settings.access_bonus_cap_days,
+        rollout_grace_days=worker.settings.decay_rollout_grace_days,
+        min_confidence=worker.settings.decay_min_confidence,
         feedback_lifecycle_mode=worker.settings.feedback_lifecycle_mode,
+        feedback_bonus_cap_days=worker.settings.feedback_bonus_cap_days,
     )
 
 
@@ -485,7 +516,7 @@ def _handle_rebuild_usefulness(worker: Worker, job: dict[str, Any]) -> dict[str,
 
 def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理冲突归并任务。"""
-    consolidator = worker.config.get("consolidator") or worker._make_consolidator()
+    consolidator = worker.consolidator or worker._make_consolidator()
     payload = json.loads(job["payload_json"] or "{}")
     scope = ConsolidationScope(
         namespace=payload.get("namespace", "default"),
@@ -496,7 +527,7 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
                 "max_pairs",
                 payload.get(
                     "limit",
-                    worker.config.get("consolidate_batch_size", worker.settings.consolidate_batch_size),
+                    worker.settings.consolidate_batch_size,
                 ),
             )
         ),
@@ -508,7 +539,7 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
         int(
             payload.get(
                 "limit",
-                worker.config.get("consolidate_batch_size", worker.settings.consolidate_batch_size),
+                worker.settings.consolidate_batch_size,
             )
         ),
         payload.get("namespace", "default"),
@@ -553,7 +584,7 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 def _handle_discover_relations(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理单个新 Claim 的关系候选发现任务。"""
     payload = json.loads(job["payload_json"] or "{}")
-    discoverer = worker.config.get("relation_discoverer") or components.make_relation_discoverer(
+    discoverer = worker.relation_discoverer or components.make_relation_discoverer(
         worker.settings, worker.connection
     )
     if discoverer is None:
@@ -643,23 +674,23 @@ def dispatch_job(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> None:
     """运行 worker、处理单个任务或查看任务队列状态。"""
-    settings = Settings.from_env()
     parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.worker")
     parser.add_argument("command", choices=("run", "run-once", "status"))
-    parser.add_argument("--db", default=settings.database_path)
-    parser.add_argument("--poll-interval", type=float, default=settings.worker_poll_interval)
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--db")
+    parser.add_argument("--poll-interval", type=float)
     args = parser.parse_args()
+    settings = load_settings(args.config, args.env_file)
+    if args.db is not None:
+        settings = replace(settings, database_path=args.db)
     if args.command == "status":
-        database = Database(args.db)
+        database = Database(settings=settings)
         try:
             print(json.dumps(JobRepository(database.open()).counts(), sort_keys=True))
         finally:
             database.close()
         return
-    if args.db != settings.database_path:
-        from dataclasses import replace
-
-        settings = replace(settings, database_path=args.db)
     worker = Worker(settings)
     if args.command == "run-once":
         try:

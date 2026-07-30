@@ -51,7 +51,7 @@ class _Repo:
         self.tag_queries.append(query_tags)
         return self.tags
 
-    def helpful_rates(self, _claim_ids: list[str]) -> dict[str, float]:
+    def helpful_rates(self, _claim_ids: list[str], _min_samples: int) -> dict[str, float]:
         return {}
 
 

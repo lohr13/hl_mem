@@ -19,16 +19,20 @@ def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
     database = Database(database_path)
     database.open()
     database.close()
+    config_path = tmp_path / "hl_mem.toml"
+    config_path.write_text("", encoding="utf-8")
     env_path = tmp_path / ".env"
-    env_path.write_text(
-        "HL_MEM_EMBEDDER=fake\nHL_MEM_EXTRACTOR=fake\nHL_MEM_RERANKER=off\n",
-        encoding="utf-8",
-    )
+    env_path.write_text("", encoding="utf-8")
     monkeypatch.setattr(
         "hl_mem.doctor._check_port",
         lambda: CheckResult(CheckStatus.WARN, "服务端口", "测试跳过"),
     )
-    results = run_doctor(database_path=database_path, env_path=env_path, environ={})
+    results = run_doctor(
+        database_path=database_path,
+        config_path=config_path,
+        env_path=env_path,
+        environ={},
+    )
     assert len(results) == 9
 
 

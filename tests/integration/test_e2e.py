@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.worker import Worker
@@ -18,12 +19,18 @@ def event(key: str, session: str, text: str) -> dict[str, object]:
 
 def test_idempotency_cross_session_and_evidence(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("HL_MEM_RELATION_DISCOVERY_MODE", "audit")
-    app = create_app(tmp_path / "e2e.db")
+    app = create_app(
+        Settings(
+            database_path=str(tmp_path / "e2e.db"),
+            relation_discovery_mode="audit",
+            llm_api_key="test-key",
+        )
+    )
     with TestClient(app) as client:
         first = client.post("/v1/events", json=event("key-1", "s1", "我喜欢 PostgreSQL"))
         duplicate = client.post("/v1/events", json=event("key-1", "s1", "我喜欢 PostgreSQL"))
         client.post("/v1/events", json=event("key-2", "s2", "记住 PostgreSQL 开启备份"))
-        worker = Worker(tmp_path / "e2e.db")
+        worker = Worker(app.state.settings, relation_discoverer=object())
         assert worker.run_once()["status"] == "succeeded"
         assert worker.run_once()["status"] == "succeeded"
         response = client.post("/v1/recall", json={"query": "PostgreSQL", "session_id": "s3"})
@@ -41,7 +48,7 @@ def test_data_survives_database_restart(tmp_path) -> None:
     path = tmp_path / "restart.db"
     with TestClient(create_app(path)) as client:
         client.post("/v1/events", json=event("persist-1", "s1", "记住使用 SQLite 持久化"))
-    assert Worker(path).run_once()["status"] == "succeeded"
+    assert Worker(Settings(database_path=str(path))).run_once()["status"] == "succeeded"
     with TestClient(create_app(path)) as client:
         response = client.post("/v1/recall", json={"query": "SQLite", "session_id": "s2"})
         assert response.json()["total"] == 1

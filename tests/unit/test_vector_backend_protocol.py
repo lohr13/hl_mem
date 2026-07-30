@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
@@ -27,10 +25,8 @@ def test_vector_backend_protocol_accepts_repository(tmp_path) -> None:
     assert _search(ClaimRepository(connection)) == []
 
 
-def test_vector_backend_config_default(monkeypatch: Any) -> None:
-    monkeypatch.delenv("HL_MEM_VECTOR_BACKEND", raising=False)
-
-    assert Settings.from_env().vector_backend == "sqlite_scan"
+def test_vector_backend_config_default() -> None:
+    assert Settings().vector_backend == "sqlite_scan"
 
 
 def test_healthz_reports_last_embedded_candidate_count(tmp_path) -> None:

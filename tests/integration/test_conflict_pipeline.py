@@ -21,7 +21,7 @@ def test_preference_state_change_and_history(tmp_path, monkeypatch) -> None:
                 "occurred_at": "2026-02-01T00:00:00+00:00",
             },
         )
-        worker = Worker(tmp_path / "conflict.db")
+        worker = Worker(client.app.state.settings)
         worker.run_once()
         worker.run_once()
         current = client.post("/v1/recall", json={"query": "模式偏好"}).json()["results"]

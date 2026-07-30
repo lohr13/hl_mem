@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import Any
 
@@ -16,7 +15,6 @@ from hl_mem.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_TRACE_ACTION_LENGTH = 10_000
 MAX_TRACE_OBSERVATION_SUMMARY_LENGTH = 500
 _ERROR_PATTERNS = (
@@ -48,29 +46,36 @@ class HLMemProvider:
         db_path: str | None = None,
         daemon_url: str | None = None,
         timeout: float | None = None,
+        *,
+        settings: Settings | None = None,
+        enabled: bool | None = None,
+        hermes_home: str | None = None,
     ) -> None:
-        settings = Settings.from_env()
+        resolved_settings = settings or Settings()
+        self.settings = resolved_settings
         self.db_path = db_path
-        configured_daemon_url = daemon_url or os.getenv("HL_MEM_URL", "http://127.0.0.1:8200")
+        configured_daemon_url = daemon_url or resolved_settings.hermes_url
         if configured_daemon_url is None:
             raise ValueError("daemon URL must be configured")
-        configured_timeout = (
-            timeout if timeout is not None else float(os.getenv("HL_MEM_TIMEOUT", str(DEFAULT_TIMEOUT_SECONDS)))
-        )
+        configured_timeout = timeout if timeout is not None else float(resolved_settings.hermes_timeout)
         if configured_timeout <= 0:
             raise ValueError("timeout must be positive")
+        self.enabled = resolved_settings.hermes_enabled if enabled is None else enabled
         self.daemon_url = configured_daemon_url.rstrip("/")
         self.timeout = configured_timeout
         self._client = HLMemHttpClient(
             self.daemon_url,
             configured_timeout,
-            settings.hermes_circuit_failure_threshold,
-            settings.hermes_circuit_open_seconds,
+            resolved_settings.hermes_circuit_failure_threshold,
+            resolved_settings.hermes_circuit_open_seconds,
         )
-        self._prefetch_cache = PrefetchCache(self._client, settings.hermes_prefetch_cache_ttl_seconds)
+        self._prefetch_cache = PrefetchCache(
+            self._client,
+            resolved_settings.hermes_prefetch_cache_ttl_seconds,
+        )
         self._mapper = EpisodeMapper()
         self._session_id = ""
-        self._hermes_home = ""
+        self._hermes_home = hermes_home or resolved_settings.hermes_home or ""
 
     @property
     def name(self) -> str:
@@ -99,8 +104,8 @@ class HLMemProvider:
         self._client._circuit_open_until = value
 
     def is_available(self) -> bool:
-        """返回提供器是否由环境变量启用。"""
-        return os.getenv("HL_MEM_ENABLED", "true").lower() != "false"
+        """返回提供器是否由统一配置启用。"""
+        return self.enabled
 
     def get_tool_schemas(self) -> list[Any]:
         """返回提供器暴露的工具定义。"""
@@ -114,7 +119,7 @@ class HLMemProvider:
         """初始化健康状态，或保存 Hermes 提供的会话上下文。"""
         if session_id is not None:
             self._session_id = session_id
-            self._hermes_home = str(kwargs.get("hermes_home") or os.getenv("HERMES_HOME", ""))
+            self._hermes_home = str(kwargs.get("hermes_home") or self._hermes_home)
             return
         if not self._can_call():
             return

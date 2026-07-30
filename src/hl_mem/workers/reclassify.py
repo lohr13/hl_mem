@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
+from pathlib import Path
 from typing import Any, Iterable
 
 from hl_mem import components
+from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.attributes import validate_slot_instance
 from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
@@ -190,12 +193,16 @@ def reclassify_claims(
 
 def main() -> None:
     """运行一次记忆重分类。"""
-    settings = Settings.from_env()
     parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.reclassify")
-    parser.add_argument("--db", default=settings.database_path)
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--db")
     parser.add_argument("--batch-size", type=int, default=8)
     args = parser.parse_args()
-    database = Database(args.db)
+    settings = load_settings(args.config, args.env_file)
+    if args.db is not None:
+        settings = replace(settings, database_path=args.db)
+    database = Database(settings=settings)
     try:
         try:
             llm_client = components.make_llm_client(settings)

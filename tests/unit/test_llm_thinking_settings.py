@@ -8,23 +8,17 @@ from hl_mem.llm.providers import DashScopeProvider, ZhipuProvider
 from hl_mem.settings import Settings
 
 
-def test_llm_thinking_defaults_to_disabled(monkeypatch) -> None:
-    monkeypatch.delenv("HL_MEM_LLM_ENABLE_THINKING", raising=False)
-
-    assert Settings.from_env().enable_llm_thinking is False
+def test_llm_thinking_defaults_to_disabled() -> None:
+    assert Settings().enable_llm_thinking is False
 
 
-def test_llm_thinking_can_be_enabled_from_environment(monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_LLM_ENABLE_THINKING", "true")
-
-    assert Settings.from_env().enable_llm_thinking is True
+def test_llm_thinking_can_be_enabled() -> None:
+    assert Settings(enable_llm_thinking=True).enable_llm_thinking is True
 
 
-def test_llm_thinking_rejects_invalid_environment_value(monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_LLM_ENABLE_THINKING", "sometimes")
-
+def test_llm_thinking_rejects_invalid_value() -> None:
     with pytest.raises(ConfigurationError, match="HL_MEM_LLM_ENABLE_THINKING"):
-        Settings.from_env()
+        Settings(enable_llm_thinking="sometimes").validate()  # type: ignore[arg-type]
 
 
 def test_llm_thinking_is_exposed_in_health_snapshot() -> None:

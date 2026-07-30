@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import socket
 import sqlite3
 import sys
@@ -15,11 +14,10 @@ from typing import Mapping, Sequence
 
 import httpx
 
+from hl_mem.config_loader import load_settings
 from hl_mem.http_utils import retry_http
-from hl_mem.settings import is_placeholder_secret
-from hl_mem.storage.database import default_database_path
+from hl_mem.settings import Settings, is_placeholder_secret
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MIGRATION_DIR = Path(__file__).resolve().parent / "storage" / "migrations"
 
 
@@ -38,20 +36,6 @@ class CheckResult:
     status: CheckStatus
     name: str
     detail: str
-
-
-def read_env_file(path: Path) -> dict[str, str]:
-    """读取简单 KEY=VALUE 格式环境文件，且不修改进程环境。"""
-    if not path.is_file():
-        return {}
-    values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        name, value = line.split("=", 1)
-        values[name.strip()] = value.strip().strip("\"'")
-    return values
 
 
 def count_code_migrations(migration_dir: Path = MIGRATION_DIR) -> int:
@@ -120,20 +104,31 @@ def _check_fts_rebuild(database_path: Path) -> CheckResult:
     return CheckResult(CheckStatus.OK, "claims_fts rebuild", "临时副本测试成功，生产数据库未修改")
 
 
-def _check_env(env_path: Path, values: Mapping[str, str]) -> CheckResult:
-    if not env_path.is_file():
-        return CheckResult(CheckStatus.WARN, ".env 配置", f"文件不存在：{env_path}")
+def _check_secrets(settings: Settings) -> CheckResult:
+    """检查已启用组件对应的独立密钥。"""
     enabled: list[str] = []
-    if values.get("HL_MEM_EXTRACTOR", "fake").strip().lower() == "llm":
+    values = {
+        "LLM_API_KEY": settings.llm_api_key,
+        "EMBEDDING_API_KEY": settings.embedding_api_key,
+        "RERANKER_API_KEY": settings.reranker_api_key,
+        "IMAGE_API_KEY": settings.image_describer_api_key,
+    }
+    if (
+        settings.extractor_mode != "fake"
+        or settings.query_expansion_mode != "off"
+        or settings.relation_discovery_mode != "off"
+    ):
         enabled.append("LLM_API_KEY")
-    if values.get("HL_MEM_EMBEDDER", "fake").strip().lower() == "real":
+    if settings.embedder_mode == "real":
         enabled.append("EMBEDDING_API_KEY")
-    if values.get("HL_MEM_RERANKER", "off").strip().lower() in {"on", "real"}:
+    if settings.reranker_mode in {"on", "real"}:
         enabled.append("RERANKER_API_KEY")
+    if settings.image_describer_mode == "on":
+        enabled.append("IMAGE_API_KEY")
     invalid = [name for name in enabled if is_placeholder_secret(values.get(name))]
     if invalid:
-        return CheckResult(CheckStatus.FAIL, ".env 配置", f"缺失或为占位符：{', '.join(invalid)}")
-    return CheckResult(CheckStatus.OK, ".env 配置", "已启用组件的关键配置有效")
+        return CheckResult(CheckStatus.FAIL, "密钥配置", f"缺失或为占位符：{', '.join(invalid)}")
+    return CheckResult(CheckStatus.OK, "密钥配置", "已启用组件的独立密钥有效")
 
 
 def _post(
@@ -164,43 +159,43 @@ def _post(
     return CheckResult(CheckStatus.OK, name, f"请求成功（HTTP {response.status_code}）")
 
 
-def _check_embedding(values: Mapping[str, str]) -> CheckResult:
-    if values.get("HL_MEM_EMBEDDER", "fake").strip().lower() == "fake":
+def _check_embedding(settings: Settings) -> CheckResult:
+    if settings.embedder_mode == "fake":
         return CheckResult(CheckStatus.WARN, "Embedding API", "embedder=fake，跳过")
-    base_url = values.get("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1").rstrip("/")
+    base_url = settings.embedding_base_url.rstrip("/")
     try:
         return _post(
             "Embedding API",
             f"{base_url}/embeddings",
-            values.get("EMBEDDING_API_KEY"),
+            settings.embedding_api_key,
             {
-                "model": values.get("EMBEDDING_MODEL", "text-embedding-v4"),
+                "model": settings.embedding_model,
                 "input": ["ping"],
-                "dimensions": int(values.get("EMBEDDING_DIM", "2048")),
+                "dimensions": settings.embedding_dim,
             },
-            float(values.get("EMBEDDING_READ_TIMEOUT", "30")),
-            int(values.get("EMBEDDING_MAX_ATTEMPTS", "3")),
+            settings.embedding_read_timeout,
+            settings.embedding_max_attempts,
         )
     except ValueError as error:
         return CheckResult(CheckStatus.FAIL, "Embedding API", f"配置值无效：{error}")
 
 
-def _check_llm(values: Mapping[str, str]) -> CheckResult:
-    if values.get("HL_MEM_EXTRACTOR", "fake").strip().lower() == "fake":
+def _check_llm(settings: Settings) -> CheckResult:
+    if settings.extractor_mode == "fake":
         return CheckResult(CheckStatus.WARN, "LLM API", "extractor=fake，跳过")
-    base_url = values.get("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1").rstrip("/")
+    base_url = settings.llm_base_url.rstrip("/")
     try:
         return _post(
             "LLM API",
             f"{base_url}/chat/completions",
-            values.get("LLM_API_KEY"),
+            settings.llm_api_key,
             {
-                "model": values.get("LLM_MODEL", "glm-5.2"),
+                "model": settings.llm_model,
                 "messages": [{"role": "user", "content": "ping"}],
                 "max_tokens": 1,
             },
-            float(values.get("LLM_TIMEOUT", "30")),
-            int(values.get("LLM_MAX_ATTEMPTS", "3")),
+            settings.llm_timeout,
+            settings.llm_max_attempts,
         )
     except ValueError as error:
         return CheckResult(CheckStatus.FAIL, "LLM API", f"配置值无效：{error}")
@@ -215,9 +210,8 @@ def _check_port() -> CheckResult:
     return CheckResult(CheckStatus.OK, "服务端口", "127.0.0.1:8200 正在监听")
 
 
-def _check_hermes(values: Mapping[str, str]) -> CheckResult:
-    configured = values.get("HERMES_HOME")
-    hermes_home = Path(configured).expanduser() if configured else Path.home() / ".hermes"
+def _check_hermes(settings: Settings) -> CheckResult:
+    hermes_home = Path(settings.hermes_home).expanduser() if settings.hermes_home else Path.home() / ".hermes"
     if not hermes_home.exists():
         return CheckResult(CheckStatus.WARN, "Hermes 插件", "未检测到 Hermes，跳过")
     agent_home = hermes_home / "hermes-agent" if (hermes_home / "hermes-agent").is_dir() else hermes_home
@@ -231,13 +225,13 @@ def _check_hermes(values: Mapping[str, str]) -> CheckResult:
 
 def run_doctor(
     database_path: Path | None = None,
+    config_path: Path | None = None,
     env_path: Path | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> list[CheckResult]:
     """执行全部诊断并返回结构化结果。"""
-    resolved_env_path = env_path or PROJECT_ROOT / ".env"
-    values = {**read_env_file(resolved_env_path), **dict(environ if environ is not None else os.environ)}
-    resolved_database = database_path or Path(values.get("HL_MEM_DB_PATH", str(default_database_path())))
+    settings = load_settings(config_path, env_path, environ=environ)
+    resolved_database = database_path or Path(settings.database_path)
     return [
         CheckResult(
             CheckStatus.OK if sys.version_info >= (3, 11) else CheckStatus.FAIL,
@@ -247,11 +241,11 @@ def run_doctor(
         _check_database(resolved_database),
         _check_migrations(resolved_database),
         _check_fts_rebuild(resolved_database),
-        _check_env(resolved_env_path, values),
-        _check_embedding(values),
-        _check_llm(values),
+        _check_secrets(settings),
+        _check_embedding(settings),
+        _check_llm(settings),
         _check_port(),
-        _check_hermes(values),
+        _check_hermes(settings),
     ]
 
 
@@ -259,9 +253,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     """运行 doctor 命令并打印逐项结果和汇总。"""
     parser = argparse.ArgumentParser(prog="hl-mem doctor")
     parser.add_argument("--db", type=Path)
+    parser.add_argument("--config", type=Path)
     parser.add_argument("--env-file", type=Path)
     args = parser.parse_args(argv)
-    results = run_doctor(database_path=args.db, env_path=args.env_file)
+    results = run_doctor(
+        database_path=args.db,
+        config_path=args.config,
+        env_path=args.env_file,
+    )
     for result in results:
         print(f"[{result.status}] {result.name} — {result.detail}")
     passed = sum(result.status is CheckStatus.OK for result in results)

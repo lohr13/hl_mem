@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
+from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
-from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 
 PROTECTED_ATTRIBUTES = frozenset({"memory.explicit", "identity.name"})
@@ -113,21 +115,35 @@ def backfill_expires_at(
 
 def main() -> None:
     """从命令行执行 expires_at 回填，默认仅预览。"""
-    settings = Settings.from_env()
     parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.backfill_expires_at")
-    parser.add_argument("--db", default=settings.database_path)
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--db")
     parser.add_argument("--apply", action="store_true", help="实际写入；省略时为 dry-run")
-    parser.add_argument("--batch-size", type=int, default=settings.ttl_backfill_batch_size)
-    parser.add_argument("--grace-hours", type=int, default=settings.ttl_backfill_grace_hours)
+    parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--grace-hours", type=int)
     args = parser.parse_args()
-    database = Database(args.db)
+    settings = load_settings(args.config, args.env_file)
+    if args.db is not None:
+        settings = replace(settings, database_path=args.db)
+    database = Database(settings=settings)
     try:
         result = backfill_expires_at(
             database.open(),
             settings.retention_policy(),
             dry_run=not args.apply,
-            batch_size=args.batch_size,
-            grace_period=timedelta(hours=args.grace_hours),
+            batch_size=(
+                args.batch_size
+                if args.batch_size is not None
+                else settings.ttl_backfill_batch_size
+            ),
+            grace_period=timedelta(
+                hours=(
+                    args.grace_hours
+                    if args.grace_hours is not None
+                    else settings.ttl_backfill_grace_hours
+                )
+            ),
         )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     finally:

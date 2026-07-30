@@ -61,7 +61,12 @@ def test_ttl_worker_compares_mixed_offset_storage_as_instants(tmp_path) -> None:
             "expires_at": "2026-01-02T01:00:00+08:00",
         }
     )
-    assert expire_claims(connection, "2026-01-01T18:00:00Z") == {"expired": 1}
+    assert expire_claims(
+        connection,
+        "2026-01-01T18:00:00Z",
+        feedback_lifecycle_mode="observe",
+        slot_short_ttl_seconds=86400,
+    ) == {"expired": 1}
 
 
 def test_slot_backfill_preserves_existing_classification_by_default(tmp_path) -> None:

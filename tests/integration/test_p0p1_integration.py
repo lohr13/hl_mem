@@ -105,7 +105,12 @@ def test_api_feedback_bonus_flows_into_ttl_valid_to(
                 },
             )
 
-        assert expire_claims(connection, "2026-08-04T00:00:00+00:00", "on") == {"expired": 1}
+        assert expire_claims(
+            connection,
+            "2026-08-04T00:00:00+00:00",
+            feedback_lifecycle_mode="on",
+            slot_short_ttl_seconds=86400,
+        ) == {"expired": 1}
         row = connection.execute("SELECT valid_to FROM claims WHERE id=?", ("ttl-claim",)).fetchone()
         assert row["valid_to"] == "2026-08-03T00:00:00+00:00"
 

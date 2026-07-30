@@ -1,6 +1,7 @@
 import httpx
 
 from hl_mem.adapters.hermes.provider import HLMemProvider, _summarize_observation
+from hl_mem.settings import Settings
 
 
 class Response:
@@ -97,18 +98,14 @@ def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:
     assert provider._failure_count == 0
 
 
-def test_provider_uses_configurable_default_timeout(monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_TIMEOUT", "25")
-
-    provider = HLMemProvider()
+def test_provider_uses_configurable_default_timeout() -> None:
+    provider = HLMemProvider(settings=Settings(hermes_timeout=25))
 
     assert provider.timeout == 25.0
     assert provider._client.timeout == 25.0
 
 
-def test_provider_defaults_to_long_recall_timeout(monkeypatch) -> None:
-    monkeypatch.delenv("HL_MEM_TIMEOUT", raising=False)
-
+def test_provider_defaults_to_long_recall_timeout() -> None:
     provider = HLMemProvider()
 
     assert provider.timeout == 30.0

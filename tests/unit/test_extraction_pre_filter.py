@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
-from unittest.mock import patch
 
 from hl_mem.ingest.pre_filter import ExtractionPreFilter
 from hl_mem.observability.audit import AuditLogger
@@ -168,31 +167,19 @@ class ExtractionPreFilterTests(unittest.TestCase):
 
 
 class ExtractionPreFilterSettingsTests(unittest.TestCase):
-    """验证环境变量开关的向后兼容契约。"""
+    """验证统一 Settings 中的预过滤配置契约。"""
 
     def test_default_is_off(self) -> None:
-        with patch.dict("os.environ", {}, clear=True):
-            self.assertFalse(Settings.from_env().extract_pre_filter)
+        self.assertFalse(Settings().extract_pre_filter)
 
-    def test_on_enables_pre_filter(self) -> None:
-        with patch.dict("os.environ", {"HL_MEM_EXTRACT_PRE_FILTER": "on"}, clear=True):
-            self.assertTrue(Settings.from_env().extract_pre_filter)
+    def test_true_enables_pre_filter(self) -> None:
+        self.assertTrue(Settings(extract_pre_filter=True).extract_pre_filter)
 
-    def test_invalid_value_is_rejected(self) -> None:
-        with patch.dict("os.environ", {"HL_MEM_EXTRACT_PRE_FILTER": "sometimes"}, clear=True):
-            with self.assertRaisesRegex(Exception, "HL_MEM_EXTRACT_PRE_FILTER"):
-                Settings.from_env()
-
-    def test_temporal_cleanup_durations_are_loaded_from_environment(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {
-                "HL_MEM_TEMPORAL_CLEANUP_AGE_DAYS": "45",
-                "HL_MEM_TEMPORAL_CLEANUP_EXPIRY_DAYS": "120",
-            },
-            clear=True,
-        ):
-            settings = Settings.from_env()
+    def test_temporal_cleanup_durations_are_explicit(self) -> None:
+        settings = Settings(
+            temporal_cleanup_age_days=45,
+            temporal_cleanup_expiry_days=120,
+        )
         self.assertEqual(settings.temporal_cleanup_age_days, 45)
         self.assertEqual(settings.temporal_cleanup_expiry_days, 120)
 
@@ -247,14 +234,12 @@ class WorkerPreFilterIntegrationTests(unittest.TestCase):
         audit = _RecordingAudit()
         worker = Worker(
             Settings(database_path=str(path), extract_pre_filter=True),
-            {
-                "extractor": extractor,
-                "embedder": object(),
-                "image_describer": None,
-                "pre_filter": pre_filter,
-                "audit": audit,
-                "budget": _Budget(),
-            },
+            extractor=extractor,
+            embedder=object(),
+            image_describer=None,
+            pre_filter=pre_filter,
+            audit_logger=audit,
+            budget=_Budget(),
         )
         now = datetime.now(timezone.utc).isoformat()
         EventRepository(worker.connection).insert_event(
@@ -300,12 +285,10 @@ class WorkerPreFilterIntegrationTests(unittest.TestCase):
             path = Path(directory) / "audit-default.db"
             worker = Worker(
                 Settings(database_path=str(path), extract_pre_filter=True),
-                {
-                    "extractor": _CountingExtractor(),
-                    "embedder": object(),
-                    "image_describer": None,
-                    "budget": _Budget(),
-                },
+                extractor=_CountingExtractor(),
+                embedder=object(),
+                image_describer=None,
+                budget=_Budget(),
             )
             self.assertIsInstance(worker.audit, AuditLogger)
             worker.audit.close()

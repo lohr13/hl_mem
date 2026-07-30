@@ -26,7 +26,5 @@ def test_make_reranker_real_dashscope() -> None:
     assert isinstance(reranker, DashScopeReranker)
 
 
-def test_reranker_provider_config(monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_RERANKER_PROVIDER", "DASHSCOPE")
-
-    assert Settings.from_env().reranker_provider == "dashscope"
+def test_reranker_provider_config() -> None:
+    assert Settings(reranker_provider="dashscope").reranker_provider == "dashscope"
