@@ -126,22 +126,15 @@ def make_reranker(
     if settings.reranker_mode == "fake":
         return FakeReranker()
     if not settings.reranker_api_key:
-        if settings.environment == "production" or not settings.allow_fake_fallback:
-            raise ConfigurationError(
-                f"HL_MEM_RERANKER={settings.reranker_mode} but " "RERANKER_API_KEY or EMBEDDING_API_KEY is missing"
-            )
-        return None
+        raise ConfigurationError(
+            f"HL_MEM_RERANKER={settings.reranker_mode} but RERANKER_API_KEY is missing"
+        )
     registry = provider_types or RERANKER_PROVIDERS
     provider_type = registry.get(settings.reranker_provider)
     if provider_type is None:
         raise ConfigurationError(f"unsupported reranker provider: {settings.reranker_provider}")
-    try:
-        return provider_type(
-            settings.reranker_api_key,
-            settings.reranker_base_url,
-            settings.reranker_model,
-        )
-    except Exception:
-        if settings.environment == "production":
-            raise
-        return None
+    return provider_type(
+        settings.reranker_api_key,
+        settings.reranker_base_url,
+        settings.reranker_model,
+    )

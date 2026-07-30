@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import batch_cosine_similarity, cosine_similarity
 from hl_mem.domain.claims.claim import build_index_text
 from hl_mem.domain.claims.conflicts import slot_qualifier_key
@@ -15,6 +14,7 @@ from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
 from hl_mem.protocols import ClaimRow, EmbedderProtocol
+from hl_mem.settings import Settings
 from hl_mem.storage._shared import (
     decode_json,
     encode_json,
@@ -35,11 +35,19 @@ class SupersedeResult:
 class ClaimRepository:
     """封装 Claim 持久化、时间可见检索、状态更新与去重查询。"""
 
-    def __init__(self, connection: sqlite3.Connection, vector_batch_size: int = 512) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        vector_batch_size: int = 512,
+        settings: Settings | None = None,
+    ) -> None:
         self.connection = connection
         if vector_batch_size < 1:
             raise ValueError("vector_batch_size must be positive")
         self.vector_batch_size = vector_batch_size
+        resolved_settings = settings or Settings()
+        self.recall_default_limit = resolved_settings.recall_default_limit
+        self.recall_vector_scan_limit = resolved_settings.recall_vector_scan_limit
 
     def insert_claim(self, claim: dict[str, Any], commit: bool = True) -> bool:
         """编码结构化字段并幂等写入一条 Claim。"""
@@ -285,13 +293,14 @@ class ClaimRepository:
     def search_claims_vector(
         self,
         query_blob: bytes,
-        limit: int = RECALL_VECTOR_SCAN_LIMIT,
+        limit: int | None = None,
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
         namespace: str = "default",
     ) -> list[dict[str, Any]]:
         """对可见 Claim 执行本地余弦全量扫描并截断。"""
+        limit = self.recall_vector_scan_limit if limit is None else limit
         # A 100k x 2048 float32 full scan is about 819 MB; indexed retrieval must
         # be reconsidered before deployments approach that scale.
         reference = as_of or datetime.now(timezone.utc).isoformat()
@@ -547,13 +556,14 @@ class ClaimRepository:
     def search_claims_fts(
         self,
         query: str,
-        limit: int = RECALL_DEFAULT_LIMIT,
+        limit: int | None = None,
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
         namespace: str = "default",
     ) -> list[ClaimRow]:
         """使用 FTS5 查询并应用双时间可见性过滤。"""
+        limit = self.recall_default_limit if limit is None else limit
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
         statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
@@ -590,7 +600,7 @@ class ClaimRepository:
         self,
         query_tags: list[str],
         namespace: str = "default",
-        limit: int = RECALL_DEFAULT_LIMIT,
+        limit: int | None = None,
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
@@ -598,6 +608,7 @@ class ClaimRepository:
         """按规范化标签执行 OR 查询，并返回时间可见的 claim。"""
         if not query_tags:
             return []
+        limit = self.recall_default_limit if limit is None else limit
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
         statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"

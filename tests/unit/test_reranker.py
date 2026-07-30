@@ -4,36 +4,32 @@ import httpx
 import pytest
 
 from hl_mem.api.schemas import RecallInput
+from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.recall.recall_pipeline import hybrid_claims, matching_policies
 from hl_mem.recall.reranker import FakeReranker, Reranker
 
 
-def test_server_reranker_on_without_key_falls_back_to_disabled(monkeypatch) -> None:
+def test_server_reranker_on_without_key_fails() -> None:
     from hl_mem.components import make_reranker
     from hl_mem.settings import Settings
 
-    monkeypatch.setenv("HL_MEM_ALLOW_FAKE_FALLBACK", "true")
-    monkeypatch.setenv("HL_MEM_RERANKER", "on")
-    monkeypatch.delenv("RERANKER_API_KEY", raising=False)
-    monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
-
-    assert make_reranker(Settings.from_env()) is None
+    with pytest.raises(ConfigurationError, match="RERANKER_API_KEY"):
+        make_reranker(Settings(reranker_mode="on"))
 
 
-def test_server_reranker_initialization_failure_falls_back(monkeypatch) -> None:
+def test_server_reranker_initialization_failure_propagates(monkeypatch) -> None:
     import hl_mem.components as components
     from hl_mem.settings import Settings
 
-    monkeypatch.setenv("HL_MEM_RERANKER", "on")
-    monkeypatch.setenv("RERANKER_API_KEY", "test-key")
     monkeypatch.setattr(
         components,
         "Reranker",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad")),
     )
 
-    assert components.make_reranker(Settings.from_env()) is None
+    with pytest.raises(RuntimeError, match="bad"):
+        components.make_reranker(Settings(reranker_mode="on", reranker_api_key="test-key"))
 
 
 def _claims() -> list[dict]:

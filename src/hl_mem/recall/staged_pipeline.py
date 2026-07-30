@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from hl_mem.config import RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.core.vector import normalized_cosine_similarity, normalized_vector
 from hl_mem.domain.claims.attributes import SLOT_REGISTRY, normalize_predicate
 from hl_mem.domain.claims.query_tags import (
@@ -37,6 +36,7 @@ from hl_mem.recall.relation_expansion import (
 )
 from hl_mem.recall.reranker import RerankResult
 from hl_mem.recall.trace import SearchTracer
+from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 
 # ── 排序因子冻结 ──────────────────────────────────────────────
@@ -52,6 +52,7 @@ RRF_K = 60
 class RecallConfig:
     """召回管线使用的完整排序配置。"""
 
+    vector_scan_limit: int = field(default_factory=lambda: Settings().recall_vector_scan_limit)
     candidate_floor: int = 50
     tag_boost_enabled: bool = True
     tag_boost_weight: float = 0.05
@@ -288,7 +289,7 @@ def _collect_candidates(
     """仅执行 FTS 与向量检索，并建立统一时间快照。"""
     config = recall_config or RecallConfig()
     effective_floor = candidate_floor or config.candidate_floor
-    candidate_limit = min(RECALL_VECTOR_SCAN_LIMIT, max(limit * 5, effective_floor))
+    candidate_limit = min(config.vector_scan_limit, max(limit * 5, effective_floor))
     ranking_now = now or datetime.now(timezone.utc).isoformat()
     selected_intent = RecallIntent(intent) if intent else route_recall_intent(query, as_of, ranking_now)
     reference = as_of or ranking_now

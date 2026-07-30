@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
-import warnings
 from pathlib import Path
 
 import pytest
 
 from hl_mem.doctor import CheckResult, CheckStatus, count_code_migrations, run_doctor
 from hl_mem.errors import ConfigurationError
-from hl_mem.settings import Environment, Settings, is_placeholder_secret
+from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.database import Database
 
 
@@ -22,7 +21,7 @@ def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
     database.close()
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "HL_MEM_ENV=test\nHL_MEM_EMBEDDER=fake\nHL_MEM_EXTRACTOR=fake\nHL_MEM_RERANKER=off\n",
+        "HL_MEM_EMBEDDER=fake\nHL_MEM_EXTRACTOR=fake\nHL_MEM_RERANKER=off\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -51,10 +50,9 @@ def test_migration_count_matches_database(tmp_path: Path) -> None:
     assert applied == count_code_migrations()
 
 
-def test_placeholder_validation_by_environment() -> None:
-    """production 拒绝占位符，dev 警告，test 完全跳过。"""
-    production = Settings(
-        environment=Environment.PRODUCTION,
+def test_enabled_components_reject_placeholder_secrets() -> None:
+    """启用真实组件时，任何环境都必须拒绝空值或占位密钥。"""
+    settings = Settings(
         extractor_mode="llm",
         embedder_mode="real",
         reranker_mode="on",
@@ -63,13 +61,7 @@ def test_placeholder_validation_by_environment() -> None:
         reranker_api_key="reranker-real-key",
     )
     with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
-        production.validate()
+        settings.validate()
 
-    development = Settings(extractor_mode="llm", llm_api_key="your-key")
-    with pytest.warns(UserWarning, match="LLM_API_KEY"):
-        development.validate()
-
-    testing = Settings(environment=Environment.TEST, extractor_mode="llm", llm_api_key="xxx")
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        testing.validate()
+    with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
+        Settings(extractor_mode="real", llm_api_key="your-key").validate()

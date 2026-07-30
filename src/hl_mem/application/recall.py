@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.application.ingest import new_id
-from hl_mem.config import RECALL_DEFAULT_LIMIT, RECALL_VECTOR_SCAN_LIMIT
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
@@ -204,7 +203,7 @@ class RecallService:
     def recall(
         self,
         query: str,
-        limit: int = RECALL_DEFAULT_LIMIT,
+        limit: int | None = None,
         as_of: str | None = None,
         intent: RecallIntent | str | None = None,
         known_as_of: str | None = None,
@@ -216,6 +215,7 @@ class RecallService:
         debug: bool = False,
     ) -> dict[str, Any]:
         """执行混合召回并返回 claim、策略、证据及查询标识。"""
+        limit = self.settings.recall_default_limit if limit is None else limit
         total_started = time.perf_counter_ns()
         query_id = query_id or new_id()
         intent_source = "explicit" if intent is not None else "keyword"
@@ -271,7 +271,7 @@ class RecallService:
                 intent=selected_intent.value,
                 limit=limit,
                 candidate_limit=min(
-                    RECALL_VECTOR_SCAN_LIMIT,
+                    self.settings.recall_vector_scan_limit,
                     max(limit * 5, self.settings.recall_candidate_floor),
                 ),
                 candidates={},
@@ -387,7 +387,11 @@ class RecallService:
                 return expand_for(trigger) if trigger is not None else ([], [])
 
         claims = hybrid_claims(
-            ClaimRepository(self.connection, vector_batch_size=self.settings.vector_batch_size),
+            ClaimRepository(
+                self.connection,
+                vector_batch_size=self.settings.vector_batch_size,
+                settings=self.settings,
+            ),
             query,
             query_blobs[0],
             limit,
@@ -397,6 +401,7 @@ class RecallService:
             known_as_of=known_as_of,
             namespace=namespace,
             recall_config=RecallConfig(
+                vector_scan_limit=self.settings.recall_vector_scan_limit,
                 candidate_floor=self.settings.recall_candidate_floor,
                 tag_boost_enabled=self.settings.tag_boost_enabled,
                 tag_boost_weight=self.settings.tag_boost_weight,

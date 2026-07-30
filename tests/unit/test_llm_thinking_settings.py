@@ -9,21 +9,18 @@ from hl_mem.settings import Settings
 
 
 def test_llm_thinking_defaults_to_disabled(monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_ENV", "dev")
     monkeypatch.delenv("HL_MEM_LLM_ENABLE_THINKING", raising=False)
 
     assert Settings.from_env().enable_llm_thinking is False
 
 
 def test_llm_thinking_can_be_enabled_from_environment(monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_ENV", "dev")
     monkeypatch.setenv("HL_MEM_LLM_ENABLE_THINKING", "true")
 
     assert Settings.from_env().enable_llm_thinking is True
 
 
 def test_llm_thinking_rejects_invalid_environment_value(monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_ENV", "dev")
     monkeypatch.setenv("HL_MEM_LLM_ENABLE_THINKING", "sometimes")
 
     with pytest.raises(ConfigurationError, match="HL_MEM_LLM_ENABLE_THINKING"):

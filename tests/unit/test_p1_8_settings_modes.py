@@ -30,7 +30,6 @@ def test_for_test_returns_safe_non_network_configuration() -> None:
     settings = Settings.for_test()
     settings.validate()
 
-    assert settings.environment == "test"
     assert settings.embedder_mode == "fake"
     assert settings.extractor_mode == "fake"
     assert settings.reranker_mode == "off"

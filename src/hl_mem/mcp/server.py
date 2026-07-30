@@ -147,7 +147,7 @@ class McpMemoryServer:
     def _recall(self, connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         """通过共享召回服务执行混合召回。"""
         query = str(arguments.get("query", ""))
-        limit = int(arguments.get("limit", 20))
+        limit = int(arguments.get("limit", self.settings.recall_default_limit))
         return RecallService(
             connection,
             self.embedder,

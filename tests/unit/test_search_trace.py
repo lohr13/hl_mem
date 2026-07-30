@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from hl_mem.application.recall import RecallService
 from hl_mem.ingest.embedder import FakeEmbedder, pack_vector
 from hl_mem.recall.recall_pipeline import hybrid_claims
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
+from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 
 
@@ -133,7 +135,8 @@ def test_recall_service_only_returns_search_trace_in_debug_mode(tmp_path: Path) 
     database = Database(tmp_path / "search-trace.db")
     try:
         with database.connect() as connection:
-            service = RecallService(connection, FakeEmbedder(4))
+            settings = replace(Settings(), recall_default_limit=7, recall_vector_scan_limit=9)
+            service = RecallService(connection, FakeEmbedder(4), settings=settings)
 
             normal = service.recall("private query")
             debug = service.recall("private query", debug=True, query_id="query-1")
@@ -142,5 +145,7 @@ def test_recall_service_only_returns_search_trace_in_debug_mode(tmp_path: Path) 
 
     assert "search_trace" not in normal
     assert debug["search_trace"]["query_id"] == "query-1"
+    assert debug["search_trace"]["limit"] == 7
+    assert debug["search_trace"]["candidate_limit"] == 9
     assert debug["search_trace"]["query_hash"] != "private query"
     assert "private query" not in json.dumps(debug["search_trace"])

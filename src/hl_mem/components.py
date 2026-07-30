@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 from pathlib import Path
 from typing import Literal
@@ -44,8 +43,6 @@ _EXTRACTOR_REGISTRY: dict[str, str] = {
 }
 
 Reranker = DashScopeReranker
-LOGGER = logging.getLogger(__name__)
-
 _COMPONENT_HEALTH: dict[str, dict[str, str | None]] = {}
 
 
@@ -73,7 +70,7 @@ def make_image_describer(settings: Settings) -> ImageDescriberProtocol | None:
     if settings.image_describer_mode == "off":
         return None
     if not settings.image_describer_api_key:
-        raise ConfigurationError("IMAGE_API_KEY or LLM_API_KEY is required")
+        raise ConfigurationError("IMAGE_API_KEY is required")
     return DashScopeImageDescriber(
         settings.image_describer_api_key,
         settings.image_describer_base_url,
@@ -124,9 +121,7 @@ def make_embedder(settings: Settings) -> EmbedderProtocol:
     if settings.embedder_mode == "fake":
         return FakeEmbedder(settings.embedding_dim)
     if not settings.embedding_api_key:
-        if settings.environment == "production" or not settings.allow_fake_fallback:
-            raise ConfigurationError("HL_MEM_EMBEDDER=real but EMBEDDING_API_KEY is missing")
-        return FakeEmbedder(settings.embedding_dim)
+        raise ConfigurationError("HL_MEM_EMBEDDER=real but EMBEDDING_API_KEY is missing")
     return Embedder(
         settings.embedding_api_key,
         settings.embedding_base_url,
@@ -151,23 +146,16 @@ def make_query_expander(
     if settings.query_expansion_mode == "off" or settings.query_expansion_max == 0:
         _record_component_health("query_expander", settings.query_expansion_mode, "off")
         return None
-    try:
-        result = QueryExpander(
-            make_llm_client(settings, connection, operation="query_expansion"),
-            max_concurrency=settings.query_expansion_max_concurrency,
-        )
-        _record_component_health(
-            "query_expander",
-            settings.query_expansion_mode,
-            settings.query_expansion_mode,
-        )
-        return result
-    except ConfigurationError as error:
-        if settings.environment == "production" or not settings.allow_fake_fallback:
-            raise
-        LOGGER.warning("query expansion disabled after configuration error: %s", error)
-        _record_component_health("query_expander", settings.query_expansion_mode, "off", str(error))
-        return None
+    result = QueryExpander(
+        make_llm_client(settings, connection, operation="query_expansion"),
+        max_concurrency=settings.query_expansion_max_concurrency,
+    )
+    _record_component_health(
+        "query_expander",
+        settings.query_expansion_mode,
+        settings.query_expansion_mode,
+    )
+    return result
 
 
 def make_relation_discoverer(
@@ -178,22 +166,15 @@ def make_relation_discoverer(
     if settings.relation_discovery_mode == "off":
         _record_component_health("relation_discoverer", settings.relation_discovery_mode, "off")
         return None
-    try:
-        from hl_mem.workers.discover_relations import LLMRelationDiscoverer
+    from hl_mem.workers.discover_relations import LLMRelationDiscoverer
 
-        result = LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
-        _record_component_health(
-            "relation_discoverer",
-            settings.relation_discovery_mode,
-            settings.relation_discovery_mode,
-        )
-        return result
-    except ConfigurationError as error:
-        if settings.environment == "production" or not settings.allow_fake_fallback:
-            raise
-        LOGGER.warning("relation discovery disabled after configuration error: %s", error)
-        _record_component_health("relation_discoverer", settings.relation_discovery_mode, "off", str(error))
-        return None
+    result = LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
+    _record_component_health(
+        "relation_discoverer",
+        settings.relation_discovery_mode,
+        settings.relation_discovery_mode,
+    )
+    return result
 
 
 def make_extractor(
@@ -204,13 +185,9 @@ def make_extractor(
 ) -> ExtractorProtocol:
     """依据统一配置创建 LLM 提取组件。"""
     if settings.extractor_mode == "fake" and not require_real:
-        if settings.environment == "production":
-            raise ConfigurationError("HL_MEM_EXTRACTOR=fake is not allowed in production")
         return FakeExtractor()
     if not settings.llm_api_key:
-        if settings.environment == "production" or require_real or not settings.allow_fake_fallback:
-            raise ConfigurationError("LLM_API_KEY is required")
-        return FakeExtractor()
+        raise ConfigurationError("LLM_API_KEY is required")
     structured_mode = (
         StructuredOutputMode.JSON_OBJECT
         if settings.llm_structured_mode == "json_object"

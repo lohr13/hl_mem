@@ -1,31 +1,20 @@
 """hl_mem server + worker launcher."""
 
-import os
 import threading
-from pathlib import Path
 
 import uvicorn
 
+from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
 from hl_mem.observability.audit import AuditLogger
-from hl_mem.storage.database import default_database_path
+from hl_mem.settings import Settings
 from hl_mem.workers.worker import Worker
 
-# Load .env
-env_file = Path(__file__).parent / ".env"
-if env_file.exists():
-    for line in env_file.read_text().splitlines():
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip())
-
-os.environ.setdefault("HL_MEM_RERANKER", "on")
-os.environ.setdefault("HL_MEM_EMBEDDER", "real")
-os.environ.setdefault("HL_MEM_EXTRACTOR", "llm")
-
-db_path = str(default_database_path())
+settings = Settings.from_env()
+set_active_aliases(load_entity_aliases(settings.entity_aliases_path))
+db_path = settings.database_path
 
 audit = AuditLogger(db_path, enabled=True)
-worker = Worker(db_path, {"audit": audit})
+worker = Worker(settings, {"audit": audit})
 threading.Thread(target=worker.run_forever, daemon=True).start()
 print("Worker started, db=" + db_path)
 

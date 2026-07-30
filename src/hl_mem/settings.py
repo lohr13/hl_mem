@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import os
 import re
-import warnings
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal, overload
 
 from hl_mem.domain.claims.retention import TTLPolicy
-from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
 from hl_mem.errors import ConfigurationError
 
 EmbedderMode = Literal["fake", "real"]
@@ -162,14 +160,6 @@ def _parse_bool(value: str, variable_name: str) -> bool:
     raise ConfigurationError(f"{variable_name} must be 'true' or 'false'")
 
 
-class Environment(StrEnum):
-    """支持的部署环境。"""
-
-    DEV = "dev"
-    TEST = "test"
-    PRODUCTION = "production"
-
-
 class VectorBackend(StrEnum):
     """支持的向量检索后端。"""
 
@@ -204,9 +194,10 @@ def parse_daily_cron(value: str, variable_name: str) -> int:
 class Settings:
     """全局非敏感配置快照。"""
 
-    environment: Environment = Environment.DEV
     database_path: str = "var/hl_mem.db"
-    allow_fake_fallback: bool = False
+    database_pool_size: int = 8
+    database_busy_timeout_seconds: int = 30
+    entity_aliases_path: str | None = None
     embedder_mode: EmbedderMode = "fake"
     embedding_dim: int = 2048
     embedding_api_key: str | None = None
@@ -227,12 +218,13 @@ class Settings:
     relation_expansion_mode: RelationExpansionMode = "off"
     relation_expansion_max_depth: int = 1
     # relation_discovery: audit 只记录候选 proposal，不自动写入关系边
-    # from_env 默认 audit，Settings() 默认 off（测试安全）
     relation_discovery_mode: RelationDiscoveryMode = "off"
     relation_discovery_pool_limit: int = 40
     relation_discovery_max_proposals: int = 10
     relation_auto_apply_confidence: float = 0.90
     relation_conflict_confidence: float = 0.80
+    recall_default_limit: int = 20
+    recall_vector_scan_limit: int = 200
     packed_context_token_budget: int = 2000
     recall_candidate_floor: int = 50
     recall_dedup_threshold: float = 0.95
@@ -271,6 +263,10 @@ class Settings:
     recall_side_effect_backoff_seconds: float = 0.05
     vector_backend: VectorBackend = VectorBackend.SQLITE_SCAN
     vector_batch_size: int = 512
+    hermes_enabled: bool = False
+    hermes_url: str = "http://127.0.0.1:8200"
+    hermes_timeout: int = 30
+    hermes_home: str | None = None
     hermes_circuit_failure_threshold: int = 5
     hermes_circuit_open_seconds: float = 60.0
     hermes_prefetch_cache_ttl_seconds: float = 300.0
@@ -280,9 +276,9 @@ class Settings:
     extract_pre_filter: bool = False
     llm_api_key: str | None = None
     llm_base_url: str = "https://coding.dashscope.aliyuncs.com/v1"
-    llm_model: str = "qwen3.7-plus"
+    llm_model: str = "glm-5.2"
     llm_provider: LLMProvider = "dashscope"
-    llm_structured_mode: StructuredOutputModeName = "auto"
+    llm_structured_mode: StructuredOutputModeName = "json_object"
     enable_llm_thinking: bool = False
     llm_timeout: float = 90.0
     llm_max_attempts: int = 3
@@ -330,6 +326,15 @@ class Settings:
     ttl_backfill_grace_hours: int = 0
     temporal_cleanup_age_days: int = 30
     temporal_cleanup_expiry_days: int = 90
+    decay_temporal_days: int = 7
+    archive_temporal_days: int = 30
+    decay_permanent_days: int = 90
+    archive_permanent_days: int = 180
+    access_bonus_every: int = 5
+    access_bonus_days: int = 1
+    access_bonus_cap_days: int = 30
+    decay_rollout_grace_days: int = 7
+    decay_min_confidence: float = 0.05
     # feedback_lifecycle: observe 只聚合 usefulness，不影响 TTL/decay；观察稳定后可切换为 on
     feedback_lifecycle_mode: FeedbackLifecycleMode = "observe"
     feedback_bonus_every: int = 3
@@ -350,16 +355,12 @@ class Settings:
     def from_env(cls) -> "Settings":
         """从环境变量创建并校验不可变配置快照。"""
         try:
-            environment = Environment(os.getenv("HL_MEM_ENV", "dev").lower())
             vector_backend = VectorBackend(os.getenv("HL_MEM_VECTOR_BACKEND", "sqlite_scan"))
         except ValueError as error:
             raise ConfigurationError(f"invalid enum configuration: {error}") from error
-        production = environment is Environment.PRODUCTION
         settings = cls(
-            environment=environment,
             database_path=os.getenv("HL_MEM_DB_PATH", "var/hl_mem.db"),
-            allow_fake_fallback=os.getenv("HL_MEM_ALLOW_FAKE_FALLBACK", "").lower() == "true",
-            embedder_mode=_env_choice("HL_MEM_EMBEDDER", "real" if production else "fake", ("fake", "real")),
+            embedder_mode=_env_choice("HL_MEM_EMBEDDER", "fake", ("fake", "real")),
             embedding_dim=int(os.getenv("EMBEDDING_DIM", "2048")),
             embedding_api_key=os.getenv("EMBEDDING_API_KEY"),
             embedding_base_url=os.getenv(
@@ -380,7 +381,7 @@ class Settings:
             index_text_version=os.getenv("HL_MEM_INDEX_TEXT_VERSION", "v1"),
             reranker_mode=_env_choice(
                 "HL_MEM_RERANKER",
-                "real" if production else "off",
+                "off",
                 ("off", "fake", "on", "real"),
             ),
             reranker_provider=_env_choice("HL_MEM_RERANKER_PROVIDER", "dashscope", ("dashscope",)),
@@ -389,7 +390,7 @@ class Settings:
             reranker_model=os.getenv("RERANKER_MODEL", "gte-rerank-v2"),
             relation_expansion_mode=_env_choice("HL_MEM_RELATION_EXPANSION", "off", ("off", "on")),
             relation_expansion_max_depth=int(os.getenv("HL_MEM_RELATION_EXPANSION_MAX_DEPTH", "1")),
-            relation_discovery_mode=_env_choice("HL_MEM_RELATION_DISCOVERY_MODE", "audit", ("off", "audit", "auto")),
+            relation_discovery_mode=_env_choice("HL_MEM_RELATION_DISCOVERY_MODE", "off", ("off", "audit", "auto")),
             relation_discovery_pool_limit=int(os.getenv("HL_MEM_RELATION_DISCOVERY_POOL_LIMIT", "40")),
             relation_discovery_max_proposals=int(os.getenv("HL_MEM_RELATION_DISCOVERY_MAX_PROPOSALS", "10")),
             relation_auto_apply_confidence=float(os.getenv("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE", "0.90")),
@@ -459,7 +460,7 @@ class Settings:
             ),
             llm_api_key=os.getenv("LLM_API_KEY"),
             llm_base_url=os.getenv("LLM_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
-            llm_model=os.getenv("LLM_MODEL", "qwen3.7-plus"),
+            llm_model=os.getenv("LLM_MODEL", "glm-5.2"),
             llm_provider=_env_choice(
                 "HL_MEM_LLM_PROVIDER",
                 "dashscope",
@@ -467,7 +468,7 @@ class Settings:
             ),
             llm_structured_mode=_env_choice(
                 "HL_MEM_LLM_STRUCTURED_MODE",
-                "auto",
+                "json_object",
                 ("auto", "json_object", "json_schema"),
             ),
             enable_llm_thinking=_parse_bool(
@@ -479,7 +480,7 @@ class Settings:
             llm_schema_retries=int(os.getenv("HL_MEM_LLM_SCHEMA_RETRIES", "2")),
             image_describer_mode=_env_choice("HL_MEM_IMAGE_DESCRIBER_MODE", "off", ("off", "on")),
             image_describer_provider=_env_choice("HL_MEM_IMAGE_DESCRIBER_PROVIDER", "dashscope", ("dashscope",)),
-            image_describer_api_key=os.getenv("IMAGE_API_KEY") or os.getenv("LLM_API_KEY"),
+            image_describer_api_key=os.getenv("IMAGE_API_KEY"),
             image_describer_base_url=os.getenv(
                 "HL_MEM_IMAGE_DESCRIBER_BASE_URL",
                 "https://coding.dashscope.aliyuncs.com/v1",
@@ -545,14 +546,12 @@ class Settings:
             alert_email_to=os.getenv("HL_MEM_ALERT_EMAIL_TO"),
         )
         settings.validate()
-        set_active_aliases(load_entity_aliases())
         return settings
 
     @classmethod
     def for_test(cls) -> "Settings":
         """返回不创建真实网络客户端的显式测试配置。"""
         return cls(
-            environment=Environment.TEST,
             embedder_mode="fake",
             extractor_mode="fake",
             reranker_mode="off",
@@ -563,23 +562,60 @@ class Settings:
 
     def validate(self) -> None:
         """校验配置组合以及已启用组件的密钥。"""
-        if self.environment != Environment.TEST:
-            required_secrets: dict[str, str | None] = {}
-            if self.extractor_mode == "llm":
-                required_secrets["LLM_API_KEY"] = self.llm_api_key
-            if self.embedder_mode == "real":
-                required_secrets["EMBEDDING_API_KEY"] = self.embedding_api_key
-            if self.reranker_mode == "on":
-                required_secrets["RERANKER_API_KEY"] = self.reranker_api_key
-            invalid_secrets = [name for name, value in required_secrets.items() if is_placeholder_secret(value)]
-            if invalid_secrets:
-                message = (
-                    "placeholder or empty secret configured for enabled component(s): "
-                    f"{', '.join(invalid_secrets)}; replace each value with a real API key"
-                )
-                if self.environment == Environment.PRODUCTION:
-                    raise ConfigurationError(message)
-                warnings.warn(message, UserWarning, stacklevel=2)
+        required_secrets: dict[str, str | None] = {}
+        if (
+            self.extractor_mode != "fake"
+            or self.query_expansion_mode != "off"
+            or self.relation_discovery_mode != "off"
+        ):
+            required_secrets["LLM_API_KEY"] = self.llm_api_key
+        if self.embedder_mode == "real":
+            required_secrets["EMBEDDING_API_KEY"] = self.embedding_api_key
+        if self.reranker_mode in {"on", "real"}:
+            required_secrets["RERANKER_API_KEY"] = self.reranker_api_key
+        if self.image_describer_mode == "on":
+            required_secrets["IMAGE_API_KEY"] = self.image_describer_api_key
+        invalid_secrets = [name for name, value in required_secrets.items() if is_placeholder_secret(value)]
+        if invalid_secrets:
+            raise ConfigurationError(
+                "placeholder or empty secret configured for enabled component(s): "
+                f"{', '.join(invalid_secrets)}; replace each value with a real API key"
+            )
+        if self.database_pool_size < 1 or self.database_busy_timeout_seconds < 1:
+            raise ConfigurationError("database pool size and busy timeout must be positive")
+        if self.entity_aliases_path is not None and not self.entity_aliases_path.strip():
+            raise ConfigurationError("entity aliases path must not be empty")
+        if self.recall_default_limit < 1 or self.recall_default_limit > 100:
+            raise ConfigurationError("recall default limit must be between 1 and 100")
+        if self.recall_vector_scan_limit < 1:
+            raise ConfigurationError("recall vector scan limit must be positive")
+        if not isinstance(self.hermes_enabled, bool):
+            raise ConfigurationError("hermes enabled must be a boolean")
+        if self.hermes_timeout < 1:
+            raise ConfigurationError("hermes timeout must be positive")
+        if self.hermes_enabled and not self.hermes_url.strip():
+            raise ConfigurationError("hermes URL must not be empty when Hermes is enabled")
+        if self.hermes_home is not None and not self.hermes_home.strip():
+            raise ConfigurationError("hermes home must not be empty")
+        if not self.llm_model.strip() or self.llm_timeout <= 0:
+            raise ConfigurationError("LLM model must not be empty and timeout must be positive")
+        if min(
+            self.decay_temporal_days,
+            self.archive_temporal_days,
+            self.decay_permanent_days,
+            self.archive_permanent_days,
+            self.access_bonus_every,
+            self.decay_rollout_grace_days,
+        ) < 1:
+            raise ConfigurationError("decay, archive, and access bonus intervals must be positive")
+        if min(self.access_bonus_days, self.access_bonus_cap_days) < 0:
+            raise ConfigurationError("access bonus days and cap must be non-negative")
+        if not 0.0 <= self.decay_min_confidence <= 1.0:
+            raise ConfigurationError("decay minimum confidence must be between 0 and 1")
+        if self.decay_temporal_days > self.archive_temporal_days:
+            raise ConfigurationError("temporal decay days must not exceed archive days")
+        if self.decay_permanent_days > self.archive_permanent_days:
+            raise ConfigurationError("permanent decay days must not exceed archive days")
         if self.feedback_lifecycle_mode not in {"off", "observe", "on"}:
             raise ConfigurationError("HL_MEM_FEEDBACK_LIFECYCLE_MODE must be 'off', 'observe', or 'on'")
         if self.feedback_bonus_every <= 0:
@@ -699,8 +735,6 @@ class Settings:
         if self.image_max_bytes < 1 or self.image_max_parts < 1 or self.image_describer_timeout_seconds <= 0:
             raise ConfigurationError("image limits and timeout must be positive")
         if self.image_describer_mode == "on":
-            if not self.image_describer_api_key:
-                raise ConfigurationError("IMAGE_API_KEY or LLM_API_KEY is required when image describer is on")
             if not self.image_describer_base_url.lower().startswith("https://"):
                 raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_BASE_URL must use HTTPS")
             if not self.image_describer_model.strip():
@@ -754,20 +788,6 @@ class Settings:
             raise ConfigurationError("HL_MEM_RERANKER_PROVIDER must be 'dashscope'")
         if self.extractor_mode not in {"fake", "real", "llm"}:
             raise ConfigurationError("HL_MEM_EXTRACTOR must be 'fake', 'real', or 'llm'")
-        if self.environment != Environment.PRODUCTION:
-            return
-        if self.embedder_mode != "real":
-            raise ConfigurationError("HL_MEM_EMBEDDER must be 'real' in production")
-        if self.reranker_mode not in {"on", "real"}:
-            raise ConfigurationError("HL_MEM_RERANKER must be enabled in production")
-        if self.extractor_mode == "fake":
-            raise ConfigurationError("HL_MEM_EXTRACTOR must not be 'fake' in production")
-        if self.extractor_mode == "llm" and is_placeholder_secret(self.llm_api_key):
-            raise ConfigurationError("LLM_API_KEY is required in production")
-        if self.embedder_mode == "real" and is_placeholder_secret(self.embedding_api_key):
-            raise ConfigurationError("EMBEDDING_API_KEY is required in production")
-        if self.reranker_mode == "on" and is_placeholder_secret(self.reranker_api_key):
-            raise ConfigurationError("RERANKER_API_KEY is required in production")
 
     def _validate(self) -> None:
         """兼容旧调用方，委托公开配置校验入口。"""
@@ -776,7 +796,6 @@ class Settings:
     def snapshot(self) -> dict[str, Any]:
         """返回可用于健康检查和审计的非敏感配置。"""
         return {
-            "environment": self.environment,
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
             "index_text_mode": self.index_text_mode,
@@ -796,6 +815,8 @@ class Settings:
             "relation_discovery_mode": self.relation_discovery_mode,
             "relation_discovery_pool_limit": self.relation_discovery_pool_limit,
             "relation_discovery_max_proposals": self.relation_discovery_max_proposals,
+            "recall_default_limit": self.recall_default_limit,
+            "recall_vector_scan_limit": self.recall_vector_scan_limit,
             "tag_boost_enabled": self.tag_boost_enabled,
             "tag_boost_weight": self.tag_boost_weight,
             "tag_channel_enabled": self.tag_channel_enabled,

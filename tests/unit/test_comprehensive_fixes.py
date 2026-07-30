@@ -104,7 +104,6 @@ def test_repository_commit_false_allows_atomic_event_and_job_rollback(tmp_path) 
 
 def test_event_api_rolls_back_event_when_job_enqueue_fails(tmp_path, monkeypatch) -> None:
     """任务入队异常时 API 不得留下孤立 Event。"""
-    monkeypatch.setenv("HL_MEM_ENV", "test")
     app = server.create_app(tmp_path / "event-rollback.db")
     monkeypatch.setattr(
         "hl_mem.application.ingest.IngestService._queue_event",
@@ -119,10 +118,9 @@ def test_event_api_rolls_back_event_when_job_enqueue_fails(tmp_path, monkeypatch
         connection.close()
 
 
-def test_production_requires_real_embedder_and_reranker() -> None:
-    """生产环境缺少外部模型密钥时必须启动失败。"""
+def test_real_embedder_and_reranker_require_keys() -> None:
+    """真实外部模型组件缺少密钥时必须直接失败。"""
     settings = Settings(
-        environment="production",
         embedder_mode="real",
         reranker_mode="real",
         extractor_mode="real",
@@ -133,31 +131,26 @@ def test_production_requires_real_embedder_and_reranker() -> None:
         make_reranker(settings)
 
 
-def test_worker_extractor_fail_fast_in_production() -> None:
-    """生产环境不得将 Worker 提取器静默降级为 FakeExtractor。"""
+def test_worker_real_extractor_fails_without_key() -> None:
+    """真实 Worker 提取器缺少密钥时不得静默降级。"""
     worker = Worker.__new__(Worker)
-    worker.settings = Settings(environment="production", extractor_mode="real")
+    worker.settings = Settings(extractor_mode="real")
     worker.config = {}
     with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
         worker._make_extractor()
 
-    worker.settings = Settings(environment="production", extractor_mode="fake")
-    with pytest.raises(ConfigurationError, match="HL_MEM_EXTRACTOR"):
-        worker._make_extractor()
 
-
-def test_worker_extractor_fake_allowed_in_dev() -> None:
-    """开发环境仍允许 Worker 使用 FakeExtractor。"""
+def test_worker_fake_extractor_is_safe_default() -> None:
+    """静态默认配置允许 Worker 使用 FakeExtractor。"""
     worker = Worker.__new__(Worker)
-    worker.settings = Settings(environment="dev", extractor_mode="fake")
+    worker.settings = Settings(extractor_mode="fake")
     worker.config = {}
 
     assert isinstance(worker._make_extractor(), FakeExtractor)
 
 
-def test_health_reports_fake_components_in_test_environment(tmp_path, monkeypatch) -> None:
+def test_health_reports_fake_components(tmp_path, monkeypatch) -> None:
     """健康检查暴露当前模型组件是否为降级实现。"""
-    monkeypatch.setenv("HL_MEM_ENV", "test")
     monkeypatch.setenv("HL_MEM_EMBEDDER", "fake")
     monkeypatch.setenv("HL_MEM_RERANKER", "fake")
     with TestClient(server.create_app(tmp_path / "health.db")) as client:
@@ -168,7 +161,6 @@ def test_health_reports_fake_components_in_test_environment(tmp_path, monkeypatc
 
 def test_recall_feedback_failure_does_not_change_main_result(tmp_path, monkeypatch) -> None:
     """召回曝光批量写入失败时仍返回主召回结果。"""
-    monkeypatch.setenv("HL_MEM_ENV", "test")
     monkeypatch.setattr(
         ExperienceService,
         "record_feedback_batch",
@@ -197,7 +189,6 @@ def test_episode_state_machine_reward_and_terminal_trace_guards(tmp_path) -> Non
 
 def test_episode_api_returns_conflict_for_illegal_transition(tmp_path, monkeypatch) -> None:
     """非法状态转换由 API 映射为 HTTP 409。"""
-    monkeypatch.setenv("HL_MEM_ENV", "test")
     with TestClient(server.create_app(tmp_path / "episode-api.db")) as client:
         episode_id = client.post("/v1/episodes", json={"goal": "修复"}).json()["id"]
         assert client.patch(f"/v1/episodes/{episode_id}", json={"status": "success"}).status_code == 200
