@@ -120,7 +120,8 @@ class RecallContext:
 
 
 def _claim_text(claim: dict[str, Any]) -> str:
-    return f"{claim.get('subject_entity_id', '')} {claim.get('predicate', '')} {claim.get('value', '')}"
+    index_text = claim.get("index_text")
+    return index_text if isinstance(index_text, str) else ""
 
 
 def _recorded_epoch(claim: dict[str, Any]) -> float:

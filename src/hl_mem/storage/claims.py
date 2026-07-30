@@ -409,12 +409,17 @@ class ClaimRepository:
                 continue
             placeholders = ",".join("?" for _ in chunk)
             rows = self.connection.execute(
-                "SELECT id,value_json,conflict_key FROM claims "
+                "SELECT id,index_text,conflict_key FROM claims "
                 f"WHERE conflict_key IN ({placeholders}) AND status='disputed' AND namespace_key=?",
                 (*chunk, namespace),
             ).fetchall()
             for row in rows:
-                result[row["conflict_key"]].append({"id": row["id"], "value": decode_json(row["value_json"])})
+                result[row["conflict_key"]].append(
+                    {
+                        "id": row["id"],
+                        "text": row["index_text"] if isinstance(row["index_text"], str) else "",
+                    }
+                )
         return result
 
     @staticmethod

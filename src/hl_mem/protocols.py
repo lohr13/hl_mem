@@ -110,6 +110,7 @@ class ClaimRow(TypedDict, total=False):
     subject_entity_id: str
     predicate: str
     value: object
+    index_text: str
     status: str
     confidence: float
     canonical_attribute: str | None
@@ -132,7 +133,7 @@ class RecallResult(TypedDict):
     type: str
     memory_type: str
     id: str
-    text: object
+    text: str
     score: float
     features: dict[str, float]
     status: str

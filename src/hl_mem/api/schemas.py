@@ -70,7 +70,7 @@ class ClaimOutput(BaseModel):
     type: Literal["claim"] = "claim"
     memory_type: Literal["claim"] = "claim"
     id: str
-    text: Any
+    text: str
     score: float
     features: dict[str, float] = Field(default_factory=dict)
     status: str | None = None

@@ -51,6 +51,12 @@ _SIDE_EFFECT_HEALTH: dict[str, dict[str, int | str | None]] = {
 }
 
 
+def _claim_index_text(claim: dict[str, Any]) -> str:
+    """只暴露 Claim 持久化的索引文本。"""
+    index_text = claim.get("index_text")
+    return index_text if isinstance(index_text, str) else ""
+
+
 def recall_side_effect_health() -> dict[str, dict[str, int | str | None]]:
     """返回召回副作用的进程级降级计数与最近错误类型。"""
     with _SIDE_EFFECT_LOCK:
@@ -662,19 +668,13 @@ class RecallService:
         results: list[dict[str, Any]] = []
         for claim in claims:
             evidence = all_evidence.get(claim["id"], [])
-            decoded = claim.get("value")
-            text = (
-                decoded.get("old_value")
-                if isinstance(decoded, dict) and decoded.get("_type") == "superseded_value"
-                else decoded
-            )
             superseded_by_id = claim.get("superseded_by_id")
             replacement = replacement_map.get(str(superseded_by_id)) if superseded_by_id else None
             result: dict[str, Any] = {
                 "type": "claim",
                 "memory_type": "claim",
                 "id": claim["id"],
-                "text": text,
+                "text": _claim_index_text(claim),
                 "score": float(claim.get("_score", 0.0)),
                 "score_path": str(claim.get("_score_path", "reranker_fallback")),
                 "reranker_raw_score": claim.get("_reranker_raw_score"),
@@ -813,7 +813,7 @@ class RecallService:
         return {
             claim_id: {
                 "id": claim["id"],
-                "text": claim["value"],
+                "text": _claim_index_text(claim),
                 "valid_from": claim["valid_from"],
             }
             for claim_id, claim in claims.items()
