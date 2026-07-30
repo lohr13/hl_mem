@@ -132,17 +132,9 @@ def main() -> None:
             database.open(),
             settings.retention_policy(),
             dry_run=not args.apply,
-            batch_size=(
-                args.batch_size
-                if args.batch_size is not None
-                else settings.ttl_backfill_batch_size
-            ),
+            batch_size=(args.batch_size if args.batch_size is not None else settings.ttl_backfill_batch_size),
             grace_period=timedelta(
-                hours=(
-                    args.grace_hours
-                    if args.grace_hours is not None
-                    else settings.ttl_backfill_grace_hours
-                )
+                hours=(args.grace_hours if args.grace_hours is not None else settings.ttl_backfill_grace_hours)
             ),
         )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))

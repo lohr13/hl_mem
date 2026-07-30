@@ -88,8 +88,7 @@ def _coerce_toml_value(value: Any, annotation: Any, path: Path, key_path: str) -
             raise _type_error(path, key_path, annotation)
         item_annotation = arguments[0] if arguments else Any
         return tuple(
-            _coerce_toml_value(item, item_annotation, path, f"{key_path}[{index}]")
-            for index, item in enumerate(value)
+            _coerce_toml_value(item, item_annotation, path, f"{key_path}[{index}]") for index, item in enumerate(value)
         )
     if isinstance(annotation, type) and issubclass(annotation, StrEnum):
         if not isinstance(value, str):

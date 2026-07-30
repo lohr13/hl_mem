@@ -97,9 +97,7 @@ class Worker:
         self.pre_filter = pre_filter or ExtractionPreFilter()
         self.extractor = extractor or self._make_extractor()
         self.image_describer = (
-            image_describer
-            if image_describer is not _UNSET
-            else components.make_image_describer(self.settings)
+            image_describer if image_describer is not _UNSET else components.make_image_describer(self.settings)
         )
         self.embedder = embedder or self._make_embedder()
         self.budget = budget or TokenBudget(
@@ -584,9 +582,7 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 def _handle_discover_relations(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理单个新 Claim 的关系候选发现任务。"""
     payload = json.loads(job["payload_json"] or "{}")
-    discoverer = worker.relation_discoverer or components.make_relation_discoverer(
-        worker.settings, worker.connection
-    )
+    discoverer = worker.relation_discoverer or components.make_relation_discoverer(worker.settings, worker.connection)
     if discoverer is None:
         return {
             "candidates": 0,

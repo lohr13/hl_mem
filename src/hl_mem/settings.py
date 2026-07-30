@@ -480,11 +480,7 @@ class Settings:
     def validate(self) -> None:
         """校验配置组合以及已启用组件的密钥。"""
         required_secrets: dict[str, str | None] = {}
-        if (
-            self.extractor_mode != "fake"
-            or self.query_expansion_mode != "off"
-            or self.relation_discovery_mode != "off"
-        ):
+        if self.extractor_mode != "fake" or self.query_expansion_mode != "off" or self.relation_discovery_mode != "off":
             required_secrets["LLM_API_KEY"] = self.llm_api_key
         if self.embedder_mode == "real":
             required_secrets["EMBEDDING_API_KEY"] = self.embedding_api_key
@@ -516,14 +512,17 @@ class Settings:
             raise ConfigurationError("hermes home must not be empty")
         if not self.llm_model.strip() or self.llm_timeout <= 0:
             raise ConfigurationError("LLM model must not be empty and timeout must be positive")
-        if min(
-            self.decay_temporal_days,
-            self.archive_temporal_days,
-            self.decay_permanent_days,
-            self.archive_permanent_days,
-            self.access_bonus_every,
-            self.decay_rollout_grace_days,
-        ) < 1:
+        if (
+            min(
+                self.decay_temporal_days,
+                self.archive_temporal_days,
+                self.decay_permanent_days,
+                self.archive_permanent_days,
+                self.access_bonus_every,
+                self.decay_rollout_grace_days,
+            )
+            < 1
+        ):
             raise ConfigurationError("decay, archive, and access bonus intervals must be positive")
         if min(self.access_bonus_days, self.access_bonus_cap_days) < 0:
             raise ConfigurationError("access bonus days and cap must be non-negative")
