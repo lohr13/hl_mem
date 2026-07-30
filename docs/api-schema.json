@@ -184,7 +184,8 @@
             "title": "Status"
           },
           "text": {
-            "title": "Text"
+            "title": "Text",
+            "type": "string"
           },
           "topic_tags": {
             "items": {

@@ -39,6 +39,7 @@ def _claims() -> list[dict]:
             "subject_entity_id": "用户",
             "predicate": "偏好",
             "value": value,
+            "index_text": f"用户 偏好 {value}",
             "embedding_dense": pack_vector([score]),
         }
         for claim_id, value, score in (
@@ -84,7 +85,11 @@ def test_reranker_empty_documents(monkeypatch) -> None:
 def test_pipeline_with_fake_reranker_reorders() -> None:
     class ReverseReranker:
         def rerank(self, query, documents, top_n=20):
-            assert "中文" in " ".join(documents)
+            assert documents == [
+                "用户 偏好 中文一",
+                "用户 偏好 中文二",
+                "用户 偏好 中文三",
+            ]
             return [(index, float(index)) for index in range(len(documents) - 1, -1, -1)][:top_n]
 
     result = hybrid_claims(Repo(), "查询", pack_vector([1.0]), 2, None, ReverseReranker())
