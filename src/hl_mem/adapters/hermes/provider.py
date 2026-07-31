@@ -263,11 +263,11 @@ class HLMemProvider:
         previous_session = self._session_id
         self._session_id = active_session
         try:
-            self._sync_post(
+            user_written = self._sync_post(
                 "/v1/events",
                 self._hermes_event_payload("user", content, namespace=namespace),
             )
-            self._sync_post(
+            assistant_written = self._sync_post(
                 "/v1/events",
                 self._hermes_event_payload(
                     "assistant",
@@ -275,6 +275,8 @@ class HLMemProvider:
                     namespace=namespace,
                 ),
             )
+            if user_written or assistant_written:
+                self._prefetch_cache.invalidate_session(active_session)
         finally:
             self._session_id = previous_session or active_session
         if kwargs.get("messages"):
@@ -317,20 +319,21 @@ class HLMemProvider:
 
     def on_memory_write(
         self,
-        key: str,
+        action: str,
+        target: str,
         content: str,
-        target: str = "memory",
+        metadata: dict[str, Any] | None = None,
         *,
         namespace: str = "default",
     ) -> None:
         namespace = _trusted_namespace(namespace)
-        self._sync_post(
+        written = self._sync_post(
             "/v1/memories",
             {
                 "text": content,
-                "qualifiers": {"key": key, "target": target},
+                "qualifiers": {"action": action, "target": target},
                 "idempotency_key": _memory_idempotency_key(
-                    key,
+                    action,
                     target,
                     content,
                     namespace,
@@ -338,6 +341,8 @@ class HLMemProvider:
                 "namespace": namespace,
             },
         )
+        if written:
+            self._prefetch_cache.invalidate_session(self._session_id)
 
     def on_pre_compress(
         self,
@@ -445,7 +450,11 @@ class HLMemProvider:
             ),
         )
 
-    def on_session_end(self, **kwargs: Any) -> None:
+    def on_session_end(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """处理 Hermes 会话结束钩子。"""
         session_id = str(kwargs.get("session_id") or self._session_id)
         self.flush_delivery_receipts(session_id=session_id)

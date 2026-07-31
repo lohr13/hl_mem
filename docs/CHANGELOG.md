@@ -1,5 +1,17 @@
 # HL-Mem 变更记录
 
+## v0.19.1 (2026-07-31)
+
+### Bug Fixes
+
+- 修复 Hermes Provider hook 签名不匹配：`on_memory_write(action, target, content, metadata)` 匹配 Hermes 调用约定，`on_session_end(messages)` 接受位置参数，修复参数错位和 `invalidate_session` 从未执行的缺陷。
+- `sync_turn()` 和 `on_memory_write()` 成功写入后主动失效 prefetch 缓存，消除同一会话内最多 300 秒的 stale bundle 窗口。
+- A/B 测试 runner 增加实验有效性 gate：两 arm 投影 `text_hash` 相同时标记 `result.status = "inconclusive"`，避免从无效实验生成结论。
+
+### Enhancements
+
+- JSONL import 在 `jobs_queued > 0` 时向 stderr 输出 extractor model warning，提高 CLI 透明度。
+
 ## v0.19.0 (2026-07-31)
 
 ### Context Delivery and Feedback
@@ -21,7 +33,7 @@
 ### Evaluation and Release Gates
 
 - 修正评测中 Hit@5 与 Recall@5 的定义和聚合，Hit@5 仅表示是否至少命中一条，Recall@5 按相关集合覆盖率计算。
-- 改善实验性 `answerable` 文本投影及其回填/一致性校验；受控 A/B 未得到显著收益，因此 v0.19.0 继续以 `legacy` 为默认投影。
+- 改善实验性 `answerable` 文本投影及其回填/一致性校验；受控 A/B 实验结果为 inconclusive（两 arm 投影文本相同），保留 `legacy` 为保守选择。
 - 建立 v0.19 eval gate 基础设施：冻结 dataset/fixture/config、compatibility 与 non-regression gate、关键 slice 门禁、受控单变量 A/B 报告和显式 baseline 警告。
 - CI 合成 fixture 的 no-answer 指标保留为已知限制，不作为真实 provider 的生产拒答质量证据。
 

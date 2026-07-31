@@ -1,6 +1,6 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-07-31 · v0.19.0
+> 最后更新：2026-07-31 · v0.19.1
 
 ## 当前状态
 
@@ -19,7 +19,7 @@
 - feedback exposure 在 packet 物化时批量落库；Hermes 在文本实际进入 Agent host/model 输入边界后确认 `injected`，失败不阻断交付并通过有界队列重试。
 - migration 035 将 `retrieval_feedback.used_by_model` 重命名为 `injected`；现有 35 个 SQL migration 仍保持不可变、仅向前执行。
 - Claim 写入、FTS、dense embedding、回填和投影一致性检查统一消费持久化 `index_text`。
-- `answerable` 投影完成规则、回填、校验和单变量 A/B 基础设施；基于 CI 合成 fixture 的离线受控 A/B 无显著收益，继续保留 `legacy` 默认。
+- `answerable` 投影完成规则、回填、校验和单变量 A/B 基础设施；受控 A/B 实验结果为 inconclusive（两 arm 投影文本相同），保留 `legacy` 为保守选择。
 - Hit@5 与 Recall@5 已按“是否命中”与“相关集合覆盖率”分别计算；v0.19 legacy compatibility 与关键 slice gate 已接入 CI，candidate non-regression/win condition 配置供显式 A/B 使用。
 - 整库 backup/restore CLI 支持 manifest、SHA-256、sidecar/integrity 校验及原子替换。
 - JSONL import 默认为新增或缺失的 Event 补建稳定 `extract_event` Job，使 Worker 可重建 Claims。

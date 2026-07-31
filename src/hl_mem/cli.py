@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import sqlite3
+import sys
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
@@ -493,6 +494,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     except JSONLImportError as error:
         print(json.dumps(error.report, ensure_ascii=False, sort_keys=True))
         raise SystemExit(1) from error
+    if import_report["jobs_queued"] > 0:
+        print(
+            f"Warning: {import_report['jobs_queued']} extraction job(s) queued; workers may invoke "
+            "their currently configured extractor model when processing them.",
+            file=sys.stderr,
+        )
     print(json.dumps(import_report, ensure_ascii=False, sort_keys=True))
 
 

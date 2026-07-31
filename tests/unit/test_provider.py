@@ -129,7 +129,7 @@ def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "post", post)
     provider = HLMemProvider("unused.db", "http://memory.test/", timeout=2.0)
 
-    provider.on_memory_write("preference", "喜欢黑咖啡")
+    provider.on_memory_write("save", "memory", "喜欢黑咖啡")
     provider.on_pre_compress([{"role": "user", "content": "记住这个偏好"}])
 
     assert requests == [
@@ -138,9 +138,9 @@ def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:
             {
                 "json": {
                     "text": "喜欢黑咖啡",
-                    "qualifiers": {"key": "preference", "target": "memory"},
+                    "qualifiers": {"action": "save", "target": "memory"},
                     "idempotency_key": _memory_idempotency_key(
-                        "preference",
+                        "save",
                         "memory",
                         "喜欢黑咖啡",
                     ),
@@ -176,24 +176,24 @@ def test_memory_write_uses_stable_key_and_trusted_namespace(monkeypatch) -> None
     provider = HLMemProvider("unused.db", "http://memory.test/", timeout=2.0)
 
     provider.on_memory_write(
-        "preference",
+        "save",
+        "profile",
         "喜欢黑咖啡",
-        target="profile",
         namespace="project-a",
     )
     provider.on_memory_write(
-        "preference",
+        "save",
+        "profile",
         "喜欢黑咖啡",
-        target="profile",
         namespace="project-a",
     )
 
     assert requests[0] == requests[1]
     assert requests[0][1] == {
         "text": "喜欢黑咖啡",
-        "qualifiers": {"key": "preference", "target": "profile"},
+        "qualifiers": {"action": "save", "target": "profile"},
         "idempotency_key": _memory_idempotency_key(
-            "preference",
+            "save",
             "profile",
             "喜欢黑咖啡",
             "project-a",
@@ -201,21 +201,21 @@ def test_memory_write_uses_stable_key_and_trusted_namespace(monkeypatch) -> None
         "namespace": "project-a",
     }
     assert _memory_idempotency_key(
-        "preference",
+        "save",
         "profile",
         "喜欢黑咖啡",
     ) != _memory_idempotency_key(
-        "preference",
+        "save",
         "profile",
         "喜欢拿铁",
     )
     assert _memory_idempotency_key(
-        "preference",
+        "save",
         "profile",
         "喜欢黑咖啡",
         "project-a",
     ) != _memory_idempotency_key(
-        "preference",
+        "save",
         "profile",
         "喜欢黑咖啡",
         "project-b",
@@ -278,7 +278,7 @@ def test_sync_hooks_open_circuit_after_repeated_http_failures(monkeypatch) -> No
     provider = HLMemProvider()
 
     for _ in range(6):
-        provider.on_memory_write("key", "value")
+        provider.on_memory_write("save", "memory", "value")
 
     assert calls == 15
     assert provider._circuit_open_until > 0

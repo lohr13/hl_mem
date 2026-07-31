@@ -662,8 +662,20 @@ def run_ab_test(
             }
             if len(canonical_digests) != 1:
                 raise RuntimeError("legacy and answerable copies differ outside derived projection fields")
+            projection_text_hashes = {
+                str(mode_reports[mode]["projection"]["backfill"]["text_hash"]) for mode in AB_INDEX_TEXT_MODES
+            }
+            result = (
+                {
+                    "status": "inconclusive",
+                    "reason": "Experiment produced no independent variable change; both arms project identical index_text",
+                }
+                if len(projection_text_hashes) == 1
+                else {"status": "valid"}
+            )
             report = {
                 "schema_version": 1,
+                "result": result,
                 "source_snapshot": {
                     "path": str(snapshot),
                     "sha256_before": source_hash_before,
@@ -714,7 +726,11 @@ def _markdown_text(value: Any) -> str:
 
 def _render_ab_report(report: dict[str, Any]) -> str:
     source = report["source_snapshot"]
+    result = report["result"]
     lines = [
+        f"Result status: `{result['status']}`",
+        *([f"Reason: {_markdown_text(result['reason'])}"] if "reason" in result else []),
+        "",
         f"Source snapshot SHA-256: `{source['sha256_before']}` (unchanged: {source['unchanged']})",
         "",
         "| Pipeline metric | legacy | answerable | delta |",
