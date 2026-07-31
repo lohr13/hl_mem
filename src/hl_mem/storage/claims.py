@@ -16,6 +16,7 @@ from hl_mem.lifecycle import ClaimStatus, assert_transition
 from hl_mem.protocols import ClaimRow, EmbedderProtocol
 from hl_mem.settings import Settings
 from hl_mem.storage._shared import (
+    build_fts_trigram_fallback_query,
     decode_json,
     encode_json,
     insert_row,
@@ -569,22 +570,28 @@ class ClaimRepository:
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
         statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
-        try:
-            rows = self.connection.execute(
-                "SELECT c.* FROM claims_fts f JOIN claims c ON c.rowid=f.rowid "
-                f"WHERE claims_fts MATCH ? AND c.status IN {statuses} "
-                "AND c.namespace_key=? "
-                "AND (c.valid_from IS NULL OR c.valid_from<=?) "
-                "AND (c.valid_to IS NULL OR c.valid_to>?) "
-                "ORDER BY bm25(claims_fts) LIMIT ?",
-                (
-                    sanitize_fts_query(query, tokenizer="trigram"),
-                    namespace,
-                    reference,
-                    reference,
-                    limit,
-                ),
+        match_sql = (
+            "SELECT c.* FROM claims_fts f JOIN claims c ON c.rowid=f.rowid "
+            f"WHERE claims_fts MATCH ? AND c.status IN {statuses} "
+            "AND c.namespace_key=? "
+            "AND (c.valid_from IS NULL OR c.valid_from<=?) "
+            "AND (c.valid_to IS NULL OR c.valid_to>?) "
+            "ORDER BY bm25(claims_fts) LIMIT ?"
+        )
+
+        def execute_match(match_query: str) -> list[sqlite3.Row]:
+            return self.connection.execute(
+                match_sql,
+                (match_query, namespace, reference, reference, limit),
             ).fetchall()
+
+        strict_query = sanitize_fts_query(query, tokenizer="trigram")
+        try:
+            rows = execute_match(strict_query)
+            if not rows:
+                fallback_query = build_fts_trigram_fallback_query(query)
+                if fallback_query and fallback_query != strict_query:
+                    rows = execute_match(fallback_query)
         except sqlite3.OperationalError as error:
             if not is_fts_syntax_error(error):
                 raise

@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import Any
+
+_FTS_FALLBACK_SEGMENT_RE = re.compile(
+    r"(?P<cjk>[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f]+)" r"|(?P<latin>[A-Za-z0-9]+)"
+)
 
 
 def decode_json(value: str | bytes | bytearray | None) -> Any:
@@ -46,6 +51,11 @@ def escape_like_pattern(pattern: str) -> str:
     return pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _quote_fts_phrase(phrase: str) -> str:
+    """将文本安全引用为 FTS5 phrase。"""
+    return f'"{phrase.replace(chr(34), chr(34) * 2)}"'
+
+
 def sanitize_fts_query(query: str, *, tokenizer: str = "unicode61") -> str:
     """清洗 FTS5 查询字符串，安全引用用户文本为字面量 phrase。
 
@@ -63,7 +73,29 @@ def sanitize_fts_query(query: str, *, tokenizer: str = "unicode61") -> str:
         tokens = [t for t in tokens if len(t) >= 3]
         if not tokens:
             return '""'
-    return " ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+    return " ".join(_quote_fts_phrase(token) for token in tokens)
+
+
+def build_fts_trigram_fallback_query(query: str) -> str:
+    """构造适配 trigram tokenizer 的边界感知 OR fallback 查询。"""
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for match in _FTS_FALLBACK_SEGMENT_RE.finditer(query):
+        cjk_segment = match.group("cjk")
+        segment = match.group()
+        if cjk_segment is not None:
+            candidates = [cjk_segment[index : index + 3] for index in range(len(cjk_segment) - 2)]
+        elif len(segment) >= 3:
+            candidates = [segment]
+        else:
+            candidates = []
+        for token in candidates:
+            dedup_key = token.casefold()
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+            tokens.append(token)
+    return " OR ".join(_quote_fts_phrase(token) for token in tokens)
 
 
 def is_fts_syntax_error(error: sqlite3.OperationalError) -> bool:
