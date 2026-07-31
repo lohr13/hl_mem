@@ -340,7 +340,7 @@ def test_recall_service_side_effects_use_final_enforced_results(
     intent: RecallIntent,
     expected_ids: list[str],
 ) -> None:
-    """服务只为截断后的结果记录 access/exposure，非白名单 intent 不截断。"""
+    """服务只为截断后的最终 packet 记录 access/exposure，非白名单 intent 不截断。"""
     claims = [{"id": "top"}, {"id": "low"}]
 
     def fake_hybrid_claims(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
@@ -366,13 +366,32 @@ def test_recall_service_side_effects_use_final_enforced_results(
     )
     monkeypatch.setattr(service, "_assemble_results", lambda items, namespace: [dict(item) for item in items])
     monkeypatch.setattr(service, "_assemble_observations", lambda claim_ids: [])
-    monkeypatch.setattr(
-        service,
-        "_record_feedback",
-        lambda items, observations, policies, query_id: exposed.extend(str(item["id"]) for item in items),
-    )
 
-    response = service.recall("query", intent=intent)
+    def materialize(bundle: Any) -> dict[str, Any]:
+        exposed.extend(item.id for item in bundle.items)
+        return {
+            "schema_major": 1,
+            "schema_minor": 0,
+            "query_id": bundle.query_id,
+            "answerability": bundle.answerability,
+            "feedback_state": "available",
+            "items": [
+                {
+                    "type": item.type,
+                    "id": item.id,
+                    "text": item.text,
+                    "evidence": [],
+                    "feedback_id": f"feedback-{item.id}",
+                }
+                for item in bundle.items
+            ],
+            "used_tokens_estimate": bundle.used_tokens_estimate,
+            "truncated": bundle.truncated,
+        }
+
+    monkeypatch.setattr(service, "_materialize_context_packet", materialize)
+
+    response = service.recall("query", intent=intent, response_format="both")
 
     assert [item["id"] for item in response["results"]] == expected_ids
     assert accessed == expected_ids

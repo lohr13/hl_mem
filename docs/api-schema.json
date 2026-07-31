@@ -280,6 +280,133 @@
         "title": "ConsolidationScopeInput",
         "type": "object"
       },
+      "ContextPacketItemOutput": {
+        "additionalProperties": false,
+        "description": "Context Packet v1 中的扁平记忆条目。",
+        "properties": {
+          "evidence": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "feedback_id": {
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "title": "Feedback Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "claim",
+              "observation",
+              "policy",
+              "episode",
+              "trace"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "text",
+          "evidence",
+          "feedback_id"
+        ],
+        "title": "ContextPacketItemOutput",
+        "type": "object"
+      },
+      "ContextPacketOutput": {
+        "additionalProperties": false,
+        "description": "严格冻结的 Context Packet v1 输出契约。",
+        "properties": {
+          "answerability": {
+            "enum": [
+              "supported",
+              "low_confidence",
+              "no_evidence"
+            ],
+            "title": "Answerability",
+            "type": "string"
+          },
+          "feedback_state": {
+            "enum": [
+              "available",
+              "degraded"
+            ],
+            "title": "Feedback State",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ContextPacketItemOutput"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "query_id": {
+            "title": "Query Id",
+            "type": "string"
+          },
+          "schema_major": {
+            "const": 1,
+            "title": "Schema Major",
+            "type": "integer"
+          },
+          "schema_minor": {
+            "const": 0,
+            "title": "Schema Minor",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "used_tokens_estimate": {
+            "minimum": 0.0,
+            "title": "Used Tokens Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_major",
+          "schema_minor",
+          "query_id",
+          "answerability",
+          "feedback_state",
+          "items",
+          "used_tokens_estimate",
+          "truncated"
+        ],
+        "title": "ContextPacketOutput",
+        "type": "object"
+      },
+      "ContextPacketRecallOutput": {
+        "additionalProperties": false,
+        "description": "仅返回 Context Packet 的召回响应。",
+        "properties": {
+          "context_packet": {
+            "$ref": "#/components/schemas/ContextPacketOutput"
+          }
+        },
+        "required": [
+          "context_packet"
+        ],
+        "title": "ContextPacketRecallOutput",
+        "type": "object"
+      },
       "DryRunExtractionInput": {
         "description": "Dry-run 提取请求，不触发任何记忆持久化。",
         "properties": {
@@ -846,6 +973,16 @@
             "title": "Query",
             "type": "string"
           },
+          "response_format": {
+            "default": "legacy",
+            "enum": [
+              "legacy",
+              "context_packet",
+              "both"
+            ],
+            "title": "Response Format",
+            "type": "string"
+          },
           "session_id": {
             "anyOf": [
               {
@@ -914,6 +1051,16 @@
               }
             ],
             "title": "Context"
+          },
+          "context_packet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextPacketOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "observations": {
             "items": {
@@ -1677,7 +1824,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RecallOutput"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RecallOutput"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ContextPacketRecallOutput"
+                    }
+                  ],
+                  "title": "Response Recall V1 Recall Post"
                 }
               }
             },

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import replace
 
 import pytest
 
 from hl_mem.domain.feedback import BayesianUsefulnessPolicy
+from hl_mem.experience.service import ExperienceService
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.usefulness import UsefulnessRepository
@@ -45,7 +47,7 @@ def test_usefulness_rebuild_matches_incremental_aggregate(tmp_path) -> None:
             "INSERT INTO claims(id,recorded_from,status,scope) VALUES('c1','2026-01-01T00:00:00+00:00','active','temporal')"
         )
         connection.execute(
-            "INSERT INTO retrieval_feedback(id,query_id,memory_type,memory_id,used_by_model,helpful,task_outcome,created_at) "
+            "INSERT INTO retrieval_feedback(id,query_id,memory_type,memory_id,injected,helpful,task_outcome,created_at) "
             "VALUES('f1','q1','claim','c1',0,1,0.8,'2026-01-01T00:00:00+00:00')"
         )
         repository = UsefulnessRepository(connection)
@@ -55,6 +57,109 @@ def test_usefulness_rebuild_matches_incremental_aggregate(tmp_path) -> None:
         assert rebuilt is not None
         assert rebuilt.helpful_count == incremental.helpful_count
         assert rebuilt.usefulness_score == pytest.approx(incremental.usefulness_score)
+    finally:
+        database.close()
+
+
+def test_exposure_batch_materializes_only_delivery_neutral_receipts(tmp_path) -> None:
+    """Exposure 物化固定为未注入且无隐式 helpful/outcome。"""
+    database = Database(tmp_path / "exposure.db")
+    connection = database.open()
+    try:
+        service = ExperienceService(connection)
+        exposures = [
+            ("f1", "q1", "claim", "c1", 1, 0.9, "2026-01-01T00:00:00+00:00"),
+            ("f2", "q1", "policy", "p1", 2, 0.8, "2026-01-01T00:00:00+00:00"),
+        ]
+
+        assert service.record_exposure_batch(exposures) == 2
+        rows = connection.execute(
+            "SELECT id,rank,score,injected,helpful,task_outcome " "FROM retrieval_feedback ORDER BY rank"
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [
+            ("f1", 1, 0.9, 0, None, None),
+            ("f2", 2, 0.8, 0, None, None),
+        ]
+    finally:
+        database.close()
+
+
+def test_legacy_feedback_batch_replay_remains_idempotent(tmp_path) -> None:
+    """兼容十列 batch 重放仍忽略已存在的 receipt。"""
+    database = Database(tmp_path / "legacy-feedback-batch.db")
+    connection = database.open()
+    try:
+        service = ExperienceService(connection)
+        feedback = [
+            (
+                "f1",
+                "q1",
+                "claim",
+                "c1",
+                1,
+                0.9,
+                0,
+                None,
+                None,
+                "2026-01-01T00:00:00+00:00",
+            )
+        ]
+
+        assert service.record_feedback_batch(feedback) == 1
+        assert service.record_feedback_batch(feedback) == 0
+        assert connection.execute("SELECT count(*) FROM retrieval_feedback").fetchone()[0] == 1
+    finally:
+        database.close()
+
+
+def test_exposure_batch_uses_savepoint_and_rolls_back_all_rows(tmp_path) -> None:
+    """外层事务存在时，重复 receipt 只回滚 exposure batch，不破坏外层写入。"""
+    database = Database(tmp_path / "exposure-rollback.db")
+    connection = database.open()
+    try:
+        service = ExperienceService(connection)
+        connection.execute("CREATE TEMP TABLE batch_sentinel(value TEXT NOT NULL)")
+        connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("INSERT INTO batch_sentinel(value) VALUES('preserved')")
+        duplicate = ("duplicate", "q1", "claim", "c1", 1, 0.9, "2026-01-01T00:00:00+00:00")
+
+        with pytest.raises(sqlite3.IntegrityError):
+            service.record_exposure_batch([duplicate, duplicate])
+
+        assert connection.in_transaction
+        assert connection.execute("SELECT value FROM batch_sentinel").fetchone()[0] == "preserved"
+        assert connection.execute("SELECT count(*) FROM retrieval_feedback").fetchone()[0] == 0
+        connection.rollback()
+    finally:
+        database.close()
+
+
+def test_mark_feedback_injected_batch_is_atomic_idempotent_and_strict(tmp_path) -> None:
+    """Delivery 标记可重放；未知任一 ID 明确失败且不部分更新。"""
+    database = Database(tmp_path / "injected.db")
+    connection = database.open()
+    try:
+        service = ExperienceService(connection)
+        service.record_exposure_batch(
+            [
+                ("f1", "q1", "claim", "c1", 1, 0.9, "2026-01-01T00:00:00+00:00"),
+                ("f2", "q1", "claim", "c2", 2, 0.8, "2026-01-01T00:00:00+00:00"),
+            ]
+        )
+
+        assert service.mark_feedback_injected_batch(["f1", "f1"]) == 1
+        assert service.mark_feedback_injected_batch(["f1"]) == 0
+        with pytest.raises(ValueError, match="feedback exposure not found: missing"):
+            service.mark_feedback_injected_batch(["f2", "missing"])
+
+        rows = connection.execute(
+            "SELECT id,injected,helpful,task_outcome FROM retrieval_feedback ORDER BY id"
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [
+            ("f1", 1, None, None),
+            ("f2", 0, None, None),
+        ]
     finally:
         database.close()
 

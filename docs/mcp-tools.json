@@ -7,6 +7,12 @@
         "as_of": {
           "type": "string"
         },
+        "context_mode": {
+          "enum": [
+            "packed"
+          ],
+          "type": "string"
+        },
         "debug": {
           "type": "boolean"
         },
@@ -26,8 +32,21 @@
         "query": {
           "type": "string"
         },
+        "response_format": {
+          "default": "legacy",
+          "enum": [
+            "legacy",
+            "context_packet",
+            "both"
+          ],
+          "type": "string"
+        },
         "session_id": {
           "type": "string"
+        },
+        "token_budget": {
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "required": [
@@ -35,7 +54,135 @@
       ],
       "type": "object"
     },
-    "name": "memory_recall"
+    "name": "memory_recall",
+    "outputSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "answerability": {
+          "enum": [
+            "supported",
+            "low_confidence",
+            "no_evidence"
+          ],
+          "type": "string"
+        },
+        "context": {
+          "type": "object"
+        },
+        "context_packet": {
+          "additionalProperties": false,
+          "properties": {
+            "answerability": {
+              "enum": [
+                "supported",
+                "low_confidence",
+                "no_evidence"
+              ],
+              "type": "string"
+            },
+            "feedback_state": {
+              "enum": [
+                "available",
+                "degraded"
+              ],
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "evidence": {
+                    "items": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "feedback_id": {
+                    "minLength": 1,
+                    "pattern": ".*\\S.*",
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "claim",
+                      "observation",
+                      "policy",
+                      "episode",
+                      "trace"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "text",
+                  "evidence",
+                  "feedback_id"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "query_id": {
+              "type": "string"
+            },
+            "schema_major": {
+              "const": 1,
+              "type": "integer"
+            },
+            "schema_minor": {
+              "const": 0,
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "used_tokens_estimate": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "schema_major",
+            "schema_minor",
+            "query_id",
+            "answerability",
+            "feedback_state",
+            "items",
+            "used_tokens_estimate",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "observations": {
+          "type": "array"
+        },
+        "policies": {
+          "type": "array"
+        },
+        "query_id": {
+          "type": "string"
+        },
+        "results": {
+          "type": "array"
+        },
+        "search_trace": {
+          "type": "object"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "description": "Save an explicit memory.",

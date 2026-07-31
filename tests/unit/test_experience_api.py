@@ -102,17 +102,28 @@ def test_recall_records_impressions_and_feedback_updates_them(tmp_path) -> None:
         )
         connection.commit()
 
-        recalled = client.post("/v1/recall", json={"query": "likes tea", "limit": 1}).json()
+        recalled = client.post(
+            "/v1/recall",
+            json={
+                "query": "likes tea",
+                "limit": 1,
+                "response_format": "both",
+            },
+        ).json()
         query_id = recalled["query_id"]
         impression = connection.execute(
-            "SELECT rank,score,helpful FROM retrieval_feedback WHERE query_id=? AND memory_id='claim-1'",
+            "SELECT rank,score,injected,helpful FROM retrieval_feedback " "WHERE query_id=? AND memory_id='claim-1'",
             (query_id,),
         ).fetchone()
         assert impression[0] == 1
         assert impression[1] is not None
-        assert impression[2] is None
+        assert impression[2] == 0
+        assert impression[3] is None
 
-        feedback_id = recalled["results"][0]["feedback_id"]
+        packet = recalled["context_packet"]
+        assert packet["feedback_state"] == "available"
+        feedback_id = packet["items"][0]["feedback_id"]
+        assert recalled["results"][0]["feedback_id"] == feedback_id
         response = client.post(
             "/v1/feedback",
             json={"feedback_id": feedback_id, "helpful": True, "task_outcome": 1.0},

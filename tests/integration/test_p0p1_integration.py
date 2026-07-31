@@ -40,13 +40,22 @@ def test_procedure_episode_feedback_reaches_usefulness(
         )
         recalled = client.post(
             "/v1/recall",
-            json={"query": "deploy literal service", "intent": "procedure", "limit": 5},
+            json={
+                "query": "deploy literal service",
+                "intent": "procedure",
+                "limit": 5,
+                "response_format": "both",
+            },
         ).json()
-        episode = next(item for item in recalled["results"] if item["memory_type"] == "episode")
+        packet_episode = next(
+            item
+            for item in recalled["context_packet"]["items"]
+            if item["type"] == "episode" and item["id"] == episode_id
+        )
         response = client.post(
             "/v1/feedback",
             json={
-                "feedback_id": episode["feedback_id"],
+                "feedback_id": packet_episode["feedback_id"],
                 "helpful": True,
                 "task_outcome": 1.0,
             },
@@ -95,12 +104,13 @@ def test_api_feedback_bonus_flows_into_ttl_valid_to(
                     "query": "service degraded",
                     "limit": 1,
                     "as_of": "2026-07-19T00:00:00+00:00",
+                    "response_format": "context_packet",
                 },
             ).json()
             client.post(
                 "/v1/feedback",
                 json={
-                    "feedback_id": recalled["results"][0]["feedback_id"],
+                    "feedback_id": recalled["context_packet"]["items"][0]["feedback_id"],
                     "helpful": True,
                 },
             )

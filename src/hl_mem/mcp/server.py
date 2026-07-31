@@ -19,6 +19,62 @@ from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import EvidenceRepository
 
 
+def _context_packet_schema() -> dict[str, Any]:
+    """返回与 REST DTO 一致的严格 Context Packet v1 JSON Schema。"""
+    item_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "type": {
+                "type": "string",
+                "enum": ["claim", "observation", "policy", "episode", "trace"],
+            },
+            "id": {"type": "string"},
+            "text": {"type": "string"},
+            "evidence": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+            },
+            "feedback_id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": r".*\S.*",
+            },
+        },
+        "required": ["type", "id", "text", "evidence", "feedback_id"],
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "schema_major": {"type": "integer", "const": 1},
+            "schema_minor": {"type": "integer", "const": 0},
+            "query_id": {"type": "string"},
+            "answerability": {
+                "type": "string",
+                "enum": ["supported", "low_confidence", "no_evidence"],
+            },
+            "feedback_state": {
+                "type": "string",
+                "enum": ["available", "degraded"],
+            },
+            "items": {"type": "array", "items": item_schema},
+            "used_tokens_estimate": {"type": "integer", "minimum": 0},
+            "truncated": {"type": "boolean"},
+        },
+        "required": [
+            "schema_major",
+            "schema_minor",
+            "query_id",
+            "answerability",
+            "feedback_state",
+            "items",
+            "used_tokens_estimate",
+            "truncated",
+        ],
+    }
+
+
 def get_tool_schemas() -> list[dict[str, Any]]:
     """返回稳定、可快照化的 MCP 工具 JSON Schema。"""
     object_schema = {"type": "object", "additionalProperties": True}
@@ -34,11 +90,36 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                     "as_of": {"type": "string"},
                     "known_as_of": {"type": "string"},
                     "intent": {"type": "string"},
+                    "token_budget": {"type": "integer", "minimum": 1},
+                    "context_mode": {"type": "string", "enum": ["packed"]},
+                    "response_format": {
+                        "type": "string",
+                        "enum": ["legacy", "context_packet", "both"],
+                        "default": "legacy",
+                    },
                     "namespace": {"type": "string"},
                     "session_id": {"type": "string"},
                     "debug": {"type": "boolean"},
                 },
                 "required": ["query"],
+            },
+            "outputSchema": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "context_packet": _context_packet_schema(),
+                    "results": {"type": "array"},
+                    "observations": {"type": "array"},
+                    "policies": {"type": "array"},
+                    "total": {"type": "integer"},
+                    "query_id": {"type": "string"},
+                    "answerability": {
+                        "type": "string",
+                        "enum": ["supported", "low_confidence", "no_evidence"],
+                    },
+                    "context": {"type": "object"},
+                    "search_trace": {"type": "object"},
+                },
             },
         },
         {
@@ -153,12 +234,15 @@ class McpMemoryServer:
             settings=self.settings,
             query_expander=components.make_query_expander(self.settings, connection),
         ).recall(
-            query,
-            limit,
-            arguments.get("as_of"),
-            arguments.get("intent"),
-            arguments.get("known_as_of"),
-            arguments.get("query_id"),
+            query=query,
+            limit=limit,
+            as_of=arguments.get("as_of"),
+            intent=arguments.get("intent"),
+            known_as_of=arguments.get("known_as_of"),
+            query_id=arguments.get("query_id"),
+            token_budget=(int(arguments["token_budget"]) if arguments.get("token_budget") is not None else None),
+            context_mode=arguments.get("context_mode"),
+            response_format=str(arguments.get("response_format", "legacy")),
             namespace=str(arguments.get("namespace", "default")),
             session_id=arguments.get("session_id"),
             debug=bool(arguments.get("debug", False)),

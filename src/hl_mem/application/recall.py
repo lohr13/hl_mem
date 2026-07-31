@@ -8,9 +8,19 @@ import logging
 import sqlite3
 import threading
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
+from hl_mem.application.context_packet import (
+    Answerability,
+    ContextPacketAssembler,
+    MemoryType,
+    RetrievalBundle,
+    RetrievalBundleItem,
+    estimate_tokens,
+    pack_retrieval_bundle,
+)
 from hl_mem.application.ingest import new_id
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
@@ -43,6 +53,7 @@ from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import DerivationRepository, EvidenceRepository
 
 LOGGER = logging.getLogger(__name__)
+_RESPONSE_FORMATS = frozenset({"legacy", "context_packet", "both"})
 _SIDE_EFFECT_LOCK = threading.Lock()
 _SIDE_EFFECT_HEALTH: dict[str, dict[str, int | str | None]] = {
     "access_record": {"failures": 0, "last_error": None},
@@ -55,6 +66,17 @@ def _claim_index_text(claim: dict[str, Any]) -> str:
     """只暴露 Claim 持久化的索引文本。"""
     index_text = claim.get("index_text")
     return index_text if isinstance(index_text, str) else ""
+
+
+def _context_text(memory_type: str, data: Mapping[str, Any]) -> str:
+    """只从公开投影提取 packet/context 文本，Claim 不读取 value_json。"""
+    if memory_type == "claim":
+        text = data.get("text")
+        return text if isinstance(text, str) else ""
+    value = data.get("text") or data.get("body") or data.get("procedure") or ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def recall_side_effect_health() -> dict[str, dict[str, int | str | None]]:
@@ -79,8 +101,9 @@ def budget_pack(items: list[dict[str, Any]], token_budget: int) -> list[dict[str
     used = 0
     for item in items:
         data = item.get("data", item)
-        text = str(data.get("text") or data.get("body") or data.get("procedure") or "")
-        cost = max(1, (len(text) + 1) // 2)
+        memory_type = str(item.get("type") or data.get("memory_type") or data.get("type") or "")
+        text = _context_text(memory_type, data)
+        cost = estimate_tokens(text)
         if used + cost > token_budget:
             continue
         packed.append(item)
@@ -219,8 +242,11 @@ class RecallService:
         namespace: str = "default",
         session_id: str | None = None,
         debug: bool = False,
+        response_format: str = "legacy",
     ) -> dict[str, Any]:
         """执行混合召回并返回 claim、策略、证据及查询标识。"""
+        if response_format not in _RESPONSE_FORMATS:
+            raise ValueError(f"unsupported response_format: {response_format}")
         limit = self.settings.recall_default_limit if limit is None else limit
         total_started = time.perf_counter_ns()
         query_id = query_id or new_id()
@@ -474,6 +500,7 @@ class RecallService:
                 token_budget=token_budget,
                 context_mode=context_mode,
                 debug=debug,
+                response_format=response_format,
                 tracer=tracer,
                 total_started=total_started,
             )
@@ -483,29 +510,67 @@ class RecallService:
             ExperienceService(self.connection).list_policies("active", namespace=namespace),
             query,
         )
-        self._record_feedback(results, observations, policies, query_id)
+        policy_evidence = EvidenceRepository(self.connection).batch_get_links_for_derived(
+            "policy",
+            [str(policy["id"]) for policy in policies],
+        )
+        for policy in policies:
+            policy["evidence"] = policy_evidence.get(str(policy["id"]), [])
+        answerability = self._answerability(
+            claims,
+            tracer,
+            relevance_enforced=enforce_enabled,
+        )
+        packet_candidates = self._context_candidates(results, observations, policies)
+        retrieval_bundle = self._bundle_from_context_items(
+            query_id,
+            cast(Answerability, answerability),
+            packet_candidates,
+        )
+        if response_format != "legacy" or context_mode == "packed":
+            budget = token_budget or self.settings.packed_context_token_budget
+            bundle = pack_retrieval_bundle(retrieval_bundle, budget)
+            packet_context = self._assemble_context(
+                results,
+                observations,
+                policies,
+                budget,
+            )
+        else:
+            used = sum(estimate_tokens(item.text) for item in retrieval_bundle.items)
+            bundle = RetrievalBundle(
+                query_id=retrieval_bundle.query_id,
+                answerability=retrieval_bundle.answerability,
+                items=retrieval_bundle.items,
+                used_tokens_estimate=used,
+                truncated=False,
+            )
+            packet_context = {
+                "context_items": packet_candidates,
+                "used_tokens_estimate": used,
+                "truncated": False,
+            }
+        materialized_packet = self._materialize_context_packet(bundle)
+        if response_format != "context_packet":
+            self._attach_packet_feedback(packet_context, materialized_packet)
+        context_packet = materialized_packet if response_format != "legacy" else None
         response = {
             "results": results,
             "observations": observations,
             "policies": policies,
             "total": len(results),
             "query_id": query_id,
-            "answerability": self._answerability(
-                claims,
-                tracer,
-                relevance_enforced=enforce_enabled,
-            ),
+            "answerability": answerability,
         }
         if context_mode == "packed":
-            response["context"] = self._assemble_context(
-                results,
-                observations,
-                policies,
-                token_budget or self.settings.packed_context_token_budget,
-            )
+            response["context"] = packet_context
         if debug:
             tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
             response["search_trace"] = tracer.to_dict()
+        if response_format == "context_packet":
+            return {"context_packet": context_packet}
+        if response_format == "both":
+            response["context_packet"] = context_packet
         return response
 
     @staticmethod
@@ -538,7 +603,34 @@ class RecallService:
 
     def _assemble_observations(self, claim_ids: list[str]) -> list[dict[str, Any]]:
         """查询与召回 Claim 相关的活跃派生记忆。"""
-        return DerivationRepository(self.connection).list_active_for_claims(claim_ids)
+        observations = DerivationRepository(self.connection).list_active_for_claims(claim_ids)
+        if not observations:
+            return []
+        evidence_repo = EvidenceRepository(self.connection)
+        by_kind: dict[str, list[str]] = {}
+        for observation in observations:
+            by_kind.setdefault(str(observation.get("kind") or "observation"), []).append(str(observation["id"]))
+        evidence: dict[str, list[dict[str, str]]] = {}
+        for kind, derived_ids in by_kind.items():
+            evidence.update(evidence_repo.batch_get_links_for_derived(kind, derived_ids))
+        for observation in observations:
+            observation["evidence"] = evidence.get(str(observation["id"]), [])
+        return observations
+
+    @staticmethod
+    def _context_candidates(
+        claims: list[dict[str, Any]],
+        observations: list[dict[str, Any]],
+        policies: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """按稳定优先级返回尚未预算裁剪的 context candidates。"""
+        all_items: list[dict[str, Any]] = (
+            [{"type": "claim", "data": item, "priority": 2} for item in claims]
+            + [{"type": "observation", "data": item, "priority": 1} for item in observations]
+            + [{"type": "policy", "data": item, "priority": 0} for item in policies]
+        )
+        all_items.sort(key=lambda item: -item["priority"] if isinstance(item.get("priority"), int) else 0)
+        return all_items
 
     @staticmethod
     def _assemble_context(
@@ -548,23 +640,86 @@ class RecallService:
         token_budget: int,
     ) -> dict[str, Any]:
         """按优先级跨类型组装受 token 预算约束的上下文。"""
-        all_items: list[dict[str, Any]] = (
-            [{"type": "claim", "data": item, "priority": 2} for item in claims]
-            + [{"type": "observation", "data": item, "priority": 1} for item in observations]
-            + [{"type": "policy", "data": item, "priority": 0} for item in policies]
-        )
-        all_items.sort(key=lambda item: -item["priority"] if isinstance(item.get("priority"), int) else 0)
+        all_items = RecallService._context_candidates(claims, observations, policies)
         packed = budget_pack(all_items, token_budget)
         used = 0
         for item in packed:
             data = item.get("data", item)
-            text = str(data.get("text") or data.get("body") or data.get("procedure") or "")
-            used += max(1, (len(text) + 1) // 2)
+            memory_type = str(item.get("type") or data.get("memory_type") or data.get("type") or "")
+            used += estimate_tokens(_context_text(memory_type, data))
         return {
             "context_items": packed,
             "used_tokens_estimate": used,
             "truncated": len(packed) < len(all_items),
         }
+
+    @staticmethod
+    def _bundle_from_context_items(
+        query_id: str,
+        answerability: Answerability,
+        context_items: list[dict[str, Any]],
+    ) -> RetrievalBundle:
+        """把有序 context candidates 投影为可缓存、无 receipt 的 RetrievalBundle。"""
+        items: list[RetrievalBundleItem] = []
+        for wrapped in context_items:
+            data = wrapped.get("data", wrapped)
+            memory_type = str(wrapped.get("type") or data.get("memory_type") or data.get("type") or "")
+            raw_evidence = data.get("evidence") or []
+            evidence = tuple(reference for reference in raw_evidence if isinstance(reference, Mapping))
+            raw_score = data.get("_score", data.get("score"))
+            score: float | None
+            try:
+                score = float(raw_score) if raw_score is not None else None
+            except (TypeError, ValueError):
+                score = None
+            items.append(
+                RetrievalBundleItem(
+                    cast(MemoryType, memory_type),
+                    str(data["id"]),
+                    _context_text(memory_type, data),
+                    evidence,
+                    score,
+                )
+            )
+        return RetrievalBundle(
+            query_id=query_id,
+            answerability=answerability,
+            items=tuple(items),
+        )
+
+    def _materialize_context_packet(self, bundle: RetrievalBundle) -> dict[str, Any]:
+        """有限重试 exposure 批量落库，并把最终失败收敛为 degraded packet。"""
+        service = ExperienceService(self.connection)
+        assembler = ContextPacketAssembler(
+            service,
+            persist_exposures=lambda exposures: self._run_side_effect_with_retry(
+                lambda: service.record_exposure_batch(exposures)
+            ),
+        )
+        packet = assembler.assemble(bundle)
+        if assembler.last_error is not None:
+            _record_side_effect_failure("feedback_record", assembler.last_error)
+            self._emit_failure(
+                "feedback_record",
+                "feedback_record_failed",
+                assembler.last_error,
+                len(bundle.items),
+            )
+        return packet
+
+    @staticmethod
+    def _attach_packet_feedback(
+        context: Mapping[str, Any],
+        packet: Mapping[str, Any],
+    ) -> None:
+        """both 模式仅在 exposure 已确认时把同一 receipt 附到 legacy item。"""
+        if packet.get("feedback_state") != "available":
+            return
+        context_items = context.get("context_items") or []
+        packet_items = packet.get("items") or []
+        for wrapped, packet_item in zip(context_items, packet_items):
+            data = wrapped.get("data", wrapped)
+            data["feedback_id"] = packet_item["feedback_id"]
 
     def _record_access(self, claims: list[dict[str, Any]]) -> None:
         try:
@@ -575,51 +730,6 @@ class RecallService:
             _record_side_effect_failure("access_record", error)
             LOGGER.exception("recall side effect failed: access_record")
             self._emit_failure("access_record", "access_record_failed", error, len(claims))
-
-    def _record_feedback(
-        self,
-        claims: list[dict[str, Any]],
-        observations: list[dict[str, Any]],
-        policies: list[dict[str, Any]],
-        query_id: str,
-    ) -> None:
-        """为实际返回的三类记忆创建唯一 exposure，并把主键返回给调用方。"""
-        try:
-            recorded_at = _now()
-            feedback: list[tuple[Any, ...]] = []
-            for default_memory_type, items in (
-                ("claim", claims),
-                ("observation", observations),
-                ("policy", policies),
-            ):
-                for rank, item in enumerate(items, 1):
-                    memory_type = str(item.get("memory_type") or default_memory_type)
-                    feedback_id = new_id()
-                    item["feedback_id"] = feedback_id
-                    feedback.append(
-                        (
-                            feedback_id,
-                            query_id,
-                            memory_type,
-                            item["id"],
-                            rank,
-                            float(item.get("_score", item.get("score", 0.0))),
-                            0,
-                            None,
-                            None,
-                            recorded_at,
-                        )
-                    )
-            self._run_side_effect_with_retry(lambda: ExperienceService(self.connection).record_feedback_batch(feedback))
-        except Exception as error:
-            _record_side_effect_failure("feedback_record", error)
-            LOGGER.exception("recall side effect failed: feedback_record")
-            self._emit_failure(
-                "feedback_record",
-                "feedback_record_failed",
-                error,
-                len(claims) + len(observations) + len(policies),
-            )
 
     def _run_side_effect_with_retry(self, operation: Any) -> Any:
         """仅对 SQLite busy/locked 做 Settings 控制的有限退避重试。"""
@@ -710,6 +820,7 @@ class RecallService:
         token_budget: int | None,
         context_mode: str | None,
         debug: bool,
+        response_format: str,
         tracer: SearchTracer,
         total_started: int,
     ) -> dict[str, Any]:
@@ -738,7 +849,8 @@ class RecallService:
         )
         budget = token_budget or self.settings.packed_context_token_budget
         packed, quotas, reflow = budget_pack_by_type(candidates, selected_intent, budget)
-        selected = packed[:limit] if context_mode == "packed" else candidates[:limit]
+        packet_selected = packed[:limit]
+        selected = packet_selected if context_mode == "packed" else candidates[:limit]
         results = [
             {
                 "type": item.memory_type,
@@ -751,14 +863,42 @@ class RecallService:
             }
             for item in selected
         ]
-        self._record_feedback(results, [], [], query_id)
+        answerability = self._answerability([], tracer) if not candidates else "supported"
+        materialized_selection = packet_selected if response_format != "legacy" else selected
+        bundle = RetrievalBundle(
+            query_id=query_id,
+            answerability=cast(Answerability, answerability),
+            items=tuple(
+                RetrievalBundleItem(
+                    cast(MemoryType, item.memory_type),
+                    item.memory_id,
+                    item.text,
+                    tuple(reference for reference in item.evidence if isinstance(reference, Mapping)),
+                    item.score,
+                )
+                for item in materialized_selection
+            ),
+            used_tokens_estimate=sum(estimate_tokens(item.text) for item in materialized_selection),
+            truncated=len(materialized_selection) < len(candidates),
+        )
+        materialized_packet = self._materialize_context_packet(bundle)
+        if response_format != "context_packet" and materialized_packet["feedback_state"] == "available":
+            feedback_by_memory = {
+                (item["type"], item["id"]): item["feedback_id"] for item in materialized_packet["items"]
+            }
+            for result in results:
+                feedback_id = feedback_by_memory.get((result["memory_type"], result["id"]))
+                if feedback_id is not None:
+                    result["feedback_id"] = feedback_id
+        context_packet = materialized_packet if response_format != "legacy" else None
         tracer.trace.candidate_counts = {
             kind: sum(item.memory_type == kind for item in candidates)
             for kind in ("policy", "episode", "trace", "claim")
         }
         tracer.trace.quota_tokens = quotas
         tracer.trace.reflow_tokens = reflow
-        selected_keys = {(item.memory_type, item.memory_id): rank for rank, item in enumerate(selected, 1)}
+        traced_selection = materialized_selection
+        selected_keys = {(item.memory_type, item.memory_id): rank for rank, item in enumerate(traced_selection, 1)}
         tracer.trace.experience_candidates = [
             ExperienceCandidateTrace(
                 memory_type=item.memory_type,
@@ -777,10 +917,10 @@ class RecallService:
             "policies": [item for item in results if item["memory_type"] == "policy"],
             "total": len(results),
             "query_id": query_id,
-            "answerability": self._answerability([], tracer) if not results else "supported",
+            "answerability": answerability,
         }
         if context_mode == "packed":
-            used = sum(max(1, (len(item.text) + 1) // 2) for item in selected)
+            used = sum(estimate_tokens(item.text) for item in selected)
             response["context"] = {
                 "context_items": [
                     {"type": item.memory_type, "data": result} for item, result in zip(selected, results)
@@ -793,6 +933,10 @@ class RecallService:
         if debug:
             tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
             response["search_trace"] = tracer.to_dict()
+        if response_format == "context_packet":
+            return {"context_packet": context_packet}
+        if response_format == "both":
+            response["context_packet"] = context_packet
         return response
 
     @staticmethod

@@ -74,13 +74,28 @@ curl -X POST http://127.0.0.1:8200/v1/recall \
     "limit": 5,
     "namespace": "default",
     "context_mode": "packed",
-    "token_budget": 1200
+    "token_budget": 1200,
+    "response_format": "both"
   }'
 ```
 
 The response contains ranked `results`, derived `observations`, applicable `policies`, `total`, and an optional packed
 `context`. Set `debug` to `true` to include `search_trace`. Each Claim result can include scores, ranking features,
 temporal fields, canonical slot/tags, relations, conflicts, and evidence.
+
+`response_format` accepts `legacy`, `context_packet`, or `both` and defaults to `legacy`. `context_packet` returns only
+the optional `context_packet` envelope; `both` returns it alongside the legacy fields. Context Packet v1 has exactly
+eight top-level fields: `schema_major`, `schema_minor`, `query_id`, `answerability`, `feedback_state`, `items`,
+`used_tokens_estimate`, and `truncated`. Each ordered item has exactly `type`, `id`, `text`, `evidence`, and a newly
+materialized non-empty `feedback_id`; its array position is its rank. Claim text comes only from the stored
+`index_text` projection.
+
+`feedback_state=available` means every item exposure was atomically persisted. `degraded` means the packet text remains
+usable, but its feedback identifiers must not be submitted. Exposure persistence failure never turns a successful
+recall into an HTTP 503. The internal `injected` flag means an adapter explicitly delivered the item across the Agent
+host/model input boundary; it does not claim that the model read, adopted, or cited the memory.
+Successful `legacy` responses retain item-level `feedback_id` values for compatibility; if their exposure batch cannot
+be confirmed, those identifiers are omitted rather than returning unusable receipts without a `feedback_state`.
 
 ## Experience Requests
 

@@ -164,13 +164,31 @@ def test_recall_feedback_failure_does_not_change_main_result(tmp_path, monkeypat
     """召回曝光批量写入失败时仍返回主召回结果。"""
     monkeypatch.setattr(
         ExperienceService,
-        "record_feedback_batch",
+        "record_exposure_batch",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("feedback")),
     )
-    with TestClient(server.create_app(tmp_path / "recall-feedback.db")) as client:
-        response = client.post("/v1/recall", json={"query": "不存在"})
+    app = server.create_app(tmp_path / "recall-feedback.db")
+    connection = app.state.db.open()
+    connection.execute(
+        "INSERT INTO claims(id,status,subject_entity_id,predicate,value_json,index_text,recorded_from) "
+        "VALUES ('claim-1','active','user','likes','\"tea\"','user likes tea','2026-07-22T00:00:00+00:00')"
+    )
+    connection.commit()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/recall",
+            json={
+                "query": "likes tea",
+                "limit": 1,
+                "response_format": "context_packet",
+            },
+        )
+        assert connection.execute("SELECT count(*) FROM retrieval_feedback").fetchone()[0] == 0
     assert response.status_code == 200
-    assert response.json()["results"] == []
+    packet = response.json()["context_packet"]
+    assert packet["feedback_state"] == "degraded"
+    assert packet["items"][0]["id"] == "claim-1"
+    assert packet["items"][0]["feedback_id"]
 
 
 def test_episode_state_machine_reward_and_terminal_trace_guards(tmp_path) -> None:

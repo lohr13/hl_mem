@@ -34,7 +34,10 @@ def test_v006_database_upgrades_to_current_schema(tmp_path: Path) -> None:
         expected_versions = {migration.stem for migration in MIGRATION_DIR.glob("*.sql")}
         applied_versions = {row[0] for row in upgraded.execute("SELECT version FROM schema_migrations")}
         assert expected_versions <= applied_versions
-        assert "029_ttl_scan_indexes" in applied_versions
+        assert "035_retrieval_feedback_injected" in applied_versions
+        feedback_columns = {row[1] for row in upgraded.execute("PRAGMA table_info(retrieval_feedback)")}
+        assert "injected" in feedback_columns
+        assert "used_by_model" not in feedback_columns
 
         upgraded.execute(
             "INSERT INTO events "
@@ -71,6 +74,21 @@ def test_v010_snapshot_preserves_data_through_current_schema(tmp_path: Path) -> 
         connection.executescript(migration.read_text(encoding="utf-8"))
         connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (migration.stem,))
     connection.executescript(V010_FIXTURE.read_text(encoding="utf-8"))
+    connection.execute(
+        "INSERT INTO retrieval_feedback("
+        "id,query_id,memory_type,memory_id,used_by_model,helpful,task_outcome,created_at"
+        ") VALUES(?,?,?,?,?,?,?,?)",
+        (
+            "feedback-before-rename",
+            "query-before-rename",
+            "claim",
+            "claim-018-1",
+            1,
+            None,
+            None,
+            "2026-07-26T00:00:00Z",
+        ),
+    )
     expected_counts = {
         table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
         for table in ("events", "claims", "evidence_links", "episodes", "traces")
@@ -104,6 +122,13 @@ def test_v010_snapshot_preserves_data_through_current_schema(tmp_path: Path) -> 
         expected_versions = {migration.stem for migration in MIGRATION_DIR.glob("*.sql")}
         applied_versions = {row[0] for row in upgraded.execute("SELECT version FROM schema_migrations")}
         assert expected_versions <= applied_versions
-        assert "029_ttl_scan_indexes" in applied_versions
+        assert "035_retrieval_feedback_injected" in applied_versions
+        feedback_columns = {row[1] for row in upgraded.execute("PRAGMA table_info(retrieval_feedback)")}
+        assert "injected" in feedback_columns
+        assert "used_by_model" not in feedback_columns
+        renamed_feedback = upgraded.execute(
+            "SELECT injected,helpful,task_outcome FROM retrieval_feedback WHERE id='feedback-before-rename'"
+        ).fetchone()
+        assert tuple(renamed_feedback) == (1, None, None)
     finally:
         database.close()

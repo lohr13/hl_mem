@@ -46,7 +46,7 @@ def test_rebuild_all_includes_episode_and_trace_feedback(tmp_path: Path) -> None
         _seed_episode_and_trace(connection)
         connection.executemany(
             "INSERT INTO retrieval_feedback("
-            "id,query_id,memory_type,memory_id,used_by_model,helpful,created_at"
+            "id,query_id,memory_type,memory_id,injected,helpful,created_at"
             ") VALUES(?,?,?,?,?,?,?)",
             (
                 (

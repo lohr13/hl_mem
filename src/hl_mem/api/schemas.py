@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from hl_mem.domain.recall import RecallIntent
 
@@ -60,6 +60,7 @@ class RecallInput(BaseModel):
     known_as_of: str | None = None
     token_budget: int | None = Field(default=None, ge=1)
     context_mode: str | None = Field(default=None, pattern="^(packed)$")
+    response_format: Literal["legacy", "context_packet", "both"] = "legacy"
     namespace: str = Field(default="default", max_length=100)
     debug: bool = False
 
@@ -108,6 +109,33 @@ class ExperienceMemoryOutput(BaseModel):
     feedback_id: str | None = None
 
 
+class ContextPacketItemOutput(BaseModel):
+    """Context Packet v1 中的扁平记忆条目。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["claim", "observation", "policy", "episode", "trace"]
+    id: str
+    text: str
+    evidence: list[dict[str, Any]]
+    feedback_id: str = Field(min_length=1, pattern=r".*\S.*")
+
+
+class ContextPacketOutput(BaseModel):
+    """严格冻结的 Context Packet v1 输出契约。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_major: Literal[1]
+    schema_minor: Literal[0]
+    query_id: str
+    answerability: Literal["supported", "low_confidence", "no_evidence"]
+    feedback_state: Literal["available", "degraded"]
+    items: list[ContextPacketItemOutput]
+    used_tokens_estimate: int = Field(ge=0)
+    truncated: bool
+
+
 class RecallOutput(BaseModel):
     """REST 与 MCP 共享应用服务返回的召回契约。"""
 
@@ -119,6 +147,15 @@ class RecallOutput(BaseModel):
     answerability: str | None = None
     context: dict[str, Any] | None = None
     search_trace: dict[str, Any] | None = None
+    context_packet: ContextPacketOutput | None = None
+
+
+class ContextPacketRecallOutput(BaseModel):
+    """仅返回 Context Packet 的召回响应。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    context_packet: ContextPacketOutput
 
 
 class MemoryInput(BaseModel):

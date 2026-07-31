@@ -186,7 +186,7 @@ def test_historical_helpful_rate_breaks_otherwise_equal_ranking(tmp_path):
     _claim(connection, "helpful")
     _claim(connection, "unhelpful")
     connection.executemany(
-        "INSERT INTO retrieval_feedback(id,query_id,memory_type,memory_id,used_by_model,helpful,created_at) "
+        "INSERT INTO retrieval_feedback(id,query_id,memory_type,memory_id,injected,helpful,created_at) "
         "VALUES (?,?,?,?,1,?,?)",
         [
             ("f1", "q1", "claim", "helpful", 1, NOW),

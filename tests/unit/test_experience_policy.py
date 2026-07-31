@@ -11,6 +11,9 @@ def test_schema_embeds_procedure_in_policy_without_procedures_table(tmp_path) ->
     assert {"episodes", "traces", "policies", "retrieval_feedback"} <= tables
     assert "procedures" not in tables
     assert {"procedure", "procedure_status", "reliability"} <= columns
+    feedback_columns = {row[1] for row in connection.execute("PRAGMA table_info(retrieval_feedback)")}
+    assert "injected" in feedback_columns
+    assert "used_by_model" not in feedback_columns
 
 
 def test_policy_requires_independent_successes_then_retires_after_failures(

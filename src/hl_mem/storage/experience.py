@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from hl_mem.lifecycle import (
     TERMINAL_EPISODE_STATUSES,
@@ -26,6 +27,9 @@ __all__ = [
 
 if TYPE_CHECKING:
     from hl_mem.settings import Settings
+
+
+_T = TypeVar("_T")
 
 
 def _id() -> str:
@@ -242,7 +246,7 @@ class ExperienceRepository:
         query_id: str,
         memory_type: str,
         memory_id: str,
-        used_by_model: bool,
+        injected: bool,
         helpful: bool | None,
         task_outcome: float | str | None,
         created_at: str,
@@ -252,7 +256,7 @@ class ExperienceRepository:
     ) -> bool:
         """幂等记录检索反馈，并将 Episode 任务结果归因为 reward。"""
         cursor = self.connection.execute(
-            "INSERT OR IGNORE INTO retrieval_feedback(id,query_id,memory_type,memory_id,rank,score,used_by_model,"
+            "INSERT OR IGNORE INTO retrieval_feedback(id,query_id,memory_type,memory_id,rank,score,injected,"
             "helpful,task_outcome,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 feedback_id,
@@ -261,7 +265,7 @@ class ExperienceRepository:
                 memory_id,
                 rank,
                 score,
-                int(used_by_model),
+                int(injected),
                 helpful,
                 task_outcome,
                 created_at,
@@ -274,22 +278,91 @@ class ExperienceRepository:
             self.connection.commit()
         return inserted
 
-    def record_feedback_batch(self, feedback: list[tuple[Any, ...]]) -> int:
-        """在单个事务中批量写入召回曝光记录。"""
+    def record_exposure_batch(self, exposures: list[tuple[Any, ...]]) -> int:
+        """原子写入最终注入项的 exposure，不接受隐式反馈或交付状态。"""
+        feedback = []
+        for exposure in exposures:
+            if len(exposure) != 7:
+                raise ValueError("exposure must contain id, query_id, memory_type, memory_id, rank, score, created_at")
+            feedback.append((*exposure[:6], 0, None, None, exposure[6]))
         if not feedback:
             return 0
-        before = self.connection.total_changes
-        try:
+
+        def insert_all() -> int:
             self.connection.executemany(
-                "INSERT OR IGNORE INTO retrieval_feedback(id,query_id,memory_type,memory_id,rank,score,"
-                "used_by_model,helpful,task_outcome,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO retrieval_feedback(id,query_id,memory_type,memory_id,rank,score,"
+                "injected,helpful,task_outcome,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 feedback,
             )
-            self.connection.commit()
+            return len(feedback)
+
+        return self._run_atomic_batch(insert_all)
+
+    def record_feedback_batch(self, feedback: list[tuple[Any, ...]]) -> int:
+        """兼容旧十列调用，原子且幂等地写入召回反馈记录。"""
+        if not feedback:
+            return 0
+
+        def insert_all() -> int:
+            before = self.connection.total_changes
+            self.connection.executemany(
+                "INSERT OR IGNORE INTO retrieval_feedback(id,query_id,memory_type,memory_id,rank,score,"
+                "injected,helpful,task_outcome,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                feedback,
+            )
+            return self.connection.total_changes - before
+
+        return self._run_atomic_batch(insert_all)
+
+    def mark_feedback_injected_batch(self, feedback_ids: list[str]) -> int:
+        """原子、幂等地标记已跨过 Agent host/model 输入边界的 exposure。"""
+        unique_ids = list(dict.fromkeys(feedback_ids))
+        if not unique_ids:
+            return 0
+
+        def mark_all() -> int:
+            placeholders = ",".join("?" for _ in unique_ids)
+            existing = {
+                row[0]
+                for row in self.connection.execute(
+                    f"SELECT id FROM retrieval_feedback WHERE id IN ({placeholders})",
+                    unique_ids,
+                ).fetchall()
+            }
+            missing = next((feedback_id for feedback_id in unique_ids if feedback_id not in existing), None)
+            if missing is not None:
+                raise ValueError(f"feedback exposure not found: {missing}")
+            cursor = self.connection.execute(
+                f"UPDATE retrieval_feedback SET injected=1 " f"WHERE id IN ({placeholders}) AND injected=0",
+                unique_ids,
+            )
+            return cursor.rowcount
+
+        return self._run_atomic_batch(mark_all)
+
+    def _run_atomic_batch(self, operation: Callable[[], _T]) -> _T:
+        """在独立事务或外层事务 savepoint 中执行全有全无的批量操作。"""
+        started_transaction = not self.connection.in_transaction
+        savepoint = f"hl_mem_feedback_{uuid.uuid4().hex}"
+        if started_transaction:
+            self.connection.execute("BEGIN IMMEDIATE")
+        else:
+            self.connection.execute(f"SAVEPOINT {savepoint}")
+        try:
+            result = operation()
+            if started_transaction:
+                self.connection.commit()
+            else:
+                self.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            return result
         except Exception:
-            self.connection.rollback()
+            if started_transaction:
+                if self.connection.in_transaction:
+                    self.connection.rollback()
+            else:
+                self.connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                self.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
             raise
-        return self.connection.total_changes - before
 
     def submit_retrieval_feedback(
         self,

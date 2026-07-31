@@ -19,6 +19,7 @@ from starlette.responses import Response
 from hl_mem import __version__, components
 from hl_mem.api.schemas import (
     ConsolidationScopeInput,
+    ContextPacketRecallOutput,
     DryRunExtractionInput,
     EpisodeInput,
     EpisodeUpdate,
@@ -207,7 +208,11 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         )
         return {"id": job_id}
 
-    @app.post("/v1/recall", response_model=RecallOutput, response_model_exclude_none=True)
+    @app.post(
+        "/v1/recall",
+        response_model=RecallOutput | ContextPacketRecallOutput,
+        response_model_exclude_none=True,
+    )
     def recall(
         payload: RecallInput,
         request: Request,
@@ -226,14 +231,15 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
                 settings,
                 components.make_query_expander(settings, connection),
             ).recall(
-                payload.query,
-                payload.limit,
-                payload.as_of,
+                query=payload.query,
+                limit=payload.limit,
+                as_of=payload.as_of,
                 intent=payload.intent,
                 known_as_of=payload.known_as_of,
                 query_id=query_id,
                 token_budget=payload.token_budget,
                 context_mode=payload.context_mode,
+                response_format=payload.response_format,
                 namespace=payload.namespace,
                 session_id=payload.session_id,
                 debug=payload.debug,
@@ -252,9 +258,14 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     def post_feedback(
         payload: FeedbackInput, connection: sqlite3.Connection = Depends(get_connection)
     ) -> dict[str, Any]:
-        result: dict[str, Any] = ExperienceService(connection, settings=settings).submit_retrieval_feedback(
-            payload.feedback_id, payload.helpful, payload.task_outcome, _now()
-        )
+        try:
+            result: dict[str, Any] = ExperienceService(connection, settings=settings).submit_retrieval_feedback(
+                payload.feedback_id, payload.helpful, payload.task_outcome, _now()
+            )
+        except ValueError as error:
+            if str(error).startswith("feedback exposure not found:"):
+                raise HTTPException(404, str(error)) from error
+            raise
         correction = payload.correction
         if correction is None:
             return result
