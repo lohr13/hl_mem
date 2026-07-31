@@ -8,7 +8,7 @@
 - **版本**：v0.18.0
 - **阶段**：v0.18.0
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），34 migrations；实时数据量以 `/healthz` 和只读审计为准
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），35 migrations；实时数据量以 `/healthz` 和只读审计为准
 - **FTS**：trigram（claims/tags），unicode61（events）
 
 ## 已完成

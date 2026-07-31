@@ -192,7 +192,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.18.0，共 34 个不可变、仅向前执行的 Migration。
+当前基线为 v0.18.0，共 35 个不可变、仅向前执行的 Migration。
 
 ## 文档
 

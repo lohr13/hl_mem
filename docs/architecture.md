@@ -101,7 +101,7 @@ src/hl_mem/
 │   ├── jobs.py               # Durable job queue
 │   ├── relation_proposals.py # Auditable relation candidates
 │   ├── usefulness.py         # Feedback usefulness aggregation
-│   └── migrations/           # 34 immutable SQL migrations (001-034)
+│   └── migrations/           # 35 immutable SQL migrations (001-035)
 ├── workers/
 │   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
 │   ├── ttl.py                # Importance-aware expiry
