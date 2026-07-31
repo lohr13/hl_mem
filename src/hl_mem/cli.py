@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -21,6 +22,13 @@ from hl_mem.storage.events import EventRepository
 from hl_mem.workers.backfill_index_text import backfill_index_text
 
 EXPORT_FORMAT_VERSION = "1"
+
+
+def _open_readonly_database(database_path: Path) -> sqlite3.Connection:
+    """以 SQLite 强制只读模式打开现有数据库，且不运行 migration。"""
+    connection = sqlite3.connect(f"{database_path.resolve().as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
 def export_database(
@@ -177,6 +185,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     backfill.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     backfill.add_argument("--dry-run", action="store_true")
     backfill.add_argument("--cursor")
+    backfill.add_argument("--mode", choices=("legacy", "answerable"))
     doctor = commands.add_parser("doctor")
     doctor.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--config", type=Path, default=argparse.SUPPRESS)
@@ -196,12 +205,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         settings = replace(settings, database_path=str(args.db))
     database_path = Path(settings.database_path)
     if args.command == "backfill-index-text":
-        database = Database(settings=settings)
+        database: Database | None = None
+        connection: sqlite3.Connection | None = None
         try:
+            if args.dry_run:
+                connection = _open_readonly_database(database_path)
+            else:
+                database = Database(settings=settings)
+                connection = database.open()
             result = backfill_index_text(
-                database.open(),
+                connection,
                 make_embedder(settings),
-                mode=settings.index_text_mode,
+                mode=args.mode or settings.index_text_mode,
                 version=settings.index_text_version,
                 batch_size=settings.index_backfill_batch_size,
                 max_attempts=settings.index_backfill_max_attempts,
@@ -209,8 +224,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 cursor=args.cursor,
             )
         finally:
-            database.close()
+            if database is None:
+                if connection is not None:
+                    connection.close()
+            else:
+                database.close()
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
+        if result.failed > 0 or not result.coverage_complete:
+            raise SystemExit(1)
         return
     if args.command == "eval":
         if args.limit is not None and args.limit < 1:

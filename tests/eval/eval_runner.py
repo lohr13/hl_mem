@@ -205,6 +205,8 @@ def run(
     dataset: Path,
     top_k: int,
     settings: Settings | None = None,
+    *,
+    reference_time: str | None = None,
 ) -> dict[str, Any]:
     """在临时数据库上运行评测，保证源 snapshot 只读。"""
     rows = _load_rows(dataset)
@@ -227,8 +229,9 @@ def run(
                     "query": row["query"],
                     "limit": top_k,
                     "intent": row.get("intent", "current_state"),
-                    "as_of": row.get("as_of"),
+                    "as_of": row.get("as_of") or reference_time,
                     "known_as_of": row.get("known_as_of"),
+                    "namespace": row.get("namespace", "default"),
                     "debug": True,
                 }
                 started = time.perf_counter()
@@ -264,6 +267,7 @@ def run(
             "reranker": health.get("reranker", "unknown"),
             "settings": health.get("settings", {}),
             "reranker_paths": dict(reranker_paths),
+            "reference_time": reference_time,
         },
         "case_count": len(scores),
         "slice_counts": dict(sorted(Counter(score["slice"] for score in scores).items())),
