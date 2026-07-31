@@ -1,5 +1,36 @@
 # HL-Mem 变更记录
 
+## v0.19.0 (2026-07-31)
+
+### Context Delivery and Feedback
+
+- 新增严格版本化的 Context Packet v1：召回完成相关性过滤和最终 token 预算打包后，统一输出有序记忆条目、证据、answerability、截断状态及逐条 `feedback_id`。
+- Claim 写入、FTS、dense embedding、回填与一致性检查统一消费持久化 `index_text`，避免同一 Claim 在不同检索通道使用不同文本投影。
+- feedback exposure 改为在最终 Context Packet 物化时批量创建；Hermes 只在文本实际跨过 Agent host/model 输入边界后异步确认 `injected`，失败可降级并有限重试。
+- 新增不可变 migration `035_retrieval_feedback_injected`，将 `retrieval_feedback.used_by_model` 收口为语义明确的 `injected` 字段。
+
+### Operations and Compatibility
+
+- 新增整库 `hl-mem backup` / `hl-mem restore` CLI：备份附带 SHA-256 manifest，恢复前校验 sidecar、大小、哈希和 SQLite integrity，并通过同目录临时库原子替换。
+- JSONL import 默认按稳定幂等键重建缺失的 `extract_event` Job，使 Event 归档恢复后可由 Worker 重建 Claims；取证场景可显式跳过。
+- REST 显式记忆与 MCP `memory_save` 支持调用方幂等键，重试会返回原始 Event/Claim，不再生成重复记忆。
+- 数据集与 quality-smoke baseline hash 统一使用 CRLF/LF/CR 无关的 `sha256-utf8-lf-v1`；未知 schema 或 hash 算法拒绝静默比较。
+- 修复 Windows/POSIX 启动脚本：从脚本位置解析仓库根目录、统一调用 `start_server.py`，删除旧 `start_v017.sh` 和失效的 `HL_MEM_*` 覆盖。
+- 公共接口以 `namespace` 为唯一现行名称，`tenant_id` 仅保留为已弃用兼容别名；文档明确 namespace 是相关性软分区而非安全边界。
+
+### Evaluation and Release Gates
+
+- 修正评测中 Hit@5 与 Recall@5 的定义和聚合，Hit@5 仅表示是否至少命中一条，Recall@5 按相关集合覆盖率计算。
+- 改善实验性 `answerable` 文本投影及其回填/一致性校验；受控 A/B 未得到显著收益，因此 v0.19.0 继续以 `legacy` 为默认投影。
+- 建立 v0.19 eval gate 基础设施：冻结 dataset/fixture/config、compatibility 与 non-regression gate、关键 slice 门禁、受控单变量 A/B 报告和显式 baseline 警告。
+- CI 合成 fixture 的 no-answer 指标保留为已知限制，不作为真实 provider 的生产拒答质量证据。
+
+### Configuration and Maintenance
+
+- 发布版本更新为 `0.19.0`；DashScope 默认 LLM 模型与 provider 对齐为 `qwen3.7-plus`。
+- GitHub Actions 中仍使用 Node 20 的 setup/upload action 已升级到 Node 24 运行时版本。
+- 清理无入口、硬编码本机路径或生产数据库的一次性调试脚本，并扩充临时日志/pytest 输出忽略规则。
+
 ## v0.18.0 (2026-07-30)
 
 ### Breaking Changes

@@ -1,6 +1,6 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.18.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.19.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 
 ## 加载规则
@@ -178,7 +178,7 @@ hl-mem import var/events.jsonl --db var/restored.db
 | `llm.base_url` | 字符串 | `"https://coding.dashscope.aliyuncs.com/v1"` | 任意字符串 | `llm_base_url` |
 | `llm.enable_thinking` | 布尔值 | `false` | `true`、`false` | `enable_llm_thinking` |
 | `llm.max_attempts` | 整数 | `3` | >= 1 | `llm_max_attempts` |
-| `llm.model` | 字符串 | `"glm-5.2"` | 非空字符串 | `llm_model` |
+| `llm.model` | 字符串 | `"qwen3.7-plus"` | 非空字符串 | `llm_model` |
 | `llm.provider` | 字符串 | `"dashscope"` | `dashscope`、`zhipu`、`openai_compatible` | `llm_provider` |
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |

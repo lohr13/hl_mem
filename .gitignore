@@ -21,6 +21,9 @@ var/*.db.cleanup_backup_*
 var/*.db.bak_*
 var/*.db.bak.*
 var/*.log
+*.log
+pytest_*.txt
+pending_commits.txt
 tests/eval/reports/*.json
 evaluation/results/
 scripts/*.stdout.log

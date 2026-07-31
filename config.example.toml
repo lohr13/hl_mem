@@ -10,7 +10,7 @@ busy_timeout_seconds = 30
 [llm]
 provider = "dashscope"
 base_url = "https://coding.dashscope.aliyuncs.com/v1"
-model = "glm-5.2"
+model = "qwen3.7-plus"
 structured_mode = "json_object"
 timeout = 90
 max_attempts = 3

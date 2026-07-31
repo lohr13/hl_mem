@@ -288,7 +288,7 @@ class Settings:
         default="https://coding.dashscope.aliyuncs.com/v1",
         metadata={"toml": "llm.base_url"},
     )
-    llm_model: str = field(default="glm-5.2", metadata={"toml": "llm.model"})
+    llm_model: str = field(default="qwen3.7-plus", metadata={"toml": "llm.model"})
     llm_provider: LLMProvider = field(default="dashscope", metadata={"toml": "llm.provider"})
     llm_structured_mode: StructuredOutputModeName = field(
         default="json_object",

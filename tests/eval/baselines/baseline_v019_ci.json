@@ -3,6 +3,9 @@
   "status": "ci_fixture",
   "description": "Deterministic v0.18.0 legacy control generated from the synthetic recall-v019 CI snapshot fixture.",
   "warning": "not valid for release decisions; regenerate with real providers in Phase 2",
+  "limitations": {
+    "no_answer": "This synthetic fake-provider fixture cannot validate production abstention: all 25 hard-negative queries return candidates and are classified low_confidence rather than no_evidence. Its 0.0 no-answer precision/recall require a real-provider evaluation with an explicit abstention policy."
+  },
   "dataset_sha256": "e115d969c2ef76b7187ec357295d77d60e2b0958320b6d1806027191c2a7afb6",
   "dataset_sha256_algorithm": "sha256-utf8-lf-v1",
   "fixture_id": "recall-v019-ci-v1",

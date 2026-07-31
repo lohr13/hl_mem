@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.18.0
+- Document baseline: v0.19.0
 - Updated: 2026-07-31
 - Deployment baseline: local-first, SQLite-first
 
@@ -59,6 +59,7 @@ src/hl_mem/
 │   ├── server.py             # FastAPI assembly, middleware, exception mapping, 16 REST routes
 │   └── schemas.py            # Pydantic request and response contracts
 ├── application/
+│   ├── context_packet.py     # Context Packet v1 assembly and exposure materialization
 │   ├── ingest.py             # IngestService and atomic Claim write path
 │   ├── recall.py             # RecallService orchestration and context packing
 │   └── forget.py             # ForgetService and cascading withdrawal
@@ -149,6 +150,10 @@ Events. Derivations retain source relations and become stale when a source Claim
 Classification combines a controlled operational slot with open topic tags. Slots drive conflict, retention, and
 preference behavior; tags improve discovery without becoming hard schema.
 
+Context Packet v1 is a delivery projection rather than another stored memory type. It freezes the final ordered,
+token-budgeted items for one recall, carries evidence and answerability, and assigns a fresh `feedback_id` to each
+delivered item so later feedback can be attributed to that exposure.
+
 ## 5. Write Pipeline
 
 ```text
@@ -159,7 +164,7 @@ Client
   → LLM extraction with preceding context and temporal anchoring
   → deterministic JSON repair + schema validation + bounded retry
   → subject guard / scope normalization / canonical predicate projection
-  → index_text construction (legacy / value_only / natural)
+  → index_text construction (legacy / value_only / natural / answerable)
   → fact_hash v2 exact deduplication
   → canonical attribute + conflict_key deterministic conflict resolution
   → LLM four-way consolidation for gray-zone conflicts
@@ -198,13 +203,21 @@ POST /v1/recall
   → recency + importance + access + scope + helpfulness scoring
   → optional reranking (model configured via TOML)
   → relation, Observation, and Experience expansion
-  → token-budget and cross-type quota packing
-  → evidence-aware Context Packet + optional SearchTrace
+  → response shaping: legacy results or token-budgeted packet/both/Hermes delivery
+  → optional evidence-aware Context Packet + optional SearchTrace
 ```
 
 Lexical retrieval uses trigram tokenization for Claim/tag Chinese substring behavior; Event FTS remains `unicode61`.
 Dense retrieval scans a configured candidate bound before scoring. Optional provider failures degrade to deterministic or
 original-query paths so the SQLite retrieval core remains available.
+
+For `context_packet` / `both` responses and Hermes delivery, Context Packet assembly is the last recall stage, after
+relevance decisions, expansion, reranking, any intent-specific quota selection, and the selected delivery path's token
+budget. The legacy response can materialize exposures from its returned item set without invoking packet-only packing.
+Only the materialized items receive feedback exposure rows. Hermes may cache the receipt-free retrieval bundle, but it
+requests fresh packet receipts for each delivery and marks their migration-035 `injected` field only after rendered text
+crosses the Agent host/model input boundary; persistence failure degrades feedback attribution without discarding the
+recalled text.
 
 ## 7. Conflict, Deduplication, and Lifecycle
 
@@ -226,7 +239,7 @@ dependent derivations stale.
 | MCP | Minimal five-tool memory contract | Beta |
 | CLI | Worker, maintenance, backup, import/export, benchmark operations | Stable |
 
-### REST route map
+### Public REST route map
 
 | Method | Path | Application responsibility |
 |---|---|---|
@@ -256,6 +269,9 @@ The database layer owns WAL mode, busy timeout, connection lifecycle, online bac
 Workers use durable jobs with leases, heartbeat, stage, and processed/total progress. Audit logs record state changes and
 automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. `/healthz`, `/v1/stats`,
 offline evaluation, and the LongMemEval adapter provide operational and quality visibility.
+
+Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by_model` to `injected`, preserving existing
+values while making the field describe the actual host/model delivery boundary.
 
 Backup and restore are whole-database operations:
 

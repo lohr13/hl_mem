@@ -23,7 +23,6 @@ DEFAULT_ENTITY_ALIASES: dict[str, str] = {
     "codex cli": "Codex",
     "llmextractor": "llm_extractor",
     "watchdog": "hlmem-watchdog",
-    "cleanup_data.py": "scripts/cleanup_data.py",
 }
 
 _active_aliases: dict[str, str] | None = None

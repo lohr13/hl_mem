@@ -4,20 +4,20 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v0.17.3（2026-07-29）**
+**当前版本：v0.19.0（2026-07-31）**
 
 ## 技术栈
 
 - **运行时**：Python 3.11+，FastAPI + uvicorn
 - **存储**：SQLite WAL + FTS5（全文检索）+ 向量 BLOB（暴力余弦，首版）
-- **LLM 提取**：glm-5.2（智谱 Coding Plan），JSON mode
+- **LLM 提取**：LLM 通过 .env/TOML 配置，使用结构化 JSON 输出
 - **Embedding**：text-embedding-v4（百炼通用 AK），2048 维
 - **Reranker**：gte-rerank-v2（百炼通用 AK）
 - **分类体系**：SLOT_REGISTRY（15 operational slot + 40 topic tags；Phase 18 已接入检索，soft boost 默认开启，独立 tag channel 默认关闭待评测）
 - **TTL**：retention 纯函数（scope × importance 三档）
 - **跨 subject 去重**：DedupJudge（audit-only 默认开启）
 - **包管理**：uv（lockfile: uv.lock）
-- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）443 passed，1 skipped
+- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）730 passed，1 skipped
 
 ## 代码结构
 
@@ -67,7 +67,7 @@ src/hl_mem/
 │   ├── relation_proposals.py  # 关系候选审计
 │   ├── usefulness.py          # 反馈效用聚合
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 29 SQL migrations (001-029)
+│   └── migrations/            # 35 SQL migrations (001-035)
 ├── workers/                # 后台任务
 │   ├── worker.py              # Job 调度器
 │   ├── ttl.py                 # TTL 过期
@@ -104,7 +104,7 @@ src/hl_mem/
 .venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short
 ```
 
-当前：443 passed，1 skipped。
+当前：730 passed，1 skipped。
 
 ## 关键设计决策
 
@@ -152,4 +152,4 @@ src/hl_mem/
 
 ## Migration
 
-29 个 SQL migration（001-029），按版本号顺序执行。不可变。
+35 个 SQL migration（001-035），按版本号顺序执行。不可变。
