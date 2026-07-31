@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+from collections import deque
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -11,12 +14,20 @@ import httpx
 from hl_mem.adapters.hermes.episode_mapper import EpisodeMapper
 from hl_mem.adapters.hermes.http_client import HLMemHttpClient
 from hl_mem.adapters.hermes.prefetch import PrefetchCache
+from hl_mem.adapters.hermes.renderer import render_context
+from hl_mem.application.context_packet import (
+    RetrievalBundle,
+    UnknownSchemaMajorError,
+    retrieval_bundle_to_dict,
+)
 from hl_mem.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 MAX_TRACE_ACTION_LENGTH = 10_000
 MAX_TRACE_OBSERVATION_SUMMARY_LENGTH = 500
+MAX_DELIVERY_RECEIPTS = 128
+MAX_INJECTION_ATTEMPTS = 3
 _ERROR_PATTERNS = (
     re.compile(r"^Traceback", re.MULTILINE),
     re.compile(r"^Error:", re.MULTILINE),
@@ -25,6 +36,22 @@ _ERROR_PATTERNS = (
     re.compile(r"\b(?:[A-Za-z_]\w*)?Error\b(?:[ \t]+[^:\r\n]+)?:"),
 )
 _EXIT_CODE_PATTERN = re.compile(r'["\']?exit_code["\']?\s*[:=]\s*(-?\d+)')
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryReceipt:
+    """Hermes 内部 delivery 记录；不进入 Context Packet wire schema。"""
+
+    session: str
+    turn: int | str
+    query_id: str
+    feedback_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingInjection:
+    receipt: DeliveryReceipt
+    attempts: int
 
 
 def _summarize_observation(raw: str) -> str:
@@ -72,10 +99,26 @@ class HLMemProvider:
         self._prefetch_cache = PrefetchCache(
             self._client,
             resolved_settings.hermes_prefetch_cache_ttl_seconds,
+            projection_version=(f"{resolved_settings.index_text_mode}:" f"{resolved_settings.index_text_version}"),
         )
         self._mapper = EpisodeMapper()
         self._session_id = ""
         self._hermes_home = hermes_home or resolved_settings.hermes_home or ""
+        self._delivery_lock = threading.Lock()
+        self._delivery_receipts: deque[DeliveryReceipt] = deque(maxlen=MAX_DELIVERY_RECEIPTS)
+        self._pending_injections: deque[_PendingInjection] = deque()
+        self._session_turns: dict[str, int] = {}
+        self._delivery_health: dict[str, int | str | None] = {
+            "deliveries": 0,
+            "bundle_misses": 0,
+            "materialization_failures": 0,
+            "injection_failures": 0,
+            "injection_deferred": 0,
+            "injection_retries": 0,
+            "injection_abandoned": 0,
+            "schema_failures": 0,
+            "last_error": None,
+        }
 
     @property
     def name(self) -> str:
@@ -86,6 +129,24 @@ class HLMemProvider:
     def state(self) -> str:
         """返回只读熔断状态：open、closed 或 half_open。"""
         return self._client.state
+
+    @property
+    def delivery_receipts(self) -> tuple[DeliveryReceipt, ...]:
+        """返回有界、无正文的 delivery receipt 历史快照。"""
+        with self._delivery_lock:
+            return tuple(self._delivery_receipts)
+
+    def health(self) -> dict[str, Any]:
+        """返回 Hermes prefetch/delivery 的无敏感内容健康快照。"""
+        with self._delivery_lock:
+            delivery = dict(self._delivery_health)
+            delivery["pending_injections"] = len(self._pending_injections)
+            delivery["retained_receipts"] = len(self._delivery_receipts)
+        return {
+            "circuit_state": self.state,
+            "prefetch": self._prefetch_cache.health(),
+            "delivery": delivery,
+        }
 
     @property
     def _failure_count(self) -> int:
@@ -138,10 +199,25 @@ class HLMemProvider:
         as_of: str | None = None,
         *,
         session_id: str | None = None,
+        known_as_of: str | None = None,
+        namespace: str = "default",
+        token_budget: int | None = None,
+        turn_id: int | str | None = None,
+        projection_version: str | None = None,
     ) -> str:
-        """返回当前会话和查询对应的同步预取结果。"""
-        del limit, intent, as_of
-        return self._prefetch_cache.get(session_id or self._session_id, query)
+        """物化并向 Hermes 返回当前 key 的预取文本。"""
+        return self._deliver_prefetched(
+            query,
+            session_id=session_id or self._session_id,
+            limit=limit,
+            intent=intent,
+            as_of=as_of,
+            known_as_of=known_as_of,
+            namespace=namespace,
+            token_budget=self._effective_token_budget(token_budget),
+            turn_id=turn_id,
+            projection_version=projection_version,
+        )
 
     def sync_turn(
         self,
@@ -167,6 +243,10 @@ class HLMemProvider:
             self._session_id = previous_session or active_session
         if kwargs.get("messages"):
             self._sync_episode_sync(kwargs["messages"], active_session)
+        self.flush_delivery_receipts(
+            session_id=active_session,
+            max_items=8,
+        )
         return None
 
     def _sync_episode_sync(self, messages: list[dict[str, Any]], session_id: str) -> None:
@@ -201,13 +281,61 @@ class HLMemProvider:
 
     def shutdown(self) -> None:
         self._prefetch_cache.shutdown(self.timeout)
+        self.flush_delivery_receipts()
 
-    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        self._prefetch_cache.queue(query, session_id or self._session_id)
+    def queue_prefetch(
+        self,
+        query: str,
+        limit: int = 10,
+        intent: str | None = None,
+        as_of: str | None = None,
+        *,
+        session_id: str = "",
+        known_as_of: str | None = None,
+        namespace: str = "default",
+        token_budget: int | None = None,
+        projection_version: str | None = None,
+    ) -> None:
+        """排队 receipt-free retrieval，并完整传递所有结果影响参数。"""
+        self._prefetch_cache.queue(
+            query,
+            session_id or self._session_id,
+            limit=limit,
+            intent=intent,
+            as_of=as_of,
+            known_as_of=known_as_of,
+            namespace=namespace,
+            token_budget=self._effective_token_budget(token_budget),
+            projection_version=projection_version,
+        )
 
-    def prefetched(self, query: str = "", *, session_id: str = "") -> str:
-        """返回 Hermes 会话已经缓存的预取文本。"""
-        return self._prefetch_cache.get(session_id or self._session_id, query)
+    def prefetched(
+        self,
+        query: str = "",
+        limit: int = 10,
+        intent: str | None = None,
+        as_of: str | None = None,
+        *,
+        session_id: str = "",
+        known_as_of: str | None = None,
+        namespace: str = "default",
+        token_budget: int | None = None,
+        turn_id: int | str | None = None,
+        projection_version: str | None = None,
+    ) -> str:
+        """物化并交付 Hermes 会话已经缓存的结构化 bundle。"""
+        return self._deliver_prefetched(
+            query,
+            session_id=session_id or self._session_id,
+            limit=limit,
+            intent=intent,
+            as_of=as_of,
+            known_as_of=known_as_of,
+            namespace=namespace,
+            token_budget=self._effective_token_budget(token_budget),
+            turn_id=turn_id,
+            projection_version=projection_version,
+        )
 
     def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any) -> None:
         """记录 Hermes 委派任务及其子代理结果。"""
@@ -219,7 +347,280 @@ class HLMemProvider:
     def on_session_end(self, **kwargs: Any) -> None:
         """处理 Hermes 会话结束钩子。"""
         session_id = str(kwargs.get("session_id") or self._session_id)
+        self.flush_delivery_receipts(session_id=session_id)
         self._prefetch_cache.invalidate_session(session_id)
+        with self._delivery_lock:
+            self._session_turns.pop(session_id, None)
+
+    def flush_delivery_receipts(
+        self,
+        *,
+        session_id: str | None = None,
+        max_items: int | None = None,
+    ) -> int:
+        """有限重试尚未确认的 injected 标记，并返回本次成功数。"""
+        if max_items is not None and max_items < 0:
+            raise ValueError("max_items must be non-negative")
+        with self._delivery_lock:
+            pending_count = sum(
+                session_id is None or pending.receipt.session == session_id for pending in self._pending_injections
+            )
+        attempt_budget = pending_count if max_items is None else min(pending_count, max_items)
+        succeeded = 0
+        for _ in range(attempt_budget):
+            with self._delivery_lock:
+                pending = self._pop_pending_injection_locked(session_id)
+                if pending is None:
+                    break
+            outcome = self._try_mark_injected(pending.receipt)
+            if outcome is not None and pending.attempts:
+                with self._delivery_lock:
+                    self._delivery_health["injection_retries"] = (
+                        int(self._delivery_health["injection_retries"] or 0) + 1
+                    )
+            if outcome is True:
+                succeeded += 1
+                continue
+            if outcome is None:
+                with self._delivery_lock:
+                    queue_full = self._enqueue_pending_injection_locked(pending)
+                if queue_full:
+                    logger.error("Hermes injected retry queue full; oldest receipt abandoned")
+                continue
+            attempts = pending.attempts + 1
+            queue_full = False
+            with self._delivery_lock:
+                if attempts >= MAX_INJECTION_ATTEMPTS:
+                    self._delivery_health["injection_abandoned"] = (
+                        int(self._delivery_health["injection_abandoned"] or 0) + 1
+                    )
+                else:
+                    queue_full = self._enqueue_pending_injection_locked(_PendingInjection(pending.receipt, attempts))
+            if queue_full:
+                logger.error("Hermes injected retry queue full; oldest receipt abandoned")
+        return succeeded
+
+    def _pop_pending_injection_locked(
+        self,
+        session_id: str | None,
+    ) -> _PendingInjection | None:
+        for _ in range(len(self._pending_injections)):
+            pending = self._pending_injections.popleft()
+            if session_id is None or pending.receipt.session == session_id:
+                return pending
+            self._pending_injections.append(pending)
+        return None
+
+    def _deliver_prefetched(
+        self,
+        query: str,
+        *,
+        session_id: str,
+        limit: int,
+        intent: str | None,
+        as_of: str | None,
+        known_as_of: str | None,
+        namespace: str,
+        token_budget: int,
+        turn_id: int | str | None,
+        projection_version: str | None,
+    ) -> str:
+        bundle = self._prefetch_cache.get(
+            session_id,
+            query,
+            limit=limit,
+            intent=intent,
+            as_of=as_of,
+            known_as_of=known_as_of,
+            namespace=namespace,
+            token_budget=token_budget,
+            projection_version=projection_version,
+        )
+        if bundle is None:
+            with self._delivery_lock:
+                self._delivery_health["bundle_misses"] = int(self._delivery_health["bundle_misses"] or 0) + 1
+            return ""
+
+        try:
+            packet = self._materialize_prefetched_bundle(bundle)
+        except UnknownSchemaMajorError as error:
+            self._record_delivery_failure("schema_failures", error)
+            logger.warning(
+                "Hermes packet schema is unsupported; returning empty context",
+                exc_info=True,
+            )
+            return ""
+
+        render_payload = packet if packet is not None else retrieval_bundle_to_dict(bundle)
+        try:
+            rendered = render_context(render_payload)
+        except ValueError as error:
+            self._record_delivery_failure("schema_failures", error)
+            logger.warning(
+                "Hermes renderer rejected packet schema; returning empty context",
+                exc_info=True,
+            )
+            return ""
+        if not rendered.text:
+            return ""
+
+        feedback_ids = (
+            rendered.included_feedback_ids if packet is not None and packet.get("feedback_state") == "available" else ()
+        )
+        self._record_delivery(
+            session_id=session_id,
+            turn_id=turn_id,
+            query_id=bundle.query_id,
+            feedback_ids=feedback_ids,
+        )
+
+        # The string return is the Hermes host/model input boundary. Durable
+        # receipts are only queued here; a later lifecycle flush marks injected,
+        # so daemon latency cannot delay or cancel the Agent delivery.
+        return rendered.text
+
+    def _materialize_prefetched_bundle(
+        self,
+        bundle: RetrievalBundle,
+    ) -> dict[str, Any] | None:
+        try:
+            if not self._client.can_call():
+                raise RuntimeError("memory daemon circuit is open")
+            response = self._client.materialize_context_packet(retrieval_bundle_to_dict(bundle))
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise TypeError("materialization response must be an object")
+            packet = payload.get("context_packet", payload)
+            if not isinstance(packet, dict):
+                raise TypeError("materialization response is missing context_packet")
+            schema_major = packet.get("schema_major")
+            if not isinstance(schema_major, int) or isinstance(schema_major, bool) or schema_major != 1:
+                raise UnknownSchemaMajorError(f"unsupported context packet schema major: " f"{schema_major!r}")
+            if packet.get("query_id") != bundle.query_id:
+                raise TypeError("materialized packet query_id does not match cached bundle")
+            if packet.get("feedback_state") not in {
+                "available",
+                "degraded",
+            }:
+                raise TypeError("materialized packet feedback_state is invalid")
+            packet_items = packet.get("items")
+            if (
+                not isinstance(packet_items, list)
+                or len(packet_items) != len(bundle.items)
+                or any(
+                    not isinstance(packet_item, dict)
+                    or (
+                        packet_item.get("type"),
+                        packet_item.get("id"),
+                        packet_item.get("text"),
+                    )
+                    != (
+                        bundle_item.type,
+                        bundle_item.id,
+                        bundle_item.text,
+                    )
+                    or not isinstance(
+                        packet_item.get("feedback_id"),
+                        str,
+                    )
+                    or not packet_item["feedback_id"].strip()
+                    for packet_item, bundle_item in zip(
+                        packet_items,
+                        bundle.items,
+                    )
+                )
+            ):
+                raise TypeError("materialized packet items do not match cached bundle")
+            self._client.on_success()
+            return packet
+        except UnknownSchemaMajorError:
+            self._client.on_failure()
+            raise
+        except Exception as error:
+            self._client.on_failure()
+            self._record_delivery_failure(
+                "materialization_failures",
+                error,
+            )
+            logger.warning(
+                "Hermes packet materialization failed; rendering cached bundle",
+                exc_info=True,
+            )
+            return None
+
+    def _try_mark_injected(
+        self,
+        receipt: DeliveryReceipt,
+    ) -> bool | None:
+        if not self._client.can_call():
+            with self._delivery_lock:
+                self._delivery_health["injection_deferred"] = int(self._delivery_health["injection_deferred"] or 0) + 1
+            return None
+        try:
+            self._client.mark_feedback_injected(list(receipt.feedback_ids))
+            self._client.on_success()
+            return True
+        except Exception as error:
+            self._client.on_failure()
+            self._record_delivery_failure("injection_failures", error)
+            logger.warning(
+                "Hermes injected marking failed; delivery remains available",
+                exc_info=True,
+            )
+            return False
+
+    def _record_delivery(
+        self,
+        *,
+        session_id: str,
+        turn_id: int | str | None,
+        query_id: str,
+        feedback_ids: tuple[str, ...],
+    ) -> None:
+        queue_full = False
+        with self._delivery_lock:
+            if turn_id is None:
+                next_turn = self._session_turns.get(session_id, 0) + 1
+                self._session_turns[session_id] = next_turn
+                turn: int | str = next_turn
+            else:
+                turn = turn_id
+            receipt = DeliveryReceipt(
+                session=session_id,
+                turn=turn,
+                query_id=query_id,
+                feedback_ids=feedback_ids,
+            )
+            self._delivery_receipts.append(receipt)
+            self._delivery_health["deliveries"] = int(self._delivery_health["deliveries"] or 0) + 1
+            if receipt.feedback_ids:
+                queue_full = self._enqueue_pending_injection_locked(_PendingInjection(receipt, 0))
+        if queue_full:
+            logger.error("Hermes injected retry queue full; oldest receipt abandoned")
+
+    def _enqueue_pending_injection_locked(
+        self,
+        pending: _PendingInjection,
+    ) -> bool:
+        queue_full = len(self._pending_injections) >= MAX_DELIVERY_RECEIPTS
+        if queue_full:
+            self._pending_injections.popleft()
+            self._delivery_health["injection_abandoned"] = int(self._delivery_health["injection_abandoned"] or 0) + 1
+            self._delivery_health["last_error"] = "RetryQueueFull"
+        self._pending_injections.append(pending)
+        return queue_full
+
+    def _record_delivery_failure(
+        self,
+        metric: str,
+        error: Exception,
+    ) -> None:
+        with self._delivery_lock:
+            self._delivery_health[metric] = int(self._delivery_health[metric] or 0) + 1
+            self._delivery_health["last_error"] = type(error).__name__
+
+    def _effective_token_budget(self, token_budget: int | None) -> int:
+        return self.settings.packed_context_token_budget if token_budget is None else token_budget
 
     def _sync_post(self, path: str, payload: dict[str, Any]) -> bool:
         if not self._can_call():

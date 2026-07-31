@@ -1,6 +1,14 @@
+import threading
+
 import httpx
 
-from hl_mem.adapters.hermes.provider import HLMemProvider, _summarize_observation
+from hl_mem.adapters.hermes.prefetch import PrefetchCache
+from hl_mem.adapters.hermes.provider import (
+    MAX_DELIVERY_RECEIPTS,
+    HLMemProvider,
+    _summarize_observation,
+)
+from hl_mem.application.context_packet import retrieval_bundle_to_dict
 from hl_mem.settings import Settings
 
 
@@ -10,6 +18,57 @@ class Response:
 
     def json(self):
         return {"results": [{"id": "one"}]}
+
+
+class JsonResponse(Response):
+    def __init__(self, payload):
+        self.payload = payload
+
+    def json(self):
+        return self.payload
+
+
+def _bundle_payload(query_id="query-1", texts=("cached memory",)):
+    return {
+        "schema_major": 1,
+        "schema_minor": 0,
+        "query_id": query_id,
+        "answerability": "supported",
+        "items": [
+            {
+                "type": "claim",
+                "id": f"claim-{index}",
+                "text": text,
+                "evidence": [{"type": "event", "id": f"event-{index}"}],
+                "score": 1.0 - index / 10,
+            }
+            for index, text in enumerate(texts, 1)
+        ],
+        "used_tokens_estimate": sum(max(1, (len(text) + 1) // 2) for text in texts),
+        "truncated": False,
+    }
+
+
+def _packet_payload(bundle, feedback_prefix="feedback"):
+    return {
+        "schema_major": 1,
+        "schema_minor": 0,
+        "query_id": bundle["query_id"],
+        "answerability": bundle["answerability"],
+        "feedback_state": "available",
+        "items": [
+            {
+                "type": item["type"],
+                "id": item["id"],
+                "text": item["text"],
+                "evidence": item["evidence"],
+                "feedback_id": f"{feedback_prefix}-{index}",
+            }
+            for index, item in enumerate(bundle["items"], 1)
+        ],
+        "used_tokens_estimate": bundle["used_tokens_estimate"],
+        "truncated": bundle["truncated"],
+    }
 
 
 class AsyncClient:
@@ -133,43 +192,506 @@ def test_sync_hooks_open_circuit_after_repeated_http_failures(monkeypatch) -> No
 def test_prefetch_success_timeout_and_circuit(monkeypatch) -> None:
     calls = 0
     error = None
+    receipt_count = 0
 
-    class PrefetchResponse(Response):
-        def json(self):
-            return {"results": [{"text": "cached memory"}]}
-
-    def post(*_args, **_kwargs):
-        nonlocal calls
+    def post(url, **kwargs):
+        nonlocal calls, receipt_count
         calls += 1
-        if error:
-            raise error
-        return PrefetchResponse()
+        if url.endswith("/v1/internal/retrieval-bundles"):
+            assert "headers" not in kwargs
+            if error:
+                raise error
+            return JsonResponse({"retrieval_bundle": _bundle_payload(f"query-{kwargs['json']['query']}")})
+        if url.endswith("/v1/internal/context-packets/materialize"):
+            receipt_count += 1
+            bundle = kwargs["json"]["retrieval_bundle"]
+            return JsonResponse({"context_packet": _packet_payload(bundle, f"feedback-{receipt_count}")})
+        if url.endswith("/v1/internal/retrieval-feedback/injected"):
+            return JsonResponse({"updated": len(kwargs["json"]["feedback_ids"])})
+        raise AssertionError(f"unexpected request: {url}")
 
     monkeypatch.setattr(httpx, "post", post)
     monkeypatch.setattr("hl_mem.http_utils.time.sleep", lambda _delay: None)
     provider = HLMemProvider(timeout=2.0)
     provider.queue_prefetch("query")
-    provider.shutdown()
+    provider._prefetch_cache.drain(2.0)
     assert provider.prefetch("query") == "cached memory"
+    assert provider.flush_delivery_receipts() == 1
 
     error = httpx.ReadTimeout("slow")
     for index in range(5):
         query = f"timeout-{index}"
         provider.queue_prefetch(query)
-        provider.shutdown()
+        provider._prefetch_cache.drain(2.0)
         assert provider.prefetch(query) == ""
 
     request_count = calls
     provider.queue_prefetch("circuit-open")
-    provider.shutdown()
+    provider._prefetch_cache.drain(2.0)
     assert provider.prefetch("circuit-open") == ""
     assert calls == request_count
 
     provider._circuit_open_until = 0
     error = None
     provider.queue_prefetch("recovered")
-    provider.shutdown()
+    provider._prefetch_cache.drain(2.0)
     assert provider.prefetch("recovered") == "cached memory"
+
+
+def test_prefetch_forwards_parameters_isolates_keys_and_caches_no_receipts(
+    monkeypatch,
+) -> None:
+    requests = []
+    provider = HLMemProvider(timeout=2.0)
+
+    def post(path, payload, *, headers=None):
+        requests.append((path, payload, headers))
+        return JsonResponse({"retrieval_bundle": _bundle_payload(f"query-limit-{payload['limit']}")})
+
+    monkeypatch.setattr(provider._client, "post", post)
+
+    common = {
+        "intent": "preference",
+        "as_of": "2026-07-01T00:00:00+00:00",
+        "session_id": "session-1",
+        "known_as_of": "2026-07-02T00:00:00+00:00",
+        "namespace": "project-a",
+        "token_budget": 41,
+    }
+    provider.queue_prefetch("same query", limit=3, **common)
+    provider.queue_prefetch("same query", limit=4, **common)
+    provider._prefetch_cache.drain(2.0)
+
+    assert len(requests) == 2
+    assert {request[0] for request in requests} == {"/v1/internal/retrieval-bundles"}
+    assert all(request[2] is None for request in requests)
+    payloads = sorted((request[1] for request in requests), key=lambda item: item["limit"])
+    assert payloads == [
+        {
+            "query": "same query",
+            "session_id": "session-1",
+            "limit": 3,
+            "intent": "preference",
+            "as_of": "2026-07-01T00:00:00+00:00",
+            "known_as_of": "2026-07-02T00:00:00+00:00",
+            "namespace": "project-a",
+            "token_budget": 41,
+            "context_mode": "packed",
+        },
+        {
+            "query": "same query",
+            "session_id": "session-1",
+            "limit": 4,
+            "intent": "preference",
+            "as_of": "2026-07-01T00:00:00+00:00",
+            "known_as_of": "2026-07-02T00:00:00+00:00",
+            "namespace": "project-a",
+            "token_budget": 41,
+            "context_mode": "packed",
+        },
+    ]
+
+    first = provider._prefetch_cache.get(
+        "session-1", "same query", limit=3, **{k: v for k, v in common.items() if k != "session_id"}
+    )
+    second = provider._prefetch_cache.get(
+        "session-1", "same query", limit=4, **{k: v for k, v in common.items() if k != "session_id"}
+    )
+    assert first is not None
+    assert second is not None
+    assert first.query_id == "query-limit-3"
+    assert second.query_id == "query-limit-4"
+    assert all("feedback_id" not in item for item in retrieval_bundle_to_dict(first)["items"])
+    assert "feedback_id" not in retrieval_bundle_to_dict(first)
+
+
+def test_each_delivery_materializes_fresh_receipts_with_stable_text(
+    monkeypatch,
+) -> None:
+    provider = HLMemProvider(timeout=2.0)
+    materialized = []
+    injected = []
+    materialize_count = 0
+
+    monkeypatch.setattr(
+        provider._client,
+        "recall_bundle",
+        lambda _payload: JsonResponse(
+            {"retrieval_bundle": _bundle_payload("stable-query", ("first memory", "second memory"))}
+        ),
+    )
+
+    def materialize(bundle):
+        nonlocal materialize_count
+        materialize_count += 1
+        materialized.append(bundle)
+        return JsonResponse({"context_packet": _packet_payload(bundle, f"delivery-{materialize_count}")})
+
+    def mark_injected(feedback_ids):
+        injected.append(feedback_ids)
+        return JsonResponse({"updated": len(feedback_ids)})
+
+    monkeypatch.setattr(provider._client, "materialize_context_packet", materialize)
+    monkeypatch.setattr(provider._client, "mark_feedback_injected", mark_injected)
+
+    provider.queue_prefetch("query", session_id="session-1")
+    provider._prefetch_cache.drain(2.0)
+
+    first_text = provider.prefetch("query", session_id="session-1", turn_id="turn-1")
+    second_text = provider.prefetched("query", session_id="session-1", turn_id="turn-2")
+
+    assert first_text == second_text == "first memory\nsecond memory"
+    assert len(materialized) == 2
+    assert materialized[0] == materialized[1]
+    assert all("feedback_id" not in item for item in materialized[0]["items"])
+    assert injected == []
+    assert provider.health()["delivery"]["pending_injections"] == 2
+    assert provider.flush_delivery_receipts() == 2
+    assert injected == [
+        ["delivery-1-1", "delivery-1-2"],
+        ["delivery-2-1", "delivery-2-2"],
+    ]
+    receipts = provider.delivery_receipts
+    assert [receipt.query_id for receipt in receipts] == [
+        "stable-query",
+        "stable-query",
+    ]
+    assert [receipt.turn for receipt in receipts] == ["turn-1", "turn-2"]
+    assert receipts[0].feedback_ids != receipts[1].feedback_ids
+
+
+def test_injected_failure_does_not_block_delivery_and_flush_is_bounded(
+    monkeypatch,
+) -> None:
+    provider = HLMemProvider(timeout=2.0)
+    mark_attempts = 0
+
+    monkeypatch.setattr(
+        provider._client,
+        "recall_bundle",
+        lambda _payload: JsonResponse({"retrieval_bundle": _bundle_payload("query-1")}),
+    )
+    monkeypatch.setattr(
+        provider._client,
+        "materialize_context_packet",
+        lambda bundle: JsonResponse({"context_packet": _packet_payload(bundle)}),
+    )
+
+    def fail_mark(_feedback_ids):
+        nonlocal mark_attempts
+        mark_attempts += 1
+        raise httpx.ConnectError("injected endpoint unavailable")
+
+    monkeypatch.setattr(provider._client, "mark_feedback_injected", fail_mark)
+
+    provider.queue_prefetch("query", session_id="session-1")
+    provider._prefetch_cache.drain(2.0)
+
+    assert provider.prefetch("query", session_id="session-1") == "cached memory"
+    before_flush = provider.health()["delivery"]
+    assert before_flush["injection_failures"] == 0
+    assert before_flush["pending_injections"] == 1
+
+    for _ in range(3):
+        assert provider.flush_delivery_receipts() == 0
+    after_flush = provider.health()["delivery"]
+    assert mark_attempts == 3
+    assert after_flush["injection_failures"] == 3
+    assert after_flush["injection_retries"] == 2
+    assert after_flush["injection_abandoned"] == 1
+    assert after_flush["pending_injections"] == 0
+
+
+def test_concurrent_delivery_and_retry_requeue_stays_bounded(monkeypatch) -> None:
+    provider = HLMemProvider(timeout=2.0)
+    for index in range(MAX_DELIVERY_RECEIPTS):
+        provider._record_delivery(
+            session_id="session-1",
+            turn_id=index,
+            query_id=f"query-{index}",
+            feedback_ids=(f"feedback-{index}",),
+        )
+
+    def fail_after_concurrent_delivery(_receipt):
+        provider._record_delivery(
+            session_id="session-2",
+            turn_id="concurrent",
+            query_id="query-concurrent",
+            feedback_ids=("feedback-concurrent",),
+        )
+        return False
+
+    monkeypatch.setattr(
+        provider,
+        "_try_mark_injected",
+        fail_after_concurrent_delivery,
+    )
+
+    assert provider.flush_delivery_receipts(max_items=1) == 0
+    health = provider.health()["delivery"]
+    assert health["pending_injections"] == MAX_DELIVERY_RECEIPTS
+    assert health["retained_receipts"] == MAX_DELIVERY_RECEIPTS
+    assert health["injection_abandoned"] == 1
+
+
+def test_valid_cached_bundle_renders_when_materialization_fails(
+    monkeypatch,
+) -> None:
+    provider = HLMemProvider(timeout=2.0)
+    mark_calls = []
+
+    monkeypatch.setattr(
+        provider._client,
+        "recall_bundle",
+        lambda _payload: JsonResponse(
+            {"retrieval_bundle": _bundle_payload("cached-query", ("cached first", "cached second"))}
+        ),
+    )
+
+    def fail_materialize(_bundle):
+        raise httpx.ConnectError("materialization unavailable")
+
+    monkeypatch.setattr(provider._client, "materialize_context_packet", fail_materialize)
+    monkeypatch.setattr(
+        provider._client,
+        "mark_feedback_injected",
+        lambda feedback_ids: mark_calls.append(feedback_ids),
+    )
+
+    provider.queue_prefetch("query", session_id="session-1")
+    provider._prefetch_cache.drain(2.0)
+
+    assert provider.prefetch("query", session_id="session-1") == "cached first\ncached second"
+    delivery_health = provider.health()["delivery"]
+    assert delivery_health["materialization_failures"] == 1
+    assert delivery_health["deliveries"] == 1
+    assert delivery_health["pending_injections"] == 0
+    assert mark_calls == []
+    assert provider.delivery_receipts[-1].feedback_ids == ()
+
+
+def test_unknown_materialized_schema_major_fails_open_to_empty_context(
+    monkeypatch,
+) -> None:
+    provider = HLMemProvider(timeout=2.0)
+    monkeypatch.setattr(
+        provider._client,
+        "recall_bundle",
+        lambda _payload: JsonResponse({"retrieval_bundle": _bundle_payload("cached-query")}),
+    )
+    monkeypatch.setattr(
+        provider._client,
+        "materialize_context_packet",
+        lambda _bundle: JsonResponse({"context_packet": {"schema_major": 2, "items": []}}),
+    )
+
+    provider.queue_prefetch("query", session_id="session-1")
+    provider._prefetch_cache.drain(2.0)
+
+    assert provider.prefetch("query", session_id="session-1") == ""
+    delivery_health = provider.health()["delivery"]
+    assert delivery_health["schema_failures"] == 1
+    assert delivery_health["deliveries"] == 0
+    assert provider.delivery_receipts == ()
+
+
+def test_different_prefetch_keys_run_concurrently_without_dropping_tasks(
+    monkeypatch,
+) -> None:
+    provider = HLMemProvider(timeout=3.0)
+    rendezvous = threading.Barrier(2, timeout=2.0)
+    queries = []
+
+    def recall_bundle(payload):
+        queries.append(payload["query"])
+        rendezvous.wait()
+        return JsonResponse(
+            {"retrieval_bundle": _bundle_payload(f"query-{payload['query']}", (f"memory {payload['query']}",))}
+        )
+
+    monkeypatch.setattr(provider._client, "recall_bundle", recall_bundle)
+
+    provider.queue_prefetch("one", session_id="session-1")
+    provider.queue_prefetch("two", session_id="session-2")
+    provider._prefetch_cache.drain(3.0)
+
+    budget = provider.settings.packed_context_token_budget
+    first = provider._prefetch_cache.get("session-1", "one", token_budget=budget)
+    second = provider._prefetch_cache.get("session-2", "two", token_budget=budget)
+    assert sorted(queries) == ["one", "two"]
+    assert first is not None
+    assert second is not None
+    assert first.items[0].text == "memory one"
+    assert second.items[0].text == "memory two"
+    assert provider.health()["prefetch"]["completed"] == 2
+
+
+def test_prefetch_state_is_pending_completed_then_expired_and_same_key_dedupes(
+    monkeypatch,
+) -> None:
+    provider = HLMemProvider(timeout=2.0)
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+    now = [100.0]
+    provider._prefetch_cache._clock = lambda: now[0]
+
+    def recall_bundle(_payload):
+        nonlocal calls
+        calls += 1
+        started.set()
+        assert release.wait(1.0)
+        return JsonResponse({"retrieval_bundle": _bundle_payload("state-query")})
+
+    monkeypatch.setattr(provider._client, "recall_bundle", recall_bundle)
+    budget = provider.settings.packed_context_token_budget
+
+    provider.queue_prefetch("query", session_id="session-1")
+    assert started.wait(1.0)
+    provider.queue_prefetch("query", session_id="session-1")
+    pending = provider._prefetch_cache.inspect(
+        "session-1",
+        "query",
+        token_budget=budget,
+    )
+    assert pending is not None
+    assert pending.status == "pending"
+    assert calls == 1
+
+    release.set()
+    provider._prefetch_cache.drain(2.0)
+    completed = provider._prefetch_cache.inspect(
+        "session-1",
+        "query",
+        token_budget=budget,
+    )
+    assert completed is not None
+    assert completed.status == "completed"
+
+    now[0] += provider._prefetch_cache.ttl_seconds
+    expired = provider._prefetch_cache.inspect(
+        "session-1",
+        "query",
+        token_budget=budget,
+    )
+    assert expired is not None
+    assert expired.status == "expired"
+    assert expired.bundle is None
+
+
+def test_prefetch_overload_is_explicit_and_cache_stays_bounded(monkeypatch) -> None:
+    provider = HLMemProvider(timeout=2.0)
+    cache = PrefetchCache(
+        provider._client,
+        ttl_seconds=60.0,
+        max_workers=1,
+        max_entries=2,
+    )
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def recall_bundle(payload):
+        nonlocal calls
+        calls += 1
+        if payload["query"] == "stable":
+            return JsonResponse({"retrieval_bundle": _bundle_payload("stable-query")})
+        started.set()
+        assert release.wait(2.0)
+        return JsonResponse({"retrieval_bundle": _bundle_payload("bounded-query")})
+
+    monkeypatch.setattr(provider._client, "recall_bundle", recall_bundle)
+
+    cache.queue("stable", "session-0")
+    cache.drain(1.0)
+    cache.queue("one", "session-1")
+    assert started.wait(1.0)
+    cache.queue("two", "session-2")
+    cache.queue("three", "session-3")
+
+    rejected = cache.inspect("session-3", "three")
+    health = cache.health()
+    assert rejected is not None
+    assert rejected.status == "expired"
+    assert rejected.error_type == "PrefetchOverloadedError"
+    assert health["pending"] == 1
+    assert health["completed"] == 1
+    assert health["expired"] == 2
+    assert health["cached_entries"] == 2
+    assert health["rejection_entries"] == 2
+    assert health["queued_tasks"] == 1
+    assert health["overload_rejections"] == 2
+    assert cache.get("session-0", "stable") is not None
+    assert calls == 2
+
+    release.set()
+    cache.shutdown(2.0)
+    assert cache.inspect("session-1", "one").status == "completed"
+
+
+def test_prefetch_invalidation_cancels_queued_session_work(monkeypatch) -> None:
+    provider = HLMemProvider(timeout=2.0)
+    cache = PrefetchCache(
+        provider._client,
+        ttl_seconds=60.0,
+        max_workers=1,
+        max_entries=6,
+        max_pending=3,
+    )
+    started = threading.Event()
+    release = threading.Event()
+    queries = []
+
+    def recall_bundle(payload):
+        queries.append(payload["query"])
+        if payload["query"] == "running":
+            started.set()
+            assert release.wait(2.0)
+        return JsonResponse({"retrieval_bundle": _bundle_payload(f"query-{payload['query']}")})
+
+    monkeypatch.setattr(provider._client, "recall_bundle", recall_bundle)
+
+    cache.queue("running", "ended-session")
+    assert started.wait(1.0)
+    cache.queue("queued-one", "ended-session")
+    cache.queue("queued-two", "ended-session")
+    assert cache.health()["queued_tasks"] == 3
+
+    cache.invalidate_session("ended-session")
+    cache.queue("live", "live-session")
+    release.set()
+    cache.drain(2.0)
+
+    assert queries == ["running", "live"]
+    assert cache.inspect("ended-session", "running") is None
+    assert cache.get("live-session", "live") is not None
+    cache.shutdown(0.0)
+
+
+def test_prefetch_shutdown_rejects_new_work_explicitly(monkeypatch) -> None:
+    provider = HLMemProvider(timeout=2.0)
+    cache = PrefetchCache(provider._client, ttl_seconds=60.0)
+    calls = 0
+
+    def recall_bundle(_payload):
+        nonlocal calls
+        calls += 1
+        return JsonResponse({"retrieval_bundle": _bundle_payload("never")})
+
+    monkeypatch.setattr(provider._client, "recall_bundle", recall_bundle)
+
+    cache.shutdown(0.0)
+    cache.queue("after-shutdown", "session-1")
+
+    entry = cache.inspect("session-1", "after-shutdown")
+    health = cache.health()
+    assert entry is not None
+    assert entry.status == "expired"
+    assert entry.error_type == "PrefetchClosedError"
+    assert health["closed"] is True
+    assert health["closed_rejections"] == 1
+    assert health["queued_tasks"] == 0
+    assert calls == 0
 
 
 def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:

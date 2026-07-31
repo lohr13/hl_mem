@@ -58,15 +58,56 @@ class HLMemHttpClient:
 
         return retry_http(send_request)
 
-    def post(self, path: str, payload: dict[str, Any]) -> httpx.Response:
+    def post(
+        self,
+        path: str,
+        payload: dict[str, Any],
+    ) -> httpx.Response:
         """执行同步 POST 请求。"""
+        return self._post(path, payload, retry=True)
+
+    def _post(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        retry: bool,
+        timeout: float | None = None,
+    ) -> httpx.Response:
+        """构造同步 POST，并按操作幂等性决定是否启用 HTTP 重试。"""
 
         def send_request() -> httpx.Response:
-            response = httpx.post(f"{self.daemon_url}{path}", json=payload, timeout=self.timeout)
+            kwargs: dict[str, Any] = {
+                "json": payload,
+                "timeout": self.timeout if timeout is None else timeout,
+            }
+            response = httpx.post(f"{self.daemon_url}{path}", **kwargs)
             response.raise_for_status()
             return response
 
-        return retry_http(send_request)
+        return retry_http(send_request) if retry else send_request()
+
+    def recall_bundle(self, payload: dict[str, Any]) -> httpx.Response:
+        """请求 receipt-free RetrievalBundle，不触发 exposure。"""
+        return self.post("/v1/internal/retrieval-bundles", payload)
+
+    def materialize_context_packet(self, retrieval_bundle: dict[str, Any]) -> httpx.Response:
+        """为缓存 bundle 请求本次 delivery 的新 Context Packet receipt。"""
+        return self._post(
+            "/v1/internal/context-packets/materialize",
+            {"retrieval_bundle": retrieval_bundle},
+            retry=False,
+            timeout=min(self.timeout, 2.0),
+        )
+
+    def mark_feedback_injected(self, feedback_ids: list[str]) -> httpx.Response:
+        """标记已经跨过 Hermes delivery 边界的 exposure。"""
+        return self._post(
+            "/v1/internal/retrieval-feedback/injected",
+            {"feedback_ids": feedback_ids},
+            retry=False,
+            timeout=min(self.timeout, 2.0),
+        )
 
     async def async_post(
         self,

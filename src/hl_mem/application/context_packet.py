@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from hl_mem.experience.service import ExperienceService
 
@@ -20,6 +20,12 @@ MemoryType = Literal["claim", "observation", "policy", "episode", "trace"]
 
 _ANSWERABILITY_VALUES = frozenset({"supported", "low_confidence", "no_evidence"})
 _MEMORY_TYPE_VALUES = frozenset({"claim", "observation", "policy", "episode", "trace"})
+RETRIEVAL_BUNDLE_SCHEMA_MAJOR = 1
+RETRIEVAL_BUNDLE_SCHEMA_MINOR = 0
+
+
+class UnknownSchemaMajorError(ValueError):
+    """Wire payload 使用了当前进程无法安全解释的 schema major。"""
 
 
 def estimate_tokens(text: str) -> int:
@@ -63,6 +69,93 @@ class RetrievalBundle:
             raise ValueError(f"unsupported answerability: {self.answerability}")
         if self.used_tokens_estimate is not None and self.used_tokens_estimate < 0:
             raise ValueError("used_tokens_estimate must be non-negative")
+
+
+def retrieval_bundle_to_dict(bundle: RetrievalBundle) -> dict[str, Any]:
+    """序列化 receipt-free bundle；wire payload 永不携带 feedback_id。"""
+    return {
+        "schema_major": RETRIEVAL_BUNDLE_SCHEMA_MAJOR,
+        "schema_minor": RETRIEVAL_BUNDLE_SCHEMA_MINOR,
+        "query_id": bundle.query_id,
+        "answerability": bundle.answerability,
+        "items": [
+            {
+                "type": item.type,
+                "id": item.id,
+                "text": item.text,
+                "evidence": [dict(reference) for reference in item.evidence],
+                "score": item.score,
+            }
+            for item in bundle.items
+        ],
+        "used_tokens_estimate": bundle.used_tokens_estimate,
+        "truncated": bundle.truncated,
+    }
+
+
+def retrieval_bundle_from_dict(payload: Mapping[str, Any]) -> RetrievalBundle:
+    """校验并反序列化 Hermes 内部 receipt-free bundle wire payload。"""
+    schema_major = payload.get("schema_major")
+    if (
+        not isinstance(schema_major, int)
+        or isinstance(schema_major, bool)
+        or schema_major != RETRIEVAL_BUNDLE_SCHEMA_MAJOR
+    ):
+        raise UnknownSchemaMajorError(f"unsupported retrieval bundle schema major: {schema_major!r}")
+    query_id = payload.get("query_id")
+    answerability = payload.get("answerability")
+    raw_items = payload.get("items")
+    if not isinstance(query_id, str) or not query_id:
+        raise ValueError("retrieval bundle query_id must be a non-empty string")
+    if answerability not in _ANSWERABILITY_VALUES:
+        raise ValueError(f"unsupported answerability: {answerability!r}")
+    if not isinstance(raw_items, list):
+        raise TypeError("retrieval bundle items must be a list")
+
+    items: list[RetrievalBundleItem] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, Mapping):
+            raise TypeError("retrieval bundle item must be an object")
+        raw_type = raw_item.get("type")
+        raw_id = raw_item.get("id")
+        raw_text = raw_item.get("text")
+        if not isinstance(raw_type, str):
+            raise TypeError("retrieval bundle item type must be a string")
+        if not isinstance(raw_id, str) or not raw_id:
+            raise ValueError("retrieval bundle item id must be a non-empty string")
+        if not isinstance(raw_text, str):
+            raise TypeError("retrieval bundle item text must be a string")
+        raw_evidence = raw_item.get("evidence", [])
+        if not isinstance(raw_evidence, list):
+            raise TypeError("retrieval bundle item evidence must be a list")
+        evidence = tuple(dict(reference) for reference in raw_evidence if isinstance(reference, Mapping))
+        raw_score = raw_item.get("score")
+        score = float(raw_score) if raw_score is not None else None
+        items.append(
+            RetrievalBundleItem(
+                cast(MemoryType, raw_type),
+                raw_id,
+                raw_text,
+                evidence,
+                score,
+            )
+        )
+
+    used_tokens_estimate = payload.get("used_tokens_estimate")
+    if used_tokens_estimate is not None and (
+        not isinstance(used_tokens_estimate, int) or isinstance(used_tokens_estimate, bool)
+    ):
+        raise TypeError("used_tokens_estimate must be an integer or null")
+    truncated = payload.get("truncated")
+    if truncated is not None and not isinstance(truncated, bool):
+        raise TypeError("truncated must be a boolean or null")
+    return RetrievalBundle(
+        query_id=query_id,
+        answerability=cast(Answerability, answerability),
+        items=tuple(items),
+        used_tokens_estimate=used_tokens_estimate,
+        truncated=truncated,
+    )
 
 
 def pack_retrieval_items(

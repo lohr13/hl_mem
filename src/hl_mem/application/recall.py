@@ -20,6 +20,7 @@ from hl_mem.application.context_packet import (
     RetrievalBundleItem,
     estimate_tokens,
     pack_retrieval_bundle,
+    retrieval_bundle_to_dict,
 )
 from hl_mem.application.ingest import new_id
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
@@ -53,7 +54,7 @@ from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import DerivationRepository, EvidenceRepository
 
 LOGGER = logging.getLogger(__name__)
-_RESPONSE_FORMATS = frozenset({"legacy", "context_packet", "both"})
+_RESPONSE_FORMATS = frozenset({"legacy", "context_packet", "both", "retrieval_bundle"})
 _SIDE_EFFECT_LOCK = threading.Lock()
 _SIDE_EFFECT_HEALTH: dict[str, dict[str, int | str | None]] = {
     "access_record": {"failures": 0, "last_error": None},
@@ -550,6 +551,8 @@ class RecallService:
                 "used_tokens_estimate": used,
                 "truncated": False,
             }
+        if response_format == "retrieval_bundle":
+            return {"retrieval_bundle": retrieval_bundle_to_dict(bundle)}
         materialized_packet = self._materialize_context_packet(bundle)
         if response_format != "context_packet":
             self._attach_packet_feedback(packet_context, materialized_packet)
@@ -706,6 +709,10 @@ class RecallService:
                 len(bundle.items),
             )
         return packet
+
+    def materialize_context_packet(self, bundle: RetrievalBundle) -> dict[str, Any]:
+        """为 adapter 已缓存的最终 bundle 创建本次 delivery packet。"""
+        return self._materialize_context_packet(bundle)
 
     @staticmethod
     def _attach_packet_feedback(
@@ -881,6 +888,8 @@ class RecallService:
             used_tokens_estimate=sum(estimate_tokens(item.text) for item in materialized_selection),
             truncated=len(materialized_selection) < len(candidates),
         )
+        if response_format == "retrieval_bundle":
+            return {"retrieval_bundle": retrieval_bundle_to_dict(bundle)}
         materialized_packet = self._materialize_context_packet(bundle)
         if response_format != "context_packet" and materialized_packet["feedback_state"] == "available":
             feedback_by_memory = {

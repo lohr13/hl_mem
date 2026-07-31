@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,10 @@ from hl_mem.api.schemas import (
     RecallInput,
     RecallOutput,
     TraceInput,
+)
+from hl_mem.application.context_packet import (
+    UnknownSchemaMajorError,
+    retrieval_bundle_from_dict,
 )
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService, new_id
@@ -119,6 +124,43 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     def get_connection() -> Iterator[sqlite3.Connection]:
         with database.connect() as connection:
             yield connection
+
+    def make_recall_service(connection: sqlite3.Connection) -> RecallService:
+        """组装 REST recall 与 Hermes 内部 materializer 共用的应用服务。"""
+        return RecallService(
+            connection,
+            embedder,
+            reranker,
+            RelationExpansionConfig(
+                enabled=settings.relation_expansion_mode == "on",
+                max_depth=settings.relation_expansion_max_depth,
+            ),
+            settings,
+            components.make_query_expander(settings, connection),
+        )
+
+    def execute_recall(
+        payload: RecallInput,
+        *,
+        query_id: str,
+        connection: sqlite3.Connection,
+        response_format: str,
+    ) -> dict[str, Any]:
+        """把公开 recall 与内部 receipt-free retrieval 接到同一应用服务。"""
+        return make_recall_service(connection).recall(
+            query=payload.query,
+            limit=payload.limit,
+            as_of=payload.as_of,
+            intent=payload.intent,
+            known_as_of=payload.known_as_of,
+            query_id=query_id,
+            token_budget=payload.token_budget,
+            context_mode=payload.context_mode,
+            response_format=response_format,
+            namespace=payload.namespace,
+            session_id=payload.session_id,
+            debug=payload.debug,
+        )
 
     @app.get("/healthz")
     def healthz(
@@ -220,30 +262,74 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     ) -> dict[str, Any]:
         query_id = request.headers.get("X-Request-ID") or new_id()
         with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
-            return RecallService(
-                connection,
-                embedder,
-                reranker,
-                RelationExpansionConfig(
-                    enabled=settings.relation_expansion_mode == "on",
-                    max_depth=settings.relation_expansion_max_depth,
-                ),
-                settings,
-                components.make_query_expander(settings, connection),
-            ).recall(
-                query=payload.query,
-                limit=payload.limit,
-                as_of=payload.as_of,
-                intent=payload.intent,
-                known_as_of=payload.known_as_of,
+            return execute_recall(
+                payload,
                 query_id=query_id,
-                token_budget=payload.token_budget,
-                context_mode=payload.context_mode,
+                connection=connection,
                 response_format=payload.response_format,
-                namespace=payload.namespace,
-                session_id=payload.session_id,
-                debug=payload.debug,
             )
+
+    @app.post(
+        "/v1/internal/retrieval-bundles",
+        include_in_schema=False,
+    )
+    def retrieve_bundle(
+        payload: RecallInput,
+        request: Request,
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
+        """为 Hermes 预取 receipt-free bundle；旧 daemon 会安全返回 404。"""
+        query_id = request.headers.get("X-Request-ID") or new_id()
+        with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
+            return execute_recall(
+                payload,
+                query_id=query_id,
+                connection=connection,
+                response_format="retrieval_bundle",
+            )
+
+    @app.post(
+        "/v1/internal/context-packets/materialize",
+        include_in_schema=False,
+    )
+    def materialize_context_packet(
+        payload: dict[str, Any],
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
+        """为 Hermes 缓存的 receipt-free bundle 创建本次 delivery receipt。"""
+        raw_bundle = payload.get("retrieval_bundle", payload)
+        if not isinstance(raw_bundle, Mapping):
+            raise HTTPException(422, "retrieval_bundle must be an object")
+        try:
+            bundle = retrieval_bundle_from_dict(raw_bundle)
+        except UnknownSchemaMajorError as error:
+            raise HTTPException(409, str(error)) from error
+        except (TypeError, ValueError) as error:
+            raise HTTPException(422, str(error)) from error
+        packet = make_recall_service(connection).materialize_context_packet(bundle)
+        return {"context_packet": packet}
+
+    @app.post(
+        "/v1/internal/retrieval-feedback/injected",
+        include_in_schema=False,
+    )
+    def mark_retrieval_feedback_injected(
+        payload: dict[str, Any],
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, int]:
+        """在 Hermes delivery 边界后原子标记 injected，不写 outcome。"""
+        feedback_ids = payload.get("feedback_ids")
+        if (
+            not isinstance(feedback_ids, list)
+            or not feedback_ids
+            or any(not isinstance(feedback_id, str) or not feedback_id.strip() for feedback_id in feedback_ids)
+        ):
+            raise HTTPException(422, "feedback_ids must be a non-empty string array")
+        try:
+            updated = ExperienceService(connection).mark_feedback_injected_batch(feedback_ids)
+        except ValueError as error:
+            raise HTTPException(404, str(error)) from error
+        return {"updated": updated}
 
     @app.post("/v1/episodes")
     def create_episode(
