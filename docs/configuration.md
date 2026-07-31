@@ -18,6 +18,51 @@ uv run hl-mem doctor
 uv run python start_server.py
 ```
 
+## 启动入口
+
+- Windows 使用 `start_production.bat`，Git Bash/POSIX 使用 `./start_hl_mem.sh`。两个脚本都从脚本自身位置定位仓库根目录，并调用 `start_server.py`，因此可以从任意当前目录启动。
+- 脚本使用仓库内的虚拟环境；Shell 入口兼容 `.venv/bin/python` 和 `.venv/Scripts/python.exe`。
+- 启动脚本不保存第二份运行配置，也不选择 provider/model，且不再设置旧版 `HL_MEM_*` 覆盖。除四个密钥外，所有有效配置都只来自仓库根目录的 `hl_mem.toml`；loader 会忽略继承到进程中的 `HL_MEM_*`。
+- 直接执行 `uv run python start_server.py` 时，`hl_mem.toml` 和 `.env` 仍相对进程当前目录解析。
+
+## 部署边界
+
+HL-Mem 面向受信任环境中的本地单租户部署。API 的 `namespace` 只是用于召回、Episode、Policy 和维护任务的
+相关性/profile 软标签，不是认证、授权、加密或侧信道安全边界；`tenant_id` 仅作为已弃用的兼容别名。备份与
+恢复始终覆盖整个 SQLite 数据库，不提供按 namespace 导出、RBAC、按租户密钥、计费或 SaaS 多租户隔离。
+
+## 备份与恢复
+
+```bash
+hl-mem backup var/backup.db --db var/hl_mem.db
+hl-mem restore var/backup.db --manifest var/backup.db.manifest.json \
+  --db var/hl_mem.db --confirm-overwrite
+```
+
+`backup` 输出包含 backup、manifest、size、SHA-256 和 integrity 状态的 JSON。`restore` 会先校验 manifest、
+大小和哈希，再在目标同目录的临时数据库上执行恢复及 `PRAGMA integrity_check`，成功后才原子替换目标；任何
+失败都保留原目标。目标已存在时必须提供 `--confirm-overwrite`，且 source、backup、manifest、target 不得解析
+为同一路径。校验与恢复会拒绝 backup 或 target 旁残留的 `-wal`、`-shm`、`-journal` sidecar，防止未纳入
+manifest 的页面影响校验或原子替换。执行 restore 前必须停止 API、Worker 及其他数据库使用者，成功后再重启服务。
+
+## JSONL Event 归档
+
+```bash
+hl-mem export var/events.jsonl --db var/hl_mem.db
+hl-mem import var/events.jsonl --db var/restored.db
+```
+
+默认 import 会在同一批次事务中为每个新 Event 创建 `extract_event` job，幂等键为
+`extract:<event_id>`，使 Worker 能从归档重建 Claims。重复导入会跳过已有 Event/job，不增加记录。JSON
+报告包含 `processed`、`events_created`、`events_skipped`、`jobs_queued`、`failed_batch` 和
+`claims_not_rebuilt`；非法记录会回滚当前批次并报告 batch/line。
+
+若 Event 已由旧版 importer 或 `--skip-extraction-jobs` 导入，但稳定 extraction job 缺失，随后执行普通 import
+会验证 Event payload 并补建 job；同 ID 不同 payload 会明确失败，不会被当作重复记录静默跳过。
+
+`--skip-extraction-jobs` 只用于不希望重建 Claims 的取证恢复。该模式仅导入 Events、不会排队提取，并明确
+输出 `claims_not_rebuilt=true`。
+
 ## 密钥
 
 | 环境变量 | Settings 字段 | 需要提供的条件 |

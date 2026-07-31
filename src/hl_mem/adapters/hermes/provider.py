@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 import threading
@@ -63,6 +65,31 @@ def _summarize_observation(raw: str) -> str:
     status = "error" if is_error else "success"
     summary = raw[:MAX_TRACE_OBSERVATION_SUMMARY_LENGTH].strip()
     return f"[{status}] {summary}"
+
+
+def _memory_idempotency_key(
+    key: str,
+    target: str,
+    content: str,
+    namespace: str = "default",
+) -> str:
+    """从 Hermes host identity 与正文摘要生成稳定、无正文的重试键。"""
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    identity = json.dumps(
+        [namespace, key, target, content_hash],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"hermes-memory:{hashlib.sha256(identity.encode('utf-8')).hexdigest()}"
+
+
+def _trusted_namespace(namespace: str) -> str:
+    """Validate a namespace supplied by trusted host configuration or hook arguments."""
+    if not isinstance(namespace, str) or not namespace:
+        raise ValueError("namespace must be a non-empty string")
+    if len(namespace) > 100:
+        raise ValueError("namespace must be at most 100 characters")
+    return namespace
 
 
 class HLMemProvider:
@@ -225,35 +252,57 @@ class HLMemProvider:
         assistant_content: str | None = None,
         *,
         session_id: str = "",
+        namespace: str = "default",
         **kwargs: Any,
     ) -> None:
         """通过 Hermes 同步 hook 写入一轮对话。"""
         if isinstance(content, list):
             raise TypeError("sync_turn expects user content as str")
+        namespace = _trusted_namespace(namespace)
         active_session = session_id or self._session_id
         previous_session = self._session_id
         self._session_id = active_session
         try:
-            self._sync_post("/v1/events", self._hermes_event_payload("user", content))
             self._sync_post(
                 "/v1/events",
-                self._hermes_event_payload("assistant", assistant_content or ""),
+                self._hermes_event_payload("user", content, namespace=namespace),
+            )
+            self._sync_post(
+                "/v1/events",
+                self._hermes_event_payload(
+                    "assistant",
+                    assistant_content or "",
+                    namespace=namespace,
+                ),
             )
         finally:
             self._session_id = previous_session or active_session
         if kwargs.get("messages"):
-            self._sync_episode_sync(kwargs["messages"], active_session)
+            self._sync_episode_sync(
+                kwargs["messages"],
+                active_session,
+                namespace,
+            )
         self.flush_delivery_receipts(
             session_id=active_session,
             max_items=8,
         )
         return None
 
-    def _sync_episode_sync(self, messages: list[dict[str, Any]], session_id: str) -> None:
+    def _sync_episode_sync(
+        self,
+        messages: list[dict[str, Any]],
+        session_id: str,
+        namespace: str,
+    ) -> None:
         async def sync() -> None:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 enriched = [{**message, "session_id": message.get("session_id") or session_id} for message in messages]
-                await self._sync_episode(client, enriched)
+                await self._sync_episode(
+                    client,
+                    enriched,
+                    namespace=namespace,
+                )
 
         try:
             import asyncio
@@ -266,17 +315,44 @@ class HLMemProvider:
             )
             return
 
-    def on_memory_write(self, key: str, content: str, target: str = "memory") -> None:
+    def on_memory_write(
+        self,
+        key: str,
+        content: str,
+        target: str = "memory",
+        *,
+        namespace: str = "default",
+    ) -> None:
+        namespace = _trusted_namespace(namespace)
         self._sync_post(
             "/v1/memories",
-            {"text": content, "qualifiers": {"key": key, "target": target}},
+            {
+                "text": content,
+                "qualifiers": {"key": key, "target": target},
+                "idempotency_key": _memory_idempotency_key(
+                    key,
+                    target,
+                    content,
+                    namespace,
+                ),
+                "namespace": namespace,
+            },
         )
 
-    def on_pre_compress(self, messages: list[dict[str, Any]]) -> None:
+    def on_pre_compress(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        namespace: str = "default",
+    ) -> None:
+        namespace = _trusted_namespace(namespace)
         if not self._can_call():
             return
         for message in messages:
-            if not self._sync_post("/v1/events", self._event_payload(message)):
+            if not self._sync_post(
+                "/v1/events",
+                self._event_payload(message, namespace=namespace),
+            ):
                 break
 
     def shutdown(self) -> None:
@@ -337,12 +413,37 @@ class HLMemProvider:
             projection_version=projection_version,
         )
 
-    def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any) -> None:
+    def on_delegation(
+        self,
+        task: str,
+        result: str,
+        *,
+        child_session_id: str = "",
+        namespace: str = "default",
+        **kwargs: Any,
+    ) -> None:
         """记录 Hermes 委派任务及其子代理结果。"""
         del kwargs
+        namespace = _trusted_namespace(namespace)
         qualifiers = {"child_session_id": child_session_id} if child_session_id else None
-        self._sync_post("/v1/events", self._hermes_event_payload("user", task, qualifiers))
-        self._sync_post("/v1/events", self._hermes_event_payload("assistant", result, qualifiers))
+        self._sync_post(
+            "/v1/events",
+            self._hermes_event_payload(
+                "user",
+                task,
+                qualifiers,
+                namespace=namespace,
+            ),
+        )
+        self._sync_post(
+            "/v1/events",
+            self._hermes_event_payload(
+                "assistant",
+                result,
+                qualifiers,
+                namespace=namespace,
+            ),
+        )
 
     def on_session_end(self, **kwargs: Any) -> None:
         """处理 Hermes 会话结束钩子。"""
@@ -634,7 +735,14 @@ class HLMemProvider:
             self._on_failure()
             return False
 
-    async def _sync_episode(self, client: httpx.AsyncClient, messages: list[dict[str, Any]]) -> None:
+    async def _sync_episode(
+        self,
+        client: httpx.AsyncClient,
+        messages: list[dict[str, Any]],
+        *,
+        namespace: str = "default",
+    ) -> None:
+        namespace = _trusted_namespace(namespace)
         tool_calls = self._mapper.tool_calls(messages)
         if len(tool_calls) < 2:
             return
@@ -654,6 +762,7 @@ class HLMemProvider:
             "/v1/episodes",
             {
                 "goal": goal,
+                "namespace": namespace,
                 "session_id": session_id,
                 "task_type": self._mapper.task_type([call["action"] for call in tool_calls]),
             },
@@ -704,22 +813,33 @@ class HLMemProvider:
         self._client.on_failure()
 
     @staticmethod
-    def _event_payload(message: dict[str, Any]) -> dict[str, Any]:
+    def _event_payload(
+        message: dict[str, Any],
+        *,
+        namespace: str = "default",
+    ) -> dict[str, Any]:
         role = message.get("role", "user")
         return {
             "event_type": "message",
             "actor_type": role,
             "content": {"text": str(message.get("content", ""))},
+            "namespace": _trusted_namespace(namespace),
         }
 
     def _hermes_event_payload(
-        self, role: str, content: str, qualifiers: dict[str, Any] | None = None
+        self,
+        role: str,
+        content: str,
+        qualifiers: dict[str, Any] | None = None,
+        *,
+        namespace: str = "default",
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "event_type": "message",
             "actor_type": role,
             "content": {"text": content},
             "session_id": self._session_id or None,
+            "namespace": _trusted_namespace(namespace),
         }
         if qualifiers:
             payload["content"]["qualifiers"] = qualifiers

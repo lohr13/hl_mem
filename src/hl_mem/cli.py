@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sqlite3
+import uuid
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -17,11 +19,73 @@ from hl_mem.config_loader import load_settings
 from hl_mem.doctor import main as doctor_main
 from hl_mem.evaluation.runner import BenchmarkRunner
 from hl_mem.settings import Settings
+from hl_mem.storage.backup import backup_database, restore_database, validate_backup
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
+from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.backfill_index_text import backfill_index_text
 
 EXPORT_FORMAT_VERSION = "1"
+IMPORT_BATCH_SIZE = 100
+EVENT_ARCHIVE_COLUMNS = (
+    "id",
+    "idempotency_key",
+    "tenant_id",
+    "user_id",
+    "project_id",
+    "agent_id",
+    "session_id",
+    "event_type",
+    "actor_type",
+    "actor_id",
+    "content_json",
+    "occurred_at",
+    "recorded_at",
+    "source_uri",
+    "content_hash",
+    "sensitivity",
+)
+
+
+class JSONLImportError(ValueError):
+    """JSONL import failure carrying a machine-readable partial report."""
+
+    def __init__(self, message: str, report: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.report = report
+
+
+def _normalized_archive_event(event: dict[str, Any]) -> dict[str, Any]:
+    """按 EventRepository 的存储规则规范化归档事件，用于安全判重。"""
+    stored = dict(event)
+    if "content" in stored:
+        content_json = json.dumps(
+            stored.pop("content"),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        stored["content_json"] = content_json
+        stored.setdefault(
+            "content_hash",
+            hashlib.sha256(content_json.encode()).hexdigest(),
+        )
+    defaults = {
+        "tenant_id": "default",
+        "sensitivity": "normal",
+    }
+    return {column: stored[column] if column in stored else defaults.get(column) for column in EVENT_ARCHIVE_COLUMNS}
+
+
+def _archive_event_matches_existing(connection: sqlite3.Connection, event: dict[str, Any]) -> bool:
+    event_id = event.get("id")
+    existing = connection.execute(
+        f"SELECT {','.join(EVENT_ARCHIVE_COLUMNS)} FROM events WHERE id=?",
+        (event_id,),
+    ).fetchone()
+    if existing is None:
+        return False
+    expected = _normalized_archive_event(event)
+    return all(existing[column] == expected[column] for column in EVENT_ARCHIVE_COLUMNS)
 
 
 def _open_readonly_database(database_path: Path) -> sqlite3.Connection:
@@ -55,23 +119,138 @@ def import_database(
     input_path: str | Path,
     *,
     settings: Settings | None = None,
-) -> int:
-    """幂等导入 JSONL 事件档案。"""
+    skip_extraction_jobs: bool = False,
+    batch_size: int = IMPORT_BATCH_SIZE,
+) -> dict[str, Any]:
+    """Import a JSONL event archive and atomically queue extraction jobs."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    report: dict[str, Any] = {
+        "processed": 0,
+        "events_created": 0,
+        "events_skipped": 0,
+        "jobs_queued": 0,
+        "failed_batch": None,
+        "claims_not_rebuilt": skip_extraction_jobs,
+    }
     database = Database(database_path, settings=settings)
+    connection = database.open()
+    event_repository = EventRepository(connection)
+    job_repository = JobRepository(connection)
+
+    def fail(batch: int, line: int, error: Exception) -> JSONLImportError:
+        message = str(error) or error.__class__.__name__
+        report["failed_batch"] = {
+            "batch": batch,
+            "line": line,
+            "error": message,
+        }
+        return JSONLImportError(f"JSONL import failed at batch {batch}, line {line}: {message}", dict(report))
+
+    def import_batch(records: list[tuple[int, dict[str, Any]]], batch: int) -> None:
+        created = 0
+        skipped = 0
+        queued = 0
+        current_line = records[0][0]
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for current_line, event in records:
+                event_id = event.get("id")
+                if not isinstance(event_id, str) or not event_id:
+                    raise ValueError("event data requires a non-empty string id")
+                event_created = event_repository.insert_event(event, commit=False)
+                if not event_created:
+                    if not _archive_event_matches_existing(connection, event):
+                        raise ValueError(f"event {event_id!r} conflicts with an existing event payload")
+                    skipped += 1
+                else:
+                    created += 1
+                if skip_extraction_jobs:
+                    continue
+                timestamp = datetime.now(timezone.utc).isoformat()
+                job_created = job_repository.insert_job(
+                    {
+                        "id": uuid.uuid4().hex,
+                        "job_type": "extract_event",
+                        "payload": {"event_id": event_id},
+                        "idempotency_key": f"extract:{event_id}",
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                    },
+                    commit=False,
+                )
+                if job_created:
+                    queued += 1
+                    continue
+                existing_job = connection.execute(
+                    "SELECT job_type,payload_json FROM jobs WHERE idempotency_key=?",
+                    (f"extract:{event_id}",),
+                ).fetchone()
+                try:
+                    existing_payload = json.loads(existing_job["payload_json"]) if existing_job is not None else None
+                except json.JSONDecodeError:
+                    existing_payload = None
+                if (
+                    existing_job is None
+                    or existing_job["job_type"] != "extract_event"
+                    or existing_payload != {"event_id": event_id}
+                ):
+                    raise ValueError(f"extraction job key conflict for event {event_id!r}")
+            connection.commit()
+        except Exception as error:
+            connection.rollback()
+            raise fail(batch, current_line, error) from error
+        report["processed"] += len(records)
+        report["events_created"] += created
+        report["events_skipped"] += skipped
+        report["jobs_queued"] += queued
+
     try:
-        repository = EventRepository(database.open())
-        imported = 0
-        with Path(input_path).open("r", encoding="utf-8") as stream:
-            for line in stream:
-                record: dict[str, Any] = json.loads(line)
+        pending: list[tuple[int, dict[str, Any]]] = []
+        batch = 1
+        metadata_seen = False
+        with Path(input_path).open("rb") as stream:
+            for line_number, raw_line in enumerate(stream, start=1):
+                try:
+                    line = raw_line.decode("utf-8")
+                    record = json.loads(line)
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    raise fail(batch, line_number, error) from error
+                if not isinstance(record, dict):
+                    raise fail(batch, line_number, ValueError("archive record must be a JSON object"))
                 if record.get("type") == "metadata":
+                    if metadata_seen or pending or report["processed"]:
+                        raise fail(
+                            batch,
+                            line_number,
+                            ValueError("archive metadata must appear exactly once before events"),
+                        )
                     if record.get("format_version") != EXPORT_FORMAT_VERSION:
-                        raise ValueError(f"unsupported archive format version: {record.get('format_version')}")
+                        raise fail(
+                            batch,
+                            line_number,
+                            ValueError(f"unsupported archive format version: {record.get('format_version')}"),
+                        )
+                    metadata_seen = True
                     continue
                 if record.get("type") != "event" or not isinstance(record.get("data"), dict):
-                    raise ValueError("archive contains unsupported record")
-                imported += int(repository.insert_event(record["data"], commit=True))
-        return imported
+                    raise fail(batch, line_number, ValueError("archive contains unsupported record"))
+                if not metadata_seen:
+                    raise fail(
+                        batch,
+                        line_number,
+                        ValueError("archive metadata must appear before events"),
+                    )
+                pending.append((line_number, record["data"]))
+                if len(pending) == batch_size:
+                    import_batch(pending, batch)
+                    pending = []
+                    batch += 1
+        if not metadata_seen:
+            raise fail(batch, 1, ValueError("archive metadata record is missing"))
+        if pending:
+            import_batch(pending, batch)
+        return report
     finally:
         database.close()
 
@@ -158,10 +337,28 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--db", type=Path)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("export", "import"):
-        command = commands.add_parser(name)
-        command.add_argument("path", type=Path)
-        command.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    export = commands.add_parser("export")
+    export.add_argument("path", type=Path)
+    export.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    import_archive = commands.add_parser("import")
+    import_archive.add_argument("path", type=Path)
+    import_archive.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    import_archive.add_argument(
+        "--skip-extraction-jobs",
+        action="store_true",
+        help="forensic restore only; imported events will not rebuild claims",
+    )
+    backup = commands.add_parser("backup")
+    backup.add_argument("path", type=Path)
+    backup.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    restore = commands.add_parser(
+        "restore",
+        description="Restore a verified backup. Stop the API, workers, and all writers first.",
+    )
+    restore.add_argument("path", type=Path)
+    restore.add_argument("--manifest", type=Path, required=True)
+    restore.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    restore.add_argument("--confirm-overwrite", action="store_true")
     conflicts = commands.add_parser("conflicts")
     conflicts.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     conflict_commands = conflicts.add_subparsers(dest="conflict_command", required=True)
@@ -204,6 +401,19 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.db is not None:
         settings = replace(settings, database_path=str(args.db))
     database_path = Path(settings.database_path)
+    if args.command == "backup":
+        manifest = backup_database(database_path, args.path)
+        print(json.dumps(validate_backup(args.path, manifest), ensure_ascii=False, sort_keys=True))
+        return
+    if args.command == "restore":
+        restored = restore_database(
+            args.path,
+            args.manifest,
+            database_path,
+            confirm_overwrite=args.confirm_overwrite,
+        )
+        print(json.dumps(restored, ensure_ascii=False, sort_keys=True))
+        return
     if args.command == "backfill-index-text":
         database: Database | None = None
         connection: sqlite3.Connection | None = None
@@ -270,12 +480,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         print(json.dumps(conflict_result, ensure_ascii=False, sort_keys=True))
         return
-    count = (
-        export_database(database_path, args.path, settings=settings)
-        if args.command == "export"
-        else import_database(database_path, args.path, settings=settings)
-    )
-    print(json.dumps({"processed": count}))
+    if args.command == "export":
+        print(json.dumps({"processed": export_database(database_path, args.path, settings=settings)}))
+        return
+    try:
+        import_report = import_database(
+            database_path,
+            args.path,
+            settings=settings,
+            skip_extraction_jobs=args.skip_extraction_jobs,
+        )
+    except JSONLImportError as error:
+        print(json.dumps(error.report, ensure_ascii=False, sort_keys=True))
+        raise SystemExit(1) from error
+    print(json.dumps(import_report, ensure_ascii=False, sort_keys=True))
 
 
 if __name__ == "__main__":

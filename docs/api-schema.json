@@ -449,6 +449,13 @@
             "title": "Goal",
             "type": "string"
           },
+          "namespace": {
+            "default": "default",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Namespace",
+            "type": "string"
+          },
           "session_id": {
             "anyOf": [
               {
@@ -472,6 +479,21 @@
               }
             ],
             "title": "Task Type"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
+            "title": "Tenant Id"
           }
         },
         "required": [
@@ -596,6 +618,13 @@
             ],
             "title": "Idempotency Key"
           },
+          "namespace": {
+            "default": "default",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Namespace",
+            "type": "string"
+          },
           "occurred_at": {
             "anyOf": [
               {
@@ -650,10 +679,19 @@
             "title": "Source Uri"
           },
           "tenant_id": {
-            "default": "default",
-            "maxLength": 100,
-            "title": "Tenant Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
+            "title": "Tenant Id"
           },
           "user_id": {
             "anyOf": [
@@ -863,6 +901,26 @@
             ],
             "title": "Content"
           },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "namespace": {
+            "default": "default",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Namespace",
+            "type": "string"
+          },
           "predicate": {
             "default": "explicit_memory",
             "maxLength": 100,
@@ -880,6 +938,21 @@
             "title": "Subject",
             "type": "string"
           },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
+            "title": "Tenant Id"
+          },
           "text": {
             "anyOf": [
               {
@@ -894,6 +967,25 @@
           }
         },
         "title": "MemoryInput",
+        "type": "object"
+      },
+      "MemorySaveOutput": {
+        "description": "显式记忆写入的真实幂等结果。",
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created"
+        ],
+        "title": "MemorySaveOutput",
         "type": "object"
       },
       "RecallInput": {
@@ -964,6 +1056,7 @@
           "namespace": {
             "default": "default",
             "maxLength": 100,
+            "minLength": 1,
             "title": "Namespace",
             "type": "string"
           },
@@ -994,6 +1087,21 @@
               }
             ],
             "title": "Session Id"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
+            "title": "Tenant Id"
           },
           "token_budget": {
             "anyOf": [
@@ -1314,6 +1422,44 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "in": "query",
+            "name": "namespace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          },
+          {
+            "deprecated": true,
+            "in": "query",
+            "name": "tenant_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "deprecated": true,
+              "title": "Tenant Id"
+            }
           }
         ],
         "responses": {
@@ -1533,6 +1679,8 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 200,
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -1684,6 +1832,26 @@
     "/v1/memories": {
       "post": {
         "operationId": "save_memory_v1_memories_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1699,15 +1867,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Save Memory V1 Memories Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MemorySaveOutput"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "409": {
+            "description": "Idempotency key payload conflict"
           },
           "422": {
             "content": {
@@ -1776,6 +1943,44 @@
               "default": "active",
               "title": "Status",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "namespace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          },
+          {
+            "deprecated": true,
+            "in": "query",
+            "name": "tenant_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "deprecated": true,
+              "title": "Tenant Id"
             }
           }
         ],

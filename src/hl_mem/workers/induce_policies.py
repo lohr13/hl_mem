@@ -17,21 +17,25 @@ def induce_policies(
     now: str,
     lookback_days: int | None = None,
     min_episodes: int | None = None,
+    namespace: str | None = None,
 ) -> dict[str, int]:
-    """按任务类型和工具序列聚类最近七天的高奖励 Episode。"""
+    """按 namespace、任务类型和工具序列聚类近期高奖励 Episode。"""
     current = datetime.fromisoformat(now.replace("Z", "+00:00"))
     defaults = Settings()
     effective_lookback = lookback_days or defaults.policy_induction_lookback_days
     effective_min_episodes = min_episodes or defaults.policy_induction_min_episodes
     cutoff = (current - timedelta(days=effective_lookback)).isoformat()
+    namespace_filter = "AND namespace_key=? " if namespace is not None else ""
+    parameters: tuple[Any, ...] = (cutoff, now, namespace) if namespace is not None else (cutoff, now)
     rows = connection.execute(
-        "SELECT id,goal,scope_json FROM episodes "
+        "SELECT id,namespace_key,goal,scope_json FROM episodes "
         "WHERE status='success' AND reward>=0.5 "
         "AND coalesce(ended_at,started_at)>=? AND coalesce(ended_at,started_at)<=? "
+        f"{namespace_filter}"
         "ORDER BY started_at,id",
-        (cutoff, now),
+        parameters,
     ).fetchall()
-    clusters: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = defaultdict(list)
+    clusters: dict[tuple[str, str, tuple[str, ...]], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         scope = json.loads(row["scope_json"] or "{}")
         task_type = str(scope.get("task_type") or "general")
@@ -45,22 +49,28 @@ def induce_policies(
         if actions:
             # 用前3个action作为聚类key，而非完整序列
             prefix = actions[:3]
-            clusters[(task_type, prefix)].append(dict(row))
+            clusters[(str(row["namespace_key"]), task_type, prefix)].append(dict(row))
 
     service = ExperienceService(connection, min_support=2)
     induced = 0
     eligible = 0
-    for (task_type, actions), episodes in clusters.items():
+    for (episode_namespace, task_type, actions), episodes in clusters.items():
         if len(episodes) < effective_min_episodes:
             continue
         eligible += 1
         trigger = f"{task_type} {' '.join(actions)}"
         if connection.execute(
-            "SELECT 1 FROM policies WHERE namespace_key='default' AND trigger=?",
-            (trigger,),
+            "SELECT 1 FROM policies WHERE namespace_key=? AND trigger=?",
+            (episode_namespace, trigger),
         ).fetchone():
             continue
-        service.induce_policy(trigger, {"steps": list(actions)}, [item["id"] for item in episodes], now)
+        service.induce_policy(
+            trigger,
+            {"steps": list(actions)},
+            [item["id"] for item in episodes],
+            now,
+            namespace=episode_namespace,
+        )
         induced += 1
     return {"clusters": eligible, "policies_induced": induced}
 

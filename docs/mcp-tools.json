@@ -192,6 +192,16 @@
         "content": {
           "type": "string"
         },
+        "idempotency_key": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "namespace": {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
         "predicate": {
           "type": "string"
         },

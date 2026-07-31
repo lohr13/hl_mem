@@ -1,7 +1,19 @@
 @echo off
-:: hl_mem production startup script
-set HL_MEM_ENV=production
-set HL_MEM_EMBEDDER=real
-set HL_MEM_RERANKER=real
-cd /d D:\workspace\hl_agent\hl_mem
-.venv\Scripts\python.exe -m uvicorn hl_mem.api.server:app --host 127.0.0.1 --port 8200
+setlocal
+set "ROOT_DIR=%~dp0"
+set "PYTHON_EXE=%ROOT_DIR%.venv\Scripts\python.exe"
+
+if not exist "%PYTHON_EXE%" (
+    echo Missing virtual environment Python: "%PYTHON_EXE%" 1>&2
+    exit /b 1
+)
+if not exist "%ROOT_DIR%hl_mem.toml" (
+    echo Missing configuration file: "%ROOT_DIR%hl_mem.toml" 1>&2
+    exit /b 1
+)
+
+pushd "%ROOT_DIR%" || exit /b 1
+"%PYTHON_EXE%" "%ROOT_DIR%start_server.py"
+set "EXIT_CODE=%ERRORLEVEL%"
+popd
+exit /b %EXIT_CODE%

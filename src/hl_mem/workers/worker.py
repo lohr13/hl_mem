@@ -187,10 +187,8 @@ class Worker:
         maintainer.mark_stale_dependencies()
         maintainer.scan_and_build(maintenance_now)
         auto_resolve_conflicts(self.connection, maintenance_now)
-        from hl_mem.security.retention import purge_retained_events
-
         cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)).isoformat()
-        purge_retained_events(self.connection, "default", cutoff)
+        _purge_retained_events(self.connection, cutoff)
         self.audit.cleanup(self.settings.audit_retention_days)
         enqueue_daily_consolidation(
             self.connection,
@@ -550,11 +548,13 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_induce_policies(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理策略归纳任务。"""
+    payload = json.loads(job.get("payload_json") or "{}")
     return induce_policies(
         worker.connection,
         _now(),
         worker.settings.policy_induction_lookback_days,
         worker.settings.policy_induction_min_episodes,
+        namespace=payload.get("namespace"),
     )
 
 
@@ -632,10 +632,34 @@ def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_purge_retention(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理事件保留清理任务。"""
+    payload = json.loads(job.get("payload_json") or "{}")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=worker.settings.retention_days)).isoformat()
+    return {
+        "purged": _purge_retained_events(
+            worker.connection,
+            cutoff,
+            namespace=payload.get("namespace"),
+        )
+    }
+
+
+def _purge_retained_events(
+    connection: Any,
+    cutoff: str,
+    namespace: str | None = None,
+) -> int:
+    """清理一个或全部现存 namespace，避免把维护范围静默固定为 default。"""
     from hl_mem.security.retention import purge_retained_events
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=worker.settings.retention_days)).isoformat()
-    return {"purged": purge_retained_events(worker.connection, "default", cutoff)}
+    namespaces = (
+        [namespace]
+        if namespace is not None
+        else [
+            str(row[0])
+            for row in connection.execute("SELECT DISTINCT tenant_id FROM events ORDER BY tenant_id").fetchall()
+        ]
+    )
+    return sum(purge_retained_events(connection, event_namespace, cutoff) for event_namespace in namespaces)
 
 
 def _handle_retry_failed(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:

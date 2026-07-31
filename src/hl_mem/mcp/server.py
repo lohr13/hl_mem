@@ -133,6 +133,16 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                     "subject": {"type": "string"},
                     "predicate": {"type": "string"},
                     "qualifiers": {"type": "object"},
+                    "idempotency_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                    },
                 },
             },
         },
@@ -215,13 +225,28 @@ class McpMemoryServer:
         text = str(arguments.get("text") or arguments.get("content") or "")
         if not text:
             raise ValueError("text or content is required")
+        idempotency_key = arguments.get("idempotency_key")
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str):
+                raise ValueError("idempotency_key must be a string")
+            if not idempotency_key:
+                raise ValueError("idempotency_key must not be empty")
+            if len(idempotency_key) > 200:
+                raise ValueError("idempotency_key must be at most 200 characters")
+        namespace = arguments.get("namespace", "default")
+        if not isinstance(namespace, str) or not namespace:
+            raise ValueError("namespace must be a non-empty string")
+        if len(namespace) > 100:
+            raise ValueError("namespace must be at most 100 characters")
         result = IngestService(connection).save_explicit_memory(
             text,
             str(arguments.get("subject", "用户")),
             str(arguments.get("predicate", "explicit_memory")),
             arguments.get("qualifiers") or {},
+            idempotency_key=idempotency_key,
+            namespace=namespace,
         )
-        return {**result, "created": True}
+        return result
 
     def _recall(self, connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         """通过共享召回服务执行混合召回。"""

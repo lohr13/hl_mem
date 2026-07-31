@@ -30,6 +30,8 @@ DEFAULT_DATASET = ROOT / "evaluation/datasets/smoke_v2.jsonl"
 DEFAULT_BASELINE = ROOT / "evaluation/baselines/smoke_v2_baseline.json"
 DEFAULT_RESULTS = ROOT / "evaluation/results"
 FIXED_TIME = "2026-01-01T00:00:00+00:00"
+BASELINE_SCHEMA_VERSION = 2
+HASH_ALGORITHM = "sha256-utf8-lf-v1"
 DEFAULT_TOLERANCES = {
     "recall_at_5": 0.05,
     "recall_at_10": 0.1,
@@ -63,7 +65,7 @@ def seed_case(connection: Any, case: dict[str, Any], embedder: FakeEmbedder) -> 
     for memory in case["input"].get("memories", []):
         event_id = str(memory["id"])
         occurred_at = str(memory.get("occurred_at", FIXED_TIME))
-        event = {
+        event: dict[str, Any] = {
             "id": event_id,
             "idempotency_key": f"smoke:{case['id']}:{event_id}",
             "tenant_id": "default",
@@ -78,6 +80,8 @@ def seed_case(connection: Any, case: dict[str, Any], embedder: FakeEmbedder) -> 
         if len(extracted) != 1:
             raise ValueError(f"case {case['id']} memory {event_id} must produce exactly one fake extraction")
         stored = IngestService.store_extracted(connection, extracted[0], event, occurred_at, embedder)
+        if stored.claim_id is None:
+            raise ValueError(f"case {case['id']} memory {event_id} did not store a claim")
         claim_ids[event_id] = stored.claim_id
         connection.execute(
             "UPDATE claims SET valid_from=?,valid_to=? WHERE id=?",
@@ -271,8 +275,10 @@ def aggregate(case_results: list[dict[str, Any]]) -> dict[str, float]:
 
 
 def dataset_hash(path: Path) -> str:
-    """返回数据集内容的 SHA-256 摘要。"""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """按 UTF-8/LF 规范化算法返回数据集内容摘要。"""
+    text = path.read_bytes().decode("utf-8")
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def percentile(values: list[float], percentile_rank: float) -> float:
@@ -317,7 +323,8 @@ def write_baseline(
 ) -> None:
     """显式写入当前 smoke 指标，作为后续质量退化门禁。"""
     payload = {
-        "schema_version": 1,
+        "schema_version": BASELINE_SCHEMA_VERSION,
+        "hash_algorithm": HASH_ALGORITHM,
         "dataset_hash": source_hash,
         "metrics": metrics,
         "expected_metrics_per_case": cases,
@@ -335,6 +342,16 @@ def compare_baseline(
 ) -> tuple[dict[str, Any], dict[str, float], dict[str, dict[str, float]], bool]:
     """比较聚合和逐用例指标；任何超出阈值的下降都会关闭门禁。"""
     baseline = json.loads(path.read_text(encoding="utf-8"))
+    if baseline.get("schema_version") != BASELINE_SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported quality smoke baseline schema_version: "
+            f"{baseline.get('schema_version')!r}; expected {BASELINE_SCHEMA_VERSION}"
+        )
+    if baseline.get("hash_algorithm") != HASH_ALGORITHM:
+        raise ValueError(
+            f"unsupported quality smoke hash_algorithm: "
+            f"{baseline.get('hash_algorithm')!r}; expected {HASH_ALGORITHM}"
+        )
     tolerances = {key: float(value) for key, value in baseline["tolerance_thresholds"].items()}
     baseline_metrics = {key: float(value) for key, value in baseline["metrics"].items()}
     aggregate_delta = {key: current_metrics[key] - value for key, value in baseline_metrics.items()}

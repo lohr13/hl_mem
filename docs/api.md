@@ -7,11 +7,16 @@ OpenAPI documentation is available at `/docs` while the service is running.
 ## Conventions
 
 - Request and response bodies use JSON unless noted otherwise.
-- `POST /v1/events` accepts `Idempotency-Key`; the body-level `idempotency_key` is used when the header is absent.
+- `POST /v1/events` and `POST /v1/memories` accept `Idempotency-Key`; the body-level `idempotency_key` is used when the
+  header is absent.
 - Validation failures return `422`, missing resources return `404`, and invalid state transitions return `409`.
 - Timeouts, models, database paths, and feature modes come from `hl_mem.toml`; provider credentials come only from the
   optional `.env` or same-named process environment variables. See the [configuration reference](configuration.md).
-- Recall is scoped to a `namespace` and can filter both valid time (`as_of`) and recorded time (`known_as_of`).
+- Recall, Episode create/list, and Policy listing use an explicit `namespace`. It is a relevance/profile soft label inside
+  one trusted local single-tenant deployment, not an authentication, authorization, encryption, or side-channel boundary.
+- `tenant_id` is a deprecated compatibility alias for `namespace`; clients should send `namespace`, and conflicting values
+  are rejected. Neither field provides SaaS multi-tenant isolation, RBAC, billing isolation, or per-tenant keys.
+- Recall can filter both valid time (`as_of`) and recorded time (`known_as_of`).
 
 ## Endpoints
 
@@ -24,8 +29,8 @@ OpenAPI documentation is available at `/docs` while the service is running.
 | `POST` | `/v1/recall` | Retrieve evidence-aware memory through hybrid search and optional reranking |
 | `POST` | `/v1/memories` | Save an explicit pinned memory through the normal ingestion path |
 | `DELETE` | `/v1/memories/{memory_id}` | Explicitly forget a memory and propagate withdrawal/staleness |
-| `POST` | `/v1/episodes` | Create an experience Episode |
-| `GET` | `/v1/episodes` | List Episodes, optionally filtered by status |
+| `POST` | `/v1/episodes` | Create an experience Episode in a namespace |
+| `GET` | `/v1/episodes` | List Episodes by namespace, optionally filtered by status |
 | `GET` | `/v1/episodes/{episode_id}` | Return one Episode and its details |
 | `PATCH` | `/v1/episodes/{episode_id}` | Update Episode status/outcome and optionally back-propagate reward |
 | `POST` | `/v1/episodes/{episode_id}/traces` | Append an action/observation Trace to an Episode |
@@ -50,7 +55,7 @@ curl -X POST http://127.0.0.1:8200/v1/events \
   }'
 ```
 
-Important fields include tenant/user/project/agent/session identifiers, `event_type`, `actor_type`, `content`,
+Important fields include namespace/user/project/agent/session identifiers, `event_type`, `actor_type`, `content`,
 `occurred_at`, `source_uri`, and `sensitivity`. Ingestion returns the event identifier and whether it was newly created.
 
 ### Save an explicit memory
@@ -58,10 +63,19 @@ Important fields include tenant/user/project/agent/session identifiers, `event_t
 ```bash
 curl -X POST http://127.0.0.1:8200/v1/memories \
   -H "Content-Type: application/json" \
-  -d '{"text":"Alice prefers dark mode","subject":"Alice","predicate":"preference"}'
+  -H "Idempotency-Key: profile-alice-dark-mode" \
+  -d '{
+    "namespace":"profile-alice",
+    "text":"Alice prefers dark mode",
+    "subject":"Alice",
+    "predicate":"preference"
+  }'
 ```
 
-Provide either `text` or the compatibility field `content`. `subject`, `predicate`, and `qualifiers` are optional.
+Provide either `text` or the compatibility field `content`. `subject`, `predicate`, `qualifiers`, `namespace`, and
+`idempotency_key` are optional. The header key takes precedence over the body key. Repeating the same key and canonical
+payload returns the original ID with `created=false`; reusing the key for another payload returns `409`. Omitting the key
+preserves the existing create-on-each-call behavior.
 
 ### Recall memory
 
@@ -99,9 +113,11 @@ be confirmed, those identifiers are omitted rather than returning unusable recei
 
 ## Experience Requests
 
-Create an Episode with `goal`, optional `session_id`, and optional `task_type`. Append Traces with `action`, optional
-`observation`, `error_signature`, and numeric `value`. Complete or otherwise update the Episode through `PATCH`, supplying
-`status`, optional reward in the `[0, 1]` range, and `outcome_summary`.
+Create an Episode with `goal`, `namespace` (default `default`), optional `session_id`, and optional `task_type`. Listing
+requires the same soft partition to avoid cross-profile aggregation. Append Traces with `action`, optional `observation`,
+`error_signature`, and numeric `value`. Complete or otherwise update the Episode through `PATCH`, supplying `status`,
+optional reward in the `[0, 1]` range, and `outcome_summary`. Policy induction buckets Episodes by namespace, and every
+supporting Episode must share the Policy namespace.
 
 Retrieval feedback requires `feedback_id` and `helpful`; `task_outcome` is optional. A correction can target a Claim with
 an idempotent `retract` or `replace` action. Replacement also requires `corrected_text`.

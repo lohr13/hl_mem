@@ -85,7 +85,15 @@ class ExperienceRepository:
         self.retire_after_failures = retire_after_failures
         self.settings = settings
 
-    def record_episode(self, episode_id: str, goal: str, status: str, reward: float, occurred_at: str) -> str:
+    def record_episode(
+        self,
+        episode_id: str,
+        goal: str,
+        status: str,
+        reward: float,
+        occurred_at: str,
+        namespace: str = "default",
+    ) -> str:
         """记录一次独立 Episode 并返回其 ID。"""
         try:
             assert_episode_transition(EpisodeStatus.RUNNING.value, status)
@@ -93,9 +101,19 @@ class ExperienceRepository:
             raise ValueError("recorded episode status must be terminal") from error
         _validate_reward(reward)
         self.connection.execute(
-            "INSERT OR IGNORE INTO episodes(id,goal,status,started_at,ended_at,reward,outcome_summary) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (episode_id, goal, status, occurred_at, occurred_at, reward, status),
+            "INSERT OR IGNORE INTO episodes("
+            "id,namespace_key,goal,status,started_at,ended_at,reward,outcome_summary"
+            ") VALUES (?,?,?,?,?,?,?,?)",
+            (
+                episode_id,
+                namespace,
+                goal,
+                status,
+                occurred_at,
+                occurred_at,
+                reward,
+                status,
+            ),
         )
         self.connection.commit()
         return episode_id
@@ -107,13 +125,15 @@ class ExperienceRepository:
         started_at: str,
         session_id: str | None = None,
         task_type: str | None = None,
+        namespace: str = "default",
     ) -> str:
         """创建一个待完成的 Episode。"""
         scope = {key: value for key, value in {"session_id": session_id, "task_type": task_type}.items() if value}
         self.connection.execute(
-            "INSERT INTO episodes(id,goal,status,started_at,scope_json) VALUES (?,?,?,?,?)",
+            "INSERT INTO episodes(id,namespace_key,goal,status,started_at,scope_json) VALUES (?,?,?,?,?,?)",
             (
                 episode_id,
+                namespace,
                 goal,
                 EpisodeStatus.RUNNING.value,
                 started_at,
@@ -160,17 +180,22 @@ class ExperienceRepository:
                 self.connection.commit()
         return self.get_episode(episode_id)
 
-    def list_episodes(self, limit: int = 20, status: str | None = None) -> list[dict[str, Any]]:
-        """按开始时间倒序列出 Episode。"""
+    def list_episodes(
+        self,
+        limit: int = 20,
+        status: str | None = None,
+        namespace: str = "default",
+    ) -> list[dict[str, Any]]:
+        """按开始时间倒序列出指定 namespace 的 Episode。"""
         if status is None:
             rows = self.connection.execute(
-                "SELECT * FROM episodes ORDER BY started_at DESC,id DESC LIMIT ?",
-                (limit,),
+                "SELECT * FROM episodes WHERE namespace_key=? ORDER BY started_at DESC,id DESC LIMIT ?",
+                (namespace, limit),
             ).fetchall()
         else:
             rows = self.connection.execute(
-                "SELECT * FROM episodes WHERE status=? ORDER BY started_at DESC,id DESC LIMIT ?",
-                (status, limit),
+                "SELECT * FROM episodes WHERE namespace_key=? AND status=? " "ORDER BY started_at DESC,id DESC LIMIT ?",
+                (namespace, status, limit),
             ).fetchall()
         result = [dict(row) for row in rows]
         for episode in result:
@@ -448,12 +473,14 @@ class ExperienceRepository:
             raise ValueError("at least one supporting episode is required")
         placeholders = ",".join("?" for _ in unique_ids)
         rows = self.connection.execute(
-            f"SELECT id FROM episodes WHERE id IN ({placeholders}) AND status='success' AND reward>0",
-            unique_ids,
+            f"SELECT id FROM episodes WHERE namespace_key=? AND id IN ({placeholders}) "
+            "AND status='success' AND reward>0",
+            (namespace, *unique_ids),
         ).fetchall()
-        valid_ids = [row[0] for row in rows]
+        valid_id_set = {row[0] for row in rows}
+        valid_ids = [episode_id for episode_id in unique_ids if episode_id in valid_id_set]
         if len(valid_ids) != len(unique_ids):
-            raise ValueError("all supporting episodes must be independent successes")
+            raise ValueError("all supporting episodes must be independent successes in the policy namespace")
         policy_id = _id()
         status = PolicyStatus.ACTIVE if len(valid_ids) >= self.min_support else PolicyStatus.CANDIDATE
         self.connection.execute("BEGIN IMMEDIATE")
@@ -482,14 +509,22 @@ class ExperienceRepository:
 
     def add_support(self, policy_id: str, episode_id: str) -> None:
         """为策略增加一条未重复的成功 Episode 证据。"""
-        policy = self.connection.execute("SELECT status,support FROM policies WHERE id=?", (policy_id,)).fetchone()
+        policy = self.connection.execute(
+            "SELECT status,support,namespace_key FROM policies WHERE id=?",
+            (policy_id,),
+        ).fetchone()
         if not policy:
             raise ValueError(f"policy not found: {policy_id}")
         if policy["status"] == PolicyStatus.RETIRED:
             raise InvalidStateTransitionError("retired policy cannot accept support")
-        episode = self.connection.execute("SELECT status,reward FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        episode = self.connection.execute(
+            "SELECT status,reward,namespace_key FROM episodes WHERE id=?",
+            (episode_id,),
+        ).fetchone()
         if not episode or episode["status"] != "success" or episode["reward"] <= 0:
             raise ValueError("supporting episode must be successful")
+        if episode["namespace_key"] != policy["namespace_key"]:
+            raise ValueError("supporting episode must be in the policy namespace")
         before = self.connection.total_changes
         self._link_episode(policy_id, episode_id)
         if self.connection.total_changes > before:

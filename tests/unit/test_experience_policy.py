@@ -1,3 +1,5 @@
+import pytest
+
 from hl_mem.experience.service import ExperienceService, backprop_episode_reward
 from hl_mem.storage.database import Database
 
@@ -113,3 +115,82 @@ def test_episode_returns_ordered_trace(tmp_path) -> None:
         "测试",
         "部署",
     ]
+
+
+def test_episode_create_and_list_are_namespace_scoped(tmp_path) -> None:
+    connection = Database(tmp_path / "episode-namespace.db").open()
+    service = ExperienceService(connection)
+
+    service.create_episode(
+        "project-a-running",
+        "部署 A",
+        "2026-01-01T00:00:00Z",
+        namespace="project-a",
+    )
+    service.create_episode(
+        "project-b-running",
+        "部署 B",
+        "2026-01-02T00:00:00Z",
+        namespace="project-b",
+    )
+    service.record_episode(
+        "project-a-success",
+        "验证 A",
+        "success",
+        1.0,
+        "2026-01-03T00:00:00Z",
+        namespace="project-a",
+    )
+
+    assert {episode["id"] for episode in service.list_episodes(namespace="project-a")} == {
+        "project-a-running",
+        "project-a-success",
+    }
+    assert [
+        episode["id"]
+        for episode in service.list_episodes(
+            status="running",
+            namespace="project-b",
+        )
+    ] == ["project-b-running"]
+    assert service.list_episodes(namespace="default") == []
+
+
+def test_policy_supporting_episodes_must_share_policy_namespace(tmp_path) -> None:
+    connection = Database(tmp_path / "policy-namespace.db").open()
+    service = ExperienceService(connection)
+    project_a = service.record_episode(
+        "project-a",
+        "修复故障",
+        "success",
+        1.0,
+        "2026-01-01T00:00:00Z",
+        namespace="project-a",
+    )
+    project_b = service.record_episode(
+        "project-b",
+        "修复故障",
+        "success",
+        1.0,
+        "2026-01-01T00:00:00Z",
+        namespace="project-b",
+    )
+
+    with pytest.raises(ValueError, match="policy namespace"):
+        service.induce_policy(
+            "修复故障",
+            {"steps": ["检查日志"]},
+            [project_a, project_b],
+            "2026-01-02T00:00:00Z",
+            namespace="project-a",
+        )
+
+    policy_id = service.induce_policy(
+        "修复故障",
+        {"steps": ["检查日志"]},
+        [project_a],
+        "2026-01-02T00:00:00Z",
+        namespace="project-a",
+    )
+    with pytest.raises(ValueError, match="policy namespace"):
+        service.add_support(policy_id, project_b)

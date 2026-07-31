@@ -6,6 +6,7 @@ from hl_mem.adapters.hermes.prefetch import PrefetchCache
 from hl_mem.adapters.hermes.provider import (
     MAX_DELIVERY_RECEIPTS,
     HLMemProvider,
+    _memory_idempotency_key,
     _summarize_observation,
 )
 from hl_mem.application.context_packet import retrieval_bundle_to_dict
@@ -138,6 +139,12 @@ def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:
                 "json": {
                     "text": "喜欢黑咖啡",
                     "qualifiers": {"key": "preference", "target": "memory"},
+                    "idempotency_key": _memory_idempotency_key(
+                        "preference",
+                        "memory",
+                        "喜欢黑咖啡",
+                    ),
+                    "namespace": "default",
                 },
                 "timeout": 2.0,
             },
@@ -149,12 +156,100 @@ def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:
                     "event_type": "message",
                     "actor_type": "user",
                     "content": {"text": "记住这个偏好"},
+                    "namespace": "default",
                 },
                 "timeout": 2.0,
             },
         ),
     ]
     assert provider._failure_count == 0
+
+
+def test_memory_write_uses_stable_key_and_trusted_namespace(monkeypatch) -> None:
+    requests = []
+
+    def post(url, **kwargs):
+        requests.append((url, kwargs["json"]))
+        return Response()
+
+    monkeypatch.setattr(httpx, "post", post)
+    provider = HLMemProvider("unused.db", "http://memory.test/", timeout=2.0)
+
+    provider.on_memory_write(
+        "preference",
+        "喜欢黑咖啡",
+        target="profile",
+        namespace="project-a",
+    )
+    provider.on_memory_write(
+        "preference",
+        "喜欢黑咖啡",
+        target="profile",
+        namespace="project-a",
+    )
+
+    assert requests[0] == requests[1]
+    assert requests[0][1] == {
+        "text": "喜欢黑咖啡",
+        "qualifiers": {"key": "preference", "target": "profile"},
+        "idempotency_key": _memory_idempotency_key(
+            "preference",
+            "profile",
+            "喜欢黑咖啡",
+            "project-a",
+        ),
+        "namespace": "project-a",
+    }
+    assert _memory_idempotency_key(
+        "preference",
+        "profile",
+        "喜欢黑咖啡",
+    ) != _memory_idempotency_key(
+        "preference",
+        "profile",
+        "喜欢拿铁",
+    )
+    assert _memory_idempotency_key(
+        "preference",
+        "profile",
+        "喜欢黑咖啡",
+        "project-a",
+    ) != _memory_idempotency_key(
+        "preference",
+        "profile",
+        "喜欢黑咖啡",
+        "project-b",
+    )
+
+
+def test_write_hooks_propagate_only_trusted_host_namespace(monkeypatch) -> None:
+    requests = []
+
+    def post(url, **kwargs):
+        requests.append((url, kwargs["json"]))
+        return Response()
+
+    monkeypatch.setattr(httpx, "post", post)
+    provider = HLMemProvider("unused.db", "http://memory.test/", timeout=2.0)
+
+    provider.sync_turn(
+        "用户消息",
+        "助手消息",
+        namespace="project-a",
+    )
+    provider.on_pre_compress(
+        [{"role": "user", "content": "压缩前", "namespace": "message-controlled"}],
+        namespace="project-a",
+    )
+    provider.on_delegation(
+        "委派任务",
+        "委派结果",
+        namespace="project-a",
+    )
+
+    event_payloads = [payload for url, payload in requests if url.endswith("/v1/events")]
+    assert len(event_payloads) == 5
+    assert {payload["namespace"] for payload in event_payloads} == {"project-a"}
 
 
 def test_provider_uses_configurable_default_timeout() -> None:
@@ -726,12 +821,14 @@ def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
         "修复项目并部署",
         "修复完成",
         session_id="session-1",
+        namespace="project-a",
         messages=messages,
     )
 
     episode_requests = [(url, payload) for url, payload in AsyncClient.requests if "/v1/episodes" in url]
     assert episode_requests[0][1] == {
         "goal": "修复项目并部署",
+        "namespace": "project-a",
         "session_id": "session-1",
         "task_type": "coding",
     }

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
@@ -27,6 +27,7 @@ from hl_mem.api.schemas import (
     EventInput,
     FeedbackInput,
     MemoryInput,
+    MemorySaveOutput,
     RecallInput,
     RecallOutput,
     TraceInput,
@@ -58,6 +59,13 @@ from hl_mem.storage.jobs import JobRepository
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _resolve_namespace_alias(namespace: str | None, tenant_id: str | None) -> str:
+    """解析查询参数中的 deprecated tenant_id alias。"""
+    if namespace is not None and tenant_id is not None and namespace != tenant_id:
+        raise HTTPException(422, "namespace and deprecated tenant_id must match")
+    return namespace or tenant_id or "default"
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
@@ -157,7 +165,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             token_budget=payload.token_budget,
             context_mode=payload.context_mode,
             response_format=response_format,
-            namespace=payload.namespace,
+            namespace=payload.effective_namespace,
             session_id=payload.session_id,
             debug=payload.debug,
         )
@@ -190,13 +198,14 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     @app.post("/v1/events")
     def post_event(
         payload: EventInput,
-        idempotency_key: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None, min_length=1, max_length=200),
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
         key = idempotency_key or payload.idempotency_key
         content = payload.content if isinstance(payload.content, dict) else {"text": payload.content}
         content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
-        event = payload.model_dump()
+        event = payload.model_dump(exclude={"namespace", "tenant_id"})
+        event["tenant_id"] = payload.effective_namespace
         service = IngestService(connection)
         result = service.ingest_event(event, key)
         event_id, created = result["id"], result["created"]
@@ -206,7 +215,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             "queued" if created else "duplicate",
             trace_id=event_id,
             event_id=event_id,
-            tenant_id=payload.tenant_id,
+            tenant_id=payload.effective_namespace,
             detail={
                 "event_type": payload.event_type,
                 "actor_type": payload.actor_type,
@@ -261,7 +270,12 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
         query_id = request.headers.get("X-Request-ID") or new_id()
-        with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
+        with audit_scope(
+            audit,
+            trace_id=query_id,
+            query_id=query_id,
+            tenant_id=payload.effective_namespace,
+        ):
             return execute_recall(
                 payload,
                 query_id=query_id,
@@ -280,7 +294,12 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     ) -> dict[str, Any]:
         """为 Hermes 预取 receipt-free bundle；旧 daemon 会安全返回 404。"""
         query_id = request.headers.get("X-Request-ID") or new_id()
-        with audit_scope(audit, trace_id=query_id, query_id=query_id, tenant_id="default"):
+        with audit_scope(
+            audit,
+            trace_id=query_id,
+            query_id=query_id,
+            tenant_id=payload.effective_namespace,
+        ):
             return execute_recall(
                 payload,
                 query_id=query_id,
@@ -337,7 +356,14 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     ) -> dict[str, Any]:
         episode_id = new_id()
         service = ExperienceService(connection)
-        service.create_episode(episode_id, payload.goal, _now(), payload.session_id, payload.task_type)
+        service.create_episode(
+            episode_id,
+            payload.goal,
+            _now(),
+            payload.session_id,
+            payload.task_type,
+            namespace=payload.effective_namespace,
+        )
         return service.get_episode(episode_id)
 
     @app.post("/v1/feedback")
@@ -443,11 +469,25 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     def list_episodes(
         limit: int = 20,
         status: str | None = None,
+        namespace: str | None = Query(default=None, min_length=1, max_length=100),
+        tenant_id: str | None = Query(
+            default=None,
+            min_length=1,
+            max_length=100,
+            deprecated=True,
+        ),
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
         if not 1 <= limit <= 100:
             raise HTTPException(422, "limit must be between 1 and 100")
-        return {"episodes": ExperienceService(connection).list_episodes(limit, status)}
+        effective_namespace = _resolve_namespace_alias(namespace, tenant_id)
+        return {
+            "episodes": ExperienceService(connection).list_episodes(
+                limit,
+                status,
+                namespace=effective_namespace,
+            )
+        }
 
     @app.get("/v1/episodes/{episode_id}")
     def get_episode(episode_id: str, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
@@ -458,17 +498,46 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
 
     @app.get("/v1/policies")
     def list_policies(
-        status: str = "active", connection: sqlite3.Connection = Depends(get_connection)
+        status: str = "active",
+        namespace: str | None = Query(default=None, min_length=1, max_length=100),
+        tenant_id: str | None = Query(
+            default=None,
+            min_length=1,
+            max_length=100,
+            deprecated=True,
+        ),
+        connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
-        return {"policies": ExperienceService(connection).list_policies(status)}
+        effective_namespace = _resolve_namespace_alias(namespace, tenant_id)
+        return {
+            "policies": ExperienceService(connection).list_policies(
+                status,
+                namespace=effective_namespace,
+            )
+        }
 
-    @app.post("/v1/memories")
-    def save_memory(payload: MemoryInput, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, str]:
+    @app.post(
+        "/v1/memories",
+        response_model=MemorySaveOutput,
+        responses={409: {"description": "Idempotency key payload conflict"}},
+    )
+    def save_memory(
+        payload: MemoryInput,
+        idempotency_key: str | None = Header(default=None, min_length=1, max_length=200),
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
         text = payload.text or payload.content
         if not text:
             raise HTTPException(422, "text or content is required")
         service = IngestService(connection)
-        result = service.save_explicit_memory(text, payload.subject, payload.predicate, payload.qualifiers)
+        result = service.save_explicit_memory(
+            text,
+            payload.subject,
+            payload.predicate,
+            payload.qualifiers,
+            idempotency_key=idempotency_key or payload.idempotency_key,
+            namespace=payload.effective_namespace,
+        )
         event_id = result["id"]
         content_json = json.dumps(
             {
@@ -485,9 +554,10 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         audit.emit(
             "ingest",
             "accepted",
-            "queued",
+            "queued" if result["created"] else "duplicate",
             trace_id=event_id,
             event_id=event_id,
+            tenant_id=payload.effective_namespace,
             detail={
                 "event_type": "explicit_memory",
                 "actor_type": "user",

@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
 - Document baseline: v0.18.0
-- Updated: 2026-07-30
+- Updated: 2026-07-31
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -17,6 +17,11 @@ events or recall queries and receive structured memory with temporal and provena
 SQLite WAL is the supported primary store. FTS5 provides lexical retrieval and vector embeddings are stored as BLOBs for
 bounded brute-force cosine search. External LLM, embedding, reranking, and vision providers are optional capabilities
 injected through settings; they are not storage dependencies.
+
+HL-Mem is a local, single-tenant service intended to run inside one trusted deployment. `namespace` is a relevance/profile
+label that keeps recall, Episodes, Policies, and maintenance work in separate soft partitions. It is not an authentication,
+authorization, encryption, or side-channel boundary. The deprecated name `tenant_id` remains only as a compatibility
+alias; the presence of either name does not provide SaaS multi-tenancy, RBAC, quotas, billing isolation, or per-tenant keys.
 
 ## 2. Layered Architecture
 
@@ -252,6 +257,20 @@ Workers use durable jobs with leases, heartbeat, stage, and processed/total prog
 automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. `/healthz`, `/v1/stats`,
 offline evaluation, and the LongMemEval adapter provide operational and quality visibility.
 
+Backup and restore are whole-database operations:
+
+```bash
+hl-mem backup var/backup.db --db var/hl_mem.db
+hl-mem restore var/backup.db --manifest var/backup.db.manifest.json \
+  --db var/hl_mem.db --confirm-overwrite
+```
+
+Backup emits the database and a SHA-256 manifest. Restore validates the manifest, restores and checks a temporary database,
+then atomically replaces the target. An existing target requires explicit overwrite confirmation. These commands do not
+select, export, encrypt, or isolate an individual namespace. Stop the API, Worker, and every other database user before
+restore; restart them only after the command succeeds. Validation rejects adjacent SQLite `-wal`, `-shm`, and `-journal`
+sidecars for the backup or restore target so unhashed or stale pages cannot alter the verified image.
+
 All runtime paths, provider models, timeouts, and feature modes come from one validated `Settings` snapshot loaded from
 `hl_mem.toml`. Only four provider credentials come from `.env` or same-named process environment variables. Image file
 inputs remain disabled unless explicitly enabled and constrained to configured allow-roots. PostgreSQL is only an
@@ -264,11 +283,16 @@ The combined launcher loads and validates `hl_mem.toml` plus the optional `.env`
 
 ```bash
 uv run python start_server.py
+start_production.bat
+./start_hl_mem.sh
 ```
 
-The loader resolves both files from the process current working directory. `hl_mem.toml` is mandatory, so service managers
-must set their working directory to the deployment directory that contains it. Real components are enabled explicitly by
-TOML mode and require their independent keys; there is no environment-based production profile or automatic fake fallback.
+Direct `start_server.py` execution resolves both files from the process current working directory. The platform launch
+scripts resolve the repository root from their own location and launch that same entry point, so they also work from another
+current directory. `hl_mem.toml` is mandatory. Both scripts use the repository virtual environment and do not duplicate or
+override runtime configuration: non-secret settings, including provider/model selection, come only from TOML; the four
+provider credentials may come from `.env` or same-named process environment variables. There is no environment-based
+production profile or automatic fake fallback.
 
 Install the Hermes adapter with `uv run python install_to_hermes.py --hermes-home <HERMES_HOME>`, then restart Hermes.
 

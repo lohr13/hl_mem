@@ -37,6 +37,7 @@ from hl_mem.domain.entity import (
     isolated_subject_id,
     normalize_entity_id,
 )
+from hl_mem.errors import ConflictError, ValidationError
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol
@@ -103,6 +104,53 @@ def _summary(claim: ExtractedClaim | dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _event_namespace(event: dict[str, Any]) -> str:
+    """解析 namespace/tenant_id 兼容字段，并拒绝含糊的双重指定。"""
+    namespace = event.get("namespace")
+    tenant_id = event.get("tenant_id")
+    if namespace is not None and tenant_id is not None and namespace != tenant_id:
+        raise ValidationError("namespace and tenant_id must match when both are provided")
+    resolved = namespace if namespace is not None else tenant_id
+    resolved = "default" if resolved is None else resolved
+    if not isinstance(resolved, str) or not resolved:
+        raise ValidationError("namespace must be a non-empty string")
+    return resolved
+
+
+def _canonical_event_payload(
+    event: dict[str, Any],
+    *,
+    include_id: bool = False,
+    include_occurred_at: bool = False,
+) -> str:
+    """生成用于幂等冲突判断的稳定事件载荷。"""
+    content = event.get("content", {})
+    content = content if isinstance(content, dict) else {"text": content}
+    payload = {
+        "tenant_id": _event_namespace(event),
+        "user_id": event.get("user_id"),
+        "project_id": event.get("project_id"),
+        "agent_id": event.get("agent_id"),
+        "session_id": event.get("session_id"),
+        "event_type": event.get("event_type", "message"),
+        "actor_type": event.get("actor_type", "user"),
+        "actor_id": event.get("actor_id"),
+        "content": content,
+        "source_uri": event.get("source_uri"),
+        "sensitivity": event.get("sensitivity", "normal"),
+    }
+    if include_id:
+        payload["id"] = event.get("id")
+    if include_occurred_at:
+        payload["occurred_at"] = event.get("occurred_at")
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 class IngestService:
     """记忆写入应用服务，拥有事件和任务写入的事务边界。"""
 
@@ -142,22 +190,40 @@ class IngestService:
         timestamp = _now()
         content = event.get("content", {})
         content = content if isinstance(content, dict) else {"text": content}
-        stored_event = {key: value for key, value in event.items() if key not in {"content", "id"}}
+        namespace = _event_namespace(event)
+        stored_event = {field: value for field, value in event.items() if field not in {"content", "id", "namespace"}}
         stored_event.update(
             id=event_id,
             idempotency_key=key,
+            tenant_id=namespace,
             content=content,
             occurred_at=event.get("occurred_at") or timestamp,
             recorded_at=timestamp,
         )
         self.connection.execute("BEGIN IMMEDIATE")
         try:
+            events = EventRepository(self.connection)
             if key:
-                existing_id = EventRepository(self.connection).find_id_by_idempotency_key(key)
+                existing_id = events.find_id_by_idempotency_key(key)
                 if existing_id:
+                    existing = events.get_event(existing_id)
+                    if existing is None:
+                        raise RuntimeError(f"idempotent event disappeared: {existing_id}")
+                    include_id = event.get("id") is not None
+                    include_occurred_at = event.get("occurred_at") is not None
+                    if _canonical_event_payload(
+                        existing,
+                        include_id=include_id,
+                        include_occurred_at=include_occurred_at,
+                    ) != _canonical_event_payload(
+                        stored_event,
+                        include_id=include_id,
+                        include_occurred_at=include_occurred_at,
+                    ):
+                        raise ConflictError(f"idempotency key {key!r} was already used with a different event payload")
                     self.connection.commit()
                     return {"id": existing_id, "created": False}
-            created = EventRepository(self.connection).insert_event(stored_event, commit=False)
+            created = events.insert_event(stored_event, commit=False)
             if created:
                 self._queue_event(event_id, timestamp, commit=False)
             self.connection.commit()
@@ -172,34 +238,26 @@ class IngestService:
         subject: str = DEFAULT_SUBJECT,
         predicate: str = "explicit_memory",
         qualifiers: dict[str, Any] | None = None,
+        *,
+        idempotency_key: str | None = None,
+        namespace: str = "default",
     ) -> dict[str, Any]:
-        """写入显式记忆事件并排队，返回事件标识。"""
-        timestamp, event_id = _now(), new_id()
+        """经统一事件事务写入显式记忆，并返回真实的新建状态。"""
         memory = {
             "text": text,
             "subject": subject,
             "predicate": predicate,
             "qualifiers": qualifiers or {},
         }
-        event = {
-            "id": event_id,
-            "idempotency_key": None,
-            "tenant_id": "default",
-            "event_type": "explicit_memory",
-            "actor_type": "user",
-            "content": {"text": text, "memory": memory},
-            "occurred_at": timestamp,
-            "recorded_at": timestamp,
-        }
-        self.connection.execute("BEGIN IMMEDIATE")
-        try:
-            EventRepository(self.connection).insert_event(event, commit=False)
-            self._queue_event(event_id, timestamp, commit=False)
-            self.connection.commit()
-        except Exception:
-            self.connection.rollback()
-            raise
-        return {"id": event_id}
+        return self.ingest_event(
+            {
+                "tenant_id": namespace,
+                "event_type": "explicit_memory",
+                "actor_type": "user",
+                "content": {"text": text, "memory": memory},
+            },
+            idempotency_key=idempotency_key,
+        )
 
     def _queue_event(self, event_id: str, now: str, commit: bool = False) -> None:
         JobRepository(self.connection).insert_job(

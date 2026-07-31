@@ -40,8 +40,21 @@ def test_cli_export_import_round_trip(tmp_path) -> None:
     archive = tmp_path / "memory.jsonl"
     assert export_database(source, archive) == 1
     target = tmp_path / "target.db"
-    assert import_database(target, archive) == 1
-    assert Database(target).open().execute("SELECT content_json FROM events WHERE id='e1'").fetchone()[0]
+    report = import_database(target, archive)
+    assert report == {
+        "processed": 1,
+        "events_created": 1,
+        "events_skipped": 0,
+        "jobs_queued": 1,
+        "failed_batch": None,
+        "claims_not_rebuilt": False,
+    }
+    target_connection = Database(target).open()
+    assert target_connection.execute("SELECT content_json FROM events WHERE id='e1'").fetchone()[0]
+    assert (
+        target_connection.execute("SELECT idempotency_key FROM jobs WHERE job_type='extract_event'").fetchone()[0]
+        == "extract:e1"
+    )
 
 
 def test_cli_version(capsys: pytest.CaptureFixture[str]) -> None:

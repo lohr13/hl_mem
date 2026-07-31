@@ -4,18 +4,46 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from hl_mem.domain.recall import RecallIntent
 
 
-class EventInput(BaseModel):
+class NamespaceInput(BaseModel):
+    """单租户部署内的相关性软分区输入。"""
+
+    namespace: str = Field(default="default", min_length=1, max_length=100)
+    # 兼容旧请求；namespace 只是软标签，不是授权或数据隔离边界。
+    tenant_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        deprecated=True,
+        description="Deprecated compatibility alias for namespace; not a security boundary.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_conflicting_namespace_aliases(cls, data: Any) -> Any:
+        """同时提供两个名称时要求值完全一致。"""
+        if isinstance(data, dict):
+            namespace = data.get("namespace")
+            tenant_id = data.get("tenant_id")
+            if namespace is not None and tenant_id is not None and namespace != tenant_id:
+                raise ValueError("namespace and deprecated tenant_id must match")
+        return data
+
+    @property
+    def effective_namespace(self) -> str:
+        """返回兼容 alias 解析后的 namespace。"""
+        return str(self.__dict__.get("tenant_id") or self.namespace)
+
+
+class EventInput(NamespaceInput):
     """事件写入请求。"""
 
-    # tenant_id 当前仅为单租户部署中的软标签，并非授权或数据隔离边界。
     id: str | None = None
     idempotency_key: str | None = Field(default=None, max_length=200)
-    tenant_id: str = Field(default="default", max_length=100)
     user_id: str | None = Field(default=None, max_length=100)
     project_id: str | None = Field(default=None, max_length=100)
     agent_id: str | None = Field(default=None, max_length=100)
@@ -48,10 +76,9 @@ class ConsolidationScopeInput(BaseModel):
     similarity_ceiling: float = Field(default=0.95, ge=0.0, le=1.0)
 
 
-class RecallInput(BaseModel):
+class RecallInput(NamespaceInput):
     """记忆召回请求。"""
 
-    # namespace 当前仅为软标签；后台维护、策略归纳和归档仍使用 default。
     query: str = Field(min_length=1, max_length=2000)
     limit: int | None = Field(default=None, ge=1, le=100)
     as_of: str | None = None
@@ -61,7 +88,6 @@ class RecallInput(BaseModel):
     token_budget: int | None = Field(default=None, ge=1)
     context_mode: str | None = Field(default=None, pattern="^(packed)$")
     response_format: Literal["legacy", "context_packet", "both"] = "legacy"
-    namespace: str = Field(default="default", max_length=100)
     debug: bool = False
 
 
@@ -158,7 +184,7 @@ class ContextPacketRecallOutput(BaseModel):
     context_packet: ContextPacketOutput
 
 
-class MemoryInput(BaseModel):
+class MemoryInput(NamespaceInput):
     """显式记忆写入请求。"""
 
     text: str | None = Field(default=None, max_length=50000)
@@ -166,9 +192,17 @@ class MemoryInput(BaseModel):
     subject: str = Field(default="用户", max_length=200)
     predicate: str = Field(default="explicit_memory", max_length=100)
     qualifiers: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
 
 
-class EpisodeInput(BaseModel):
+class MemorySaveOutput(BaseModel):
+    """显式记忆写入的真实幂等结果。"""
+
+    id: str
+    created: bool
+
+
+class EpisodeInput(NamespaceInput):
     """创建 Episode 的请求。"""
 
     goal: str = Field(min_length=1, max_length=5000)
