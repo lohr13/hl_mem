@@ -20,6 +20,7 @@ var/*.db-*
 var/*.db.cleanup_backup_*
 var/*.db.bak_*
 var/*.db.bak.*
+var/*.db.manifest.json
 var/*.log
 *.log
 pytest_*.txt
@@ -41,3 +42,8 @@ scripts/extraction_benchmark_glm*.jsonl
 scripts/glm52_*.jsonl
 fix_env_ak.py
 test_hermes_ak.py
+
+# 评测数据和报告（包含敏感信息，不推送到公开仓库）
+tests/eval/datasets/
+tests/eval/baselines/
+docs/eval-reports/

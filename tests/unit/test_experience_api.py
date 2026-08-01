@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
 from hl_mem.experience.service import ExperienceService
+from hl_mem.storage.claims import ClaimRepository
 
 
 def test_episode_api_supports_lifecycle_and_listing(tmp_path) -> None:
@@ -96,11 +97,17 @@ def test_recall_records_impressions_and_feedback_updates_them(tmp_path) -> None:
     app = create_app(tmp_path / "feedback-api.db")
     with TestClient(app) as client:
         connection = app.state.db.open()
-        connection.execute(
-            "INSERT INTO claims(id,status,subject_entity_id,predicate,value_json,index_text,recorded_from) "
-            "VALUES ('claim-1','active','user','likes','\"tea\"','user likes tea','2026-07-22T00:00:00+00:00')"
+        ClaimRepository(connection).insert_claim(
+            {
+                "id": "claim-1",
+                "status": "active",
+                "subject_entity_id": "user",
+                "predicate": "likes",
+                "value": "tea",
+                "index_text": "user likes tea",
+                "recorded_from": "2026-07-22T00:00:00+00:00",
+            }
         )
-        connection.commit()
 
         recalled = client.post(
             "/v1/recall",

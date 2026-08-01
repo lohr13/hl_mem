@@ -1,4 +1,4 @@
-"""为 trigram FTS 提供不依赖生产环境的确定性行为门禁。"""
+"""为 tokenized FTS v2 和保留的 legacy query builder 提供确定性门禁。"""
 
 from __future__ import annotations
 
@@ -93,23 +93,23 @@ def test_mixed_chinese_english(claim_repository: ClaimRepository) -> None:
     assert _result_ids(claim_repository, "Codex") == ["mixed"]
 
 
-def test_zero_hit_falls_back_to_cjk_and_latin_or_terms(claim_repository: ClaimRepository) -> None:
-    """自然中文问句严格零命中时，应由 CJK 三元片段或 Latin 整词召回。"""
-    assert _traced_result_ids(claim_repository, "用户的GPU型号是什么") == (["gpu"], 2)
+def test_tokenized_fts_answers_cjk_and_latin_in_one_match(claim_repository: ClaimRepository) -> None:
+    """自然中英混合问句应由统一 lexicalizer 在单次 v2 MATCH 中召回。"""
+    assert _traced_result_ids(claim_repository, "用户的GPU型号是什么") == (["gpu"], 1)
 
 
-def test_strict_match_does_not_broaden_to_fallback(claim_repository: ClaimRepository) -> None:
-    """严格 phrase 已命中时，不应再由 OR fallback 引入局部匹配。"""
+def test_tokenized_match_does_not_broaden_results(claim_repository: ClaimRepository) -> None:
+    """tokenized AND 查询命中完整文本时不应引入局部匹配。"""
     assert _traced_result_ids(claim_repository, "完整严格查询") == (["strict-exact"], 1)
 
 
-def test_raw_strict_hit_does_not_fallback_after_visibility_filter(claim_repository: ClaimRepository) -> None:
-    """严格 SQL 有 raw row 时，即使后置可见性过滤为空也不应 fallback。"""
+def test_visibility_filter_does_not_issue_legacy_fallback(claim_repository: ClaimRepository) -> None:
+    """v2 SQL 有 raw row 但后置可见性为空时，不应再发出 legacy fallback。"""
     assert _traced_result_ids(claim_repository, "不可见严格命中") == ([], 1)
 
 
-def test_fallback_handles_quoted_mixed_query(claim_repository: ClaimRepository) -> None:
-    """双引号应作为安全边界处理，fallback 仍可召回且不产生 FTS 语法错误。"""
+def test_tokenized_fts_handles_quoted_mixed_query(claim_repository: ClaimRepository) -> None:
+    """双引号应作为安全边界处理，统一 lexicalizer 仍可召回且不产生语法错误。"""
     assert _result_ids(claim_repository, '用户的"GPU"型号是什么') == ["gpu"]
 
 
@@ -136,7 +136,7 @@ def test_trigram_fallback_query_filters_boundaries_and_duplicates(query: str, ex
 
 
 def test_short_query_returns_empty(claim_repository: ClaimRepository) -> None:
-    """少于三个 Unicode 字符的 trigram 查询应返回空结果。"""
+    """没有对应词项的短查询应安全返回空结果。"""
     assert _result_ids(claim_repository, "FT") == []
 
 
@@ -147,10 +147,10 @@ def test_special_characters_quoted(claim_repository: ClaimRepository, query: str
 
 
 @pytest.mark.parametrize("query", ["", "   ", "，。！？", '"'])
-def test_non_searchable_query_has_no_fallback(
+def test_non_searchable_query_issues_no_match(
     claim_repository: ClaimRepository,
     query: str,
 ) -> None:
-    """空白或纯标点查询应安全返回空结果，且不构造 fallback MATCH。"""
+    """空白或纯标点查询应安全返回空结果，且不执行任何 MATCH。"""
     assert build_fts_trigram_fallback_query(query) == ""
-    assert _traced_result_ids(claim_repository, query) == ([], 1)
+    assert _traced_result_ids(claim_repository, query) == ([], 0)

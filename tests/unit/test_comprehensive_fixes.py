@@ -17,6 +17,7 @@ from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import Embedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.settings import Settings
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
@@ -169,11 +170,17 @@ def test_recall_feedback_failure_does_not_change_main_result(tmp_path, monkeypat
     )
     app = server.create_app(tmp_path / "recall-feedback.db")
     connection = app.state.db.open()
-    connection.execute(
-        "INSERT INTO claims(id,status,subject_entity_id,predicate,value_json,index_text,recorded_from) "
-        "VALUES ('claim-1','active','user','likes','\"tea\"','user likes tea','2026-07-22T00:00:00+00:00')"
+    ClaimRepository(connection).insert_claim(
+        {
+            "id": "claim-1",
+            "status": "active",
+            "subject_entity_id": "user",
+            "predicate": "likes",
+            "value": "tea",
+            "index_text": "user likes tea",
+            "recorded_from": "2026-07-22T00:00:00+00:00",
+        }
     )
-    connection.commit()
     with TestClient(app) as client:
         response = client.post(
             "/v1/recall",

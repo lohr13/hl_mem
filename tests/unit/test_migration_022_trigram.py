@@ -122,10 +122,10 @@ def test_schema_migrations_registered(
     assert row["version"] == "022_fts_trigram"
 
 
-def test_events_fts_still_unicode61(
+def test_events_repository_uses_tokenized_v2_after_later_migrations(
     upgraded_database: tuple[Database, sqlite3.Connection],
 ) -> None:
-    """migration 022 不改变 events FTS 的 unicode61 中文整词行为。"""
+    """完整升级后的 EventRepository 应通过 tokenized FTS v2 命中中文词。"""
     _, connection = upgraded_database
     repository = EventRepository(connection)
     assert repository.insert_event(
@@ -138,4 +138,4 @@ def test_events_fts_still_unicode61(
             "recorded_at": "2026-07-24T00:00:00+00:00",
         }
     )
-    assert repository.search_events_fts("记忆系统") == []
+    assert [event["id"] for event in repository.search_events_fts("记忆系统")] == ["event-memory"]

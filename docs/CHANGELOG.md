@@ -1,5 +1,32 @@
 # HL-Mem 变更记录
 
+## v0.20.0 (2026-08-01)
+
+### Tokenized FTS v2 Migration
+
+- 新增确定性中文 lexicalizer：NFKC 归一化、jieba 领域词典与 stopwords、技术标识符整体词和分段词；claims、events 与 claim topic tags 的生产稀疏检索统一切换到预分词 FTS v2，dense、RRF 与 reranker 通道保持不变。
+- 新增不可变 migration 036，创建 `claims_fts_v2`、`events_fts_v2`、`claims_tags_fts_v2` 与源行删除清理 trigger；启动时校验 source/v2 rowid 集合，不完整时在单一 `BEGIN IMMEDIATE` 事务中原子重建三个通道。
+- claim/event 写入、`index_text` compare-and-set 回填和 v2 文档更新共享事务边界；新增 `backfill_tokenized_fts` 工具支持按 channel 原子重建。
+- 旧 trigram/raw FTS 表保留用于回滚窗口，但生产查询不再调用 legacy sanitizer 或 trigram fallback；计划在后续 migration 037 删除旧表。
+
+### Evaluation
+
+| 版本 / 口径 | 正例数 | Hit@1 | Hit@5 | MRR |
+|---|---:|---:|---:|---:|
+| v0.19.1 原始标签 | 20 | 0.6500 | 0.7500 | 0.6917 |
+| v0.19.1 有证据子集 | 17 | 0.7647 | 0.8824 | 0.8137 |
+| v0.20.0 tokenized FTS v2 + real dense/reranker | 17 | 0.8235 | 0.9412 | 0.8725 |
+
+- 30-case 数据集经原文核对后将无库内事实的 q13、q16、q18 修正为 no-answer；当前口径为 17 条有证据正例与 13 条 no-answer。
+- 发布门禁保持 hybrid Hit@5 >= 0.75；纯 FTS 的 Hit@5 为 0.1765，仅作为语义改写问题的诊断指标。
+
+### Known Issues and Compatibility
+
+- q08“向量模型”仍依赖后续语义别名与 reranker 融合改进；dense 通道仍会为 no-answer 查询补足候选，当前 no-answer precision 为 0，拒答阈值标定不在本版本范围内。
+- 绕过 repository 的原始 SQL UPDATE 不会运行 Python lexicalizer，需用 `backfill_tokenized_fts` 修复内容陈旧；原始 SQL INSERT 造成的缺行会在下次启动时自动重建。
+- lexicalizer 首次加载 jieba 词典会增加冷启动时间，首次升级还会同步重建三个 v2 channel。
+- 无公共 API breaking change。数据库 migration 036 不可变且生产稀疏检索直切 v2；升级前应按既有流程备份数据库并预留首次重建时间。
+
 ## v0.19.1 (2026-07-31)
 
 ### Bug Fixes

@@ -18,7 +18,7 @@ from hl_mem.storage.database import Database
 pytestmark = pytest.mark.eval
 
 DATABASE_PATH = Path("var/hl_mem.db")
-DATASET_PATH = Path(__file__).parent / "datasets" / "chinese_fts_eval.jsonl"
+DATASET_PATH = Path.home() / "hl_mem_eval_data" / "datasets" / "chinese_fts_eval.jsonl"
 RESULT_LIMIT = 10
 
 
@@ -55,6 +55,8 @@ def _result_details(results: list[dict[str, Any]]) -> list[str]:
 
 def test_chinese_fts_retrieval_evaluation() -> None:
     """按 gold_text 记录中文 FTS-only 与混合召回排名指标。"""
+    if not DATASET_PATH.is_file():
+        pytest.skip(f"evaluation dataset does not exist: {DATASET_PATH}")
     if not DATABASE_PATH.is_file():
         pytest.skip(f"evaluation database does not exist: {DATABASE_PATH}")
 
