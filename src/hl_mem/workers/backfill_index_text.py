@@ -13,6 +13,7 @@ from typing import Any
 from hl_mem.domain.claims.claim import IndexTextMode, build_index_text
 from hl_mem.llm.client import classify_provider_error
 from hl_mem.protocols import EmbedderProtocol
+from hl_mem.recall.lexicalizer import prepare_fts_document
 from hl_mem.workers.index_integrity import check_index_integrity
 
 
@@ -149,7 +150,7 @@ def backfill_index_text(
 
     while True:
         rows = connection.execute(
-            "SELECT id,status,subject_entity_id,predicate,value_json,qualifiers_json,canonical_slot,"
+            "SELECT rowid AS claim_rowid,id,status,subject_entity_id,predicate,value_json,qualifiers_json,canonical_slot,"
             "topic_tags_json,index_text,embedding_dense,embedding_model,embedding_dim "
             "FROM claims WHERE status IN ('active','superseded','expired') "
             "AND id>? ORDER BY id LIMIT ?",
@@ -269,6 +270,10 @@ def backfill_index_text(
                     ),
                 )
                 if result.rowcount == 1:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO claims_fts_v2(rowid,terms) VALUES(?,?)",
+                        (row["claim_rowid"], prepare_fts_document(target)),
+                    )
                     applied += 1
                 else:
                     failed += 1

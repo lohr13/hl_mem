@@ -14,15 +14,14 @@ from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
 from hl_mem.protocols import ClaimRow, EmbedderProtocol
+from hl_mem.recall.lexicalizer import prepare_fts_document, prepare_fts_query
 from hl_mem.settings import Settings
 from hl_mem.storage._shared import (
-    build_fts_trigram_fallback_query,
     decode_json,
     encode_json,
     insert_row,
     is_fts_syntax_error,
     row_to_dict,
-    sanitize_fts_query,
 )
 
 
@@ -51,7 +50,7 @@ class ClaimRepository:
         self.recall_vector_scan_limit = resolved_settings.recall_vector_scan_limit
 
     def insert_claim(self, claim: dict[str, Any], commit: bool = True) -> bool:
-        """编码结构化字段并幂等写入一条 Claim。"""
+        """编码结构化字段，并在同一事务同步写入 tokenized FTS v2。"""
         stored = dict(claim)
         if "value" in stored:
             stored["value_json"] = encode_json(stored.pop("value"), sort_keys=True)
@@ -64,7 +63,34 @@ class ClaimRepository:
             if "topic_tags" not in index_claim and stored.get("topic_tags_json") is not None:
                 index_claim["topic_tags"] = decode_json(stored["topic_tags_json"])
             stored["index_text"] = build_index_text(index_claim)
-        return insert_row(self.connection, "claims", stored, commit)
+        try:
+            created = insert_row(self.connection, "claims", stored, commit=False)
+            if created:
+                row = self.connection.execute(
+                    "SELECT rowid,index_text,topic_tags_json FROM claims WHERE id=?",
+                    (stored["id"],),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError(f"inserted claim is missing: {stored['id']}")
+                raw_tags = decode_json(row["topic_tags_json"] or "[]")
+                if not isinstance(raw_tags, list):
+                    raise ValueError(f"topic_tags_json for claim {stored['id']} must be a JSON array")
+                tags_text = " ".join(dict.fromkeys(tag for tag in raw_tags if isinstance(tag, str)))
+                self.connection.execute(
+                    "INSERT INTO claims_fts_v2(rowid,terms) VALUES(?,?)",
+                    (row["rowid"], prepare_fts_document(row["index_text"] or "")),
+                )
+                self.connection.execute(
+                    "INSERT INTO claims_tags_fts_v2(rowid,tags_text) VALUES(?,?)",
+                    (row["rowid"], tags_text),
+                )
+            if commit:
+                self.connection.commit()
+            return created
+        except Exception:
+            if commit and self.connection.in_transaction:
+                self.connection.rollback()
+            raise
 
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:
         """按标识获取并解码 Claim，不存在时返回 None。"""
@@ -571,12 +597,12 @@ class ClaimRepository:
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
         statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
         match_sql = (
-            "SELECT c.* FROM claims_fts f JOIN claims c ON c.rowid=f.rowid "
-            f"WHERE claims_fts MATCH ? AND c.status IN {statuses} "
+            "SELECT c.* FROM claims_fts_v2 f JOIN claims c ON c.rowid=f.rowid "
+            f"WHERE claims_fts_v2 MATCH ? AND c.status IN {statuses} "
             "AND c.namespace_key=? "
             "AND (c.valid_from IS NULL OR c.valid_from<=?) "
             "AND (c.valid_to IS NULL OR c.valid_to>?) "
-            "ORDER BY bm25(claims_fts) LIMIT ?"
+            "ORDER BY bm25(claims_fts_v2) LIMIT ?"
         )
 
         def execute_match(match_query: str) -> list[sqlite3.Row]:
@@ -585,13 +611,11 @@ class ClaimRepository:
                 (match_query, namespace, reference, reference, limit),
             ).fetchall()
 
-        strict_query = sanitize_fts_query(query, tokenizer="trigram")
+        match_query = prepare_fts_query(query)
+        if not match_query:
+            return []
         try:
-            rows = execute_match(strict_query)
-            if not rows:
-                fallback_query = build_fts_trigram_fallback_query(query)
-                if fallback_query and fallback_query != strict_query:
-                    rows = execute_match(fallback_query)
+            rows = execute_match(match_query)
         except sqlite3.OperationalError as error:
             if not is_fts_syntax_error(error):
                 raise
@@ -624,12 +648,12 @@ class ClaimRepository:
         match_query = " OR ".join(f'"{tag.replace(chr(34), chr(34) * 2)}"' for tag in dict.fromkeys(query_tags))
         try:
             rows = self.connection.execute(
-                "SELECT c.* FROM claims_tags_fts f JOIN claims c ON c.rowid=f.rowid "
-                f"WHERE claims_tags_fts MATCH ? AND c.status IN {statuses} "
+                "SELECT c.* FROM claims_tags_fts_v2 f JOIN claims c ON c.rowid=f.rowid "
+                f"WHERE claims_tags_fts_v2 MATCH ? AND c.status IN {statuses} "
                 "AND c.namespace_key=? "
                 "AND (c.valid_from IS NULL OR c.valid_from<=?) "
                 "AND (c.valid_to IS NULL OR c.valid_to>?) "
-                "ORDER BY bm25(claims_tags_fts) LIMIT ?",
+                "ORDER BY bm25(claims_tags_fts_v2) LIMIT ?",
                 (match_query, namespace, reference, reference, limit),
             ).fetchall()
         except sqlite3.OperationalError as error:

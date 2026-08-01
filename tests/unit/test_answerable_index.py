@@ -14,6 +14,7 @@ import hl_mem.workers.backfill_index_text as backfill_module
 from hl_mem.domain.claims.claim import build_index_text
 from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.embedder import FakeEmbedder
+from hl_mem.recall.lexicalizer import prepare_fts_document
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
@@ -154,6 +155,35 @@ def test_backfill_covers_recallable_statuses_and_ignores_candidate(tmp_path) -> 
     assert all(row["index_text"] == "hl_mem 使用的数据库 SQLite" for row in updated)
     assert all(len(row["embedding_dense"]) == 32 for row in updated)
     assert tuple(candidate_after) == tuple(candidate_before)
+
+
+def test_backfill_replaces_tokenized_fts_v2_row_with_updated_index_text(tmp_path) -> None:
+    """index_text 的 CAS 更新必须在同一事务替换对应的 v2 文档。"""
+    connection = Database(tmp_path / "tokenized-fts-sync.db").open()
+    _insert_claim(connection)
+    rowid = connection.execute("SELECT rowid FROM claims WHERE id='claim-1'").fetchone()[0]
+    connection.execute(
+        "INSERT OR REPLACE INTO claims_fts_v2(rowid,terms) VALUES(?,?)",
+        (rowid, "stale terms"),
+    )
+    connection.commit()
+
+    result = backfill_index_text(
+        connection,
+        FakeEmbedder(8),
+        mode="answerable",
+        version="v1",
+        batch_size=100,
+        max_attempts=1,
+    )
+
+    expected_text = "hl_mem 使用的数据库 SQLite"
+    assert result.backfilled == 1
+    indexed_terms = connection.execute(
+        "SELECT terms FROM claims_fts_v2 WHERE rowid=?",
+        (rowid,),
+    ).fetchone()[0]
+    assert indexed_terms == prepare_fts_document(expected_text)
 
 
 def test_backfill_projection_includes_qualifiers(tmp_path) -> None:

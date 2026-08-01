@@ -10,14 +10,15 @@ from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.protocols import ImageDescription
+from hl_mem.recall.lexicalizer import prepare_fts_document, prepare_fts_query
 from hl_mem.storage._shared import (
     decode_json,
     encode_json,
     insert_row,
     is_fts_syntax_error,
     row_to_dict,
-    sanitize_fts_query,
 )
+from hl_mem.storage.tokenized_fts import event_text_for_fts
 
 
 class EventRepository:
@@ -27,7 +28,7 @@ class EventRepository:
         self.connection = connection
 
     def insert_event(self, event: dict[str, Any], commit: bool = True) -> bool:
-        """写入事件，并在需要时提交事务。"""
+        """写入事件，并在同一事务同步写入 tokenized FTS v2。"""
         stored = dict(event)
         if "content" in stored:
             content_json = encode_json(stored.pop("content"), sort_keys=True)
@@ -35,7 +36,26 @@ class EventRepository:
             stored.setdefault("content_hash", hashlib.sha256(content_json.encode()).hexdigest())
         if "metadata" in stored:
             stored["metadata_json"] = encode_json(stored.pop("metadata"), sort_keys=True)
-        return insert_row(self.connection, "events", stored, commit)
+        try:
+            created = insert_row(self.connection, "events", stored, commit=False)
+            if created:
+                row = self.connection.execute(
+                    "SELECT rowid,content_json FROM events WHERE id=?",
+                    (stored["id"],),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError(f"inserted event is missing: {stored['id']}")
+                self.connection.execute(
+                    "INSERT INTO events_fts_v2(rowid,terms) VALUES(?,?)",
+                    (row["rowid"], prepare_fts_document(event_text_for_fts(row["content_json"]))),
+                )
+            if commit:
+                self.connection.commit()
+            return created
+        except Exception:
+            if commit and self.connection.in_transaction:
+                self.connection.rollback()
+            raise
 
     def get_event(self, event_id: str) -> dict[str, Any] | None:
         """按标识返回事件。"""
@@ -150,11 +170,14 @@ class EventRepository:
 
     def search_events_fts(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """执行安全的事件全文检索。"""
+        match_query = prepare_fts_query(query)
+        if not match_query:
+            return []
         try:
             rows = self.connection.execute(
-                "SELECT e.* FROM events_fts f JOIN events e ON e.rowid=f.rowid "
-                "WHERE events_fts MATCH ? ORDER BY bm25(events_fts) LIMIT ?",
-                (sanitize_fts_query(query), limit),
+                "SELECT e.* FROM events_fts_v2 f JOIN events e ON e.rowid=f.rowid "
+                "WHERE events_fts_v2 MATCH ? ORDER BY bm25(events_fts_v2) LIMIT ?",
+                (match_query, limit),
             ).fetchall()
         except sqlite3.OperationalError as error:
             if not is_fts_syntax_error(error):
