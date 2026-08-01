@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from hl_mem.domain.claims.attributes import validate_canonical_attribute
 from hl_mem.ingest.schemas import (
     ExtractionResponseSchema,
     extraction_response_json_schema,
@@ -33,6 +34,15 @@ def _valid_response() -> dict[str, Any]:
 
 def test_valid_extraction_response_is_accepted() -> None:
     assert ExtractionResponseSchema.model_validate(_valid_response()).claims[0].importance == 0.8
+
+
+def test_noncanonical_attribute_reaches_domain_fallback() -> None:
+    payload = _valid_response()
+    payload["claims"][0]["canonical_attribute"] = "中文属性"
+
+    claim = ExtractionResponseSchema.model_validate(payload).claims[0]
+
+    assert validate_canonical_attribute(claim.predicate, claim.canonical_attribute) == "custom.unknown"
 
 
 @pytest.mark.parametrize(

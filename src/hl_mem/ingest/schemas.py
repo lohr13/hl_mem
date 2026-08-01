@@ -85,7 +85,7 @@ class ExtractedClaimSchema(BaseModel):
 
     subject: str = Field(min_length=1, max_length=200)
     predicate: str = Field(min_length=1, max_length=100)
-    canonical_attribute: str = Field(pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+    canonical_attribute: str = Field(min_length=1)
     canonical_slot: CanonicalSlot | None = None
     topic_tags: list[TopicTag] = Field(default_factory=list)
     value: str = Field(min_length=1)

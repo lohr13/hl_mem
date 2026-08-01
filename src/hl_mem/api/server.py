@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
@@ -48,7 +48,6 @@ from hl_mem.experience.service import (
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
-from hl_mem.observability.llm_spans import llm_span_stats
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.reranker import FakeReranker
 from hl_mem.recall.trace import SearchTracer
@@ -171,14 +170,9 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         )
 
     @app.get("/healthz")
-    def healthz(
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
+    def healthz() -> dict[str, Any]:
         from hl_mem.application.health import monitoring_snapshot
 
-        connection.execute("SELECT 1").fetchone()
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        operations = llm_span_stats(connection, since)["operations"]
         return {
             "status": "ok",
             "version": __version__,
@@ -186,10 +180,6 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
             "settings": settings.snapshot(),
             "components": components.component_health(),
-            "llm_stats": {
-                "calls": sum(item["count"] for item in operations),
-                "total_tokens": sum(item["total_tokens"] for item in operations),
-            },
             "vector_search": SearchTracer.vector_search_metrics(),
             "recall_side_effects": recall_side_effect_health(),
             "monitoring": monitoring_snapshot(),

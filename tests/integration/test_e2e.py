@@ -55,16 +55,20 @@ def test_data_survives_database_restart(tmp_path) -> None:
         assert response.json()["results"][0]["evidence"]
 
 
-def test_healthz(tmp_path) -> None:
+def test_healthz_does_not_open_a_database_connection(monkeypatch, tmp_path) -> None:
     from hl_mem import __version__
 
-    with TestClient(create_app(tmp_path / "health.db")) as client:
+    app = create_app(tmp_path / "health.db")
+    with TestClient(app) as client:
+        def fail_connect() -> None:
+            raise AssertionError("healthz must not open a database connection")
+
+        monkeypatch.setattr(app.state.db, "connect", fail_connect)
         result = client.get("/healthz").json()
         assert result["status"] == "ok"
         assert result["version"] == __version__
         assert "embedder" in result
         assert "reranker" in result
-        assert result["llm_stats"] == {"calls": 0, "total_tokens": 0}
 
 
 def test_jobs_api_includes_progress_fields(tmp_path) -> None:
