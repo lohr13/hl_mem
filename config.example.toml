@@ -47,6 +47,12 @@ vector_scan_limit = 200
 packed_context_token_budget = 2000
 query_expansion_mode = "off"
 tag_channel_enabled = false
+relevance_gate_mode = "observe"
+relevance_reranker_floor = 0.4
+relevance_dense_floor = 0.3
+relevance_relative_drop = 0.30
+relevance_keep_top1 = false
+relevance_intents = ["current_state"]
 
 [dedup]
 enabled = true
