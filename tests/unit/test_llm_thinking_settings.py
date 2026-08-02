@@ -1,5 +1,7 @@
 """LLM 思考模式配置与组件传递测试。"""
 
+from dataclasses import replace
+
 import pytest
 
 from hl_mem.components import make_llm_client
@@ -18,7 +20,7 @@ def test_llm_thinking_can_be_enabled() -> None:
 
 def test_llm_thinking_rejects_invalid_value() -> None:
     with pytest.raises(ConfigurationError, match="HL_MEM_LLM_ENABLE_THINKING"):
-        Settings(enable_llm_thinking="sometimes").validate()  # type: ignore[arg-type]
+        replace(Settings.for_test(), enable_llm_thinking="sometimes").validate()  # type: ignore[arg-type]
 
 
 def test_llm_thinking_is_exposed_in_health_snapshot() -> None:

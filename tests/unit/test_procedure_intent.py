@@ -22,7 +22,7 @@ def test_routes_tool_and_procedure_signals_with_expected_priority() -> None:
 
 def test_settings_default_to_keyword_and_validate_bounds() -> None:
     """默认路由模式必须是 keyword，且候选与时间窗口有界。"""
-    settings = Settings()
+    settings = Settings.for_test()
     assert settings.procedure_recall_mode == "keyword"
     assert settings.procedure_candidate_limit == 30
     settings.validate()

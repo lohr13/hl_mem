@@ -596,10 +596,10 @@ def test_backfill_cli_exits_nonzero_on_integrity_failure(tmp_path, monkeypatch, 
 
 def test_index_backfill_settings_validation() -> None:
     """新增回填参数必须为正数且版本非空。"""
-    replace(Settings(), index_text_mode="answerable").validate()
+    replace(Settings.for_test(), index_text_mode="answerable").validate()
     with pytest.raises(ConfigurationError):
-        replace(Settings(), index_backfill_batch_size=0).validate()
+        replace(Settings.for_test(), index_backfill_batch_size=0).validate()
     with pytest.raises(ConfigurationError):
-        replace(Settings(), index_backfill_max_attempts=0).validate()
+        replace(Settings.for_test(), index_backfill_max_attempts=0).validate()
     with pytest.raises(ConfigurationError):
-        replace(Settings(), index_text_version=" ").validate()
+        replace(Settings.for_test(), index_text_version=" ").validate()

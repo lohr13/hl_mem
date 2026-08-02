@@ -182,8 +182,12 @@ class Settings:
     tag_candidate_limit: int = field(default=20, metadata={"toml": "recall.tag_candidate_limit"})
     # query_expansion: auto 仅在短查询或指代查询时触发 LLM 改写，提升 recall
     query_expansion_mode: QueryExpansionMode = field(
-        default="off",
+        default="auto",
         metadata={"toml": "recall.query_expansion_mode"},
+    )
+    query_expansion_model: str | None = field(
+        default=None,
+        metadata={"toml": "recall.query_expansion_model"},
     )
     query_expansion_max: int = field(default=2, metadata={"toml": "recall.query_expansion_max"})
     query_expansion_candidate_floor: int = field(
@@ -195,11 +199,11 @@ class Settings:
         metadata={"toml": "recall.query_expansion_token_ceiling"},
     )
     query_expansion_timeout_seconds: float = field(
-        default=2.0,
+        default=5.0,
         metadata={"toml": "recall.query_expansion_timeout_seconds"},
     )
     query_expansion_total_timeout_seconds: float = field(
-        default=3.0,
+        default=6.0,
         metadata={"toml": "recall.query_expansion_total_timeout_seconds"},
     )
     query_expansion_max_concurrency: int = field(
@@ -739,6 +743,7 @@ class Settings:
             "tag_channel_weight": self.tag_channel_weight,
             "tag_candidate_limit": self.tag_candidate_limit,
             "query_expansion_mode": self.query_expansion_mode,
+            "query_expansion_model": self.query_expansion_model,
             "query_expansion_max": self.query_expansion_max,
             "query_expansion_candidate_floor": self.query_expansion_candidate_floor,
             "query_expansion_token_ceiling": self.query_expansion_token_ceiling,

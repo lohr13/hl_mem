@@ -29,7 +29,9 @@ def test_missing_default_and_explicit_config_fail(tmp_path: Path, monkeypatch: p
 def test_empty_toml_uses_static_defaults(tmp_path: Path) -> None:
     config_path = _write(tmp_path / "empty.toml")
 
-    assert load_settings(config_path, tmp_path / ".env", environ={}) == Settings()
+    assert load_settings(config_path, tmp_path / ".env", environ={"LLM_API_KEY": "test-key"}) == Settings(
+        llm_api_key="test-key"
+    )
 
 
 def test_loads_native_types_tuple_and_string_enum(tmp_path: Path) -> None:
@@ -44,6 +46,7 @@ pool_size = 4
 timeout = 12
 
 [recall]
+query_expansion_model = "glm-4.7"
 tag_channel_enabled = true
 relevance_intents = ["current_state", "preference"]
 vector_backend = "sqlite_scan"
@@ -58,6 +61,7 @@ decay_min_confidence = 0.1
     assert settings.database_path == "custom.db"
     assert settings.database_pool_size == 4
     assert settings.llm_timeout == 12.0
+    assert settings.query_expansion_model == "glm-4.7"
     assert settings.tag_channel_enabled is True
     assert settings.relevance_intents == ("current_state", "preference")
     assert settings.vector_backend is VectorBackend.SQLITE_SCAN

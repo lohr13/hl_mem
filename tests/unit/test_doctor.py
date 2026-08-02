@@ -20,7 +20,7 @@ def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
     database.open()
     database.close()
     config_path = tmp_path / "hl_mem.toml"
-    config_path.write_text("", encoding="utf-8")
+    config_path.write_text('[recall]\nquery_expansion_mode = "off"\n', encoding="utf-8")
     env_path = tmp_path / ".env"
     env_path.write_text("", encoding="utf-8")
     monkeypatch.setattr(

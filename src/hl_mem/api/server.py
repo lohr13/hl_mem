@@ -129,7 +129,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     """使用已加载的统一配置组装数据库、应用服务、审计和全部 REST 路由。"""
     if not isinstance(settings, Settings):
-        settings = replace(Settings(), database_path=str(settings))
+        settings = replace(Settings.for_test(), database_path=str(settings))
     components.initialize_process(settings)
     database = Database(settings=settings)
     embedder = components.make_embedder(settings)

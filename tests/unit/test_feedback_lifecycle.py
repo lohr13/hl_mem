@@ -35,7 +35,7 @@ def test_settings_default_to_observe_and_validate_mode() -> None:
     """默认 rollout 只观察，非法模式拒绝启动。"""
     assert Settings().feedback_lifecycle_mode == "observe"
     with pytest.raises(Exception):
-        replace(Settings(), feedback_lifecycle_mode="invalid").validate()
+        replace(Settings.for_test(), feedback_lifecycle_mode="invalid").validate()
 
 
 def test_usefulness_rebuild_matches_incremental_aggregate(tmp_path) -> None:

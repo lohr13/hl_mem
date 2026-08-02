@@ -170,7 +170,7 @@ def test_fallback_fts_only_candidate_is_irrelevant_without_dense_evidence() -> N
 def test_relevance_thresholds_must_be_unit_interval(field_name: str, value: float) -> None:
     """relevance 阈值必须处于闭区间 [0, 1]。"""
     with pytest.raises(ConfigurationError):
-        replace(Settings(), **{field_name: value}).validate()
+        replace(Settings.for_test(), **{field_name: value}).validate()
 
 
 def test_relevance_settings_snapshot_contains_non_sensitive_values() -> None:

@@ -67,6 +67,7 @@ def test_ab_test_uses_isolated_copies_and_preserves_source_snapshot(tmp_path: Pa
         embedding_dim=8,
         extractor_mode="fake",
         reranker_mode="off",
+        query_expansion_mode="off",
         index_backfill_batch_size=10,
     )
     embedder = FakeEmbedder(8)

@@ -10,7 +10,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 151
+    assert len(fields(Settings)) == 152
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -18,7 +18,10 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.embedder_mode == "fake"
     assert settings.reranker_mode == "off"
     assert settings.image_describer_mode == "off"
-    assert settings.query_expansion_mode == "off"
+    assert settings.query_expansion_mode == "auto"
+    assert settings.query_expansion_model is None
+    assert settings.query_expansion_timeout_seconds == 5.0
+    assert settings.query_expansion_total_timeout_seconds == 6.0
     assert settings.relation_discovery_mode == "off"
     assert settings.dedup_threshold == 0.92
     assert settings.daily_token_limit == 500_000

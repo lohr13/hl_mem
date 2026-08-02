@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from hl_mem.core.vector import batch_cosine_similarity, cosine_similarity, pack_vector
@@ -99,4 +101,4 @@ def test_vector_batch_size_settings_contract() -> None:
     assert settings.snapshot()["vector_batch_size"] == 64
 
     with pytest.raises(ConfigurationError, match="HL_MEM_VECTOR_BATCH_SIZE must be positive"):
-        Settings(vector_batch_size=0).validate()
+        replace(Settings.for_test(), vector_batch_size=0).validate()

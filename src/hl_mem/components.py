@@ -93,6 +93,7 @@ def make_llm_client(
     connection: sqlite3.Connection | None = None,
     *,
     operation: str = "other",
+    model: str | None = None,
 ) -> LLMClient:
     """依据统一配置创建 provider 无关的 LLM 客户端。"""
     if not settings.llm_api_key:
@@ -110,10 +111,11 @@ def make_llm_client(
         if provider_type is DashScopeProvider
         else provider_type()
     )
+    normalized_model = model.strip() if model is not None else None
     return LLMClient(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
-        model=settings.llm_model,
+        model=normalized_model or settings.llm_model,
         provider=provider,
         timeout=httpx.Timeout(settings.llm_timeout),
         max_attempts=settings.llm_max_attempts,
@@ -153,7 +155,12 @@ def make_query_expander(
         _record_component_health("query_expander", settings.query_expansion_mode, "off")
         return None
     result = QueryExpander(
-        make_llm_client(settings, connection, operation="query_expansion"),
+        make_llm_client(
+            settings,
+            connection,
+            operation="query_expansion",
+            model=settings.query_expansion_model,
+        ),
         max_concurrency=settings.query_expansion_max_concurrency,
     )
     _record_component_health(
