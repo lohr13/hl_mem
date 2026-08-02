@@ -6,11 +6,14 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from hl_mem.application.recall import RecallService
 from hl_mem.ingest.embedder import FakeEmbedder, pack_vector
 from hl_mem.recall.recall_pipeline import hybrid_claims
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 
 
@@ -149,3 +152,38 @@ def test_recall_service_only_returns_search_trace_in_debug_mode(tmp_path: Path) 
     assert debug["search_trace"]["candidate_limit"] == 9
     assert debug["search_trace"]["query_hash"] != "private query"
     assert "private query" not in json.dumps(debug["search_trace"])
+
+
+def test_recall_trace_preserves_dense_cosine_for_relevance_gate(tmp_path: Path) -> None:
+    database = Database(tmp_path / "dense-search-trace.db")
+    query = "dense trace query"
+    embedder = FakeEmbedder(4)
+    try:
+        with database.connect() as connection:
+            ClaimRepository(connection).insert_claim(
+                {
+                    "id": "dense-claim",
+                    "subject_entity_id": "user",
+                    "predicate": "preference",
+                    "value": "dense trace value",
+                    "index_text": query,
+                    "embedding_dense": embedder.embed_one(query),
+                    "status": "active",
+                    "valid_from": "2026-01-01T00:00:00+00:00",
+                    "recorded_from": "2026-01-01T00:00:00+00:00",
+                    "confidence": 1.0,
+                    "importance": 0.5,
+                }
+            )
+            settings = replace(Settings(), relevance_gate_mode="observe", recall_default_limit=1)
+            response = RecallService(connection, embedder, settings=settings).recall(
+                query,
+                debug=True,
+                query_id="dense-query",
+            )
+    finally:
+        database.close()
+
+    candidate = response["search_trace"]["candidates"]["dense-claim"]
+    assert candidate["channel_scores"]["dense"] == pytest.approx(1.0)
+    assert candidate["evidence_score"] == pytest.approx(1.0)

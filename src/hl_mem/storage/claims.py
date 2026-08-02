@@ -353,7 +353,7 @@ class ClaimRepository:
             )
             scored_claims.extend(zip(claims, scores))
         scored_claims.sort(key=lambda item: (-item[1], str(item[0]["id"])))
-        return [claim for claim, _ in scored_claims[:limit]]
+        return [{**claim, "_score": score} for claim, score in scored_claims[:limit]]
 
     def search(
         self,
