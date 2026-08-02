@@ -17,12 +17,17 @@ OpenAPI documentation is available at `/docs` while the service is running.
 - `tenant_id` is a deprecated compatibility alias for `namespace`; clients should send `namespace`, and conflicting values
   are rejected. Neither field provides SaaS multi-tenant isolation, RBAC, billing isolation, or per-tenant keys.
 - Recall can filter both valid time (`as_of`) and recorded time (`known_as_of`).
+- `/healthz` is an async, database-free process liveness endpoint. It reports version, effective settings, component state,
+  and in-memory metrics without opening a SQLite connection or calling an external provider; use database-backed read-only
+  audit surfaces when storage or historical LLM span statistics are required.
+- Every HTTP request emits `request_started` and `request_finished` INFO records with method, path, status, and duration;
+  a caller-supplied `X-Request-ID` is sanitized and included when present.
 
 ## Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/healthz` | Check database/component health, version, settings snapshot, and recent LLM/vector metrics |
+| `GET` | `/healthz` | Check process/component liveness, version, settings snapshot, and in-memory metrics without database I/O |
 | `POST` | `/v1/events` | Idempotently ingest an event and enqueue its extraction job |
 | `POST` | `/v1/extract/dry-run` | Extract candidate claims and token usage without persisting memory data |
 | `POST` | `/v1/consolidate` | Enqueue conflict consolidation for an explicit namespace/slot/tag scope |

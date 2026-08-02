@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.19.0
-- Updated: 2026-07-31
+- Document baseline: v0.20.1
+- Updated: 2026-08-02
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -107,7 +107,7 @@ src/hl_mem/
 │   ├── jobs.py               # Durable job queue
 │   ├── relation_proposals.py # Auditable relation candidates
 │   ├── usefulness.py         # Feedback usefulness aggregation
-│   └── migrations/           # 35 immutable SQL migrations (001-035)
+│   └── migrations/           # 36 immutable SQL migrations (001-036)
 ├── workers/
 │   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
 │   ├── ttl.py                # Importance-aware expiry
@@ -243,7 +243,7 @@ dependent derivations stale.
 
 | Method | Path | Application responsibility |
 |---|---|---|
-| `GET` | `/healthz` | Component and database health |
+| `GET` | `/healthz` | Database-free process/component liveness and in-memory metrics |
 | `POST` | `/v1/events` | Idempotent Event ingestion |
 | `POST` | `/v1/extract/dry-run` | Non-persistent Claim extraction |
 | `POST` | `/v1/consolidate` | Scoped conflict-consolidation job |
@@ -267,11 +267,17 @@ documentation at `/docs` while the service is running.
 
 The database layer owns WAL mode, busy timeout, connection lifecycle, online backup, and ordered immutable migrations.
 Workers use durable jobs with leases, heartbeat, stage, and processed/total progress. Audit logs record state changes and
-automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. `/healthz`, `/v1/stats`,
-offline evaluation, and the LongMemEval adapter provide operational and quality visibility.
+automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. The async `/healthz`
+route exposes only process-local state so database locks and worker-pool pressure cannot starve the liveness probe;
+`/v1/stats`, offline evaluation, and the LongMemEval adapter provide database-backed operational and quality visibility.
+On Windows, the external watchdog described in [watchdog.md](watchdog.md) can capture incident packages and restart an
+unresponsive service after a configurable consecutive-failure threshold.
 
 Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by_model` to `injected`, preserving existing
 values while making the field describe the actual host/model delivery boundary.
+
+Migration 036 is the v0.20 schema change: it adds tokenized FTS v2 tables and orphan-cleanup triggers for claims, events,
+and claim tags. v0.20.1 adds no migration.
 
 Backup and restore are whole-database operations:
 

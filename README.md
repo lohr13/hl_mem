@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.19.0](https://img.shields.io/badge/version-0.19.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.20.1](https://img.shields.io/badge/version-0.20.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -112,6 +112,8 @@ curl -X POST http://127.0.0.1:8200/v1/recall -H "Content-Type: application/json"
 
 完整请求契约见 [API 文档](docs/api.md)。
 
+Windows 常驻部署可使用仓库内的独立 watchdog，通过计划任务探测 `/healthz`，在连续失败后保存事故包并自动重启服务；安装、验证和卸载步骤见 [Windows watchdog 运维指南](docs/watchdog.md)。
+
 ### 3. 集成 Hermes
 
 启动顺序必须是：先启动 HL-Mem 并确认健康检查通过，再安装插件，最后重启 Hermes：
@@ -192,7 +194,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.19.0，共 35 个不可变、仅向前执行的 Migration。
+当前基线为 v0.20.1，共 36 个不可变、仅向前执行的 Migration。
 
 ## 文档
 
@@ -202,6 +204,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 | [配置参考](docs/configuration.md) | TOML 键、默认值、允许值与密钥边界 |
 | [架构](docs/architecture.md) | 分层、模块、写入/召回管线、存储和生命周期 |
 | [API](docs/api.md) | REST 端点和请求约定 |
+| [Windows watchdog](docs/watchdog.md) | 计划任务、自动重启、事故包与故障排查 |
 | [兼容性策略](docs/compatibility.md) | 版本和公共契约保证 |
 | [能力矩阵](docs/capability-matrix.md) | 成熟度、默认值和验证证据 |
 | [变更日志](docs/CHANGELOG.md) | 发布历史 |

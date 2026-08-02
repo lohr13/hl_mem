@@ -1,17 +1,25 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-07-31 · v0.19.1
+> 最后更新：2026-08-02 · v0.20.1
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.19.0
-- **阶段**：v0.19.0
+- **版本**：v0.20.1
+- **阶段**：v0.20.1 发版准备
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），35 migrations；实时数据量以 `/healthz` 和只读审计为准
-- **FTS**：trigram（claims/tags），unicode61（events）
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），36 migrations；实时数据量以数据库只读审计为准
+- **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-02 v0.20.1 可靠性热修复
+
+- LLM 提取 schema 接受非规范 `canonical_attribute` 字符串，交由领域校验回退，避免提取 Job 因格式偏差直接 dead。
+- `/healthz` 已改为 DB-free async liveness probe，不再因数据库锁或同步线程池饥饿而超时；历史 LLM span 聚合不再放入该响应。
+- Windows P0 watchdog 通过计划任务定时探测，连续失败时保存事故包、终止异常进程树并重启服务；安装与处置流程见 `docs/watchdog.md`。
+- FastAPI P1 请求日志记录 start/end、状态码、单调时钟耗时和受控 `X-Request-ID`，覆盖异常退出路径。
+- v0.20.1 无新增 migration；数据库 schema 保持在 migration 036。
 
 ### 2026-07-31 v0.19.0 集成交付
 
@@ -52,7 +60,7 @@
 - Hermes Provider（可配置 timeout + circuit breaker + prefetch/delivery receipt）
 - MCP Server（5 工具契约，可嵌入工具套件，beta）
 - REST API 新增 `POST /v1/extract/dry-run`、`POST /v1/consolidate`
-- LLM 可观测性：`llm_call_spans` 持久化调用 span，`healthz` 暴露 24h 聚合
+- LLM 可观测性：`llm_call_spans` 持久化调用 span；`healthz` 只暴露进程内状态，不查询 span 表
 - 审计日志 + 整库备份/恢复 + 可重建 Job 的 JSONL 导入导出
 - 实验性 PostgreSQL 连接探针（尚无 HL-Mem 存储语义）
 

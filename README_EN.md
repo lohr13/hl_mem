@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.19.0](https://img.shields.io/badge/version-0.19.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.20.1](https://img.shields.io/badge/version-0.20.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -65,6 +65,8 @@ curl -X POST http://127.0.0.1:8200/v1/recall -H "Content-Type: application/json"
 
 See the [API reference](docs/api.md) for complete request contracts.
 
+For an always-on Windows deployment, the repository includes an independent watchdog that probes `/healthz` from Task Scheduler, captures an incident package after consecutive failures, and restarts the service. See the [Windows watchdog operations guide](docs/watchdog.md) for installation, verification, and removal.
+
 ### 3. Integrate with Hermes
 
 Start HL-Mem, then deploy its MemoryProvider into Hermes:
@@ -112,7 +114,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.19.0 with 35 immutable, forward-only migrations.
+The current baseline is v0.20.1 with 36 immutable, forward-only migrations.
 
 ## Documentation
 
@@ -122,6 +124,7 @@ The current baseline is v0.19.0 with 35 immutable, forward-only migrations.
 | [Configuration reference](docs/configuration.md) | TOML keys, defaults, allowed values, and secret boundary |
 | [Architecture](docs/architecture.md) | Layers, modules, pipelines, storage, and lifecycle |
 | [API reference](docs/api.md) | REST endpoints and request conventions |
+| [Windows watchdog](docs/watchdog.md) | Scheduled probes, automatic restart, incident packages, and troubleshooting |
 | [Compatibility policy](docs/compatibility.md) | Versioning and public contract guarantees |
 | [Capability matrix](docs/capability-matrix.md) | Maturity, defaults, and evidence |
 | [Changelog](docs/CHANGELOG.md) | Release history |

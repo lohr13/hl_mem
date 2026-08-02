@@ -1,5 +1,18 @@
 # HL-Mem 变更记录
 
+## v0.20.1 (2026-08-02)
+
+### Reliability and Observability
+
+- 放宽 `canonical_attribute` 的 LLM 结构化输出 schema：非规范值不再导致提取任务直接失败，而是进入既有领域校验并回退为 `custom.unknown`。
+- 将 `/healthz` 改为不依赖数据库的异步端点，仅返回进程内状态，避免线程池耗尽或数据库锁竞争使健康探针饿死。
+- 新增 P0 Windows watchdog：`scripts/hlmem_watchdog.sh` 由计划任务定时探测服务，连续失败后自动收集事故包、终止异常进程树并重启服务，同时提供失败阈值、冷却和锁重叠保护。
+- 新增 P1 HTTP 请求生命周期日志中间件：记录 `request_started` / `request_finished`、方法、路径、状态码、耗时及经过清理的可选 `X-Request-ID`，异常请求也会记录完成事件。
+
+### Compatibility
+
+- 无新增数据库 migration，当前 schema 仍为 migration 036；无 REST 或 MCP 路由变更。`/healthz` 不再返回需要查询数据库的 24 小时 `llm_stats` 聚合，数据库与 LLM span 统计应使用专用只读审计路径。
+
 ## v0.20.0 (2026-08-01)
 
 ### Tokenized FTS v2 Migration
