@@ -484,13 +484,7 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
     pre_scores = {
         claim_id: memory_score(features)
         + tag_boosts.get(claim_id, 0.0)
-        + (
-            0.05
-            if any(
-                _slot_matches(str(by_id[claim_id].get("canonical_slot") or ""), hint) for hint in ctx.query_slot_hints
-            )
-            else 0.0
-        )
+        + (0.05 if any(_claim_matches_slot_hint(by_id[claim_id], hint) for hint in ctx.query_slot_hints) else 0.0)
         + (
             ctx.preference_boost * features["recency"]
             if ctx.selected_intent is RecallIntent.PREFERENCE and _is_preference_claim(by_id[claim_id])
@@ -505,8 +499,7 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
     ctx.ranked_claims = _sort_pre_rank(by_id, feature_by_id, pre_scores)
     if tracer is not None:
         tracer.trace.slot_boost_applied = any(
-            any(_slot_matches(str(claim.get("canonical_slot") or ""), hint) for hint in ctx.query_slot_hints)
-            for claim in by_id.values()
+            any(_claim_matches_slot_hint(claim, hint) for hint in ctx.query_slot_hints) for claim in by_id.values()
         )
         tracer.trace.tag_boost_applied = bool(tag_boosts)
         tracer.record_tag_boosts(tag_boosts)
@@ -518,6 +511,11 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
 def _slot_matches(slot: str, hint: str) -> bool:
     """匹配精确 slot 或 preference 通配 hint。"""
     return slot.startswith("preference.") if hint == "preference.*" else slot == hint
+
+
+def _claim_matches_slot_hint(claim: dict[str, Any], hint: str) -> bool:
+    """让 operational slot hint 同时匹配新 slot 与兼容 canonical attribute。"""
+    return any(_slot_matches(str(claim.get(field) or ""), hint) for field in ("canonical_slot", "canonical_attribute"))
 
 
 def _sort_pre_rank(

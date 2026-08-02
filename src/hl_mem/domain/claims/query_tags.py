@@ -47,7 +47,11 @@ TAG_INFO_WEIGHT = {tag: 1.0 for tag in ALLOWED_TOPIC_TAGS if tag not in LOW_INFO
 
 _SLOT_HINT_RULES: tuple[tuple[re.Pattern[str], str, tuple[str, ...]], ...] = (
     (re.compile(r"叫什么|姓名|名字|name", re.I), "identity.name", ("identity",)),
-    (re.compile(r"GPU|显卡|内存|CPU|硬件", re.I), "config.hardware", ("hardware",)),
+    (
+        re.compile(r"GPU|显卡|显存|VRAM|graphics\s+card|内存|CPU|处理器|processor|硬件", re.I),
+        "config.hardware",
+        ("hardware",),
+    ),
     (
         re.compile(r"提取模型|embedding\s*模型|reranker\s*模型|模型", re.I),
         "config.model",

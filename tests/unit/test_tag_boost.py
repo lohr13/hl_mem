@@ -6,6 +6,7 @@ from typing import Any
 
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims
+from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 
 NOW = "2026-07-24T00:00:00+00:00"
 
@@ -55,6 +56,20 @@ class _Repo:
         return {}
 
 
+def _tracer() -> SearchTracer:
+    return SearchTracer(
+        SearchTrace(
+            query_id="query-1",
+            query_hash="hash-only",
+            intent="current_state",
+            limit=2,
+            candidate_limit=50,
+            candidates={},
+            phases=SearchPhaseMetrics(),
+        )
+    )
+
+
 def test_recall_config_supplies_pipeline_defaults() -> None:
     first = _claim("first", ["architecture"])
     second = _claim("second")
@@ -99,6 +114,28 @@ def test_tag_boost_promotes_matching_candidate() -> None:
     assert [claim["id"] for claim in result] == ["tagged", "plain"]
     assert result[0]["_tag_boost"] == 0.05
     assert "_tag_boost" not in result[1]
+
+
+def test_slot_hint_boost_uses_legacy_canonical_attribute() -> None:
+    """缺少 canonical_slot 的旧 claim 仍应通过 canonical_attribute 获得 slot boost。"""
+    plain = _claim("plain")
+    hardware = {**_claim("hardware"), "canonical_slot": None, "canonical_attribute": "config.hardware"}
+    repo = _Repo([plain, hardware], [plain, hardware])
+    tracer = _tracer()
+
+    result = hybrid_claims(
+        repo,
+        "我的 GPU 是什么",
+        pack_vector([1.0]),
+        2,
+        None,
+        now=NOW,
+        tracer=tracer,
+    )
+
+    assert [claim["id"] for claim in result] == ["hardware", "plain"]
+    assert tracer.trace.query_slot_hints == ["config.hardware"]
+    assert tracer.trace.slot_boost_applied is True
 
 
 def test_tag_boost_disabled_preserves_existing_order_and_skips_tag_search() -> None:
