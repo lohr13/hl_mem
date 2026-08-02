@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
+import time
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -56,6 +58,9 @@ from hl_mem.storage.database import Database
 from hl_mem.storage.jobs import JobRepository
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -80,6 +85,48 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         if content_length and int(content_length) > self.max_request_body:
             return Response(status_code=413, content="Request body too large")
         return await call_next(request)
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """记录每个 HTTP 请求的开始、完成状态与单调时钟耗时。"""
+
+    @staticmethod
+    def _safe_query_id(value: str) -> str:
+        """限制日志字段长度，并替换可能破坏单行日志结构的字符。"""
+        return "".join(character if character.isalnum() or character in "-._:" else "_" for character in value)[
+            :200
+        ]
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        method = request.method
+        path = request.url.path
+        query_id = request.headers.get("X-Request-ID")
+        if query_id:
+            query_id = self._safe_query_id(query_id)
+            LOGGER.info(
+                "request_started method=%s path=%s query_id=%s",
+                method,
+                path,
+                query_id,
+            )
+        else:
+            LOGGER.info("request_started method=%s path=%s", method, path)
+
+        started_at = time.perf_counter()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            LOGGER.info(
+                "request_finished method=%s path=%s status=%d duration_ms=%.3f",
+                method,
+                path,
+                status_code,
+                duration_ms,
+            )
 
 
 def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
@@ -112,6 +159,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     app.state.settings = settings
     app.state.audit = audit
     app.add_middleware(RequestSizeLimitMiddleware, max_request_body=settings.max_request_body)
+    app.add_middleware(RequestLoggingMiddleware)
 
     @app.exception_handler(NotFoundError)
     async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
@@ -170,7 +218,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         )
 
     @app.get("/healthz")
-    def healthz() -> dict[str, Any]:
+    async def healthz() -> dict[str, Any]:
         from hl_mem.application.health import monitoring_snapshot
 
         return {

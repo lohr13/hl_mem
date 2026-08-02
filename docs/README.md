@@ -17,6 +17,7 @@ reference while integrating; consult Design, Proposals, and Research when evalua
 ## Reference
 
 - [API Endpoints](api.md)
+- [Windows Watchdog Operations](watchdog.md)
 - [Changelog](CHANGELOG.md)
 - [Capability Matrix](capability-matrix.md)
 - [Audit Log Design](audit-log-design.md)
