@@ -17,7 +17,7 @@ reference while integrating; consult Design, Proposals, and Research when evalua
 ## Reference
 
 - [API Endpoints](api.md)
-- [Windows Watchdog Operations](watchdog.md)
+- [Deployment Supervision and Health Checks](watchdog.md)
 - [v0.20.1 Release Notes](releases/v0.20.1-watchdog-observability.md)
 - [Changelog](CHANGELOG.md)
 - [Capability Matrix](capability-matrix.md)

@@ -112,7 +112,7 @@ curl -X POST http://127.0.0.1:8200/v1/recall -H "Content-Type: application/json"
 
 完整请求契约见 [API 文档](docs/api.md)。
 
-Windows 常驻部署可使用仓库内的独立 watchdog，通过计划任务探测 `/healthz`，在连续失败后保存事故包并自动重启服务；安装、验证和卸载步骤见 [Windows watchdog 运维指南](docs/watchdog.md)。
+常驻部署统一使用纯标准库的 `scripts/healthcheck.py` 探测 `/healthz`，进程重启与告警交给 systemd、Windows 服务管理器或容器编排平台。示例见 [服务监督与健康检查](docs/watchdog.md)。
 
 ### 3. 集成 Hermes
 
@@ -204,7 +204,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 | [配置参考](docs/configuration.md) | TOML 键、默认值、允许值与密钥边界 |
 | [架构](docs/architecture.md) | 分层、模块、写入/召回管线、存储和生命周期 |
 | [API](docs/api.md) | REST 端点和请求约定 |
-| [Windows watchdog](docs/watchdog.md) | 计划任务、自动重启、事故包与故障排查 |
+| [服务监督与健康检查](docs/watchdog.md) | 跨平台健康探针及 systemd、Windows、容器部署示例 |
 | [兼容性策略](docs/compatibility.md) | 版本和公共契约保证 |
 | [能力矩阵](docs/capability-matrix.md) | 成熟度、默认值和验证证据 |
 | [变更日志](docs/CHANGELOG.md) | 发布历史 |

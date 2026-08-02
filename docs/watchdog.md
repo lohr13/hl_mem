@@ -1,52 +1,108 @@
-# Windows watchdog 运维指南
+# 服务监督与健康检查（Deployment Supervision）
 
-`scripts/hlmem_watchdog.sh` 是独立于 HL-Mem/Hermes Python 环境的外部探针。它每次运行只探测一次 `/healthz`；Windows 计划任务负责每两分钟调用。连续三次失败后，脚本先保存事故包，再终止 8200 监听进程树并拉起服务。单次超时为 5 秒，重启冷却期为 60 秒。
+HL-Mem 只提供一个跨平台监督接口：`GET /healthz`。仓库内的 `scripts/healthcheck.py` 对该接口执行一次探测；HTTP 状态码为 200 且 JSON 字段 `status` 等于 `ok` 时退出 0，否则退出 1。进程拉起、重启、防抖、日志和告警由 systemd、Windows 服务管理器或容器编排平台负责，不由 HL-Mem 自己监控自己。
 
-## 前置条件
+探针只使用 Python 标准库，不需要 HL-Mem 或 Hermes 的虚拟环境：
 
-- Windows 10，已安装 Git for Windows，系统 Bash 位于 `C:\Program Files\Git\bin\bash.exe`。
-- `curl`、Git Bash 自带的 `timeout`、`powershell.exe`、`netstat.exe`、`tasklist.exe` 和 `taskkill.exe` 可用。
-- 启动脚本位于 `C:\Users\Administrator\bin\start_hlmem.sh`。
-- 可选安装 `py-spy` 并放入计划任务的系统 `PATH`；缺失时事故包仍会保存进程快照。
+```text
+python scripts/healthcheck.py [--url http://127.0.0.1:8200/healthz] [--timeout 5]
+```
 
-watchdog 启动时会清除 `VIRTUAL_ENV`、`PYTHONPATH` 和 `PYTHONHOME`，不会使用 Hermes 或 HL-Mem venv。启动服务时才由 `start_hlmem.sh` 设置 HL-Mem 自己的环境。
+有控制台时脚本只输出一行，例如 `ok: status=ok` 或 `fail: <原因>`。`pythonw.exe` 没有控制台输出，计划任务仍可通过进程退出码判断结果。
 
-## 注册计划任务
+## Linux / systemd
 
-在“以管理员身份运行”的 PowerShell 中执行以下命令。`/RP *` 会提示输入 Administrator 密码；任务使用最高权限，且因为没有 `/IT`，会在非交互会话运行，不弹出窗口。
+主服务由 systemd 监督进程退出：
+
+```ini
+# /etc/systemd/system/hl-mem.service
+[Unit]
+Description=HL-Mem
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/hl-mem
+ExecStart=/opt/hl-mem/.venv/bin/python /opt/hl-mem/start_server.py
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`Restart=on-failure` 只处理已退出的进程。要发现“进程仍在但 `/healthz` 失败”，可用 oneshot service + timer 定时运行探针，并把失败交给恢复 unit：
+
+```ini
+# /etc/systemd/system/hl-mem-health.service
+[Unit]
+Description=Probe HL-Mem health
+OnFailure=hl-mem-recover.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/hl-mem/scripts/healthcheck.py --timeout 5
+
+# /etc/systemd/system/hl-mem-health.timer
+[Unit]
+Description=Probe HL-Mem every 30 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+Unit=hl-mem-health.service
+
+[Install]
+WantedBy=timers.target
+
+# /etc/systemd/system/hl-mem-recover.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart hl-mem.service
+```
+
+启用后执行 `systemctl enable --now hl-mem.service hl-mem-health.timer`。依赖 HL-Mem 的其他 unit 也可在自己的 `[Service]` 段加入启动门禁；它只阻止下游服务在 HL-Mem 不健康时启动，不替代持续探测：
+
+```ini
+ExecStartPre=/usr/bin/python3 /opt/hl-mem/scripts/healthcheck.py --timeout 5
+```
+
+若部署不包含脚本，定时 unit 可改用 `curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8200/healthz`，但该命令只校验 HTTP 成功，不校验 JSON 的 `status` 字段。
+
+systemd 的 `WatchdogSec=` 需要服务持续发送 `sd_notify(WATCHDOG=1)`，它不会主动请求 HTTP。HL-Mem 当前不发送该通知；只有部署包装器负责通知时才应启用 `WatchdogSec=`，否则使用上述 timer。
+
+## Windows / Task Scheduler
+
+使用系统 Python 安装中的 `pythonw.exe` 可避免计划任务弹出控制台窗口。以下 PowerShell 示例每两分钟运行一次探针；请按实际安装位置修改两个路径：
 
 ```powershell
+$pythonw = 'C:\Python311\pythonw.exe'
+$probe = 'D:\workspace\hl_agent\hl_mem\scripts\healthcheck.py'
+$taskCommand = "`"$pythonw`" `"$probe`" --url http://127.0.0.1:8200/healthz --timeout 5"
+
 schtasks.exe /Create `
-  /TN "HL-Mem Watchdog" `
+  /TN "HL-Mem Healthcheck" `
   /SC MINUTE /MO 2 `
-  /RU Administrator /RP * `
-  /RL HIGHEST /F `
-  /TR '"C:\Program Files\Git\bin\bash.exe" --noprofile --norc "REDACTED_PATH/scripts/hlmem_watchdog.sh"'
+  /RU SYSTEM /RL HIGHEST /F `
+  /TR $taskCommand
 ```
 
-查询任务、触发一次探测或卸载：
+查询、立即触发或删除任务：
 
 ```powershell
-schtasks.exe /Query /TN "HL-Mem Watchdog" /V /FO LIST
-schtasks.exe /Run /TN "HL-Mem Watchdog"
-schtasks.exe /Delete /TN "HL-Mem Watchdog" /F
+schtasks.exe /Query /TN "HL-Mem Healthcheck" /V /FO LIST
+schtasks.exe /Run /TN "HL-Mem Healthcheck"
+schtasks.exe /Delete /TN "HL-Mem Healthcheck" /F
 ```
 
-首次注册后执行一次 `/Run`，再检查 `var/watchdog.log` 是否出现 `healthz_probe_succeeded`。也可以绕过计划任务手动验证：
+任务历史中的 Last Run Result 为 `0` 表示健康，`1` 表示探测失败。需要在终端查看原因时，用 `python.exe scripts\healthcheck.py` 手动运行。计划任务只负责探测；自动恢复应把 HL-Mem 注册为 Windows 服务并配置 Service Control Manager 的失败恢复，或由现有运维代理根据退出码执行。不要再通过 Bash 脚本从产品仓库内终止并重启服务。
 
-```powershell
-& 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc 'REDACTED_PATH/scripts/hlmem_watchdog.sh'
+## 容器
+
+在包含 Python 和探针脚本的镜像中加入一行：
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["python", "/app/scripts/healthcheck.py", "--url", "http://127.0.0.1:8200/healthz", "--timeout", "5"]
 ```
 
-## 状态、日志与事故包
-
-- `var/watchdog.state`：连续失败数和最近重启 Unix 时间；健康探测成功会把失败数清零。
-- `var/watchdog.log`：探测结果、耗时、错误、事故收集、终止和重启动作。
-- `var/hlmem_startup.log`：watchdog 拉起服务后的标准输出和错误输出。
-- `var/crash-packages/<UTC timestamp>/`：最近探测日志、8200 监听 PID、进程树、CPU/内存/线程数、DB/WAL/SHM 元数据、服务日志尾部，以及 `py-spy` 栈或降级说明。
-
-原子目录 `var/watchdog.lock` 防止重叠运行并记录 owner PID/创建时间；正常退出会自动删除，异常残留超过 300 秒后自动安全回收。外部诊断命令默认最多运行 10 秒；监听进程终止失败、端口复查失败或启动器立即退出时，脚本保留失败计数且不进入冷却，等待下次计划任务重试。事故包可能包含命令行和日志中的敏感信息，应只允许 Administrator 访问，并按本机保留策略定期清理。
-
-## 可选覆盖
-
-手动运行或定制任务动作时，可设置 `HL_MEM_ROOT`、`HL_MEM_HEALTH_URL`、`HL_MEM_START_SCRIPT`、`HL_MEM_BASH`、`HL_MEM_PORT`、`HL_MEM_WATCHDOG_TIMEOUT_SECONDS`、`HL_MEM_WATCHDOG_FAILURE_THRESHOLD`、`HL_MEM_WATCHDOG_COOLDOWN_SECONDS`、`HL_MEM_WATCHDOG_LOCK_STALE_SECONDS`、`HL_MEM_WATCHDOG_DIAGNOSTIC_TIMEOUT_SECONDS`、`HL_MEM_WATCHDOG_TERMINATION_WAIT_SECONDS`、`HL_MEM_WATCHDOG_START_GRACE_SECONDS` 和 `HL_MEM_STARTUP_LOG`。默认核心策略依次为 5 秒探测、3 次失败、60 秒冷却、300 秒陈旧锁、10 秒诊断上限、10 秒端口终止等待和 1 秒启动存活检查。
+Docker 会记录 `healthy` / `unhealthy` 状态，但不会仅因容器变为 unhealthy 自动重启；Docker / Compose 的 restart policy 只响应容器退出。基于 unhealthy 的恢复与告警需要由 Swarm、Kubernetes 或外部监控消费，进程退出后的重启策略也应留在部署配置中。

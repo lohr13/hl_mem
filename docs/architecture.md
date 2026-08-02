@@ -270,8 +270,8 @@ Workers use durable jobs with leases, heartbeat, stage, and processed/total prog
 automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. The async `/healthz`
 route exposes only process-local state so database locks and worker-pool pressure cannot starve the liveness probe;
 `/v1/stats`, offline evaluation, and the LongMemEval adapter provide database-backed operational and quality visibility.
-On Windows, the external watchdog described in [watchdog.md](watchdog.md) can capture incident packages and restart an
-unresponsive service after a configurable consecutive-failure threshold.
+The stdlib-only probe described in [watchdog.md](watchdog.md) exposes `/healthz` to deployment supervision on every
+platform; systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
 Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by_model` to `injected`, preserving existing
 values while making the field describe the actual host/model delivery boundary.

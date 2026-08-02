@@ -1,5 +1,7 @@
 # v0.20.1 watchdog 与可观测性方案
 
+> 后续状态：本方案中的仓库内 Windows watchdog 已被跨平台 `scripts/healthcheck.py` 和部署层监督取代；当前部署方式见 [`docs/watchdog.md`](../watchdog.md)。以下内容保留为历史设计记录。
+
 ## 选择
 
 P0 采用仓库内 Bash 脚本，由 Windows 计划任务每两分钟调用系统 Git Bash。相比 Python 脚本，这一方案不依赖项目或 Hermes venv，可在清除 `VIRTUAL_ENV`、`PYTHONPATH` 后直接使用 `curl` 和 Windows 系统诊断命令。脚本通过 `var/watchdog.state` 跨次保存连续失败数和最近重启时间，通过带 owner 信息及陈旧回收的原子目录锁避免计划任务重叠；单次探测超时 5 秒，健康即清零，第三次连续失败且不在 60 秒冷却期时才处理事故。

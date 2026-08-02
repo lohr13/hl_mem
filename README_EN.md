@@ -65,7 +65,7 @@ curl -X POST http://127.0.0.1:8200/v1/recall -H "Content-Type: application/json"
 
 See the [API reference](docs/api.md) for complete request contracts.
 
-For an always-on Windows deployment, the repository includes an independent watchdog that probes `/healthz` from Task Scheduler, captures an incident package after consecutive failures, and restarts the service. See the [Windows watchdog operations guide](docs/watchdog.md) for installation, verification, and removal.
+For always-on deployments, use the stdlib-only `scripts/healthcheck.py` to probe `/healthz`, and leave process restarts and alerting to systemd, Windows service management, or the container orchestrator. See [Deployment Supervision and Health Checks](docs/watchdog.md) for examples.
 
 ### 3. Integrate with Hermes
 
@@ -124,7 +124,7 @@ The current baseline is v0.20.1 with 36 immutable, forward-only migrations.
 | [Configuration reference](docs/configuration.md) | TOML keys, defaults, allowed values, and secret boundary |
 | [Architecture](docs/architecture.md) | Layers, modules, pipelines, storage, and lifecycle |
 | [API reference](docs/api.md) | REST endpoints and request conventions |
-| [Windows watchdog](docs/watchdog.md) | Scheduled probes, automatic restart, incident packages, and troubleshooting |
+| [Deployment supervision](docs/watchdog.md) | Cross-platform health probe and systemd, Windows, and container examples |
 | [Compatibility policy](docs/compatibility.md) | Versioning and public contract guarantees |
 | [Capability matrix](docs/capability-matrix.md) | Maturity, defaults, and evidence |
 | [Changelog](docs/CHANGELOG.md) | Release history |
