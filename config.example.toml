@@ -54,7 +54,7 @@ relevance_gate_mode = "observe"
 relevance_reranker_floor = 0.4
 relevance_dense_floor = 0.3
 relevance_relative_drop = 0.30
-relevance_keep_top1 = false
+relevance_keep_top1 = true
 relevance_intents = ["current_state"]
 
 [dedup]
