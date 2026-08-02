@@ -34,7 +34,7 @@
 - REST 显式记忆与 MCP `memory_save` 支持调用方幂等键；CRLF/LF/CR 数据集 hash 统一为 `sha256-utf8-lf-v1`。
 - Windows/POSIX 启动脚本统一定位仓库根目录并调用 `start_server.py`；旧版本脚本与失效环境变量覆盖已移除。
 - 公共调用面统一使用 `namespace`；`tenant_id` 只作为已弃用兼容别名，且 namespace 不构成安全隔离。
-- DashScope 默认 LLM 模型已对齐为 `qwen3.7-plus`，真实模型仍以 `.env` 密钥和 TOML 非敏感配置为准。
+- LLM、Embedding 与 Reranker 的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置；活文档不固化具体型号。
 
 ### 2026-07-28 提取与召回治理
 

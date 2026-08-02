@@ -4,15 +4,15 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v0.19.0（2026-07-31）**
+**当前版本：v0.20.1（2026-08-02）**
 
 ## 技术栈
 
 - **运行时**：Python 3.11+，FastAPI + uvicorn
 - **存储**：SQLite WAL + FTS5（全文检索）+ 向量 BLOB（暴力余弦，首版）
-- **LLM 提取**：LLM 通过 .env/TOML 配置，使用结构化 JSON 输出
-- **Embedding**：text-embedding-v4（百炼通用 AK），2048 维
-- **Reranker**：gte-rerank-v2（百炼通用 AK）
+- **LLM 提取**：API 密钥通过 .env 配置，provider/model 通过 TOML 配置，使用结构化 JSON 输出
+- **Embedding**：API 密钥通过 .env 配置，provider/model/维度通过 TOML 配置
+- **Reranker**：API 密钥通过 .env 配置，provider/model 通过 TOML 配置
 - **分类体系**：SLOT_REGISTRY（15 operational slot + 40 topic tags；Phase 18 已接入检索，soft boost 默认开启，独立 tag channel 默认关闭待评测）
 - **TTL**：retention 纯函数（scope × importance 三档）
 - **跨 subject 去重**：DedupJudge（audit-only 默认开启）
@@ -43,7 +43,7 @@ src/hl_mem/
 │   ├── llm_extractor.py       # LLM 提取器
 │   ├── extractors.py          # FakeExtractor / LLMExtractor
 │   ├── chunking.py            # 结构感知分块
-│   ├── embedder.py            # text-embedding-v4 向量化
+│   ├── embedder.py            # Embedding 向量化
 │   ├── event_filter.py        # 事件预过滤
 │   └── budget.py              # Token 预算控制
 ├── llm/                    # LLM 客户端（Provider 解耦）
@@ -54,7 +54,7 @@ src/hl_mem/
 │   ├── staged_pipeline.py     # 三通道 RRF (FTS + Dense + Tag)
 │   ├── trace.py               # SearchTrace 可观测性
 │   ├── ranking.py             # 多因子排序
-│   ├── reranker.py            # gte-rerank-v2 重排器
+│   ├── reranker.py            # Reranker 重排
 │   ├── relation_expansion.py  # 一跳关系扩展
 │   └── observation.py         # 派生记忆构建
 ├── storage/                # 存储层（按职责拆分）
@@ -67,7 +67,7 @@ src/hl_mem/
 │   ├── relation_proposals.py  # 关系候选审计
 │   ├── usefulness.py          # 反馈效用聚合
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 35 SQL migrations (001-035)
+│   └── migrations/            # 36 SQL migrations (001-036)
 ├── workers/                # 后台任务
 │   ├── worker.py              # Job 调度器
 │   ├── ttl.py                 # TTL 过期
@@ -116,7 +116,7 @@ src/hl_mem/
 ### 召回管线
 - FTS5 全文检索 + dense vector 余弦相似度 → RRF 融合
 - 多因子排序：recency / importance / access_count / scope / helpful_rate
-- 可选 reranker（gte-rerank-v2）
+- 可选 Reranker（密钥与 provider/model 由配置提供）
 - 双时间过滤：valid_from/valid_to + recorded_from/recorded_to
 - **上下文预算**：token_budget + context_mode="packed" + 跨类型配额
 - 偏好专用召回 intent（RecallIntent.PREFERENCE）
@@ -152,4 +152,4 @@ src/hl_mem/
 
 ## Migration
 
-35 个 SQL migration（001-035），按版本号顺序执行。不可变。
+36 个 SQL migration（001-036），按版本号顺序执行。不可变。

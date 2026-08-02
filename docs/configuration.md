@@ -1,7 +1,8 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.19.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.20.1 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
+模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
 ## 加载规则
 
@@ -117,7 +118,7 @@ hl-mem import var/events.jsonl --db var/restored.db
 | `embedding.dim` | 整数 | `2048` | 任意整数 | `embedding_dim` |
 | `embedding.max_attempts` | 整数 | `3` | 任意整数 | `embedding_max_attempts` |
 | `embedding.mode` | 字符串 | `"fake"` | `fake`、`real` | `embedder_mode` |
-| `embedding.model` | 字符串 | `"text-embedding-v4"` | 任意字符串 | `embedding_model` |
+| `embedding.model` | 字符串 | `Settings` 内置值（可配置） | 任意字符串 | `embedding_model` |
 | `embedding.read_timeout` | 数值 | `30.0` | 任意数值 | `embedding_read_timeout` |
 
 ### `[entity]`
@@ -158,7 +159,7 @@ hl-mem import var/events.jsonl --db var/restored.db
 | `image_describer.max_bytes` | 整数 | `10485760` | >= 1 | `image_max_bytes` |
 | `image_describer.max_parts` | 整数 | `4` | >= 1 | `image_max_parts` |
 | `image_describer.mode` | 字符串 | `"off"` | `off`、`on` | `image_describer_mode` |
-| `image_describer.model` | 字符串 | `"qwen3.7-plus"` | 任意字符串 | `image_describer_model` |
+| `image_describer.model` | 字符串 | `Settings` 内置值（可配置） | 任意字符串 | `image_describer_model` |
 | `image_describer.provider` | 字符串 | `"dashscope"` | `dashscope` | `image_describer_provider` |
 | `image_describer.timeout_seconds` | 数值 | `20.0` | > 0 | `image_describer_timeout_seconds` |
 
@@ -178,7 +179,7 @@ hl-mem import var/events.jsonl --db var/restored.db
 | `llm.base_url` | 字符串 | `"https://coding.dashscope.aliyuncs.com/v1"` | 任意字符串 | `llm_base_url` |
 | `llm.enable_thinking` | 布尔值 | `false` | `true`、`false` | `enable_llm_thinking` |
 | `llm.max_attempts` | 整数 | `3` | >= 1 | `llm_max_attempts` |
-| `llm.model` | 字符串 | `"qwen3.7-plus"` | 非空字符串 | `llm_model` |
+| `llm.model` | 字符串 | `Settings` 内置值（可配置） | 非空字符串 | `llm_model` |
 | `llm.provider` | 字符串 | `"dashscope"` | `dashscope`、`zhipu`、`openai_compatible` | `llm_provider` |
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |
@@ -248,7 +249,7 @@ hl-mem import var/events.jsonl --db var/restored.db
 |---|---|---|---|---|
 | `reranker.base_url` | 字符串 | `"https://dashscope.aliyuncs.com"` | 任意字符串 | `reranker_base_url` |
 | `reranker.mode` | 字符串 | `"off"` | `off`、`fake`、`on`、`real` | `reranker_mode` |
-| `reranker.model` | 字符串 | `"gte-rerank-v2"` | 任意字符串 | `reranker_model` |
+| `reranker.model` | 字符串 | `Settings` 内置值（可配置） | 任意字符串 | `reranker_model` |
 | `reranker.provider` | 字符串 | `"dashscope"` | `dashscope` | `reranker_provider` |
 
 ### `[retention]`
