@@ -163,7 +163,9 @@ class QueryExpander:
         session_context: tuple[tuple[str, str], ...] = (),
     ) -> LLMRequest:
         system = (
-            "你是查询改写器。仅输出 JSON。生成语义等价、便于记忆检索的查询。"
+            '你是查询改写器。仅输出 JSON，格式必须为：{"queries": ["改写查询 1", "改写查询 2"]}。'
+            "queries 必须是仅包含字符串的数组，最多包含 2 项，且 JSON 对象不得包含其他字段。"
+            "生成语义等价、便于记忆检索的查询。"
             "禁止添加人物、时间、namespace 或原查询未给出的事实；不得改变查询意图和约束。"
         )
         context_text = ""

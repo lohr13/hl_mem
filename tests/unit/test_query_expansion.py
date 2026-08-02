@@ -74,6 +74,22 @@ def test_expander_cleans_deduplicates_and_limits_results() -> None:
     assert "namespace" in prompt
 
 
+def test_expander_prompt_names_queries_output_contract() -> None:
+    client = _Client({"queries": ["改写查询"]})
+    QueryExpander(client).expand(
+        "原查询",
+        intent=RecallIntent.CURRENT_STATE,
+        max_expansions=2,
+        timeout_seconds=1.0,
+        token_ceiling=256,
+    )
+
+    system_prompt = client.requests[0].messages[0].content
+    assert '{"queries": ["改写查询 1", "改写查询 2"]}' in system_prompt
+    assert "queries 必须是仅包含字符串的数组" in system_prompt
+    assert "最多包含 2 项" in system_prompt
+
+
 def test_expander_invalid_json_and_token_ceiling_fall_back() -> None:
     invalid = QueryExpander(_Client("not-json")).expand(
         "查询",
