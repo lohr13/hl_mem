@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 import time
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,9 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.components import make_embedder
+from hl_mem.config_loader import load_settings
+from hl_mem.core.vector import batch_cosine_similarity
 from hl_mem.settings import Settings
 from tests.eval.dataset import bind_cases, load_cases
 
@@ -122,7 +126,13 @@ def _dcg(hits: list[int]) -> float:
     return sum(hit / math.log2(rank + 1) for rank, hit in enumerate(hits, 1))
 
 
-def _score(row: dict[str, Any], response: dict[str, Any], latency_ms: float, top_k: int) -> dict[str, Any]:
+def _score(
+    row: dict[str, Any],
+    response: dict[str, Any],
+    latency_ms: float,
+    top_k: int,
+    dense_raw_scores: dict[str, float] | None = None,
+) -> dict[str, Any]:
     """计算一条查询的排序和无答案诊断指标。"""
     results = response.get("results", [])
     if not isinstance(results, list):
@@ -130,6 +140,28 @@ def _score(row: dict[str, Any], response: dict[str, Any], latency_ms: float, top
     returned_ids = [str(item.get("id")) for item in results if isinstance(item, dict)]
     relevant = set(row["expected_claim_ids"]) | set(row["equivalent_ids"])
     forbidden = set(row["forbidden_ids"])
+    trace = response.get("search_trace") or {}
+    trace_candidates = trace.get("candidates") or {}
+    result_by_id = {
+        str(item.get("id")): item for item in results if isinstance(item, dict) and item.get("id") is not None
+    }
+    raw_scores: list[dict[str, Any]] = []
+    for rank, claim_id in enumerate(returned_ids[:top_k], 1):
+        candidate = trace_candidates.get(claim_id) if isinstance(trace_candidates, dict) else None
+        result = result_by_id.get(claim_id, {})
+        reranker_raw_score = candidate.get("rerank_score") if isinstance(candidate, dict) else None
+        if reranker_raw_score is None:
+            reranker_raw_score = result.get("reranker_raw_score")
+        raw_scores.append(
+            {
+                "claim_id": claim_id,
+                "rank": rank,
+                "dense_raw_score": (dense_raw_scores or {}).get(claim_id),
+                "reranker_raw_score": (
+                    float(reranker_raw_score) if isinstance(reranker_raw_score, (int, float)) else None
+                ),
+            }
+        )
     answerability = str(response.get("answerability") or "supported")
     answerable = row["slice"] != "no_answer" and bool(relevant)
     ranks = [index + 1 for index, claim_id in enumerate(returned_ids) if claim_id in relevant]
@@ -146,6 +178,7 @@ def _score(row: dict[str, Any], response: dict[str, Any], latency_ms: float, top
     ideal = [1] * min(len(relevant), 5)
     return {
         "id": row["id"],
+        "pair_id": row.get("pair_id"),
         "slice": row["slice"],
         "answerable": answerable,
         "expected_claim_ids": sorted(relevant),
@@ -163,6 +196,9 @@ def _score(row: dict[str, Any], response: dict[str, Any], latency_ms: float, top
         "min_relevance": row["min_relevance"],
         "min_relevance_diagnostic": "not yet used for scoring",
         "forbidden_hits": sorted(forbidden.intersection(returned_ids)),
+        "raw_scores": raw_scores,
+        "expansion_trigger": trace.get("expansion_trigger") if isinstance(trace, dict) else None,
+        "expansions": list(trace.get("expansions") or []) if isinstance(trace, dict) else [],
         "latency_ms": latency_ms,
         "http_status": int(response.pop("_http_status", 200)),
     }
@@ -200,6 +236,75 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[max(0, math.ceil(percentile * len(ordered)) - 1)]
 
 
+def _distribution(values: list[float]) -> dict[str, int | float | None]:
+    """汇总用于阈值校准的固定 raw score 分位点。"""
+    if not values:
+        return {
+            "count": 0,
+            "min": None,
+            "p10": None,
+            "p25": None,
+            "p50": None,
+            "p75": None,
+            "p90": None,
+            "max": None,
+            "mean": None,
+        }
+    return {
+        "count": len(values),
+        "min": min(values),
+        "p10": _percentile(values, 0.10),
+        "p25": _percentile(values, 0.25),
+        "p50": _percentile(values, 0.50),
+        "p75": _percentile(values, 0.75),
+        "p90": _percentile(values, 0.90),
+        "max": max(values),
+        "mean": mean(values),
+    }
+
+
+def _score_distributions(items: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, int | float | None]]]:
+    """按查询真值汇总每条查询首个返回 claim 的 raw score。"""
+    grouped: dict[str, dict[str, list[float]]] = {
+        "answerable": {"dense_raw_score": [], "reranker_raw_score": []},
+        "no_answer": {"dense_raw_score": [], "reranker_raw_score": []},
+    }
+    for item in items:
+        raw_scores = item.get("raw_scores") or []
+        if not raw_scores:
+            continue
+        group = "answerable" if item["answerable"] else "no_answer"
+        top = raw_scores[0]
+        for score_name in ("dense_raw_score", "reranker_raw_score"):
+            value = top.get(score_name)
+            if isinstance(value, (int, float)):
+                grouped[group][score_name].append(float(value))
+    return {
+        group: {score_name: _distribution(values) for score_name, values in scores.items()}
+        for group, scores in grouped.items()
+    }
+
+
+def _dense_raw_scores(
+    connection: sqlite3.Connection,
+    query_blob: bytes,
+    claim_ids: list[str],
+) -> dict[str, float]:
+    """计算原始 query 与返回 claim 冻结向量间的精确余弦分数。"""
+    unique_ids = list(dict.fromkeys(claim_ids))
+    if not unique_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_ids)
+    rows = connection.execute(
+        f"SELECT id,embedding_dense FROM claims WHERE id IN ({placeholders}) AND embedding_dense IS NOT NULL",
+        unique_ids,
+    ).fetchall()
+    embeddings = {str(claim_id): bytes(blob) for claim_id, blob in rows}
+    scored_ids = [claim_id for claim_id in unique_ids if claim_id in embeddings]
+    scores = batch_cosine_similarity(query_blob, [embeddings[claim_id] for claim_id in scored_ids])
+    return dict(zip(scored_ids, scores, strict=True))
+
+
 def run(
     snapshot: Path,
     dataset: Path,
@@ -222,26 +327,40 @@ def run(
         working = Path(temporary_directory) / "snapshot.db"
         shutil.copy2(snapshot, working)
         runtime_settings = replace(settings or Settings(), database_path=str(working))
-        with TestClient(create_app(runtime_settings)) as client:
-            health = client.get("/healthz").json()
-            for row in rows:
-                payload = {
-                    "query": row["query"],
-                    "limit": top_k,
-                    "intent": row.get("intent", "current_state"),
-                    "as_of": row.get("as_of") or reference_time,
-                    "known_as_of": row.get("known_as_of"),
-                    "namespace": row.get("namespace", "default"),
-                    "debug": True,
-                }
-                started = time.perf_counter()
-                api_response = client.post("/v1/recall", json=payload)
-                latency_ms = (time.perf_counter() - started) * 1000.0
-                body = api_response.json()
-                body["_http_status"] = api_response.status_code
-                trace = body.get("search_trace") or {}
-                reranker_paths[str(trace.get("reranker_status", health.get("reranker", "unknown")))] += 1
-                scores.append(_score(row, body, latency_ms, top_k))
+        query_blobs = make_embedder(runtime_settings).embed_batch([str(row["query"]) for row in rows])
+        raw_connection = sqlite3.connect(f"file:{working.resolve().as_posix()}?mode=ro", uri=True)
+        try:
+            with TestClient(create_app(runtime_settings)) as client:
+                health = client.get("/healthz").json()
+                for row, query_blob in zip(rows, query_blobs, strict=True):
+                    payload = {
+                        "query": row["query"],
+                        "limit": top_k,
+                        "intent": row.get("intent", "current_state"),
+                        "as_of": row.get("as_of") or reference_time,
+                        "known_as_of": row.get("known_as_of"),
+                        "namespace": row.get("namespace", "default"),
+                        "debug": True,
+                    }
+                    started = time.perf_counter()
+                    api_response = client.post("/v1/recall", json=payload)
+                    latency_ms = (time.perf_counter() - started) * 1000.0
+                    body = api_response.json()
+                    body["_http_status"] = api_response.status_code
+                    trace = body.get("search_trace") or {}
+                    reranker_paths[str(trace.get("reranker_status", health.get("reranker", "unknown")))] += 1
+                    returned_ids = [str(item.get("id")) for item in body.get("results", []) if isinstance(item, dict)]
+                    scores.append(
+                        _score(
+                            row,
+                            body,
+                            latency_ms,
+                            top_k,
+                            dense_raw_scores=_dense_raw_scores(raw_connection, query_blob, returned_ids[:top_k]),
+                        )
+                    )
+        finally:
+            raw_connection.close()
     if _sha256(snapshot) != snapshot_hash:
         raise RuntimeError("评测期间源 snapshot 发生变化")
     slices: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -267,12 +386,16 @@ def run(
             "reranker": health.get("reranker", "unknown"),
             "settings": health.get("settings", {}),
             "reranker_paths": dict(reranker_paths),
+            "expansion_triggers": dict(Counter(str(score.get("expansion_trigger") or "none") for score in scores)),
+            "raw_dense_score_source": "original_query_cosine",
+            "score_distribution_population": "top_returned_claim_per_query",
             "reference_time": reference_time,
         },
         "case_count": len(scores),
         "slice_counts": dict(sorted(Counter(score["slice"] for score in scores).items())),
         "metrics": _metrics(scores),
         "slices": {name: {"count": len(items), "metrics": _metrics(items)} for name, items in sorted(slices.items())},
+        "score_distributions": _score_distributions(scores),
         "latency_ms": {"p50": _percentile(latencies, 0.50), "p95": _percentile(latencies, 0.95)},
         "http_success_rate": sum(score["http_status"] == 200 for score in scores) / len(scores),
         "total_forbidden_hits": sum(len(score["forbidden_hits"]) for score in scores),
@@ -298,6 +421,14 @@ def _print_summary(report: dict[str, Any], baseline: dict[str, Any] | None) -> N
         f"low-confidence rate={metrics['low_confidence_rate']:.4f} | "
         f"latency p50={report['latency_ms']['p50']:.1f}ms p95={report['latency_ms']['p95']:.1f}ms"
     )
+    for group, distributions in report.get("score_distributions", {}).items():
+        for score_name, distribution in distributions.items():
+            print(
+                f"{group} {score_name}: count={distribution['count']} "
+                f"min={distribution['min']} p10={distribution['p10']} p25={distribution['p25']} "
+                f"p50={distribution['p50']} p75={distribution['p75']} p90={distribution['p90']} "
+                f"max={distribution['max']} mean={distribution['mean']}"
+            )
     if baseline and baseline.get("status") == "ready":
         print(
             "Baseline delta: "
@@ -308,18 +439,32 @@ def _print_summary(report: dict[str, Any], baseline: dict[str, Any] | None) -> N
         )
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """命令行入口。"""
     parser = argparse.ArgumentParser(description="运行固定 snapshot 的召回回归评测")
     parser.add_argument("--snapshot", required=True, type=Path)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--expansion-mode", choices=("off", "auto", "always"))
+    parser.add_argument("--reference-time")
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     if arguments.top_k < 5:
         parser.error("--top-k 必须至少为 5，才能计算 Recall@5/nDCG@5")
-    report = run(arguments.snapshot, arguments.dataset, arguments.top_k)
+    settings = load_settings(arguments.config, arguments.env_file)
+    if arguments.expansion_mode is not None:
+        settings = replace(settings, query_expansion_mode=arguments.expansion_mode)
+        settings.validate()
+    report = run(
+        arguments.snapshot,
+        arguments.dataset,
+        arguments.top_k,
+        settings,
+        reference_time=arguments.reference_time,
+    )
     arguments.report.parent.mkdir(parents=True, exist_ok=True)
     arguments.report.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
