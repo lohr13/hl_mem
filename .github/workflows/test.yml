@@ -70,7 +70,11 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
       - run: uv sync --frozen
       - name: Run offline recall contract and fixture gate
+        if: ${{ hashFiles('tests/eval/datasets/recall_v2.jsonl') != '' && hashFiles('tests/eval/datasets/recall_v2.manifest.json') != '' && hashFiles('tests/eval/baselines/baseline_v019_ci.json') != '' }}
         run: uv run --frozen python -m tests.eval.ci_gate
+      - name: Report unavailable private recall fixtures
+        if: ${{ hashFiles('tests/eval/datasets/recall_v2.jsonl') == '' || hashFiles('tests/eval/datasets/recall_v2.manifest.json') == '' || hashFiles('tests/eval/baselines/baseline_v019_ci.json') == '' }}
+        run: echo "Recall fixture gate skipped because private evaluation artifacts are not checked into Git."
 
   format:
     runs-on: ubuntu-latest

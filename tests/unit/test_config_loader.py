@@ -47,6 +47,7 @@ timeout = 12
 
 [recall]
 query_expansion_model = "glm-4.7"
+query_expansion_mode = "off"
 tag_channel_enabled = true
 relevance_intents = ["current_state", "preference"]
 vector_backend = "sqlite_scan"
@@ -56,7 +57,7 @@ decay_min_confidence = 0.1
 """,
     )
 
-    settings = load_settings(config_path, environ={})
+    settings = load_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.database_path == "custom.db"
     assert settings.database_pool_size == 4

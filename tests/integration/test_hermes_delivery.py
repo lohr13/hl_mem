@@ -10,22 +10,21 @@ from fastapi.testclient import TestClient
 from hl_mem.adapters.hermes.provider import HLMemProvider
 from hl_mem.api.server import create_app
 from hl_mem.settings import Settings
+from hl_mem.storage.claims import ClaimRepository
 
 
 def _seed_claim(connection) -> None:
-    connection.execute(
-        "INSERT INTO claims("
-        "id,status,subject_entity_id,predicate,value_json,index_text,recorded_from"
-        ") VALUES (?,?,?,?,?,?,?)",
-        (
-            "claim-tea",
-            "active",
-            "user",
-            "likes",
-            '"SECRET_RAW_VALUE"',
-            "likes tea",
-            "2026-07-31T00:00:00+00:00",
-        ),
+    ClaimRepository(connection).insert_claim(
+        {
+            "id": "claim-tea",
+            "status": "active",
+            "subject_entity_id": "user",
+            "predicate": "likes",
+            "value_json": '"SECRET_RAW_VALUE"',
+            "index_text": "likes tea",
+            "recorded_from": "2026-07-31T00:00:00+00:00",
+        },
+        commit=False,
     )
     connection.commit()
 

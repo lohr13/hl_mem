@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
 from hl_mem.protocols import RelationProposal
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.discover_relations import discover_relations
 from hl_mem.workers.ttl import expire_claims
 
@@ -81,20 +82,19 @@ def test_api_feedback_bonus_flows_into_ttl_valid_to(
     app = create_app(tmp_path / "feedback-ttl.db")
     with TestClient(app) as client:
         connection = app.state.db.open()
-        connection.execute(
-            "INSERT INTO claims(id,status,subject_entity_id,predicate,value_json,index_text,recorded_from,scope,expires_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            (
-                "ttl-claim",
-                "active",
-                "service",
-                "state",
-                '"degraded"',
-                "service state degraded",
-                "2026-07-01T00:00:00+00:00",
-                "temporal",
-                "2026-07-20T00:00:00+00:00",
-            ),
+        ClaimRepository(connection).insert_claim(
+            {
+                "id": "ttl-claim",
+                "status": "active",
+                "subject_entity_id": "service",
+                "predicate": "state",
+                "value_json": '"degraded"',
+                "index_text": "service state degraded",
+                "recorded_from": "2026-07-01T00:00:00+00:00",
+                "scope": "temporal",
+                "expires_at": "2026-07-20T00:00:00+00:00",
+            },
+            commit=False,
         )
         connection.commit()
         for _ in range(3):

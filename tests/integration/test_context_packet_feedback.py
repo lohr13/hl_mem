@@ -5,33 +5,34 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.storage.claims import ClaimRepository
 
 
 def _seed_claims(connection) -> None:
-    connection.executemany(
-        "INSERT INTO claims("
-        "id,status,subject_entity_id,predicate,value_json,index_text,recorded_from"
-        ") VALUES (?,?,?,?,?,?,?)",
-        (
-            (
-                "claim-tea",
-                "active",
-                "user",
-                "likes",
-                '"SECRET_RAW_VALUE"',
-                "likes tea",
-                "2026-07-31T00:00:00+00:00",
-            ),
-            (
-                "claim-milk",
-                "active",
-                "user",
-                "likes",
-                '"another raw value"',
-                "likes tea with milk every morning",
-                "2026-07-31T00:00:01+00:00",
-            ),
-        ),
+    repository = ClaimRepository(connection)
+    repository.insert_claim(
+        {
+            "id": "claim-tea",
+            "status": "active",
+            "subject_entity_id": "user",
+            "predicate": "likes",
+            "value_json": '"SECRET_RAW_VALUE"',
+            "index_text": "likes tea",
+            "recorded_from": "2026-07-31T00:00:00+00:00",
+        },
+        commit=False,
+    )
+    repository.insert_claim(
+        {
+            "id": "claim-milk",
+            "status": "active",
+            "subject_entity_id": "user",
+            "predicate": "likes",
+            "value_json": '"another raw value"',
+            "index_text": "likes tea with milk every morning",
+            "recorded_from": "2026-07-31T00:00:01+00:00",
+        },
+        commit=False,
     )
     connection.execute(
         "INSERT INTO evidence_links("
