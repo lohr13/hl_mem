@@ -46,9 +46,9 @@ def test_settings_contract_includes_bypass_and_recall_fields() -> None:
     assert settings.access_bonus_cap_days == 30
     assert settings.decay_rollout_grace_days == 7
     assert settings.decay_min_confidence == 0.05
-    assert settings.recall_default_limit == 20
+    assert settings.recall_default_limit == 5
     assert settings.recall_vector_scan_limit == 200
-    assert settings.snapshot()["recall_default_limit"] == 20
+    assert settings.snapshot()["recall_default_limit"] == 5
     assert settings.snapshot()["recall_vector_scan_limit"] == 200
     assert RecallInput(query="memory").limit is None
 

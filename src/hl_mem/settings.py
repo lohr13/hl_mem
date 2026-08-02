@@ -138,7 +138,7 @@ class Settings:
         default=0.80,
         metadata={"toml": "relation.conflict_confidence"},
     )
-    recall_default_limit: int = field(default=20, metadata={"toml": "recall.default_limit"})
+    recall_default_limit: int = field(default=5, metadata={"toml": "recall.default_limit"})
     recall_vector_scan_limit: int = field(default=200, metadata={"toml": "recall.vector_scan_limit"})
     packed_context_token_budget: int = field(
         default=2000,
@@ -155,7 +155,7 @@ class Settings:
         metadata={"toml": "recall.relevance_gate_mode"},
     )
     relevance_reranker_floor: float = field(
-        default=0.4,
+        default=0.15,
         metadata={"toml": "recall.relevance_reranker_floor"},
     )
     relevance_dense_floor: float = field(

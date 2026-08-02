@@ -178,7 +178,7 @@ def test_relevance_settings_snapshot_contains_non_sensitive_values() -> None:
     snapshot = Settings().snapshot()
 
     assert snapshot["relevance_gate_mode"] == "off"
-    assert snapshot["relevance_reranker_floor"] == 0.4
+    assert snapshot["relevance_reranker_floor"] == 0.15
     assert snapshot["relevance_dense_floor"] == 0.3
     assert snapshot["relevance_relative_drop"] == 0.15
     assert snapshot["relevance_keep_top1"] is True
