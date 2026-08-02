@@ -29,7 +29,6 @@ _SOURCE_NAMES = {
     "low_recall": "llm_low_recall",
     "always": "llm_short",
 }
-_LOW_RECALL_DENSE_TOP_SCORE_FLOOR = 0.5
 _QUERY_SCHEMA = {
     "type": "object",
     "properties": {
@@ -62,8 +61,6 @@ class QueryExpander:
         *,
         candidate_count: int | None = None,
         candidate_floor: int = 8,
-        fts_hit_count: int | None = None,
-        dense_top_score: float | None = None,
     ) -> str | None:
         """返回当前模式下的扩展触发原因。"""
         if mode == "off":
@@ -76,12 +73,6 @@ class QueryExpander:
         if len(normalized) < 10:
             return "short_query"
         if candidate_count is not None and candidate_count < candidate_floor:
-            return "low_recall"
-        if (
-            fts_hit_count == 0
-            and dense_top_score is not None
-            and dense_top_score < _LOW_RECALL_DENSE_TOP_SCORE_FLOOR
-        ):
             return "low_recall"
         return None
 

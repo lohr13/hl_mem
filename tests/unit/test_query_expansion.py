@@ -52,55 +52,6 @@ def test_auto_trigger_boundaries_and_coreference() -> None:
     )
 
 
-def test_auto_low_recall_trigger_requires_weak_dense_when_candidates_are_plentiful_and_fts_is_empty() -> None:
-    query = "普通且足够具体的查询文本"
-
-    assert (
-        QueryExpander.trigger_for(
-            query,
-            "auto",
-            candidate_count=20,
-            candidate_floor=8,
-            fts_hit_count=0,
-            dense_top_score=0.49,
-        )
-        == "low_recall"
-    )
-    assert (
-        QueryExpander.trigger_for(
-            query,
-            "auto",
-            candidate_count=20,
-            candidate_floor=8,
-            fts_hit_count=0,
-            dense_top_score=0.5,
-        )
-        is None
-    )
-    assert (
-        QueryExpander.trigger_for(
-            query,
-            "auto",
-            candidate_count=20,
-            candidate_floor=8,
-            fts_hit_count=0,
-            dense_top_score=None,
-        )
-        is None
-    )
-    assert (
-        QueryExpander.trigger_for(
-            query,
-            "auto",
-            candidate_count=20,
-            candidate_floor=8,
-            fts_hit_count=1,
-            dense_top_score=0.49,
-        )
-        is None
-    )
-
-
 def test_expander_cleans_deduplicates_and_limits_results() -> None:
     client = _Client({"queries": [" 原查询 ", "Ａ方案", "A方案", "", "第二条", "第三条"]})
     result = QueryExpander(client).expand(

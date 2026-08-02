@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from hl_mem.core.vector import cosine_similarity, normalized_cosine_similarity, normalized_vector
+from hl_mem.core.vector import normalized_cosine_similarity, normalized_vector
 from hl_mem.domain.claims.attributes import SLOT_REGISTRY, normalize_predicate
 from hl_mem.domain.claims.query_tags import (
     LOW_INFORMATION_TAGS,
@@ -230,7 +230,7 @@ def hybrid_claims(
     tag_candidate_limit: int | None = None,
     weighted_queries: list[WeightedQuery] | None = None,
     query_blobs: list[bytes] | None = None,
-    low_recall_expander: Callable[[int, int, float | None], tuple[list[WeightedQuery], list[bytes]]] | None = None,
+    low_recall_expander: Callable[[int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
 ) -> list[dict[str, Any]]:
     """协调候选收集、过滤评分、关系扩展、重排和结果收尾。"""
     state = _collect_candidates(
@@ -287,7 +287,7 @@ def _collect_candidates(
     tag_candidate_limit: int | None = None,
     weighted_queries: list[WeightedQuery] | None = None,
     query_blobs: list[bytes] | None = None,
-    low_recall_expander: Callable[[int, int, float | None], tuple[list[WeightedQuery], list[bytes]]] | None = None,
+    low_recall_expander: Callable[[int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
 ) -> RecallContext:
     """仅执行 FTS 与向量检索，并建立统一时间快照。"""
     config = recall_config or RecallConfig()
@@ -352,34 +352,16 @@ def _collect_candidates(
             tracer.record_channel("dense" if legacy and index == 0 else f"{label}:dense", dense_results)
 
     collect_query(queries[0], blobs[0], 0)
+    original_visible_count = len(
+        {
+            str(claim["id"])
+            for _, channel, _, _ in query_channels
+            for claim in channel
+            if claim_is_visible(claim, reference, known_as_of, selected_intent)
+        }
+    )
     if len(queries) == 1 and low_recall_expander is not None:
-        original_visible_count = len(
-            {
-                str(claim["id"])
-                for _, channel, _, _ in query_channels
-                for claim in channel
-                if claim_is_visible(claim, reference, known_as_of, selected_intent)
-            }
-        )
-        original_visible_fts_count = len(
-            {
-                str(claim["id"])
-                for claim in query_channels[0][1]
-                if claim_is_visible(claim, reference, known_as_of, selected_intent)
-            }
-        )
-        original_dense_top = query_channels[1][1][0] if query_channels[1][1] else None
-        original_dense_top_embedding = original_dense_top.get("embedding_dense") if original_dense_top else None
-        original_dense_top_score = (
-            cosine_similarity(blobs[0], original_dense_top_embedding)
-            if isinstance(original_dense_top_embedding, bytes)
-            else None
-        )
-        extra_queries, extra_blobs = low_recall_expander(
-            original_visible_count,
-            original_visible_fts_count,
-            original_dense_top_score,
-        )
+        extra_queries, extra_blobs = low_recall_expander(original_visible_count)
         queries.extend(extra_queries)
         blobs.extend(extra_blobs)
     for index, (item, blob) in enumerate(zip(queries[1:], blobs[1:]), 1):

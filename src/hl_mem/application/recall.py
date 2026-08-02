@@ -410,16 +410,12 @@ class RecallService:
 
             def low_recall_expander(
                 candidate_count: int,
-                fts_hit_count: int,
-                dense_top_score: float | None,
             ) -> tuple[list[WeightedQuery], list[bytes]]:
                 trigger = QueryExpander.trigger_for(
                     query,
                     "auto",
                     candidate_count=candidate_count,
                     candidate_floor=self.settings.query_expansion_candidate_floor,
-                    fts_hit_count=fts_hit_count,
-                    dense_top_score=dense_top_score,
                 )
                 return expand_for(trigger) if trigger is not None else ([], [])
 
