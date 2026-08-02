@@ -8,6 +8,7 @@ from pathlib import Path
 
 from hl_mem.application.recall import RecallService
 from hl_mem.ingest.embedder import FakeEmbedder, pack_vector
+from hl_mem.protocols import WeightedQuery
 from hl_mem.recall.recall_pipeline import hybrid_claims
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
@@ -107,6 +108,28 @@ def test_hybrid_claims_records_candidates_without_sensitive_text() -> None:
     assert tracer.to_dict()["phases"]["fusion_us"] >= 0
     assert "plaintext query" not in serialized
     assert "secret value" not in serialized
+
+
+def test_hybrid_claims_passes_visible_first_round_evidence_to_low_recall_expander() -> None:
+    class DenseOnlyRepo(_Repo):
+        def search_claims_fts(self, *_args, **_kwargs):
+            return []
+
+    received: list[tuple[int, ...]] = []
+
+    hybrid_claims(
+        DenseOnlyRepo(),
+        "plaintext query",
+        pack_vector([1.0]),
+        1,
+        None,
+        now="2026-07-24T00:00:00+00:00",
+        weighted_queries=[WeightedQuery("plaintext query", "original", 1.0)],
+        query_blobs=[pack_vector([-1.0])],
+        low_recall_expander=lambda *evidence: (received.append(evidence) or ([], [])),
+    )
+
+    assert received == [(2, 0, -1.0)]
 
 
 def test_search_tracer_truncates_non_final_candidates() -> None:
