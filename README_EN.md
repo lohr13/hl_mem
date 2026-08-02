@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.20.1](https://img.shields.io/badge/version-0.20.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.20.2](https://img.shields.io/badge/version-0.20.2-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -89,11 +89,15 @@ variables. Common keys are listed below.
 | `embedding.mode` | `fake` | `fake` or `real` |
 | `reranker.mode` | `off` | `off`, `fake`, `on`, or `real` |
 | `image_describer.mode` | `off` | `off` or `on` |
-| `recall.query_expansion_mode` | `off` | `off`, `auto`, or `always` |
+| `recall.query_expansion_mode` | `auto` | `off`, `auto`, or `always` |
 | `relation.discovery_mode` | `off` | `off`, `audit`, or `auto` |
 
-Real components must be enabled explicitly and supplied with their own key; there is no automatic fake fallback.
-`HL_MEM_*` environment variables no longer participate in configuration.
+Real components and external-call paths must be supplied with their own key; there is no automatic fake fallback.
+`HL_MEM_*` environment variables no longer participate in application `Settings` configuration. Code defaults intentionally differ from the
+example deployment: `Settings` keeps `recall.default_limit` / `recall.relevance_reranker_floor` at `20` / `0.4`, while
+the repository TOML and `config.example.toml` explicitly set `5` / `0.15` and keep
+`recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model with 5/6-second per-call/total
+timeouts.
 
 ## Capabilities
 
@@ -114,7 +118,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.20.1 with 36 immutable, forward-only migrations.
+The current baseline is v0.20.2 with 36 immutable, forward-only migrations.
 
 ## Documentation
 

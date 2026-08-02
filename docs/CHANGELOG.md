@@ -1,5 +1,32 @@
 # HL-Mem 变更记录
 
+## v0.20.2 (2026-08-02)
+
+### Recall Quality and Diagnostics
+
+- 修复 query expansion 结构化提示词缺少 `queries` 输出键的问题；将默认模式切换为 `auto`，支持为扩展请求单独配置 `glm-4.7`，并将单次/总超时放宽到 5/6 秒。
+- slot hint 现在同时匹配 `canonical_slot` 与兼容字段 `canonical_attribute`，并补充显存、VRAM、graphics card、处理器等高价值中英文别名。
+- 回滚基于首轮 FTS 命中数和 dense top score 的 `low_recall` 触发升级，恢复候选数不足时才触发的保守规则，等待针对性评测完成后再决定是否扩大触发面。
+- dense 检索结果携带真实 cosine `_score`，SearchTrace 的 dense channel scores 不再缺失原始通道分数。
+
+### Evaluation
+
+- 新增 28 条针对性配对评测集，并扩展 `eval_runner` 输出 `pair_id`、dense cosine 与 reranker raw score，支持 query expansion 开关的逐对基线比较。
+
+### Configuration
+
+- 恢复仓库与示例 TOML 的 `recall.relevance_keep_top1 = true`，保护低分但正确的 top-1 结果。
+- 将仓库与示例 TOML 的 `recall.default_limit` 从 20 调整为 5、`recall.relevance_reranker_floor` 从 0.4 调整为 0.15；`Settings` 静态代码默认值保持 20 / 0.4，部署覆盖与代码默认在配置文档中明确区分。
+
+### Reliability and Operations
+
+- 移除 Bash watchdog，新增纯标准库 `scripts/healthcheck.py`，并补充 systemd、Windows Task Scheduler 与容器平台的跨平台探测、恢复和告警职责说明。
+- 新增 Windows 单次执行的静默 `scripts/hlmem_supervisor.py`：兼容 `pythonw.exe`，提供连续失败阈值、重启冷却、跨次状态、陈旧锁回收、端口进程树终止和无窗口拉起。
+
+### Compatibility
+
+- 无新增数据库 migration，当前 schema 仍为 migration 036；无 REST 或 MCP 契约变更。`query_expansion_mode` 的 `Settings` 默认值从 `off` 变为 `auto`，生产部署需要提供 `LLM_API_KEY`，不希望产生扩展调用的环境应显式配置为 `off`。
+
 ## v0.20.1 (2026-08-02)
 
 ### Reliability and Observability

@@ -1,6 +1,6 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.20.1 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.20.2 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
@@ -210,10 +210,11 @@ hl-mem import var/events.jsonl --db var/restored.db
 | `recall.query_expansion_candidate_floor` | 整数 | `8` | > 0 | `query_expansion_candidate_floor` |
 | `recall.query_expansion_max` | 整数 | `2` | 0 - 2 | `query_expansion_max` |
 | `recall.query_expansion_max_concurrency` | 整数 | `4` | > 0 | `query_expansion_max_concurrency` |
-| `recall.query_expansion_mode` | 字符串 | `"off"` | `off`、`auto`、`always` | `query_expansion_mode` |
-| `recall.query_expansion_timeout_seconds` | 数值 | `2.0` | > 0 | `query_expansion_timeout_seconds` |
+| `recall.query_expansion_mode` | 字符串 | `"auto"` | `off`、`auto`、`always` | `query_expansion_mode` |
+| `recall.query_expansion_model` | 字符串 | 未设置 | 字符串；可省略 | `query_expansion_model` |
+| `recall.query_expansion_timeout_seconds` | 数值 | `5.0` | > 0 | `query_expansion_timeout_seconds` |
 | `recall.query_expansion_token_ceiling` | 整数 | `256` | > 0 | `query_expansion_token_ceiling` |
-| `recall.query_expansion_total_timeout_seconds` | 数值 | `3.0` | > 0 | `query_expansion_total_timeout_seconds` |
+| `recall.query_expansion_total_timeout_seconds` | 数值 | `6.0` | > 0 | `query_expansion_total_timeout_seconds` |
 | `recall.relevance_dense_floor` | 数值 | `0.3` | 0.0 - 1.0 | `relevance_dense_floor` |
 | `recall.relevance_gate_mode` | 字符串 | `"off"` | `off`、`observe`、`enforce` | `relevance_gate_mode` |
 | `recall.relevance_intents` | 字符串 数组 | `["current_state"]` | 非空数组；元素为 current_state、preference、historical、tool、procedure | `relevance_intents` |

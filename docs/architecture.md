@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.20.1
+- Document baseline: v0.20.2
 - Updated: 2026-08-02
 - Deployment baseline: local-first, SQLite-first
 
@@ -277,7 +277,7 @@ Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by
 values while making the field describe the actual host/model delivery boundary.
 
 Migration 036 is the v0.20 schema change: it adds tokenized FTS v2 tables and orphan-cleanup triggers for claims, events,
-and claim tags. v0.20.1 adds no migration.
+and claim tags. v0.20.2 adds no migration.
 
 Backup and restore are whole-database operations:
 

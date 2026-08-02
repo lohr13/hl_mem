@@ -1,17 +1,26 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-02 · v0.20.1
+> 最后更新：2026-08-02 · v0.20.2
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.20.1
-- **阶段**：v0.20.1 发版准备
+- **版本**：v0.20.2
+- **阶段**：v0.20.2 发版准备
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），36 migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-02 v0.20.2 召回质量与部署监督
+
+- query expansion 修复结构化输出提示词，默认切换到 `auto`，支持独立模型，并将单次/总超时放宽到 5/6 秒；低召回证据触发升级已回滚到原有候选数规则。
+- slot hint 同时匹配 `canonical_slot` 与 `canonical_attribute`，补充显存、处理器等高价值别名；dense cosine 进入 SearchTrace channel scores。
+- 新增 28 条针对性配对评测，runner 输出 `pair_id`、dense cosine 与 reranker raw score，便于比较 query expansion 前后变化。
+- 仓库与示例 TOML 将默认召回条数设为 5、reranker floor 设为 0.15，并恢复 `keep_top1 = true`；`Settings` 静态默认值仍单独保留在配置参考中。
+- 监督方案以跨平台 `healthcheck.py` 为基础；Windows 可选用 `hlmem_supervisor.py` 由 Task Scheduler 静默执行连续失败恢复。
+- v0.20.2 无新增 migration；数据库 schema 保持在 migration 036，REST 与 MCP 契约不变。
 
 ### 2026-08-02 v0.20.1 可靠性热修复
 

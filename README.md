@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.20.1](https://img.shields.io/badge/version-0.20.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.20.2](https://img.shields.io/badge/version-0.20.2-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -169,11 +169,12 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 | `llm.provider` | `dashscope` | `dashscope`、`zhipu` 或 `openai_compatible` |
 | `llm.structured_mode` | `json_object` | `auto`、`json_object` 或 `json_schema` |
 | `index.text_mode` | `legacy` | `legacy`、`value_only`、`natural` 或 `answerable` |
-| `recall.query_expansion_mode` | `off` | 多查询召回：`off`、`auto` 或 `always` |
+| `recall.query_expansion_mode` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
 | `relation.discovery_mode` | `off` | 关系发现：`off`、`audit` 或 `auto` |
 | `recall.tag_channel_enabled` | `false` | 是否启用独立 Tag 检索通道 |
 
-真实组件必须在 TOML 中显式启用并提供各自密钥；失败时不会自动切换为 fake。任意 `HL_MEM_*` 环境变量都不再参与配置。
+真实组件和外部调用路径必须提供各自密钥；失败时不会自动切换为 fake。任意 `HL_MEM_*` 环境变量都不再参与应用 `Settings` 配置。
+代码默认值与示例部署配置刻意分离：`Settings` 的 `recall.default_limit` / `recall.relevance_reranker_floor` 仍为 `20` / `0.4`，而仓库 TOML 与 `config.example.toml` 显式覆盖为 `5` / `0.15`，并保持 `recall.relevance_keep_top1 = true`。query expansion 使用独立可配置模型，单次/总超时为 5/6 秒。
 
 ## 能力概览
 
@@ -194,7 +195,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.20.1，共 36 个不可变、仅向前执行的 Migration。
+当前基线为 v0.20.2，共 36 个不可变、仅向前执行的 Migration。
 
 ## 文档
 
