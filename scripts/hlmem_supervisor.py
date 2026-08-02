@@ -343,10 +343,7 @@ class Supervisor:
 
         state.failures += 1
         _save_state(self.config.state_file, state)
-        self._log(
-            f"probe failed url={self.config.url} failures={state.failures} "
-            f"reason={_short_reason(reason)}"
-        )
+        self._log(f"probe failed url={self.config.url} failures={state.failures} " f"reason={_short_reason(reason)}")
         if state.failures < self.config.failure_threshold:
             return 1
 
@@ -354,10 +351,7 @@ class Supervisor:
         elapsed = max(0, now - state.last_restart_epoch)
         if state.last_restart_epoch and elapsed < self.config.cooldown_seconds:
             remaining = self.config.cooldown_seconds - elapsed
-            self._log(
-                f"restart suppressed reason=cooldown remaining_seconds={remaining} "
-                f"failures={state.failures}"
-            )
+            self._log(f"restart suppressed reason=cooldown remaining_seconds={remaining} " f"failures={state.failures}")
             return 1
 
         try:
@@ -411,8 +405,7 @@ def _wait_for_port_release(config: SupervisorConfig) -> None:
             return
         if time.monotonic() >= deadline:
             raise RuntimeError(
-                f"port {config.service_port} is still occupied by pids="
-                f"{','.join(str(pid) for pid in listeners)}"
+                f"port {config.service_port} is still occupied by pids=" f"{','.join(str(pid) for pid in listeners)}"
             )
         time.sleep(config.termination_poll_seconds)
 
@@ -497,9 +490,7 @@ def _default_bash_executable() -> Path:
 def build_config(url: str = DEFAULT_URL, timeout: float = 5.0) -> SupervisorConfig:
     repo_root = Path(os.environ.get("HL_MEM_ROOT", str(REPO_ROOT))).expanduser().absolute()
     var_dir = repo_root / "var"
-    start_script = Path(
-        os.environ.get("HL_MEM_START_SCRIPT", str(Path.home() / "bin" / "start_hlmem.sh"))
-    ).expanduser()
+    start_script = Path(os.environ.get("HL_MEM_START_SCRIPT", str(Path.home() / "bin" / "start_hlmem.sh"))).expanduser()
     if not start_script.is_absolute():
         start_script = repo_root / start_script
     start_script = start_script.absolute()

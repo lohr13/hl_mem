@@ -20,7 +20,9 @@ def probe(url: str, timeout: float) -> tuple[bool, str]:
         if status_code != 200:
             return False, f"HTTP {status_code}"
         if not isinstance(payload, dict) or payload.get("status") != "ok":
-            return False, f"unexpected status={payload.get('status')!r}" if isinstance(payload, dict) else "invalid body"
+            return False, (
+                f"unexpected status={payload.get('status')!r}" if isinstance(payload, dict) else "invalid body"
+            )
         return True, "status=ok"
     except (OSError, ValueError, HTTPException) as exc:
         return False, str(exc)
