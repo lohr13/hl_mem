@@ -51,3 +51,8 @@ docs/eval-reports/
 # cc-connect runtime artifacts (not part of this repo)
 .cc-connect/
 
+
+# hlmem watchdog runtime state
+var/watchdog.state
+var/crash-packages/
+
