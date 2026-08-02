@@ -8,6 +8,7 @@
 - 将 `/healthz` 改为不依赖数据库的异步端点，仅返回进程内状态，避免线程池耗尽或数据库锁竞争使健康探针饿死。
 - 新增 P0 Windows watchdog：`scripts/hlmem_watchdog.sh` 由计划任务定时探测服务，连续失败后自动收集事故包、终止异常进程树并重启服务，同时提供失败阈值、冷却和锁重叠保护。
 - 新增 P1 HTTP 请求生命周期日志中间件：记录 `request_started` / `request_finished`、方法、路径、状态码、耗时及经过清理的可选 `X-Request-ID`，异常请求也会记录完成事件。
+- 修复生产启动的 logging 配置：为 `hl_mem` logger 单独启用 INFO 输出，确保请求日志中间件事件不再被过滤，同时不开启第三方库的 INFO 日志。
 
 ### Compatibility
 
