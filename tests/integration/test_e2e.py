@@ -60,6 +60,7 @@ def test_healthz_does_not_open_a_database_connection(monkeypatch, tmp_path) -> N
 
     app = create_app(tmp_path / "health.db")
     with TestClient(app) as client:
+
         def fail_connect() -> None:
             raise AssertionError("healthz must not open a database connection")
 

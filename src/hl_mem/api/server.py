@@ -57,7 +57,6 @@ from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.jobs import JobRepository
 
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -93,9 +92,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     @staticmethod
     def _safe_query_id(value: str) -> str:
         """限制日志字段长度，并替换可能破坏单行日志结构的字符。"""
-        return "".join(character if character.isalnum() or character in "-._:" else "_" for character in value)[
-            :200
-        ]
+        return "".join(character if character.isalnum() or character in "-._:" else "_" for character in value)[:200]
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         method = request.method
