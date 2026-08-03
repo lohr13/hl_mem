@@ -13,6 +13,8 @@ def test_mcp_exposes_minimal_memory_tool_contract(tmp_path) -> None:
     assert set(server.list_tools()) == {
         "memory_recall",
         "memory_save",
+        "memory_get",
+        "memory_correct",
         "memory_forget",
         "memory_explain",
         "memory_feedback",

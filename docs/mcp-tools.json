@@ -236,6 +236,50 @@
     "name": "memory_forget"
   },
   {
+    "description": "Get complete claim details by identifier.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "memory_get"
+  },
+  {
+    "description": "Replace only a claim's content and preserve its classification.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "corrected_text": {
+          "maxLength": 50000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "corrected_text",
+        "idempotency_key"
+      ],
+      "type": "object"
+    },
+    "name": "memory_correct"
+  },
+  {
     "description": "Explain a memory's evidence chain.",
     "inputSchema": {
       "additionalProperties": true,

@@ -223,6 +223,48 @@ class MemoryListOutput(BaseModel):
     offset: int = Field(ge=0)
 
 
+class MemoryDetailOutput(BaseModel):
+    """单条 Claim 的内容、生命周期、来源与冲突历史。"""
+
+    id: str
+    text: str
+    namespace: str
+    subject: str | None = None
+    predicate: str | None = None
+    qualifiers: dict[str, Any] = Field(default_factory=dict)
+    status: str
+    confidence: float | None = None
+    importance: float | None = None
+    scope: str | None = None
+    recorded_from: str
+    recorded_to: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    expires_at: str | None = None
+    canonical_attribute: str | None = None
+    canonical_slot: str | None = None
+    topic_tags: list[str] = Field(default_factory=list)
+    superseded_by_id: str | None = None
+    evidence_links: list[dict[str, Any]] = Field(default_factory=list)
+    source_events: list[dict[str, Any]] = Field(default_factory=list)
+    conflicts: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class MemoryCorrectionInput(BaseModel):
+    """按目标 Claim 标识执行仅内容替换。"""
+
+    corrected_text: str = Field(min_length=1, max_length=50000)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class MemoryCorrectionOutput(BaseModel):
+    """显式纠正事件与新 Claim 标识。"""
+
+    correction_event_id: str
+    new_claim_id: str
+    created: bool
+
+
 class EpisodeInput(NamespaceInput):
     """创建 Episode 的请求。"""
 

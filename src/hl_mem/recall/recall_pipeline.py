@@ -47,8 +47,10 @@ def matching_policies(policies: list[dict[str, Any]], query: str) -> list[dict[s
 def stale_observations(connection: Any, claim_id: str, commit: bool = True) -> None:
     """将依赖指定 claim 的 observation 标记为过期。"""
     rows = connection.execute(
-        "SELECT derived_id FROM evidence_links WHERE derived_type='observation' "
-        "AND evidence_type='claim' AND evidence_id=?",
+        "SELECT DISTINCT e.derived_id FROM evidence_links e "
+        "JOIN derivations d ON d.id=e.derived_id AND d.kind=e.derived_type "
+        "WHERE e.derived_type='observation' AND e.evidence_type='claim' "
+        "AND e.evidence_id=? AND d.status='active'",
         (claim_id,),
     ).fetchall()
     for row in rows:

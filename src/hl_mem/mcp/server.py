@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from hl_mem import components
+from hl_mem.application.correction import CorrectionService
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService
+from hl_mem.application.memories import MemoryQueryService
 from hl_mem.application.recall import RecallService
 from hl_mem.experience.service import ExperienceService
 from hl_mem.settings import Settings
@@ -156,6 +158,28 @@ def get_tool_schemas() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "memory_get",
+            "description": "Get complete claim details by identifier.",
+            "inputSchema": {
+                **object_schema,
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"],
+            },
+        },
+        {
+            "name": "memory_correct",
+            "description": "Replace only a claim's content and preserve its classification.",
+            "inputSchema": {
+                **object_schema,
+                "properties": {
+                    "id": {"type": "string"},
+                    "corrected_text": {"type": "string", "minLength": 1, "maxLength": 50000},
+                    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 200},
+                },
+                "required": ["id", "corrected_text", "idempotency_key"],
+            },
+        },
+        {
             "name": "memory_explain",
             "description": "Explain a memory's evidence chain.",
             "inputSchema": {
@@ -216,6 +240,10 @@ class McpMemoryServer:
                 return self._recall(connection, arguments)
             if name == "memory_forget":
                 return self._forget(connection, arguments)
+            if name == "memory_get":
+                return self._get(connection, arguments)
+            if name == "memory_correct":
+                return self._correct(connection, arguments)
             if name == "memory_feedback":
                 return self._feedback(connection, arguments)
             return self._explain(connection, arguments)
@@ -299,35 +327,39 @@ class McpMemoryServer:
         correction = arguments.get("correction")
         if not correction:
             return result
-        memory_id = str(correction.get("memory_id", ""))
-        action = str(correction.get("action", ""))
-        key = str(correction.get("idempotency_key", ""))
-        if not memory_id or action not in {"retract", "replace"} or not key:
+        memory_id = correction.get("memory_id")
+        action = correction.get("action")
+        key = correction.get("idempotency_key")
+        if (
+            not isinstance(memory_id, str)
+            or not memory_id
+            or action not in {"retract", "replace"}
+            or not isinstance(key, str)
+            or not key
+        ):
             raise ValueError("correction requires memory_id, retract|replace action, and idempotency_key")
-        text = str(correction.get("corrected_text") or "")
-        if action == "replace" and not text:
-            raise ValueError("corrected_text is required for replace")
-        event = IngestService(connection).ingest_event(
-            {
-                "idempotency_key": key,
-                "tenant_id": "default",
-                "event_type": "feedback" if action == "retract" else "correction",
-                "actor_type": "user",
-                "content": {"memory_id": memory_id, "action": action, "text": text},
-                "occurred_at": now,
-            },
-            key,
+        correction_result = CorrectionService(connection, self.embedder, settings=self.settings).apply(
+            memory_id,
+            action=action,
+            corrected_text=correction.get("corrected_text"),
+            idempotency_key=key,
         )
-        if not event["created"]:
-            result["correction"] = {"id": memory_id, "idempotent": True}
-        elif action == "retract":
-            result["correction"] = ForgetService(connection).forget(memory_id)
-        else:
-            result["correction"] = {
-                "id": memory_id,
-                "replacement_event_id": event["id"],
-            }
+        result["correction"] = correction_result
+        result["correction_event_id"] = correction_result["correction_event_id"]
         return result
+
+    @staticmethod
+    def _get(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        """复用共享查询服务返回完整 Claim 详情。"""
+        return MemoryQueryService(connection).get_memory(str(arguments.get("id", "")))
+
+    def _correct(self, connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        """复用共享纠正服务执行仅内容替换。"""
+        return CorrectionService(connection, self.embedder, settings=self.settings).correct(
+            arguments.get("id"),
+            arguments.get("corrected_text"),
+            arguments.get("idempotency_key"),
+        )
 
     @staticmethod
     def _explain(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:

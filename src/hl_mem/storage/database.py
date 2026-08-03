@@ -61,6 +61,8 @@ class Database:
         return connection
 
     def _ensure_migrated(self) -> None:
+        if self.path != ":memory:" and not self.path.startswith("file:"):
+            Path(self.path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             if self._migrated:
                 return

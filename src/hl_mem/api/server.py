@@ -28,6 +28,9 @@ from hl_mem.api.schemas import (
     EpisodeUpdate,
     EventInput,
     FeedbackInput,
+    MemoryCorrectionInput,
+    MemoryCorrectionOutput,
+    MemoryDetailOutput,
     MemoryInput,
     MemoryListOutput,
     MemorySaveOutput,
@@ -39,6 +42,7 @@ from hl_mem.application.context_packet import (
     UnknownSchemaMajorError,
     retrieval_bundle_from_dict,
 )
+from hl_mem.application.correction import CorrectionService
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService, new_id
 from hl_mem.application.memories import MemoryQueryService
@@ -418,35 +422,14 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         correction = payload.correction
         if correction is None:
             return result
-        if correction.action == "replace" and not correction.corrected_text:
-            raise HTTPException(422, "corrected_text is required for replace")
-        event = {
-            "idempotency_key": correction.idempotency_key,
-            "tenant_id": "default",
-            "event_type": "feedback" if correction.action == "retract" else "correction",
-            "actor_type": "user",
-            "content": {
-                "memory_id": correction.memory_id,
-                "action": correction.action,
-                "text": correction.corrected_text or "",
-            },
-            "occurred_at": _now(),
-        }
-        event_result = IngestService(connection).ingest_event(event, correction.idempotency_key)
-        if not event_result["created"]:
-            correction_result = {"id": correction.memory_id, "idempotent": True}
-        elif correction.action == "retract":
-            try:
-                correction_result = ForgetService(connection).forget(correction.memory_id)
-            except NotFoundError as error:
-                raise HTTPException(404, str(error)) from error
-        else:
-            correction_result = {
-                "id": correction.memory_id,
-                "replacement_event_id": event_result["id"],
-            }
+        correction_result = CorrectionService(connection, embedder, settings=settings).apply(
+            correction.memory_id,
+            action=correction.action,
+            corrected_text=correction.corrected_text,
+            idempotency_key=correction.idempotency_key,
+        )
         result["correction"] = correction_result
-        result["correction_event_id"] = event_result["id"]
+        result["correction_event_id"] = correction_result["correction_event_id"]
         return result
 
     @app.post("/v1/episodes/{episode_id}/traces")
@@ -571,6 +554,27 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             status=status,
             limit=limit,
             offset=offset,
+        )
+
+    @app.get("/v1/memories/{memory_id}", response_model=MemoryDetailOutput)
+    def get_memory(
+        memory_id: str,
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
+        """返回单条 Claim 的完整公开详情。"""
+        return MemoryQueryService(connection).get_memory(memory_id)
+
+    @app.post("/v1/memories/{memory_id}/correct", response_model=MemoryCorrectionOutput)
+    def correct_memory(
+        memory_id: str,
+        payload: MemoryCorrectionInput,
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
+        """按既定契约仅替换 Claim 内容，并原子建立替代证据链。"""
+        return CorrectionService(connection, embedder, settings=settings).correct(
+            memory_id,
+            payload.corrected_text,
+            payload.idempotency_key,
         )
 
     @app.post(

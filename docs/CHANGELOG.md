@@ -2,6 +2,17 @@
 
 ## v0.21.0（未发布）
 
+### Memory Query and Correction
+
+- 新增 `GET /v1/memories/{memory_id}`，沿用 `MemoryQueryService` 返回 Claim 内容、生命周期与分类字段、`superseded_by_id`、完整 evidence links、来源事件及 conflict 历史。
+- 新增 application 层 `CorrectionService` 与 `POST /v1/memories/{memory_id}/correct`：显式纠正只替换内容，不重新经过 extractor；新 Claim 继承原分类与重要性字段，并原子重算 fact hash、index text、embedding 和 TTL，旧 Claim 同步转为 `superseded`，其派生 observation 标记 stale，并建立 correction event 与替代证据链；远程 embedding 窗口使用继承字段快照防止并发分类更新丢失。
+- MCP 新增 `memory_get`、`memory_correct`，与 REST 复用同一查询/纠正服务；`memory_feedback` 的显式 correction 也统一走该服务，并与 REST 一致返回 `correction_event_id`，同时保留既有 `id`、`replacement_event_id`、`forgotten`/`idempotent` 兼容字段。
+
+### Reliability
+
+- `Database` 在首次打开与迁移前自动创建数据库父目录，修复 `hlmem init` 后默认 `var/` 尚不存在时首次启动报 `unable to open database file`；该保护同时覆盖 server、worker、MCP 与自定义数据库路径。
+- 本批次不新增 migration，schema 仍为 migration 036。
+
 ### Daily CLI and Offline First Run
 
 - `hl-mem` 新增 `init`、`server`、`remember`、`recall`、`list`、`forget` 日常命令，并提供等价的 `hlmem` entry point；日常读写默认通过本地 HTTP 服务，保持与真实部署一致的事务、审计和错误语义。
