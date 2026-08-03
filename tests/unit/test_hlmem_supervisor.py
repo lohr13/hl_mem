@@ -65,7 +65,15 @@ def test_process_ownership_accepts_venv_command_with_base_python_executable() ->
         command_line=r"D:\workspace\hl_agent\hl_mem\.venv\Scripts\python.exe start_server.py",
     )
 
-    assert supervisor._process_belongs_to_hl_mem(config, info) is True
+    with patch.object(
+        supervisor,
+        "_command_line_args",
+        return_value=[
+            r"D:\workspace\hl_agent\hl_mem\.venv\Scripts\python.exe",
+            "start_server.py",
+        ],
+    ):
+        assert supervisor._process_belongs_to_hl_mem(config, info) is True
 
 
 def test_process_ownership_accepts_base_python_command_with_absolute_server_script() -> None:
@@ -74,13 +82,18 @@ def test_process_ownership_accepts_base_python_command_with_absolute_server_scri
         pid=32_944,
         created_epoch=1_234,
         executable_path=r"C:\ProgramData\miniconda3\python.exe",
-        command_line=(
-            r"C:\ProgramData\miniconda3\python.exe "
-            r"D:\workspace\hl_agent\hl_mem\start_server.py"
-        ),
+        command_line=(r"C:\ProgramData\miniconda3\python.exe " r"D:\workspace\hl_agent\hl_mem\start_server.py"),
     )
 
-    assert supervisor._process_belongs_to_hl_mem(config, info) is True
+    with patch.object(
+        supervisor,
+        "_command_line_args",
+        return_value=[
+            r"C:\ProgramData\miniconda3\python.exe",
+            r"D:\workspace\hl_agent\hl_mem\start_server.py",
+        ],
+    ):
+        assert supervisor._process_belongs_to_hl_mem(config, info) is True
 
 
 def test_process_ownership_rejects_command_without_server_script() -> None:
@@ -92,7 +105,15 @@ def test_process_ownership_rejects_command_without_server_script() -> None:
         command_line=r"D:\workspace\hl_agent\hl_mem\.venv\Scripts\python.exe other.py",
     )
 
-    assert supervisor._process_belongs_to_hl_mem(config, info) is False
+    with patch.object(
+        supervisor,
+        "_command_line_args",
+        return_value=[
+            r"D:\workspace\hl_agent\hl_mem\.venv\Scripts\python.exe",
+            "other.py",
+        ],
+    ):
+        assert supervisor._process_belongs_to_hl_mem(config, info) is False
 
 
 def test_process_ownership_rejects_empty_command_line() -> None:
