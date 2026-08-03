@@ -33,6 +33,7 @@ RestartFn = Callable[[], int]
 ClockFn = Callable[[], float]
 LogFn = Callable[[str], None]
 LockResult = Literal["acquired", "reclaimed", "busy"]
+SupervisorStatus = Literal["idle", "starting"]
 
 
 @dataclass(frozen=True)
@@ -43,8 +44,6 @@ class SupervisorConfig:
     state_file: Path
     log_file: Path
     lock_dir: Path
-    start_script: Path
-    bash_executable: Path
     url: str = DEFAULT_URL
     timeout: float = 5.0
     failure_threshold: int = 3
@@ -54,13 +53,31 @@ class SupervisorConfig:
     command_timeout_seconds: float = 10.0
     termination_wait_seconds: float = 10.0
     termination_poll_seconds: float = 0.2
-    start_grace_seconds: float = 1.0
+    starting_timeout_seconds: float = 60.0
+    start_health_timeout_seconds: float = 30.0
+    start_health_poll_seconds: float = 0.5
+    server_log_max_bytes: int = 5 * 1024 * 1024
+    server_log_backups: int = 3
 
 
 @dataclass
 class SupervisorState:
     failures: int = 0
     last_restart_epoch: int = 0
+    status: SupervisorStatus = "idle"
+    launcher_pid: int = 0
+    starting_epoch: int = 0
+    launcher_created_epoch: int = 0
+    service_pid: int = 0
+    service_created_epoch: int = 0
+
+
+@dataclass(frozen=True)
+class ProcessInfo:
+    pid: int
+    created_epoch: int
+    executable_path: str
+    command_line: str
 
 
 def _timestamp() -> str:
@@ -81,11 +98,34 @@ def _load_state(path: Path, log: LogFn) -> SupervisorState:
         return SupervisorState()
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        failures = int(raw["failures"])
-        last_restart_epoch = int(raw["last_restart_epoch"])
-        if failures < 0 or last_restart_epoch < 0:
+        if not isinstance(raw, dict):
+            raise TypeError("state must be a JSON object")
+        state = SupervisorState(
+            failures=int(raw.get("failures", 0)),
+            last_restart_epoch=int(raw.get("last_restart_epoch", 0)),
+            status=str(raw.get("status", "idle")),
+            launcher_pid=int(raw.get("launcher_pid", 0)),
+            starting_epoch=int(raw.get("starting_epoch", 0)),
+            launcher_created_epoch=int(raw.get("launcher_created_epoch", 0)),
+            service_pid=int(raw.get("service_pid", 0)),
+            service_created_epoch=int(raw.get("service_created_epoch", 0)),
+        )
+        numeric_values = (
+            state.failures,
+            state.last_restart_epoch,
+            state.launcher_pid,
+            state.starting_epoch,
+            state.launcher_created_epoch,
+            state.service_pid,
+            state.service_created_epoch,
+        )
+        if any(value < 0 for value in numeric_values):
             raise ValueError("state values must be non-negative")
-        return SupervisorState(failures, last_restart_epoch)
+        if state.status not in ("idle", "starting"):
+            raise ValueError(f"invalid supervisor status: {state.status}")
+        if state.status == "starting" and (state.launcher_pid <= 0 or state.starting_epoch <= 0):
+            raise ValueError("starting state requires launcher_pid and starting_epoch")
+        return state
     except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError) as exc:
         log(f"state reset reason={_short_reason(exc)}")
         return SupervisorState()
@@ -132,6 +172,115 @@ def _pid_is_alive(process_id: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _query_process_info(config: SupervisorConfig, process_id: int) -> ProcessInfo:
+    if process_id <= 0:
+        raise ValueError(f"invalid process id: {process_id}")
+    powershell_script = (
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+        f"$process = Get-CimInstance Win32_Process -Filter 'ProcessId = {process_id}' -ErrorAction Stop; "
+        "if ($null -eq $process) { exit 3 }; "
+        "$created = [DateTimeOffset]$process.CreationDate; "
+        "[pscustomobject]@{"
+        "pid=[int]$process.ProcessId;"
+        "created_epoch=[long]$created.ToUnixTimeMilliseconds();"
+        "executable_path=[string]$process.ExecutablePath;"
+        "command_line=[string]$process.CommandLine"
+        "} | ConvertTo-Json -Compress"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", powershell_script],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        creationflags=CREATE_NO_WINDOW,
+        timeout=config.command_timeout_seconds,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"process query failed for pid={process_id} exit={result.returncode}: " f"{_short_reason(result.stderr)}"
+        )
+    try:
+        raw = json.loads(result.stdout)
+        info = ProcessInfo(
+            pid=int(raw["pid"]),
+            created_epoch=int(raw["created_epoch"]),
+            executable_path=str(raw.get("executable_path") or ""),
+            command_line=str(raw.get("command_line") or ""),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"invalid process query result for pid={process_id}: {_short_reason(exc)}") from exc
+    if info.pid != process_id or info.created_epoch <= 0:
+        raise RuntimeError(f"invalid process identity for pid={process_id}")
+    return info
+
+
+def _command_line_args(command_line: str) -> list[str]:
+    if not command_line:
+        return []
+    if os.name != "nt":
+        import shlex
+
+        return shlex.split(command_line)
+
+    import ctypes
+    from ctypes import wintypes
+
+    argument_count = ctypes.c_int()
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
+    kernel32.LocalFree.restype = wintypes.HLOCAL
+    ctypes.set_last_error(0)
+    arguments = shell32.CommandLineToArgvW(command_line, ctypes.byref(argument_count))
+    if not arguments:
+        raise OSError(ctypes.get_last_error(), "CommandLineToArgvW failed")
+    try:
+        return [arguments[index] for index in range(argument_count.value)]
+    finally:
+        kernel32.LocalFree(ctypes.cast(arguments, wintypes.HLOCAL))
+
+
+def _normalized_windows_path(path: str | Path) -> str:
+    return str(path).replace("\\", "/").casefold().rstrip("/")
+
+
+def _process_belongs_to_hl_mem(config: SupervisorConfig, info: ProcessInfo) -> bool:
+    expected_executable = _normalized_windows_path(config.repo_root / ".venv" / "Scripts" / "python.exe")
+    if _normalized_windows_path(info.executable_path) != expected_executable:
+        return False
+    try:
+        arguments = _command_line_args(info.command_line)
+    except (OSError, ValueError):
+        return False
+    if len(arguments) < 2:
+        return False
+    script_argument = _normalized_windows_path(arguments[1])
+    expected_script = _normalized_windows_path(config.repo_root / "start_server.py")
+    return script_argument == "start_server.py" or script_argument == expected_script
+
+
+def _state_matches_process(state: SupervisorState, info: ProcessInfo) -> bool:
+    service_matches = state.service_pid == info.pid and state.service_created_epoch == info.created_epoch
+    launcher_matches = (
+        state.status == "starting"
+        and state.launcher_pid == info.pid
+        and state.launcher_created_epoch == info.created_epoch
+    )
+    return service_matches or launcher_matches
+
+
+def _clear_starting(state: SupervisorState) -> None:
+    state.status = "idle"
+    state.launcher_pid = 0
+    state.starting_epoch = 0
+    state.launcher_created_epoch = 0
 
 
 class _ReclaimGuard:
@@ -305,7 +454,7 @@ class Supervisor:
         self._probe = probe_fn
         self._clock = clock
         self._log = log_fn or (lambda message: append_log(config.log_file, message))
-        self._restart = restart_fn or (lambda: restart_service(config, self._log))
+        self._restart = restart_fn
 
     def run_once(self) -> int:
         """Probe once, persist state, and restart only when policy permits."""
@@ -330,41 +479,166 @@ class Supervisor:
 
     def _run_locked(self) -> int:
         state = _load_state(self.config.state_file, self._log)
-        try:
-            healthy, reason = self._probe(self.config.url, self.config.timeout)
-        except Exception as exc:  # A scheduled pythonw task must record unexpected probe failures.
-            healthy, reason = False, f"probe exception: {_short_reason(exc)}"
+        healthy, reason = self._probe_once()
 
         if healthy:
-            state.failures = 0
-            _save_state(self.config.state_file, state)
+            self._mark_healthy(state)
             self._log(f"probe ok url={self.config.url} detail={_short_reason(reason)}")
             return 0
+
+        now = int(self._clock())
+        if state.status == "starting":
+            starting_age = max(0, now - state.starting_epoch)
+            if starting_age < self.config.starting_timeout_seconds:
+                self._log(
+                    f"startup still in progress launcher_pid={state.launcher_pid} "
+                    f"age_seconds={starting_age} process_alive={_pid_is_alive(state.launcher_pid)} "
+                    f"healthz={_short_reason(reason)}"
+                )
+                return 1
+            self._log(
+                f"startup state timed out launcher_pid={state.launcher_pid} "
+                f"age_seconds={starting_age} process_alive={_pid_is_alive(state.launcher_pid)} "
+                f"healthz={_short_reason(reason)}"
+            )
+            _clear_starting(state)
+            _save_state(self.config.state_file, state)
+
+        try:
+            listener_pids = _query_listener_pids(self.config)
+        except Exception as exc:
+            self._log(
+                f"probe failed url={self.config.url} failures={state.failures} "
+                f"reason={_short_reason(reason)} listener_query={_short_reason(exc)}"
+            )
+            return 1
 
         state.failures += 1
         _save_state(self.config.state_file, state)
         self._log(f"probe failed url={self.config.url} failures={state.failures} " f"reason={_short_reason(reason)}")
+
+        if not listener_pids:
+            self._log(f"port empty port={self.config.service_port}; starting immediately")
+            return self._start_and_confirm(state)
+
         if state.failures < self.config.failure_threshold:
             return 1
 
-        now = int(self._clock())
         elapsed = max(0, now - state.last_restart_epoch)
         if state.last_restart_epoch and elapsed < self.config.cooldown_seconds:
             remaining = self.config.cooldown_seconds - elapsed
             self._log(f"restart suppressed reason=cooldown remaining_seconds={remaining} " f"failures={state.failures}")
             return 1
 
+        return self._start_and_confirm(state)
+
+    def _probe_once(self, timeout: float | None = None) -> tuple[bool, str]:
         try:
-            launcher_pid = self._restart()
+            probe_timeout = self.config.timeout if timeout is None else timeout
+            return self._probe(self.config.url, probe_timeout)
+        except Exception as exc:  # A scheduled pythonw task must record unexpected probe failures.
+            return False, f"probe exception: {_short_reason(exc)}"
+
+    def _record_healthy_identity(self, state: SupervisorState) -> None:
+        try:
+            listener_pids = _query_listener_pids(self.config)
+        except Exception as exc:
+            self._log(f"healthy listener identity not recorded reason={_short_reason(exc)}")
+            return
+        if len(listener_pids) != 1:
+            self._log(
+                f"healthy listener identity not recorded reason=expected one listener "
+                f"pids={','.join(str(pid) for pid in listener_pids) or 'none'}"
+            )
+            return
+
+        process_id = listener_pids[0]
+        try:
+            info = _query_process_info(self.config, process_id)
+        except Exception as exc:
+            self._log(f"healthy listener identity not recorded pid={process_id} " f"reason={_short_reason(exc)}")
+            return
+        if not _process_belongs_to_hl_mem(self.config, info):
+            self._log(
+                f"healthy listener identity not recorded pid={process_id} "
+                f"reason=command line mismatch cmd={_short_reason(info.command_line)}"
+            )
+            return
+        state.service_pid = info.pid
+        state.service_created_epoch = info.created_epoch
+
+    def _mark_healthy(self, state: SupervisorState) -> None:
+        completed_start = state.status == "starting"
+        self._record_healthy_identity(state)
+        state.failures = 0
+        if completed_start:
+            state.last_restart_epoch = int(self._clock())
+        _clear_starting(state)
+        _save_state(self.config.state_file, state)
+
+    def _start_and_confirm(self, state: SupervisorState) -> int:
+        try:
+            if self._restart is None:
+                launcher_pid = restart_service(self.config, self._log, state)
+            else:
+                launcher_pid = self._restart()
+            launcher_pid = int(launcher_pid)
+            if launcher_pid <= 0:
+                raise RuntimeError(f"invalid launcher pid: {launcher_pid}")
         except Exception as exc:
             self._log(f"restart failed reason={_short_reason(exc)} failures={state.failures}")
             return 1
 
-        state.failures = 0
-        state.last_restart_epoch = int(self._clock())
+        state.status = "starting"
+        state.launcher_pid = launcher_pid
+        state.starting_epoch = int(self._clock())
+        state.launcher_created_epoch = 0
+        state.service_pid = 0
+        state.service_created_epoch = 0
         _save_state(self.config.state_file, state)
-        self._log(f"restart triggered launcher_pid={launcher_pid}")
-        return 1
+        self._log(f"restart triggered launcher_pid={launcher_pid} status=starting")
+        deadline = time.monotonic() + max(0.0, self.config.start_health_timeout_seconds)
+        try:
+            launcher_info = _query_process_info(self.config, launcher_pid)
+            if _process_belongs_to_hl_mem(self.config, launcher_info):
+                state.launcher_created_epoch = launcher_info.created_epoch
+                _save_state(self.config.state_file, state)
+            else:
+                self._log(
+                    f"launcher identity command line mismatch pid={launcher_pid} "
+                    f"cmd={_short_reason(launcher_info.command_line)}"
+                )
+        except Exception as exc:
+            self._log(f"launcher identity not recorded pid={launcher_pid} reason={_short_reason(exc)}")
+
+        last_reason = "not probed"
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._log(
+                    f"startup confirmation timed out launcher_pid={launcher_pid} "
+                    f"process_alive={_pid_is_alive(launcher_pid)} healthz={_short_reason(last_reason)} "
+                    f"failures={state.failures}"
+                )
+                return 1
+            probe_timeout = min(max(0.01, self.config.timeout), remaining)
+            healthy, last_reason = self._probe_once(probe_timeout)
+            if healthy:
+                self._mark_healthy(state)
+                self._log(f"startup confirmed launcher_pid={launcher_pid} " f"healthz={_short_reason(last_reason)}")
+                return 1
+
+            process_alive = _pid_is_alive(launcher_pid)
+            remaining = deadline - time.monotonic()
+            if not process_alive or remaining <= 0:
+                outcome = "failed" if not process_alive else "timed out"
+                self._log(
+                    f"startup confirmation {outcome} launcher_pid={launcher_pid} "
+                    f"process_alive={process_alive} healthz={_short_reason(last_reason)} "
+                    f"failures={state.failures}"
+                )
+                return 1
+            time.sleep(min(max(0.01, self.config.start_health_poll_seconds), remaining))
 
 
 def _listener_pids(output: str, port: int) -> list[int]:
@@ -410,11 +684,65 @@ def _wait_for_port_release(config: SupervisorConfig) -> None:
         time.sleep(config.termination_poll_seconds)
 
 
-def restart_service(config: SupervisorConfig, log: LogFn) -> int:
+def _verify_listener_ownership(
+    config: SupervisorConfig,
+    state: SupervisorState,
+    listener_pids: list[int],
+    log: LogFn,
+) -> None:
+    for process_id in listener_pids:
+        try:
+            info = _query_process_info(config, process_id)
+        except Exception as exc:
+            log(f"端口冲突:拒绝终止 pid={process_id} cmd=<unavailable> " f"reason={_short_reason(exc)}")
+            raise RuntimeError(f"port conflict: ownership unknown for pid={process_id}") from exc
+
+        command_matches = _process_belongs_to_hl_mem(config, info)
+        identity_matches = _state_matches_process(state, info)
+        if not command_matches or not identity_matches:
+            log(
+                f"端口冲突:拒绝终止 pid={process_id} cmd={_short_reason(info.command_line)} "
+                f"command_matches={command_matches} identity_matches={identity_matches}"
+            )
+            raise RuntimeError(f"port conflict: refusing to terminate pid={process_id}")
+
+
+def _rotate_service_log(path: Path, max_bytes: int, backup_count: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    retained_backups = max(0, backup_count)
+    for candidate in path.parent.glob(f"{path.name}.*"):
+        suffix = candidate.name.removeprefix(f"{path.name}.")
+        if suffix.isdigit() and int(suffix) > retained_backups:
+            candidate.unlink(missing_ok=True)
+
+    if not path.exists() or path.stat().st_size < max(0, max_bytes):
+        return
+    if retained_backups == 0:
+        path.unlink()
+        return
+
+    oldest = path.with_name(f"{path.name}.{retained_backups}")
+    oldest.unlink(missing_ok=True)
+    for index in range(retained_backups - 1, 0, -1):
+        source = path.with_name(f"{path.name}.{index}")
+        if source.exists():
+            source.replace(path.with_name(f"{path.name}.{index + 1}"))
+    path.replace(path.with_name(f"{path.name}.1"))
+
+
+def restart_service(
+    config: SupervisorConfig,
+    log: LogFn,
+    state: SupervisorState | None = None,
+) -> int:
     """Kill listeners on the service port and launch HL-Mem without a window."""
 
     listener_pids = _query_listener_pids(config)
+    if listener_pids:
+        effective_state = state or _load_state(config.state_file, log)
+        _verify_listener_ownership(config, effective_state, listener_pids, log)
     for process_id in listener_pids:
+        _verify_listener_ownership(config, effective_state, [process_id], log)
         result = subprocess.run(
             ["taskkill.exe", "/PID", str(process_id), "/T", "/F"],
             stdin=subprocess.DEVNULL,
@@ -436,71 +764,40 @@ def restart_service(config: SupervisorConfig, log: LogFn) -> int:
     environment["PYTHONPATH"] = str(config.repo_root / "src")
     environment.pop("PYTHONHOME", None)
 
-    if config.start_script.is_file():
-        bash_executable = config.bash_executable.expanduser().absolute()
-        command = [
-            str(bash_executable),
-            "--noprofile",
-            "--norc",
-            str(config.start_script),
-        ]
-        launcher = f"start_script={config.start_script}"
-    else:
-        command = [
-            str(virtual_environment / "Scripts" / "python.exe"),
-            "start_server.py",
-        ]
-        launcher = "start_script=direct_python"
-
-    process = subprocess.Popen(
-        command,
-        cwd=str(config.repo_root),
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        creationflags=CREATE_NO_WINDOW,
-    )
-    if config.start_grace_seconds > 0:
-        time.sleep(config.start_grace_seconds)
-    return_code = process.poll()
-    if return_code is not None:
-        raise RuntimeError(f"launcher exited immediately with code {return_code}")
-    log(f"service launch started launcher_pid={process.pid} {launcher}")
-    return process.pid
-
-
-def _default_bash_executable() -> Path:
-    configured = os.environ.get("HL_MEM_BASH")
-    if configured:
-        resolved = shutil.which(configured)
-        return Path(resolved or configured).expanduser().absolute()
-
-    candidates = [
-        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe",
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Git" / "bin" / "bash.exe",
+    command = [
+        str(virtual_environment / "Scripts" / "python.exe"),
+        "start_server.py",
     ]
-    discovered = shutil.which("bash.exe")
-    if discovered:
-        candidates.append(Path(discovered))
-    return next((path.absolute() for path in candidates if path.is_file()), candidates[0].absolute())
+    stdout_path = config.repo_root / "var" / "server.out.log"
+    stderr_path = config.repo_root / "var" / "server.err.log"
+    _rotate_service_log(stdout_path, config.server_log_max_bytes, config.server_log_backups)
+    _rotate_service_log(stderr_path, config.server_log_max_bytes, config.server_log_backups)
+    with (
+        stdout_path.open("ab", buffering=0) as stdout_stream,
+        stderr_path.open("ab", buffering=0) as stderr_stream,
+    ):
+        process = subprocess.Popen(
+            command,
+            cwd=str(config.repo_root),
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_stream,
+            stderr=stderr_stream,
+            close_fds=True,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    log(f"service launch started launcher_pid={process.pid} launcher=direct_python")
+    return process.pid
 
 
 def build_config(url: str = DEFAULT_URL, timeout: float = 5.0) -> SupervisorConfig:
     repo_root = Path(os.environ.get("HL_MEM_ROOT", str(REPO_ROOT))).expanduser().absolute()
     var_dir = repo_root / "var"
-    start_script = Path(os.environ.get("HL_MEM_START_SCRIPT", str(Path.home() / "bin" / "start_hlmem.sh"))).expanduser()
-    if not start_script.is_absolute():
-        start_script = repo_root / start_script
-    start_script = start_script.absolute()
     return SupervisorConfig(
         repo_root=repo_root,
         state_file=var_dir / "supervisor.state",
         log_file=var_dir / "supervisor.log",
         lock_dir=var_dir / "supervisor.lock",
-        start_script=start_script,
-        bash_executable=_default_bash_executable(),
         url=url,
         timeout=timeout,
     )

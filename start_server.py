@@ -41,5 +41,7 @@ uvicorn.run(
     create_app(settings, audit=audit),
     host="127.0.0.1",
     port=8200,
+    workers=1,
+    reload=False,
     log_config=LOGGING_CONFIG,
 )
