@@ -252,15 +252,24 @@ def _normalized_windows_path(path: str | Path) -> str:
 
 
 def _process_belongs_to_hl_mem(config: SupervisorConfig, info: ProcessInfo) -> bool:
-    expected_executable = _normalized_windows_path(config.repo_root / ".venv" / "Scripts" / "python.exe")
-    if _normalized_windows_path(info.executable_path) != expected_executable:
-        return False
     try:
         arguments = _command_line_args(info.command_line)
     except (OSError, ValueError):
         return False
     if len(arguments) < 2:
         return False
+
+    expected_executable = _normalized_windows_path(config.repo_root / ".venv" / "Scripts" / "python.exe")
+    command_executable = _normalized_windows_path(arguments[0])
+    command_is_python = command_executable == "python.exe" or command_executable.endswith("/python.exe")
+    if command_executable != expected_executable and not command_is_python:
+        return False
+
+    executable_path = _normalized_windows_path(info.executable_path)
+    executable_is_python = executable_path == "python.exe" or executable_path.endswith("/python.exe")
+    if executable_path and not executable_is_python:
+        return False
+
     script_argument = _normalized_windows_path(arguments[1])
     expected_script = _normalized_windows_path(config.repo_root / "start_server.py")
     return script_argument == "start_server.py" or script_argument == expected_script

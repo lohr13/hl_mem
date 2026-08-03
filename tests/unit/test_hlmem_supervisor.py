@@ -56,6 +56,70 @@ def _owned_process_info(
     )
 
 
+def test_process_ownership_accepts_venv_command_with_base_python_executable() -> None:
+    config = _config(Path(r"D:\workspace\hl_agent\hl_mem"))
+    info = supervisor.ProcessInfo(
+        pid=32_944,
+        created_epoch=1_234,
+        executable_path=r"C:\ProgramData\miniconda3\python.exe",
+        command_line=r"D:\workspace\hl_agent\hl_mem\.venv\Scripts\python.exe start_server.py",
+    )
+
+    assert supervisor._process_belongs_to_hl_mem(config, info) is True
+
+
+def test_process_ownership_accepts_base_python_command_with_absolute_server_script() -> None:
+    config = _config(Path(r"D:\workspace\hl_agent\hl_mem"))
+    info = supervisor.ProcessInfo(
+        pid=32_944,
+        created_epoch=1_234,
+        executable_path=r"C:\ProgramData\miniconda3\python.exe",
+        command_line=(
+            r"C:\ProgramData\miniconda3\python.exe "
+            r"D:\workspace\hl_agent\hl_mem\start_server.py"
+        ),
+    )
+
+    assert supervisor._process_belongs_to_hl_mem(config, info) is True
+
+
+def test_process_ownership_rejects_command_without_server_script() -> None:
+    config = _config(Path(r"D:\workspace\hl_agent\hl_mem"))
+    info = supervisor.ProcessInfo(
+        pid=32_944,
+        created_epoch=1_234,
+        executable_path=r"C:\ProgramData\miniconda3\python.exe",
+        command_line=r"D:\workspace\hl_agent\hl_mem\.venv\Scripts\python.exe other.py",
+    )
+
+    assert supervisor._process_belongs_to_hl_mem(config, info) is False
+
+
+def test_process_ownership_rejects_empty_command_line() -> None:
+    config = _config(Path(r"D:\workspace\hl_agent\hl_mem"))
+    info = supervisor.ProcessInfo(
+        pid=32_944,
+        created_epoch=1_234,
+        executable_path=r"C:\ProgramData\miniconda3\python.exe",
+        command_line="",
+    )
+
+    assert supervisor._process_belongs_to_hl_mem(config, info) is False
+
+
+def test_process_ownership_rejects_command_line_parse_failure() -> None:
+    config = _config(Path(r"D:\workspace\hl_agent\hl_mem"))
+    info = supervisor.ProcessInfo(
+        pid=32_944,
+        created_epoch=1_234,
+        executable_path=r"C:\ProgramData\miniconda3\python.exe",
+        command_line=r"D:\workspace\hl_agent\hl_mem\.venv\Scripts\python.exe start_server.py",
+    )
+
+    with patch.object(supervisor, "_command_line_args", side_effect=OSError("parse failed")):
+        assert supervisor._process_belongs_to_hl_mem(config, info) is False
+
+
 def test_failed_probe_increments_persisted_failure_count(tmp_path: Path) -> None:
     config = _config(tmp_path)
     runner = supervisor.Supervisor(
