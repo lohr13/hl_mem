@@ -272,8 +272,7 @@
       },
       "required": [
         "id",
-        "corrected_text",
-        "idempotency_key"
+        "corrected_text"
       ],
       "type": "object"
     },
