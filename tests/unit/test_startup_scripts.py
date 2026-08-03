@@ -87,11 +87,13 @@ def test_server_entrypoint_enables_hl_mem_info_logging_without_touching_uvicorn(
         uvicorn_logger.setLevel(logging.ERROR)
         uvicorn_logger.propagate = False
 
-        def fake_uvicorn_run(app, *, host, port, log_config=None):
+        def fake_uvicorn_run(app, *, host, port, workers, reload, log_config=None):
             assert uvicorn_handler._closed is False
             assert uvicorn_logger.handlers == [uvicorn_handler]
             assert uvicorn_logger.level == logging.ERROR
             assert uvicorn_logger.propagate is False
+            assert workers == 1
+            assert reload is False
             assert log_config is not None
 
             logging.config.dictConfig(log_config)
