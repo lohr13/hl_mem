@@ -10,10 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from hl_mem.config_loader import load_settings
-from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
+from hl_mem.domain.claims.retention import PROTECTED_ATTRIBUTES as PROTECTED_ATTRIBUTES
+from hl_mem.domain.claims.retention import (
+    TTLPolicy,
+    compute_expiration,
+    is_protected_attribute,
+)
 from hl_mem.storage.database import Database
-
-PROTECTED_ATTRIBUTES = frozenset({"memory.explicit", "identity.name"})
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -56,7 +59,7 @@ def backfill_expires_at(
             claim = dict(raw_row)
             last_id = str(claim["id"])
             scanned += 1
-            if claim.get("canonical_attribute") in PROTECTED_ATTRIBUTES:
+            if is_protected_attribute(claim.get("canonical_attribute")):
                 skipped_protected += 1
                 continue
             expires_at, _reason = compute_expiration(
@@ -81,7 +84,8 @@ def backfill_expires_at(
                 "UPDATE claims SET expires_at=?,status=CASE WHEN ? THEN 'expired' ELSE status END,"
                 "valid_to=CASE WHEN ? AND (valid_to IS NULL OR ?<valid_to) THEN ? "
                 "ELSE valid_to END WHERE id=? AND status='active' AND scope='temporal' "
-                "AND recorded_from=? AND importance=? AND canonical_slot IS ? AND expires_at IS ?",
+                "AND recorded_from=? AND importance=? AND canonical_slot IS ? "
+                "AND canonical_attribute IS ? AND expires_at IS ?",
                 (
                     expires_at,
                     should_expire,
@@ -92,6 +96,7 @@ def backfill_expires_at(
                     claim["recorded_from"],
                     claim.get("importance"),
                     claim.get("canonical_slot"),
+                    claim.get("canonical_attribute"),
                     claim.get("expires_at"),
                 ),
             )

@@ -24,6 +24,13 @@ from hl_mem.storage._shared import (
     row_to_dict,
 )
 
+_CURRENT_STATUS_SQL = "('active')"
+_HISTORICAL_STATUS_SQL = "('active','archived','superseded','expired')"
+
+
+def _recall_statuses_sql(intent: RecallIntent) -> str:
+    return _HISTORICAL_STATUS_SQL if intent is RecallIntent.HISTORICAL else _CURRENT_STATUS_SQL
+
 
 @dataclass(frozen=True)
 class SupersedeResult:
@@ -323,7 +330,7 @@ class ClaimRepository:
         """返回指定双时间视图下仍携带向量的可见 Claim。"""
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
-        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
+        statuses = _recall_statuses_sql(selected_intent)
         rows = self.connection.execute(
             f"SELECT * FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
             "AND namespace_key=? "
@@ -351,7 +358,7 @@ class ClaimRepository:
         # be reconsidered before deployments approach that scale.
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
-        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
+        statuses = _recall_statuses_sql(selected_intent)
         cursor = self.connection.execute(
             f"SELECT * FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
             "AND namespace_key=? "
@@ -614,7 +621,7 @@ class ClaimRepository:
         limit = self.recall_default_limit if limit is None else limit
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
-        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
+        statuses = _recall_statuses_sql(selected_intent)
         match_sql = (
             "SELECT c.* FROM claims_fts_v2 f JOIN claims c ON c.rowid=f.rowid "
             f"WHERE claims_fts_v2 MATCH ? AND c.status IN {statuses} "
@@ -663,7 +670,7 @@ class ClaimRepository:
         limit = self.recall_default_limit if limit is None else limit
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
-        statuses = "('active','superseded','expired')" if selected_intent is RecallIntent.HISTORICAL else "('active')"
+        statuses = _recall_statuses_sql(selected_intent)
         match_query = " OR ".join(f'"{tag.replace(chr(34), chr(34) * 2)}"' for tag in dict.fromkeys(query_tags))
         try:
             rows = self.connection.execute(

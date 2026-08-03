@@ -178,7 +178,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                     "corrected_text": {"type": "string", "minLength": 1, "maxLength": 50000},
                     "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 200},
                 },
-                "required": ["id", "corrected_text", "idempotency_key"],
+                "required": ["id", "corrected_text"],
             },
         },
         {
@@ -378,14 +378,8 @@ class McpMemoryServer:
         memory_id = correction.get("memory_id")
         action = correction.get("action")
         key = correction.get("idempotency_key")
-        if (
-            not isinstance(memory_id, str)
-            or not memory_id
-            or action not in {"retract", "replace"}
-            or not isinstance(key, str)
-            or not key
-        ):
-            raise ValidationError("correction requires memory_id, retract|replace action, and idempotency_key")
+        if not isinstance(memory_id, str) or not memory_id or action not in {"retract", "replace"}:
+            raise ValidationError("correction requires memory_id and retract|replace action")
         correction_result = CorrectionService(connection, self.embedder, settings=self.settings).apply(
             memory_id,
             action=action,

@@ -7,6 +7,16 @@ from datetime import datetime, timedelta, timezone
 
 from hl_mem.domain.claims.attributes import SLOT_REGISTRY, normalize_canonical_attribute
 
+PROTECTED_ATTRIBUTES = frozenset({"memory.explicit", "identity.name"})
+PROTECTED_ATTRIBUTE_PREFIXES = ("identity.",)
+
+
+def is_protected_attribute(canonical_attribute: str | None) -> bool:
+    """Return whether a durable core memory is exempt from automated retirement."""
+    if not canonical_attribute:
+        return False
+    return canonical_attribute in PROTECTED_ATTRIBUTES or canonical_attribute.startswith(PROTECTED_ATTRIBUTE_PREFIXES)
+
 
 @dataclass(frozen=True)
 class TTLPolicy:

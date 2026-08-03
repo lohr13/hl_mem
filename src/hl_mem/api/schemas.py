@@ -254,7 +254,7 @@ class MemoryCorrectionInput(BaseModel):
     """按目标 Claim 标识执行仅内容替换。"""
 
     corrected_text: str = Field(min_length=1, max_length=50000)
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class MemoryCorrectionOutput(BaseModel):
@@ -297,7 +297,7 @@ class ExplicitCorrectionInput(BaseModel):
     memory_id: str = Field(min_length=1, max_length=200)
     corrected_text: str | None = Field(default=None, max_length=50000)
     action: Literal["retract", "replace"]
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class FeedbackInput(BaseModel):

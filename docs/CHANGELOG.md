@@ -2,6 +2,13 @@
 
 ## v0.21.0（未发布）
 
+### Memory Lifecycle and Corrections
+
+- 核心记忆 `identity.*` 与 `memory.explicit` 统一免于自动衰减、归档和 TTL 回填，避免长期身份锚点及显式记忆因低访问量退出召回通道；身份变更继续由冲突与 supersede 链表达。
+- historical 召回可见 `archived`、`superseded` 与 `expired` 历史状态；TTL worker 同时关闭已到期的 `active` 和 `disputed` Claim。
+- decay 以 UTC 当日零点统一计算并记录 `last_decayed_at`，消除非零点运行造成的逐日衰减漂移；temporal cleanup 不再读取或依赖已弃用的 `volatility` 字段。
+- REST、MCP 及 feedback correction 的 `idempotency_key` 改为可选；缺省时由 `CorrectionService` 自动生成 UUID，显式提供时仍保留原有幂等冲突校验。
+
 ### MCP Runtime
 
 - 使用官方 MCP Python SDK 2.x 低层 `Server` 接入 stdio transport，新增 `hl-mem-mcp` 与 `python -m hl_mem.mcp` 入口；工具列表直接复用既有 JSON Schema，避免 transport 契约漂移。

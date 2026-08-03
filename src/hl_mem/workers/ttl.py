@@ -16,7 +16,7 @@ def expire_claims(
     feedback_lifecycle_mode: str,
     slot_short_ttl_seconds: int,
 ) -> dict[str, int]:
-    """过期 expires_at 已到达且仍处于 active 的 claim。"""
+    """过期 expires_at 已到达且仍处于 active 或 disputed 的 claim。"""
     reference = normalize_utc_iso(now or datetime.now(timezone.utc).isoformat(), "now")
     candidate_cutoff = (datetime.fromisoformat(reference).astimezone(timezone.utc) + timedelta(days=180)).isoformat(
         timespec="seconds"
@@ -27,10 +27,10 @@ def expire_claims(
             "SELECT c.id,c.status,c.expires_at,c.valid_to,c.canonical_slot,c.observed_at,c.recorded_from,"
             "COALESCE(u.retention_bonus_days,0) AS bonus_days FROM claims c "
             "LEFT JOIN memory_usefulness u ON u.memory_type='claim' AND u.memory_id=c.id "
-            "WHERE c.status=? AND c.expires_at IS NOT NULL AND c.expires_at<=?",
-            ("active", candidate_cutoff),
+            "WHERE c.status IN ('active','disputed') AND c.expires_at IS NOT NULL AND c.expires_at<=?",
+            (candidate_cutoff,),
         ).fetchall()
-        expired_claims: list[tuple[str, str, str, str | None]] = []
+        expired_claims: list[tuple[str, str, str, str, str | None]] = []
         for row in rows:
             base = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
             effective = base
@@ -49,13 +49,14 @@ def expire_claims(
                 expired_claims.append(
                     (
                         row["id"],
+                        row["status"],
                         effective.isoformat(timespec="seconds"),
                         row["expires_at"],
                         row["valid_to"],
                     )
                 )
         cursor_count = 0
-        for claim_id, effective_expire, expires_at, valid_to in expired_claims:
+        for claim_id, status, effective_expire, expires_at, valid_to in expired_claims:
             cursor = connection.execute(
                 "UPDATE claims SET status='expired',valid_to=CASE WHEN valid_to IS NULL OR ?<valid_to "
                 "THEN ? ELSE valid_to END WHERE id=? AND status=? AND expires_at=? AND valid_to IS ?",
@@ -63,7 +64,7 @@ def expire_claims(
                     effective_expire,
                     effective_expire,
                     claim_id,
-                    "active",
+                    status,
                     expires_at,
                     valid_to,
                 ),

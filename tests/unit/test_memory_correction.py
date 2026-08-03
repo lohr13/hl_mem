@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -181,6 +182,27 @@ def test_correct_memory_api_replaces_only_content_and_rebuilds_derived_fields(tm
     database.close()
 
 
+def test_correct_memory_api_generates_idempotency_key_when_omitted(tmp_path: Path) -> None:
+    database_path = tmp_path / "correct-generated-key.db"
+    database = Database(database_path)
+    connection = database.open()
+    _insert_claim(connection)
+    database.close()
+
+    with TestClient(create_app(_settings(database_path))) as client:
+        response = client.post(
+            "/v1/memories/claim-old/correct",
+            json={"corrected_text": "Python 3.13"},
+        )
+
+    assert response.status_code == 200
+    database = Database(database_path)
+    connection = database.open()
+    key = connection.execute("SELECT idempotency_key FROM events WHERE event_type='correction'").fetchone()[0]
+    assert UUID(key).version == 4
+    database.close()
+
+
 class _ClassificationChangingEmbedder:
     model = "fake"
     dim = 8
@@ -269,12 +291,12 @@ def test_mcp_memory_get_and_correct_share_application_services(tmp_path: Path) -
     get_schema = next(tool for tool in get_tool_schemas() if tool["name"] == "memory_get")
     correct_schema = next(tool for tool in get_tool_schemas() if tool["name"] == "memory_correct")
     assert get_schema["inputSchema"]["required"] == ["id"]
-    assert correct_schema["inputSchema"]["required"] == ["id", "corrected_text", "idempotency_key"]
+    assert correct_schema["inputSchema"]["required"] == ["id", "corrected_text"]
 
     detail = server.call_tool("memory_get", {"id": "claim-old"})
     corrected = server.call_tool(
         "memory_correct",
-        {"id": "claim-old", "corrected_text": "Python 3.13", "idempotency_key": "mcp-correction"},
+        {"id": "claim-old", "corrected_text": "Python 3.13"},
     )
 
     assert detail["id"] == "claim-old"
@@ -282,6 +304,9 @@ def test_mcp_memory_get_and_correct_share_application_services(tmp_path: Path) -
     assert corrected["correction_event_id"]
     assert corrected["new_claim_id"]
     assert corrected["created"] is True
+    with server.database.connect() as connection:
+        key = connection.execute("SELECT idempotency_key FROM events WHERE event_type='correction'").fetchone()[0]
+        assert UUID(key).version == 4
     server.database.close()
 
 
@@ -329,7 +354,6 @@ def test_mcp_feedback_correction_returns_shared_correction_event_id(tmp_path: Pa
                 "memory_id": "feedback-claim",
                 "action": "replace",
                 "corrected_text": "Python 3.13",
-                "idempotency_key": "feedback-correction",
             },
         },
     )
@@ -366,7 +390,6 @@ def test_rest_feedback_correction_returns_shared_correction_event_id(tmp_path: P
                     "memory_id": "rest-feedback-claim",
                     "action": "replace",
                     "corrected_text": "Python 3.13",
-                    "idempotency_key": "rest-feedback-correction",
                 },
             },
         )

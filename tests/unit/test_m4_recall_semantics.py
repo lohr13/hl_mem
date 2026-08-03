@@ -85,6 +85,53 @@ def test_visibility_uses_half_open_valid_and_recorded_intervals() -> None:
         parse_utc("bad")
 
 
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("active", True),
+        ("archived", True),
+        ("superseded", True),
+        ("expired", True),
+        ("disputed", False),
+        ("retracted", False),
+    ],
+)
+def test_historical_visibility_uses_auditable_statuses(status, expected) -> None:
+    claim = {
+        "status": status,
+        "valid_from": "2026-01-01T00:00:00Z",
+        "recorded_from": "2026-01-01T00:00:00Z",
+    }
+
+    assert claim_is_visible(claim, "2026-02-01T00:00:00Z", None, RecallIntent.HISTORICAL) is expected
+
+
+def test_historical_fts_candidates_include_archived_claims(tmp_path) -> None:
+    connection = Database(tmp_path / "archived-history.db").open()
+    _claim(
+        connection,
+        "archived",
+        value="legacy archive marker",
+        status="archived",
+        embedding_dense=None,
+    )
+    repository = ClaimRepository(connection)
+
+    historical = repository.search_claims_fts(
+        "archive marker",
+        as_of="2026-02-01T00:00:00Z",
+        intent=RecallIntent.HISTORICAL,
+    )
+    current = repository.search_claims_fts(
+        "archive marker",
+        as_of="2026-02-01T00:00:00Z",
+        intent=RecallIntent.CURRENT_STATE,
+    )
+
+    assert [claim["id"] for claim in historical] == ["archived"]
+    assert current == []
+
+
 def test_ttl_closes_valid_interval_but_remains_historically_visible(tmp_path) -> None:
     connection = Database(tmp_path / "ttl-history.db").open()
     _claim(

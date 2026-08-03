@@ -44,7 +44,7 @@ class CorrectionService:
         *,
         action: Any,
         corrected_text: Any,
-        idempotency_key: Any,
+        idempotency_key: Any = None,
     ) -> dict[str, Any]:
         """按显式动作选择内容替换或撤回，并返回统一事件字段。"""
         if action == "replace":
@@ -53,9 +53,9 @@ class CorrectionService:
             return self._retract(memory_id, idempotency_key)
         raise ValidationError(f"unsupported correction action: {action}")
 
-    def correct(self, memory_id: Any, corrected_text: Any, idempotency_key: Any) -> dict[str, Any]:
+    def correct(self, memory_id: Any, corrected_text: Any, idempotency_key: Any = None) -> dict[str, Any]:
         """只替换 Claim 内容，继承分类字段并重建 hash、索引、向量与 TTL。"""
-        self._validate_input(memory_id, corrected_text, idempotency_key)
+        idempotency_key = self._validate_input(memory_id, corrected_text, idempotency_key)
         existing = self._existing_result(memory_id, "replace", corrected_text, idempotency_key)
         if existing is not None:
             return existing
@@ -240,8 +240,8 @@ class CorrectionService:
             )
         }
 
-    def _retract(self, memory_id: str, idempotency_key: str) -> dict[str, Any]:
-        self._validate_input(memory_id, None, idempotency_key)
+    def _retract(self, memory_id: str, idempotency_key: Any = None) -> dict[str, Any]:
+        idempotency_key = self._validate_input(memory_id, None, idempotency_key)
         existing = self._existing_result(memory_id, "retract", None, idempotency_key)
         if existing is not None:
             return existing
@@ -374,7 +374,7 @@ class CorrectionService:
             raise ConflictError(f"correction event already exists: {event_id}")
 
     @staticmethod
-    def _validate_input(memory_id: Any, corrected_text: Any, idempotency_key: Any) -> None:
+    def _validate_input(memory_id: Any, corrected_text: Any, idempotency_key: Any) -> str:
         if not isinstance(memory_id, str):
             raise ValidationError("memory_id must be a string")
         if not memory_id:
@@ -386,9 +386,12 @@ class CorrectionService:
                 raise ValidationError("corrected_text is required for replace")
             if len(corrected_text) > 50000:
                 raise ValidationError("corrected_text must be at most 50000 characters")
+        if idempotency_key is None:
+            return new_id()
         if not isinstance(idempotency_key, str):
             raise ValidationError("idempotency_key must be a string")
         if not idempotency_key:
             raise ValidationError("idempotency_key is required")
         if len(idempotency_key) > 200:
             raise ValidationError("idempotency_key must be at most 200 characters")
+        return idempotency_key

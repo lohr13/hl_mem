@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from hl_mem.domain.claims.retention import is_protected_attribute
 from hl_mem.lifecycle import assert_transition
 
 
@@ -20,7 +21,7 @@ def cleanup_stale_temporal_claims(
     age_days: int,
     expiry_days: int,
 ) -> dict[str, int]:
-    """在写事务快照内保守清理缺少 expires_at 的稳定 temporal Claim。"""
+    """在写事务快照内保守清理缺少 expires_at 的陈旧 temporal Claim。"""
     reference = _parse(now) if now else datetime.now(timezone.utc)
     cutoff = reference - timedelta(days=age_days)
     promoted = 0
@@ -28,9 +29,9 @@ def cleanup_stale_temporal_claims(
     connection.execute("BEGIN IMMEDIATE")
     try:
         rows = connection.execute(
-            "SELECT id,recorded_from,canonical_attribute,volatility FROM claims "
-            "WHERE scope=? AND expires_at IS NULL AND status=? AND volatility=? AND recorded_from<?",
-            ("temporal", "active", "stable", cutoff.isoformat()),
+            "SELECT id,recorded_from,canonical_attribute FROM claims "
+            "WHERE scope=? AND expires_at IS NULL AND status=? AND recorded_from<?",
+            ("temporal", "active", cutoff.isoformat()),
         ).fetchall()
         for row in rows:
             recorded_from = _parse(row["recorded_from"])
@@ -38,14 +39,13 @@ def cleanup_stale_temporal_claims(
             if attribute.startswith(("fact.decision", "fact.history", "fact.architecture")):
                 cursor = connection.execute(
                     "UPDATE claims SET scope=? WHERE id=? AND scope=? AND expires_at IS NULL AND status=? "
-                    "AND canonical_attribute IS ? AND volatility=? AND recorded_from=?",
+                    "AND canonical_attribute IS ? AND recorded_from=?",
                     (
                         "permanent",
                         row["id"],
                         "temporal",
                         "active",
                         row["canonical_attribute"],
-                        row["volatility"],
                         row["recorded_from"],
                     ),
                 )
@@ -55,14 +55,13 @@ def cleanup_stale_temporal_claims(
                 cursor = connection.execute(
                     "UPDATE claims SET expires_at=? "
                     "WHERE id=? AND scope=? AND expires_at IS NULL AND status=? "
-                    "AND canonical_attribute IS ? AND volatility=? AND recorded_from=?",
+                    "AND canonical_attribute IS ? AND recorded_from=?",
                     (
                         expires_at,
                         row["id"],
                         "temporal",
                         "active",
                         row["canonical_attribute"],
-                        row["volatility"],
                         row["recorded_from"],
                     ),
                 )
@@ -108,12 +107,14 @@ def decay_claims(
         grace_until = migration_at + timedelta(days=rollout_grace_days) if migration_at else None
         rows = connection.execute(
             "SELECT c.id,c.scope,c.confidence,c.access_count,c.recorded_from,c.last_accessed_at,c.last_decayed_at,"
-            "c.expires_at,c.status,COALESCE(u.retention_bonus_days,0) AS feedback_bonus "
+            "c.expires_at,c.status,c.canonical_attribute,COALESCE(u.retention_bonus_days,0) AS feedback_bonus "
             "FROM claims c LEFT JOIN memory_usefulness u ON u.memory_type='claim' AND u.memory_id=c.id "
             "WHERE c.status IN ('active','disputed')"
         ).fetchall()
         for row in rows:
             claim = dict(row)
+            if claim["status"] == "active" and is_protected_attribute(claim.get("canonical_attribute")):
+                continue
             anchor = _parse(claim["last_accessed_at"] or claim["recorded_from"])
             if (
                 claim["last_accessed_at"] is None
@@ -155,6 +156,8 @@ def decay_claims(
             if inactive_days <= decay_after:
                 continue
             previous = _parse(claim["last_decayed_at"]) if claim["last_decayed_at"] else None
+            if previous is not None:
+                previous = previous.replace(hour=0, minute=0, second=0, microsecond=0)
             if previous is not None and previous >= day_start:
                 continue
             decay_start = anchor + timedelta(days=decay_after)
@@ -166,7 +169,7 @@ def decay_claims(
             confidence = max(minimum, float(claim["confidence"] or 0.0) - daily_delta * elapsed_days)
             cursor = connection.execute(
                 "UPDATE claims SET confidence=?,last_decayed_at=? " "WHERE id=? AND status IN ('active','disputed')",
-                (confidence, reference.isoformat(), claim["id"]),
+                (confidence, day_start.isoformat(), claim["id"]),
             )
             decayed += cursor.rowcount
         connection.commit()

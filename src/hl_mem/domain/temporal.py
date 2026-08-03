@@ -56,4 +56,4 @@ def claim_is_visible(
             return False
         expires_at = claim.get("expires_at")
         return not expires_at or parse_utc(expires_at) > valid_point
-    return claim.get("status", "active") in {"active", "superseded", "expired"}
+    return claim.get("status", "active") in {"active", "archived", "superseded", "expired"}

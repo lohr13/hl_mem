@@ -49,3 +49,27 @@ def test_expired_active_claims_are_expired(tmp_path) -> None:
         "future": "active",
         "past_stable": "expired",
     }
+
+
+def test_expired_disputed_claim_is_expired(tmp_path) -> None:
+    connection = Database(tmp_path / "ttl-disputed.db").open()
+    assert ClaimRepository(connection).insert_claim(
+        {
+            "id": "disputed",
+            "namespace_key": "default",
+            "recorded_from": "2026-01-01T00:00:00+00:00",
+            "status": "disputed",
+            "expires_at": "2026-01-02T00:00:00+00:00",
+        }
+    )
+
+    assert expire_claims(
+        connection,
+        "2026-01-03T00:00:00+00:00",
+        feedback_lifecycle_mode="observe",
+        slot_short_ttl_seconds=86400,
+    ) == {"expired": 1}
+    assert tuple(connection.execute("SELECT status,valid_to FROM claims").fetchone()) == (
+        "expired",
+        "2026-01-02T00:00:00+00:00",
+    )

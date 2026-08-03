@@ -350,8 +350,41 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
             finally:
                 database.close()
 
+    def test_temporal_cleanup_ignores_legacy_volatility(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = Database(Path(directory) / "temporal-volatility.db").open()
+            try:
+                ClaimRepository(connection).insert_claim(
+                    {
+                        "id": "state",
+                        "namespace_key": "default",
+                        "predicate": "事实",
+                        "recorded_from": "2026-01-01T00:00:00+00:00",
+                        "status": "active",
+                        "scope": "temporal",
+                        "volatility": "ephemeral",
+                        "canonical_attribute": "state.service",
+                    }
+                )
+
+                self.assertEqual(
+                    cleanup_stale_temporal_claims(
+                        connection,
+                        "2026-07-26T00:00:00+00:00",
+                        age_days=30,
+                        expiry_days=90,
+                    ),
+                    {"expired_at_set": 1, "promoted": 0},
+                )
+                self.assertEqual(
+                    connection.execute("SELECT expires_at FROM claims WHERE id='state'").fetchone()[0],
+                    "2026-04-01T00:00:00+00:00",
+                )
+            finally:
+                connection.close()
+
     def test_temporal_cleanup_rereads_classification_after_write_lock(self) -> None:
-        """第二连接在加锁前重分类时，清理不得应用旧 attribute/volatility 快照。"""
+        """第二连接在加锁前重分类时，清理不得应用旧 attribute 快照。"""
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "temporal-concurrency.db")
             cleanup_connection = database.open()
@@ -372,8 +405,8 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
 
                 def reclassify() -> None:
                     concurrent_connection.execute(
-                        "UPDATE claims SET canonical_attribute=?,volatility=? WHERE id=?",
-                        ("fact.capability", "ephemeral", "claim"),
+                        "UPDATE claims SET canonical_attribute=? WHERE id=?",
+                        ("fact.capability", "claim"),
                     )
                     concurrent_connection.commit()
 
@@ -385,11 +418,11 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
                 )
 
                 row = cleanup_connection.execute(
-                    "SELECT canonical_attribute,volatility,expires_at FROM claims WHERE id=?",
+                    "SELECT canonical_attribute,expires_at FROM claims WHERE id=?",
                     ("claim",),
                 ).fetchone()
                 self.assertEqual(result, {"expired_at_set": 0, "promoted": 0})
-                self.assertEqual(tuple(row), ("fact.capability", "ephemeral", None))
+                self.assertEqual(tuple(row), ("fact.capability", None))
             finally:
                 database.close()
 
