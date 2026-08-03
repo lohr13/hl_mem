@@ -44,6 +44,7 @@ chunk_target_chars = 12000
 [recall]
 default_limit = 5
 vector_scan_limit = 200
+dense_enabled = true
 packed_context_token_budget = 2000
 query_expansion_mode = "auto"
 query_expansion_model = "glm-4.7"

@@ -81,6 +81,24 @@ sudo systemctl status hl-mem
 
 ## 快速开始
 
+无需 API key 的本地首次体验：
+
+```bash
+uv run hl-mem init --offline
+uv run hl-mem server
+```
+
+另开终端后即可使用日常命令；这些命令通过 `http://127.0.0.1:8200` 调用真实服务路径：
+
+```bash
+uv run hl-mem remember "Alice 喜欢深色模式"
+uv run hl-mem recall "Alice 喜欢什么"
+uv run hl-mem list
+uv run hl-mem forget <recall-or-list 返回的 Claim ID>
+```
+
+offline 配置采用纯关键词 FTS 候选召回；确定性 fake embedding 仅用于兼容本地写入结构，不是语义模型。若要启用真实模型，请在 `.env` 中配置相应密钥，并修改 `hl_mem.toml` 中的 extraction、embedding、reranker 等 mode。
+
 ### 1. 配置服务
 
 复制 TOML 配置和密钥模板：

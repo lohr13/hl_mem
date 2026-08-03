@@ -190,9 +190,10 @@ hl-mem import var/events.jsonl --db var/restored.db
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
 | `recall.candidate_floor` | 整数 | `50` | >= 1 | `recall_candidate_floor` |
+| `recall.dense_enabled` | 布尔 | `true` | `true`、`false` | `recall_dense_enabled` |
 | `recall.dedup_candidate_limit` | 整数 | `100` | >= 1 | `recall_dedup_candidate_limit` |
 | `recall.dedup_threshold` | 数值 | `0.95` | 0.0 - 1.0；0 关闭折叠 | `recall_dedup_threshold` |
-| `recall.default_limit` | 整数 | `20` | 1 - 100 | `recall_default_limit` |
+| `recall.default_limit` | 整数 | `5` | 1 - 100 | `recall_default_limit` |
 | `recall.expansion_circuit_failure_threshold` | 整数 | `5` | >= 1 | `expansion_circuit_failure_threshold` |
 | `recall.expansion_circuit_open_seconds` | 数值 | `60.0` | > 0 | `expansion_circuit_open_seconds` |
 | `recall.feedback_min_samples` | 整数 | `3` | >= 1 | `feedback_min_samples` |

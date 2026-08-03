@@ -23,7 +23,7 @@ from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.ingest.pre_filter import ExtractionPreFilter
 from hl_mem.observability.audit import AuditLogger, NullAuditLogger, audit_scope
-from hl_mem.settings import Settings, parse_daily_cron
+from hl_mem.settings import Settings, is_placeholder_secret, parse_daily_cron
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
@@ -190,17 +190,18 @@ class Worker:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)).isoformat()
         _purge_retained_events(self.connection, cutoff)
         self.audit.cleanup(self.settings.audit_retention_days)
-        enqueue_daily_consolidation(
-            self.connection,
-            _now(),
-            self.settings.consolidate_cron,
-        )
-        if self.settings.dedup_enabled:
-            enqueue_daily_deduplication(
+        if not is_placeholder_secret(self.settings.llm_api_key):
+            enqueue_daily_consolidation(
                 self.connection,
                 _now(),
-                self.dedup_scheduled_minutes,
+                self.settings.consolidate_cron,
             )
+            if self.settings.dedup_enabled:
+                enqueue_daily_deduplication(
+                    self.connection,
+                    _now(),
+                    self.dedup_scheduled_minutes,
+                )
         enqueue_daily_policy_induction(
             self.connection,
             _now(),

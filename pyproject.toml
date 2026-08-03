@@ -24,6 +24,7 @@ Changelog = "https://github.com/REDACTED_USER/hl_mem/blob/main/docs/CHANGELOG.md
 
 [project.scripts]
 hl-mem = "hl_mem.cli:main"
+hlmem = "hl_mem.cli:main"
 hl-mem-worker = "hl_mem.workers.worker:main"
 
 [dependency-groups]

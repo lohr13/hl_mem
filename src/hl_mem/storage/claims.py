@@ -141,6 +141,25 @@ class ClaimRepository:
         rows = self.connection.execute("SELECT * FROM claims ORDER BY id").fetchall()
         return self._decode_rows(rows)
 
+    def list_memories(
+        self,
+        namespace: str,
+        status: str,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """按 namespace/status 返回稳定倒序的分页 Claim 与总数。"""
+        if limit < 1 or offset < 0:
+            raise ValueError("memory page limit must be positive and offset non-negative")
+        where = "namespace_key=? AND status=?"
+        parameters = (namespace, status)
+        total = int(self.connection.execute(f"SELECT count(*) FROM claims WHERE {where}", parameters).fetchone()[0])
+        rows = self.connection.execute(
+            f"SELECT * FROM claims WHERE {where} ORDER BY recorded_from DESC,id DESC LIMIT ? OFFSET ?",
+            (*parameters, limit, offset),
+        ).fetchall()
+        return self._decode_rows(rows), total
+
     def list_active_for_consolidation(
         self,
         namespace: str,

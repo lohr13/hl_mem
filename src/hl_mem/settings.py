@@ -140,6 +140,7 @@ class Settings:
     )
     recall_default_limit: int = field(default=5, metadata={"toml": "recall.default_limit"})
     recall_vector_scan_limit: int = field(default=200, metadata={"toml": "recall.vector_scan_limit"})
+    recall_dense_enabled: bool = field(default=True, metadata={"toml": "recall.dense_enabled"})
     packed_context_token_budget: int = field(
         default=2000,
         metadata={"toml": "recall.packed_context_token_budget"},
@@ -506,6 +507,8 @@ class Settings:
             raise ConfigurationError("recall default limit must be between 1 and 100")
         if self.recall_vector_scan_limit < 1:
             raise ConfigurationError("recall vector scan limit must be positive")
+        if not isinstance(self.recall_dense_enabled, bool):
+            raise ConfigurationError("recall dense enabled must be a boolean")
         if not isinstance(self.hermes_enabled, bool):
             raise ConfigurationError("hermes enabled must be a boolean")
         if self.hermes_timeout < 1:
@@ -737,6 +740,7 @@ class Settings:
             "relation_discovery_max_proposals": self.relation_discovery_max_proposals,
             "recall_default_limit": self.recall_default_limit,
             "recall_vector_scan_limit": self.recall_vector_scan_limit,
+            "recall_dense_enabled": self.recall_dense_enabled,
             "tag_boost_enabled": self.tag_boost_enabled,
             "tag_boost_weight": self.tag_boost_weight,
             "tag_channel_enabled": self.tag_channel_enabled,

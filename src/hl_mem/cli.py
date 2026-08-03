@@ -17,6 +17,7 @@ from typing import Any
 from hl_mem import __version__
 from hl_mem.components import make_embedder
 from hl_mem.config_loader import load_settings
+from hl_mem.daily_cli import add_daily_commands, handle_daily_command
 from hl_mem.doctor import main as doctor_main
 from hl_mem.evaluation.runner import BenchmarkRunner
 from hl_mem.settings import Settings
@@ -388,7 +389,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     doctor.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--config", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--env-file", type=Path, default=argparse.SUPPRESS)
+    add_daily_commands(commands)
     args = parser.parse_args(argv)
+    if handle_daily_command(args, parser):
+        return
     if args.command == "doctor":
         doctor_args: list[str] = []
         if args.db is not None:
@@ -401,6 +405,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     settings = load_settings(args.config, args.env_file)
     if args.db is not None:
         settings = replace(settings, database_path=str(args.db))
+    if args.command == "server":
+        if not 1 <= args.port <= 65535:
+            parser.error("--port must be between 1 and 65535")
+        from hl_mem.server import run_server
+
+        run_server(settings, host=args.host, port=args.port)
+        return
     database_path = Path(settings.database_path)
     if args.command == "backup":
         manifest = backup_database(database_path, args.path)

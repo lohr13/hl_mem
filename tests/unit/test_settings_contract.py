@@ -10,7 +10,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 152
+    assert len(fields(Settings)) == 153
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -48,8 +48,10 @@ def test_settings_contract_includes_bypass_and_recall_fields() -> None:
     assert settings.decay_min_confidence == 0.05
     assert settings.recall_default_limit == 5
     assert settings.recall_vector_scan_limit == 200
+    assert settings.recall_dense_enabled is True
     assert settings.snapshot()["recall_default_limit"] == 5
     assert settings.snapshot()["recall_vector_scan_limit"] == 200
+    assert settings.snapshot()["recall_dense_enabled"] is True
     assert RecallInput(query="memory").limit is None
 
 

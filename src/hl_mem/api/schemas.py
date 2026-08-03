@@ -202,6 +202,27 @@ class MemorySaveOutput(BaseModel):
     created: bool
 
 
+class MemoryListItemOutput(BaseModel):
+    """分页记忆列表中的公开 Claim 摘要。"""
+
+    id: str
+    text: str
+    status: str
+    recorded_from: str
+    valid_from: str | None = None
+    canonical_slot: str | None = None
+    topic_tags: list[str] = Field(default_factory=list)
+
+
+class MemoryListOutput(BaseModel):
+    """稳定 offset 分页的记忆列表响应。"""
+
+    memories: list[MemoryListItemOutput]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
 class EpisodeInput(NamespaceInput):
     """创建 Episode 的请求。"""
 

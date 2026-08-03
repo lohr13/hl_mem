@@ -32,6 +32,7 @@ OpenAPI documentation is available at `/docs` while the service is running.
 | `POST` | `/v1/extract/dry-run` | Extract candidate claims and token usage without persisting memory data |
 | `POST` | `/v1/consolidate` | Enqueue conflict consolidation for an explicit namespace/slot/tag scope |
 | `POST` | `/v1/recall` | Retrieve evidence-aware memory through hybrid search and optional reranking |
+| `GET` | `/v1/memories` | List Claim memories with namespace/status filters and limit/offset pagination |
 | `POST` | `/v1/memories` | Save an explicit pinned memory through the normal ingestion path |
 | `DELETE` | `/v1/memories/{memory_id}` | Explicitly forget a memory and propagate withdrawal/staleness |
 | `POST` | `/v1/episodes` | Create an experience Episode in a namespace |
@@ -81,6 +82,15 @@ Provide either `text` or the compatibility field `content`. `subject`, `predicat
 `idempotency_key` are optional. The header key takes precedence over the body key. Repeating the same key and canonical
 payload returns the original ID with `created=false`; reusing the key for another payload returns `409`. Omitting the key
 preserves the existing create-on-each-call behavior.
+
+### List memories
+
+```bash
+curl "http://127.0.0.1:8200/v1/memories?namespace=default&status=active&limit=20&offset=0"
+```
+
+The response contains `memories`, `total`, `limit`, and `offset`. Items expose the Claim ID accepted by
+`DELETE /v1/memories/{memory_id}`; embedding blobs and other internal storage fields are never returned.
 
 ### Recall memory
 

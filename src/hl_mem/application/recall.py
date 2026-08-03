@@ -314,7 +314,7 @@ class RecallService:
         )
         expansion_deadline = time.monotonic() + self.settings.query_expansion_total_timeout_seconds
         weighted_queries = [WeightedQuery(query, "original", 1.0)]
-        query_blobs = [self.embedder.embed_one(query)]
+        query_blobs = [self.embedder.embed_one(query) if self.settings.recall_dense_enabled else b""]
 
         def expand_for(trigger: str) -> tuple[list[WeightedQuery], list[bytes]]:
             trace_source = {
@@ -397,7 +397,9 @@ class RecallService:
                         latency_ms=result.latency_ms,
                     )
                 )
-            return additions, [self.embedder.embed_one(item.text) for item in additions]
+            return additions, [
+                self.embedder.embed_one(item.text) if self.settings.recall_dense_enabled else b"" for item in additions
+            ]
 
         initial_trigger = QueryExpander.trigger_for(query, self.settings.query_expansion_mode)
         if initial_trigger is not None and self.query_expander is not None:
@@ -435,6 +437,7 @@ class RecallService:
             namespace=namespace,
             recall_config=RecallConfig(
                 vector_scan_limit=self.settings.recall_vector_scan_limit,
+                dense_enabled=self.settings.recall_dense_enabled,
                 candidate_floor=self.settings.recall_candidate_floor,
                 tag_boost_enabled=self.settings.tag_boost_enabled,
                 tag_boost_weight=self.settings.tag_boost_weight,

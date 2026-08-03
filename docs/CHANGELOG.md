@@ -1,5 +1,15 @@
 # HL-Mem 变更记录
 
+## v0.21.0（未发布）
+
+### Daily CLI and Offline First Run
+
+- `hl-mem` 新增 `init`、`server`、`remember`、`recall`、`list`、`forget` 日常命令，并提供等价的 `hlmem` entry point；日常读写默认通过本地 HTTP 服务，保持与真实部署一致的事务、审计和错误语义。
+- `hl-mem init --offline` 可生成无需 API key 的安全配置：确定性 fake extraction/embedding、关闭 reranker、图片描述、query expansion、关系发现和跨主体去重，并明确 fake embedding 不代表语义检索。
+- 新增 `GET /v1/memories`，通过 application service 与 ClaimRepository 共享查询路径，按 namespace/status 提供稳定的 limit/offset 分页。
+- 新增 `recall.dense_enabled`（默认 `true`）；关闭时召回管线完全跳过 query embedding 和 dense 候选收集。offline 配置同时关闭 tag channel，提供诚实的 FTS-only 关键词候选召回。
+- 无有效 LLM key 时，Worker 不再调度需要 LLM 的每日冲突归并和跨主体去重任务；确定性的生命周期维护保持运行。
+
 ## v0.20.2 (2026-08-02)
 
 ### Recall Quality and Diagnostics

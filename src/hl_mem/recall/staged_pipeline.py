@@ -53,6 +53,7 @@ class RecallConfig:
     """召回管线使用的完整排序配置。"""
 
     vector_scan_limit: int = field(default_factory=lambda: Settings().recall_vector_scan_limit)
+    dense_enabled: bool = True
     candidate_floor: int = 50
     tag_boost_enabled: bool = True
     tag_boost_weight: float = 0.05
@@ -327,29 +328,28 @@ def _collect_candidates(
             )
         ]
         fts_us += (time.perf_counter_ns() - started) // 1000
-        started = time.perf_counter_ns()
-        dense_results = [
-            dict(claim)
-            for claim in repo.search_claims_vector(
-                blob,
-                candidate_limit,
-                reference,
-                selected_intent,
-                known_as_of,
-                namespace=namespace,
-            )
-        ]
-        dense_us += (time.perf_counter_ns() - started) // 1000
-        query_channels.extend(
-            [
-                (f"{label}:fts", fts_results, item.weight, 1.0),
-                (f"{label}:dense", dense_results, item.weight, 1.0),
+        query_channels.append((f"{label}:fts", fts_results, item.weight, 1.0))
+        dense_results: list[dict[str, Any]] = []
+        if config.dense_enabled:
+            started = time.perf_counter_ns()
+            dense_results = [
+                dict(claim)
+                for claim in repo.search_claims_vector(
+                    blob,
+                    candidate_limit,
+                    reference,
+                    selected_intent,
+                    known_as_of,
+                    namespace=namespace,
+                )
             ]
-        )
+            dense_us += (time.perf_counter_ns() - started) // 1000
+            query_channels.append((f"{label}:dense", dense_results, item.weight, 1.0))
         if tracer is not None:
             legacy = weighted_queries is None
             tracer.record_channel("fts" if legacy and index == 0 else f"{label}:fts", fts_results)
-            tracer.record_channel("dense" if legacy and index == 0 else f"{label}:dense", dense_results)
+            if config.dense_enabled:
+                tracer.record_channel("dense" if legacy and index == 0 else f"{label}:dense", dense_results)
 
     collect_query(queries[0], blobs[0], 0)
     original_visible_count = len(
@@ -367,7 +367,7 @@ def _collect_candidates(
     for index, (item, blob) in enumerate(zip(queries[1:], blobs[1:]), 1):
         collect_query(item, blob, index)
     fts = query_channels[0][1]
-    dense = query_channels[1][1]
+    dense = next((channel for name, channel, _, _ in query_channels if name == "original:dense"), [])
     if tracer is not None:
         tracer.trace.candidate_limit = candidate_limit
         tracer.trace.phases.fts_us = fts_us

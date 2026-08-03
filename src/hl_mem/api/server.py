@@ -29,6 +29,7 @@ from hl_mem.api.schemas import (
     EventInput,
     FeedbackInput,
     MemoryInput,
+    MemoryListOutput,
     MemorySaveOutput,
     RecallInput,
     RecallOutput,
@@ -40,6 +41,7 @@ from hl_mem.application.context_packet import (
 )
 from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService, new_id
+from hl_mem.application.memories import MemoryQueryService
 from hl_mem.application.recall import RecallService, recall_side_effect_health
 from hl_mem.errors import ConflictError, NotFoundError, ValidationError
 from hl_mem.experience.service import (
@@ -550,6 +552,26 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
                 namespace=effective_namespace,
             )
         }
+
+    @app.get("/v1/memories", response_model=MemoryListOutput)
+    def list_memories(
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        status: str = Query(
+            default="active",
+            pattern="^(active|candidate|disputed|superseded|expired|archived|retracted)$",
+        ),
+        namespace: str | None = Query(default=None, min_length=1, max_length=100),
+        tenant_id: str | None = Query(default=None, min_length=1, max_length=100, deprecated=True),
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
+        """按 namespace/status 分页列出 Claim 记忆。"""
+        return MemoryQueryService(connection).list_memories(
+            namespace=_resolve_namespace_alias(namespace, tenant_id),
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
 
     @app.post(
         "/v1/memories",
