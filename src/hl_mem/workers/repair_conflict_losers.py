@@ -1,4 +1,4 @@
-"""修复已 resolved 冲突中仍停留在 disputed 的败者 Claim。"""
+"""修复已 resolved 冲突中仍停留在 disputed 的胜败者 Claim。"""
 
 from __future__ import annotations
 
@@ -31,13 +31,19 @@ def _repair_candidates(connection: Any) -> list[dict[str, str]]:
                 (winner_id, loser_id),
             ).fetchall()
         }
-        if winner_id not in statuses or statuses.get(loser_id) != "disputed":
+        if winner_id not in statuses or loser_id not in statuses:
+            continue
+        winner_status = str(statuses[winner_id])
+        loser_status = str(statuses[loser_id])
+        if winner_status != "disputed" and loser_status != "disputed":
             continue
         candidates.append(
             {
                 "case_id": str(row["id"]),
                 "winner_id": str(winner_id),
+                "winner_status": winner_status,
                 "loser_id": str(loser_id),
+                "loser_status": loser_status,
                 "resolved_at": str(row["resolved_at"]),
             }
         )
@@ -45,7 +51,7 @@ def _repair_candidates(connection: Any) -> list[dict[str, str]]:
 
 
 def repair_conflict_losers(connection: Any, *, dry_run: bool = True) -> dict[str, int | bool]:
-    """预览或修复 resolved case 的 disputed 败者，默认不写数据库。"""
+    """预览或修复 resolved case 的 disputed 胜败者，默认不写数据库。"""
     candidates = _repair_candidates(connection)
     if dry_run:
         return {
@@ -60,18 +66,29 @@ def repair_conflict_losers(connection: Any, *, dry_run: bool = True) -> dict[str
     connection.execute("BEGIN IMMEDIATE")
     try:
         for candidate in _repair_candidates(connection):
-            assert_transition("disputed", "superseded")
-            cursor = connection.execute(
-                "UPDATE claims SET status='superseded',valid_to=?,recorded_to=?,superseded_by_id=? "
-                "WHERE id=? AND status='disputed'",
-                (
-                    candidate["resolved_at"],
-                    candidate["resolved_at"],
-                    candidate["winner_id"],
-                    candidate["loser_id"],
-                ),
-            )
-            if cursor.rowcount == 1:
+            expected_updates = 0
+            applied_updates = 0
+            if candidate["winner_status"] == "disputed":
+                assert_transition("disputed", "active")
+                expected_updates += 1
+                applied_updates += connection.execute(
+                    "UPDATE claims SET status='active' WHERE id=? AND status='disputed'",
+                    (candidate["winner_id"],),
+                ).rowcount
+            if candidate["loser_status"] == "disputed":
+                assert_transition("disputed", "superseded")
+                expected_updates += 1
+                applied_updates += connection.execute(
+                    "UPDATE claims SET status='superseded',valid_to=?,recorded_to=?,superseded_by_id=? "
+                    "WHERE id=? AND status='disputed'",
+                    (
+                        candidate["resolved_at"],
+                        candidate["resolved_at"],
+                        candidate["winner_id"],
+                        candidate["loser_id"],
+                    ),
+                ).rowcount
+            if applied_updates == expected_updates:
                 repaired += 1
             else:
                 cas_skipped += 1
@@ -89,7 +106,7 @@ def repair_conflict_losers(connection: Any, *, dry_run: bool = True) -> dict[str
 
 
 def main() -> None:
-    """运行冲突败者修复；省略 --apply 时仅输出 dry-run 统计。"""
+    """运行冲突胜败者修复；省略 --apply 时仅输出 dry-run 统计。"""
     parser = argparse.ArgumentParser(prog="python -m hl_mem.workers.repair_conflict_losers")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--env-file", type=Path)

@@ -36,6 +36,7 @@
 
 - `Database` 在首次打开与迁移前自动创建数据库父目录，修复 `hlmem init` 后默认 `var/` 尚不存在时首次启动报 `unable to open database file`；该保护同时覆盖 server、worker、MCP 与自定义数据库路径。
 - 测试套件在 `tests/conftest.py` 顶层通过 `setdefault` 提供 `test`/`fake`/`off` 默认运行环境，避免集成测试误用真实 extractor、embedding 或 reranker，同时保留显式环境变量的覆盖优先级。
+- `repair_conflict_losers` 存量修复命令按 resolved case 同时收敛胜败者终态：遗留的 disputed 胜者恢复为 active，disputed 败者转为 superseded 并补齐替代关联与双时间边界。
 - 本批次不新增 migration，schema 仍为 migration 036。
 
 ### Daily CLI and Offline First Run

@@ -116,6 +116,112 @@ def test_repair_conflict_losers_defaults_to_dry_run_then_applies(tmp_path) -> No
     ) == ("superseded", "historical-winner")
 
 
+@pytest.mark.parametrize(
+    ("decision", "left_claim_id", "right_claim_id", "winner_id", "loser_id", "loser_status"),
+    [
+        pytest.param(
+            "keep_left",
+            "left-winner",
+            "right-loser",
+            "left-winner",
+            "right-loser",
+            "disputed",
+            id="keep-left-both-disputed",
+        ),
+        pytest.param(
+            "keep_right",
+            "left-loser",
+            "right-winner",
+            "right-winner",
+            "left-loser",
+            "disputed",
+            id="keep-right-both-disputed",
+        ),
+        pytest.param(
+            "keep_left",
+            "left-winner",
+            "right-loser",
+            "left-winner",
+            "right-loser",
+            "superseded",
+            id="keep-left-winner-only",
+        ),
+        pytest.param(
+            "keep_right",
+            "left-loser",
+            "right-winner",
+            "right-winner",
+            "left-loser",
+            "superseded",
+            id="keep-right-winner-only",
+        ),
+    ],
+)
+def test_repair_conflict_losers_activates_disputed_winner_and_supersedes_loser(
+    tmp_path,
+    decision,
+    left_claim_id,
+    right_claim_id,
+    winner_id,
+    loser_id,
+    loser_status,
+) -> None:
+    repair_conflict_losers = importlib.import_module("hl_mem.workers.repair_conflict_losers").repair_conflict_losers
+    connection = Database(tmp_path / f"repair-{decision}.db").open()
+    _insert_claim(connection, left_claim_id, status="disputed")
+    _insert_claim(connection, right_claim_id, status="disputed")
+    resolved_at = "2026-01-03T00:00:00+00:00"
+    if loser_status == "superseded":
+        connection.execute(
+            "UPDATE claims SET status='superseded',superseded_by_id=?,valid_to=?,recorded_to=? WHERE id=?",
+            (winner_id, resolved_at, resolved_at, loser_id),
+        )
+    connection.execute(
+        "INSERT INTO conflict_cases("
+        "id,pair_key,left_claim_id,right_claim_id,status,decision,created_at,resolved_at"
+        ") VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "case",
+            "pair",
+            left_claim_id,
+            right_claim_id,
+            "resolved",
+            decision,
+            "2026-01-01T00:00:00+00:00",
+            resolved_at,
+        ),
+    )
+    connection.commit()
+
+    assert repair_conflict_losers(connection) == {
+        "matched": 1,
+        "repaired": 0,
+        "cas_skipped": 0,
+        "dry_run": True,
+    }
+    assert connection.execute("SELECT status FROM claims WHERE id=?", (winner_id,)).fetchone()[0] == "disputed"
+
+    assert repair_conflict_losers(connection, dry_run=False) == {
+        "matched": 1,
+        "repaired": 1,
+        "cas_skipped": 0,
+        "dry_run": False,
+    }
+    assert connection.execute("SELECT status FROM claims WHERE id=?", (winner_id,)).fetchone()[0] == "active"
+    assert tuple(
+        connection.execute(
+            "SELECT status,superseded_by_id,valid_to,recorded_to FROM claims WHERE id=?",
+            (loser_id,),
+        ).fetchone()
+    ) == ("superseded", winner_id, resolved_at, resolved_at)
+    assert repair_conflict_losers(connection, dry_run=False) == {
+        "matched": 0,
+        "repaired": 0,
+        "cas_skipped": 0,
+        "dry_run": False,
+    }
+
+
 def test_backfill_short_ttl_defaults_to_dry_run_and_preserves_non_short_slot(tmp_path) -> None:
     backfill_short_ttl = importlib.import_module("hl_mem.workers.backfill_short_ttl").backfill_short_ttl
     connection = Database(tmp_path / "backfill-short-ttl.db").open()
