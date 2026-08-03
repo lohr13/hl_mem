@@ -182,7 +182,7 @@ def test_recall_result_serializes_slot_tags_and_legacy_attribute(tmp_path) -> No
 
 @pytest.mark.parametrize("cron", ["3:00", "03:0", "24:00", "03:60", "03:00x"])
 def test_settings_rejects_non_strict_dedup_cron(cron: str) -> None:
-    with pytest.raises(ConfigurationError, match="HL_MEM_DEDUP_CRON"):
+    with pytest.raises(ConfigurationError, match=r"dedup\.cron"):
         replace(Settings.for_test(), dedup_cron=cron)._validate()
 
 

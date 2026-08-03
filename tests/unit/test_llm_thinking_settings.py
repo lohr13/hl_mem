@@ -19,7 +19,7 @@ def test_llm_thinking_can_be_enabled() -> None:
 
 
 def test_llm_thinking_rejects_invalid_value() -> None:
-    with pytest.raises(ConfigurationError, match="HL_MEM_LLM_ENABLE_THINKING"):
+    with pytest.raises(ConfigurationError, match=r"llm\.enable_thinking"):
         replace(Settings.for_test(), enable_llm_thinking="sometimes").validate()  # type: ignore[arg-type]
 
 

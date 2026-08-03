@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
+
+os.environ.setdefault("HL_MEM_ENV", "test")
+os.environ.setdefault("HL_MEM_EXTRACTOR", "fake")
+os.environ.setdefault("HL_MEM_EMBEDDER", "fake")
+os.environ.setdefault("HL_MEM_RERANKER", "off")
 
 
 @pytest.fixture(autouse=True)
