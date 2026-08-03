@@ -38,6 +38,7 @@ ALLOWED_TRANSITIONS: frozenset[tuple[ClaimStatus, ClaimStatus]] = frozenset(
         (ClaimStatus.DISPUTED, ClaimStatus.ARCHIVED),
         (ClaimStatus.DISPUTED, ClaimStatus.EXPIRED),
         (ClaimStatus.DISPUTED, ClaimStatus.ACTIVE),
+        (ClaimStatus.DISPUTED, ClaimStatus.SUPERSEDED),
         (ClaimStatus.DISPUTED, ClaimStatus.RETRACTED),
     }
 )

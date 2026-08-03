@@ -7,9 +7,11 @@ import pytest
 from hl_mem.lifecycle import (
     DERIVATION_TRANSITIONS,
     POLICY_TRANSITIONS,
+    ClaimStatus,
     DerivationStatus,
     InvalidTransitionError,
     PolicyStatus,
+    assert_transition,
     assert_valid_derivation_transition,
     assert_valid_policy_transition,
 )
@@ -29,3 +31,7 @@ def test_derivation_transition_matrix_accepts_only_declared_edges() -> None:
         assert_valid_derivation_transition(source, target)
     with pytest.raises(InvalidTransitionError):
         assert_valid_derivation_transition(DerivationStatus.STALE, DerivationStatus.ARCHIVED)
+
+
+def test_disputed_claim_can_reach_superseded_terminal_state() -> None:
+    assert_transition(ClaimStatus.DISPUTED, ClaimStatus.SUPERSEDED)

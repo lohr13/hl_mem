@@ -68,6 +68,7 @@ def backfill_expires_at(
                 observed_at=str(claim.get("observed_at") or ""),
                 recorded_from=str(claim["recorded_from"]),
                 policy=policy,
+                canonical_attribute=claim.get("canonical_attribute"),
             )
             changed = expires_at != claim.get("expires_at")
             updated += int(changed)

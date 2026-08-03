@@ -1,12 +1,30 @@
 import json
+import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import hl_mem.workers.worker as worker_module
+from hl_mem.monitoring.worker import WorkerRuntimeState
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.worker import Worker
+
+
+class RecordingAudit:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, str, dict[str, object]]] = []
+
+    def emit(self, phase, action, outcome, *, detail=None, **_dimensions):
+        self.events.append((phase, action, outcome, detail or {}))
+        return True
+
+    def cleanup(self, _retention_days):
+        return True
+
+    def close(self):
+        return True
 
 
 def test_worker_module_exposes_cli_entrypoint() -> None:
@@ -74,3 +92,54 @@ def test_lease_prevents_second_worker_from_taking_running_job(tmp_path) -> None:
     now = datetime.now(timezone.utc).isoformat()
     assert JobRepository(first_db.open()).lease_job("2999-01-01T00:00:00+00:00", now)
     assert JobRepository(second_db.open()).lease_job("2999-01-01T00:00:00+00:00", now) is None
+
+
+def test_maintenance_failure_rolls_back_and_does_not_stop_later_items(
+    monkeypatch,
+    tmp_path,
+    caplog,
+) -> None:
+    runtime = WorkerRuntimeState()
+    audit = RecordingAudit()
+    worker = Worker(
+        replace(Settings.for_test(), database_path=str(tmp_path / "maintenance.db")),
+        audit_logger=audit,
+        worker_runtime=runtime,
+    )
+    later_items: list[str] = []
+
+    def broken_cleanup(connection, **_kwargs):
+        connection.execute("BEGIN IMMEDIATE")
+        raise RuntimeError("cleanup exploded")
+
+    def healthy_expiration(connection, **_kwargs):
+        assert connection.in_transaction is False
+        later_items.append("expire_claims")
+        return {"expired": 0}
+
+    monkeypatch.setattr(worker_module, "cleanup_stale_temporal_claims", broken_cleanup)
+    monkeypatch.setattr(worker_module, "expire_claims", healthy_expiration)
+
+    with caplog.at_level(logging.ERROR, logger="hl_mem.workers.worker"):
+        worker._run_maintenance()
+
+    snapshot = runtime.snapshot()
+    assert later_items == ["expire_claims"]
+    assert snapshot["maintenance_runs"] == 1
+    assert snapshot["maintenance_failures"] == 1
+    assert snapshot["failure_counts"] == {"cleanup_stale_temporal_claims": 1}
+    assert snapshot["last_maintenance_completed_at"] is not None
+    assert audit.events == [
+        (
+            "worker",
+            "maintenance",
+            "error",
+            {
+                "item": "cleanup_stale_temporal_claims",
+                "error_class": "RuntimeError",
+                "error": "cleanup exploded",
+            },
+        )
+    ]
+    assert "worker_maintenance_failed item=cleanup_stale_temporal_claims" in caplog.text
+    worker.database.close()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -22,6 +23,7 @@ from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.ingest.pre_filter import ExtractionPreFilter
+from hl_mem.monitoring.worker import DEFAULT_WORKER_RUNTIME, WorkerRuntimeState
 from hl_mem.observability.audit import AuditLogger, NullAuditLogger, audit_scope
 from hl_mem.settings import Settings, is_placeholder_secret, parse_daily_cron
 from hl_mem.storage.database import Database
@@ -46,6 +48,7 @@ from hl_mem.workers.scheduling import enqueue_daily_job
 from hl_mem.workers.ttl import expire_claims
 
 _UNSET = object()
+LOGGER = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -83,6 +86,7 @@ class Worker:
         audit_logger: Any = None,
         consolidator: Any = None,
         relation_discoverer: Any = None,
+        worker_runtime: WorkerRuntimeState = DEFAULT_WORKER_RUNTIME,
     ) -> None:
         self.settings = settings
         self.db_path = Path(settings.database_path)
@@ -112,9 +116,11 @@ class Worker:
             self.audit = NullAuditLogger()
         self.consolidator = consolidator
         self.relation_discoverer = relation_discoverer
+        self.worker_runtime = worker_runtime
 
     def run_once(self) -> dict[str, Any]:
         now = _now()
+        self.worker_runtime.heartbeat(now)
         lease = (datetime.now(timezone.utc) + timedelta(minutes=self.settings.worker_job_lease_minutes)).isoformat()
         job = self.jobs.lease_job(lease, now)
         if not job:
@@ -144,8 +150,10 @@ class Worker:
         """持续处理任务并按统一配置执行维护调度。"""
         effective_poll_interval = poll_interval if poll_interval is not None else self.settings.worker_poll_interval
         next_ttl = 0.0
+        self.worker_runtime.mark_started(_now())
         try:
             while True:
+                self.worker_runtime.heartbeat(_now())
                 current = time.monotonic()
                 if current >= next_ttl:
                     self._run_maintenance()
@@ -153,65 +161,149 @@ class Worker:
                 if self.run_once()["status"] == "idle":
                     time.sleep(effective_poll_interval)
         finally:
+            self.worker_runtime.mark_stopped(_now())
             self.audit.close()
             self.database.close()
 
     def _run_maintenance(self) -> None:
         """执行一轮 TTL、衰减、派生记忆、保留策略和定时任务维护。"""
-        cleanup_stale_temporal_claims(
-            self.connection,
-            age_days=self.settings.temporal_cleanup_age_days,
-            expiry_days=self.settings.temporal_cleanup_expiry_days,
-        )
-        expire_claims(
-            self.connection,
-            feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
-            slot_short_ttl_seconds=self.settings.slot_short_ttl_seconds,
-        )
-        decay_claims(
-            self.connection,
-            temporal_decay_days=self.settings.decay_temporal_days,
-            temporal_archive_days=self.settings.archive_temporal_days,
-            permanent_decay_days=self.settings.decay_permanent_days,
-            permanent_archive_days=self.settings.archive_permanent_days,
-            access_bonus_every=self.settings.access_bonus_every,
-            access_bonus_days=self.settings.access_bonus_days,
-            access_bonus_cap_days=self.settings.access_bonus_cap_days,
-            rollout_grace_days=self.settings.decay_rollout_grace_days,
-            min_confidence=self.settings.decay_min_confidence,
-            feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
-            feedback_bonus_cap_days=self.settings.feedback_bonus_cap_days,
-        )
         maintenance_now = _now()
-        maintainer = DerivedMemoryMaintainer(self.connection)
-        maintainer.mark_stale_dependencies()
-        maintainer.scan_and_build(maintenance_now)
-        auto_resolve_conflicts(self.connection, maintenance_now)
         cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)).isoformat()
-        _purge_retained_events(self.connection, cutoff)
-        self.audit.cleanup(self.settings.audit_retention_days)
+        items: list[tuple[str, Callable[[], Any]]] = [
+            (
+                "cleanup_stale_temporal_claims",
+                lambda: cleanup_stale_temporal_claims(
+                    self.connection,
+                    age_days=self.settings.temporal_cleanup_age_days,
+                    expiry_days=self.settings.temporal_cleanup_expiry_days,
+                ),
+            ),
+            (
+                "expire_claims",
+                lambda: expire_claims(
+                    self.connection,
+                    feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
+                    slot_short_ttl_seconds=self.settings.slot_short_ttl_seconds,
+                ),
+            ),
+            (
+                "decay_claims",
+                lambda: decay_claims(
+                    self.connection,
+                    temporal_decay_days=self.settings.decay_temporal_days,
+                    temporal_archive_days=self.settings.archive_temporal_days,
+                    permanent_decay_days=self.settings.decay_permanent_days,
+                    permanent_archive_days=self.settings.archive_permanent_days,
+                    access_bonus_every=self.settings.access_bonus_every,
+                    access_bonus_days=self.settings.access_bonus_days,
+                    access_bonus_cap_days=self.settings.access_bonus_cap_days,
+                    rollout_grace_days=self.settings.decay_rollout_grace_days,
+                    min_confidence=self.settings.decay_min_confidence,
+                    feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
+                    feedback_bonus_cap_days=self.settings.feedback_bonus_cap_days,
+                ),
+            ),
+            (
+                "mark_stale_dependencies",
+                lambda: DerivedMemoryMaintainer(self.connection).mark_stale_dependencies(),
+            ),
+            (
+                "scan_derived_memories",
+                lambda: DerivedMemoryMaintainer(self.connection).scan_and_build(maintenance_now),
+            ),
+            (
+                "auto_resolve_conflicts",
+                lambda: auto_resolve_conflicts(self.connection, maintenance_now),
+            ),
+            (
+                "purge_retained_events",
+                lambda: _purge_retained_events(self.connection, cutoff),
+            ),
+            (
+                "cleanup_audit_log",
+                lambda: self.audit.cleanup(self.settings.audit_retention_days),
+            ),
+        ]
         if not is_placeholder_secret(self.settings.llm_api_key):
-            enqueue_daily_consolidation(
-                self.connection,
-                _now(),
-                self.settings.consolidate_cron,
+            items.append(
+                (
+                    "enqueue_daily_consolidation",
+                    lambda: enqueue_daily_consolidation(
+                        self.connection,
+                        _now(),
+                        self.settings.consolidate_cron,
+                    ),
+                )
             )
             if self.settings.dedup_enabled:
-                enqueue_daily_deduplication(
-                    self.connection,
-                    _now(),
-                    self.dedup_scheduled_minutes,
+                items.append(
+                    (
+                        "enqueue_daily_deduplication",
+                        lambda: enqueue_daily_deduplication(
+                            self.connection,
+                            _now(),
+                            self.dedup_scheduled_minutes,
+                        ),
+                    )
                 )
-        enqueue_daily_policy_induction(
-            self.connection,
-            _now(),
-            self.settings.induce_policies_cron,
+        items.extend(
+            [
+                (
+                    "enqueue_daily_policy_induction",
+                    lambda: enqueue_daily_policy_induction(
+                        self.connection,
+                        _now(),
+                        self.settings.induce_policies_cron,
+                    ),
+                ),
+                (
+                    "enqueue_daily_reclassify",
+                    lambda: enqueue_daily_reclassify(
+                        self.connection,
+                        _now(),
+                        self.settings.reclassify_cron,
+                    ),
+                ),
+            ]
         )
-        enqueue_daily_reclassify(
-            self.connection,
-            _now(),
-            self.settings.reclassify_cron,
-        )
+
+        self.worker_runtime.begin_maintenance(maintenance_now)
+        try:
+            for item, operation in items:
+                self._run_maintenance_item(item, operation)
+        finally:
+            self.worker_runtime.finish_maintenance(_now())
+
+    def _run_maintenance_item(self, item: str, operation: Callable[[], Any]) -> None:
+        """隔离单个维护项，清理失败事务并保留可观测失败信息。"""
+        try:
+            operation()
+        except Exception as error:
+            rollback_error: Exception | None = None
+            try:
+                if self.connection.in_transaction:
+                    self.connection.rollback()
+            except Exception as caught_rollback_error:  # pragma: no cover - sqlite rollback 极少失败
+                rollback_error = caught_rollback_error
+            failure_at = _now()
+            self.worker_runtime.record_maintenance_failure(item, error, failure_at)
+            detail = {
+                "item": item,
+                "error_class": type(error).__name__,
+                "error": str(error)[:256],
+            }
+            if rollback_error is not None:
+                detail["rollback_error"] = f"{type(rollback_error).__name__}: {str(rollback_error)[:256]}"
+            LOGGER.exception("worker_maintenance_failed item=%s", item)
+            try:
+                self.audit.emit(
+                    "worker",
+                    "maintenance",
+                    "error",
+                    detail=detail,
+                )
+            except Exception:
+                LOGGER.exception("worker_maintenance_audit_failed item=%s", item)
 
     def _extract(self, payload: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
         events = EventRepository(self.connection)

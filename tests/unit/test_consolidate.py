@@ -1,11 +1,14 @@
 """M5 冲突归并 worker 测试。"""
 
+import pytest
+
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.consolidate import (
     ConflictConsolidator,
     ConsolidationDecision,
+    auto_resolve_conflicts,
     enqueue_daily_consolidation,
 )
 
@@ -74,3 +77,89 @@ def test_daily_scheduler_is_idempotent_and_configurable(tmp_path) -> None:
     assert enqueue_daily_consolidation(connection, "2026-07-22T12:00:00+00:00", "03:30") is False
     row = connection.execute("SELECT job_type,idempotency_key FROM jobs").fetchone()
     assert tuple(row) == ("consolidate_conflicts", "consolidate:2026-07-22")
+
+
+def _auto_conflict_case(connection) -> None:
+    _claim(connection, "a", [1.0, 0.0], status="disputed", source_authority="high")
+    _claim(connection, "b", [0.8, 0.6], status="disputed", source_authority="low")
+    connection.execute(
+        "INSERT INTO conflict_cases("
+        "id,pair_key,left_claim_id,right_claim_id,status,created_at"
+        ") VALUES ('case','pair','a','b','auto_resolved','2026-01-01T00:00:00+00:00')"
+    )
+    connection.commit()
+
+
+def test_auto_resolve_conflict_commits_winner_loser_and_case_together(tmp_path) -> None:
+    connection = Database(tmp_path / "auto-resolve.db").open()
+    _auto_conflict_case(connection)
+    resolved_at = "2026-01-03T04:05:06+00:00"
+
+    assert auto_resolve_conflicts(connection, resolved_at) == {
+        "auto_resolved": 1,
+        "manual_required": 0,
+    }
+
+    winner = connection.execute("SELECT status FROM claims WHERE id='a'").fetchone()
+    loser = connection.execute(
+        "SELECT status,superseded_by_id,valid_to,recorded_to FROM claims WHERE id='b'"
+    ).fetchone()
+    case = connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
+    assert winner["status"] == "active"
+    assert tuple(loser) == ("superseded", "a", resolved_at, resolved_at)
+    assert tuple(case) == ("resolved", "keep_left", resolved_at)
+
+
+def test_auto_resolve_conflict_rolls_back_entire_case_on_failure(tmp_path) -> None:
+    connection = Database(tmp_path / "auto-resolve-rollback.db").open()
+    _auto_conflict_case(connection)
+    connection.execute(
+        "CREATE TRIGGER reject_conflict_resolution BEFORE UPDATE OF status ON conflict_cases "
+        "WHEN NEW.status='resolved' BEGIN SELECT RAISE(ABORT,'reject resolution'); END"
+    )
+    connection.commit()
+
+    with pytest.raises(Exception, match="reject resolution"):
+        auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00")
+
+    claims = connection.execute(
+        "SELECT id,status,superseded_by_id,valid_to,recorded_to FROM claims ORDER BY id"
+    ).fetchall()
+    assert [tuple(row) for row in claims] == [
+        ("a", "disputed", None, None, None),
+        ("b", "disputed", None, None, None),
+    ]
+    assert tuple(
+        connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
+    ) == ("auto_resolved", None, None)
+    assert connection.in_transaction is False
+
+
+def test_auto_resolve_conflict_failure_does_not_block_later_cases(tmp_path) -> None:
+    connection = Database(tmp_path / "auto-resolve-continue.db").open()
+    _auto_conflict_case(connection)
+    _claim(connection, "c", [1.0, 0.0], status="disputed", source_authority="high")
+    _claim(connection, "d", [0.8, 0.6], status="disputed", source_authority="low")
+    connection.execute(
+        "INSERT INTO conflict_cases("
+        "id,pair_key,left_claim_id,right_claim_id,status,created_at"
+        ") VALUES ('case-2','pair-2','c','d','auto_resolved','2026-01-02T00:00:00+00:00')"
+    )
+    connection.execute(
+        "CREATE TRIGGER reject_first_resolution BEFORE UPDATE OF status ON conflict_cases "
+        "WHEN OLD.id='case' AND NEW.status='resolved' BEGIN SELECT RAISE(ABORT,'reject first'); END"
+    )
+    connection.commit()
+
+    with pytest.raises(Exception, match="reject first"):
+        auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00")
+
+    first = connection.execute(
+        "SELECT id,status,superseded_by_id FROM claims WHERE id IN ('a','b') ORDER BY id"
+    ).fetchall()
+    second = connection.execute(
+        "SELECT id,status,superseded_by_id FROM claims WHERE id IN ('c','d') ORDER BY id"
+    ).fetchall()
+    assert [tuple(row) for row in first] == [("a", "disputed", None), ("b", "disputed", None)]
+    assert [tuple(row) for row in second] == [("c", "active", None), ("d", "superseded", "c")]
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-2'").fetchone()[0] == "resolved"

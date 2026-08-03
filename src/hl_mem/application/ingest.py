@@ -580,6 +580,7 @@ def _build_claim_drafts(
         observed_at=observed_at,
         recorded_from=recorded_from,
         policy=policy,
+        canonical_attribute=canonical_attribute,
     )
     claim = {
         "id": new_id(),

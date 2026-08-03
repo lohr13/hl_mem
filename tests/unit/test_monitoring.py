@@ -1,7 +1,9 @@
 """Provider 监控和告警状态机测试。"""
 
+from hl_mem.application.health import monitoring_snapshot
 from hl_mem.monitoring.alerts import AlertManager, CircuitBreaker
 from hl_mem.monitoring.metrics import ProviderCall, ProviderMetrics
+from hl_mem.monitoring.worker import WorkerRuntimeState
 
 
 class _Channel:
@@ -36,3 +38,20 @@ def test_circuit_breaker_opens_after_failures() -> None:
     assert breaker.allow()
     breaker.record(False)
     assert not breaker.allow()
+
+
+def test_monitoring_snapshot_includes_worker_liveness() -> None:
+    snapshot = monitoring_snapshot(ProviderMetrics(), WorkerRuntimeState())
+
+    assert snapshot["worker"] == {
+        "running": False,
+        "started_at": None,
+        "stopped_at": None,
+        "heartbeat_at": None,
+        "maintenance_runs": 0,
+        "maintenance_failures": 0,
+        "last_maintenance_started_at": None,
+        "last_maintenance_completed_at": None,
+        "last_maintenance_error": None,
+        "failure_counts": {},
+    }

@@ -117,6 +117,7 @@ def _classification_expiration(
         observed_at=observed_at,
         recorded_from=recorded_from,
         policy=policy,
+        canonical_attribute=claim.get("canonical_attribute"),
     )
     return expires_at
 

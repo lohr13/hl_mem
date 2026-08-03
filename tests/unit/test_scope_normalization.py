@@ -94,3 +94,34 @@ def test_temporal_scope_is_never_upgraded() -> None:
         "用户是开发者",
         canonical_attribute="identity.role",
     ) == ("temporal", "llm_preserved")
+
+
+def test_short_ttl_scope_falls_back_to_attribute_only_when_slot_is_missing() -> None:
+    assert normalize_scope(
+        "permanent",
+        "状态",
+        None,
+        "gateway",
+        "available",
+        canonical_attribute="state.service_health",
+    ) == ("temporal", "slot_short_ttl")
+    assert normalize_scope(
+        "permanent",
+        "状态",
+        "state.process",
+        "gateway",
+        "available",
+        canonical_attribute="state.service_health",
+    ) == ("permanent", "slot_no_ttl")
+
+
+def test_explicit_short_slot_takes_precedence_over_durable_attribute() -> None:
+    assert normalize_scope(
+        "permanent",
+        "身份",
+        "state.service_health",
+        "gateway",
+        "available",
+        {"service": "gateway"},
+        canonical_attribute="identity.role",
+    ) == ("temporal", "slot_short_ttl")

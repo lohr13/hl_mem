@@ -17,6 +17,7 @@ from hl_mem.domain.claims.attributes import (
     OPERATIONAL_SLOT_NAMES,
     SLOT_REGISTRY,
     infer_canonical_attribute,
+    normalize_canonical_attribute,
     normalize_predicate,
     normalize_topic_tags,
     predicate_for_canonical_attribute,
@@ -300,9 +301,13 @@ def normalize_scope(
 
     if scope != "permanent":
         return scope, "llm_preserved"
+    slot_definition = SLOT_REGISTRY.get(normalize_canonical_attribute(canonical_slot)) if canonical_slot else None
+    if slot_definition is not None and slot_definition.ttl_class == "short":
+        return "temporal", "slot_short_ttl"
     if canonical_attribute in _DURABLE_SCOPE_ATTRIBUTES and not _RUNTIME_CONFIGURATION_RE.search(text):
         return "permanent", "durable_attribute"
-    slot_definition = SLOT_REGISTRY.get(canonical_slot) if canonical_slot else None
+    if not canonical_slot and canonical_attribute:
+        slot_definition = SLOT_REGISTRY.get(normalize_canonical_attribute(canonical_attribute))
     if slot_definition is not None and slot_definition.ttl_class == "short":
         return "temporal", "slot_short_ttl"
     if _HEALTH_CHECK_RE.search(text):

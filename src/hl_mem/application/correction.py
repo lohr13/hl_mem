@@ -160,6 +160,7 @@ class CorrectionService:
             observed_at=timestamp,
             recorded_from=timestamp,
             policy=self.settings.retention_policy(),
+            canonical_attribute=old_claim.get("canonical_attribute"),
         )
         claim = {
             "id": new_claim_id,

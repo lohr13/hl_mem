@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from hl_mem.domain.claims.attributes import SLOT_REGISTRY, normalize_canonical_attribute
+
 
 @dataclass(frozen=True)
 class TTLPolicy:
@@ -36,6 +38,22 @@ def normalize_utc_iso(value: str, field_name: str) -> str:
     return _parse_iso(value, field_name).isoformat(timespec="seconds")
 
 
+def is_short_ttl_classification(
+    canonical_slot: str | None,
+    canonical_attribute: str | None,
+    policy: TTLPolicy,
+) -> bool:
+    """优先采用现有 slot；仅在 slot 缺失时回退到 attribute registry 元数据。"""
+    if canonical_slot:
+        normalized_slot = normalize_canonical_attribute(canonical_slot)
+        definition = SLOT_REGISTRY.get(normalized_slot)
+        return normalized_slot in policy.short_ttl_slots or (definition is not None and definition.ttl_class == "short")
+    if not canonical_attribute:
+        return False
+    definition = SLOT_REGISTRY.get(normalize_canonical_attribute(canonical_attribute))
+    return definition is not None and definition.ttl_class == "short"
+
+
 def compute_expiration(
     scope: str,
     importance: float,
@@ -45,6 +63,7 @@ def compute_expiration(
     observed_at: str,
     recorded_from: str,
     policy: TTLPolicy,
+    canonical_attribute: str | None = None,
 ) -> tuple[str | None, str]:
     """从原始时间锚点计算绝对过期时间及原因码。"""
     del volatility  # 变化频率不再决定保留期，保留参数用于稳定领域契约。
@@ -71,7 +90,7 @@ def compute_expiration(
         expires_at = None
         reason = "none"
 
-    if canonical_slot in policy.short_ttl_slots:
+    if is_short_ttl_classification(canonical_slot, canonical_attribute, policy):
         slot_expiration = anchor + timedelta(seconds=policy.slot_short_ttl_seconds)
         if expires_at is None or slot_expiration < expires_at:
             expires_at = slot_expiration

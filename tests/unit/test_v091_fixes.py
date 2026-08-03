@@ -50,6 +50,35 @@ def test_compute_expiration_normalizes_positive_and_negative_offsets_to_utc() ->
     assert negative == "2026-01-02T17:00:00+00:00"
 
 
+@pytest.mark.parametrize(
+    ("canonical_slot", "canonical_attribute", "expected_expiration", "expected_reason"),
+    [
+        ("state.service_health", "fact.other", "2026-01-02T00:00:00+00:00", "slot_short"),
+        (None, "state.service_health", "2026-01-02T00:00:00+00:00", "slot_short"),
+        ("state.process", "state.service_health", None, "permanent"),
+    ],
+)
+def test_short_ttl_prefers_existing_slot_then_falls_back_to_registry_attribute(
+    canonical_slot,
+    canonical_attribute,
+    expected_expiration,
+    expected_reason,
+) -> None:
+    expires_at, reason = compute_expiration(
+        scope="permanent",
+        importance=0.5,
+        volatility="stable",
+        canonical_slot=canonical_slot,
+        canonical_attribute=canonical_attribute,
+        valid_to=None,
+        observed_at="2026-01-01T00:00:00+00:00",
+        recorded_from="2026-01-01T00:00:00+00:00",
+        policy=TTLPolicy(slot_short_ttl_seconds=86400),
+    )
+
+    assert (expires_at, reason) == (expected_expiration, expected_reason)
+
+
 def test_ttl_worker_compares_mixed_offset_storage_as_instants(tmp_path) -> None:
     connection = Database(tmp_path / "mixed-offset.db").open()
     ClaimRepository(connection).insert_claim(
