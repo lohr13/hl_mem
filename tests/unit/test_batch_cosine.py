@@ -100,5 +100,5 @@ def test_vector_batch_size_settings_contract() -> None:
     assert settings.vector_batch_size == 64
     assert settings.snapshot()["vector_batch_size"] == 64
 
-    with pytest.raises(ConfigurationError, match="HL_MEM_VECTOR_BATCH_SIZE must be positive"):
+    with pytest.raises(ConfigurationError, match=r"recall\.vector_batch_size must be positive"):
         replace(Settings.for_test(), vector_batch_size=0).validate()

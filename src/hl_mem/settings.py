@@ -484,20 +484,30 @@ class Settings:
 
     def validate(self) -> None:
         """校验配置组合以及已启用组件的密钥。"""
-        required_secrets: dict[str, str | None] = {}
-        if self.extractor_mode != "fake" or self.query_expansion_mode != "off" or self.relation_discovery_mode != "off":
-            required_secrets["LLM_API_KEY"] = self.llm_api_key
+        required_secrets: dict[str, tuple[str | None, list[str]]] = {}
+        llm_disable_modes: list[str] = []
+        if self.extractor_mode != "fake":
+            llm_disable_modes.append("extraction.mode='fake'")
+        if self.query_expansion_mode != "off":
+            llm_disable_modes.append("recall.query_expansion_mode='off'")
+        if self.relation_discovery_mode != "off":
+            llm_disable_modes.append("relation.discovery_mode='off'")
+        if llm_disable_modes:
+            required_secrets["LLM_API_KEY"] = (self.llm_api_key, llm_disable_modes)
         if self.embedder_mode == "real":
-            required_secrets["EMBEDDING_API_KEY"] = self.embedding_api_key
+            required_secrets["EMBEDDING_API_KEY"] = (self.embedding_api_key, ["embedding.mode='fake'"])
         if self.reranker_mode in {"on", "real"}:
-            required_secrets["RERANKER_API_KEY"] = self.reranker_api_key
+            required_secrets["RERANKER_API_KEY"] = (self.reranker_api_key, ["reranker.mode='off'"])
         if self.image_describer_mode == "on":
-            required_secrets["IMAGE_API_KEY"] = self.image_describer_api_key
-        invalid_secrets = [name for name, value in required_secrets.items() if is_placeholder_secret(value)]
+            required_secrets["IMAGE_API_KEY"] = (self.image_describer_api_key, ["image_describer.mode='off'"])
+        invalid_secrets = [
+            name for name, (value, _disable_modes) in required_secrets.items() if is_placeholder_secret(value)
+        ]
         if invalid_secrets:
+            recovery = "; ".join(f"{name} -> {', '.join(required_secrets[name][1])}" for name in invalid_secrets)
             raise ConfigurationError(
-                "placeholder or empty secret configured for enabled component(s): "
-                f"{', '.join(invalid_secrets)}; replace each value with a real API key"
+                "missing or placeholder API key(s) for enabled component(s): "
+                f"{', '.join(invalid_secrets)}; add each key to .env or disable its TOML mode: {recovery}"
             )
         if self.database_pool_size < 1 or self.database_busy_timeout_seconds < 1:
             raise ConfigurationError("database pool size and busy timeout must be positive")
@@ -540,49 +550,49 @@ class Settings:
         if self.decay_permanent_days > self.archive_permanent_days:
             raise ConfigurationError("permanent decay days must not exceed archive days")
         if self.feedback_lifecycle_mode not in {"off", "observe", "on"}:
-            raise ConfigurationError("HL_MEM_FEEDBACK_LIFECYCLE_MODE must be 'off', 'observe', or 'on'")
+            raise ConfigurationError("retention.feedback_lifecycle_mode must be 'off', 'observe', or 'on'")
         if self.feedback_bonus_every <= 0:
-            raise ConfigurationError("HL_MEM_FEEDBACK_BONUS_EVERY must be positive")
+            raise ConfigurationError("retention.feedback_bonus_every must be positive")
         if min(self.feedback_bonus_days, self.feedback_bonus_cap_days) < 0:
             raise ConfigurationError("feedback bonus days and cap must be non-negative")
         if self.feedback_min_samples <= 0:
-            raise ConfigurationError("HL_MEM_FEEDBACK_MIN_SAMPLES must be positive")
+            raise ConfigurationError("recall.feedback_min_samples must be positive")
         if self.llm_provider not in {"dashscope", "zhipu", "openai_compatible"}:
-            raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
+            raise ConfigurationError("llm.provider must be 'dashscope', 'zhipu', or 'openai_compatible'")
         if self.llm_structured_mode not in {"auto", "json_object", "json_schema"}:
-            raise ConfigurationError("HL_MEM_LLM_STRUCTURED_MODE must be 'auto', 'json_object', or 'json_schema'")
+            raise ConfigurationError("llm.structured_mode must be 'auto', 'json_object', or 'json_schema'")
         if not isinstance(self.enable_llm_thinking, bool):
-            raise ConfigurationError("HL_MEM_LLM_ENABLE_THINKING must be a boolean")
+            raise ConfigurationError("llm.enable_thinking must be a boolean")
         if self.relation_expansion_mode not in {"off", "on"}:
-            raise ConfigurationError("HL_MEM_RELATION_EXPANSION must be 'off' or 'on'")
+            raise ConfigurationError("relation.expansion_mode must be 'off' or 'on'")
         if self.relation_expansion_max_depth < 1:
-            raise ConfigurationError("HL_MEM_RELATION_EXPANSION_MAX_DEPTH must be at least 1")
+            raise ConfigurationError("relation.expansion_max_depth must be at least 1")
         if self.relation_discovery_mode not in {"off", "audit", "auto"}:
-            raise ConfigurationError("HL_MEM_RELATION_DISCOVERY_MODE must be 'off', 'audit', or 'auto'")
+            raise ConfigurationError("relation.discovery_mode must be 'off', 'audit', or 'auto'")
         if self.relation_discovery_pool_limit < 1 or self.relation_discovery_max_proposals < 1:
             raise ConfigurationError("relation discovery limits must be positive")
         if not 0.0 <= self.relation_auto_apply_confidence <= 1.0:
-            raise ConfigurationError("HL_MEM_RELATION_AUTO_APPLY_CONFIDENCE must be between 0 and 1")
+            raise ConfigurationError("relation.auto_apply_confidence must be between 0 and 1")
         if not 0.0 <= self.relation_conflict_confidence <= 1.0:
-            raise ConfigurationError("HL_MEM_RELATION_CONFLICT_CONFIDENCE must be between 0 and 1")
+            raise ConfigurationError("relation.conflict_confidence must be between 0 and 1")
         if self.packed_context_token_budget < 1 or self.recall_candidate_floor < 1:
             raise ConfigurationError("recall budgets must be positive")
         if not 0.0 <= self.recall_dedup_threshold <= 1.0:
-            raise ConfigurationError("HL_MEM_RECALL_DEDUP_THRESHOLD must be between 0 and 1 (0 disables fold)")
+            raise ConfigurationError("recall.dedup_threshold must be between 0 and 1 (0 disables fold)")
         if self.recall_dedup_candidate_limit < 1:
-            raise ConfigurationError("HL_MEM_RECALL_DEDUP_CANDIDATE_LIMIT must be positive")
+            raise ConfigurationError("recall.dedup_candidate_limit must be positive")
         if self.relevance_gate_mode not in {"off", "observe", "enforce"}:
-            raise ConfigurationError("HL_MEM_RELEVANCE_GATE_MODE must be 'off', 'observe', or 'enforce'")
+            raise ConfigurationError("recall.relevance_gate_mode must be 'off', 'observe', or 'enforce'")
         relevance_thresholds = {
-            "HL_MEM_RELEVANCE_RERANKER_FLOOR": self.relevance_reranker_floor,
-            "HL_MEM_RELEVANCE_DENSE_FLOOR": self.relevance_dense_floor,
-            "HL_MEM_RELEVANCE_RELATIVE_DROP": self.relevance_relative_drop,
+            "recall.relevance_reranker_floor": self.relevance_reranker_floor,
+            "recall.relevance_dense_floor": self.relevance_dense_floor,
+            "recall.relevance_relative_drop": self.relevance_relative_drop,
         }
         for variable_name, value in relevance_thresholds.items():
             if not 0.0 <= value <= 1.0:
                 raise ConfigurationError(f"{variable_name} must be between 0 and 1")
         if not isinstance(self.relevance_keep_top1, bool):
-            raise ConfigurationError("HL_MEM_RELEVANCE_KEEP_TOP1 must be a boolean")
+            raise ConfigurationError("recall.relevance_keep_top1 must be a boolean")
         allowed_relevance_intents = {
             "current_state",
             "preference",
@@ -593,21 +603,21 @@ class Settings:
         if not self.relevance_intents or any(
             intent not in allowed_relevance_intents for intent in self.relevance_intents
         ):
-            raise ConfigurationError("HL_MEM_RELEVANCE_INTENTS must contain comma-separated recall intents")
+            raise ConfigurationError("recall.relevance_intents must contain valid recall intents")
         if not 0.0 <= self.preference_recency_boost <= 1.0:
-            raise ConfigurationError("HL_MEM_PREFERENCE_RECENCY_BOOST must be between 0 and 1")
+            raise ConfigurationError("recall.preference_recency_boost must be between 0 and 1")
         if not 0.0 <= self.tag_boost_weight <= 1.0:
-            raise ConfigurationError("HL_MEM_TAG_BOOST_WEIGHT must be between 0 and 1")
+            raise ConfigurationError("recall.tag_boost_weight must be between 0 and 1")
         if not 0.0 <= self.tag_channel_weight <= 1.0:
-            raise ConfigurationError("HL_MEM_TAG_CHANNEL_WEIGHT must be between 0 and 1")
+            raise ConfigurationError("recall.tag_channel_weight must be between 0 and 1")
         if self.tag_candidate_limit < 1:
-            raise ConfigurationError("HL_MEM_TAG_CANDIDATE_LIMIT must be positive")
+            raise ConfigurationError("recall.tag_candidate_limit must be positive")
         if self.query_expansion_mode not in {"off", "auto", "always"}:
-            raise ConfigurationError("HL_MEM_QUERY_EXPANSION_MODE must be 'off', 'auto', or 'always'")
+            raise ConfigurationError("recall.query_expansion_mode must be 'off', 'auto', or 'always'")
         if self.query_context_mode not in {"off", "coreference"}:
-            raise ConfigurationError("HL_MEM_QUERY_CONTEXT_MODE must be 'off' or 'coreference'")
+            raise ConfigurationError("recall.query_context_mode must be 'off' or 'coreference'")
         if not 0 <= self.query_expansion_max <= 2:
-            raise ConfigurationError("HL_MEM_QUERY_EXPANSION_MAX must be between 0 and 2")
+            raise ConfigurationError("recall.query_expansion_max must be between 0 and 2")
         if (
             min(
                 self.query_expansion_candidate_floor,
@@ -622,9 +632,9 @@ class Settings:
         ):
             raise ConfigurationError("query expansion budgets and timeouts must be positive")
         if self.procedure_recall_mode not in {"off", "keyword", "auto"}:
-            raise ConfigurationError("HL_MEM_PROCEDURE_RECALL_MODE must be 'off', 'keyword', or 'auto'")
+            raise ConfigurationError("recall.procedure_mode must be 'off', 'keyword', or 'auto'")
         if not 0.0 <= self.procedure_llm_threshold <= 1.0:
-            raise ConfigurationError("HL_MEM_PROCEDURE_LLM_THRESHOLD must be between 0 and 1")
+            raise ConfigurationError("recall.procedure_llm_threshold must be between 0 and 1")
         if (
             min(
                 self.procedure_router_timeout_seconds,
@@ -638,7 +648,7 @@ class Settings:
         if self.recall_side_effect_max_attempts < 1 or self.recall_side_effect_backoff_seconds < 0:
             raise ConfigurationError("recall side-effect attempts must be positive and backoff non-negative")
         if self.vector_batch_size < 1:
-            raise ConfigurationError("HL_MEM_VECTOR_BATCH_SIZE must be positive")
+            raise ConfigurationError("recall.vector_batch_size must be positive")
         if (
             self.hermes_circuit_failure_threshold < 1
             or self.hermes_circuit_open_seconds <= 0
@@ -648,35 +658,37 @@ class Settings:
         if self.policy_induction_lookback_days < 1 or self.policy_induction_min_episodes < 1:
             raise ConfigurationError("policy induction values must be positive")
         if self.llm_max_attempts < 1:
-            raise ConfigurationError("LLM_MAX_ATTEMPTS must be at least 1")
+            raise ConfigurationError("llm.max_attempts must be at least 1")
         if self.llm_schema_retries < 0:
-            raise ConfigurationError("HL_MEM_LLM_SCHEMA_RETRIES must be non-negative")
+            raise ConfigurationError("llm.schema_retries must be non-negative")
         if self.image_describer_mode not in {"off", "on"}:
-            raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_MODE must be 'off' or 'on'")
+            raise ConfigurationError("image_describer.mode must be 'off' or 'on'")
         if self.image_describer_provider != "dashscope":
-            raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_PROVIDER must be 'dashscope'")
+            raise ConfigurationError("image_describer.provider must be 'dashscope'")
         if self.image_max_bytes < 1 or self.image_max_parts < 1 or self.image_describer_timeout_seconds <= 0:
             raise ConfigurationError("image limits and timeout must be positive")
         if self.image_describer_mode == "on":
             if not self.image_describer_base_url.lower().startswith("https://"):
-                raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_BASE_URL must use HTTPS")
+                raise ConfigurationError("image_describer.base_url must use HTTPS")
             if not self.image_describer_model.strip():
-                raise ConfigurationError("HL_MEM_IMAGE_DESCRIBER_MODEL must not be empty")
+                raise ConfigurationError("image_describer.model must not be empty")
             if self.image_allow_file_uris and not self.image_file_allow_roots:
-                raise ConfigurationError("HL_MEM_IMAGE_FILE_ALLOW_ROOTS is required when file image URIs are enabled")
+                raise ConfigurationError(
+                    "image_describer.file_allow_roots is required when file image URIs are enabled"
+                )
         if not 0.0 <= self.dedup_threshold <= 1.0:
-            raise ConfigurationError("HL_MEM_DEDUP_THRESHOLD must be between 0 and 1")
+            raise ConfigurationError("dedup.threshold must be between 0 and 1")
         if not self.dedup_threshold <= self.dedup_auto_merge_min_confidence <= 1.0:
-            raise ConfigurationError("HL_MEM_DEDUP_AUTO_MERGE_MIN_CONFIDENCE must be between dedup threshold and 1")
+            raise ConfigurationError("dedup.auto_merge_min_confidence must be between dedup.threshold and 1")
         if self.dedup_scan_limit < 1:
-            raise ConfigurationError("HL_MEM_DEDUP_SCAN_LIMIT must be positive")
-        parse_daily_cron(self.dedup_cron, "HL_MEM_DEDUP_CRON")
+            raise ConfigurationError("dedup.scan_limit must be positive")
+        parse_daily_cron(self.dedup_cron, "dedup.cron")
         if self.extraction_chunk_target_chars < 1:
-            raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_TARGET_CHARS must be positive")
+            raise ConfigurationError("extraction.chunk_target_chars must be positive")
         if self.extraction_chunk_overlap_turns < 0:
-            raise ConfigurationError("HL_MEM_EXTRACTION_CHUNK_OVERLAP_TURNS must be non-negative")
+            raise ConfigurationError("extraction.chunk_overlap_turns must be non-negative")
         if self.extraction_max_split_depth < 0:
-            raise ConfigurationError("HL_MEM_EXTRACTION_MAX_SPLIT_DEPTH must be non-negative")
+            raise ConfigurationError("extraction.max_split_depth must be non-negative")
         if (
             min(
                 self.temporal_ttl_days_low,
@@ -696,21 +708,19 @@ class Settings:
         ):
             raise ConfigurationError("importance thresholds must be ordered between 0 and 1")
         if self.embedder_mode not in {"fake", "real"}:
-            raise ConfigurationError("HL_MEM_EMBEDDER must be 'fake' or 'real'")
+            raise ConfigurationError("embedding.mode must be 'fake' or 'real'")
         if self.index_text_mode not in {"legacy", "value_only", "natural", "answerable"}:
-            raise ConfigurationError(
-                "HL_MEM_INDEX_TEXT_MODE must be 'legacy', 'value_only', 'natural', or 'answerable'"
-            )
+            raise ConfigurationError("index.text_mode must be 'legacy', 'value_only', 'natural', or 'answerable'")
         if self.index_backfill_batch_size < 1 or self.index_backfill_max_attempts < 1:
             raise ConfigurationError("index backfill batch size and max attempts must be positive")
         if not self.index_text_version.strip():
-            raise ConfigurationError("HL_MEM_INDEX_TEXT_VERSION must not be empty")
+            raise ConfigurationError("index.text_version must not be empty")
         if self.reranker_mode not in {"off", "fake", "on", "real"}:
-            raise ConfigurationError("HL_MEM_RERANKER must be 'off', 'fake', 'on', or 'real'")
+            raise ConfigurationError("reranker.mode must be 'off', 'fake', 'on', or 'real'")
         if self.reranker_provider != "dashscope":
-            raise ConfigurationError("HL_MEM_RERANKER_PROVIDER must be 'dashscope'")
+            raise ConfigurationError("reranker.provider must be 'dashscope'")
         if self.extractor_mode not in {"fake", "real", "llm"}:
-            raise ConfigurationError("HL_MEM_EXTRACTOR must be 'fake', 'real', or 'llm'")
+            raise ConfigurationError("extraction.mode must be 'fake', 'real', or 'llm'")
 
     def _validate(self) -> None:
         """兼容旧调用方，委托公开配置校验入口。"""

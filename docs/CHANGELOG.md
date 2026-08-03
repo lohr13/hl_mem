@@ -2,6 +2,23 @@
 
 ## v0.21.0（未发布）
 
+### MCP Runtime
+
+- 使用官方 MCP Python SDK 2.x 低层 `Server` 接入 stdio transport，新增 `hl-mem-mcp` 与 `python -m hl_mem.mcp` 入口；工具列表直接复用既有 JSON Schema，避免 transport 契约漂移。
+- 同步数据库和应用服务调用通过 worker thread 执行；参数校验、资源不存在和生命周期冲突等预期错误返回 MCP `isError=true`，未分类内部异常保留协议级错误语义。
+- 新增内存级 MCP Client/Server 协议测试、线程执行测试和 `--config`/`--env-file`/`--db` 入口参数测试，并补充 Codex、Claude Code/Desktop 与 Cursor 的 stdio 连接说明。
+
+### Packaging and First Run
+
+- 项目版本更新为 `0.21.0`，新增 `mcp>=2,<3` 运行依赖和 `hl-mem-mcp` console script；PyPI 安装包继续同时提供 `hlmem` 与 `hl-mem`。
+- 新增 tag `v*` 触发的 PyPI Trusted Publishing workflow：先校验 tag 与 `pyproject.toml` 版本一致，再构建 wheel/sdist，通过 `pypi` environment 和 OIDC `id-token: write` 上传；首次创建项目时需先配置 pending publisher。
+- sdist 显式排除本地 `.env`、部署配置、备份、运行时 `var/`、任务草稿和本地研究笔记，避免发布归档携带工作区状态。
+- 中英文 README 第一屏改为 PyPI 安装、`hlmem init --offline`、server、remember、recall 和证据引用说明；源码安装、在线模型、Hermes 与 systemd 移至进阶章节。
+
+### Configuration Errors
+
+- `Settings.validate()` 中历史 `HL_MEM_*` 错误提示改为实际 TOML 路径；缺少已启用组件密钥时明确列出 `LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`，并提示写入 `.env` 或关闭对应 TOML mode。
+
 ### Memory Query and Correction
 
 - 新增 `GET /v1/memories/{memory_id}`，沿用 `MemoryQueryService` 返回 Claim 内容、生命周期与分类字段、`superseded_by_id`、完整 evidence links、来源事件及 conflict 历史。

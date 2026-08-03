@@ -1,6 +1,6 @@
 # HL-Mem 能力成熟度矩阵
 
-> 基线：v0.20.2。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
+> 基线：v0.21.0。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
 
 ## 成熟度定义
 
@@ -38,7 +38,7 @@
 | Episode / Trace | stable | `on` | 否 | 是 | 不影响 Claim 主通道；非法状态转换明确失败 | 保持 API、状态机、reward 与 usefulness 回归 |
 | Policy / Procedure 归纳 | beta | `auto`（定时 Job） | 是 | 是 | 归纳失败保留 Episode，Job 可重试且不发布新策略 | 多 Episode 支撑、成功率、退役与审计指标达到阈值 |
 | Mental Model 维护 | beta | `auto`（定时 Job） | 是 | 是 | 刷新失败保留旧模型并标记 stale/记录 Job 错误 | 水位幂等、证据覆盖、刷新质量和 stale 恢复达到阈值 |
-| MCP Server（可嵌入工具套件） | beta | `on` | 否 | 依工具而定 | 委托 application 服务；服务错误按 MCP 错误返回；尚无独立 transport/runtime 入口 | 工具契约、事务边界和 REST 行为持续一致，并补齐 transport/runtime 入口 |
+| MCP Server（stdio） | beta | 按需启动 | 否 | 依工具而定 | 委托 application 服务；预期业务错误返回 `isError=true`，内部异常保留协议级错误 | 工具契约、事务边界和 REST 行为持续一致，Codex/Claude/Cursor 兼容与长时间运行指标达到 SLO |
 | Hermes Provider | beta | `off`（`hermes.enabled=false`） | 是，调用本地 HL-Mem HTTP | 间接写入 | timeout/circuit breaker 后不阻断 Agent 主任务 | 兼容矩阵、重连、超时和长时间运行指标达到 SLO |
 | Audit / LLM spans | stable | `on` | 否 | 是 | 关键审计写入失败时明确报错；非关键 span 不改变业务结果 | 保持字段稳定、敏感信息脱敏和可查询性 |
 | SQLite 备份与 migration | stable | `on` | 否 | 是 | migration 失败事务回滚；备份失败不替换现有备份 | 空库升级由 CI 门禁保护；历史快照升级与恢复演练仍需独立门禁 |

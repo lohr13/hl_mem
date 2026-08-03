@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.20.2
-- Updated: 2026-08-02
+- Document baseline: v0.21.0
+- Updated: 2026-08-03
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -236,7 +236,7 @@ dependent derivations stale.
 |---|---|---|
 | REST / FastAPI | Full ingestion, recall, experience, feedback, jobs, and health surface | Stable |
 | Hermes Provider | Agent-facing memory adapter with timeout and circuit breaker | Stable |
-| MCP | Minimal five-tool memory contract | Beta |
+| MCP | Seven-tool MCP SDK 2.x low-level Server over stdio | Beta |
 | CLI | Worker, maintenance, backup, import/export, benchmark operations | Stable |
 
 ### Public REST route map
@@ -277,7 +277,7 @@ Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by
 values while making the field describe the actual host/model delivery boundary.
 
 Migration 036 is the v0.20 schema change: it adds tokenized FTS v2 tables and orphan-cleanup triggers for claims, events,
-and claim tags. v0.20.2 adds no migration.
+and claim tags. v0.21.0 adds no migration.
 
 Backup and restore are whole-database operations:
 

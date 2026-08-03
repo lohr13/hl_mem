@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import fields, replace
 
+import pytest
+
 from hl_mem.api.schemas import RecallInput
 from hl_mem.config import DEDUP_SEMANTIC_THRESHOLD
+from hl_mem.errors import ConfigurationError
 from hl_mem.settings import Settings
 
 
@@ -67,3 +70,28 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
     assert cross_subject.recall_dedup_threshold == 0.95
     assert recall_fold.dedup_threshold == 0.92
     assert DEDUP_SEMANTIC_THRESHOLD == 0.82
+
+
+@pytest.mark.parametrize(
+    ("changes", "toml_path"),
+    [
+        ({"feedback_lifecycle_mode": "invalid"}, "retention.feedback_lifecycle_mode"),
+        ({"feedback_min_samples": 0}, "recall.feedback_min_samples"),
+        ({"llm_provider": "invalid"}, "llm.provider"),
+        ({"relation_expansion_mode": "invalid"}, "relation.expansion_mode"),
+        ({"relevance_gate_mode": "invalid"}, "recall.relevance_gate_mode"),
+        ({"query_context_mode": "invalid"}, "recall.query_context_mode"),
+        ({"procedure_recall_mode": "invalid"}, "recall.procedure_mode"),
+        ({"vector_batch_size": 0}, "recall.vector_batch_size"),
+        ({"dedup_threshold": 2.0}, "dedup.threshold"),
+        ({"index_text_mode": "invalid"}, "index.text_mode"),
+        ({"reranker_provider": "invalid"}, "reranker.provider"),
+    ],
+)
+def test_validation_errors_reference_toml_paths(changes: dict[str, object], toml_path: str) -> None:
+    with pytest.raises(ConfigurationError) as caught:
+        replace(Settings.for_test(), **changes).validate()
+
+    message = str(caught.value)
+    assert toml_path in message
+    assert "HL_MEM_" not in message

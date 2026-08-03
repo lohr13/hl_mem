@@ -144,6 +144,38 @@ def test_placeholder_error_is_redacted(tmp_path: Path) -> None:
     assert "sk-xxx" not in message
 
 
+def test_missing_enabled_component_keys_explain_env_and_toml_recovery(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "enabled.toml",
+        """
+[extraction]
+mode = "real"
+[embedding]
+mode = "real"
+[reranker]
+mode = "on"
+[image_describer]
+mode = "on"
+[recall]
+query_expansion_mode = "off"
+[relation]
+discovery_mode = "off"
+""".strip(),
+    )
+
+    with pytest.raises(ConfigurationError) as caught:
+        load_settings(config_path, tmp_path / ".env", environ={})
+
+    message = str(caught.value)
+    for secret_name in ("LLM_API_KEY", "EMBEDDING_API_KEY", "RERANKER_API_KEY", "IMAGE_API_KEY"):
+        assert secret_name in message
+    assert ".env" in message
+    assert "extraction.mode='fake'" in message
+    assert "embedding.mode='fake'" in message
+    assert "reranker.mode='off'" in message
+    assert "image_describer.mode='off'" in message
+
+
 def test_every_settings_field_declares_exactly_one_source() -> None:
     for settings_field in fields(Settings):
         assert set(settings_field.metadata) in ({"toml"}, {"secret_env"})

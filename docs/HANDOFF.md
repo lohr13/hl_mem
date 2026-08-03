@@ -1,17 +1,23 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-02 · v0.20.2
+> 最后更新：2026-08-03 · v0.21.0
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.20.2
-- **阶段**：v0.20.2 发版准备
+- **版本**：v0.21.0
+- **阶段**：v0.21.0 发版准备
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），36 migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-03 v0.21.0 MCP runtime 与发布准备
+
+- MCP 七工具契约接入官方 Python SDK 2.x 低层 `Server` 与 stdio transport，提供 `hl-mem-mcp`/`python -m hl_mem.mcp` 入口、线程化同步调用和 `isError` 业务错误。
+- 新增 PyPI Trusted Publishing tag workflow、PyPI-first 中英文快速开始、Codex/Claude/Cursor MCP 配置说明和 TOML/密钥恢复型错误信息。
+- v0.21.0 无新增 migration；数据库 schema 保持在 migration 036。
 
 ### 2026-08-02 v0.20.2 召回质量与部署监督
 
@@ -67,7 +73,7 @@
 - 生命周期：TTL 过期 → 线性衰减 → 归档 → 重分类
 - 显式遗忘：级联撤回 + 向量清除 + stale 传播
 - Hermes Provider（可配置 timeout + circuit breaker + prefetch/delivery receipt）
-- MCP Server（5 工具契约，可嵌入工具套件，beta）
+- MCP Server（7 工具契约，官方 SDK 2.x stdio runtime，beta）
 - REST API 新增 `POST /v1/extract/dry-run`、`POST /v1/consolidate`
 - LLM 可观测性：`llm_call_spans` 持久化调用 span；`healthz` 只暴露进程内状态，不查询 span 表
 - 审计日志 + 整库备份/恢复 + 可重建 Job 的 JSONL 导入导出

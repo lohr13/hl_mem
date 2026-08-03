@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.20.2](https://img.shields.io/badge/version-0.20.2-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.21.0](https://img.shields.io/badge/version-0.21.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -13,164 +13,77 @@
 
 HL-Mem 是面向 AI Agent 的本地优先、证据驱动长期记忆系统。它不只是向量数据库：系统把不可变事件提取为带证据链的结构化 Claim，以有效时间和记录时间描述事实变化，并通过独立的 Experience 通道保存 Episode、Trace 和可复用 Policy。默认使用 SQLite WAL、FTS5 和向量 BLOB，无需部署外部数据库服务。
 
-## 安装
+## 五分钟上手
 
-### 前置条件
-
-- Python 3.11 或更高版本。
-- 推荐安装 [uv](https://docs.astral.sh/uv/)；也可使用 pip。
-- SQLite 必须包含 FTS5（Python 官方发行版通常已包含）。
-- 使用真实提取、Embedding 或 Reranker 时，需要对应服务的 API key。
-- 集成 Hermes 时，需要可写的 Hermes 根目录及重启 Hermes 的权限。
-
-### 本地安装
-
-推荐使用 uv：
+需要 Python 3.11+。先从 PyPI 安装：
 
 ```bash
-git clone git@github.com:REDACTED_USER/hl_mem.git
+python -m pip install hl-mem
+```
+
+在准备存放本地配置和数据库的目录中，生成无需 API key 的离线配置并启动服务：
+
+```bash
+hlmem init --offline
+hlmem server
+```
+
+另开一个终端，写入并召回记忆：
+
+```bash
+hlmem remember "Alice 喜欢深色模式"
+hlmem recall "Alice 喜欢什么"
+```
+
+召回结果会同时给出 Claim ID、分数和证据引用，例如：
+
+```text
+[1] Alice 喜欢深色模式
+    ID: <claim-id>
+    分数: 0.8123
+    证据:
+      - event/<event-id>
+```
+
+`event/<event-id>` 表示这条 Claim 可追溯到对应的不可变原始事件，而不是一段没有来源的模型文本。可用 `hlmem list` 再次查看 Claim ID，并将它用于 `hlmem forget <claim-id>`、REST 详情查询或 MCP 的 `memory_explain`。离线配置是 FTS-only 关键词召回；fake embedding 只保持存储结构兼容，不提供语义检索。
+
+## 进阶安装与集成
+
+### 从源码安装
+
+```bash
+git clone https://github.com/REDACTED_USER/hl_mem.git
 cd hl_mem
 uv sync
+uv run hlmem init --offline
+uv run hlmem server
 ```
 
-也可以使用 pip 安装当前仓库：
+开发环境使用 `uv sync --dev`；安装后可运行 `hlmem doctor` 做只读诊断。SQLite 需要 FTS5，Python 官方发行版通常已包含。
+
+### 启用在线模型
+
+从源码仓库复制 `config.example.toml` 和 `.env.example`，或直接编辑 `hl_mem.toml`。把启用组件的独立密钥写入 `.env`：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`；再将对应的 `extraction.mode`、`embedding.mode`、`reranker.mode`、`image_describer.mode` 切换到在线模式。完整字段见 [配置参考](docs/configuration.md)。
+
+### 连接 Codex、Claude 与 Cursor
+
+安装包同时提供官方 SDK 2.x 的 stdio MCP 入口 `hl-mem-mcp`，可直接连接 Codex、Claude Code、Claude Desktop 或 Cursor。配置示例和七个工具的契约见 [MCP 使用说明](docs/mcp.md)。
+
+### 集成 Hermes
+
+先启动 HL-Mem 并确认 `curl --fail http://127.0.0.1:8200/healthz` 成功，再从源码仓库运行：
 
 ```bash
-python -m pip install .
-```
-
-开发环境可使用 `uv sync --dev` 或 `python -m pip install -e .`；运行测试所需的开发依赖以 `uv.lock` 为准。
-
-安装和配置后可运行只读诊断：
-
-```bash
-uv run hl-mem doctor
-```
-
-### Linux / systemd 部署
-
-将下列模板保存为 `/etc/systemd/system/hl-mem.service`，并将 `<HL_MEM_DIR>`、`<RUN_USER>` 替换为实际值：
-
-```ini
-[Unit]
-Description=HL-Mem local memory service
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=<RUN_USER>
-WorkingDirectory=<HL_MEM_DIR>
-ExecStart=<HL_MEM_DIR>/.venv/bin/python <HL_MEM_DIR>/start_server.py
-Restart=on-failure
-RestartSec=5
-TimeoutStopSec=30
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`start_server.py` 从进程当前工作目录加载必需的 `hl_mem.toml` 和可选的 `.env`。因此 systemd 的
-`WorkingDirectory` 必须指向放置这两个文件的部署目录；缺少 `hl_mem.toml` 时服务不会启动。安装并启动服务：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now hl-mem
-sudo systemctl status hl-mem
-```
-
-## 快速开始
-
-无需 API key 的本地首次体验：
-
-```bash
-uv run hl-mem init --offline
-uv run hl-mem server
-```
-
-另开终端后即可使用日常命令；这些命令通过 `http://127.0.0.1:8200` 调用真实服务路径：
-
-```bash
-uv run hl-mem remember "Alice 喜欢深色模式"
-uv run hl-mem recall "Alice 喜欢什么"
-uv run hl-mem list
-uv run hl-mem forget <recall-or-list 返回的 Claim ID>
-```
-
-offline 配置采用纯关键词 FTS 候选召回；确定性 fake embedding 仅用于兼容本地写入结构，不是语义模型。若要启用真实模型，请在 `.env` 中配置相应密钥，并修改 `hl_mem.toml` 中的 extraction、embedding、reranker 等 mode。
-
-### 1. 配置服务
-
-复制 TOML 配置和密钥模板：
-
-```bash
-cp config.example.toml hl_mem.toml
-cp .env.example .env
-```
-
-`config.example.toml` 只列常用参数，并显式写入推荐的真实能力模式；这些推荐值不是代码默认值。根据启用的组件填写
-`.env` 中的独立密钥，或将不需要的组件 mode 改回安全默认值。不要提交包含真实密钥的 `.env`。所有 TOML 字段见
-[配置参考](docs/configuration.md)。
-
-### 2. 启动服务
-
-```bash
-uv run python start_server.py
-```
-
-API 和后台 Worker 默认随服务启动，监听 `http://127.0.0.1:8200`。写入并召回一条记忆：
-
-```bash
-curl -X POST http://127.0.0.1:8200/v1/memories -H "Content-Type: application/json" \
-  -d '{"text":"Alice prefers dark mode","subject":"Alice"}'
-
-curl -X POST http://127.0.0.1:8200/v1/recall -H "Content-Type: application/json" \
-  -d '{"query":"What does Alice prefer?","limit":5}'
-```
-
-完整请求契约见 [API 文档](docs/api.md)。
-
-常驻部署统一使用纯标准库的 `scripts/healthcheck.py` 探测 `/healthz`，进程重启与告警交给 systemd、Windows 服务管理器或容器编排平台。示例见 [服务监督与健康检查](docs/watchdog.md)。
-
-### 3. 集成 Hermes
-
-启动顺序必须是：先启动 HL-Mem 并确认健康检查通过，再安装插件，最后重启 Hermes：
-
-```bash
-curl --fail http://127.0.0.1:8200/healthz
 uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
-# 使用 Hermes 自己的服务管理方式重启 Hermes
 ```
 
-安装脚本的目标路径是 `<HERMES_HOME>/plugins/hl_mem/`。安装后必须重启 Hermes，让插件扫描器重新加载。适配器通过 HTTP 调用本地 HL-Mem 服务，并提供超时、熔断、预取及 Episode/Trace 同步；服务不可用时会降级，不阻断 Agent 主任务。
+插件安装到 `<HERMES_HOME>/plugins/hl_mem/`；完成后必须重启 Hermes。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
 
-### 三步验证清单
+### 常驻部署与 systemd
 
-1. 验证 HL-Mem 服务健康：
+常驻部署使用 `scripts/healthcheck.py` 探测 `/healthz`，将重启和告警交给 systemd、Windows 服务管理器或容器编排平台。systemd 的 `WorkingDirectory` 必须包含 `hl_mem.toml` 和可选 `.env`；完整单元模板与跨平台示例见 [服务监督与健康检查](docs/watchdog.md)。
 
-   ```bash
-   curl --fail http://127.0.0.1:8200/healthz
-   ```
-
-2. 发起一次召回并确认返回 JSON：
-
-   ```bash
-   curl --fail -X POST http://127.0.0.1:8200/v1/recall \
-     -H "Content-Type: application/json" \
-     -d '{"query":"What does Alice prefer?","limit":5}'
-   ```
-
-3. 检查 Hermes Agent 日志是否加载并调用 HL-Mem：
-
-   ```bash
-   grep -iE "hl[_-]mem|memory provider" <HERMES_HOME>/agent.log
-   ```
-
-### 常见问题排查
-
-- Hermes 扫描不到插件：确认文件位于 `<HERMES_HOME>/plugins/hl_mem/`，不要放在旧路径 `<HERMES_HOME>/plugins/memory/hl_mem/`；修正后重启 Hermes。
-- 服务启动失败或 FTS 异常：运行 `uv run hl-mem doctor`，根据逐项 `OK/WARN/FAIL` 结果检查数据库、migration、密钥与端口。
-- `healthz` 正常但 Hermes 无召回：先确认 Hermes 是在 HL-Mem 启动后重启的，再检查 `agent.log` 和插件目录权限。
+REST 的完整请求契约见 [API 文档](docs/api.md)。
 
 ## 关键配置
 
@@ -202,7 +115,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 - **混合召回**：中文 FTS5、稠密向量、RRF 融合、多因子排序、可选 Reranker、关系/查询扩展和按 Token 预算打包上下文。
 - **生命周期**：importance 联动 TTL、置信度衰减、归档、重分类、反馈效用、审计日志和在线备份。
 - **经验通道**：Episode、Trace、Reward、Policy/Procedure 和派生 Observation。
-- **接口**：FastAPI REST 与 Hermes Provider 为稳定主路径；五工具 MCP 接口处于 Beta。
+- **接口**：FastAPI REST 与 Hermes Provider 为稳定主路径；七工具 MCP stdio 接口处于 Beta。
 - **评测**：离线提取/召回/生命周期指标、召回诊断、索引文本受控 A/B、跨模型提取 Benchmark 和 LongMemEval 适配器。
 
 能力成熟度、默认开关和证据见 [能力矩阵](docs/capability-matrix.md)，架构与数据流见 [架构文档](docs/architecture.md)。
@@ -213,7 +126,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.20.2，共 36 个不可变、仅向前执行的 Migration。
+当前基线为 v0.21.0，共 36 个不可变、仅向前执行的 Migration。
 
 ## 文档
 
@@ -223,6 +136,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 | [配置参考](docs/configuration.md) | TOML 键、默认值、允许值与密钥边界 |
 | [架构](docs/architecture.md) | 分层、模块、写入/召回管线、存储和生命周期 |
 | [API](docs/api.md) | REST 端点和请求约定 |
+| [MCP](docs/mcp.md) | stdio 启动参数、Codex/Claude/Cursor 配置与工具错误语义 |
 | [服务监督与健康检查](docs/watchdog.md) | 跨平台健康探针及 systemd、Windows、容器部署示例 |
 | [兼容性策略](docs/compatibility.md) | 版本和公共契约保证 |
 | [能力矩阵](docs/capability-matrix.md) | 成熟度、默认值和验证证据 |

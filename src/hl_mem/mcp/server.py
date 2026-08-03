@@ -13,6 +13,8 @@ from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService
 from hl_mem.application.memories import MemoryQueryService
 from hl_mem.application.recall import RecallService
+from hl_mem.domain.temporal import RecallIntent, parse_utc
+from hl_mem.errors import NotFoundError, ValidationError
 from hl_mem.experience.service import ExperienceService
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
@@ -232,7 +234,7 @@ class McpMemoryServer:
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """调用一个记忆工具并返回 JSON 可序列化结果。"""
         if name not in self._TOOLS:
-            raise ValueError(f"unknown MCP tool: {name}")
+            raise ValidationError(f"unknown MCP tool: {name}")
         with self.database.connect() as connection:
             if name == "memory_save":
                 return self._save(connection, arguments)
@@ -250,27 +252,30 @@ class McpMemoryServer:
 
     def _save(self, connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         """原子保存显式记忆事件并创建提取任务。"""
-        text = str(arguments.get("text") or arguments.get("content") or "")
-        if not text:
-            raise ValueError("text or content is required")
+        text = arguments.get("text") or arguments.get("content")
+        if not isinstance(text, str) or not text:
+            raise ValidationError("text or content is required")
         idempotency_key = arguments.get("idempotency_key")
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str):
-                raise ValueError("idempotency_key must be a string")
+                raise ValidationError("idempotency_key must be a string")
             if not idempotency_key:
-                raise ValueError("idempotency_key must not be empty")
+                raise ValidationError("idempotency_key must not be empty")
             if len(idempotency_key) > 200:
-                raise ValueError("idempotency_key must be at most 200 characters")
+                raise ValidationError("idempotency_key must be at most 200 characters")
         namespace = arguments.get("namespace", "default")
         if not isinstance(namespace, str) or not namespace:
-            raise ValueError("namespace must be a non-empty string")
+            raise ValidationError("namespace must be a non-empty string")
         if len(namespace) > 100:
-            raise ValueError("namespace must be at most 100 characters")
+            raise ValidationError("namespace must be at most 100 characters")
+        qualifiers = arguments.get("qualifiers") or {}
+        if not isinstance(qualifiers, dict):
+            raise ValidationError("qualifiers must be an object")
         result = IngestService(connection).save_explicit_memory(
             text,
             str(arguments.get("subject", "用户")),
             str(arguments.get("predicate", "explicit_memory")),
-            arguments.get("qualifiers") or {},
+            qualifiers,
             idempotency_key=idempotency_key,
             namespace=namespace,
         )
@@ -278,8 +283,35 @@ class McpMemoryServer:
 
     def _recall(self, connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         """通过共享召回服务执行混合召回。"""
-        query = str(arguments.get("query", ""))
-        limit = int(arguments.get("limit", self.settings.recall_default_limit))
+        query = arguments.get("query")
+        if not isinstance(query, str) or not query:
+            raise ValidationError("query is required")
+        limit = arguments.get("limit", self.settings.recall_default_limit)
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValidationError("limit must be a positive integer")
+        token_budget = arguments.get("token_budget")
+        if token_budget is not None and (
+            isinstance(token_budget, bool) or not isinstance(token_budget, int) or token_budget < 1
+        ):
+            raise ValidationError("token_budget must be a positive integer")
+        for field_name in ("as_of", "known_as_of"):
+            timestamp = arguments.get(field_name)
+            if timestamp is not None:
+                if not isinstance(timestamp, str):
+                    raise ValidationError(f"{field_name} must be an ISO-8601 string")
+                try:
+                    parse_utc(timestamp)
+                except ValueError as error:
+                    raise ValidationError(str(error)) from error
+        intent = arguments.get("intent")
+        if intent is not None:
+            try:
+                RecallIntent(intent)
+            except (TypeError, ValueError) as error:
+                raise ValidationError(f"unsupported recall intent: {intent}") from error
+        response_format = arguments.get("response_format", "legacy")
+        if response_format not in {"legacy", "context_packet", "both"}:
+            raise ValidationError(f"unsupported response_format: {response_format}")
         return RecallService(
             connection,
             self.embedder,
@@ -290,12 +322,12 @@ class McpMemoryServer:
             query=query,
             limit=limit,
             as_of=arguments.get("as_of"),
-            intent=arguments.get("intent"),
+            intent=intent,
             known_as_of=arguments.get("known_as_of"),
             query_id=arguments.get("query_id"),
-            token_budget=(int(arguments["token_budget"]) if arguments.get("token_budget") is not None else None),
+            token_budget=token_budget,
             context_mode=arguments.get("context_mode"),
-            response_format=str(arguments.get("response_format", "legacy")),
+            response_format=response_format,
             namespace=str(arguments.get("namespace", "default")),
             session_id=arguments.get("session_id"),
             debug=bool(arguments.get("debug", False)),
@@ -314,19 +346,35 @@ class McpMemoryServer:
 
     def _feedback(self, connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         """按 feedback_id 提交 usefulness，并仅在显式 correction 字段存在时纠正记忆。"""
-        feedback_id = str(arguments.get("feedback_id", ""))
-        if not feedback_id:
-            raise ValueError("feedback_id is required")
+        feedback_id = arguments.get("feedback_id")
+        if not isinstance(feedback_id, str) or not feedback_id:
+            raise ValidationError("feedback_id is required")
+        if not isinstance(arguments.get("helpful"), bool):
+            raise ValidationError("helpful must be a boolean")
+        task_outcome = arguments.get("task_outcome")
+        if task_outcome is not None and (
+            isinstance(task_outcome, bool)
+            or not isinstance(task_outcome, (int, float))
+            or not 0.0 <= task_outcome <= 1.0
+        ):
+            raise ValidationError("task_outcome must be between 0 and 1")
         now = datetime.now(timezone.utc).isoformat()
-        result: dict[str, Any] = ExperienceService(connection, settings=self.settings).submit_retrieval_feedback(
-            feedback_id,
-            bool(arguments["helpful"]),
-            float(arguments["task_outcome"]) if arguments.get("task_outcome") is not None else None,
-            now,
-        )
+        try:
+            result: dict[str, Any] = ExperienceService(connection, settings=self.settings).submit_retrieval_feedback(
+                feedback_id,
+                arguments["helpful"],
+                float(task_outcome) if task_outcome is not None else None,
+                now,
+            )
+        except ValueError as error:
+            if not str(error).startswith("feedback exposure not found:"):
+                raise
+            raise ValidationError(str(error)) from error
         correction = arguments.get("correction")
         if not correction:
             return result
+        if not isinstance(correction, dict):
+            raise ValidationError("correction must be an object")
         memory_id = correction.get("memory_id")
         action = correction.get("action")
         key = correction.get("idempotency_key")
@@ -337,7 +385,7 @@ class McpMemoryServer:
             or not isinstance(key, str)
             or not key
         ):
-            raise ValueError("correction requires memory_id, retract|replace action, and idempotency_key")
+            raise ValidationError("correction requires memory_id, retract|replace action, and idempotency_key")
         correction_result = CorrectionService(connection, self.embedder, settings=self.settings).apply(
             memory_id,
             action=action,
@@ -374,7 +422,7 @@ class McpMemoryServer:
             }
         claim = ClaimRepository(connection).get_claim(memory_id)
         if not claim:
-            raise ValueError(f"memory not found: {memory_id}")
+            raise NotFoundError(f"memory not found: {memory_id}")
         links = EvidenceRepository(connection).get_links_for_derived("claim", memory_id)
         evidence = [
             {

@@ -37,7 +37,7 @@ HL-Mem 已完成最初 Phase 0–6 的建设目标。本文不再作为待实现
 
 ## Milestone 5（✅ Completed）：接口、扩展召回与运维
 
-- 完成 REST、Hermes、五工具 MCP、CLI、在线备份、审计日志和 LLM spans。
+- 完成 REST、Hermes、七工具 MCP stdio runtime、CLI、在线备份、审计日志和 LLM spans。
 - 交付 query expansion、关系候选、tag soft boost、多因子排序、reranker 与 context packing。
 - 所有核心能力通过配置注入，外部 Provider 失败可降级到本地确定性路径。
 
