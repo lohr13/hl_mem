@@ -16,6 +16,7 @@ import pytest
 from mcp import Client
 from mcp.shared.exceptions import MCPError
 
+from hl_mem import __version__
 from hl_mem.daily_cli import OFFLINE_CONFIG
 from hl_mem.mcp.server import McpMemoryServer, get_tool_schemas
 from hl_mem.settings import Settings
@@ -137,5 +138,5 @@ def test_packaged_console_and_module_entry_points(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 0
-    assert completed.stdout.strip() == "hl_mem MCP 0.21.0"
+    assert completed.stdout.strip() == f"hl_mem MCP {__version__}"
     assert "hl_mem MCP" not in completed.stderr

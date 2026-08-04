@@ -126,7 +126,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.21.0，共 36 个不可变、仅向前执行的 Migration。
+当前基线为 v0.21.1，共 36 个不可变、仅向前执行的 Migration。
 
 ## 文档
 

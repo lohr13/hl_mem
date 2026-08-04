@@ -126,7 +126,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.21.0 with 36 immutable, forward-only migrations.
+The current baseline is v0.21.1 with 36 immutable, forward-only migrations.
 
 ## Documentation
 
