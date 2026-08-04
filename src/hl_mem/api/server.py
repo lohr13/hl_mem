@@ -224,9 +224,17 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     async def healthz() -> dict[str, Any]:
         from hl_mem.application.health import monitoring_snapshot
 
+        with database.connect() as connection:
+            conflict_open_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM conflict_cases "
+                    "WHERE status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL"
+                ).fetchone()[0]
+            )
         return {
             "status": "ok",
             "version": __version__,
+            "conflict_open_count": conflict_open_count,
             "embedder": "fake" if isinstance(embedder, FakeEmbedder) else "real",
             "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
             "settings": settings.snapshot(),
