@@ -13,7 +13,29 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+from hl_mem.domain.claims.attributes import (
+    SLOT_REGISTRY,
+    normalize_canonical_attribute,
+    normalize_predicate,
+    predicate_for_canonical_attribute,
+)
+from hl_mem.domain.entity import load_entity_aliases, normalize_entity_id
+
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+_EVALUATION_ENTITY_ALIASES = {
+    **load_entity_aliases(),
+    "user": "用户",
+    "用户": "用户",
+}
+_CANONICAL_FAMILY_PREDICATES = {
+    "choice": frozenset({"使用", "配置"}),
+    "config": frozenset({"使用", "配置"}),
+    "fact": frozenset({"事实", "状态"}),
+    "state": frozenset({"事实", "状态"}),
+}
+_NUMBER_PATTERN = re.compile(r"(?<![\w.])(?P<number>[+-]?(?:(?:\d{1,3}(?:,\d{3})+)|\d+)(?:\.\d+)?)(?![\w.])")
+_URL_PATTERN = re.compile(r"https?://[^\s\"'<>，。！？；]+", flags=re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -48,12 +70,72 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def normalize_text(value: Any) -> str:
     """规范化中英文文本，消除空白与标点差异。"""
-    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    text = normalize_value(value)
+    text = _NUMBER_PATTERN.sub(_encode_number, text)
     return re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
+
+
+def normalize_subject(value: Any) -> str:
+    """复用生产实体规则，并统一评测数据中的用户角色标签。"""
+    subject = None if value is None else str(value)
+    return normalize_entity_id(subject, aliases=_EVALUATION_ENTITY_ALIASES).casefold()
+
+
+def canonical_predicate_labels(claim: dict[str, Any]) -> frozenset[str]:
+    """返回字面 predicate 及 canonical attribute 投影出的允许标签集合。"""
+    predicate = normalize_predicate(str(claim.get("predicate") or ""))
+    attribute = claim.get("canonical_attribute") or claim.get("canonical_slot")
+    projected = predicate_for_canonical_attribute(attribute, predicate)
+    labels = {label for label in (predicate, projected) if label}
+    normalized_attribute = normalize_canonical_attribute(str(attribute or ""))
+    if normalized_attribute in SLOT_REGISTRY:
+        family = normalized_attribute.partition(".")[0]
+        labels.update(_CANONICAL_FAMILY_PREDICATES.get(family, ()))
+    return frozenset(labels)
+
+
+def _normalize_number(match: re.Match[str]) -> str:
+    """把千分位、前导零和无意义的小数零归一为同一数字文本。"""
+    raw = match.group("number").replace(",", "")
+    integer, separator, fraction = raw.partition(".")
+    sign = "-" if integer.startswith("-") else ""
+    unsigned_integer = integer.lstrip("+-")
+    normalized_integer = str(int(unsigned_integer or "0"))
+    normalized_fraction = fraction.rstrip("0") if separator else ""
+    if normalized_integer == "0" and not normalized_fraction:
+        sign = ""
+    suffix = f".{normalized_fraction}" if normalized_fraction else ""
+    return f"{sign}{normalized_integer}{suffix}"
+
+
+def _encode_number(match: re.Match[str]) -> str:
+    """把数字编码为不会在去标点时丢失符号或小数点的 token。"""
+    normalized = _normalize_number(match)
+    sign = "negative" if normalized.startswith("-") else ""
+    magnitude = normalized.lstrip("-").replace(".", "point")
+    return f" number{sign}{magnitude} "
+
+
+def normalize_value(value: Any) -> str:
+    """规范 value 的 Unicode、URL 尾斜杠、数字格式与空白。"""
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    text = _URL_PATTERN.sub(lambda match: match.group(0).rstrip("/"), text)
+    text = _NUMBER_PATTERN.sub(_normalize_number, text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def normalized_numbers(value: Any) -> frozenset[str]:
+    """提取规范化后的数字集合，用于阻止数值冲突被文本相似度掩盖。"""
+    normalized = normalize_value(value)
+    return frozenset(_normalize_number(match) for match in _NUMBER_PATTERN.finditer(normalized))
 
 
 def value_similarity(left: Any, right: Any) -> float:
     """以包含关系、序列相似度和字符二元组衡量短文本语义近似。"""
+    left_numbers = normalized_numbers(left)
+    right_numbers = normalized_numbers(right)
+    if left_numbers and right_numbers and left_numbers.isdisjoint(right_numbers):
+        return 0.0
     normalized_left = normalize_text(left)
     normalized_right = normalize_text(right)
     if not normalized_left or not normalized_right:
@@ -78,9 +160,9 @@ def match_claims(
     candidates: list[ClaimMatch] = []
     for gold_index, gold in enumerate(gold_claims):
         for predicted_index, predicted in enumerate(predicted_claims):
-            if normalize_text(gold.get("subject")) != normalize_text(predicted.get("subject")):
+            if normalize_subject(gold.get("subject")) != normalize_subject(predicted.get("subject")):
                 continue
-            if normalize_text(gold.get("predicate")) != normalize_text(predicted.get("predicate")):
+            if not canonical_predicate_labels(gold) & canonical_predicate_labels(predicted):
                 continue
             score = value_similarity(gold.get("value"), predicted.get("value"))
             if score >= value_threshold:

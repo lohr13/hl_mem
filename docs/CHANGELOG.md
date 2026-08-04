@@ -14,15 +14,18 @@
 
 - `scripts/reclassify_predicates.py --custom-unknown` 增加不调用 LLM 的 registry 属性回填模式，支持 dry-run 和原子 apply；该小版本只更新 `canonical_attribute`，不改写历史 predicate 或派生索引。本地存量 5 条 `custom.unknown` 已闭环为 architecture 2、capability 1、dependency 1、version 1。
 - 通过正常 `ForgetService` 撤回 6 条明确来自 assistant 单次执行过程、未批准条件建议或 quoted assistant 自述的测试策略噪声，并清除其 dense/sparse embedding。
-- qwen3.7-plus 同口径 50-event benchmark 全部完成且无提取错误；20 条 gold 事件指标如下：
+- gold matcher 复用生产 `normalize_entity_id()` 和 canonical attribute registry：统一 `user`/`用户`、大小写及全半角实体差异，按已注册 attribute family 兼容“配置/使用”和“事实/状态”旧标签，并在保持 value 阈值 `0.62` 不变的前提下规范引号、标点、数字格式和 URL 尾斜杠；value 部分匹配继续输出连续分数。
+- qwen3.7-plus 同口径 50-event benchmark 全部完成且无提取错误；复用已有结果文件、未重新调用 API 的 20 条 gold 事件指标如下：
 
-| 指标 | v0.21.0 baseline | v0.21.1 | 变化 |
-|---|---:|---:|---:|
-| Claim precision | 13.3% | 18.8% | +5.5 pp |
-| Claim recall | 5.6% | 8.3% | +2.7 pp |
-| Scope accuracy | 50.0% | 66.7% | +16.7 pp |
-| 漏提取 | 34 | 33 | -1 |
-| 过提取 | 13 | 13 | 0 |
+| 指标 | v0.21.0 baseline | v0.21.1 prompt | B（matcher 修复前） | B（matcher 修复后） |
+|---|---:|---:|---:|---:|
+| Claim precision | 13.3% | 18.8% | 25.0% | 31.2% |
+| Claim recall | 5.6% | 8.3% | 11.1% | 13.9% |
+| Scope accuracy | 50.0% | 66.7% | 75.0% | 60.0% |
+| 漏提取 | 34 | 33 | 32 | 31 |
+| 过提取 | 13 | 13 | 12 | 11 |
+
+- matcher 修复后新增匹配的 entity graph claim 内容正确，但预测 scope 为 `permanent`、gold 为 `temporal`；因此 scope accuracy 降至 60.0%，反映的是新暴露的真实 scope 错分，而非匹配质量回退。
 
 - 本批次不新增 migration，schema 仍为 migration 036。
 

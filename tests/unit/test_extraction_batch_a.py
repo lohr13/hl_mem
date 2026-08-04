@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import pytest
+
 from hl_mem.ingest.extractors import ExtractedClaim
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -121,3 +123,125 @@ def test_gold_evaluator_matches_semantically_equivalent_values() -> None:
     matches = evaluator.match_claims(gold, predicted, value_threshold=0.5)
 
     assert len(matches) == 1
+
+
+@pytest.mark.parametrize(
+    ("gold_subject", "predicted_subject"),
+    [
+        ("USER", "用户"),
+        ("ＨＬ－ＭＥＭ", "HL_MEM 项目"),
+    ],
+)
+def test_gold_evaluator_normalizes_subjects_with_production_aliases(
+    gold_subject: str,
+    predicted_subject: str,
+) -> None:
+    evaluator = _load_script("eval_against_gold")
+    gold = [{"subject": gold_subject, "predicate": "事实", "value": "已启用"}]
+    predicted = [{"subject": predicted_subject, "predicate": "事实", "value": "已启用"}]
+
+    matches = evaluator.match_claims(gold, predicted, value_threshold=0.62)
+
+    assert len(matches) == 1
+
+
+def test_gold_evaluator_matches_predicate_by_canonical_attribute() -> None:
+    evaluator = _load_script("eval_against_gold")
+    gold = [{"subject": "Hermes", "predicate": "配置", "value": "provider 为 hl_mem"}]
+    predicted = [
+        {
+            "subject": "hermes",
+            "predicate": "uses",
+            "canonical_attribute": "config.provider",
+            "value": "provider 为 hl_mem",
+        }
+    ]
+
+    matches = evaluator.match_claims(gold, predicted, value_threshold=0.62)
+
+    assert len(matches) == 1
+
+
+def test_gold_evaluator_matches_legacy_fact_and_state_labels_by_canonical_family() -> None:
+    evaluator = _load_script("eval_against_gold")
+    gold = [{"subject": "hl_mem", "predicate": "状态", "value": "尚未实现 entity graph"}]
+    predicted = [
+        {
+            "subject": "hl_mem",
+            "predicate": "事实",
+            "canonical_attribute": "fact.architecture",
+            "value": "未实现实体关系图谱（entity graph）",
+        }
+    ]
+
+    matches = evaluator.match_claims(gold, predicted, value_threshold=0.62)
+
+    assert len(matches) == 1
+
+
+@pytest.mark.parametrize(
+    "predicted",
+    [
+        {"subject": "hl_mem", "predicate": "uses", "value": "provider 为 hl_mem"},
+        {
+            "subject": "hl_mem",
+            "predicate": "uses",
+            "canonical_attribute": "config.unregistered",
+            "value": "provider 为 hl_mem",
+        },
+        {
+            "subject": "hl_mem",
+            "predicate": "事实",
+            "canonical_attribute": "fact.other",
+            "value": "provider 为 hl_mem",
+        },
+    ],
+)
+def test_gold_evaluator_does_not_bridge_predicates_without_a_compatible_registered_family(
+    predicted: dict[str, str],
+) -> None:
+    evaluator = _load_script("eval_against_gold")
+    gold = [{"subject": "hl_mem", "predicate": "配置", "value": "provider 为 hl_mem"}]
+
+    matches = evaluator.match_claims(gold, [predicted], value_threshold=0.62)
+
+    assert matches == []
+
+
+def test_gold_evaluator_normalizes_value_formatting_before_scoring() -> None:
+    evaluator = _load_script("eval_against_gold")
+
+    url_score = evaluator.value_similarity(
+        '"访问 https://EXAMPLE.com/api/，计数 1,000.0 次"',
+        "访问 https://example.com/api，计数 1000 次",
+    )
+    number_score = evaluator.value_similarity("配置端口为 1.0", "配置端口为 1")
+
+    assert url_score == pytest.approx(1.0)
+    assert number_score == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("版本为 1.2", "版本为 12"),
+        ("阈值为 -0.5", "阈值为 0.5"),
+    ],
+)
+def test_gold_evaluator_rejects_conflicting_numeric_values(left: str, right: str) -> None:
+    evaluator = _load_script("eval_against_gold")
+
+    score = evaluator.value_similarity(left, right)
+
+    assert score < 0.62
+
+
+def test_gold_evaluator_gives_partial_values_an_intermediate_score() -> None:
+    evaluator = _load_script("eval_against_gold")
+
+    score = evaluator.value_similarity(
+        "NO_PROXY 包含 aliyuncs.com 和 bigmodel.cn",
+        "NO_PROXY 包含 aliyuncs.com",
+    )
+
+    assert 0.62 <= score < 1.0
