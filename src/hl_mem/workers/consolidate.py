@@ -327,78 +327,170 @@ class ConflictConsolidator:
         self.connection.commit()
 
 
+_OPEN_CONFLICT_STATUSES_SQL = "('pending','auto_resolved','manual_required')"
+_TERMINAL_CLAIM_STATUSES = {"expired", "retracted", "archived"}
+_LIVING_CLAIM_STATUSES = {"active", "disputed", "candidate"}
+
+
+def _follow_superseded_chain(repository: ClaimRepository, claim_id: str) -> dict[str, Any] | None:
+    """追踪至非 superseded 端点；异常链返回 None。"""
+    visited: set[str] = set()
+    current_id = claim_id
+    for redirect_count in range(33):
+        if current_id in visited:
+            return None
+        visited.add(current_id)
+        claim = repository.get_claim(current_id)
+        if claim is None:
+            return None
+        if claim["status"] != "superseded":
+            return claim
+        next_id = claim.get("superseded_by_id")
+        if not next_id or redirect_count == 32:
+            return None
+        current_id = str(next_id)
+    return None
+
+
+def _resolve_conflict_case(connection: Any, case_id: str, decision: str, now: str) -> None:
+    cursor = connection.execute(
+        "UPDATE conflict_cases SET status='resolved',resolved_at=?,decision=? "
+        f"WHERE id=? AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL",
+        (now, decision, case_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(f"conflict case changed during resolution: {case_id}")
+
+
+def _activate_uncontested_survivor(connection: Any, case_id: str, survivor: dict[str, Any]) -> None:
+    if survivor["status"] == "active":
+        return
+    other_case = connection.execute(
+        "SELECT 1 FROM conflict_cases WHERE id<>? "
+        f"AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL "
+        "AND (left_claim_id=? OR right_claim_id=?) LIMIT 1",
+        (case_id, survivor["id"], survivor["id"]),
+    ).fetchone()
+    if other_case is not None:
+        return
+    assert_transition(survivor["status"], "active")
+    cursor = connection.execute(
+        "UPDATE claims SET status='active' WHERE id=? AND status=?",
+        (survivor["id"], survivor["status"]),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(f"conflict survivor changed during resolution: {survivor['id']}")
+
+
 def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
-    """逐案原子解决低风险冲突，并将败者收敛为 superseded。"""
+    """逐案原子解决全部未决冲突，并将败者收敛为 superseded。"""
     rows = connection.execute(
-        "SELECT * FROM conflict_cases WHERE status='auto_resolved' AND resolved_at IS NULL ORDER BY created_at,id"
+        "SELECT * FROM conflict_cases "
+        f"WHERE status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL ORDER BY created_at,id"
     ).fetchall()
     repository = ClaimRepository(connection)
     resolved = 0
+    manual_required = 0
     deferred = 0
     failures: list[Exception] = []
     for selected_row in rows:
         connection.execute("BEGIN IMMEDIATE")
         try:
             case_row = connection.execute(
-                "SELECT * FROM conflict_cases WHERE id=? AND status='auto_resolved' AND resolved_at IS NULL",
+                "SELECT * FROM conflict_cases "
+                f"WHERE id=? AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL",
                 (selected_row["id"],),
             ).fetchone()
             if case_row is None:
                 connection.rollback()
+                deferred += 1
                 continue
             case = dict(case_row)
-            left = repository.get_claim(case["left_claim_id"])
-            right = repository.get_claim(case["right_claim_id"])
-            if not left or not right or left["status"] != "disputed" or right["status"] != "disputed":
+            left = _follow_superseded_chain(repository, case["left_claim_id"])
+            right = _follow_superseded_chain(repository, case["right_claim_id"])
+            if left is None or right is None:
                 connection.rollback()
+                deferred += 1
                 continue
+
+            if left["id"] == right["id"]:
+                _resolve_conflict_case(connection, case["id"], "obsolete", now)
+                connection.commit()
+                resolved += 1
+                continue
+
+            left_terminal = left["status"] in _TERMINAL_CLAIM_STATUSES
+            right_terminal = right["status"] in _TERMINAL_CLAIM_STATUSES
+            if left_terminal and right_terminal:
+                _resolve_conflict_case(connection, case["id"], "obsolete", now)
+                connection.commit()
+                resolved += 1
+                continue
+            if left_terminal != right_terminal:
+                survivor_side = "right" if left_terminal else "left"
+                survivor = right if left_terminal else left
+                if survivor["status"] not in _LIVING_CLAIM_STATUSES:
+                    connection.rollback()
+                    deferred += 1
+                    continue
+                _activate_uncontested_survivor(connection, case["id"], survivor)
+                _resolve_conflict_case(connection, case["id"], f"keep_{survivor_side}", now)
+                connection.commit()
+                resolved += 1
+                continue
+
+            if left["status"] != "disputed" or right["status"] != "disputed":
+                connection.rollback()
+                deferred += 1
+                continue
+
             authority = {"high": 3, "medium": 2, "low": 1}
             left_score = authority.get(left.get("source_authority", "medium"), 2)
             right_score = authority.get(right.get("source_authority", "medium"), 2)
             if left_score == right_score:
                 cursor = connection.execute(
                     "UPDATE conflict_cases SET status='manual_required' "
-                    "WHERE id=? AND status='auto_resolved' AND resolved_at IS NULL",
+                    f"WHERE id=? AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL",
                     (case["id"],),
                 )
                 if cursor.rowcount != 1:
                     raise RuntimeError(f"conflict case changed during resolution: {case['id']}")
                 connection.commit()
+                manual_required += 1
                 deferred += 1
                 continue
 
             winner_side = "left" if left_score > right_score else "right"
-            loser_side = "right" if winner_side == "left" else "left"
-            winner_id = case[f"{winner_side}_claim_id"]
-            loser_id = case[f"{loser_side}_claim_id"]
+            winner = left if winner_side == "left" else right
+            loser = right if winner_side == "left" else left
             assert_transition("disputed", "active")
             assert_transition("disputed", "superseded")
             winner_cursor = connection.execute(
                 "UPDATE claims SET status='active' WHERE id=? AND status='disputed'",
-                (winner_id,),
+                (winner["id"],),
             )
             if winner_cursor.rowcount != 1:
-                raise RuntimeError(f"conflict winner changed during resolution: {winner_id}")
+                raise RuntimeError(f"conflict winner changed during resolution: {winner['id']}")
             loser_cursor = connection.execute(
                 "UPDATE claims SET status='superseded',valid_to=?,recorded_to=?,superseded_by_id=? "
                 "WHERE id=? AND status='disputed'",
-                (now, now, winner_id, loser_id),
+                (now, now, winner["id"], loser["id"]),
             )
             if loser_cursor.rowcount != 1:
-                raise RuntimeError(f"conflict loser changed during resolution: {loser_id}")
-            case_cursor = connection.execute(
-                "UPDATE conflict_cases SET status='resolved',resolved_at=?,decision=? "
-                "WHERE id=? AND status='auto_resolved' AND resolved_at IS NULL",
-                (now, f"keep_{winner_side}", case["id"]),
-            )
-            if case_cursor.rowcount != 1:
-                raise RuntimeError(f"conflict case changed during resolution: {case['id']}")
+                raise RuntimeError(f"conflict loser changed during resolution: {loser['id']}")
+            _resolve_conflict_case(connection, case["id"], f"keep_{winner_side}", now)
             connection.commit()
             resolved += 1
         except Exception as error:
             if connection.in_transaction:
                 connection.rollback()
+            deferred += 1
             failures.append(error)
     if failures:
         raise RuntimeError(f"{len(failures)} auto conflict case(s) failed; first error: {failures[0]}") from failures[0]
-    return {"auto_resolved": resolved, "manual_required": deferred}
+    return {
+        "scanned": len(rows),
+        "auto_resolved": resolved,
+        "manual_required": manual_required,
+        "deferred": deferred,
+    }

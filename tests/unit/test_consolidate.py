@@ -79,15 +79,31 @@ def test_daily_scheduler_is_idempotent_and_configurable(tmp_path) -> None:
     assert tuple(row) == ("consolidate_conflicts", "consolidate:2026-07-22")
 
 
-def _auto_conflict_case(connection) -> None:
+def _conflict_case(
+    connection,
+    case_id: str,
+    left_claim_id: str,
+    right_claim_id: str,
+    *,
+    status: str = "auto_resolved",
+    created_at: str = "2026-01-01T00:00:00+00:00",
+) -> None:
+    assert ClaimRepository(connection).insert_conflict_case(
+        {
+            "id": case_id,
+            "pair_key": f"{left_claim_id}:{right_claim_id}",
+            "left_claim_id": left_claim_id,
+            "right_claim_id": right_claim_id,
+            "status": status,
+            "created_at": created_at,
+        }
+    )
+
+
+def _auto_conflict_case(connection, *, status: str = "auto_resolved") -> None:
     _claim(connection, "a", [1.0, 0.0], status="disputed", source_authority="high")
     _claim(connection, "b", [0.8, 0.6], status="disputed", source_authority="low")
-    connection.execute(
-        "INSERT INTO conflict_cases("
-        "id,pair_key,left_claim_id,right_claim_id,status,created_at"
-        ") VALUES ('case','pair','a','b','auto_resolved','2026-01-01T00:00:00+00:00')"
-    )
-    connection.commit()
+    _conflict_case(connection, "case", "a", "b", status=status)
 
 
 def test_auto_resolve_conflict_commits_winner_loser_and_case_together(tmp_path) -> None:
@@ -96,8 +112,10 @@ def test_auto_resolve_conflict_commits_winner_loser_and_case_together(tmp_path) 
     resolved_at = "2026-01-03T04:05:06+00:00"
 
     assert auto_resolve_conflicts(connection, resolved_at) == {
+        "scanned": 1,
         "auto_resolved": 1,
         "manual_required": 0,
+        "deferred": 0,
     }
 
     winner = connection.execute("SELECT status FROM claims WHERE id='a'").fetchone()
@@ -140,10 +158,12 @@ def test_auto_resolve_conflict_failure_does_not_block_later_cases(tmp_path) -> N
     _auto_conflict_case(connection)
     _claim(connection, "c", [1.0, 0.0], status="disputed", source_authority="high")
     _claim(connection, "d", [0.8, 0.6], status="disputed", source_authority="low")
-    connection.execute(
-        "INSERT INTO conflict_cases("
-        "id,pair_key,left_claim_id,right_claim_id,status,created_at"
-        ") VALUES ('case-2','pair-2','c','d','auto_resolved','2026-01-02T00:00:00+00:00')"
+    _conflict_case(
+        connection,
+        "case-2",
+        "c",
+        "d",
+        created_at="2026-01-02T00:00:00+00:00",
     )
     connection.execute(
         "CREATE TRIGGER reject_first_resolution BEFORE UPDATE OF status ON conflict_cases "
@@ -163,3 +183,129 @@ def test_auto_resolve_conflict_failure_does_not_block_later_cases(tmp_path) -> N
     assert [tuple(row) for row in first] == [("a", "disputed", None), ("b", "disputed", None)]
     assert [tuple(row) for row in second] == [("c", "active", None), ("d", "superseded", "c")]
     assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-2'").fetchone()[0] == "resolved"
+
+
+def test_auto_resolve_scans_manual_required_cases(tmp_path) -> None:
+    connection = Database(tmp_path / "manual-required.db").open()
+    _auto_conflict_case(connection, status="manual_required")
+    resolved_at = "2026-01-03T04:05:06+00:00"
+
+    assert auto_resolve_conflicts(connection, resolved_at) == {
+        "scanned": 1,
+        "auto_resolved": 1,
+        "manual_required": 0,
+        "deferred": 0,
+    }
+    assert tuple(
+        connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
+    ) == ("resolved", "keep_left", resolved_at)
+
+
+def test_auto_resolve_marks_converged_chains_obsolete(tmp_path) -> None:
+    connection = Database(tmp_path / "same-chain-tip.db").open()
+    repository = ClaimRepository(connection)
+    _claim(connection, "left", [1.0, 0.0])
+    _claim(connection, "right", [0.8, 0.6])
+    _claim(connection, "tip", [0.9, 0.1])
+    changed_at = "2026-01-02T00:00:00+00:00"
+    assert repository.supersede_with_inline("left", "tip", "tip", changed_at, changed_at).applied
+    assert repository.supersede_with_inline("right", "tip", "tip", changed_at, changed_at).applied
+    _conflict_case(connection, "case", "left", "right", status="pending")
+    resolved_at = "2026-01-03T04:05:06+00:00"
+
+    assert auto_resolve_conflicts(connection, resolved_at) == {
+        "scanned": 1,
+        "auto_resolved": 1,
+        "manual_required": 0,
+        "deferred": 0,
+    }
+    assert repository.get_claim("tip")["status"] == "active"
+    assert tuple(
+        connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
+    ) == ("resolved", "obsolete", resolved_at)
+
+
+def test_auto_resolve_keeps_living_endpoint_when_other_is_terminal(tmp_path) -> None:
+    connection = Database(tmp_path / "single-terminal.db").open()
+    repository = ClaimRepository(connection)
+    _claim(connection, "left", [1.0, 0.0])
+    _claim(connection, "right", [0.8, 0.6], status="disputed")
+    assert repository.update_status("left", "expired")
+    _conflict_case(connection, "case", "left", "right", status="pending")
+    resolved_at = "2026-01-03T04:05:06+00:00"
+
+    assert auto_resolve_conflicts(connection, resolved_at) == {
+        "scanned": 1,
+        "auto_resolved": 1,
+        "manual_required": 0,
+        "deferred": 0,
+    }
+    assert repository.get_claim("left")["status"] == "expired"
+    assert repository.get_claim("right")["status"] == "active"
+    assert tuple(
+        connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
+    ) == ("resolved", "keep_right", resolved_at)
+
+
+def test_auto_resolve_does_not_activate_survivor_with_another_open_case(tmp_path) -> None:
+    connection = Database(tmp_path / "contested-survivor.db").open()
+    repository = ClaimRepository(connection)
+    _claim(connection, "terminal", [1.0, 0.0])
+    _claim(connection, "survivor", [0.8, 0.6], status="disputed", source_authority="medium")
+    _claim(connection, "rival", [0.9, 0.1], status="disputed", source_authority="medium")
+    assert repository.update_status("terminal", "expired")
+    _conflict_case(connection, "case-1", "terminal", "survivor", status="pending")
+    _conflict_case(
+        connection,
+        "case-2",
+        "survivor",
+        "rival",
+        status="manual_required",
+        created_at="2026-01-02T00:00:00+00:00",
+    )
+
+    assert auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00") == {
+        "scanned": 2,
+        "auto_resolved": 1,
+        "manual_required": 1,
+        "deferred": 1,
+    }
+    assert repository.get_claim("survivor")["status"] == "disputed"
+
+
+def test_auto_resolve_marks_two_terminal_endpoints_obsolete(tmp_path) -> None:
+    connection = Database(tmp_path / "double-terminal.db").open()
+    repository = ClaimRepository(connection)
+    _claim(connection, "left", [1.0, 0.0])
+    _claim(connection, "right", [0.8, 0.6])
+    assert repository.update_status("left", "expired")
+    assert repository.update_status("right", "retracted")
+    _conflict_case(connection, "case", "left", "right", status="manual_required")
+    resolved_at = "2026-01-03T04:05:06+00:00"
+
+    assert auto_resolve_conflicts(connection, resolved_at) == {
+        "scanned": 1,
+        "auto_resolved": 1,
+        "manual_required": 0,
+        "deferred": 0,
+    }
+    assert tuple(
+        connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
+    ) == ("resolved", "obsolete", resolved_at)
+
+
+def test_auto_resolve_keeps_equal_authority_case_manual_required(tmp_path) -> None:
+    connection = Database(tmp_path / "authority-tie.db").open()
+    _claim(connection, "left", [1.0, 0.0], status="disputed", source_authority="medium")
+    _claim(connection, "right", [0.8, 0.6], status="disputed", source_authority="medium")
+    _conflict_case(connection, "case", "left", "right", status="manual_required")
+
+    assert auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00") == {
+        "scanned": 1,
+        "auto_resolved": 0,
+        "manual_required": 1,
+        "deferred": 1,
+    }
+    assert tuple(
+        connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
+    ) == ("manual_required", None, None)
