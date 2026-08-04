@@ -1,6 +1,6 @@
 # HL-Mem 能力成熟度矩阵
 
-> 基线：v0.21.1。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
+> 基线：v0.21.2。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
 
 ## 成熟度定义
 
@@ -34,7 +34,7 @@
 | 双时间与作用域过滤 | stable | `on` | 否 | 是 | 不降级；非法时间/作用域明确失败 | 保持历史查询、可见性与并发回归 |
 | TTL / decay / archive | stable | `auto` | 否 | 是 | 单 Job 失败可重试，CAS/事务避免部分更新 | 保持扫描完整性、双时间和访问 bonus 回归 |
 | Semantic dedup | beta | `audit`（跨 subject） | 判断灰区时是 | 是，写 dedup audit；自动模式可 supersede | LLM 失败保留 distinct/uncertain，不自动删除 | precision、人工复核率和错误 supersede 低于阈值 |
-| 冲突处理 | stable | `auto`（确定性优先） | 灰区是 | 是 | LLM 失败进入待处理状态，不吞异常 | 保持状态机终态收敛、证据和事务回归 |
+| 冲突处理 | stable | `auto`（确定性优先） | 灰区是 | 是 | LLM 失败保留未决 case；维护任务会回访全部未决状态，人工可从 CLI 审核并裁决 | 保持 supersede 链汇聚、胜败者终态、证据和事务回归 |
 | Episode / Trace | stable | `on` | 否 | 是 | 不影响 Claim 主通道；非法状态转换明确失败 | 保持 API、状态机、reward 与 usefulness 回归 |
 | Policy / Procedure 归纳 | beta | `auto`（定时 Job） | 是 | 是 | 归纳失败保留 Episode，Job 可重试且不发布新策略 | 多 Episode 支撑、成功率、退役与审计指标达到阈值 |
 | Mental Model 维护 | beta | `auto`（定时 Job） | 是 | 是 | 刷新失败保留旧模型并标记 stale/记录 Job 错误 | 水位幂等、证据覆盖、刷新质量和 stale 恢复达到阈值 |

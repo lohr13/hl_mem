@@ -22,6 +22,7 @@ from hl_mem.doctor import main as doctor_main
 from hl_mem.evaluation.runner import BenchmarkRunner
 from hl_mem.settings import Settings
 from hl_mem.storage.backup import backup_database, restore_database, validate_backup
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
@@ -257,6 +258,11 @@ def import_database(
         database.close()
 
 
+def _summarize_claim_value(value: Any, limit: int = 160) -> str:
+    rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return rendered if len(rendered) <= limit else f"{rendered[: limit - 3]}..."
+
+
 def list_conflicts(
     database_path: str | Path,
     *,
@@ -265,14 +271,22 @@ def list_conflicts(
     """列出等待人工审核的冲突案例。"""
     database = Database(database_path, settings=settings)
     try:
-        rows = (
-            database.open()
-            .execute(
-                "SELECT * FROM conflict_cases WHERE status IN ('pending','manual_required') " "ORDER BY created_at,id"
-            )
-            .fetchall()
-        )
-        return [dict(row) for row in rows]
+        connection = database.open()
+        rows = connection.execute(
+            "SELECT * FROM conflict_cases WHERE status IN ('pending','manual_required') ORDER BY created_at,id"
+        ).fetchall()
+        repository = ClaimRepository(connection)
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            for side in ("left", "right"):
+                claim = repository.get_claim(item[f"{side}_claim_id"])
+                item[f"{side}_value"] = _summarize_claim_value(claim.get("value")) if claim is not None else None
+                item[f"{side}_status"] = claim.get("status") if claim is not None else None
+                item[f"{side}_authority"] = claim.get("source_authority") if claim is not None else None
+                item[f"{side}_recorded_from"] = claim.get("recorded_from") if claim is not None else None
+            result.append(item)
+        return result
     finally:
         database.close()
 
@@ -296,12 +310,20 @@ def resolve_conflict(
         if not row:
             raise ValueError(f"open conflict case not found: {case_id}")
         case = dict(row)
+        resolved_at = datetime.now(timezone.utc).isoformat()
         if decision in {"keep_left", "keep_right"}:
             winner_side = decision.removeprefix("keep_")
+            loser_side = "right" if winner_side == "left" else "left"
             winner_id = case[f"{winner_side}_claim_id"]
+            loser_id = case[f"{loser_side}_claim_id"]
             connection.execute(
                 "UPDATE claims SET status='active' WHERE id=? AND status IN ('candidate','disputed')",
                 (winner_id,),
+            )
+            connection.execute(
+                "UPDATE claims SET status='superseded',superseded_by_id=?,recorded_to=?,valid_to=? "
+                "WHERE id=? AND status IN ('active','candidate','disputed')",
+                (winner_id, resolved_at, resolved_at, loser_id),
             )
             status = "resolved"
         elif decision == "coexist":
@@ -312,7 +334,6 @@ def resolve_conflict(
             status = "resolved"
         else:
             status = "rejected"
-        resolved_at = datetime.now(timezone.utc).isoformat()
         connection.execute(
             "UPDATE conflict_cases SET status=?,decision=?,resolved_at=? WHERE id=?",
             (status, decision, resolved_at, case_id),

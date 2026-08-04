@@ -1,5 +1,16 @@
 # HL-Mem 变更记录
 
+## v0.21.2（2026-08-04）
+
+### Conflict Convergence and Operations
+
+- `auto_resolve_conflicts` 扫描 `pending`、`auto_resolved`、`manual_required` 全部未决 case，追踪 supersede 链端点，并在两端汇聚或一端已终态时自动收敛，消除已分类 case 永不回访的盲区。
+- `hl-mem conflicts resolve keep_left|keep_right` 在裁决 case 的同时将 loser 置为 `superseded`，写入 `superseded_by_id` 与双时间结束边界，使人工裁决与自动收敛保持一致。
+- `hl-mem conflicts list` 补充左右 Claim 的 value、status、authority 和 `recorded_from`，人工审核无需再额外查询 Claim。
+- `/healthz` 新增 `conflict_open_count`，统计尚未终结的 `pending`、`auto_resolved`、`manual_required` case，便于监控冲突积压。
+
+- 本批次不新增 migration，schema 仍为 migration 036。
+
 ## v0.21.1（未发布）
 
 ### Extraction Quality and Safety

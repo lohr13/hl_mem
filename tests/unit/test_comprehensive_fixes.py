@@ -161,6 +161,40 @@ def test_health_reports_fake_components(tmp_path) -> None:
     assert body["reranker"] == "fake"
 
 
+def test_health_reports_open_conflict_count(tmp_path) -> None:
+    """健康检查暴露所有未决状态且尚未解决的冲突数量。"""
+    app = server.create_app(tmp_path / "health-conflicts.db")
+    with TestClient(app) as client:
+        before = client.get("/healthz").json()
+        with app.state.db.connect() as connection:
+            repository = ClaimRepository(connection)
+            for claim_id, value in (("left", "SQLite"), ("right", "PostgreSQL")):
+                assert repository.insert_claim(
+                    {
+                        "id": claim_id,
+                        "namespace_key": "default",
+                        "subject_entity_id": "用户",
+                        "predicate": "使用",
+                        "value": value,
+                        "status": "disputed",
+                        "recorded_from": "2026-01-01T00:00:00+00:00",
+                    }
+                )
+            assert repository.insert_conflict_case(
+                {
+                    "id": "case",
+                    "pair_key": "left:right",
+                    "left_claim_id": "left",
+                    "right_claim_id": "right",
+                    "status": "manual_required",
+                    "created_at": "2026-01-02T00:00:00+00:00",
+                }
+            )
+        after = client.get("/healthz").json()
+
+    assert after["conflict_open_count"] == before["conflict_open_count"] + 1
+
+
 def test_recall_feedback_failure_does_not_change_main_result(tmp_path, monkeypatch) -> None:
     """召回曝光批量写入失败时仍返回主召回结果。"""
     monkeypatch.setattr(
