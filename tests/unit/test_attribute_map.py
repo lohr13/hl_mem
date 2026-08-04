@@ -20,8 +20,12 @@ from hl_mem.domain.claims.attributes import (
         ("状态", "测试全部通过", "state.test_suite"),
         ("身份", "开发者", "identity.role"),
         ("配置", "端口 10808", "config.port"),
+        ("配置", "CI 失败只允许重跑一次", "config.policy"),
         ("计划", "截止到 8 月 1 日", "plan.deadline"),
         ("事实", "当前采用 Codex", "fact.tool_choice"),
+        ("配置", "hl_mem 当前版本为 v0.21.0", "config.version"),
+        ("事实", "hl_mem 依赖 numpy>=2.0", "fact.dependency"),
+        ("事实", "hl_mem 采用事件溯源双通道架构", "fact.architecture"),
         ("explicit_memory", "记住发布前跑测试", "memory.explicit"),
         ("unknown", "任意", "custom.unknown"),
     ],
@@ -34,6 +38,27 @@ def test_mapping_declares_only_allowlisted_attributes() -> None:
     for allowed, fallback in PREDICATE_ATTRIBUTE_MAP.values():
         assert set(allowed) <= ATTRIBUTE_ALLOWLIST
         assert fallback in ATTRIBUTE_ALLOWLIST
+
+
+@pytest.mark.parametrize(
+    ("legacy_attribute", "expected"),
+    [
+        ("版本", "config.version"),
+        ("依赖", "fact.dependency"),
+        ("架构", "fact.architecture"),
+    ],
+)
+def test_chinese_attribute_aliases_close_registry_fallbacks(
+    legacy_attribute: str,
+    expected: str,
+) -> None:
+    assert (
+        validate_canonical_attribute(
+            predicate_for_canonical_attribute(expected, "事实"),
+            legacy_attribute,
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize(

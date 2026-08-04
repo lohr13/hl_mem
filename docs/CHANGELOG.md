@@ -1,5 +1,30 @@
 # HL-Mem 变更记录
 
+## v0.21.1（未发布）
+
+### Extraction Quality and Safety
+
+- LLM 提取结果在任何原始字段审计与写入前扫描完整结构化 claim，确定性拒绝 recovery codes、`sk-` token、`password=` / `api_key=` 赋值和 16–32 位字母数字混合 token；`secret_rejected` audit 只记录原因分类与数量，不复制敏感原文。
+- 提取后处理将包含“建议/考虑/待定/或许/可以考虑/计划中/未执行”等未决信号的 claim confidence 封顶为 `0.55`；“已确认/已批准/已执行/已完成/正式采用”等明确落地信号保持原置信度。
+- system prompt 增加三组策略讨论对照：未批准建议拒绝、用户明确确认的政策归入 `config.policy`、代码与实测共同证明的架构归入 `fact.architecture`；LLM extractor 版本更新为 `llm-v2`。
+- canonical attribute registry 新增 `config.policy`、`config.version`、`fact.dependency` 和 `fact.architecture`，并补充“版本/依赖/架构”历史中文别名及内容推断提示，不增加 operational slot 或冲突语义。
+
+### Data Governance and Evaluation
+
+- `scripts/reclassify_predicates.py --custom-unknown` 增加不调用 LLM 的 registry 属性回填模式，支持 dry-run 和原子 apply；该小版本只更新 `canonical_attribute`，不改写历史 predicate 或派生索引。本地存量 5 条 `custom.unknown` 已闭环为 architecture 2、capability 1、dependency 1、version 1。
+- 通过正常 `ForgetService` 撤回 6 条明确来自 assistant 单次执行过程、未批准条件建议或 quoted assistant 自述的测试策略噪声，并清除其 dense/sparse embedding。
+- qwen3.7-plus 同口径 50-event benchmark 全部完成且无提取错误；20 条 gold 事件指标如下：
+
+| 指标 | v0.21.0 baseline | v0.21.1 | 变化 |
+|---|---:|---:|---:|
+| Claim precision | 13.3% | 18.8% | +5.5 pp |
+| Claim recall | 5.6% | 8.3% | +2.7 pp |
+| Scope accuracy | 50.0% | 66.7% | +16.7 pp |
+| 漏提取 | 34 | 33 | -1 |
+| 过提取 | 13 | 13 | 0 |
+
+- 本批次不新增 migration，schema 仍为 migration 036。
+
 ## v0.21.0（未发布）
 
 ### Memory Lifecycle and Corrections

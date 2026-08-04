@@ -90,6 +90,8 @@ SYSTEM_PROMPT = f"""## 1. ROLE AND OUTPUT CONTRACT
 - procedural：正在执行、下一步、耗时或进度。
 - phatic：寒暄、确认或感谢。
 asserted、committed 可能准入；reported 仅在具有未来效用且 claim 保留来源/时点时可能准入；proposed、hypothetical、procedural、phatic 拒绝。
+“建议/考虑/待定/或许/可以考虑/计划中/未执行”等未决信号默认不提取；若仍因直接证据与未来效用准入，confidence 不得高于 0.55。
+“已确认/已批准/已执行/已完成/正式采用”等明确落地信号不属于未决信号，按实际证据强度判断。
 
 每个候选必须依次通过四门，任一失败即不生成 claim：
 1. 证据门：当前事件直接陈述、明确确认，或无歧义蕴含该命题；问题、建议、假设、预测和待验证项不算证据。
@@ -189,6 +191,21 @@ importance 与 confidence 分离。importance 必须是 0.0 到 1.0：
 assistant 的“测试已通过”属于 reported 快照，默认拒绝；只有用户明确要求记住某个验收基线时例外。
 
 ## 9. CONTRASTIVE FEW-SHOTS
+对照 1（讨论中的建议，拒绝）：
+输入：assistant：flaky 测试失败时重跑两次，也可以考虑把测试命令改成 pytest -v -x。用户：先讨论，方案待定，尚未执行。
+输出：{{"claims":[],"should_memorize":false}}
+说明：建议、可以考虑、待定和尚未执行都表示 proposed/procedural，不是已批准政策。
+
+对照 2（用户明确确认的政策，允许）：
+输入：用户：已确认并批准：CI 失败只允许重跑一次，此后必须停止并报告。
+输出要点：{{"subject":"CI workflow","predicate":"配置","canonical_attribute":"config.policy","value":"CI 失败只允许重跑一次，此后必须停止并报告","confidence":0.90,"scope":"permanent","volatility":"stable"}}
+说明：用户明确确认并批准了可约束未来行为的政策，不是讨论建议。
+
+对照 3（代码与实测共同证明的架构，允许）：
+输入：tool：代码显示 Database 初始化执行 PRAGMA journal_mode=WAL；实测查询 journal_mode 返回 wal。
+输出要点：{{"subject":"hl_mem","predicate":"事实","canonical_attribute":"fact.architecture","value":"hl_mem 的 SQLite 存储使用 WAL 模式","confidence":0.90,"scope":"permanent","volatility":"stable"}}
+说明：代码与实测结果共同直接证明稳定的架构描述，不是未验证的评审意见。
+
 正例 1（明确偏好）：
 输入：用户：以后回答尽量简洁，先给结论，不要长篇铺垫。
 输出要点：{{"subject":"用户","predicate":"偏好","canonical_slot":"preference.response_style","value":"用户偏好简洁回答，并要求先给结论、避免长篇铺垫","confidence":0.90,"scope":"permanent","volatility":"stable"}}
@@ -240,6 +257,16 @@ SYSTEM_PROMPT += """
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
 LOW_VALUE_HEALTH_STATES = frozenset({"ok", "running", "stopped", "健康", "正常"})
 NUMERIC_OR_VERSION_RE = re.compile(r"[0-9.]+")
+_RECOVERY_CODE_RE = re.compile(r"(?i)(?<![a-z0-9])[a-z0-9]{5}-[a-z0-9]{5}(?![a-z0-9])")
+_SECRET_ASSIGNMENT_RE = re.compile(r"""(?i)["']?(?:password|passwd|api[_-]?key)["']?\s*[:=]""")
+_SECRET_FIELD_NAME_RE = re.compile(r"(?i)(?:password|passwd|api[_-]?key)")
+_SK_TOKEN_RE = re.compile(r"(?i)(?<![a-z0-9])sk-[a-z0-9_-]+")
+_ALNUM_SECRET_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9]{16,32}(?![A-Za-z0-9])")
+_UNSETTLED_SIGNAL_RE = re.compile(r"可以考虑|建议|考虑|待定|或许|计划中|未执行")
+_SETTLED_SIGNAL_RE = re.compile(
+    r"已经确认|已确认|已经批准|已批准|已经执行|已执行|已经实施|已实施|"
+    r"已经完成|已完成|已经决定|已决定|正式采用|已经采纳|已采纳|已验证|已上线"
+)
 _TEMPORAL_SCOPE_RE = re.compile(
     r"(?i)(?:"
     r"\bdeadline\b|截止|临时|本次|这次|当前运行|本轮|某次运行|需要重启|重启后生效|"
@@ -349,6 +376,74 @@ def _is_low_value_claim(claim: ExtractedClaim) -> bool:
     return claim.canonical_slot == "state.service_health" and value.casefold() in LOW_VALUE_HEALTH_STATES
 
 
+def _secret_reason(value: Any) -> str | None:
+    """识别禁止进入 Claim 存储的确定性凭据格式。"""
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            normalized_key = unicodedata.normalize("NFKC", str(key)).strip()
+            key_reason = _secret_reason(normalized_key)
+            if key_reason is not None:
+                return key_reason
+            has_value = nested_value is not None and (
+                not isinstance(nested_value, (str, dict, list, tuple, set, frozenset)) or bool(nested_value)
+            )
+            if _SECRET_FIELD_NAME_RE.fullmatch(normalized_key) and has_value:
+                return "secret_assignment"
+            nested_reason = _secret_reason(nested_value)
+            if nested_reason is not None:
+                return nested_reason
+        return None
+    if isinstance(value, (list, tuple, set, frozenset)):
+        for item in value:
+            nested_reason = _secret_reason(item)
+            if nested_reason is not None:
+                return nested_reason
+        return None
+    if value is None:
+        return None
+    text = unicodedata.normalize("NFKC", str(value)).strip()
+    if _RECOVERY_CODE_RE.search(text):
+        return "recovery_code"
+    if _SECRET_ASSIGNMENT_RE.search(text):
+        return "secret_assignment"
+    if _SK_TOKEN_RE.search(text):
+        return "sk_token"
+    for match in _ALNUM_SECRET_RE.finditer(text):
+        token = match.group(0)
+        if any(character.isalpha() for character in token) and any(character.isdigit() for character in token):
+            return "mixed_alnum_token"
+    return None
+
+
+def _postprocess_extracted_claims(claims: list[ExtractedClaim]) -> list[ExtractedClaim]:
+    """在 LLM 输出与持久化之间校准未决表述。"""
+    retained: list[ExtractedClaim] = []
+    lowered_signals: set[str] = set()
+    lowered_count = 0
+    for claim in claims:
+        value = unicodedata.normalize("NFKC", str(claim.value)).strip()
+        unsettled = _UNSETTLED_SIGNAL_RE.search(value)
+        if unsettled is not None and _SETTLED_SIGNAL_RE.search(value) is None:
+            confidence = min(claim.confidence, 0.55)
+            if confidence != claim.confidence:
+                lowered_count += 1
+                lowered_signals.add(unsettled.group(0))
+                claim = replace(claim, confidence=confidence)
+        retained.append(claim)
+    if lowered_count:
+        current_audit().emit(
+            "extract",
+            "confidence_calibrated",
+            "lowered",
+            detail={
+                "count": lowered_count,
+                "ceiling": 0.55,
+                "signals": sorted(lowered_signals),
+            },
+        )
+    return retained
+
+
 class LLMExtractor:
     """通过统一 LLMClient 执行结构化事实提取。"""
 
@@ -375,6 +470,7 @@ class LLMExtractor:
         self._llm_call_count = 0
         self._memorize_decisions: list[tuple[bool, str]] = []
         self._last_schema_errors: list[dict[str, Any]] = []
+        self._secret_rejections: dict[str, int] = {}
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
         """同步分块提取事实，并在输出截断时递归二分恢复。"""
@@ -386,10 +482,21 @@ class LLMExtractor:
         self._llm_call_count = 0
         self._memorize_decisions = []
         self._last_schema_errors = []
+        self._secret_rejections = {}
         event_context = context or {}
         chunks = split_extraction_content(content, self.chunking_policy)
         chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
-        claims = self._merge_chunk_claims(chunk_claims)
+        claims = _postprocess_extracted_claims(self._merge_chunk_claims(chunk_claims))
+        if self._secret_rejections:
+            current_audit().emit(
+                "extract",
+                "secret_rejected",
+                "rejected",
+                detail={
+                    "count": sum(self._secret_rejections.values()),
+                    "reason_counts": self._secret_rejections,
+                },
+            )
         if LOGGER.isEnabledFor(logging.DEBUG):
             LOGGER.debug(
                 "%s",
@@ -399,7 +506,7 @@ class LLMExtractor:
                         "actor": event_context.get("actor") or event_context.get("actor_type"),
                         "session_id": event_context.get("session_id"),
                         "content_length": self._content_length(content),
-                        "should_memorize": any(decision for decision, _reason in self._memorize_decisions),
+                        "should_memorize": bool(claims),
                         "reason": self._decision_reason(),
                         "claims_count": len(claims),
                         "schema_retry_count": self._schema_retry_count,
@@ -452,14 +559,17 @@ class LLMExtractor:
         if not result.should_memorize:
             self._memorize_decisions.append((False, "should_memorize=false"))
             return []
-        reasons = sorted({item.reason for item in result.claims if item.reason})
-        self._memorize_decisions.append((True, "；".join(reasons) or "should_memorize=true"))
         parsed: list[ExtractedClaim] = []
         source_kind = str(event_context.get("source_kind") or event_context.get("category") or "")
         if re.search(r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)", chunk.text):
             source_kind = "quoted_report"
         for item in result.claims:
-            claim = self._claim(item.model_dump())
+            raw_claim = item.model_dump()
+            secret_reason = _secret_reason(raw_claim)
+            if secret_reason is not None:
+                self._secret_rejections[secret_reason] = self._secret_rejections.get(secret_reason, 0) + 1
+                continue
+            claim = self._claim(raw_claim)
             normalized_scope, reason_code = normalize_scope(
                 claim.scope,
                 claim.predicate,
@@ -484,7 +594,15 @@ class LLMExtractor:
                 },
             )
             parsed.append(replace(claim, scope=normalized_scope))
-        return [claim for claim in parsed if not _is_low_value_claim(claim)]
+        retained = [claim for claim in parsed if not _is_low_value_claim(claim)]
+        reasons = sorted({claim.reason for claim in retained if claim.reason})
+        self._memorize_decisions.append(
+            (
+                bool(retained),
+                "；".join(reasons) if retained else "postprocess_rejected",
+            )
+        )
+        return retained
 
     def _request_chunk(
         self,

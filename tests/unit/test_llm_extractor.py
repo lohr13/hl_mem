@@ -9,6 +9,7 @@ from hl_mem.ingest.llm_extractor import SYSTEM_PROMPT, LLMExtractor
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import ZhipuProvider
 from hl_mem.llm.types import LLMRequest, LLMResponse
+from hl_mem.observability.audit import audit_scope
 
 
 class _FakeLLMClient:
@@ -31,6 +32,15 @@ class _FakeLLMClient:
         """记录请求并返回预设响应。"""
         self.last_request = request
         return LLMResponse(self._content, "stop", self._tokens)
+
+
+class _RecordingAudit:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, str, dict[str, object]]] = []
+
+    def emit(self, phase, action, outcome, *, detail=None, **_dimensions):
+        self.events.append((phase, action, outcome, detail or {}))
+        return True
 
 
 def test_parses_fenced_json_and_normalizes_entity() -> None:
@@ -182,3 +192,246 @@ def test_claim_validates_canonical_attribute_against_predicate() -> None:
     assert invalid.canonical_attribute == "preference.ui_theme"
     # reconcile overrides wrong-domain attribute with content-inferred preference.ui_theme
     assert wrong_domain.canonical_attribute == "preference.ui_theme"
+
+
+def test_secret_claims_are_rejected_without_copying_values_into_audit() -> None:
+    secret_values = [
+        "GitHub recovery codes 是 abcde-fghij",
+        "服务令牌是 sk-AbC123456789xyz",
+        "数据库 password=hunter2",
+        "部署配置 api_key=plain-text-key",
+        "内部令牌为 Abcdef1234567890",
+    ]
+    raw = json.dumps(
+        {
+            "claims": [
+                *[
+                    {
+                        "predicate": "事实",
+                        "value": value,
+                        "confidence": 0.9,
+                    }
+                    for value in secret_values
+                ],
+                {
+                    "predicate": "配置",
+                    "value": "hl_mem 当前版本为 v0.21.0",
+                    "confidence": 0.9,
+                },
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claims = LLMExtractor(
+            _FakeLLMClient(raw),
+            ChunkingPolicy(10_000, 0, 2),
+        ).extract("包含结构化提取候选的事件")
+
+    assert [claim.value for claim in claims] == ["hl_mem 当前版本为 v0.21.0"]
+    rejected = [event for event in audit.events if event[1] == "secret_rejected"]
+    assert len(rejected) == 1
+    assert rejected[0][:3] == ("extract", "secret_rejected", "rejected")
+    assert rejected[0][3]["count"] == len(secret_values)
+    assert rejected[0][3]["reason_counts"] == {
+        "mixed_alnum_token": 1,
+        "recovery_code": 1,
+        "secret_assignment": 2,
+        "sk_token": 1,
+    }
+    serialized_detail = json.dumps(rejected[0][3], ensure_ascii=False)
+    assert all(value not in serialized_detail for value in secret_values)
+
+
+def test_secret_filter_checks_all_claim_fields_before_any_raw_field_audit() -> None:
+    secret_values = [
+        "它 sk-SubjectSecret123",
+        "Abcdef1234567890",
+        "sk-EntitySecret123456",
+        "password=ReasonSecret",
+    ]
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": secret_values[0],
+                    "predicate": "事实",
+                    "value": "安全的主语测试值",
+                },
+                {
+                    "predicate": "事实",
+                    "value": "安全的限定词测试值",
+                    "qualifiers": {"credential": secret_values[1]},
+                },
+                {
+                    "predicate": "事实",
+                    "value": "安全的实体测试值",
+                    "entities": [secret_values[2]],
+                },
+                {
+                    "predicate": "事实",
+                    "value": "安全的原因测试值",
+                    "reason": secret_values[3],
+                },
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claims = LLMExtractor(
+            _FakeLLMClient(raw),
+            ChunkingPolicy(10_000, 0, 2),
+        ).extract("结构化字段中包含凭据")
+
+    assert claims == []
+    rejected = [event for event in audit.events if event[1] == "secret_rejected"]
+    assert len(rejected) == 1
+    assert rejected[0][3]["count"] == len(secret_values)
+    serialized_events = json.dumps(audit.events, ensure_ascii=False)
+    assert all(value not in serialized_events for value in secret_values)
+
+
+def test_secret_filter_checks_mapping_keys_and_quoted_assignments() -> None:
+    secret_values = [
+        "sk-KeySecret123",
+        "abcde-fghij",
+        '配置 {"api_key":"hunter2"}',
+    ]
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "predicate": "事实",
+                    "value": "安全的键名测试值",
+                    "qualifiers": {secret_values[0]: True},
+                },
+                {
+                    "predicate": "事实",
+                    "value": "安全的恢复码键名测试值",
+                    "qualifiers": {secret_values[1]: True},
+                },
+                {
+                    "predicate": "配置",
+                    "value": secret_values[2],
+                },
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claims = LLMExtractor(
+            _FakeLLMClient(raw),
+            ChunkingPolicy(10_000, 0, 2),
+        ).extract("结构化键名和 JSON 赋值中包含凭据")
+
+    assert claims == []
+    rejected = [event for event in audit.events if event[1] == "secret_rejected"]
+    assert len(rejected) == 1
+    assert rejected[0][3]["reason_counts"] == {
+        "recovery_code": 1,
+        "secret_assignment": 1,
+        "sk_token": 1,
+    }
+    serialized_events = json.dumps(audit.events, ensure_ascii=False)
+    assert all(value not in serialized_events for value in secret_values)
+
+
+def test_recovery_code_filter_requires_a_code_and_preserves_safe_policy_text() -> None:
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "predicate": "事实",
+                    "value": "abcde-fghij",
+                    "confidence": 0.9,
+                },
+                {
+                    "predicate": "配置",
+                    "value": "安全政策禁止保存 recovery codes",
+                    "confidence": 0.9,
+                },
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+
+    claims = LLMExtractor(
+        _FakeLLMClient(raw),
+        ChunkingPolicy(10_000, 0, 2),
+    ).extract("恢复码与安全政策")
+
+    assert [claim.value for claim in claims] == ["安全政策禁止保存 recovery codes"]
+
+
+def test_debug_metrics_reflect_all_claims_rejected_after_llm_response(caplog) -> None:
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "predicate": "事实",
+                    "value": "服务令牌是 sk-DebugSecret123",
+                    "reason": "用户直接陈述",
+                }
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+    extractor = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2))
+
+    with caplog.at_level(logging.DEBUG, logger="hl_mem.ingest.llm_extractor"):
+        claims = extractor.extract("包含凭据的事件")
+
+    payload = json.loads(caplog.records[-1].message)
+    assert claims == []
+    assert payload["should_memorize"] is False
+    assert payload["claims_count"] == 0
+    assert payload["reason"] == "postprocess_rejected"
+
+
+def test_unsettled_claim_confidence_is_capped_but_confirmed_claim_is_preserved() -> None:
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "predicate": "配置",
+                    "value": "建议将 flaky 测试失败后的重跑次数改为两次",
+                    "confidence": 0.9,
+                },
+                {
+                    "predicate": "配置",
+                    "value": "或许可以考虑后续更换测试框架",
+                    "confidence": 0.4,
+                },
+                {
+                    "predicate": "配置",
+                    "value": "已确认采纳该建议：CI 失败只重跑一次",
+                    "confidence": 0.9,
+                },
+                {
+                    "predicate": "配置",
+                    "value": "该建议已执行：CI 现在使用 -v -x",
+                    "confidence": 0.85,
+                },
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+
+    claims = LLMExtractor(
+        _FakeLLMClient(raw),
+        ChunkingPolicy(10_000, 0, 2),
+    ).extract("测试策略讨论")
+
+    assert [claim.confidence for claim in claims] == [0.55, 0.4, 0.9, 0.85]

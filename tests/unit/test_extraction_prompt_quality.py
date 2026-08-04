@@ -48,6 +48,19 @@ class ExtractionPromptQualityTest(unittest.TestCase):
         self.assertNotIn("已有事实的补充或改写", SYSTEM_PROMPT)
         self.assertNotIn("confidence 降到 0.5 以下", SYSTEM_PROMPT)
 
+    def test_prompt_contrasts_unsettled_discussion_with_confirmed_evidence(
+        self,
+    ) -> None:
+        for expected in (
+            "flaky 测试失败时重跑两次",
+            '"canonical_attribute":"config.policy"',
+            '"canonical_attribute":"fact.architecture"',
+            "代码与实测结果共同直接证明",
+            "建议/考虑/待定/或许/可以考虑/计划中/未执行",
+            "confidence 不得高于 0.55",
+        ):
+            self.assertIn(expected, SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -199,6 +199,8 @@ _SLOT_DEFINITIONS = (
     _slot("config.timeout", "配置", "超时配置"),
     _slot("config.schedule", "配置", "调度配置"),
     _slot("config.hardware", "配置", "硬件配置"),
+    _slot("config.policy", "配置", "行为策略配置"),
+    _slot("config.version", "配置", "版本配置"),
     _slot("config.other", "配置", "其他配置", is_fallback=True),
     _slot("plan.goal", "计划", "计划目标"),
     _slot(
@@ -220,6 +222,8 @@ _SLOT_DEFINITIONS = (
     _slot("fact.cause", "事实", "原因事实"),
     _slot("fact.resolution", "事实", "解决方案事实"),
     _slot("fact.constraint", "事实", "约束事实"),
+    _slot("fact.architecture", "事实", "架构事实"),
+    _slot("fact.dependency", "事实", "依赖事实"),
     _slot("fact.project_membership", "事实", "项目成员事实"),
     _slot("fact.tool_choice", "事实", "工具选择事实"),
     _slot("fact.other", "事实", "其他事实", is_fallback=True),
@@ -330,6 +334,9 @@ ATTRIBUTE_ALIASES = {
     "preference.tool": "preference.tool_choice",
     "choice.tool_choice": "choice.tool",
     "fact.tool": "fact.tool_choice",
+    "版本": "config.version",
+    "依赖": "fact.dependency",
+    "架构": "fact.architecture",
 }
 
 MUTUALLY_EXCLUSIVE_SLOTS = frozenset(
@@ -457,6 +464,8 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
         (("timeout", "超时"), "config.timeout"),
         (("cron", "定时", "schedule"), "config.schedule"),
         (("gpu", "显卡", "硬件"), "config.hardware"),
+        (("策略", "政策", "只允许", "必须", "禁止", "policy"), "config.policy"),
+        (("版本", "version", "release"), "config.version"),
     ),
     "计划": (
         (("截止", "deadline", "之前"), "plan.deadline"),
@@ -467,12 +476,14 @@ ATTRIBUTE_HINTS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     ),
     "事实": (
         (("当前采用", "当前使用", "选择了", "codex"), "fact.tool_choice"),
-        (("支持", "具备", "能力"), "fact.capability"),
+        (("支持", "具备", "能力", "可以", "能够"), "fact.capability"),
         (("已实现", "实现了", "新增", "接入", "修复实现"), "fact.implementation"),
         (("缺陷", "问题", "bug"), "fact.issue"),
         (("因为", "原因"), "fact.cause"),
         (("已修复", "解决"), "fact.resolution"),
         (("只允许", "必须", "约束"), "fact.constraint"),
+        (("架构", "分层", "组件关系", "architecture"), "fact.architecture"),
+        (("依赖", "dependency", "requires"), "fact.dependency"),
         (("项目", "成员"), "fact.project_membership"),
     ),
 }

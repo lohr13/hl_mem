@@ -14,6 +14,14 @@ from typing import Any, Sequence
 
 import httpx
 
+from hl_mem.domain.claims.attributes import (
+    PREDICATE_ATTRIBUTE_MAP,
+    SLOT_REGISTRY,
+    infer_canonical_attribute,
+    normalize_canonical_attribute,
+    normalize_predicate,
+)
+
 VALID_PREDICATES = ("偏好", "使用", "状态", "身份", "配置", "计划", "事实")
 SYSTEM_PROMPT = (
     "你是数据分类器。给定一条记忆的 subject、value、scope，判断它应该归入哪个 predicate。"
@@ -53,6 +61,70 @@ def decode_value(value_json: str | None) -> Any:
     except json.JSONDecodeError:
         return value_json or ""
     return value.get("text", value) if isinstance(value, dict) else value
+
+
+def _decode_qualifiers(qualifiers_json: str | None) -> dict[str, Any]:
+    """尽力解码历史 qualifiers，非法值按空字典处理。"""
+    try:
+        value = json.loads(qualifiers_json or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _infer_unknown_attribute(claim: sqlite3.Row) -> str | None:
+    """优先使用历史中文 predicate 别名，否则按事实内容做保守推断。"""
+    legacy_attribute = normalize_canonical_attribute(str(claim["predicate"] or ""))
+    if legacy_attribute in SLOT_REGISTRY and legacy_attribute != "custom.unknown":
+        return legacy_attribute
+
+    predicate = normalize_predicate(str(claim["predicate"] or ""))
+    if predicate not in PREDICATE_ATTRIBUTE_MAP:
+        predicate = "事实"
+    inferred = infer_canonical_attribute(
+        predicate,
+        str(claim["subject_entity_id"] or ""),
+        decode_value(claim["value_json"]),
+        _decode_qualifiers(claim["qualifiers_json"]),
+    )
+    _allowed, fallback = PREDICATE_ATTRIBUTE_MAP[predicate]
+    return inferred if inferred != fallback and inferred != "custom.unknown" else None
+
+
+def reclassify_unknown_attributes(
+    connection: sqlite3.Connection,
+    *,
+    dry_run: bool,
+) -> dict[str, int]:
+    """确定性回填 ``custom.unknown`` 属性，不改写 predicate 或派生索引。"""
+    claims = connection.execute(
+        "SELECT id,subject_entity_id,predicate,value_json,qualifiers_json "
+        "FROM claims WHERE canonical_attribute='custom.unknown' ORDER BY recorded_from,id"
+    ).fetchall()
+    proposals = [(str(claim["id"]), str(claim["predicate"] or ""), _infer_unknown_attribute(claim)) for claim in claims]
+    actionable = [(claim_id, predicate, attribute) for claim_id, predicate, attribute in proposals if attribute]
+    updated = 0
+    if not dry_run and actionable:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for claim_id, _predicate, attribute in actionable:
+                cursor = connection.execute(
+                    "UPDATE claims SET canonical_attribute=? " "WHERE id=? AND canonical_attribute='custom.unknown'",
+                    (attribute, claim_id),
+                )
+                updated += cursor.rowcount
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+    for claim_id, predicate, attribute in proposals:
+        print(f"{claim_id} [{predicate}] -> {attribute or 'SKIP'}")
+    return {
+        "eligible": len(claims),
+        "updated": updated,
+        "proposed": len(actionable),
+        "skipped": len(claims) - len(actionable),
+    }
 
 
 def classify_claim(
@@ -163,12 +235,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--database", type=Path, default=Path("var/hl_mem.db"))
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--custom-unknown",
+        action="store_true",
+        help="不调用 LLM，仅按 registry 回填 canonical_attribute；不改写 predicate 或派生索引",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """脚本入口。"""
     args = build_parser().parse_args(argv)
+    if args.custom_unknown:
+        connection = sqlite3.connect(args.database, timeout=30.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout=30000")
+        try:
+            mode = "DRY-RUN" if args.dry_run else "APPLY"
+            print(f"[{mode}] registry custom.unknown 重分类")
+            summary = reclassify_unknown_attributes(connection, dry_run=args.dry_run)
+            print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+            return 0
+        finally:
+            connection.close()
     return run(args.database, args.env_file, dry_run=args.dry_run)
 
 
