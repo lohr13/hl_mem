@@ -1,17 +1,24 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-03 · v0.21.1
+> 最后更新：2026-08-04 · v0.21.2
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.21.1
-- **阶段**：v0.21.1 发版准备
+- **版本**：v0.21.2
+- **阶段**：v0.21.2 发版准备
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），36 migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-04 v0.21.2 冲突终态收敛
+
+- 自动冲突维护回访 `pending`、`auto_resolved`、`manual_required` 全部未决 case，并沿 supersede 链识别汇聚端点和唯一存活端，消除已分类 case 的扫描盲区。
+- CLI 人工 `keep_left`/`keep_right` 裁决同步将 loser 收敛为 `superseded`，补齐 `superseded_by_id` 与双时间边界；列表输出补充左右 Claim 的 value、status、authority、`recorded_from`。
+- `/healthz` 新增 `conflict_open_count`，直接暴露未决冲突积压；该端点复用应用生命周期数据库连接，不调用外部 provider。
+- v0.21.2 无新增 migration；数据库 schema 保持在 migration 036。
 
 ### 2026-08-03 v0.21.1 MCP runtime 与发布准备
 
@@ -66,7 +73,7 @@
 - 3 种记忆类型（event + claim + observation）
 - LLM 提取（前序上下文 + 时间锚定 + ADD-only）+ Embedding + Reranker（模型和维度由 TOML 配置）
 - 三层去重：fact_hash v2 → conflict_key（白名单互斥）→ semantic (best-match, 0.82)
-- 冲突检测：确定性 ConflictResolver（5 slots）+ LLM ConflictConsolidator（灰区）
+- 冲突检测：确定性 ConflictResolver（5 slots）+ LLM ConflictConsolidator（灰区）+ 全未决状态回访与链汇聚收敛
 - 数据质量：实体归一化 + canonical attribute reconcile + scope 后置规则 + TTL policy
 - 混合召回：FTS5 BM25 + Dense Vector → RRF → 多因子排序 → Reranker → 上下文预算打包
 - Experience 通道：Episode + Trace + Policy + 奖励回传
@@ -75,7 +82,7 @@
 - Hermes Provider（可配置 timeout + circuit breaker + prefetch/delivery receipt）
 - MCP Server（7 工具契约，官方 SDK 2.x stdio runtime，beta）
 - REST API 新增 `POST /v1/extract/dry-run`、`POST /v1/consolidate`
-- LLM 可观测性：`llm_call_spans` 持久化调用 span；`healthz` 只暴露进程内状态，不查询 span 表
+- LLM 可观测性：`llm_call_spans` 持久化调用 span；`healthz` 不查询 span 表，但会读取并暴露 `conflict_open_count`
 - 审计日志 + 整库备份/恢复 + 可重建 Job 的 JSONL 导入导出
 - 实验性 PostgreSQL 连接探针（尚无 HL-Mem 存储语义）
 

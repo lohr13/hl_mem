@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.21.1
-- Updated: 2026-08-03
+- Document baseline: v0.21.2
+- Updated: 2026-08-04
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -223,7 +223,10 @@ recalled text.
 
 The write path applies progressively more expensive checks: bounded JSON `fact_hash` equality, canonical-attribute
 `conflict_key`, then semantic similarity. Deterministic mutual-exclusion rules take priority; ambiguous cases can enter the
-audited conflict consolidator. Conflict cases converge through guarded terminal states.
+audited conflict consolidator. Automatic maintenance revisits every unresolved `pending`, `auto_resolved`, or
+`manual_required` case, follows supersede chains, and resolves converged endpoints or a surviving non-terminal endpoint.
+Manual `keep_left`/`keep_right` decisions apply the same winner/loser terminal semantics, including `superseded_by_id` and
+dual-time closure for the loser.
 
 Retention is a pure function of scope and importance. Ephemeral memories expire; temporal and permanent memories decay on
 different schedules; access and sufficiently supported helpful feedback can extend useful life within configured caps.
@@ -243,7 +246,7 @@ dependent derivations stale.
 
 | Method | Path | Application responsibility |
 |---|---|---|
-| `GET` | `/healthz` | Database-free process/component liveness and in-memory metrics |
+| `GET` | `/healthz` | Process/component liveness, in-memory metrics, and unresolved conflict count |
 | `POST` | `/v1/events` | Idempotent Event ingestion |
 | `POST` | `/v1/extract/dry-run` | Non-persistent Claim extraction |
 | `POST` | `/v1/consolidate` | Scoped conflict-consolidation job |
@@ -268,8 +271,9 @@ documentation at `/docs` while the service is running.
 The database layer owns WAL mode, busy timeout, connection lifecycle, online backup, and ordered immutable migrations.
 Workers use durable jobs with leases, heartbeat, stage, and processed/total progress. Audit logs record state changes and
 automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. The async `/healthz`
-route exposes only process-local state so database locks and worker-pool pressure cannot starve the liveness probe;
-`/v1/stats`, offline evaluation, and the LongMemEval adapter provide database-backed operational and quality visibility.
+route reports process-local component metrics and reads the unresolved conflict count through the application lifecycle
+connection; it does not call external providers. `/v1/stats`, offline evaluation, and the LongMemEval adapter provide
+broader database-backed operational and quality visibility.
 The stdlib-only probe described in [watchdog.md](watchdog.md) exposes `/healthz` to deployment supervision on every
 platform; systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
@@ -277,7 +281,7 @@ Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by
 values while making the field describe the actual host/model delivery boundary.
 
 Migration 036 is the v0.20 schema change: it adds tokenized FTS v2 tables and orphan-cleanup triggers for claims, events,
-and claim tags. v0.21.1 adds no migration.
+and claim tags. v0.21.2 adds no migration.
 
 Backup and restore are whole-database operations:
 

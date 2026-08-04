@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.21.1](https://img.shields.io/badge/version-0.21.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.21.2](https://img.shields.io/badge/version-0.21.2-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -109,7 +109,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 
 ## 能力概览
 
-- **记忆正确性**：幂等事件摄入、事务原子写入、精确/语义去重、确定性冲突规则和 LLM 灰区归并。
+- **记忆正确性**：幂等事件摄入、事务原子写入、精确/语义去重、确定性冲突规则、LLM 灰区归并和受守卫的冲突终态收敛。
 - **提取治理**：确定性的 scope 降级、从规范属性执行 predicate 投影、subject 守卫隔离无效主体，以及有界结构化输出修复。
 - **时间与证据**：有效时间与记录时间双时间模型、证据链、实体归一化、显式遗忘和 stale 传播。
 - **混合召回**：中文 FTS5、稠密向量、RRF 融合、多因子排序、可选 Reranker、关系/查询扩展和按 Token 预算打包上下文。
@@ -126,7 +126,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.21.1，共 36 个不可变、仅向前执行的 Migration。
+当前基线为 v0.21.2，共 36 个不可变、仅向前执行的 Migration。
 
 ## 文档
 
