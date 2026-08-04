@@ -9,7 +9,7 @@ import re
 import unicodedata
 from copy import deepcopy
 from dataclasses import asdict, replace
-from typing import Any, get_args
+from typing import Any, Literal, get_args
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -59,6 +59,7 @@ from .chunking import (
 from .extractors import ExtractedClaim
 from .repair import ENUM_MAPPINGS, TOPIC_TAG_ZH_TO_EN, repair_extraction_json
 from .schemas import ExtractionResponseSchema, TopicTag, extraction_response_json_schema
+from .verifier import EntailmentVerifier
 
 LOGGER = logging.getLogger(__name__)
 
@@ -550,6 +551,10 @@ class LLMExtractor:
         *,
         schema_retries: int = 2,
         structured_mode: StructuredOutputMode = StructuredOutputMode.JSON_SCHEMA,
+        verifier: EntailmentVerifier | None = None,
+        verification_mode: Literal["off", "audit", "enforce"] = "off",
+        verification_claim_threshold: int = 5,
+        verification_empty_text_threshold: int = 1_000,
     ) -> None:
         self.llm_client = llm_client
         self.model = llm_client.model
@@ -558,6 +563,14 @@ class LLMExtractor:
             raise ValueError("schema_retries must be non-negative")
         self.structured_mode = structured_mode
         self.chunking_policy = chunking_policy
+        if verification_mode not in {"off", "audit", "enforce"}:
+            raise ValueError("verification_mode must be 'off', 'audit', or 'enforce'")
+        if verification_claim_threshold < 0 or verification_empty_text_threshold < 0:
+            raise ValueError("verification thresholds must be non-negative")
+        self.verifier = verifier
+        self.verification_mode = verification_mode
+        self.verification_claim_threshold = verification_claim_threshold
+        self.verification_empty_text_threshold = verification_empty_text_threshold
         self.last_usage_tokens = 0
         self.last_input_tokens = 0
         self.last_output_tokens = 0
@@ -582,7 +595,9 @@ class LLMExtractor:
         event_context = context or {}
         chunks = split_extraction_content(content, self.chunking_policy)
         chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
-        claims = _postprocess_extracted_claims(self._merge_chunk_claims(chunk_claims))
+        claims = self._merge_chunk_claims(chunk_claims)
+        if self.verifier is None or self.verification_mode == "off":
+            claims = _postprocess_extracted_claims(claims)
         if self._secret_rejections:
             current_audit().emit(
                 "extract",
@@ -627,7 +642,10 @@ class LLMExtractor:
     ) -> list[ExtractedClaim]:
         """提取单块；仅输出截断时按策略递归二分。"""
         try:
-            return self._extract_one_chunk(chunk, event_context)
+            claims = self._extract_one_chunk(chunk, event_context)
+            if self.verifier is None or self.verification_mode == "off":
+                return claims
+            return self._verify_extracted_claims(_postprocess_extracted_claims(claims), chunk.text)
         except LLMOutputTruncatedError as error:
             split = bisect_extraction_chunk(chunk)
             if depth >= self.chunking_policy.max_split_depth or split is None:
@@ -643,6 +661,83 @@ class LLMExtractor:
                     self._extract_chunk_with_auto_split(right, event_context, depth + 1),
                 ]
             )
+
+    def _verify_extracted_claims(
+        self,
+        claims: list[ExtractedClaim],
+        source_text: str,
+    ) -> list[ExtractedClaim]:
+        """按 rollout 策略执行 audit-only 验证，并始终原样返回 claims。"""
+        if self.verifier is None or self.verification_mode == "off":
+            return claims
+        if not claims:
+            if len(source_text) > self.verification_empty_text_threshold:
+                current_audit().emit(
+                    "extract",
+                    "possible_under_extraction",
+                    "observed",
+                    detail={
+                        "source_length": len(source_text),
+                        "length_threshold": self.verification_empty_text_threshold,
+                        "verification_mode": self.verification_mode,
+                    },
+                )
+            return claims
+        should_verify = self.verification_mode == "enforce" or len(claims) > self.verification_claim_threshold
+        if not should_verify:
+            return claims
+
+        try:
+            results = self.verifier.verify_batch(claims, source_text)
+        except Exception as error:
+            self._record_verifier_usage()
+            self._emit_verification_failure(error, len(claims))
+            return claims
+
+        self._record_verifier_usage()
+        try:
+            if len(results) != len(claims):
+                raise ValueError("verifier result count does not match claim count")
+            for claim_index, (claim, result) in enumerate(zip(claims, results, strict=True)):
+                current_audit().emit(
+                    "extract",
+                    "entailment_checked",
+                    result.support_label,
+                    detail={
+                        "claim_index": claim_index,
+                        "claim_subject": claim.subject[:100],
+                        "claim_predicate": claim.predicate[:100],
+                        "claim_value": claim.value[:100],
+                        "rationale": result.rationale[:512],
+                        "verification_mode": self.verification_mode,
+                    },
+                )
+        except Exception as error:
+            self._emit_verification_failure(error, len(claims))
+        return claims
+
+    def _emit_verification_failure(self, error: Exception, claim_count: int) -> None:
+        """记录安全、截断后的 fail-open verifier 错误。"""
+        current_audit().emit(
+            "extract",
+            "entailment_verification_failed",
+            "error",
+            detail={
+                "error_class": type(error).__name__,
+                "error": str(error).replace("\n", " ")[:256],
+                "claim_count": claim_count,
+                "verification_mode": self.verification_mode,
+            },
+        )
+
+    def _record_verifier_usage(self) -> None:
+        """把额外审计调用计入提取器预算与诊断指标。"""
+        if self.verifier is None:
+            return
+        self.last_usage_tokens += int(getattr(self.verifier, "last_usage_tokens", 0))
+        self.last_input_tokens += int(getattr(self.verifier, "last_input_tokens", 0))
+        self.last_output_tokens += int(getattr(self.verifier, "last_output_tokens", 0))
+        self._llm_call_count += int(getattr(self.verifier, "last_call_count", 0))
 
     def _extract_one_chunk(
         self,

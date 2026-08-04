@@ -15,6 +15,7 @@ from hl_mem.ingest.embedder import Embedder, FakeEmbedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.image_describer import DashScopeImageDescriber
 from hl_mem.ingest.llm_extractor import LLMExtractor
+from hl_mem.ingest.verifier import EntailmentVerifier
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import (
     DashScopeProvider,
@@ -138,6 +139,8 @@ def make_embedder(settings: Settings) -> EmbedderProtocol:
         settings.embedding_connect_timeout,
         settings.embedding_read_timeout,
         settings.embedding_max_attempts,
+        api_mode=settings.embedding_api_mode,
+        text_type="document",
     )
 
 
@@ -206,8 +209,12 @@ def make_extractor(
         if settings.llm_structured_mode == "json_object"
         else StructuredOutputMode.JSON_SCHEMA
     )
+    llm_client = make_llm_client(settings, connection, operation="extract")
+    verifier = (
+        EntailmentVerifier(llm_client, structured_mode=structured_mode) if settings.verification_mode != "off" else None
+    )
     return LLMExtractor(
-        make_llm_client(settings, connection, operation="extract"),
+        llm_client,
         ChunkingPolicy(
             target_chars=settings.extraction_chunk_target_chars,
             overlap_turns=settings.extraction_chunk_overlap_turns,
@@ -215,6 +222,8 @@ def make_extractor(
         ),
         schema_retries=settings.llm_schema_retries,
         structured_mode=structured_mode,
+        verifier=verifier,
+        verification_mode=settings.verification_mode,
     )
 
 

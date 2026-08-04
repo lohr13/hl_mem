@@ -11,7 +11,7 @@
 
 - 本批次不新增 migration，schema 仍为 migration 036。
 
-## v0.21.1（未发布）
+## v0.21.1（2026-08-04）
 
 ### Extraction Quality and Safety
 
@@ -40,7 +40,7 @@
 
 - 本批次不新增 migration，schema 仍为 migration 036。
 
-## v0.21.0（未发布）
+## v0.21.0（2026-08-04）
 
 ### Memory Lifecycle and Corrections
 

@@ -11,11 +11,13 @@ from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.errors import ConfigurationError
 
 EmbedderMode = Literal["fake", "real"]
+EmbeddingApiMode = Literal["compatible", "native"]
 RerankerMode = Literal["off", "fake", "on", "real"]
 RerankerProvider = Literal["dashscope"]
 RelationExpansionMode = Literal["off", "on"]
 RelationDiscoveryMode = Literal["off", "audit", "auto"]
 ExtractorMode = Literal["fake", "real", "llm"]
+VerificationMode = Literal["off", "audit", "enforce"]
 LLMProvider = Literal["dashscope", "zhipu", "openai_compatible"]
 StructuredOutputModeName = Literal["auto", "json_object", "json_schema"]
 QueryExpansionMode = Literal["off", "auto", "always"]
@@ -81,6 +83,10 @@ class Settings:
         metadata={"toml": "embedding.base_url"},
     )
     embedding_model: str = field(default="text-embedding-v4", metadata={"toml": "embedding.model"})
+    embedding_api_mode: EmbeddingApiMode = field(
+        default="compatible",
+        metadata={"toml": "embedding.api_mode"},
+    )
     embedding_connect_timeout: float = field(
         default=5.0,
         metadata={"toml": "embedding.connect_timeout"},
@@ -284,6 +290,10 @@ class Settings:
     )
     extractor_mode: ExtractorMode = field(default="fake", metadata={"toml": "extraction.mode"})
     extract_pre_filter: bool = field(default=False, metadata={"toml": "extraction.pre_filter"})
+    verification_mode: VerificationMode = field(
+        default="off",
+        metadata={"toml": "extraction.verification_mode"},
+    )
     llm_api_key: str | None = field(
         default=None,
         repr=False,
@@ -689,6 +699,8 @@ class Settings:
             raise ConfigurationError("extraction.chunk_overlap_turns must be non-negative")
         if self.extraction_max_split_depth < 0:
             raise ConfigurationError("extraction.max_split_depth must be non-negative")
+        if self.verification_mode not in {"off", "audit", "enforce"}:
+            raise ConfigurationError("extraction.verification_mode must be 'off', 'audit', or 'enforce'")
         if (
             min(
                 self.temporal_ttl_days_low,
@@ -709,6 +721,8 @@ class Settings:
             raise ConfigurationError("importance thresholds must be ordered between 0 and 1")
         if self.embedder_mode not in {"fake", "real"}:
             raise ConfigurationError("embedding.mode must be 'fake' or 'real'")
+        if self.embedding_api_mode not in {"compatible", "native"}:
+            raise ConfigurationError("embedding.api_mode must be 'compatible' or 'native'")
         if self.index_text_mode not in {"legacy", "value_only", "natural", "answerable"}:
             raise ConfigurationError("index.text_mode must be 'legacy', 'value_only', 'natural', or 'answerable'")
         if self.index_backfill_batch_size < 1 or self.index_backfill_max_attempts < 1:
@@ -731,6 +745,7 @@ class Settings:
         return {
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
+            "embedding_api_mode": self.embedding_api_mode,
             "index_text_mode": self.index_text_mode,
             "index_backfill_batch_size": self.index_backfill_batch_size,
             "index_backfill_max_attempts": self.index_backfill_max_attempts,
@@ -778,6 +793,7 @@ class Settings:
             "vector_backend": self.vector_backend,
             "vector_batch_size": self.vector_batch_size,
             "extract_pre_filter": self.extract_pre_filter,
+            "verification_mode": self.verification_mode,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,

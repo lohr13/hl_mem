@@ -31,6 +31,7 @@ from hl_mem.protocols import (
     IntentRouterProtocol,
     RerankerProtocol,
     WeightedQuery,
+    embed_query,
 )
 from hl_mem.recall.procedure_pipeline import MemoryCandidate, recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
@@ -314,7 +315,7 @@ class RecallService:
         )
         expansion_deadline = time.monotonic() + self.settings.query_expansion_total_timeout_seconds
         weighted_queries = [WeightedQuery(query, "original", 1.0)]
-        query_blobs = [self.embedder.embed_one(query) if self.settings.recall_dense_enabled else b""]
+        query_blobs = [embed_query(self.embedder, query) if self.settings.recall_dense_enabled else b""]
 
         def expand_for(trigger: str) -> tuple[list[WeightedQuery], list[bytes]]:
             trace_source = {
@@ -398,7 +399,8 @@ class RecallService:
                     )
                 )
             return additions, [
-                self.embedder.embed_one(item.text) if self.settings.recall_dense_enabled else b"" for item in additions
+                embed_query(self.embedder, item.text) if self.settings.recall_dense_enabled else b""
+                for item in additions
             ]
 
         initial_trigger = QueryExpander.trigger_for(query, self.settings.query_expansion_mode)

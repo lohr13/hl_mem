@@ -13,12 +13,14 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 153
+    assert len(fields(Settings)) == 155
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
     assert settings.extractor_mode == "fake"
+    assert settings.verification_mode == "off"
     assert settings.embedder_mode == "fake"
+    assert settings.embedding_api_mode == "compatible"
     assert settings.reranker_mode == "off"
     assert settings.image_describer_mode == "off"
     assert settings.query_expansion_mode == "auto"
@@ -86,6 +88,7 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"dedup_threshold": 2.0}, "dedup.threshold"),
         ({"index_text_mode": "invalid"}, "index.text_mode"),
         ({"reranker_provider": "invalid"}, "reranker.provider"),
+        ({"verification_mode": "invalid"}, "extraction.verification_mode"),
     ],
 )
 def test_validation_errors_reference_toml_paths(changes: dict[str, object], toml_path: str) -> None:

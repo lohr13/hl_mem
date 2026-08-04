@@ -15,9 +15,18 @@ from hl_mem.llm.types import (
 
 
 class DedupJudge:
-    """使用 LLM 判断两个跨主体 Claim 是否表达同一事实。"""
+    """使用 LLM 判断两个 Claim 是否表达同一事实。"""
 
-    _FIELDS = ("subject_entity_id", "predicate", "value", "qualifiers")
+    _FIELDS = (
+        "subject_entity_id",
+        "predicate",
+        "value",
+        "canonical_slot",
+        "canonical_attribute",
+        "qualifiers",
+        "valid_from",
+        "valid_to",
+    )
 
     def __init__(self, llm_client: LLMClient) -> None:
         self.llm_client = llm_client
@@ -35,8 +44,10 @@ class DedupJudge:
                         role="system",
                         content=(
                             "判断两条 claim 是否表达同一事实。equivalent 表示主体写法虽不同但事实相同；"
-                            "distinct 表示不同事实；无法可靠判断时返回 uncertain。数字、端口、版本、路径、"
-                            "日期或否定含义存在差异时必须返回 distinct。仅输出符合 schema 的 JSON。"
+                            "distinct 表示不同事实；无法可靠判断时返回 uncertain。配置键、task、数字、端口、"
+                            "版本、路径、有效时间或肯定/否定极性存在差异时必须返回 distinct。"
+                            "HTTP_PROXY 与 HTTPS_PROXY 等不同标识符不是同一事实。"
+                            "仅输出符合 schema 的 JSON。"
                         ),
                     ),
                     LLMMessage(

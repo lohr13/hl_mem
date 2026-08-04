@@ -26,7 +26,7 @@ from hl_mem.components import make_embedder
 from hl_mem.config_loader import load_settings
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.claim import IndexTextMode, build_index_text
-from hl_mem.protocols import EmbedderProtocol
+from hl_mem.protocols import EmbedderProtocol, embed_queries, embed_query
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.backfill_index_text import backfill_index_text
@@ -191,7 +191,7 @@ def compare_index_text_modes(
 ) -> list[RankResult]:
     """Keep the lightweight four-mode dense diagnostic API for local analysis."""
     target_ids = {diagnostic.query: _select_target_claim(claims, diagnostic) for diagnostic in diagnostics}
-    query_vectors = {diagnostic.query: embedder.embed_one(diagnostic.query) for diagnostic in diagnostics}
+    query_vectors = {diagnostic.query: embed_query(embedder, diagnostic.query) for diagnostic in diagnostics}
     results: list[RankResult] = []
     for mode in INDEX_TEXT_MODES:
         ranked_vectors = [
@@ -607,7 +607,7 @@ def run_ab_test(
             query_embeddings = dict(
                 zip(
                     unique_queries,
-                    resolved_embedder.embed_batch(unique_queries),
+                    embed_queries(resolved_embedder, unique_queries),
                     strict=True,
                 )
             )

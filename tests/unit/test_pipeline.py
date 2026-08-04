@@ -80,3 +80,97 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
     assert row["legacy_conflict_key"]
     assert row["conflict_key"] != row["legacy_conflict_key"]
     database.close()
+
+
+def test_semantic_candidate_is_inserted_and_queued_for_async_judgment(tmp_path) -> None:
+    class ConstantEmbedder(FakeEmbedder):
+        def embed_one(self, _text: str) -> bytes:
+            return super().embed_one("constant-vector")
+
+    database = Database(tmp_path / "semantic-candidate.db")
+    connection = database.open()
+    embedder = ConstantEmbedder(8)
+    event = {
+        "tenant_id": "default",
+        "actor_type": "user",
+        "occurred_at": "2026-07-21T10:00:00+00:00",
+    }
+    first = store_extracted(
+        connection,
+        ExtractedClaim(
+            "事实",
+            "supports offline recall",
+            subject="hl_mem",
+            canonical_attribute="fact.capability",
+            canonical_slot="fact.capability",
+        ),
+        {**event, "id": "event-candidate-1"},
+        "2026-07-21T10:01:00+00:00",
+        embedder,
+    )
+    second = store_extracted(
+        connection,
+        ExtractedClaim(
+            "事实",
+            "can recall memories without a server",
+            subject="hl_mem",
+            canonical_attribute="fact.capability",
+            canonical_slot="fact.capability",
+        ),
+        {**event, "id": "event-candidate-2"},
+        "2026-07-21T10:02:00+00:00",
+        embedder,
+    )
+
+    pair = connection.execute(
+        "SELECT left_claim_id,right_claim_id,decision,policy_version,similarity FROM dedup_pairs"
+    ).fetchone()
+
+    assert second.reason == "inserted"
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 2
+    assert pair["left_claim_id"] == first.claim_id
+    assert pair["right_claim_id"] == second.claim_id
+    assert pair["decision"] is None
+    assert pair["policy_version"] == "v2"
+    assert pair["similarity"] == 1.0
+    database.close()
+
+
+def test_fact_hash_match_does_not_merge_different_task_qualifiers(tmp_path) -> None:
+    database = Database(tmp_path / "fact-hash-qualifier-guard.db")
+    connection = database.open()
+    embedder = FakeEmbedder(8)
+    event = {"tenant_id": "default", "actor_type": "user"}
+    first = store_extracted(
+        connection,
+        ExtractedClaim(
+            "使用",
+            "qwen3.7-plus",
+            subject="user",
+            canonical_attribute="choice.model",
+            canonical_slot="choice.model",
+            qualifiers={"task": "general_chat"},
+        ),
+        {**event, "id": "event-task-1"},
+        "2026-07-21T10:01:00+00:00",
+        embedder,
+    )
+    second = store_extracted(
+        connection,
+        ExtractedClaim(
+            "使用",
+            "qwen3.7-plus",
+            subject="user",
+            canonical_attribute="choice.model",
+            canonical_slot="choice.model",
+            qualifiers={"task": "data_cleaning"},
+        ),
+        {**event, "id": "event-task-2"},
+        "2026-07-21T10:02:00+00:00",
+        embedder,
+    )
+
+    assert second.claim_id != first.claim_id
+    assert second.reason == "inserted"
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 2
+    database.close()

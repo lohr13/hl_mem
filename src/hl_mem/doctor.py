@@ -16,6 +16,7 @@ import httpx
 
 from hl_mem.config_loader import load_settings
 from hl_mem.http_utils import retry_http
+from hl_mem.ingest.embedder import Embedder
 from hl_mem.settings import Settings, is_placeholder_secret
 
 MIGRATION_DIR = Path(__file__).resolve().parent / "storage" / "migrations"
@@ -162,22 +163,21 @@ def _post(
 def _check_embedding(settings: Settings) -> CheckResult:
     if settings.embedder_mode == "fake":
         return CheckResult(CheckStatus.WARN, "Embedding API", "embedder=fake，跳过")
-    base_url = settings.embedding_base_url.rstrip("/")
     try:
-        return _post(
-            "Embedding API",
-            f"{base_url}/embeddings",
-            settings.embedding_api_key,
-            {
-                "model": settings.embedding_model,
-                "input": ["ping"],
-                "dimensions": settings.embedding_dim,
-            },
+        Embedder(
+            settings.embedding_api_key or "",
+            settings.embedding_base_url,
+            settings.embedding_model,
+            settings.embedding_dim,
+            settings.embedding_connect_timeout,
             settings.embedding_read_timeout,
             settings.embedding_max_attempts,
-        )
-    except ValueError as error:
-        return CheckResult(CheckStatus.FAIL, "Embedding API", f"配置值无效：{error}")
+            api_mode=settings.embedding_api_mode,
+            text_type="document",
+        ).embed_one("ping")
+        return CheckResult(CheckStatus.OK, "Embedding API", "请求成功")
+    except (RuntimeError, ValueError, KeyError, TypeError) as error:
+        return CheckResult(CheckStatus.FAIL, "Embedding API", f"最小请求失败：{error}")
 
 
 def _check_llm(settings: Settings) -> CheckResult:

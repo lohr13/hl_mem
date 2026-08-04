@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import (
     is_mutually_exclusive_attribute,
     normalize_topic_tags,
@@ -25,7 +26,12 @@ from hl_mem.domain.claims.conflicts import (
     compute_conflict_key,
     compute_legacy_conflict_key,
 )
-from hl_mem.domain.claims.dedup import Deduplicator
+from hl_mem.domain.claims.dedup import (
+    DEDUP_EMBEDDING_TEXT_VERSION,
+    DEDUP_POLICY_VERSION,
+    Deduplicator,
+    compute_dedup_pair_key,
+)
 from hl_mem.domain.claims.retention import (
     TTLPolicy,
     compute_expiration,
@@ -330,6 +336,8 @@ class IngestService:
                 audit.emit(*args, **kwargs)
 
         superseded_old_id: str | None = None
+        semantic_candidate_id: str | None = None
+        semantic_candidate_similarity: float | None = None
         resolution: str | None = None
         current: dict[str, Any] | None = None
         result_id = claim["id"]
@@ -407,30 +415,42 @@ class IngestService:
                     )
                 )
                 started = time.perf_counter_ns()
-                duplicate_id, _ = Deduplicator(claims, embedder).find_duplicate(claim)
+                duplicate_id, dedup_reason = Deduplicator(claims, embedder).find_duplicate(claim)
+                is_semantic_candidate = dedup_reason == "semantic_candidate"
                 audit_events.append(
                     (
                         (
                             "dedup",
                             "semantic_checked",
-                            "match" if duplicate_id else "new",
+                            "candidate" if is_semantic_candidate else ("match" if duplicate_id else "new"),
                         ),
                         {
                             "event_id": event["id"],
                             "claim_id": claim["id"],
                             "related_claim_id": duplicate_id,
                             "duration_us": (time.perf_counter_ns() - started) // 1000,
-                            "detail": {"matched": duplicate_id is not None},
+                            "detail": {
+                                "matched": duplicate_id is not None and not is_semantic_candidate,
+                                "candidate": is_semantic_candidate,
+                                "reason": dedup_reason,
+                            },
                         },
                     )
                 )
-                if duplicate_id:
+                if duplicate_id and not is_semantic_candidate:
                     _link_event(evidence, duplicate_id, event["id"], commit=False)
                     _link_image_descriptions(evidence, duplicate_id, event, commit=False)
                     result_id = duplicate_id
                     connection.commit()
                     emit_audit_events()
                     return StoreClaimResult(result_id, "stored", "semantic_duplicate")
+                if duplicate_id and is_semantic_candidate:
+                    candidate = claims.get_claim(duplicate_id)
+                    if candidate and candidate.get("embedding_dense") and claim.get("embedding_dense"):
+                        semantic_candidate_id = duplicate_id
+                        semantic_candidate_similarity = cosine_similarity(
+                            candidate["embedding_dense"], claim["embedding_dense"]
+                        )
 
             inserted = _persist_resolution(claims, claim)
             if not inserted:
@@ -442,6 +462,15 @@ class IngestService:
                 connection.commit()
                 emit_audit_events()
                 return StoreClaimResult(result_id, "stored", "concurrent_duplicate")
+
+            if semantic_candidate_id is not None and semantic_candidate_similarity is not None:
+                _insert_pending_dedup_pair(
+                    connection,
+                    semantic_candidate_id,
+                    claim,
+                    semantic_candidate_similarity,
+                    now,
+                )
 
             if current is not None and resolution == "contradicts":
                 claims.update_status(current["id"], "disputed", commit=False)
@@ -641,15 +670,47 @@ def _find_resolution(
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """阶段 2：查找精确重复项和具有新冲突键的待解析候选。"""
     exact = claims.find_by_fact_hash(claim["namespace_key"], claim["fact_hash"])
+    if exact is not None:
+        if Deduplicator._deterministic_check(exact, claim) == "equivalent":
+            return exact, []
+        return None, []
     conflict_key = claim.get("conflict_key")
     exclusive = is_mutually_exclusive_attribute(claim.get("canonical_slot"))
-    existing = claims.find_by_conflict_key(conflict_key) if conflict_key and exclusive and exact is None else []
-    return exact, existing
+    existing = claims.find_by_conflict_key(conflict_key) if conflict_key and exclusive else []
+    return None, existing
 
 
 def _persist_resolution(claims: ClaimRepository, claim: dict[str, Any]) -> bool:
     """阶段 3：在调用方已开启的事务中写入解析后的 claim。"""
     return claims.insert_claim(claim, commit=False)
+
+
+def _insert_pending_dedup_pair(
+    connection: sqlite3.Connection,
+    existing_claim_id: str,
+    new_claim: dict[str, Any],
+    similarity: float,
+    created_at: str,
+) -> None:
+    """Record an LLM gray-area pair without making a remote call in the write transaction."""
+    connection.execute(
+        "INSERT OR IGNORE INTO dedup_pairs("
+        "id,pair_key,left_claim_id,right_claim_id,namespace_key,similarity,"
+        "embedding_text_version,policy_version,predicate,created_at"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            new_id(),
+            compute_dedup_pair_key(existing_claim_id, new_claim["id"]),
+            existing_claim_id,
+            new_claim["id"],
+            new_claim["namespace_key"],
+            similarity,
+            DEDUP_EMBEDDING_TEXT_VERSION,
+            DEDUP_POLICY_VERSION,
+            new_claim.get("predicate"),
+            created_at,
+        ),
+    )
 
 
 def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = False) -> None:

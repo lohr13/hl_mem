@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 from hl_mem.domain.recall import RecallIntent
 
@@ -180,6 +181,25 @@ class EmbedderProtocol(Protocol):
     def embed_one(self, text: str) -> bytes: ...
 
     def embed_batch(self, texts: list[str]) -> list[bytes]: ...
+
+
+def embed_query(embedder: EmbedderProtocol, text: str) -> bytes:
+    """Use role-aware query embedding when available, otherwise preserve legacy behavior."""
+    query_method = getattr(embedder, "embed_query", None)
+    if callable(query_method):
+        return cast(Callable[[str], bytes], query_method)(text)
+    return embedder.embed_one(text)
+
+
+def embed_queries(embedder: EmbedderProtocol, texts: list[str]) -> list[bytes]:
+    """Batch query embedding without requiring legacy embedders to implement a new method."""
+    query_batch = getattr(embedder, "embed_query_batch", None)
+    if callable(query_batch):
+        return cast(Callable[[list[str]], list[bytes]], query_batch)(texts)
+    query_method = getattr(embedder, "embed_query", None)
+    if callable(query_method):
+        return [cast(Callable[[str], bytes], query_method)(text) for text in texts]
+    return embedder.embed_batch(texts)
 
 
 class ExtractorProtocol(Protocol):

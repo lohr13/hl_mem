@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
-import hashlib
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from hl_mem.domain.claims.dedup import (
+    DEDUP_EMBEDDING_TEXT_VERSION,
+    DEDUP_POLICY_VERSION,
+    Deduplicator,
+    compute_dedup_pair_key,
+)
 from hl_mem.llm.client import LLMClient
 from hl_mem.protocols import EmbedderProtocol
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.dedup_judge import DedupJudge
 from hl_mem.workers.scheduling import enqueue_daily_job
 
-EMBEDDING_TEXT_VERSION = "v1: predicate+value"
-POLICY_VERSION = "v1"
+EMBEDDING_TEXT_VERSION = DEDUP_EMBEDDING_TEXT_VERSION
+POLICY_VERSION = DEDUP_POLICY_VERSION
 
 
 def _now() -> str:
@@ -23,8 +28,7 @@ def _now() -> str:
 
 
 def _pair_key(left_id: str, right_id: str) -> str:
-    ordered = "\x1f".join(sorted((left_id, right_id)))
-    return hashlib.sha256(ordered.encode("utf-8")).hexdigest()
+    return compute_dedup_pair_key(left_id, right_id)
 
 
 def enqueue_daily_deduplication(connection: sqlite3.Connection, now: str, scheduled_minutes: int) -> bool:
@@ -90,14 +94,19 @@ def deduplicate_claims(
             ),
         )
         discovered += cursor.rowcount
+    connection.execute(
+        "UPDATE dedup_pairs SET policy_version=? "
+        "WHERE namespace_key=? AND decision IS NULL AND COALESCE(policy_version,'')<>?",
+        (POLICY_VERSION, namespace, POLICY_VERSION),
+    )
     connection.commit()
 
     judge = DedupJudge(llm_client)
     reviewed = equivalent = distinct = uncertain = applied = skipped = 0
     pending_rows = connection.execute(
-        "SELECT * FROM dedup_pairs WHERE namespace_key=? AND decision IS NULL "
+        "SELECT * FROM dedup_pairs WHERE namespace_key=? AND policy_version=? AND decision IS NULL "
         "ORDER BY similarity DESC,created_at,id LIMIT ?",
-        (namespace, limit),
+        (namespace, POLICY_VERSION, limit),
     ).fetchall()
     pending_total = len(pending_rows)
     for processed, pending_row in enumerate(pending_rows, start=1):
@@ -110,13 +119,19 @@ def deduplicate_claims(
             skipped += 1
             continue
 
-        # 远程调用发生在任何写事务之外。
-        decision, confidence, reason = judge.judge(left, right)
+        deterministic = Deduplicator._deterministic_check(left, right)
+        if deterministic is None:
+            # 远程调用发生在任何写事务之外。
+            decision, confidence, reason = judge.judge(left, right)
+            judge_model: str | None = llm_client.model
+        else:
+            decision, confidence, reason = deterministic, 1.0, "deterministic_safety_gate"
+            judge_model = None
         reviewed_at = _now()
         cursor = connection.execute(
             "UPDATE dedup_pairs SET decision=?,judge_confidence=?,judge_reason=?,"
             "judge_model=?,reviewed_at=? WHERE id=? AND decision IS NULL",
-            (decision, confidence, reason, llm_client.model, reviewed_at, pair["id"]),
+            (decision, confidence, reason, judge_model, reviewed_at, pair["id"]),
         )
         connection.commit()
         if cursor.rowcount != 1:
@@ -132,8 +147,9 @@ def deduplicate_claims(
     if not audit_only:
         equivalent_rows = connection.execute(
             "SELECT * FROM dedup_pairs WHERE namespace_key=? AND decision='equivalent' "
-            "AND judge_confidence>=? AND applied_at IS NULL ORDER BY reviewed_at,created_at,id LIMIT ?",
-            (auto_merge_min_confidence, limit),
+            "AND policy_version=? AND judge_confidence>=? AND applied_at IS NULL "
+            "ORDER BY reviewed_at,created_at,id LIMIT ?",
+            (namespace, POLICY_VERSION, auto_merge_min_confidence, limit),
         ).fetchall()
         equivalent_total = len(equivalent_rows)
         for processed, equivalent_row in enumerate(equivalent_rows, start=1):
@@ -180,14 +196,11 @@ def _apply_equivalent_pair(
     connection.execute("BEGIN IMMEDIATE")
     try:
         pair = connection.execute(
-            "SELECT decision,judge_confidence,applied_at FROM dedup_pairs WHERE id=?",
+            "SELECT decision,judge_confidence,policy_version,applied_at FROM dedup_pairs WHERE id=?",
             (pair_id,),
         ).fetchone()
-        current_rows = connection.execute(
-            "SELECT * FROM claims WHERE id IN (?,?)",
-            (left["id"], right["id"]),
-        ).fetchall()
-        current = {row["id"]: dict(row) for row in current_rows}
+        repository = ClaimRepository(connection)
+        current = repository.batch_get_claims([left["id"], right["id"]])
         current_left = current.get(left["id"])
         current_right = current.get(right["id"])
         if pair is None or current_left is None or current_right is None:
@@ -196,14 +209,14 @@ def _apply_equivalent_pair(
         stale = (
             pair["decision"] != "equivalent"
             or float(pair["judge_confidence"] or 0.0) < min_confidence
+            or pair["policy_version"] != POLICY_VERSION
             or pair["applied_at"] is not None
             or current_left["status"] != "active"
             or current_right["status"] != "active"
             or current_left["recorded_from"] != left.get("recorded_from")
             or current_right["recorded_from"] != right.get("recorded_from")
+            or Deduplicator._deterministic_check(current_left, current_right) == "distinct"
             or current_left["predicate"] != current_right["predicate"]
-            or current_left["canonical_slot"] is not None
-            or current_right["canonical_slot"] is not None
             or current_left["canonical_attribute"] in {"memory.explicit", "identity.name"}
             or current_right["canonical_attribute"] in {"memory.explicit", "identity.name"}
         )
@@ -217,7 +230,7 @@ def _apply_equivalent_pair(
             "FROM evidence_links WHERE derived_type='claim' AND derived_id=?",
             (left["id"], right["id"]),
         )
-        result = ClaimRepository(connection).supersede_with_inline(
+        result = repository.supersede_with_inline(
             right["id"],
             left["id"],
             left["value"],

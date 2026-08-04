@@ -24,6 +24,7 @@ from hl_mem.api.server import create_app
 from hl_mem.components import make_embedder
 from hl_mem.config_loader import load_settings
 from hl_mem.core.vector import batch_cosine_similarity
+from hl_mem.protocols import embed_queries
 from hl_mem.settings import Settings
 from tests.eval.dataset import bind_cases, load_cases
 
@@ -327,7 +328,7 @@ def run(
         working = Path(temporary_directory) / "snapshot.db"
         shutil.copy2(snapshot, working)
         runtime_settings = replace(settings or Settings(), database_path=str(working))
-        query_blobs = make_embedder(runtime_settings).embed_batch([str(row["query"]) for row in rows])
+        query_blobs = embed_queries(make_embedder(runtime_settings), [str(row["query"]) for row in rows])
         raw_connection = sqlite3.connect(f"file:{working.resolve().as_posix()}?mode=ro", uri=True)
         try:
             with TestClient(create_app(runtime_settings)) as client:

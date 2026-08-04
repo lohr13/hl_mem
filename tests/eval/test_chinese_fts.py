@@ -11,6 +11,7 @@ import pytest
 from hl_mem.components import make_embedder, make_reranker
 from hl_mem.config_loader import load_settings
 from hl_mem.domain.recall import RecallIntent
+from hl_mem.protocols import embed_queries
 from hl_mem.recall.recall_pipeline import hybrid_claims
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
@@ -73,13 +74,14 @@ def test_chinese_fts_retrieval_evaluation() -> None:
 
     settings = load_settings()
     assert settings.embedder_mode == "real", "30-case evaluation requires HL_MEM_EMBEDDER=real"
-    assert settings.embedding_model == "text-embedding-v4"
+    assert settings.embedding_model == "qwen3.7-text-embedding"
+    assert settings.embedding_api_mode == "native"
     assert settings.reranker_mode in {"on", "real"}, "30-case evaluation requires a real reranker"
     assert settings.reranker_model == "gte-rerank-v2"
     embedder = make_embedder(settings)
     reranker = make_reranker(settings)
     assert reranker is not None
-    query_blobs = embedder.embed_batch([case["query"] for case in cases])
+    query_blobs = embed_queries(embedder, [case["query"] for case in cases])
     database = Database(DATABASE_PATH)
     connection = database.open()
     repo = ClaimRepository(connection, settings=settings)
