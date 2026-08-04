@@ -224,13 +224,13 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     async def healthz() -> dict[str, Any]:
         from hl_mem.application.health import monitoring_snapshot
 
-        with database.connect() as connection:
-            conflict_open_count = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM conflict_cases "
-                    "WHERE status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL"
-                ).fetchone()[0]
-            )
+        connection = database.connection or database.open_worker()
+        conflict_open_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM conflict_cases "
+                "WHERE status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL"
+            ).fetchone()[0]
+        )
         return {
             "status": "ok",
             "version": __version__,
