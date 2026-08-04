@@ -362,17 +362,25 @@ def _resolve_conflict_case(connection: Any, case_id: str, decision: str, now: st
         raise RuntimeError(f"conflict case changed during resolution: {case_id}")
 
 
-def _activate_uncontested_survivor(connection: Any, case_id: str, survivor: dict[str, Any]) -> None:
+def _activate_uncontested_survivor(
+    connection: Any,
+    repository: ClaimRepository,
+    case_id: str,
+    survivor: dict[str, Any],
+) -> None:
     if survivor["status"] == "active":
         return
-    other_case = connection.execute(
-        "SELECT 1 FROM conflict_cases WHERE id<>? "
+    other_cases = connection.execute(
+        "SELECT left_claim_id,right_claim_id FROM conflict_cases WHERE id<>? "
         f"AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL "
-        "AND (left_claim_id=? OR right_claim_id=?) LIMIT 1",
-        (case_id, survivor["id"], survivor["id"]),
-    ).fetchone()
-    if other_case is not None:
-        return
+        "ORDER BY created_at,id",
+        (case_id,),
+    ).fetchall()
+    for other_case in other_cases:
+        for endpoint in (other_case["left_claim_id"], other_case["right_claim_id"]):
+            tip = _follow_superseded_chain(repository, endpoint)
+            if tip is None or tip["id"] == survivor["id"]:
+                return
     assert_transition(survivor["status"], "active")
     cursor = connection.execute(
         "UPDATE claims SET status='active' WHERE id=? AND status=?",
@@ -394,8 +402,8 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
     deferred = 0
     failures: list[Exception] = []
     for selected_row in rows:
-        connection.execute("BEGIN IMMEDIATE")
         try:
+            connection.execute("BEGIN IMMEDIATE")
             case_row = connection.execute(
                 "SELECT * FROM conflict_cases "
                 f"WHERE id=? AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL",
@@ -433,7 +441,7 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
                     connection.rollback()
                     deferred += 1
                     continue
-                _activate_uncontested_survivor(connection, case["id"], survivor)
+                _activate_uncontested_survivor(connection, repository, case["id"], survivor)
                 _resolve_conflict_case(connection, case["id"], f"keep_{survivor_side}", now)
                 connection.commit()
                 resolved += 1

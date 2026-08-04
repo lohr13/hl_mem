@@ -273,6 +273,42 @@ def test_auto_resolve_does_not_activate_survivor_with_another_open_case(tmp_path
     assert repository.get_claim("survivor")["status"] == "disputed"
 
 
+def test_auto_resolve_treats_chain_alias_as_same_contested_survivor(tmp_path) -> None:
+    connection = Database(tmp_path / "aliased-contested-survivor.db").open()
+    repository = ClaimRepository(connection)
+    _claim(connection, "terminal", [1.0, 0.0])
+    _claim(connection, "survivor", [0.9, 0.1], status="disputed", source_authority="high")
+    _claim(connection, "alias", [0.8, 0.2])
+    _claim(connection, "rival", [0.7, 0.3], status="disputed", source_authority="low")
+    assert repository.update_status("terminal", "expired")
+    assert repository.supersede_with_inline(
+        "alias",
+        "survivor",
+        "survivor",
+        "2026-01-01T00:00:00+00:00",
+        "2026-01-01T00:00:00+00:00",
+    ).applied
+    _conflict_case(connection, "case-1", "terminal", "survivor", status="pending")
+    _conflict_case(
+        connection,
+        "case-2",
+        "alias",
+        "rival",
+        status="manual_required",
+        created_at="2026-01-02T00:00:00+00:00",
+    )
+
+    assert auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00") == {
+        "scanned": 2,
+        "auto_resolved": 2,
+        "manual_required": 0,
+        "deferred": 0,
+    }
+    assert repository.get_claim("survivor")["status"] == "active"
+    assert repository.get_claim("rival")["status"] == "superseded"
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-2'").fetchone()[0] == "resolved"
+
+
 def test_auto_resolve_marks_two_terminal_endpoints_obsolete(tmp_path) -> None:
     connection = Database(tmp_path / "double-terminal.db").open()
     repository = ClaimRepository(connection)
@@ -309,3 +345,44 @@ def test_auto_resolve_keeps_equal_authority_case_manual_required(tmp_path) -> No
     assert tuple(
         connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
     ) == ("manual_required", None, None)
+
+
+def test_auto_resolve_begin_failure_does_not_block_later_cases(tmp_path) -> None:
+    connection = Database(tmp_path / "begin-failure.db").open()
+    _auto_conflict_case(connection)
+    _claim(connection, "c", [1.0, 0.0], status="disputed", source_authority="high")
+    _claim(connection, "d", [0.8, 0.6], status="disputed", source_authority="low")
+    _conflict_case(
+        connection,
+        "case-2",
+        "c",
+        "d",
+        created_at="2026-01-02T00:00:00+00:00",
+    )
+
+    class FailFirstBegin:
+        def __init__(self, wrapped) -> None:
+            self.wrapped = wrapped
+            self.failed = False
+
+        def execute(self, sql, parameters=()):
+            if sql == "BEGIN IMMEDIATE" and not self.failed:
+                self.failed = True
+                raise RuntimeError("reject first begin")
+            return self.wrapped.execute(sql, parameters)
+
+        @property
+        def in_transaction(self):
+            return self.wrapped.in_transaction
+
+        def commit(self) -> None:
+            self.wrapped.commit()
+
+        def rollback(self) -> None:
+            self.wrapped.rollback()
+
+    with pytest.raises(RuntimeError, match="reject first begin"):
+        auto_resolve_conflicts(FailFirstBegin(connection), "2026-01-03T04:05:06+00:00")
+
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case'").fetchone()[0] == "auto_resolved"
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-2'").fetchone()[0] == "resolved"
