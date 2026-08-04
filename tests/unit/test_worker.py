@@ -4,6 +4,10 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 import hl_mem.workers.worker as worker_module
+from hl_mem.ingest.chunking import ChunkingPolicy
+from hl_mem.ingest.embedder import FakeEmbedder
+from hl_mem.ingest.llm_extractor import PROMPT_HASH, LLMExtractor
+from hl_mem.llm.types import LLMResponse
 from hl_mem.monitoring.worker import WorkerRuntimeState
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
@@ -31,14 +35,22 @@ def test_worker_module_exposes_cli_entrypoint() -> None:
     assert callable(worker_module.main)
 
 
-def queue(connection, job_id="job", event_id="event", max_attempts=3) -> None:
+def queue(
+    connection,
+    job_id="job",
+    event_id="event",
+    max_attempts=3,
+    *,
+    event_type="message",
+    content=None,
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     EventRepository(connection).insert_event(
         {
             "id": event_id,
-            "event_type": "message",
+            "event_type": event_type,
             "actor_type": "user",
-            "content_json": '{"text":"记住使用 SQLite"}',
+            "content_json": json.dumps(content or {"text": "记住使用 SQLite"}, ensure_ascii=False),
             "occurred_at": now,
             "recorded_at": now,
         }
@@ -71,6 +83,128 @@ def test_run_once_extracts_and_completes(tmp_path) -> None:
 class BrokenExtractor:
     def extract(self, _content):
         raise RuntimeError("broken")
+
+
+class NoClaimsLLMClient:
+    class Provider:
+        name = "fake"
+
+    provider = Provider()
+    model = "test-model"
+
+    def complete(self, _request):
+        return LLMResponse('{"claims":[],"should_memorize":false}', "stop", 4)
+
+
+class OneClaimLLMClient(NoClaimsLLMClient):
+    def complete(self, _request):
+        return LLMResponse(
+            '{"claims":[{"subject":"hl_mem","predicate":"使用",'
+            '"value":"hl_mem 使用 SQLite"}],"should_memorize":true}',
+            "stop",
+            4,
+        )
+
+
+class CustomVersionLLMExtractor(LLMExtractor):
+    prompt_hash = "111111111111"
+    extractor_version = "llm-v2+111111111111"
+
+
+def test_llm_extraction_audit_records_prompt_hash(tmp_path) -> None:
+    path = tmp_path / "prompt-hash-audit.db"
+    connection = Database(path).open()
+    queue(connection)
+    audit = RecordingAudit()
+    extractor = LLMExtractor(NoClaimsLLMClient(), ChunkingPolicy(10_000, 0, 2))
+    worker = Worker(
+        Settings(database_path=str(path), embedding_dim=8),
+        extractor=extractor,
+        embedder=FakeEmbedder(8),
+        image_describer=None,
+        audit_logger=audit,
+    )
+
+    result = worker.run_once()
+
+    extraction_events = [event for event in audit.events if event[:2] == ("extraction", "evaluated")]
+    assert result["status"] == "succeeded"
+    assert extraction_events[0][3]["extractor_hash"] == PROMPT_HASH
+
+
+def test_worker_carries_actual_llm_extractor_version_to_claim(tmp_path) -> None:
+    path = tmp_path / "actual-extractor-version.db"
+    connection = Database(path).open()
+    queue(connection)
+    extractor = CustomVersionLLMExtractor(OneClaimLLMClient(), ChunkingPolicy(10_000, 0, 2))
+    worker = Worker(
+        Settings(database_path=str(path), embedding_dim=8),
+        extractor=extractor,
+        embedder=FakeEmbedder(8),
+        image_describer=None,
+    )
+
+    assert worker.run_once()["status"] == "succeeded"
+    row = connection.execute("SELECT extractor_version FROM claims").fetchone()
+    assert row["extractor_version"] == extractor.extractor_version
+
+
+def test_explicit_memory_does_not_claim_llm_prompt_provenance(tmp_path) -> None:
+    path = tmp_path / "explicit-extractor-version.db"
+    connection = Database(path).open()
+    queue(
+        connection,
+        event_type="explicit_memory",
+        content={
+            "text": "用户要求显式记住 SQLite",
+            "memory": {
+                "predicate": "explicit_memory",
+                "text": "用户要求显式记住 SQLite",
+                "subject": "用户",
+                "qualifiers": {},
+            },
+        },
+    )
+    audit = RecordingAudit()
+    extractor = LLMExtractor(NoClaimsLLMClient(), ChunkingPolicy(10_000, 0, 2))
+    worker = Worker(
+        Settings(database_path=str(path), embedding_dim=8),
+        extractor=extractor,
+        embedder=FakeEmbedder(8),
+        image_describer=None,
+        audit_logger=audit,
+    )
+
+    assert worker.run_once()["status"] == "succeeded"
+    row = connection.execute("SELECT extractor_version FROM claims").fetchone()
+    extraction_event = next(event for event in audit.events if event[:2] == ("extraction", "evaluated"))
+    assert row["extractor_version"] == "explicit-v1"
+    assert "extractor_hash" not in extraction_event[3]
+
+
+def test_explicit_memory_without_bypass_payload_records_actual_llm_provenance(tmp_path) -> None:
+    path = tmp_path / "explicit-llm-fallback-version.db"
+    connection = Database(path).open()
+    queue(
+        connection,
+        event_type="explicit_memory",
+        content={"text": "hl_mem 使用 SQLite"},
+    )
+    audit = RecordingAudit()
+    extractor = CustomVersionLLMExtractor(OneClaimLLMClient(), ChunkingPolicy(10_000, 0, 2))
+    worker = Worker(
+        Settings(database_path=str(path), embedding_dim=8),
+        extractor=extractor,
+        embedder=FakeEmbedder(8),
+        image_describer=None,
+        audit_logger=audit,
+    )
+
+    assert worker.run_once()["status"] == "succeeded"
+    row = connection.execute("SELECT extractor_version FROM claims").fetchone()
+    extraction_event = next(event for event in audit.events if event[:2] == ("extraction", "evaluated"))
+    assert row["extractor_version"] == extractor.extractor_version
+    assert extraction_event[3]["extractor_hash"] == extractor.prompt_hash
 
 
 def test_failure_retries_then_becomes_dead(tmp_path) -> None:

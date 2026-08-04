@@ -1,11 +1,19 @@
 import json
 import logging
+import re
 
 import httpx
 import pytest
 
+from hl_mem.domain.claims.attributes import PREDICATE_ATTRIBUTE_MAP
 from hl_mem.ingest.chunking import ChunkingPolicy
-from hl_mem.ingest.llm_extractor import SYSTEM_PROMPT, LLMExtractor
+from hl_mem.ingest.llm_extractor import (
+    LLM_EXTRACTOR_VERSION,
+    PROMPT_HASH,
+    SYSTEM_PROMPT,
+    LLMExtractor,
+    compute_prompt_hash,
+)
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import ZhipuProvider
 from hl_mem.llm.types import LLMRequest, LLMResponse
@@ -177,6 +185,34 @@ def test_prompt_requires_canonical_attribute() -> None:
     assert "preference.ui_theme" in SYSTEM_PROMPT
 
 
+def test_prompt_hash_is_stable_and_has_expected_format() -> None:
+    first = compute_prompt_hash(SYSTEM_PROMPT)
+    second = compute_prompt_hash(SYSTEM_PROMPT)
+
+    assert first == second == PROMPT_HASH
+    assert re.fullmatch(r"[0-9a-f]{12}", PROMPT_HASH)
+
+
+def test_prompt_hash_changes_when_prompt_changes() -> None:
+    assert compute_prompt_hash(f"{SYSTEM_PROMPT}\nchanged") != PROMPT_HASH
+
+
+def test_prompt_hash_changes_when_schema_or_postprocess_rules_change() -> None:
+    assert compute_prompt_hash(SYSTEM_PROMPT, response_schema={"type": "object"}) != PROMPT_HASH
+    assert compute_prompt_hash(SYSTEM_PROMPT, postprocess_rules={"revision": 2}) != PROMPT_HASH
+
+
+def test_prompt_hash_includes_predicate_attribute_rules(monkeypatch) -> None:
+    monkeypatch.setitem(PREDICATE_ATTRIBUTE_MAP, "偏好", (("preference.other",), "preference.other"))
+
+    assert compute_prompt_hash(SYSTEM_PROMPT) != PROMPT_HASH
+
+
+def test_llm_extractor_version_contains_prompt_hash() -> None:
+    assert LLM_EXTRACTOR_VERSION == f"llm-v2+{PROMPT_HASH}"
+    assert re.fullmatch(r"llm-v2\+[0-9a-f]{12}", LLM_EXTRACTOR_VERSION)
+
+
 def test_claim_validates_canonical_attribute_against_predicate() -> None:
     valid = LLMExtractor._claim(
         {
@@ -242,6 +278,7 @@ def test_secret_claims_are_rejected_without_copying_values_into_audit() -> None:
         "secret_assignment": 2,
         "sk_token": 1,
     }
+    assert rejected[0][3]["extractor_hash"] == PROMPT_HASH
     serialized_detail = json.dumps(rejected[0][3], ensure_ascii=False)
     assert all(value not in serialized_detail for value in secret_values)
 

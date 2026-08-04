@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import unicodedata
-from dataclasses import replace
+from copy import deepcopy
+from dataclasses import asdict, replace
 from typing import Any, get_args
 
 from pydantic import ValidationError as PydanticValidationError
 
 from hl_mem.domain.claims.attributes import (
+    _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS,
     ALLOWED_TOPIC_TAGS,
+    ATTRIBUTE_ALIASES,
+    ATTRIBUTE_HINTS,
     MUTUALLY_EXCLUSIVE_SLOTS,
     OPERATIONAL_SLOT_NAMES,
+    PREDICATE_ATTRIBUTE_MAP,
+    PREDICATE_NORMALIZE,
     SLOT_REGISTRY,
     infer_canonical_attribute,
     normalize_canonical_attribute,
@@ -25,6 +32,10 @@ from hl_mem.domain.claims.attributes import (
     validate_slot_instance,
 )
 from hl_mem.domain.entity import (
+    _ENVIRONMENT_VARIABLE_PATTERN,
+    _FILE_SUBJECT_PATTERN,
+    _PASCAL_CASE_SUBJECT_PATTERN,
+    DEFAULT_ENTITY_ALIASES,
     invalid_subject_reason,
     isolated_subject_id,
     normalize_entity_id,
@@ -46,7 +57,7 @@ from .chunking import (
     split_extraction_content,
 )
 from .extractors import ExtractedClaim
-from .repair import repair_extraction_json
+from .repair import ENUM_MAPPINGS, TOPIC_TAG_ZH_TO_EN, repair_extraction_json
 from .schemas import ExtractionResponseSchema, TopicTag, extraction_response_json_schema
 
 LOGGER = logging.getLogger(__name__)
@@ -305,6 +316,88 @@ _DURABLE_SCOPE_ATTRIBUTES = frozenset(
         "memory.explicit",
     }
 )
+_UNSETTLED_CONFIDENCE_CEILING = 0.55
+_LEGACY_CLAIM_DEFAULTS: dict[str, Any] = {
+    "subject": "用户",
+    "canonical_attribute": "fact.other",
+    "canonical_slot": None,
+    "topic_tags": [],
+    "qualifiers": {},
+    "confidence": 0.5,
+    "volatility": "stable",
+    "reason": "",
+    "scope": "permanent",
+    "importance": 0.5,
+}
+
+
+def _regex_fingerprint(pattern: re.Pattern[str]) -> dict[str, Any]:
+    return {"pattern": pattern.pattern, "flags": pattern.flags}
+
+
+def _postprocess_rules_fingerprint() -> dict[str, Any]:
+    """返回会改变 LLM 原始输出的稳定规则常量。"""
+    return {
+        "aliases": ALIASES,
+        "attribute_aliases": ATTRIBUTE_ALIASES,
+        "attribute_hints": ATTRIBUTE_HINTS,
+        "attribute_high_confidence_patterns": {
+            predicate: [
+                {"pattern": _regex_fingerprint(pattern), "attribute": attribute} for pattern, attribute in patterns
+            ]
+            for predicate, patterns in _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS.items()
+        },
+        "default_entity_aliases": DEFAULT_ENTITY_ALIASES,
+        "low_value_health_states": sorted(LOW_VALUE_HEALTH_STATES),
+        "mutually_exclusive_slots": sorted(MUTUALLY_EXCLUSIVE_SLOTS),
+        "predicate_attribute_map": PREDICATE_ATTRIBUTE_MAP,
+        "predicate_normalize": PREDICATE_NORMALIZE,
+        "slot_registry": {name: asdict(definition) for name, definition in SLOT_REGISTRY.items()},
+        "durable_scope_attributes": sorted(_DURABLE_SCOPE_ATTRIBUTES),
+        "legacy_claim_defaults": _LEGACY_CLAIM_DEFAULTS,
+        "unsettled_confidence_ceiling": _UNSETTLED_CONFIDENCE_CEILING,
+        "repair_enum_mappings": ENUM_MAPPINGS,
+        "repair_topic_tag_mappings": TOPIC_TAG_ZH_TO_EN,
+        "patterns": {
+            "numeric_or_version": _regex_fingerprint(NUMERIC_OR_VERSION_RE),
+            "recovery_code": _regex_fingerprint(_RECOVERY_CODE_RE),
+            "secret_assignment": _regex_fingerprint(_SECRET_ASSIGNMENT_RE),
+            "secret_field_name": _regex_fingerprint(_SECRET_FIELD_NAME_RE),
+            "sk_token": _regex_fingerprint(_SK_TOKEN_RE),
+            "mixed_alnum_secret": _regex_fingerprint(_ALNUM_SECRET_RE),
+            "unsettled_signal": _regex_fingerprint(_UNSETTLED_SIGNAL_RE),
+            "settled_signal": _regex_fingerprint(_SETTLED_SIGNAL_RE),
+            "temporal_scope": _regex_fingerprint(_TEMPORAL_SCOPE_RE),
+            "permanent_scope": _regex_fingerprint(_PERMANENT_SCOPE_RE),
+            "health_check": _regex_fingerprint(_HEALTH_CHECK_RE),
+            "runtime_configuration": _regex_fingerprint(_RUNTIME_CONFIGURATION_RE),
+            "tool_snapshot": _regex_fingerprint(_TOOL_SNAPSHOT_RE),
+            "quoted_report": _regex_fingerprint(_QUOTED_REPORT_RE),
+            "subject_environment_variable": _regex_fingerprint(_ENVIRONMENT_VARIABLE_PATTERN),
+            "subject_filename": _regex_fingerprint(_FILE_SUBJECT_PATTERN),
+            "subject_pascal_case": _regex_fingerprint(_PASCAL_CASE_SUBJECT_PATTERN),
+        },
+    }
+
+
+def compute_prompt_hash(
+    system_prompt: str = SYSTEM_PROMPT,
+    *,
+    response_schema: dict[str, Any] | None = None,
+    postprocess_rules: dict[str, Any] | None = None,
+) -> str:
+    """计算 prompt、响应 schema 与后处理规则的稳定提取配置指纹。"""
+    payload = {
+        "system_prompt": system_prompt,
+        "response_schema": extraction_response_json_schema() if response_schema is None else response_schema,
+        "postprocess_rules": _postprocess_rules_fingerprint() if postprocess_rules is None else postprocess_rules,
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
+
+PROMPT_HASH = compute_prompt_hash()
+LLM_EXTRACTOR_VERSION = f"llm-v2+{PROMPT_HASH}"
 
 
 def normalize_scope(
@@ -424,7 +517,7 @@ def _postprocess_extracted_claims(claims: list[ExtractedClaim]) -> list[Extracte
         value = unicodedata.normalize("NFKC", str(claim.value)).strip()
         unsettled = _UNSETTLED_SIGNAL_RE.search(value)
         if unsettled is not None and _SETTLED_SIGNAL_RE.search(value) is None:
-            confidence = min(claim.confidence, 0.55)
+            confidence = min(claim.confidence, _UNSETTLED_CONFIDENCE_CEILING)
             if confidence != claim.confidence:
                 lowered_count += 1
                 lowered_signals.add(unsettled.group(0))
@@ -437,7 +530,7 @@ def _postprocess_extracted_claims(claims: list[ExtractedClaim]) -> list[Extracte
             "lowered",
             detail={
                 "count": lowered_count,
-                "ceiling": 0.55,
+                "ceiling": _UNSETTLED_CONFIDENCE_CEILING,
                 "signals": sorted(lowered_signals),
             },
         )
@@ -446,6 +539,9 @@ def _postprocess_extracted_claims(claims: list[ExtractedClaim]) -> list[Extracte
 
 class LLMExtractor:
     """通过统一 LLMClient 执行结构化事实提取。"""
+
+    prompt_hash = PROMPT_HASH
+    extractor_version = LLM_EXTRACTOR_VERSION
 
     def __init__(
         self,
@@ -495,6 +591,7 @@ class LLMExtractor:
                 detail={
                     "count": sum(self._secret_rejections.values()),
                     "reason_counts": self._secret_rejections,
+                    "extractor_hash": self.prompt_hash,
                 },
             )
         if LOGGER.isEnabledFor(logging.DEBUG):
@@ -765,18 +862,7 @@ class LLMExtractor:
             if not legacy_core.issubset(claim) or not versioned_fields.isdisjoint(claim):
                 normalized_claims.append(claim)
                 continue
-            defaults: dict[str, Any] = {
-                "subject": "用户",
-                "canonical_attribute": "fact.other",
-                "canonical_slot": None,
-                "topic_tags": [],
-                "qualifiers": {},
-                "confidence": 0.5,
-                "volatility": "stable",
-                "reason": "",
-                "scope": "permanent",
-                "importance": 0.5,
-            }
+            defaults = deepcopy(_LEGACY_CLAIM_DEFAULTS)
             missing = [key for key in defaults if key not in claim]
             for key in missing:
                 claim[key] = defaults[key]

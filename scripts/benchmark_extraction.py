@@ -37,7 +37,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from hl_mem.ingest.chunking import ChunkingPolicy  # noqa: E402
-from hl_mem.ingest.llm_extractor import LLMExtractor  # noqa: E402
+from hl_mem.ingest.llm_extractor import PROMPT_HASH, LLMExtractor  # noqa: E402
 from hl_mem.llm.client import LLMClient  # noqa: E402
 from hl_mem.llm.providers import DashScopeProvider, ZhipuProvider  # noqa: E402
 from hl_mem.llm.types import StructuredOutputMode  # noqa: E402
@@ -500,6 +500,54 @@ def git_commit_sha() -> str:
     return result.stdout.strip()
 
 
+def build_manifest(
+    mode: str,
+    configs: list[dict[str, Any]],
+    *,
+    event_count: int,
+    fingerprint: str,
+    started_at: datetime | None = None,
+) -> dict[str, Any]:
+    """构造包含提取配置指纹的 benchmark manifest。"""
+    started_at = started_at or datetime.now(timezone.utc)
+    return {
+        "run_id": f"{mode}-{started_at.strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}",
+        "mode": mode,
+        "status": "running",
+        "started_at": started_at.isoformat(),
+        "completed_at": None,
+        "git_commit": git_commit_sha(),
+        "models": list(MODELS),
+        "model_configs": [
+            {
+                "model": config["model"],
+                "provider": config["provider"],
+                "endpoint_host": urlparse(str(config["base_url"])).netloc,
+                "enable_thinking": config["enable_thinking"],
+            }
+            for config in configs
+        ],
+        "event_count": event_count,
+        "expected_call_count": event_count * len(MODELS),
+        "testset_fingerprint": fingerprint,
+        "prompt_hash": PROMPT_HASH,
+        "schema_retries": 2,
+        "chunking_policy": {
+            "target_chars": 12000,
+            "overlap_turns": 2,
+            "max_split_depth": 3,
+        },
+    }
+
+
+def validate_resume_manifest(manifest: dict[str, Any], fingerprint: str) -> None:
+    """拒绝把不同测试集或提取配置的结果续写到同一 benchmark run。"""
+    if manifest.get("testset_fingerprint") != fingerprint:
+        raise RuntimeError("无法续跑：测试集指纹与 manifest 不一致")
+    if manifest.get("prompt_hash") != PROMPT_HASH:
+        raise RuntimeError("无法续跑：提取 prompt 指纹与 manifest 不一致")
+
+
 def load_partial_results(path: Path, run_id: str, fingerprint: str) -> list[dict[str, Any]]:
     """只加载同一 run_id 与测试集指纹的断点结果。"""
     if not path.is_file():
@@ -526,6 +574,8 @@ def assert_full_is_unlocked() -> None:
         or manifest.get("error_count") != 0
     ):
         raise RuntimeError("最近一次预验证未完整通过，禁止正式 benchmark")
+    if manifest.get("prompt_hash") != PROMPT_HASH:
+        raise RuntimeError("最近一次预验证的提取 prompt 指纹已过期，禁止正式 benchmark")
 
 
 def run_benchmark(mode: str, *, resume: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -545,37 +595,16 @@ def run_benchmark(mode: str, *, resume: bool) -> tuple[list[dict[str, Any]], dic
 
     if resume:
         manifest = json.loads(paths["manifest.json"].read_text(encoding="utf-8"))
-        if manifest["testset_fingerprint"] != fingerprint:
-            raise RuntimeError("无法续跑：测试集指纹与 manifest 不一致")
+        validate_resume_manifest(manifest, fingerprint)
     else:
         started_at = datetime.now(timezone.utc)
-        manifest = {
-            "run_id": f"{mode}-{started_at.strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}",
-            "mode": mode,
-            "status": "running",
-            "started_at": started_at.isoformat(),
-            "completed_at": None,
-            "git_commit": git_commit_sha(),
-            "models": list(MODELS),
-            "model_configs": [
-                {
-                    "model": config["model"],
-                    "provider": config["provider"],
-                    "endpoint_host": urlparse(str(config["base_url"])).netloc,
-                    "enable_thinking": config["enable_thinking"],
-                }
-                for config in configs
-            ],
-            "event_count": len(testset),
-            "expected_call_count": len(testset) * len(MODELS),
-            "testset_fingerprint": fingerprint,
-            "schema_retries": 2,
-            "chunking_policy": {
-                "target_chars": 12000,
-                "overlap_turns": 2,
-                "max_split_depth": 3,
-            },
-        }
+        manifest = build_manifest(
+            mode,
+            configs,
+            event_count=len(testset),
+            fingerprint=fingerprint,
+            started_at=started_at,
+        )
         write_json_atomic(paths["manifest.json"], manifest)
         paths["testset.jsonl"].write_text(
             "\n".join(json.dumps(event, ensure_ascii=False) for event in testset) + "\n",

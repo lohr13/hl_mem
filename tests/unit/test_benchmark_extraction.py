@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
+
+import pytest
+
+from hl_mem.ingest.llm_extractor import PROMPT_HASH
 
 
 def _load_benchmark_module():
@@ -77,3 +82,64 @@ def test_make_extractor_disables_dashscope_thinking() -> None:
     extractor = benchmark.make_extractor(config)
 
     assert extractor.llm_client.provider.enable_thinking is False
+
+
+def test_benchmark_manifest_records_prompt_hash(monkeypatch) -> None:
+    benchmark = _load_benchmark_module()
+    monkeypatch.setattr(benchmark, "git_commit_sha", lambda: "abc123")
+
+    manifest = benchmark.build_manifest(
+        "validation",
+        [
+            {
+                "model": "glm-5.2",
+                "provider": "zhipu",
+                "base_url": "https://example.test/v1",
+                "enable_thinking": False,
+            }
+        ],
+        event_count=3,
+        fingerprint="testset-hash",
+    )
+
+    assert manifest["prompt_hash"] == PROMPT_HASH
+
+
+def test_resume_manifest_requires_matching_prompt_hash() -> None:
+    benchmark = _load_benchmark_module()
+
+    benchmark.validate_resume_manifest(
+        {"testset_fingerprint": "testset-hash", "prompt_hash": PROMPT_HASH},
+        "testset-hash",
+    )
+    with pytest.raises(RuntimeError, match="prompt 指纹"):
+        benchmark.validate_resume_manifest(
+            {"testset_fingerprint": "testset-hash"},
+            "testset-hash",
+        )
+    with pytest.raises(RuntimeError, match="prompt 指纹"):
+        benchmark.validate_resume_manifest(
+            {"testset_fingerprint": "testset-hash", "prompt_hash": "000000000000"},
+            "testset-hash",
+        )
+
+
+def test_full_unlock_requires_validation_for_current_prompt_hash(tmp_path, monkeypatch) -> None:
+    benchmark = _load_benchmark_module()
+    validation_dir = tmp_path / "validation"
+    validation_dir.mkdir()
+    (validation_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "actual_call_count": benchmark.VALIDATION_EVENTS * len(benchmark.MODELS),
+                "error_count": 0,
+                "prompt_hash": "000000000000",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(benchmark, "RUNS_ROOT", tmp_path)
+
+    with pytest.raises(RuntimeError, match="prompt 指纹"):
+        benchmark.assert_full_is_unlocked()

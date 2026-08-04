@@ -625,7 +625,8 @@ def _build_claim_drafts(
         "access_count": 0,
         "last_accessed_at": None,
         "source_authority": authority or ("low" if event.get("actor_type") == "assistant" else "medium"),
-        "extractor_version": "llm-v2" if event.get("extractor") == "llm" else "fake-v1",
+        "extractor_version": event.get("extractor_version")
+        or ("llm-v2" if event.get("extractor") == "llm" else "fake-v1"),
         "embedding_model": getattr(embedder, "model", "fake"),
         "embedding_dim": embedder.dim,
     }

@@ -7,6 +7,7 @@
 - LLM 提取结果在任何原始字段审计与写入前扫描完整结构化 claim，确定性拒绝 recovery codes、`sk-` token、`password=` / `api_key=` 赋值和 16–32 位字母数字混合 token；`secret_rejected` audit 只记录原因分类与数量，不复制敏感原文。
 - 提取后处理将包含“建议/考虑/待定/或许/可以考虑/计划中/未执行”等未决信号的 claim confidence 封顶为 `0.55`；“已确认/已批准/已执行/已完成/正式采用”等明确落地信号保持原置信度。
 - system prompt 增加三组策略讨论对照：未批准建议拒绝、用户明确确认的政策归入 `config.policy`、代码与实测共同证明的架构归入 `fact.architecture`；LLM extractor 版本更新为 `llm-v2`。
+- 对完整 system prompt、响应 JSON Schema 与确定性后处理规则常量计算 canonical SHA-256 前 12 位指纹；新 LLM claim 的 `extractor_version` 记录为 `llm-v2+<hash12>`，提取 audit detail 记录 `extractor_hash`，extraction benchmark manifest 记录 `prompt_hash`。历史 `llm-v2` 值继续兼容，无需 migration。
 - canonical attribute registry 新增 `config.policy`、`config.version`、`fact.dependency` 和 `fact.architecture`，并补充“版本/依赖/架构”历史中文别名及内容推断提示，不增加 operational slot 或冲突语义。
 
 ### Data Governance and Evaluation

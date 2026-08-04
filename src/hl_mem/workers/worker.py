@@ -441,8 +441,11 @@ class Worker:
                 raise RuntimeError("daily token budget exhausted")
             recent: list[dict[str, Any]] = []
             started = time.perf_counter_ns()
+            explicit_bypass = event["event_type"] == "explicit_memory" and bool(content.get("memory"))
+            uses_llm = not explicit_bypass and isinstance(self.extractor, LLMExtractor)
+            extractor_hash = self.extractor.prompt_hash if uses_llm else None
             try:
-                if event["event_type"] == "explicit_memory" and content.get("memory"):
+                if explicit_bypass:
                     memory = content["memory"]
                     extracted = [
                         ExtractedClaim(
@@ -496,6 +499,7 @@ class Worker:
                         "extractor": type(self.extractor).__name__,
                         "error_class": type(error).__name__,
                         "error": str(error)[:256],
+                        **({"extractor_hash": extractor_hash} if extractor_hash else {}),
                     },
                 )
                 raise
@@ -505,14 +509,13 @@ class Worker:
                 "claims" if extracted else "no_claims",
                 duration_us=(time.perf_counter_ns() - started) // 1000,
                 detail={
-                    "extractor": (
-                        "explicit_memory" if event["event_type"] == "explicit_memory" else type(self.extractor).__name__
-                    ),
+                    "extractor": ("explicit_memory" if explicit_bypass else type(self.extractor).__name__),
                     "claim_count": len(extracted),
                     "context_event_ids": [item["id"] for item in recent],
+                    **({"extractor_hash": extractor_hash} if extractor_hash else {}),
                 },
             )
-            if isinstance(self.extractor, LLMExtractor):
+            if uses_llm:
                 self.budget.record_usage(self.extractor.last_usage_tokens)
                 self.audit.emit(
                     "budget",
@@ -524,6 +527,10 @@ class Worker:
                     },
                 )
                 event["extractor"] = "llm"
+                event["extractor_version"] = self.extractor.extractor_version
+            elif explicit_bypass:
+                event["extractor"] = "explicit"
+                event["extractor_version"] = "explicit-v1"
             stored = 0
             rejections: list[dict[str, Any]] = []
             for claim in extracted:
