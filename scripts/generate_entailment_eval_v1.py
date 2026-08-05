@@ -242,7 +242,11 @@ QWEN_ANNOTATIONS: dict[str, list[tuple[str, bool, str]]] = {
     ],
     "b045157e30d444be84f8b7e97048be38": [
         ("partially_entailed", False, "原文明确要求合并 provider，但可见输出不足以证明整项改造已经完成。"),
-        ("partially_entailed", False, "原文要求集中工厂，且片段显示部分委托 diff；仍不足以确认所有调用点和新模块均已完成。"),
+        (
+            "partially_entailed",
+            False,
+            "原文要求集中工厂，且片段显示部分委托 diff；仍不足以确认所有调用点和新模块均已完成。",
+        ),
         ("partially_entailed", False, "原文要求清理两个文件，但没有可见的完整完成证据。"),
         ("entailed", True, "原文逐项明确了不跑 pytest、不改 tests、保持 180 tests 和不新增依赖的任务约束。"),
     ],
@@ -286,7 +290,11 @@ MUTATIONS: list[dict[str, Any]] = [
     },
     {
         "event_id": "b551e4a6e68b4bbc858357d28b284085",
-        "claim": {"subject": "Hermes", "predicate": "配置", "value": "Hermes 通过 http://127.0.0.1:8000 实时调用 hl_mem"},
+        "claim": {
+            "subject": "Hermes",
+            "predicate": "配置",
+            "value": "Hermes 通过 http://127.0.0.1:8000 实时调用 hl_mem",
+        },
         "support_label": "contradicted",
         "rationale": "只改了端口；原文给出的地址端口为 8200。",
     },
@@ -511,9 +519,7 @@ def main() -> None:
         predicted = prediction_by_event.get(event_id, [])
         annotations = QWEN_ANNOTATIONS.get(event_id, [])
         if len(predicted) != len(annotations):
-            raise ValueError(
-                f"qwen annotation count mismatch for {event_id}: {len(predicted)} != {len(annotations)}"
-            )
+            raise ValueError(f"qwen annotation count mismatch for {event_id}: {len(predicted)} != {len(annotations)}")
         for claim, (label, memory_worthy, rationale) in zip(predicted, annotations, strict=True):
             append_pair(event_id, "qwen_after_v0211", claim, label, memory_worthy, rationale)
 

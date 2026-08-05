@@ -59,12 +59,7 @@ def load_corpus() -> tuple[list[str], set[str]]:
     connection = sqlite3.connect(uri, uri=True)
     try:
         connection.execute("PRAGMA query_only=ON")
-        ids = [
-            row[0]
-            for row in connection.execute(
-                "SELECT id FROM claims WHERE status='active' ORDER BY id"
-            )
-        ]
+        ids = [row[0] for row in connection.execute("SELECT id FROM claims WHERE status='active' ORDER BY id")]
     finally:
         connection.close()
     return ids, set(ids)

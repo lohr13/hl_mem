@@ -91,9 +91,7 @@ def is_single_variable_mutation(
         if set(differences) == {"subject", "value"} and mutation["predicate"] == gold["predicate"]:
             old_subject = gold["subject"]
             new_subject = mutation["subject"]
-            if old_subject in gold["value"] and mutation["value"] == gold["value"].replace(
-                old_subject, new_subject, 1
-            ):
+            if old_subject in gold["value"] and mutation["value"] == gold["value"].replace(old_subject, new_subject, 1):
                 return True
     return False
 
@@ -111,9 +109,9 @@ def main() -> None:
 
     event_by_id = {row["id"]: row for row in raw_events}
     assert len(event_by_id) == 50, "source event IDs must be unique"
-    assert [row["event_id"] for row in gold_rows] == [row["id"] for row in raw_events], (
-        "gold rows must preserve source event order"
-    )
+    assert [row["event_id"] for row in gold_rows] == [
+        row["id"] for row in raw_events
+    ], "gold rows must preserve source event order"
 
     expected_test_counts = {
         "user_pref": 4,
@@ -135,15 +133,13 @@ def main() -> None:
         text = extract_text(source["content"])
         assert row["category"] == source["category"], f"category mismatch: {event_id}"
         assert row["text"] == text, f"text mismatch: {event_id}"
-        assert row["text_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest(), (
-            f"text hash mismatch: {event_id}"
-        )
+        assert row["text_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest(), f"text hash mismatch: {event_id}"
         assert row["split"] in SPLITS, f"bad split: {event_id}"
         assert isinstance(row["should_memorize"], bool), f"bad should_memorize: {event_id}"
         assert isinstance(row["gold_claims"], list), f"bad gold_claims: {event_id}"
-        assert row["should_memorize"] == bool(row["gold_claims"]), (
-            f"should_memorize must equal bool(gold_claims): {event_id}"
-        )
+        assert row["should_memorize"] == bool(
+            row["gold_claims"]
+        ), f"should_memorize must equal bool(gold_claims): {event_id}"
         split_by_event[event_id] = row["split"]
         gold_claims_by_event[event_id] = row["gold_claims"]
 
@@ -162,9 +158,7 @@ def main() -> None:
     split_counts = Counter(row["split"] for row in gold_rows)
     assert split_counts == Counter({"dev": 30, "test": 20}), f"bad event split: {split_counts}"
     for category, expected_test in expected_test_counts.items():
-        actual = sum(
-            row["category"] == category and row["split"] == "test" for row in gold_rows
-        )
+        actual = sum(row["category"] == category and row["split"] == "test" for row in gold_rows)
         assert actual == expected_test, f"bad test split for {category}: {actual}"
 
     expected_pair_ids = [f"ent-{index:03d}" for index in range(1, len(pair_rows) + 1)]
@@ -202,14 +196,15 @@ def main() -> None:
         elif source_name == "qwen_after_v0211":
             actual_qwen_pairs[key] += 1
         else:
-            assert row["support_label"] in {"contradicted", "unsupported"}, (
-                f"mutation must be contradicted/unsupported: {pair_id}"
-            )
+            assert row["support_label"] in {
+                "contradicted",
+                "unsupported",
+            }, f"mutation must be contradicted/unsupported: {pair_id}"
             assert row["memory_worthy"] is False, f"mutation must not be memory-worthy: {pair_id}"
             assert key not in mutation_claims, f"duplicate mutation: {pair_id}"
-            assert is_single_variable_mutation(row["claim"], gold_claims_by_event[event_id]), (
-                f"mutation is not derived by one semantic variable from an event gold claim: {pair_id}"
-            )
+            assert is_single_variable_mutation(
+                row["claim"], gold_claims_by_event[event_id]
+            ), f"mutation is not derived by one semantic variable from an event gold claim: {pair_id}"
             mutation_claims.add(key)
 
     assert actual_gold_pairs == expected_gold_pairs, "gold entailment pairs do not exactly match gold claims"
@@ -225,9 +220,9 @@ def main() -> None:
     assert set(label_counts) == SUPPORT_LABELS, f"all support labels must be represented: {label_counts}"
     pair_split_counts = Counter(row["split"] for row in pair_rows)
     expected_test_pairs = round(len(pair_rows) * 0.40)
-    assert pair_split_counts["test"] == expected_test_pairs, (
-        f"pair split must be 60/40 after event grouping: {pair_split_counts}"
-    )
+    assert (
+        pair_split_counts["test"] == expected_test_pairs
+    ), f"pair split must be 60/40 after event grouping: {pair_split_counts}"
 
     print(f"Validated {len(gold_rows)} events and {len(pair_rows)} entailment pairs")
     print(f"Gold claims: {len(gold_by_id)}")
