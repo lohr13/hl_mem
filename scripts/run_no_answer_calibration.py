@@ -28,7 +28,6 @@ for import_path in (str(SRC), str(SCRIPTS)):
     if import_path not in sys.path:
         sys.path.insert(0, import_path)
 
-from hl_mem.recall.reranker import DashScopeReranker  # noqa: E402
 from run_embedding_ablation import (  # noqa: E402
     CONFIGS,
     DashScopeEmbeddingClient,
@@ -36,6 +35,8 @@ from run_embedding_ablation import (  # noqa: E402
     _normalize_rows,
     embed_remote,
 )
+
+from hl_mem.recall.reranker import DashScopeReranker  # noqa: E402
 
 DEFAULT_DATASET = ROOT / "evaluation" / "datasets" / "recall_eval_v1.jsonl"
 DEFAULT_DATABASE = ROOT / "var" / "hl_mem.db"
@@ -202,7 +203,7 @@ def load_frozen_corpus(
     )
     manifest_rows = _database_rows(source_path, "SELECT id FROM claims WHERE status='active' ORDER BY id")
     manifest_ids = [str(row["id"]) for row in manifest_rows]
-    manifest_set = set(manifest_ids)
+    set(manifest_ids)
     live_rows = _database_rows(
         database_path,
         "SELECT id,subject_entity_id,predicate,value_json,status,index_text,"

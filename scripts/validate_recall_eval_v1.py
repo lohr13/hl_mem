@@ -13,7 +13,6 @@ import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE = ROOT / "var" / "hl_mem.db"
 DATASET = ROOT / "evaluation" / "datasets" / "recall_eval_v1.jsonl"

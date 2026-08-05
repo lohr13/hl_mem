@@ -16,7 +16,7 @@ from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
-from hl_mem.ingest.verifier import EntailmentResult, EntailmentVerifier
+from hl_mem.ingest.verifier import EntailmentVerifier
 from hl_mem.llm.types import LLMRequest, LLMResponse
 from hl_mem.observability.audit import audit_scope
 from hl_mem.settings import Settings

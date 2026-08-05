@@ -16,7 +16,6 @@ from typing import Any, Iterable
 
 import numpy as np
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE = ROOT / "var" / "hl_mem.db"
 OUTPUT = ROOT / "evaluation" / "datasets" / "claim_pair_eval_v1.jsonl"

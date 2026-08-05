@@ -10,7 +10,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "evaluation" / "datasets" / "claim_pair_eval_v1.jsonl"
 DATABASE = ROOT / "var" / "hl_mem.db"
