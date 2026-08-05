@@ -153,7 +153,9 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             audit.close()
             database.close()
 
-    app = FastAPI(title="HL-Mem", lifespan=lifespan)
+    from hl_mem import __version__
+
+    app = FastAPI(title="HL-Mem", version=__version__, lifespan=lifespan)
     app.state.db, app.state.token_budget, app.state.reranker = (
         database,
         budget,

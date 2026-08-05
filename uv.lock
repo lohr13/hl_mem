@@ -440,7 +440,7 @@ wheels = [
 
 [[package]]
 name = "hl-mem"
-version = "0.21.2"
+version = "0.22.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
