@@ -101,9 +101,9 @@ def test_llm_claim_parses_and_clamps():
 def test_llm_claim_invalid_defaults_and_prompt():
     claim = LLMExtractor._claim({"value": "x", "scope": "bad", "importance": "bad", "confidence": None})
     assert (claim.scope, claim.importance, claim.confidence) == ("permanent", 0.5, 0.5)
-    assert "先判断 scope，再独立判断 volatility" in SYSTEM_PROMPT
-    assert "confidence 只表示当前 evidence 是否足以支持 claim 的内容和归因" in SYSTEM_PROMPT
-    assert "不表示 importance、语气强度、持续时长" in SYSTEM_PROMPT
+    assert '"notability"' in SYSTEM_PROMPT
+    assert "confidence" in SYSTEM_PROMPT
+    assert "scope×volatility" not in SYSTEM_PROMPT
 
 
 def test_llm_claim_projects_predicate_after_attribute_reconciliation():

@@ -111,6 +111,28 @@ class ExtractionResponseSchema(BaseModel):
     sensitivity: Literal["normal", "sensitive", "restricted"] = "normal"
 
 
+class CompactExtractedClaimSchema(BaseModel):
+    """LLM 直接输出的最小候选契约。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str = Field(min_length=1, max_length=200)
+    value: str = Field(min_length=1)
+    kind: Literal["preference", "architecture", "identity", "config", "fact", "plan"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    notability: Literal["high", "medium", "low"]
+    evidence_quote: str = Field(min_length=1)
+
+
+class CompactExtractionResponseSchema(BaseModel):
+    """供结构化输出使用的紧凑提取响应。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claims: list[CompactExtractedClaimSchema] = Field(max_length=10)
+    should_memorize: bool
+
+
 def extraction_response_json_schema() -> dict[str, Any]:
-    """生成保留递归 additionalProperties=false 的远端 JSON Schema。"""
-    return ExtractionResponseSchema.model_json_schema()
+    """生成紧凑、递归 additionalProperties=false 的远端 JSON Schema。"""
+    return CompactExtractionResponseSchema.model_json_schema()

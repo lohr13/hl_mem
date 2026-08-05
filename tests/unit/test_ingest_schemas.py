@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from hl_mem.domain.claims.attributes import validate_canonical_attribute
 from hl_mem.ingest.schemas import (
+    CompactExtractionResponseSchema,
     ExtractionResponseSchema,
     extraction_response_json_schema,
 )
@@ -67,4 +68,24 @@ def test_invalid_extraction_response_is_rejected(path: tuple[Any, ...], value: A
 def test_generated_schema_forbids_extra_fields_recursively() -> None:
     schema = extraction_response_json_schema()
     assert schema["additionalProperties"] is False
-    assert schema["$defs"]["ExtractedClaimSchema"]["additionalProperties"] is False
+    assert schema["$defs"]["CompactExtractedClaimSchema"]["additionalProperties"] is False
+    assert (
+        CompactExtractionResponseSchema.model_validate(
+            {
+                "claims": [
+                    {
+                        "subject": "用户",
+                        "value": "用户偏好简洁回答",
+                        "kind": "preference",
+                        "confidence": 1.0,
+                        "notability": "high",
+                        "evidence_quote": "偏好简洁回答",
+                    }
+                ],
+                "should_memorize": True,
+            }
+        )
+        .claims[0]
+        .kind
+        == "preference"
+    )

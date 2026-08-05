@@ -1,4 +1,4 @@
-"""LLM 提取 prompt 的质量约束测试。"""
+"""极简 LLM 提取 prompt 的质量约束测试。"""
 
 from __future__ import annotations
 
@@ -8,56 +8,50 @@ from hl_mem.ingest.llm_extractor import SYSTEM_PROMPT
 
 
 class ExtractionPromptQualityTest(unittest.TestCase):
-    """防止自足性、主体和 attribute 边界约束回退。"""
+    """防止紧凑输出契约和准入边界回退。"""
 
-    def test_prompt_contains_self_containment_subject_and_attribute_guidance(
-        self,
-    ) -> None:
+    def test_prompt_contains_compact_contract_and_core_guidance(self) -> None:
         for expected in (
-            "脱离原对话上下文",
-            "speaker_entity",
-            "semantic_subject",
-            "fact.architecture",
-            "fact.api_design",
-            "config.timeout",
-            "config.policy",
-            "preference.workflow",
-            "config.path",
+            "对未来有价值的原子事实",
+            "脱离上下文仍可理解",
+            "subject 用标准名称",
+            '"kind"',
+            '"notability"',
+            '"evidence_quote"',
             "confidence",
+            "max 10 claims per chunk",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
 
-    def test_prompt_contains_required_counterexamples(self) -> None:
+    def test_prompt_defines_all_six_kinds(self) -> None:
         for expected in (
-            '❌ "串行" → ✅ "LLM 提取任务串行执行"',
-            '❌ "90s" → ✅ "LLM 请求超时为 90 秒"',
-            "subject=coding-workflow",
+            "preference：用户偏好/习惯/工作方式",
+            "architecture：已执行的架构决策、系统结构、组件关系",
+            "identity：用户名、硬件、角色等身份信息",
+            "config：端口、路径、模型名、API 地址等技术配置",
+            "fact：其他稳定的客观事实",
+            "plan：已确认的计划和截止日期",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
 
-    def test_prompt_keeps_confidence_independent_from_memory_deduplication(
-        self,
-    ) -> None:
-        self.assertIn("不判断它们是否与已有记忆冲突", SYSTEM_PROMPT)
-        self.assertIn(
-            "confidence 只表示当前 evidence 是否足以支持 claim 的内容和归因",
-            SYSTEM_PROMPT,
-        )
-        self.assertIn("不表示 importance", SYSTEM_PROMPT)
-        self.assertIn("与已有记忆是否一致", SYSTEM_PROMPT)
-        self.assertNotIn("已有事实的补充或改写", SYSTEM_PROMPT)
-        self.assertNotIn("confidence 降到 0.5 以下", SYSTEM_PROMPT)
+    def test_prompt_leaves_derived_fields_to_postprocessing(self) -> None:
+        for removed in (
+            "canonical_attribute",
+            "canonical_slot",
+            "topic_tags",
+            "importance",
+            "occurred_start",
+            "scope×volatility",
+            "四门",
+        ):
+            self.assertNotIn(removed, SYSTEM_PROMPT)
 
-    def test_prompt_contrasts_unsettled_discussion_with_confirmed_evidence(
-        self,
-    ) -> None:
+    def test_prompt_keeps_notability_and_exclusion_boundaries(self) -> None:
         for expected in (
-            "flaky 测试失败时重跑两次",
-            '"canonical_attribute":"config.policy"',
-            '"canonical_attribute":"fact.architecture"',
-            "代码与实测结果共同直接证明",
-            "建议/考虑/待定/或许/可以考虑/计划中/未执行",
-            "confidence 不得高于 0.55",
+            "high：核心身份、永久偏好、关键架构决策",
+            "medium：重要配置、项目特征、一般事实",
+            "low：边缘信息、临时状态、低频引用 → 跳过不提取",
+            "服务健康快照、CI 测试数量、版本号查询结果、过程进度、纯问候、未确认建议",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
 

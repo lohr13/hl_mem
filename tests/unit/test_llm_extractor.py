@@ -180,9 +180,11 @@ def test_timeout_is_configurable() -> None:
     assert settings.llm_timeout == 60.0
 
 
-def test_prompt_requires_canonical_attribute() -> None:
-    assert "canonical_attribute" in SYSTEM_PROMPT
-    assert "preference.ui_theme" in SYSTEM_PROMPT
+def test_prompt_requires_compact_candidate_fields_only() -> None:
+    for field in ("subject", "value", "kind", "confidence", "notability", "evidence_quote"):
+        assert f'"{field}"' in SYSTEM_PROMPT
+    assert "canonical_attribute" not in SYSTEM_PROMPT
+    assert "topic_tags" not in SYSTEM_PROMPT
 
 
 def test_prompt_hash_is_stable_and_has_expected_format() -> None:

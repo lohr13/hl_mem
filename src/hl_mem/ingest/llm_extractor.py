@@ -9,7 +9,7 @@ import re
 import unicodedata
 from copy import deepcopy
 from dataclasses import asdict, replace
-from typing import Any, Literal, get_args
+from typing import Any, Literal
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -19,7 +19,6 @@ from hl_mem.domain.claims.attributes import (
     ATTRIBUTE_ALIASES,
     ATTRIBUTE_HINTS,
     MUTUALLY_EXCLUSIVE_SLOTS,
-    OPERATIONAL_SLOT_NAMES,
     PREDICATE_ATTRIBUTE_MAP,
     PREDICATE_NORMALIZE,
     SLOT_REGISTRY,
@@ -31,6 +30,7 @@ from hl_mem.domain.claims.attributes import (
     reconcile_canonical_attribute,
     validate_slot_instance,
 )
+from hl_mem.domain.claims.query_tags import extract_query_tags
 from hl_mem.domain.entity import (
     _ENVIRONMENT_VARIABLE_PATTERN,
     _FILE_SUBJECT_PATTERN,
@@ -50,6 +50,20 @@ from hl_mem.llm.types import (
 )
 from hl_mem.observability.audit import current_audit
 
+from .admission import (
+    ALNUM_SECRET_RE,
+    LOW_VALUE_HEALTH_STATES,
+    NUMERIC_OR_VERSION_RE,
+    RECOVERY_CODE_RE,
+    SECRET_ASSIGNMENT_RE,
+    SECRET_FIELD_NAME_RE,
+    SK_TOKEN_RE,
+    MemoryCandidate,
+    admission_rules_fingerprint,
+    admit_claim,
+    low_value_reason,
+    secret_reason,
+)
 from .chunking import (
     ChunkingPolicy,
     ExtractionChunk,
@@ -58,222 +72,81 @@ from .chunking import (
 )
 from .extractors import ExtractedClaim
 from .repair import ENUM_MAPPINGS, TOPIC_TAG_ZH_TO_EN, repair_extraction_json
-from .schemas import ExtractionResponseSchema, TopicTag, extraction_response_json_schema
+from .schemas import (
+    CompactExtractionResponseSchema,
+    ExtractionResponseSchema,
+    extraction_response_json_schema,
+)
 from .verifier import EntailmentVerifier
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _operational_slot_prompt() -> str:
-    """从 registry 渲染允许 LLM 选择的 operational slot。"""
-    lines: list[str] = []
-    for name in OPERATIONAL_SLOT_NAMES:
-        definition = SLOT_REGISTRY[name]
-        qualifiers = "、".join(definition.required_qualifiers) or "无"
-        examples = "；".join(definition.examples) or "无"
-        lines.append(f"- {name}：{definition.description}；必需 qualifiers：{qualifiers}；示例：{examples}")
-    return "\n".join(lines)
+SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有价值的原子事实。
 
+只输出严格 JSON，不要输出解释、Markdown 或额外字段：
+{
+  "claims": [
+    {
+      "subject": "主体名称",
+      "value": "原子事实描述",
+      "kind": "preference|architecture|identity|config|fact|plan",
+      "confidence": 0.0,
+      "notability": "high|medium|low",
+      "evidence_quote": "原文中支持这条 claim 的片段"
+    }
+  ],
+  "should_memorize": true
+}
 
-_OPERATIONAL_SLOT_PROMPT = _operational_slot_prompt()
-_TOPIC_TAG_PROMPT = "、".join(sorted(get_args(TopicTag)))
-_SCHEMA_ENUM_CONSTRAINTS = f"""【JSON 枚举与类型硬约束】
-- topic_tags 的每一项必须是以下 {len(get_args(TopicTag))} 个英文标签之一：{_TOPIC_TAG_PROMPT}
-- sensitivity 只能是英文字符串 'normal' / 'sensitive' / 'restricted'
-- 顶层 entities 必须是字符串数组；claim.entities 必须是字符串数组或 null
-"""
+输入边界：
+- 只从 <extract_from> 提取事实。
+- <context_only> 仅用于消解主体和代词，不得作为事实证据。
+- 没有可提取事实时返回 {"claims":[],"should_memorize":false}。
+- should_memorize 必须等于 claims 是否非空。
 
-SYSTEM_PROMPT = f"""## 1. ROLE AND OUTPUT CONTRACT
-你是长期记忆事实提取器。只提取由当前事件支持、对未来有行动价值的原子事实，不判断它们是否与已有记忆冲突。
-只输出一个 JSON 对象，不要输出 JSON 以外的解释。对象结构保持为 claims、entities、should_memorize、sensitivity。
-先逐个候选完成以下步骤；最后令 should_memorize = (claims 非空)。没有候选通过准入时，claims 返回 []，should_memorize 返回 false。
+原子事实规则：
+- 每条 claim 只表达一个原子事实；一句话有多个事实时拆开，避免漏项。
+- value 必须脱离上下文仍可理解，包含必要的主体、关系、对象和单位。
+- subject 用标准名称（hl_mem、Hermes、用户、Codex 等），不用代词。
+- 保留用户原始语言：中文原文输出中文，英文原文输出英文。
+- 不判断与已有记忆是否冲突，只判断当前原文是否支持。
 
-## 2. STEP 1 — GENERATE CANDIDATE PROPOSITIONS
-从 <extract_from> 的当前事件中识别候选命题；<context_only> 仅用于消解主体和指代，不得作为新 claim 的证据来源。
-每个候选应表达一个可独立判断真假的主体—关系—对象命题。原始事件可以作为 evidence 保留，但只有通过准入门的命题才成为 claim。
+kind 分类：
+- preference：用户偏好/习惯/工作方式。
+- architecture：已执行的架构决策、系统结构、组件关系。
+- identity：用户名、硬件、角色等身份信息。
+- config：端口、路径、模型名、API 地址等技术配置。
+- fact：其他稳定的客观事实。
+- plan：已确认的计划和截止日期。
 
-## 3. STEP 2 — SPEECH ACT AND ADMISSION GATE
-先在内部将每个候选归为一种言语行为，不要把分类结果输出到 JSON：
-- asserted：说话者明确陈述。
-- committed：用户或有权限主体作出决定、承诺或约束。
-- reported：工具或文档报告某次观测。
-- proposed：建议、方案或评审意见。
-- hypothetical：假设、示例或条件分支。
-- procedural：正在执行、下一步、耗时或进度。
-- phatic：寒暄、确认或感谢。
-asserted、committed 可能准入；reported 仅在具有未来效用且 claim 保留来源/时点时可能准入；proposed、hypothetical、procedural、phatic 拒绝。
-“建议/考虑/待定/或许/可以考虑/计划中/未执行”等未决信号默认不提取；若仍因直接证据与未来效用准入，confidence 不得高于 0.55。
-“已确认/已批准/已执行/已完成/正式采用”等明确落地信号不属于未决信号，按实际证据强度判断。
+notability 分级：
+- high：核心身份、永久偏好、关键架构决策。
+- medium：重要配置、项目特征、一般事实。
+- low：边缘信息、临时状态、低频引用 → 跳过不提取。
+- 不要把 low 候选放入 claims。
 
-每个候选必须依次通过四门，任一失败即不生成 claim：
-1. 证据门：当前事件直接陈述、明确确认，或无歧义蕴含该命题；问题、建议、假设、预测和待验证项不算证据。
-2. 未来效用门：未来检索会改变回答、决策、个性化、约束执行、任务连续性或冲突判断。
-3. 持续/时点门：至少在当前事件之后仍有意义；已作出的决定、真实经历和承诺可以准入，纯进度或短暂快照通常拒绝。
-4. 区分度门：脱离上下文仍具体、自足，且不是通用常识、礼貌话、复述、纯数字、纯路径或无主体状态。
-核心判定问题：“如果六个月后检索到这条信息，它是否会改变 agent 的回答或行动？”还要问当前事件是否提供直接证据。
-任一答案为“否”，不要生成 claim。
+confidence：
+- 1.0：原文直接、明确陈述，主体和对象无歧义。
+- 0.8：结合上下文消解代词或省略后，只有一种合理解释。
+- 0.6：原文中的转述或弱推断；不能定位证据时不要输出。
 
-## 4. STEP 3 — ATOMIC, SELF-CONTAINED VALUE
-一条 claim 只表达一个原子命题；复合句拆成多条。value 必须脱离原对话上下文和 qualifiers 后仍可理解，包含必要的主体、关系、对象和单位。
-value 必须保持用户使用的原始语言：中文原文输出中文值，英文原文输出英文值，不要翻译。保留原文中的精确数字和日期，不得模糊化或改写。
-短于 12 字符的纯状态词、数值或时长必须重写为完整命题；qualifiers 只能补充结构化信息，不能承载理解主句所必需的信息。
-短值反例：
-❌ "串行" → ✅ "LLM 提取任务串行执行"
-❌ "90s" → ✅ "LLM 请求超时为 90 秒"
-❌ subject=用户 value="Codex 只改代码" → ✅ subject=coding-workflow value="Codex 负责代码修改，Hermes 负责测试验证"
-结合事件上下文中的 occurred_at 解析“今天”“明天”“下周”等相对时间，并在 value 中输出对应的绝对日期。
-事实明确描述时间区间时，将起止时间分别写入 occurred_start 和 occurred_end；无法确定时返回 null。
+evidence_quote：
+- 必须逐字或近似摘自 <extract_from>，并能在原文中定位。
+- 引用足以支持本条 claim 的最短片段，不要引用 <context_only>。
 
-## 5. STEP 4 — SUBJECT / PREDICATE / SLOT
-先判断命题真正描述谁或什么。区分 speaker_entity 与 semantic_subject，subject 必须使用 semantic_subject；默认仅在事实确实描述用户时使用“用户”。
-明确提到项目名或服务名时使用该名称。代词（他、她、它、那个）必须结合上下文替换为具体名称，不要保留代词。
-subject 必须复用标准实体名。同一实体不得因大小写、空格、连字符、产品后缀或“插件/memory/CLI”等描述产生新名称。
-若事件上下文提供 canonical_entities，必须从其中选择；组件级事实仍归组件，项目级事实归项目。
-规范化示例：hlmem/HL_MEM → hl_mem；Codex CLI → Codex；LLMExtractor → llm_extractor。
-版本号、端口、环境变量、路由规则和文件路径的 semantic_subject 不是“用户”，应绑定其所属产品、组件、配置或工作流。
+跳过：
+- 服务健康快照、CI 测试数量、版本号查询结果、过程进度、纯问候、未确认建议。
+- running/stopped/ok、测试通过数、环境变量已清空、正在重启等操作快照。
+- assistant 对用户原话的简单复述、示例、假设和通用常识。
+- 密钥、令牌、密码、恢复码等敏感凭据。
 
-predicate 保持以下七类且只能选择其一：
-- 偏好：喜欢或不喜欢的事物。
-- 使用：工具、数据库、操作系统等技术选择。
-- 状态：当前服务或运行状态。
-- 身份：用户名、角色、联系方式。
-- 配置：端口、路径、参数和行为策略。
-- 计划：计划事项和截止日期。
-- 事实：当前 evidence 直接支持的其他客观命题。
-用户批准的架构决定暂映射为 事实 + fact.architecture；行为约束优先映射为 配置 + config.policy。
-评审意见、建议、假设和未确认发现不得使用“事实”。predicate 无法准确表达时宁可拒绝，不得用“事实”强行兜底；确需使用“事实”时，在 reason 中写明具体事实类型。
-
-attribute 对照表：
-- fact.architecture：系统结构、分层和组件关系；具体 API 方法签名、请求/响应格式才使用 fact.api_design。
-- config.timeout：超时配置，不使用 config.env；config.policy：行为策略约束，不使用 config.env。
-- preference.workflow：工作流偏好，不使用 choice.tool；config.path：文件路径，不使用 choice.tool。
-canonical_attribute 是兼容字段：能确定 operational slot 时填写同名值；否则按 predicate 填写兼容属性。
-能确定 canonical_attribute 时先选 attribute，再由 registry 投影 predicate。canonical_slot 无法唯一确定时必须返回 null，不得猜测或创造新值。
-文本包含“改用”“换成”“现在用”“不用了”“改为”等变更信号时，在 qualifiers 中加入 "change": true。
-
-## 6. STEP 5 — SCOPE THEN VOLATILITY
-先判断 scope，再独立判断 volatility；不要从 predicate 直接推断。
-scope 回答“命题在哪段时间内有效”：
-- permanent：没有已知结束边界，跨会话持续成立直到新证据修改；不表示永远不变。
-- temporal：只对明确时间窗、一次运行、当前阶段、某版本、某任务或某个事件成立。
-判断：“该命题是否绑定某次运行、明确截止日期、当前阶段或版本？”是 → temporal，否则 → permanent。
-volatility 回答“在有效期内预计多容易变化”：
-- stable：短期内通常不会自然变化，需要明确决定或事件才改变。
-- ephemeral：会随运行、环境、状态刷新或短期计划频繁变化。
-即使没有明确截止期，若预计数小时或数天内自动刷新，选择 ephemeral。
-
-四象限对照：
-| 示例 | scope | volatility | 是否准入 |
-| 用户长期偏好简洁回答 | permanent | stable | 是 |
-| hl_mem 默认使用 SQLite WAL | permanent | stable | 是 |
-| 用户下周三前完成 benchmark | temporal | stable | 是，明确承诺/截止期 |
-| 当前服务监听临时端口 8200 | temporal | ephemeral | 通常否；仅后续任务依赖时是 |
-| CI 当前 443 passed | temporal | ephemeral | 否 |
-temporal + stable 是合法且重要的，适合有期限但期限内稳定的计划、旅行和冻结期配置。
-permanent + ephemeral 应极少出现；选择该组合时必须重新检查它是否其实是 temporal。
-
-## 7. STEP 6 — EVIDENCE CONFIDENCE
-confidence 只表示当前 evidence 是否足以支持 claim 的内容和归因；不表示 importance、语气强度、持续时长、分类把握或与已有记忆是否一致。
-每条准入 claim 只能选择以下离散锚点之一：
-- 0.98：用户明确要求记住，或权威结构化字段直接给出。
-- 0.90：当前消息直接、无条件陈述，主体和对象明确。
-- 0.75：消解明确上下文中的代词或省略后得到，且只有一种合理解释。
-- 0.55：转述、历史报告或工具推断，内容可能真实但当前性或归因较弱；仍必须通过准入门。
-- < 0.50：含歧义、推测、建议、未确认评审意见或主体不明，不准入。
-禁止输出 0.91、0.93、0.95 等未定义中间值。事实明确但 predicate/slot 不确定时，不要降低 confidence 掩盖分类问题；slot 不唯一则返回 null。
-
-importance 与 confidence 分离。importance 必须是 0.0 到 1.0：
-- 0.9-1.0：核心身份、永久偏好、关键约束。
-- 0.7-0.8：重要架构决策、工具选择、配置。
-- 0.5-0.6：项目状态、计划、一般事实。
-- 0.3-0.4：一次性操作记录、临时状态。
-- < 0.2：不写入（噪声）。
-不要仅因情绪化措辞提高 importance。保护类型 explicit_memory、identity.name 即使低分也写入。
-
-## 8. EXCLUSIONS
-跳过以下信息，不要提取为 claim：
-- 服务健康状态报告，如 healthz 返回值、服务状态 ok/running/stopped、版本号查询结果。
-- 工具自身的实现细节，如 git commit hash、文件行数、测试数量、迁移编号、数据库审计日志条数。
-- 脱离上下文的纯数字、纯版本号、纯路径；value 少于 5 个字符或仅为数字和点号的组合。
-- 临时调试输出、中间步骤状态报告，如“正在处理”“已启动 Codex”。
-- 正在执行、下一步动作、预计耗时、CI 快照和过程进度。
-- 未确认的评审意见、建议、风险猜测和待验证发现。
-- 已被覆盖的旧配置值，如 superseded 的 provider 变更历史。
-- assistant 对用户原话的复述或确认；不得因此产生第二条 claim。
-assistant 的“测试已通过”属于 reported 快照，默认拒绝；只有用户明确要求记住某个验收基线时例外。
-
-## 9. CONTRASTIVE FEW-SHOTS
-对照 1（讨论中的建议，拒绝）：
-输入：assistant：flaky 测试失败时重跑两次，也可以考虑把测试命令改成 pytest -v -x。用户：先讨论，方案待定，尚未执行。
-输出：{{"claims":[],"should_memorize":false}}
-说明：建议、可以考虑、待定和尚未执行都表示 proposed/procedural，不是已批准政策。
-
-对照 2（用户明确确认的政策，允许）：
-输入：用户：已确认并批准：CI 失败只允许重跑一次，此后必须停止并报告。
-输出要点：{{"subject":"CI workflow","predicate":"配置","canonical_attribute":"config.policy","value":"CI 失败只允许重跑一次，此后必须停止并报告","confidence":0.90,"scope":"permanent","volatility":"stable"}}
-说明：用户明确确认并批准了可约束未来行为的政策，不是讨论建议。
-
-对照 3（代码与实测共同证明的架构，允许）：
-输入：tool：代码显示 Database 初始化执行 PRAGMA journal_mode=WAL；实测查询 journal_mode 返回 wal。
-输出要点：{{"subject":"hl_mem","predicate":"事实","canonical_attribute":"fact.architecture","value":"hl_mem 的 SQLite 存储使用 WAL 模式","confidence":0.90,"scope":"permanent","volatility":"stable"}}
-说明：代码与实测结果共同直接证明稳定的架构描述，不是未验证的评审意见。
-
-正例 1（明确偏好）：
-输入：用户：以后回答尽量简洁，先给结论，不要长篇铺垫。
-输出要点：{{"subject":"用户","predicate":"偏好","canonical_slot":"preference.response_style","value":"用户偏好简洁回答，并要求先给结论、避免长篇铺垫","confidence":0.90,"scope":"permanent","volatility":"stable"}}
-说明：直接陈述、可改变未来回答且无已知结束边界。
-
-正例 2（有期限的计划，occurred_at=2026-07-29）：
-输入：用户：我决定周五前完成 extraction benchmark，期间先不切换模型。
-输出两条原子 claim：
-[{{"predicate":"计划","value":"用户计划在 2026-07-31 前完成 extraction benchmark","confidence":0.90,"scope":"temporal","volatility":"stable"}},
- {{"predicate":"配置","value":"extraction benchmark 完成前保持当前模型不变","confidence":0.90,"scope":"temporal","volatility":"stable"}}]
-说明：明确截止边界和承诺，期限内稳定，不是 ephemeral。
-
-正例 3（确认后的架构决定）：
-输入：assistant：评审建议把时间解析拆成第二步。用户：同意，就按这个方案定下来，事实抽取阶段不要解析时间。
-输出要点：{{"subject":"hl_mem","predicate":"事实","canonical_attribute":"fact.architecture","value":"hl_mem 将事实抽取与时间解析拆分为两个阶段","qualifiers":{{"change":true}},"confidence":0.75,"scope":"permanent","volatility":"stable"}}
-说明：assistant 的建议本身不准入；用户确认后成为架构决定，命题需从唯一上下文消解“这个方案”。
-
-反例 1（过程状态与耗时预测）：
-输入：assistant：我正在执行检索，预计还要 10 分钟，完成后会运行测试。
-输出：{{"claims":[],"should_memorize":false}}
-说明：全是 procedural future/progress，没有跨事件效用。
-
-反例 2（CI / 健康快照）：
-输入：assistant：CI 全绿，443 passed、1 skipped，healthz 返回 ok。
-输出：{{"claims":[],"should_memorize":false}}
-说明：这是会自动刷新且不改变未来行为的 tool/status snapshot。
-
-反例 3（未确认的评审意见）：
-输入：reviewer：ingest.py 可能存在事务不原子的问题，建议进一步验证。
-输出：{{"claims":[],"should_memorize":false}}
-说明：“可能”“建议验证”是 proposed/hypothetical finding，不得改写为“ingest.py 的事务不原子”。
-
-## 10. JSON SCHEMA CONSTRAINTS
-每个 claim 必须包含 subject、predicate、canonical_attribute、canonical_slot、topic_tags、value、qualifiers、confidence、volatility、reason、scope、importance、occurred_start、occurred_end、entities；不得增删或改名。
-canonical_slot 只表示参与业务规则的 operational slot，只能从以下 15 个值选择；无法唯一确定时返回 null：
-{_OPERATIONAL_SLOT_PROMPT}
-topic_tags 必须是 JSON 数组，只能包含以下 44 个英文标签，可返回空数组；禁止输出中文标签或集合外的值：
-{_TOPIC_TAG_PROMPT}
-顶层和每条 claim 的 entities 必须是 JSON 数组，数组元素必须是字符串，例如 ["PostgreSQL"]；没有实体时分别返回 [] 或 null，禁止直接输出字符串。
-entities 列出明确涉及的实体名。sensitivity 只能是 normal、sensitive、restricted，禁止输出中文值。
-predicate 只能是：偏好、使用、状态、身份、配置、计划、事实。
-scope 只能是 temporal、permanent；volatility 只能是 stable、ephemeral。
-输出必须满足以下 schema enum 约束：
-{_SCHEMA_ENUM_CONSTRAINTS}"""
-
-SYSTEM_PROMPT += """
-再次确认：只输出 JSON；should_memorize 等于 claims 是否非空；所有 claim 字段和 enum 必须符合 schema。"""
+限制：
+- max 10 claims per chunk。
+- claims 中每项必须且只能包含上述 6 个字段。
+- kind、notability 和 confidence 必须满足上述枚举与范围。"""
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
-LOW_VALUE_HEALTH_STATES = frozenset({"ok", "running", "stopped", "健康", "正常"})
-NUMERIC_OR_VERSION_RE = re.compile(r"[0-9.]+")
-_RECOVERY_CODE_RE = re.compile(r"(?i)(?<![a-z0-9])[a-z0-9]{5}-[a-z0-9]{5}(?![a-z0-9])")
-_SECRET_ASSIGNMENT_RE = re.compile(r"""(?i)["']?(?:password|passwd|api[_-]?key)["']?\s*[:=]""")
-_SECRET_FIELD_NAME_RE = re.compile(r"(?i)(?:password|passwd|api[_-]?key)")
-_SK_TOKEN_RE = re.compile(r"(?i)(?<![a-z0-9])sk-[a-z0-9_-]+")
-_ALNUM_SECRET_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9]{16,32}(?![A-Za-z0-9])")
 _UNSETTLED_SIGNAL_RE = re.compile(r"可以考虑|建议|考虑|待定|或许|计划中|未执行")
 _SETTLED_SIGNAL_RE = re.compile(
     r"已经确认|已确认|已经批准|已批准|已经执行|已执行|已经实施|已实施|"
@@ -330,6 +203,23 @@ _LEGACY_CLAIM_DEFAULTS: dict[str, Any] = {
     "scope": "permanent",
     "importance": 0.5,
 }
+_KIND_MAP: dict[str, tuple[str, str, str, str]] = {
+    "preference": ("偏好", "preference.other", "permanent", "stable"),
+    "architecture": ("事实", "fact.architecture", "permanent", "stable"),
+    "identity": ("身份", "identity.other", "permanent", "stable"),
+    "config": ("配置", "config.other", "permanent", "stable"),
+    "fact": ("事实", "fact.other", "permanent", "stable"),
+    "plan": ("计划", "plan.other", "temporal", "stable"),
+}
+_KIND_TOPIC_TAG = {
+    "preference": "preference",
+    "architecture": "architecture",
+    "identity": "identity",
+    "config": "config",
+    "fact": "fact",
+    "plan": "plan",
+}
+_NOTABILITY_IMPORTANCE = {"high": 0.9, "medium": 0.6, "low": 0.3}
 
 
 def _regex_fingerprint(pattern: re.Pattern[str]) -> dict[str, Any]:
@@ -356,16 +246,20 @@ def _postprocess_rules_fingerprint() -> dict[str, Any]:
         "slot_registry": {name: asdict(definition) for name, definition in SLOT_REGISTRY.items()},
         "durable_scope_attributes": sorted(_DURABLE_SCOPE_ATTRIBUTES),
         "legacy_claim_defaults": _LEGACY_CLAIM_DEFAULTS,
+        "compact_kind_map": _KIND_MAP,
+        "compact_kind_topic_tag": _KIND_TOPIC_TAG,
+        "notability_importance": _NOTABILITY_IMPORTANCE,
+        "admission": admission_rules_fingerprint(),
         "unsettled_confidence_ceiling": _UNSETTLED_CONFIDENCE_CEILING,
         "repair_enum_mappings": ENUM_MAPPINGS,
         "repair_topic_tag_mappings": TOPIC_TAG_ZH_TO_EN,
         "patterns": {
             "numeric_or_version": _regex_fingerprint(NUMERIC_OR_VERSION_RE),
-            "recovery_code": _regex_fingerprint(_RECOVERY_CODE_RE),
-            "secret_assignment": _regex_fingerprint(_SECRET_ASSIGNMENT_RE),
-            "secret_field_name": _regex_fingerprint(_SECRET_FIELD_NAME_RE),
-            "sk_token": _regex_fingerprint(_SK_TOKEN_RE),
-            "mixed_alnum_secret": _regex_fingerprint(_ALNUM_SECRET_RE),
+            "recovery_code": _regex_fingerprint(RECOVERY_CODE_RE),
+            "secret_assignment": _regex_fingerprint(SECRET_ASSIGNMENT_RE),
+            "secret_field_name": _regex_fingerprint(SECRET_FIELD_NAME_RE),
+            "sk_token": _regex_fingerprint(SK_TOKEN_RE),
+            "mixed_alnum_secret": _regex_fingerprint(ALNUM_SECRET_RE),
             "unsettled_signal": _regex_fingerprint(_UNSETTLED_SIGNAL_RE),
             "settled_signal": _regex_fingerprint(_SETTLED_SIGNAL_RE),
             "temporal_scope": _regex_fingerprint(_TEMPORAL_SCOPE_RE),
@@ -462,51 +356,12 @@ def normalize_scope(
 
 def _is_low_value_claim(claim: ExtractedClaim) -> bool:
     """判断 LLM 提取结果是否属于应在输出边界丢弃的低价值 claim。"""
-    value = unicodedata.normalize("NFKC", str(claim.value)).strip()
-    if not value:
-        return True
-    if NUMERIC_OR_VERSION_RE.fullmatch(value) and claim.canonical_slot not in MUTUALLY_EXCLUSIVE_SLOTS:
-        return True
-    return claim.canonical_slot == "state.service_health" and value.casefold() in LOW_VALUE_HEALTH_STATES
+    return low_value_reason(claim.value, claim.canonical_slot) is not None
 
 
 def _secret_reason(value: Any) -> str | None:
     """识别禁止进入 Claim 存储的确定性凭据格式。"""
-    if isinstance(value, dict):
-        for key, nested_value in value.items():
-            normalized_key = unicodedata.normalize("NFKC", str(key)).strip()
-            key_reason = _secret_reason(normalized_key)
-            if key_reason is not None:
-                return key_reason
-            has_value = nested_value is not None and (
-                not isinstance(nested_value, (str, dict, list, tuple, set, frozenset)) or bool(nested_value)
-            )
-            if _SECRET_FIELD_NAME_RE.fullmatch(normalized_key) and has_value:
-                return "secret_assignment"
-            nested_reason = _secret_reason(nested_value)
-            if nested_reason is not None:
-                return nested_reason
-        return None
-    if isinstance(value, (list, tuple, set, frozenset)):
-        for item in value:
-            nested_reason = _secret_reason(item)
-            if nested_reason is not None:
-                return nested_reason
-        return None
-    if value is None:
-        return None
-    text = unicodedata.normalize("NFKC", str(value)).strip()
-    if _RECOVERY_CODE_RE.search(text):
-        return "recovery_code"
-    if _SECRET_ASSIGNMENT_RE.search(text):
-        return "secret_assignment"
-    if _SK_TOKEN_RE.search(text):
-        return "sk_token"
-    for match in _ALNUM_SECRET_RE.finditer(text):
-        token = match.group(0)
-        if any(character.isalpha() for character in token) and any(character.isdigit() for character in token):
-            return "mixed_alnum_token"
-    return None
+    return secret_reason(value)
 
 
 def _postprocess_extracted_claims(claims: list[ExtractedClaim]) -> list[ExtractedClaim]:
@@ -739,6 +594,76 @@ class LLMExtractor:
         self.last_output_tokens += int(getattr(self.verifier, "last_output_tokens", 0))
         self._llm_call_count += int(getattr(self.verifier, "last_call_count", 0))
 
+    def _postprocess_claim(self, raw: dict[str, Any], source_text: str) -> dict[str, Any] | None:
+        """把 LLM 的 6 字段候选准入并映射为现有完整 claim schema。"""
+        try:
+            candidate = MemoryCandidate(
+                subject=str(raw["subject"]).strip(),
+                value=str(raw["value"]).strip(),
+                kind=str(raw["kind"]).strip().casefold(),
+                confidence=float(raw["confidence"]),
+                notability=str(raw["notability"]).strip().casefold(),
+                evidence_quote=str(raw["evidence_quote"]).strip(),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+        decision = admit_claim(candidate, source_text)
+        current_audit().emit(
+            "extract",
+            "admission_checked",
+            "accepted" if decision.accepted else "rejected",
+            detail={
+                "reason": decision.reason,
+                "kind": candidate.kind,
+                "notability": candidate.notability,
+            },
+        )
+        if not decision.accepted:
+            if decision.reason in {
+                "recovery_code",
+                "secret_assignment",
+                "sk_token",
+                "mixed_alnum_token",
+            }:
+                self._secret_rejections[decision.reason] = self._secret_rejections.get(decision.reason, 0) + 1
+            return None
+
+        predicate, canonical_attribute, scope, volatility = _KIND_MAP[candidate.kind]
+        subject = normalize_entity_id(candidate.subject)
+        inferred_attribute = infer_canonical_attribute(predicate, subject, candidate.value, {})
+        slot_definition = SLOT_REGISTRY.get(inferred_attribute)
+        canonical_slot = (
+            inferred_attribute
+            if slot_definition is not None
+            and slot_definition.is_operational
+            and not slot_definition.required_qualifiers
+            else None
+        )
+        topic_tags = normalize_topic_tags(
+            [
+                _KIND_TOPIC_TAG[candidate.kind],
+                *extract_query_tags(f"{subject} {candidate.value}"),
+            ]
+        )
+        return {
+            "subject": subject,
+            "predicate": predicate,
+            "canonical_attribute": canonical_attribute,
+            "canonical_slot": canonical_slot,
+            "topic_tags": topic_tags,
+            "value": candidate.value,
+            "qualifiers": {},
+            "confidence": candidate.confidence,
+            "volatility": volatility,
+            "reason": decision.reason,
+            "scope": scope,
+            "importance": _NOTABILITY_IMPORTANCE[candidate.notability],
+            "occurred_start": None,
+            "occurred_end": None,
+            "entities": [subject],
+        }
+
     def _extract_one_chunk(
         self,
         chunk: ExtractionChunk,
@@ -755,8 +680,14 @@ class LLMExtractor:
         source_kind = str(event_context.get("source_kind") or event_context.get("category") or "")
         if re.search(r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)", chunk.text):
             source_kind = "quoted_report"
+        compact_response = isinstance(result, CompactExtractionResponseSchema)
         for item in result.claims:
             raw_claim = item.model_dump()
+            if compact_response:
+                postprocessed = self._postprocess_claim(raw_claim, chunk.text)
+                if postprocessed is None:
+                    continue
+                raw_claim = postprocessed
             secret_reason = _secret_reason(raw_claim)
             if secret_reason is not None:
                 self._secret_rejections[secret_reason] = self._secret_rejections.get(secret_reason, 0) + 1
@@ -801,7 +732,7 @@ class LLMExtractor:
         chunk: ExtractionChunk,
         context: str,
         occurred_at: str,
-    ) -> ExtractionResponseSchema:
+    ) -> CompactExtractionResponseSchema | ExtractionResponseSchema:
         """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
         schema_errors: list[dict[str, Any]] = []
         previous_output: Any = None
@@ -855,6 +786,8 @@ class LLMExtractor:
                     model=self.model,
                 )
                 self._repair_count += self._count_repairs(raw, repaired)
+                if self._uses_compact_schema(repaired):
+                    return CompactExtractionResponseSchema.model_validate(repaired)
                 compatible = self._parse_legacy_defaults(repaired)
                 return ExtractionResponseSchema.model_validate(compatible)
             except (PydanticValidationError, ValueError) as error:
@@ -940,6 +873,17 @@ class LLMExtractor:
         return merged
 
     @staticmethod
+    def _uses_compact_schema(payload: dict[str, Any]) -> bool:
+        """区分当前 6 字段响应与需要兼容的旧响应。"""
+        claims = payload.get("claims")
+        if not isinstance(claims, list):
+            return False
+        if not claims:
+            return set(payload).issubset({"claims", "should_memorize"})
+        compact_markers = {"kind", "notability", "evidence_quote"}
+        return any(isinstance(item, dict) and compact_markers.intersection(item) for item in claims)
+
+    @staticmethod
     def _parse_legacy_defaults(payload: dict[str, Any]) -> dict[str, Any]:
         """仅对带有旧版核心字段签名的响应补齐后来新增的字段。"""
         compatible = dict(payload)
@@ -997,6 +941,10 @@ class LLMExtractor:
             path = ".".join(str(part) for part in item["loc"])
             if "topic_tags" in item["loc"]:
                 allowed_values: list[str] = sorted(ALLOWED_TOPIC_TAGS)
+            elif item["loc"] and item["loc"][-1] == "kind":
+                allowed_values = sorted(_KIND_MAP)
+            elif item["loc"] and item["loc"][-1] == "notability":
+                allowed_values = sorted(_NOTABILITY_IMPORTANCE)
             elif item["loc"] and item["loc"][-1] == "sensitivity":
                 allowed_values = ["normal", "sensitive", "restricted"]
             elif item["loc"] and item["loc"][-1] == "entities":
