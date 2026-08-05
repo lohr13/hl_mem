@@ -1,6 +1,6 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.21.2 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.22.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
@@ -113,6 +113,7 @@ hl-mem import var/events.jsonl --db var/restored.db
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
+| `embedding.api_mode` | 字符串 | `"compatible"` | `compatible`、`native` | `embedding_api_mode` |
 | `embedding.base_url` | 字符串 | `"https://dashscope.aliyuncs.com/compatible-mode/v1"` | 任意字符串 | `embedding_base_url` |
 | `embedding.connect_timeout` | 数值 | `5.0` | 任意数值 | `embedding_connect_timeout` |
 | `embedding.dim` | 整数 | `2048` | 任意整数 | `embedding_dim` |
@@ -136,6 +137,7 @@ hl-mem import var/events.jsonl --db var/restored.db
 | `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
 | `extraction.mode` | 字符串 | `"fake"` | `fake`、`real`、`llm` | `extractor_mode` |
 | `extraction.pre_filter` | 布尔值 | `false` | `true`、`false` | `extract_pre_filter` |
+| `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
 
 ### `[hermes]`
 

@@ -18,8 +18,10 @@ max_attempts = 3
 [embedding]
 # 推荐启用值（不是代码默认值；代码默认 mode = "fake"）。
 mode = "real"
-model = "text-embedding-v4"
+base_url = "https://dashscope.aliyuncs.com"
+model = "qwen3.7-text-embedding"
 dim = 2048
+api_mode = "native"
 
 [reranker]
 # 推荐启用值（不是代码默认值；代码默认 mode = "off"）。
@@ -40,6 +42,7 @@ timeout_seconds = 20.0
 mode = "llm"
 pre_filter = false
 chunk_target_chars = 12000
+verification_mode = "off"
 
 [recall]
 default_limit = 5

@@ -1,17 +1,25 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-04 · v0.21.2
+> 最后更新：2026-08-05 · v0.22.0
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.21.2
-- **阶段**：v0.21.2 发版准备
+- **版本**：v0.22.0
+- **阶段**：v0.22.0 发版准备
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），36 migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-05 v0.22.0 Embedding 迁移与安全门
+
+- Embedder 新增 compatible/native 双 API 模式与 query/document `text_type` 角色，生产配置迁移到 `qwen3.7-text-embedding` 2048 维向量。
+- 提取链新增 fail-open 的 entailment verifier；默认关闭，生产可用 `audit` 只记录支持度结果而不拦截 Claim。
+- dedup 升级为 cosine 候选、确定性安全门、异步 LLM 灰区判断三层链路，`policy_version` 更新为 v2。
+- 新增 claim-pair、recall、extraction/entailment 冻结评测集，以及 embedding 消融和 no-answer calibration 工具。
+- v0.22.0 无新增 migration；数据库 schema 保持在 migration 036。
 
 ### 2026-08-04 v0.21.2 冲突终态收敛
 

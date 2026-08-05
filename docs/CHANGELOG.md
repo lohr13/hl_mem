@@ -1,5 +1,44 @@
 # HL-Mem 变更记录
 
+## v0.22.0（2026-08-05）
+
+### Embedding Model Migration
+
+- Embedder 新增双 API 模式（compatible + native），支持 DashScope native API 的 `text_type` query/document 角色区分。
+- 生产 embedding 模型从 text-embedding-v4 迁移到 qwen3.7-text-embedding（native API, 2048 维, text_type 角色化），消融实验验证 Hit@5 +13.3%、MRR +20.7%。
+- 新增 `embedding.api_mode` 配置项（`compatible` | `native`），默认 `compatible` 保持向后兼容。
+- 全量 re-embedding 脚本 `scripts/reembed_all_claims.py` 支持 `--dry-run`、并发漂移守卫与失败时事务回滚。
+- `embedding_model` 列记录每条 Claim 的 embedding 版本，并由完整性检查识别模型或维度漂移，降低旧模型向量混用风险。
+
+### Extraction Verification
+
+- 新增 entailment verifier（`src/hl_mem/ingest/verifier.py`）：提取后批量 LLM 验证 claim 是否被原文支持（entailed/partially_entailed/contradicted/unsupported）。
+- 新增 `extraction.verification_mode` 配置项（`off` | `audit` | `enforce`），默认 `off`。
+- audit 模式只记录不拦截，enforce 模式验证但不拦截（未来版本才真正拦截 unsupported claim）。
+- 触发条件：claim 数量超过阈值（默认 5）或 enforce 模式下每个非空 chunk。
+- fail-open 设计：API 失败/限流时不影响提取流程。
+
+### Dedup Safety Gate
+
+- dedup 改为三层判定链：cosine 生成候选 → 确定性安全门 → 异步 LLM 判灰区。
+- 确定性安全门检查 subject/slot/qualifier 一致性，阻止已知误合并模式（不同 qualifier 值、不同主体、HTTP_PROXY vs HTTPS_PROXY 等）。
+- cosine 不再直接决定合并，只生成候选。
+- policy_version 升级到 v2；v1 决策不再自动 apply。
+- DedupJudge 补充 canonical_slot/canonical_attribute/qualifiers/valid_from/valid_to 字段，强化等价判定 prompt。
+
+### Evaluation Infrastructure
+
+- 新增 3 套冻结评测数据集：claim-pair（80 对）、recall query（80 条）、extraction/entailment（123 对）。
+- 新增 embedding 逐级消融 benchmark runner（6 配置 V0→Q4）。
+- 新增 no-answer calibration 脚本。
+- 评测数据集验证器将预期的 corpus 漂移降级为 warning，同时保持数据结构、标签与 split 校验严格。
+
+### Known Issues
+
+- 拒答能力（no-answer precision）仍然弱（0.17-0.24），相似度阈值无法有效区分有答案/无答案查询；需要更复杂机制（entailment/no-evidence 判定）。
+- relevance gate 保持 observe 模式，不建议切换 enforce。
+- 本版本不新增 migration，schema 仍为 migration 036。
+
 ## v0.21.2（2026-08-04）
 
 ### Conflict Convergence and Operations
