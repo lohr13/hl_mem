@@ -230,11 +230,11 @@ _ABSOLUTE_DATE_RE = re.compile(
     r"(?:[ T](?P<hour>\d{1,2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?)?"
 )
 _TECH_ENTITY_RE = re.compile(
-    r"(?ix)\b(?:"
+    r"(?ix)(?<![A-Za-z0-9_])(?:"
     r"PostgreSQL|SQLite|MySQL|Redis|FastAPI|Uvicorn|PyTorch|Django|Flask|"
     r"OpenAI|Anthropic|DashScope|Qwen(?:[\w.-]+)?|GPT(?:[\w.-]+)?|"
     r"Claude(?:[\w.-]+)?|Gemini(?:[\w.-]+)?|DeepSeek(?:[\w.-]+)?"
-    r")\b"
+    r")(?![A-Za-z0-9_])"
 )
 _BACKTICK_ENTITY_RE = re.compile(r"`([^`\r\n]{2,100})`")
 _RELATIVE_DATE_OFFSETS = {"今天": 0, "明天": 1, "后天": 2, "下周": 7}

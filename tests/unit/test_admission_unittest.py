@@ -137,6 +137,7 @@ class AdmissionPolicyTest(unittest.TestCase):
 
     def test_evidence_requires_exact_structured_numeric_tokens(self) -> None:
         self.assertTrue(evidence_quote_matches("代理端口为 8200", "当前代理端口为 8200。"))
+        self.assertTrue(evidence_quote_matches("代理地址为 127.0.0.1:8200", "当前代理地址为 127.0.0.1:8200。"))
         self.assertFalse(evidence_quote_matches("代理端口为 8200", "当前代理端口为 8300。"))
         self.assertFalse(evidence_quote_matches("代理地址为 127.0.0.1:8200", "代理地址为 127.0.0.1:8300"))
 
@@ -312,6 +313,49 @@ class CompactExtractionTest(unittest.TestCase):
         self.assertEqual(len(claims), 1)
         self.assertEqual(claims[0].value, "用户偏好简洁回答")
 
+    def test_compact_relative_date_uses_conversation_timezone(self) -> None:
+        value = "用户计划明天锻炼"
+        response = {
+            "claims": [
+                {
+                    "subject": "用户",
+                    "value": value,
+                    "kind": "plan",
+                    "confidence": 0.9,
+                    "notability": "medium",
+                    "evidence_quote": value,
+                }
+            ],
+            "should_memorize": True,
+        }
+
+        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract(
+            value,
+            {"occurred_at": "2026-08-06T23:30:00+08:00"},
+        )
+
+        self.assertEqual(claims[0].occurred_start, "2026-08-07T00:00:00+08:00")
+
+    def test_compact_extracts_adjacent_technology_entity(self) -> None:
+        value = "hl_mem使用PostgreSQL数据库"
+        response = {
+            "claims": [
+                {
+                    "subject": "hl_mem",
+                    "value": value,
+                    "kind": "choice",
+                    "confidence": 0.9,
+                    "notability": "high",
+                    "evidence_quote": value,
+                }
+            ],
+            "should_memorize": True,
+        }
+
+        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract(value)
+
+        self.assertIn("PostgreSQL", claims[0].entities or [])
+
     def test_legacy_response_still_uses_existing_parser(self) -> None:
         response = {
             "claims": [
@@ -347,6 +391,38 @@ class CompactExtractionTest(unittest.TestCase):
         claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract("935 tests passed")
 
         self.assertEqual(claims, [])
+
+    def test_compact_and_legacy_snapshots_have_identical_admission(self) -> None:
+        compact = {
+            "claims": [
+                {
+                    "subject": "hl_mem",
+                    "value": "935 tests passed",
+                    "kind": "fact",
+                    "confidence": 0.9,
+                    "notability": "medium",
+                    "evidence_quote": "935 tests passed",
+                }
+            ],
+            "should_memorize": True,
+        }
+        legacy = {
+            "claims": [
+                {
+                    "subject": "hl_mem",
+                    "predicate": "事实",
+                    "value": "935 tests passed",
+                    "confidence": 0.9,
+                }
+            ],
+            "should_memorize": True,
+        }
+
+        compact_claims = LLMExtractor(_FakeLLMClient(compact), ChunkingPolicy(10_000, 0, 2)).extract("935 tests passed")
+        legacy_claims = LLMExtractor(_FakeLLMClient(legacy), ChunkingPolicy(10_000, 0, 2)).extract("935 tests passed")
+
+        self.assertEqual(compact_claims, legacy_claims)
+        self.assertEqual(compact_claims, [])
 
 
 if __name__ == "__main__":
