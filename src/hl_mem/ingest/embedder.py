@@ -31,11 +31,11 @@ class Embedder:
         client: httpx.Client | None = None,
         *,
         api_mode: Literal["compatible", "native"] = "compatible",
-        text_type: Literal["document", "query"] = "document",
+        text_type: Literal["document", "query"] | None = None,
     ) -> None:
         if api_mode not in {"compatible", "native"}:
             raise ValueError("embedding api_mode must be 'compatible' or 'native'")
-        if text_type not in {"document", "query"}:
+        if text_type is not None and text_type not in {"document", "query"}:
             raise ValueError("embedding text_type must be 'document' or 'query'")
         self.api_key, self.base_url, self.model, self.dim = (
             api_key,
@@ -66,11 +66,21 @@ class Embedder:
 
     def embed_query_batch(self, texts: list[str]) -> list[bytes]:
         result: list[bytes] = []
+        query_text_type = "query" if self.text_type is not None else None
         for start in range(0, len(texts), self.MAX_BATCH_SIZE):
-            result.extend(self._request(texts[start : start + self.MAX_BATCH_SIZE], "query"))
+            result.extend(
+                self._request(
+                    texts[start : start + self.MAX_BATCH_SIZE],
+                    query_text_type,
+                )
+            )
         return result
 
-    def _request(self, texts: list[str], text_type: Literal["document", "query"]) -> list[bytes]:
+    def _request(
+        self,
+        texts: list[str],
+        text_type: Literal["document", "query"] | None,
+    ) -> list[bytes]:
         started = time.perf_counter()
 
         def send_request() -> httpx.Response:
@@ -78,10 +88,13 @@ class Embedder:
             payload: dict[str, Any]
             if self.api_mode == "native":
                 url = f"{self.base_url}/api/v1/services/embeddings/text-embedding/text-embedding"
+                parameters: dict[str, Any] = {"dimension": self.dim}
+                if text_type is not None:
+                    parameters["text_type"] = text_type
                 payload = {
                     "model": self.model,
                     "input": {"texts": texts},
-                    "parameters": {"dimension": self.dim, "text_type": text_type},
+                    "parameters": parameters,
                 }
             else:
                 url = f"{self.base_url}/embeddings"

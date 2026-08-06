@@ -16,7 +16,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +58,8 @@ DEFAULT_OUTPUT = ROOT / "evaluation" / "results" / "longmemeval_s_benchmark.json
 DATABASE_ROOT = ROOT / "var" / "benchmark_lme"
 COMPARE_ROOT = DATABASE_ROOT / "config_compare"
 COMPARE_CACHE = ROOT / "evaluation" / "cache" / "longmemeval_config_compare"
+LME_12_BACKUP_ROOT = ROOT / "evaluation" / "cache" / "lme_12_backup"
+THRESHOLD_ANALYSIS_OUTPUT = ROOT / "evaluation" / "results" / "lme_12_threshold_analysis.json"
 DEFAULT_CONFIG = ROOT / "hl_mem.toml"
 DEFAULT_ENV_FILE = ROOT / ".env"
 QA_MODEL = "qwen3.7-plus"
@@ -65,7 +67,8 @@ RETRIEVAL_KS = (1, 5, 10)
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-CLAIM_RELEVANCE_THRESHOLD = 0.65
+CLAIM_RELEVANCE_THRESHOLD = 0.5
+SIMILARITY_THRESHOLDS = (0.2, 0.3, 0.4, 0.5, 0.65)
 QUESTION_TYPES = (
     "single-session-user",
     "single-session-assistant",
@@ -540,6 +543,125 @@ def _claim_relevance_scores(
     }
 
 
+def _claim_similarity_records(
+    claims: Sequence[Mapping[str, Any]],
+    case: LongMemEvalCase,
+    embedder: Any,
+) -> list[dict[str, Any]]:
+    """Score every claim against answer and question and retain evidence provenance."""
+    if not claims:
+        return []
+    values = [str(claim.get("value") or "") for claim in claims]
+    document_texts = values + ([case.answer] if case.answer.strip() else [])
+    document_blobs = embedder.embed_batch(document_texts)
+    if len(document_blobs) != len(document_texts):
+        raise ValueError("similarity embedder returned an unexpected vector count")
+    answer_blob = document_blobs[-1] if case.answer.strip() else None
+    question_blob = embedder.embed_query(case.question) if case.question.strip() else None
+    event_to_session = {session.event_id: session.session_id for session in case.sessions}
+    gold_events = set(case.gold_event_ids)
+    records: list[dict[str, Any]] = []
+    for claim, claim_blob in zip(claims, document_blobs[: len(values)], strict=True):
+        evidence_event_ids = [str(item) for item in claim.get("evidence_event_ids") or []]
+        record = dict(claim)
+        record["answer_similarity"] = cosine_similarity(claim_blob, answer_blob) if answer_blob else None
+        record["question_similarity"] = cosine_similarity(claim_blob, question_blob) if question_blob else None
+        record["evidence_event_ids"] = evidence_event_ids
+        record["evidence_session_ids"] = [
+            event_to_session[event_id] for event_id in evidence_event_ids if event_id in event_to_session
+        ]
+        record["from_answer_session"] = bool(set(evidence_event_ids) & gold_events)
+        records.append(record)
+    return records
+
+
+def _percentile(values: Sequence[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(float(value) for value in values)
+    position = (len(ordered) - 1) * percentile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def _similarity_distribution(values: Sequence[float]) -> dict[str, Any]:
+    scores = [float(value) for value in values]
+    return {
+        "count": len(scores),
+        "max": max(scores) if scores else None,
+        "median": median(scores) if scores else None,
+        "p75": _percentile(scores, 0.75),
+        "p90": _percentile(scores, 0.90),
+        "p95": _percentile(scores, 0.95),
+        "counts_above_threshold": {
+            f">{threshold:g}": sum(score > threshold for score in scores) for threshold in SIMILARITY_THRESHOLDS
+        },
+    }
+
+
+def _similarity_breakdown(records: Sequence[Mapping[str, Any]], field: str) -> dict[str, Any]:
+    def scores(label: bool | None = None) -> list[float]:
+        return [
+            float(record[field])
+            for record in records
+            if record.get(field) is not None and (label is None or record.get("from_answer_session") is label)
+        ]
+
+    return {
+        "all_claims": _similarity_distribution(scores()),
+        "answer_session_claims": _similarity_distribution(scores(True)),
+        "other_session_claims": _similarity_distribution(scores(False)),
+    }
+
+
+def _threshold_analysis(
+    cases: Sequence[LongMemEvalCase],
+    payloads: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    per_case: list[dict[str, Any]] = []
+    all_claims: list[dict[str, Any]] = []
+    for case in cases:
+        claims = [dict(item) for item in payloads[case.case_id].get("claims", [])]
+        all_claims.extend(claims)
+        per_case.append(
+            {
+                "case_id": case.case_id,
+                "question_type": case.question_type,
+                "question": case.question,
+                "answer": case.answer,
+                "answer_session_ids": list(case.gold_session_ids),
+                "claim_count": len(claims),
+                "answer_similarity": _similarity_breakdown(claims, "answer_similarity"),
+                "question_similarity": _similarity_breakdown(claims, "question_similarity"),
+                "claims": claims,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "benchmark": "LongMemEval-S",
+        "mode": "claim_similarity_threshold_analysis",
+        "status": "completed",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "method": {
+            "embedder": "Q2:qwen3.7-text-embedding/native/query-document",
+            "similarities": ["cosine(claim_value, answer)", "cosine(claim_value, question)"],
+            "percentiles": "linear interpolation over sorted scores",
+            "threshold_comparison": "strictly greater than threshold",
+            "thresholds": list(SIMILARITY_THRESHOLDS),
+            "ground_truth_label": "claim evidence event belongs to an answer_session_id",
+        },
+        "cases": len(cases),
+        "claims": len(all_claims),
+        "global": {
+            "answer_similarity": _similarity_breakdown(all_claims, "answer_similarity"),
+            "question_similarity": _similarity_breakdown(all_claims, "question_similarity"),
+        },
+        "per_case": per_case,
+    }
+
+
 def _session_retrieval_metrics(
     results: Sequence[Mapping[str, Any]],
     gold_event_ids: Sequence[str],
@@ -686,6 +808,20 @@ def _compare_case_paths(case_id: str) -> tuple[Path, Path, Path, Path]:
     )
 
 
+def _backup_claims_file(
+    case_id: str,
+    claims_path: Path,
+    backup_root: Path = LME_12_BACKUP_ROOT,
+) -> Path:
+    """Copy one claim sidecar without removing any existing cache entries."""
+    if not claims_path.is_file():
+        raise FileNotFoundError(f"claims sidecar does not exist: {claims_path}")
+    destination = backup_root / _safe_case_name(case_id) / "claims.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(claims_path, destination)
+    return destination
+
+
 def _assert_benchmark_path(path: Path) -> None:
     root = DATABASE_ROOT.resolve()
     if not path.resolve().is_relative_to(root):
@@ -708,6 +844,12 @@ def _remove_database_artifacts(database_path: Path) -> None:
     for path in (database_path, Path(f"{database_path}-wal"), Path(f"{database_path}-shm")):
         _assert_benchmark_path(path)
         path.unlink(missing_ok=True)
+
+
+def _remove_compare_variants(directory: Path) -> None:
+    """Remove disposable embedding variants while preserving base.db and claims.json."""
+    for code in EMBEDDING_CONFIGS:
+        _remove_database_artifacts(directory / f"{code}.db")
 
 
 def _decoded_value(value_json: object) -> str:
@@ -1160,8 +1302,7 @@ def _run_case(
 def _remove_compare_case_artifacts(case: LongMemEvalCase) -> None:
     base_path, manifest_path, claims_path, directory = _compare_case_paths(case.case_id)
     _remove_database_artifacts(base_path)
-    for code in EMBEDDING_CONFIGS:
-        _remove_database_artifacts(directory / f"{code}.db")
+    _remove_compare_variants(directory)
     for path in (
         manifest_path,
         claims_path,
@@ -1189,11 +1330,13 @@ def _prepare_compare_base(
             raise FileNotFoundError(f"--skip-ingest requires base database and claims sidecar for {case.case_id}")
         _validate_manifest(manifest_path, case, settings)
         payload = json.loads(claims_path.read_text(encoding="utf-8"))
+        backup_path = _backup_claims_file(case.case_id, claims_path)
         return {
             "database": str(base_path.relative_to(ROOT)),
             "claims_file": str(claims_path.relative_to(ROOT)),
             "ingest": {"skipped": True},
             "claim_count": int(payload.get("claim_count", 0)),
+            "claims_backup": str(backup_path.relative_to(ROOT)),
             "relevance_by_claim_id": {
                 str(item["claim_id"]): float(item.get("relevance_score", 0.0)) for item in payload.get("claims", [])
             },
@@ -1213,16 +1356,17 @@ def _prepare_compare_base(
             total_hint=total_hint,
         )
         payload = _export_claim_texts(connection, case)
-        values = {str(item["claim_id"]): str(item["value"]) for item in payload["claims"]}
-        relevance = _claim_relevance_scores(values, case.answer, production_embedder)
+        payload["claims"] = _claim_similarity_records(payload["claims"], case, production_embedder)
+        relevance = {str(item["claim_id"]): float(item.get("answer_similarity") or 0.0) for item in payload["claims"]}
         for item in payload["claims"]:
-            item["relevance_score"] = relevance.get(str(item["claim_id"]), 0.0)
+            item["relevance_score"] = relevance[str(item["claim_id"])]
         payload["relevance"] = {
-            "method": "cosine(claim_value, answer)",
+            "method": ["cosine(claim_value, answer)", "cosine(claim_value, question)"],
             "embedder": "Q2:qwen3.7-text-embedding/native/query-document",
             "threshold": CLAIM_RELEVANCE_THRESHOLD,
         }
         _write_json_atomic(claims_path, payload)
+        backup_path = _backup_claims_file(case.case_id, claims_path)
         _clear_claim_embeddings(connection)
         _write_json_atomic(
             manifest_path,
@@ -1244,6 +1388,7 @@ def _prepare_compare_base(
         "claims_file": str(claims_path.relative_to(ROOT)),
         "ingest": ingest,
         "claim_count": int(payload["claim_count"]),
+        "claims_backup": str(backup_path.relative_to(ROOT)),
         "relevance_by_claim_id": relevance,
     }
 
@@ -1472,7 +1617,8 @@ def _run_config_compare(
         client.close()
         if args.clean:
             for case in cases:
-                _remove_compare_case_artifacts(case)
+                _, _, _, directory = _compare_case_paths(case.case_id)
+                _remove_compare_variants(directory)
 
     report = _config_compare_report(
         args,
@@ -1484,6 +1630,10 @@ def _run_config_compare(
         "completed",
     )
     _write_json_atomic(args.output, report)
+    threshold_payloads = {
+        case.case_id: json.loads(_compare_case_paths(case.case_id)[2].read_text(encoding="utf-8")) for case in cases
+    }
+    _write_json_atomic(THRESHOLD_ANALYSIS_OUTPUT, _threshold_analysis(cases, threshold_payloads))
     headers = "metric " + " ".join(f"{code:>8}" for code in EMBEDDING_CONFIGS)
     print(headers, flush=True)
     for row in report["comparison"]:

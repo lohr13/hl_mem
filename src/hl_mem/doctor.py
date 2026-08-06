@@ -173,7 +173,7 @@ def _check_embedding(settings: Settings) -> CheckResult:
             settings.embedding_read_timeout,
             settings.embedding_max_attempts,
             api_mode=settings.embedding_api_mode,
-            text_type="document",
+            text_type=settings.embedding_text_type or None,
         ).embed_one("ping")
         return CheckResult(CheckStatus.OK, "Embedding API", "请求成功")
     except (RuntimeError, ValueError, KeyError, TypeError) as error:

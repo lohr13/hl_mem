@@ -107,6 +107,28 @@ class EmbedderApiModeTests(unittest.TestCase):
             },
         )
 
+    def test_native_default_omits_text_type_for_document_request(self) -> None:
+        client = _RecordingClient(
+            [
+                {
+                    "output": {"embeddings": [{"embedding": [1.0, 2.0], "text_index": 0}]},
+                    "usage": {"total_tokens": 2},
+                }
+            ]
+        )
+        embedder = Embedder(
+            "key",
+            "https://dashscope.aliyuncs.com",
+            "qwen3.7-text-embedding",
+            2,
+            client=client,
+            api_mode="native",
+        )
+
+        embedder.embed_one("claim")
+
+        self.assertEqual(client.calls[0]["json"]["parameters"], {"dimension": 2})
+
     def test_embed_query_overrides_native_role_without_mutating_document_default(self) -> None:
         payload = {
             "output": {"embeddings": [{"embedding": [1.0, 0.0], "text_index": 0}]},
@@ -129,7 +151,7 @@ class EmbedderApiModeTests(unittest.TestCase):
         self.assertEqual(client.calls[0]["json"]["parameters"]["text_type"], "query")
         self.assertEqual(client.calls[1]["json"]["parameters"]["text_type"], "document")
 
-    def test_embed_query_batch_preserves_batching_and_query_role(self) -> None:
+    def test_native_default_omits_text_type_for_query_batch(self) -> None:
         client = _RecordingClient(
             [
                 {
@@ -155,7 +177,7 @@ class EmbedderApiModeTests(unittest.TestCase):
         blobs = embedder.embed_query_batch(["first", "second"])
 
         self.assertEqual(len(blobs), 2)
-        self.assertEqual(client.calls[0]["json"]["parameters"]["text_type"], "query")
+        self.assertEqual(client.calls[0]["json"]["parameters"], {"dimension": 2})
         self.assertEqual(client.calls[0]["json"]["input"]["texts"], ["first", "second"])
 
     def test_constructor_rejects_unknown_api_mode_and_text_type(self) -> None:
@@ -166,7 +188,7 @@ class EmbedderApiModeTests(unittest.TestCase):
 
 
 class ConfigurationAndRecallTests(unittest.TestCase):
-    def test_toml_loads_native_mode_and_factory_passes_document_role(self) -> None:
+    def test_toml_native_mode_defaults_factory_to_no_text_type(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = root / "hl_mem.toml"
@@ -190,7 +212,90 @@ class ConfigurationAndRecallTests(unittest.TestCase):
         embedder = make_embedder(settings)
         self.assertEqual(settings.embedding_api_mode, "native")
         self.assertEqual(embedder.api_mode, "native")
+        self.assertIsNone(getattr(settings, "embedding_text_type", object()))
+        self.assertIsNone(embedder.text_type)
+
+    def test_factory_omits_unconfigured_text_type_argument(self) -> None:
+        settings = replace(
+            Settings.for_test(),
+            embedder_mode="real",
+            embedding_api_key="key",
+            embedding_api_mode="native",
+        )
+
+        with patch("hl_mem.components.Embedder") as constructor:
+            make_embedder(settings)
+
+        self.assertNotIn("text_type", constructor.call_args.kwargs)
+
+    def test_toml_can_explicitly_enable_native_document_role(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "hl_mem.toml"
+            config.write_text(
+                "\n".join(
+                    (
+                        "[embedding]",
+                        'mode = "real"',
+                        'base_url = "https://dashscope.aliyuncs.com"',
+                        'model = "qwen3.7-text-embedding"',
+                        "dim = 2048",
+                        'api_mode = "native"',
+                        'text_type = "document"',
+                        "[recall]",
+                        'query_expansion_mode = "off"',
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            try:
+                settings = load_settings(config, root / ".env", environ={"EMBEDDING_API_KEY": "key"})
+            except ConfigurationError as error:
+                self.fail(f"explicit embedding.text_type should load: {error}")
+
+        embedder = make_embedder(settings)
+        self.assertEqual(settings.embedding_text_type, "document")
         self.assertEqual(embedder.text_type, "document")
+
+    def test_toml_empty_text_type_normalizes_to_none_in_factory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "hl_mem.toml"
+            config.write_text(
+                "\n".join(
+                    (
+                        "[embedding]",
+                        'mode = "real"',
+                        'base_url = "https://dashscope.aliyuncs.com"',
+                        'model = "qwen3.7-text-embedding"',
+                        "dim = 2048",
+                        'api_mode = "native"',
+                        'text_type = ""',
+                        "[recall]",
+                        'query_expansion_mode = "off"',
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            try:
+                settings = load_settings(config, root / ".env", environ={"EMBEDDING_API_KEY": "key"})
+            except ConfigurationError as error:
+                self.fail(f"empty embedding.text_type should load: {error}")
+
+        embedder = make_embedder(settings)
+        self.assertEqual(settings.embedding_text_type, "")
+        self.assertIsNone(embedder.text_type)
+
+    def test_settings_reject_invalid_embedding_text_type(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "hl_mem.toml"
+            config.write_text('[embedding]\ntext_type = "invalid"\n', encoding="utf-8")
+
+            with self.assertRaisesRegex(ConfigurationError, r"embedding\.text_type: expected"):
+                load_settings(config, root / ".env", environ={})
 
     def test_settings_reject_invalid_embedding_api_mode(self) -> None:
         with self.assertRaisesRegex(ConfigurationError, "embedding.api_mode"):
@@ -233,7 +338,7 @@ class ConfigurationAndRecallTests(unittest.TestCase):
         self.assertEqual(embed_queries(legacy, ["a", "b"]), [b"a", b"b"])
         self.assertEqual(legacy.calls, [["a", "b"]])
 
-    def test_doctor_uses_native_document_request(self) -> None:
+    def test_doctor_uses_native_request_without_default_text_type(self) -> None:
         response = _Response(
             {
                 "output": {"embeddings": [{"embedding": [1.0, 0.0], "text_index": 0}]},
@@ -263,7 +368,7 @@ class ConfigurationAndRecallTests(unittest.TestCase):
             calls[0]["url"],
             "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
         )
-        self.assertEqual(calls[0]["json"]["parameters"], {"dimension": 2, "text_type": "document"})
+        self.assertEqual(calls[0]["json"]["parameters"], {"dimension": 2})
 
 
 if __name__ == "__main__":

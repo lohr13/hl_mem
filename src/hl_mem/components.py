@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 
@@ -131,6 +131,9 @@ def make_embedder(settings: Settings) -> EmbedderProtocol:
         return FakeEmbedder(settings.embedding_dim)
     if not settings.embedding_api_key:
         raise ConfigurationError("HL_MEM_EMBEDDER=real but EMBEDDING_API_KEY is missing")
+    embedder_options: dict[str, Any] = {"api_mode": settings.embedding_api_mode}
+    if settings.embedding_text_type:
+        embedder_options["text_type"] = settings.embedding_text_type
     return Embedder(
         settings.embedding_api_key,
         settings.embedding_base_url,
@@ -139,8 +142,7 @@ def make_embedder(settings: Settings) -> EmbedderProtocol:
         settings.embedding_connect_timeout,
         settings.embedding_read_timeout,
         settings.embedding_max_attempts,
-        api_mode=settings.embedding_api_mode,
-        text_type="document",
+        **embedder_options,
     )
 
 

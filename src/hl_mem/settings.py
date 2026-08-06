@@ -12,6 +12,7 @@ from hl_mem.errors import ConfigurationError
 
 EmbedderMode = Literal["fake", "real"]
 EmbeddingApiMode = Literal["compatible", "native"]
+EmbeddingTextType = Literal["", "document", "query"] | None
 RerankerMode = Literal["off", "fake", "on", "real"]
 RerankerProvider = Literal["dashscope"]
 RelationExpansionMode = Literal["off", "on"]
@@ -86,6 +87,10 @@ class Settings:
     embedding_api_mode: EmbeddingApiMode = field(
         default="compatible",
         metadata={"toml": "embedding.api_mode"},
+    )
+    embedding_text_type: EmbeddingTextType = field(
+        default=None,
+        metadata={"toml": "embedding.text_type"},
     )
     embedding_connect_timeout: float = field(
         default=5.0,
@@ -723,6 +728,8 @@ class Settings:
             raise ConfigurationError("embedding.mode must be 'fake' or 'real'")
         if self.embedding_api_mode not in {"compatible", "native"}:
             raise ConfigurationError("embedding.api_mode must be 'compatible' or 'native'")
+        if self.embedding_text_type not in {None, "", "document", "query"}:
+            raise ConfigurationError("embedding.text_type must be '', 'document', or 'query'")
         if self.index_text_mode not in {"legacy", "value_only", "natural", "answerable"}:
             raise ConfigurationError("index.text_mode must be 'legacy', 'value_only', 'natural', or 'answerable'")
         if self.index_backfill_batch_size < 1 or self.index_backfill_max_attempts < 1:
@@ -746,6 +753,7 @@ class Settings:
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
             "embedding_api_mode": self.embedding_api_mode,
+            "embedding_text_type": self.embedding_text_type,
             "index_text_mode": self.index_text_mode,
             "index_backfill_batch_size": self.index_backfill_batch_size,
             "index_backfill_max_attempts": self.index_backfill_max_attempts,
