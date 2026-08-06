@@ -122,5 +122,6 @@
     "supersede_accuracy": 0.0,
     "relation_accuracy": 0.0,
     "case_accuracy": 0.0
-  }
+  },
+  "mrr": 0.75
 }
