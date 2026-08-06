@@ -69,6 +69,8 @@ FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 CLAIM_RELEVANCE_THRESHOLD = 0.5
 SIMILARITY_THRESHOLDS = (0.2, 0.3, 0.4, 0.5, 0.65)
+RELEVANCE_SCORER_CODE = "V0"
+RELEVANCE_LABEL_VERSION = "claim-answer-cosine-v2"
 QUESTION_TYPES = (
     "single-session-user",
     "single-session-assistant",
@@ -158,6 +160,22 @@ def _embedding_config(code: str, definition: Mapping[str, str | None]) -> Embedd
         use_instruct=output_type == "instruct",
         use_sparse=output_type == "sparse",
     )
+
+
+def _relevance_scorer_metadata() -> dict[str, Any]:
+    """Return the fixed, candidate-independent scorer used to label claims."""
+    definition = EMBEDDING_CONFIGS[RELEVANCE_SCORER_CODE]
+    config = _embedding_config(RELEVANCE_SCORER_CODE, definition)
+    return {
+        "code": RELEVANCE_SCORER_CODE,
+        "model": config.model,
+        "api": config.api_kind,
+        "text_type": definition["text_type"],
+        "output_type": definition["output_type"],
+        "dimension": config.dim,
+        "label_version": RELEVANCE_LABEL_VERSION,
+        "threshold": CLAIM_RELEVANCE_THRESHOLD,
+    }
 
 
 class ConfigCompareEmbedder:
@@ -645,7 +663,7 @@ def _threshold_analysis(
         "status": "completed",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "method": {
-            "embedder": "Q2:qwen3.7-text-embedding/native/query-document",
+            "relevance_scorer": _relevance_scorer_metadata(),
             "similarities": ["cosine(claim_value, answer)", "cosine(claim_value, question)"],
             "percentiles": "linear interpolation over sorted scores",
             "threshold_comparison": "strictly greater than threshold",
@@ -702,13 +720,13 @@ def retrieval_metrics(
     if relevance_by_claim_id is None:
         metrics = dict(session)
     else:
-        metrics = {"eligible": True}
         relevant_ids = {claim_id for claim_id, score in relevance_by_claim_id.items() if score >= relevance_threshold}
+        metrics = {"eligible": bool(relevant_ids)}
         ranked_ids = [str(result.get("id")) for result in results]
         for k in RETRIEVAL_KS:
-            hit = bool(set(ranked_ids[:k]) & relevant_ids)
-            metrics[f"recall_at_{k}"] = float(hit)
-            metrics[f"hit_at_{k}"] = float(hit)
+            hits = set(ranked_ids[:k]) & relevant_ids
+            metrics[f"recall_at_{k}"] = len(hits) / len(relevant_ids) if relevant_ids else None
+            metrics[f"hit_at_{k}"] = float(bool(hits)) if relevant_ids else None
             scores = [relevance_by_claim_id.get(claim_id, 0.0) for claim_id in ranked_ids[:k]]
             metrics[f"max_relevance_at_{k}"] = max(scores, default=0.0)
         first_rank = next(
@@ -773,14 +791,24 @@ def aggregate_results(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def _case_fingerprint(case: LongMemEvalCase) -> str:
-    payload = [
-        {
-            "session_id": session.session_id,
-            "occurred_at": session.occurred_at,
-            "messages": session.messages,
-        }
-        for session in case.sessions
-    ]
+    payload = {
+        "case_id": case.case_id,
+        "question_type": case.question_type,
+        "question": case.question,
+        "answer": case.answer,
+        "question_at": case.question_at,
+        "gold_event_ids": case.gold_event_ids,
+        "gold_session_ids": case.gold_session_ids,
+        "sessions": [
+            {
+                "session_id": session.session_id,
+                "event_id": session.event_id,
+                "occurred_at": session.occurred_at,
+                "messages": session.messages,
+            }
+            for session in case.sessions
+        ],
+    }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -948,18 +976,39 @@ def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     temporary.replace(path)
 
 
-def _validate_manifest(path: Path, case: LongMemEvalCase, settings: Settings) -> None:
-    if not path.is_file():
-        raise FileNotFoundError(f"--skip-ingest requires cache manifest: {path}")
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-    expected = {
+def _manifest_identity(
+    case: LongMemEvalCase,
+    settings: Settings,
+    *,
+    relevance_scorer: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the fields that make an ingest/relevance cache reusable."""
+    identity: dict[str, Any] = {
         "case_id": case.case_id,
         "case_fingerprint": _case_fingerprint(case),
         "session_count": len(case.sessions),
         "extractor_version": LLM_EXTRACTOR_VERSION,
         "embedding_model": settings.embedding_model,
         "embedding_dim": settings.embedding_dim,
+        "embedding_api_mode": settings.embedding_api_mode,
+        "embedding_text_type": settings.embedding_text_type,
     }
+    if relevance_scorer is not None:
+        identity["relevance_scorer"] = dict(relevance_scorer)
+    return identity
+
+
+def _validate_manifest(
+    path: Path,
+    case: LongMemEvalCase,
+    settings: Settings,
+    *,
+    relevance_scorer: Mapping[str, Any] | None = None,
+) -> None:
+    if not path.is_file():
+        raise FileNotFoundError(f"--skip-ingest requires cache manifest: {path}")
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    expected = _manifest_identity(case, settings, relevance_scorer=relevance_scorer)
     mismatches = {key: (manifest.get(key), value) for key, value in expected.items() if manifest.get(key) != value}
     if mismatches:
         raise ValueError(f"cached ingest manifest does not match current case/config: {mismatches}")
@@ -1270,12 +1319,7 @@ def _run_case(
             _write_json_atomic(
                 manifest_path,
                 {
-                    "case_id": case.case_id,
-                    "case_fingerprint": _case_fingerprint(case),
-                    "session_count": len(case.sessions),
-                    "extractor_version": LLM_EXTRACTOR_VERSION,
-                    "embedding_model": settings.embedding_model,
-                    "embedding_dim": settings.embedding_dim,
+                    **_manifest_identity(case, settings),
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
@@ -1319,17 +1363,21 @@ def _prepare_compare_base(
     case: LongMemEvalCase,
     settings: Settings,
     production_embedder: Any,
+    relevance_embedder: Any | None,
     *,
     skip_ingest: bool,
     case_number: int,
     total_hint: str,
 ) -> dict[str, Any]:
     base_path, manifest_path, claims_path, _ = _compare_case_paths(case.case_id)
+    relevance_scorer = _relevance_scorer_metadata()
     if skip_ingest:
         if not base_path.is_file() or not claims_path.is_file():
             raise FileNotFoundError(f"--skip-ingest requires base database and claims sidecar for {case.case_id}")
-        _validate_manifest(manifest_path, case, settings)
+        _validate_manifest(manifest_path, case, settings, relevance_scorer=relevance_scorer)
         payload = json.loads(claims_path.read_text(encoding="utf-8"))
+        if payload.get("relevance", {}).get("scorer") != relevance_scorer:
+            raise ValueError(f"cached relevance scorer does not match current config for {case.case_id}")
         backup_path = _backup_claims_file(case.case_id, claims_path)
         return {
             "database": str(base_path.relative_to(ROOT)),
@@ -1356,14 +1404,15 @@ def _prepare_compare_base(
             total_hint=total_hint,
         )
         payload = _export_claim_texts(connection, case)
-        payload["claims"] = _claim_similarity_records(payload["claims"], case, production_embedder)
+        if relevance_embedder is None:
+            raise ValueError("fixed relevance embedder is required when preparing a fresh compare base")
+        payload["claims"] = _claim_similarity_records(payload["claims"], case, relevance_embedder)
         relevance = {str(item["claim_id"]): float(item.get("answer_similarity") or 0.0) for item in payload["claims"]}
         for item in payload["claims"]:
             item["relevance_score"] = relevance[str(item["claim_id"])]
         payload["relevance"] = {
             "method": ["cosine(claim_value, answer)", "cosine(claim_value, question)"],
-            "embedder": "Q2:qwen3.7-text-embedding/native/query-document",
-            "threshold": CLAIM_RELEVANCE_THRESHOLD,
+            "scorer": relevance_scorer,
         }
         _write_json_atomic(claims_path, payload)
         backup_path = _backup_claims_file(case.case_id, claims_path)
@@ -1371,12 +1420,7 @@ def _prepare_compare_base(
         _write_json_atomic(
             manifest_path,
             {
-                "case_id": case.case_id,
-                "case_fingerprint": _case_fingerprint(case),
-                "session_count": len(case.sessions),
-                "extractor_version": LLM_EXTRACTOR_VERSION,
-                "embedding_model": settings.embedding_model,
-                "embedding_dim": settings.embedding_dim,
+                **_manifest_identity(case, settings, relevance_scorer=relevance_scorer),
                 "vectors_cleared": True,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             },
@@ -1505,9 +1549,11 @@ def _config_compare_report(
             "clean": args.clean,
             "extractor": settings.llm_model,
             "extractor_version": LLM_EXTRACTOR_VERSION,
-            "relevance_embedder": "Q2:qwen3.7-text-embedding/native/query-document",
+            "relevance_scorer": _relevance_scorer_metadata(),
             "relevance_threshold": CLAIM_RELEVANCE_THRESHOLD,
-            "primary_metric_relevance": "claim value vs reference answer cosine similarity",
+            "primary_metric_relevance": (
+                "claim Recall@K = relevant claims retrieved / all relevant extracted claims; " "Hit@K remains binary"
+            ),
             "auxiliary_metric_relevance": "claim evidence links to answer session",
             "q4_sparse": "requested from API but not indexed; dense component only",
         },
@@ -1536,27 +1582,48 @@ def _run_config_compare(
     bases: dict[str, dict[str, Any]] = {}
     extraction: list[dict[str, Any]] = []
     configs: dict[str, dict[str, Any]] = {}
+    relevance_client: DashScopeEmbeddingClient | None = None
+    relevance_embedder: ConfigCompareEmbedder | None = None
+    if not args.skip_ingest:
+        relevance_client = DashScopeEmbeddingClient(
+            str(settings.embedding_api_key),
+            base_url=settings.embedding_base_url,
+            timeout_seconds=max(90.0, settings.embedding_read_timeout),
+            max_attempts=settings.embedding_max_attempts,
+            trust_env=False,
+        )
+        relevance_definition = EMBEDDING_CONFIGS[RELEVANCE_SCORER_CODE]
+        relevance_embedder = ConfigCompareEmbedder(
+            relevance_client,
+            _embedding_config(RELEVANCE_SCORER_CODE, relevance_definition),
+            COMPARE_CACHE / "relevance",
+        )
 
     print(
         f"config-compare extract-once cases={len(cases)} types={len(QUESTION_TYPES)} "
         f"extractor={settings.llm_model} prompt={LLM_EXTRACTOR_VERSION}",
         flush=True,
     )
-    for case_number, case in enumerate(cases, start=1):
-        base = _prepare_compare_base(
-            case,
-            settings,
-            production_embedder,
-            skip_ingest=args.skip_ingest,
-            case_number=case_number,
-            total_hint=total_hint,
-        )
-        bases[case.case_id] = base
-        extraction.append({key: value for key, value in base.items() if key != "relevance_by_claim_id"})
-        _write_json_atomic(
-            args.output,
-            _config_compare_report(args, settings, cases, extraction, configs, started_at, "extracting"),
-        )
+    try:
+        for case_number, case in enumerate(cases, start=1):
+            base = _prepare_compare_base(
+                case,
+                settings,
+                production_embedder,
+                relevance_embedder,
+                skip_ingest=args.skip_ingest,
+                case_number=case_number,
+                total_hint=total_hint,
+            )
+            bases[case.case_id] = base
+            extraction.append({key: value for key, value in base.items() if key != "relevance_by_claim_id"})
+            _write_json_atomic(
+                args.output,
+                _config_compare_report(args, settings, cases, extraction, configs, started_at, "extracting"),
+            )
+    finally:
+        if relevance_client is not None:
+            relevance_client.close()
 
     client = DashScopeEmbeddingClient(
         str(settings.embedding_api_key),
@@ -1684,15 +1751,20 @@ def _report(
                 "extractor_version": LLM_EXTRACTOR_VERSION,
                 "embedder": settings.embedding_model,
                 "embedding_api_mode": settings.embedding_api_mode,
+                "embedding_text_type": settings.embedding_text_type,
                 "reranker": settings.reranker_model if settings.reranker_mode != "off" else "off",
                 "reader": QA_MODEL if not args.no_qa else "not_run",
                 "judge": QA_MODEL if not args.no_qa else "not_run",
             },
             "retrieval_k": list(RETRIEVAL_KS),
-            "metric_relevance": (
-                "primary: cosine(claim value, reference answer) >= 0.65; "
-                "auxiliary: claim evidence links to answer_session_ids"
-            ),
+            "metric_relevance": {
+                "label": (
+                    "claim is relevant when cosine(claim value, reference answer) " f">= {CLAIM_RELEVANCE_THRESHOLD:g}"
+                ),
+                "recall_at_k": "relevant claims retrieved in top-k / all relevant extracted claims",
+                "hit_at_k": "binary: at least one relevant claim appears in top-k",
+                "auxiliary": "claim evidence links to answer_session_ids",
+            },
         },
         "metrics": aggregate_results(results),
         "cases": list(results),

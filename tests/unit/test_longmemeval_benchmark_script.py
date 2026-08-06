@@ -5,12 +5,18 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from hl_mem.core.vector import pack_vector, unpack_vector
+from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION
+from hl_mem.settings import Settings
 from scripts.run_longmemeval_benchmark import (
+    _case_fingerprint,
     _claim_relevance_scores,
+    _config_compare_report,
     _reembed_database,
     _sample_stratified,
+    _validate_manifest,
     aggregate_results,
     iter_case_records,
     normalize_case,
@@ -127,6 +133,31 @@ class LongMemEvalMetricTests(unittest.TestCase):
         self.assertEqual(metrics["session_recall_at_1"], 1.0)
         self.assertEqual(metrics["session_mrr"], 1.0)
 
+    def test_claim_recall_counts_all_relevant_claims_while_hit_stays_binary(self) -> None:
+        results = [{"id": "first"}, {"id": "noise"}, {"id": "second"}]
+
+        metrics = retrieval_metrics(
+            results,
+            (),
+            relevance_by_claim_id={"first": 0.9, "noise": 0.1, "second": 0.8},
+        )
+
+        self.assertEqual(metrics["recall_at_1"], 0.5)
+        self.assertEqual(metrics["hit_at_1"], 1.0)
+        self.assertEqual(metrics["recall_at_5"], 1.0)
+        self.assertEqual(metrics["hit_at_5"], 1.0)
+
+    def test_claim_metrics_are_ineligible_without_relevant_extracted_claims(self) -> None:
+        metrics = retrieval_metrics(
+            [{"id": "noise"}],
+            (),
+            relevance_by_claim_id={"noise": 0.1},
+        )
+
+        self.assertFalse(metrics["eligible"])
+        self.assertIsNone(metrics["recall_at_1"])
+        self.assertIsNone(metrics["hit_at_1"])
+
     def test_claim_relevance_scores_use_answer_similarity(self) -> None:
         class FakeEmbedder:
             vectors = {
@@ -185,6 +216,53 @@ class LongMemEvalMetricTests(unittest.TestCase):
 
 
 class LongMemEvalConfigCompareTests(unittest.TestCase):
+    def test_manifest_rejects_embedding_api_or_text_type_changes(self) -> None:
+        case = normalize_case(_official_record())
+        settings = Settings(
+            embedding_model="qwen3.7-text-embedding",
+            embedding_dim=2048,
+            embedding_api_mode="native",
+            embedding_text_type=None,
+        )
+        manifest = {
+            "case_id": case.case_id,
+            "case_fingerprint": "will-be-replaced",
+            "session_count": len(case.sessions),
+            "extractor_version": LLM_EXTRACTOR_VERSION,
+            "embedding_model": settings.embedding_model,
+            "embedding_dim": settings.embedding_dim,
+            "embedding_api_mode": "compatible",
+            "embedding_text_type": "document",
+        }
+        manifest["case_fingerprint"] = _case_fingerprint(case)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "embedding_api_mode"):
+                _validate_manifest(path, case, settings)
+
+    def test_config_compare_report_uses_fixed_relevance_scorer_metadata(self) -> None:
+        case = normalize_case(_official_record())
+        settings = Settings()
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.json"
+            dataset.write_text("[]", encoding="utf-8")
+            args = SimpleNamespace(
+                dataset=dataset,
+                skip_ingest=False,
+                no_qa=True,
+                clean=False,
+            )
+
+            report = _config_compare_report(args, settings, [case], [], {}, "start", "running")
+
+        scorer = report["run"]["relevance_scorer"]
+        self.assertEqual(scorer["code"], "V0")
+        self.assertEqual(scorer["model"], "text-embedding-v4")
+        self.assertEqual(scorer["api"], "compatible")
+        self.assertIsNone(scorer["text_type"])
+
     def test_stratified_sample_takes_first_two_of_each_type(self) -> None:
         records = [
             {"question_type": question_type, "question_id": f"{question_type}-{index}"}
