@@ -8,7 +8,7 @@ import struct
 
 from hl_mem.errors import ConfigurationError
 
-CONTROL_MIGRATION_VERSION = "037_vector_index_control"
+DATA_MIGRATION_VERSION = "037_vector_index_control"
 VECTOR_BACKEND_NAME = "sqlite_vec"
 VECTOR_SCHEMA_VERSION = 1
 VECTOR_TABLE = "claims_vec_v1"
@@ -43,7 +43,7 @@ def ensure_vector_control_schema(connection: sqlite3.Connection) -> None:
         )
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
-            (CONTROL_MIGRATION_VERSION,),
+            (DATA_MIGRATION_VERSION,),
         )
         if started_transaction:
             connection.commit()
