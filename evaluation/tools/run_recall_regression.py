@@ -8,6 +8,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+EVALUATION_ROOT = Path(__file__).resolve().parents[1]
+
 
 def evaluate(cases: list[dict[str, Any]], predictions: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """计算排序、no-answer、覆盖率、HTTP、延迟和降级指标。"""
@@ -81,7 +83,7 @@ def main() -> None:
     parser.add_argument(
         "--dataset",
         type=Path,
-        default=Path(__file__).parent / "datasets/recall_regression_v1.jsonl",
+        default=EVALUATION_ROOT / "datasets" / "recall_regression_v1.jsonl",
     )
     parser.add_argument("--predictions", type=Path)
     args = parser.parse_args()

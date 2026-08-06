@@ -2,7 +2,7 @@
 """将 HL-Mem 适配器安装或升级到 Hermes 插件目录。
 
 Usage:
-    python install_to_hermes.py [--hermes-home PATH] [--dry-run]
+    python scripts/install_to_hermes.py [--hermes-home PATH] [--dry-run]
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).parent.resolve()
+REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = REPO_ROOT / "src" / "hl_mem" / "adapters" / "hermes" / "plugin"
 FILES = ("__init__.py", "plugin.yaml")
 

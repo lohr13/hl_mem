@@ -327,7 +327,7 @@ override runtime configuration: non-secret settings, including provider/model se
 provider credentials may come from `.env` or same-named process environment variables. There is no environment-based
 production profile or automatic fake fallback.
 
-Install the Hermes adapter with `uv run python install_to_hermes.py --hermes-home <HERMES_HOME>`, then restart Hermes.
+Install the Hermes adapter with `uv run python scripts/install_to_hermes.py --hermes-home <HERMES_HOME>`, then restart Hermes.
 
 The offline suite uses fake providers; the real-provider script requires configured credentials:
 

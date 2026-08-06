@@ -15,13 +15,7 @@ hl_mem.toml
 *.db
 *.db-*
 *.budget.json
-var/*.db
-var/*.db-*
-var/*.db.cleanup_backup_*
-var/*.db.bak_*
-var/*.db.bak.*
-var/*.db.manifest.json
-var/*.log
+/var/
 *.log
 pytest_*.txt
 pending_commits.txt
@@ -55,8 +49,3 @@ docs/eval-reports/
 
 # cc-connect runtime artifacts (not part of this repo)
 .cc-connect/
-
-
-# hlmem watchdog runtime state
-var/watchdog.state
-var/crash-packages/

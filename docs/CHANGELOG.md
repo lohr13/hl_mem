@@ -288,7 +288,7 @@
 
 ### Bug Fixes
 - Fixed an FTS column-name mismatch that caused rebuild failures (migration 034)
-- Changed the `install_to_hermes.py` plugin path from `plugins/memory/` to `plugins/hl_mem/`
+- Changed the `scripts/install_to_hermes.py` plugin path from `plugins/memory/` to `plugins/hl_mem/`
 
 ### Features
 - Added the `hl_mem doctor` diagnostic command with 9 checks

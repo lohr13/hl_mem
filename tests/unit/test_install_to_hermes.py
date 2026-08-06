@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import install_to_hermes
+from scripts import install_to_hermes
 
 
 def test_main_prints_start_and_success_messages(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

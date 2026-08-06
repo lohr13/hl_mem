@@ -77,9 +77,9 @@ Phase 2 有两个合法出口：
 
 - `tests/eval/eval_runner.py:104-122`：第 119 行用 `bool(relevant ∩ top5)` 计算 `recall_at_5`，实际是 Hit@5；第 118 行的 `recall_at_1` 实际是 Hit@1。
 - `tests/eval/metrics.py:85-120`：`recall_at_5` 同样只判断是否至少命中一条。
-- `evaluation/run_recall_regression.py:21-29,45-50`：第三处重复了相同误名。
+- `evaluation/tools/run_recall_regression.py:21-29,45-50`：第三处重复了相同误名。
 - `src/hl_mem/evaluation/metrics.py:32-38`：另一套评测已按“命中相关项数 / gold 数”计算真正 Recall@k，证明仓库内语义分裂。
-- `tests/eval/eval_runner.py:123-127` 仅把 `no_evidence` 视为 predicted no-answer；`evaluation/run_recall_regression.py:28-30` 又把 `low_confidence` 一并计入。
+- `tests/eval/eval_runner.py:123-127` 仅把 `no_evidence` 视为 predicted no-answer；`evaluation/tools/run_recall_regression.py:28-30` 又把 `low_confidence` 一并计入。
 
 #### 修复方案
 
@@ -107,7 +107,7 @@ MRR            = 第一个 relevant 的 reciprocal rank
 - `tests/eval/gate_check.py`
 - `tests/eval/test_metrics.py`
 - `tests/eval/test_recall_v2_gate.py`
-- `evaluation/run_recall_regression.py`
+- `evaluation/tools/run_recall_regression.py`
 - 必要时将公共纯函数收口到 `src/hl_mem/evaluation/metrics.py`
 
 #### 工作量估算

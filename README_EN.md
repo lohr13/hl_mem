@@ -63,7 +63,7 @@ Use `uv sync --dev` for development and `hlmem doctor` for read-only diagnostics
 
 ### Enable online models
 
-From a source checkout, copy `config.example.toml` and `.env.example`, or edit `hl_mem.toml` directly. Put each enabled component's independent key in `.env`: `LLM_API_KEY`, `EMBEDDING_API_KEY`, `RERANKER_API_KEY`, or `IMAGE_API_KEY`. Then enable the matching `extraction.mode`, `embedding.mode`, `reranker.mode`, or `image_describer.mode`. See the [configuration reference](docs/configuration.md) for the full schema.
+From a source checkout, copy `config.example.toml` to a local `hl_mem.toml`, and copy `.env.example` as needed. Put each enabled component's independent key in `.env`: `LLM_API_KEY`, `EMBEDDING_API_KEY`, `RERANKER_API_KEY`, or `IMAGE_API_KEY`. Then enable the matching `extraction.mode`, `embedding.mode`, `reranker.mode`, or `image_describer.mode`. See the [configuration reference](docs/configuration.md) for the full schema.
 
 ### Connect Codex, Claude, and Cursor
 
@@ -74,7 +74,7 @@ The package includes `hl-mem-mcp`, an official MCP Python SDK 2.x stdio server f
 Start HL-Mem and verify `curl --fail http://127.0.0.1:8200/healthz`, then run this from a source checkout:
 
 ```bash
-uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
+uv run python scripts/install_to_hermes.py --hermes-home <HERMES_HOME>
 ```
 
 The plugin is installed under `<HERMES_HOME>/plugins/hl_mem/`; restart Hermes afterward. The local HTTP adapter provides timeouts, circuit breaking, prefetching, and Episode/Trace synchronization.
@@ -104,7 +104,7 @@ variables. Common keys are listed below.
 Real components and external-call paths must be supplied with their own key; there is no automatic fake fallback.
 `HL_MEM_*` environment variables no longer participate in application `Settings` configuration. Code defaults intentionally differ from the
 example deployment: `Settings` keeps `recall.default_limit` / `recall.relevance_reranker_floor` at `20` / `0.4`, while
-the repository TOML and `config.example.toml` explicitly set `5` / `0.15` and keep
+`config.example.toml` explicitly sets `5` / `0.15` and keeps
 `recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model with 5/6-second per-call/total
 timeouts.
 

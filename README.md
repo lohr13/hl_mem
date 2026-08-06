@@ -63,7 +63,7 @@ uv run hlmem server
 
 ### 启用在线模型
 
-从源码仓库复制 `config.example.toml` 和 `.env.example`，或直接编辑 `hl_mem.toml`。把启用组件的独立密钥写入 `.env`：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`；再将对应的 `extraction.mode`、`embedding.mode`、`reranker.mode`、`image_describer.mode` 切换到在线模式。完整字段见 [配置参考](docs/configuration.md)。
+从源码仓库将 `config.example.toml` 复制为本地 `hl_mem.toml`，并按需复制 `.env.example`。把启用组件的独立密钥写入 `.env`：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`；再将对应的 `extraction.mode`、`embedding.mode`、`reranker.mode`、`image_describer.mode` 切换到在线模式。完整字段见 [配置参考](docs/configuration.md)。
 
 ### 连接 Codex、Claude 与 Cursor
 
@@ -74,7 +74,7 @@ uv run hlmem server
 先启动 HL-Mem 并确认 `curl --fail http://127.0.0.1:8200/healthz` 成功，再从源码仓库运行：
 
 ```bash
-uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
+uv run python scripts/install_to_hermes.py --hermes-home <HERMES_HOME>
 ```
 
 插件安装到 `<HERMES_HOME>/plugins/hl_mem/`；完成后必须重启 Hermes。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
@@ -106,7 +106,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `recall.tag_channel_enabled` | `false` | 是否启用独立 Tag 检索通道 |
 
 真实组件和外部调用路径必须提供各自密钥；失败时不会自动切换为 fake。任意 `HL_MEM_*` 环境变量都不再参与应用 `Settings` 配置。
-代码默认值与示例部署配置刻意分离：`Settings` 的 `recall.default_limit` / `recall.relevance_reranker_floor` 仍为 `20` / `0.4`，而仓库 TOML 与 `config.example.toml` 显式覆盖为 `5` / `0.15`，并保持 `recall.relevance_keep_top1 = true`。query expansion 使用独立可配置模型，单次/总超时为 5/6 秒。
+代码默认值与示例部署配置刻意分离：`Settings` 的 `recall.default_limit` / `recall.relevance_reranker_floor` 仍为 `20` / `0.4`，而 `config.example.toml` 显式覆盖为 `5` / `0.15`，并保持 `recall.relevance_keep_top1 = true`。query expansion 使用独立可配置模型，单次/总超时为 5/6 秒。
 
 ## 能力概览
 

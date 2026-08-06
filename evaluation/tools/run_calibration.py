@@ -8,6 +8,8 @@ from pathlib import Path
 
 from hl_mem.recall.calibration import fit_logistic
 
+EVALUATION_ROOT = Path(__file__).resolve().parents[1]
+
 
 def main() -> None:
     """读取 JSONL 特征标注并保存逻辑回归模型。"""
@@ -15,7 +17,7 @@ def main() -> None:
     parser.add_argument(
         "--labels",
         type=Path,
-        default=Path(__file__).parent / "labeling/recall_labels_v1.jsonl",
+        default=EVALUATION_ROOT / "datasets" / "recall_labels_v1.jsonl",
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
