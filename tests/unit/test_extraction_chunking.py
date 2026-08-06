@@ -127,7 +127,7 @@ def test_truncated_output_is_bisected_and_usage_is_accumulated() -> None:
         ChunkingPolicy(1_000, 0, 2),
     )
 
-    claims = extractor.extract("第一段内容。\n\n第二段内容。")
+    claims = extractor.extract("第一段内容：用户偏好深色模式。\n\n第二段内容：用户偏好深色模式。")
 
     assert len(client.requests) == 3
     assert len(claims) == 1

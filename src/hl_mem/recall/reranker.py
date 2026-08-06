@@ -24,13 +24,13 @@ class RerankResult:
 
 
 class DashScopeReranker:
-    """DashScope gte-rerank-v2 client, HTTP only, graceful degradation."""
+    """DashScope qwen3-rerank client, HTTP only, graceful degradation."""
 
     def __init__(
         self,
         api_key: str,
         base_url: str = "https://dashscope.aliyuncs.com",
-        model: str = "gte-rerank-v2",
+        model: str = "qwen3-rerank",
         timeout: float = 10.0,
         client: httpx.Client | None = None,
     ) -> None:

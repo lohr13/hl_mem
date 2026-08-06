@@ -99,8 +99,9 @@ class NoClaimsLLMClient:
 class OneClaimLLMClient(NoClaimsLLMClient):
     def complete(self, _request):
         return LLMResponse(
-            '{"claims":[{"subject":"hl_mem","predicate":"使用",'
-            '"value":"hl_mem 使用 SQLite"}],"should_memorize":true}',
+            '{"claims":[{"subject":"hl_mem","value":"hl_mem 使用 SQLite",'
+            '"kind":"choice","confidence":0.9,"notability":"high",'
+            '"evidence_quote":"使用 SQLite"}],"should_memorize":true}',
             "stop",
             4,
         )

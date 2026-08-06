@@ -253,7 +253,7 @@ def test_secret_claims_are_rejected_without_copying_values_into_audit() -> None:
                 ],
                 {
                     "predicate": "配置",
-                    "value": "hl_mem 当前版本为 v0.21.0",
+                    "value": "hl_mem 使用 SQLite WAL 模式",
                     "confidence": 0.9,
                 },
             ],
@@ -262,14 +262,15 @@ def test_secret_claims_are_rejected_without_copying_values_into_audit() -> None:
         ensure_ascii=False,
     )
     audit = _RecordingAudit()
+    source_text = "\n".join([*secret_values, "hl_mem 使用 SQLite WAL 模式"])
 
     with audit_scope(audit):
         claims = LLMExtractor(
             _FakeLLMClient(raw),
             ChunkingPolicy(10_000, 0, 2),
-        ).extract("包含结构化提取候选的事件")
+        ).extract(source_text)
 
-    assert [claim.value for claim in claims] == ["hl_mem 当前版本为 v0.21.0"]
+    assert [claim.value for claim in claims] == ["hl_mem 使用 SQLite WAL 模式"]
     rejected = [event for event in audit.events if event[1] == "secret_rejected"]
     assert len(rejected) == 1
     assert rejected[0][:3] == ("extract", "secret_rejected", "rejected")
@@ -407,7 +408,7 @@ def test_recovery_code_filter_requires_a_code_and_preserves_safe_policy_text() -
     claims = LLMExtractor(
         _FakeLLMClient(raw),
         ChunkingPolicy(10_000, 0, 2),
-    ).extract("恢复码与安全政策")
+    ).extract("abcde-fghij\n安全政策禁止保存 recovery codes")
 
     assert [claim.value for claim in claims] == ["安全政策禁止保存 recovery codes"]
 
@@ -444,7 +445,7 @@ def test_unsettled_claim_confidence_is_capped_but_confirmed_claim_is_preserved()
             "claims": [
                 {
                     "predicate": "配置",
-                    "value": "建议将 flaky 测试失败后的重跑次数改为两次",
+                    "value": "建议将索引保留周期改为两天",
                     "confidence": 0.9,
                 },
                 {
@@ -471,6 +472,15 @@ def test_unsettled_claim_confidence_is_capped_but_confirmed_claim_is_preserved()
     claims = LLMExtractor(
         _FakeLLMClient(raw),
         ChunkingPolicy(10_000, 0, 2),
-    ).extract("测试策略讨论")
+    ).extract(
+        "\n".join(
+            [
+                "建议将索引保留周期改为两天",
+                "或许可以考虑后续更换测试框架",
+                "已确认采纳该建议：CI 失败只重跑一次",
+                "该建议已执行：CI 现在使用 -v -x",
+            ]
+        )
+    )
 
     assert [claim.confidence for claim in claims] == [0.55, 0.4, 0.9, 0.85]

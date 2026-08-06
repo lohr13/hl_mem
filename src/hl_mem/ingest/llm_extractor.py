@@ -852,6 +852,10 @@ class LLMExtractor:
                     continue
                 raw_claim = postprocessed
             else:
+                secret_reason = _secret_reason(raw_claim)
+                if secret_reason is not None:
+                    self._secret_rejections[secret_reason] = self._secret_rejections.get(secret_reason, 0) + 1
+                    continue
                 legacy_candidate = self._legacy_admission_candidate(raw_claim)
                 if legacy_candidate is None or not self._record_admission(legacy_candidate, chunk.text):
                     continue

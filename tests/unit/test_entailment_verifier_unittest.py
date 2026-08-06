@@ -74,22 +74,30 @@ def _claim(index: int = 0) -> ExtractedClaim:
     )
 
 
+def _extraction_value(index: int) -> str:
+    return f"hl_mem 的超时配置项 {index} 为 {30 + index} 秒"
+
+
+def _extraction_source(claim_count: int) -> str:
+    return "\n".join(_extraction_value(index) for index in range(claim_count))
+
+
 def _extraction_response(claim_count: int) -> str:
     claims = [
         {
             "subject": "hl_mem",
-            "predicate": "配置",
-            "value": f"hl_mem 的超时配置项 {index} 为 {30 + index} 秒",
-            "qualifiers": {},
+            "value": _extraction_value(index),
+            "kind": "config",
+            "confidence": 0.9,
+            "notability": "medium",
+            "evidence_quote": _extraction_value(index),
         }
         for index in range(claim_count)
     ]
     return json.dumps(
         {
             "claims": claims,
-            "entities": ["hl_mem"],
             "should_memorize": bool(claims),
-            "sensitivity": "normal",
         },
         ensure_ascii=False,
     )
@@ -99,7 +107,7 @@ class EntailmentVerifierTests(unittest.TestCase):
     def test_default_off_preserves_single_extraction_call(self) -> None:
         client = _SequenceClient([LLMResponse(_extraction_response(1), "stop", 4)])
 
-        claims = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("hl_mem 有一条配置。")
+        claims = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract(_extraction_source(1))
 
         self.assertEqual(len(claims), 1)
         self.assertEqual(len(client.requests), 1)
@@ -194,7 +202,7 @@ class EntailmentVerifierTests(unittest.TestCase):
         audit = _RecordingAudit()
 
         with audit_scope(audit):
-            claims = extractor.extract("hl_mem 有六条独立配置事实。")
+            claims = extractor.extract(_extraction_source(6))
 
         checked = [event for event in audit.events if event[1] == "entailment_checked"]
         self.assertEqual(len(claims), 6)
@@ -230,7 +238,7 @@ class EntailmentVerifierTests(unittest.TestCase):
             verification_mode="enforce",
         )
 
-        claims = extractor.extract("这段原文不会支持模型生成的配置。")
+        claims = extractor.extract(_extraction_source(1))
 
         self.assertEqual(len(claims), 1)
         self.assertEqual(len(client.requests), 2)
@@ -246,7 +254,7 @@ class EntailmentVerifierTests(unittest.TestCase):
         audit = _RecordingAudit()
 
         with audit_scope(audit):
-            claims = extractor.extract("hl_mem 有六条配置。")
+            claims = extractor.extract(_extraction_source(6))
 
         failed = [event for event in audit.events if event[1] == "entailment_verification_failed"]
         self.assertEqual(len(claims), 6)
@@ -264,7 +272,7 @@ class EntailmentVerifierTests(unittest.TestCase):
         audit = _RecordingAudit()
 
         with audit_scope(audit):
-            claims = extractor.extract("hl_mem 有六条配置。")
+            claims = extractor.extract(_extraction_source(6))
 
         failed = [event for event in audit.events if event[1] == "entailment_verification_failed"]
         self.assertEqual(len(claims), 6)
@@ -294,7 +302,7 @@ class EntailmentSettingsTests(unittest.TestCase):
     def test_settings_adds_disabled_verification_mode(self) -> None:
         settings = Settings()
 
-        self.assertEqual(len(fields(Settings)), 155)
+        self.assertEqual(len(fields(Settings)), 156)
         self.assertEqual(settings.verification_mode, "off")
         self.assertEqual(settings.snapshot()["verification_mode"], "off")
 
