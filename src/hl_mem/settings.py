@@ -119,7 +119,7 @@ class Settings:
         default="https://dashscope.aliyuncs.com",
         metadata={"toml": "reranker.base_url"},
     )
-    reranker_model: str = field(default="gte-rerank-v2", metadata={"toml": "reranker.model"})
+    reranker_model: str = field(default="qwen3-rerank", metadata={"toml": "reranker.model"})
     relation_expansion_mode: RelationExpansionMode = field(
         default="off",
         metadata={"toml": "relation.expansion_mode"},

@@ -27,7 +27,7 @@ api_mode = "native"
 # 推荐启用值（不是代码默认值；代码默认 mode = "off"）。
 mode = "on"
 base_url = "https://dashscope.aliyuncs.com"
-model = "gte-rerank-v2"
+model = "qwen3-rerank"
 
 [image_describer]
 # 推荐启用值（不是代码默认值；代码默认 mode = "off"）。
