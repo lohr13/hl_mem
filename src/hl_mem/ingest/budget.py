@@ -61,14 +61,15 @@ class TokenBudget:
             connection.close()
 
     def get_stats(self) -> dict[str, int | str]:
-        """返回今日预算上限、已用量和剩余额度。"""
+        """返回今日预算上限、已用量和剩余额度。daily_limit<=0 时剩余为 -1（无限制）。"""
         current = self._today().isoformat()
         with self._connect() as connection:
             row = connection.execute("SELECT used_tokens FROM token_budget WHERE budget_date=?", (current,)).fetchone()
         used = int(row[0]) if row else 0
+        remaining = -1 if self.daily_limit <= 0 else max(0, self.daily_limit - used)
         return {
             "date": current,
             "daily_limit": self.daily_limit,
             "used_tokens": used,
-            "remaining_tokens": max(0, self.daily_limit - used),
+            "remaining_tokens": remaining,
         }

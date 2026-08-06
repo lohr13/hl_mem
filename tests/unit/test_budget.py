@@ -20,3 +20,11 @@ def test_budget_resets_on_natural_day(tmp_path) -> None:
     current[0] = date(2026, 7, 21)
     assert budget.can_spend(10)
     assert budget.get_stats()["used_tokens"] == 0
+
+
+def test_unlimited_budget_never_exhausts(tmp_path) -> None:
+    budget = TokenBudget(0, tmp_path / "budget.json")
+    budget.record_usage(999_999_999)
+    assert budget.can_spend(999_999_999)
+    stats = budget.get_stats()
+    assert stats["remaining_tokens"] == -1
