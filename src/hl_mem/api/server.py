@@ -234,6 +234,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         return {
             "status": "ok",
             "version": __version__,
+            "vector_backend": str(settings.vector_backend),
             "conflict_open_count": conflict_open_count,
             "embedder": "fake" if isinstance(embedder, FakeEmbedder) else "real",
             "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
