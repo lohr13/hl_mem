@@ -5,7 +5,7 @@
   "metrics": {
     "recall_at_5": 0.7738095238095238,
     "recall_at_10": 0.8571428571428571,
-    "mrr": 0.6928571428571428,
+    "mrr": 0.75,
     "precision_at_5": 0.24285714285714285,
     "temporal_accuracy": 1.0,
     "supersede_accuracy": 1.0,
@@ -122,6 +122,5 @@
     "supersede_accuracy": 0.0,
     "relation_accuracy": 0.0,
     "case_accuracy": 0.0
-  },
-  "mrr": 0.75
+  }
 }
