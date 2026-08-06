@@ -1,0 +1,126 @@
+{
+  "schema_version": 2,
+  "hash_algorithm": "sha256-utf8-lf-v1",
+  "dataset_hash": "0bc571fe942448179a4c46ab43af6ef9afc69f3de43680b86ac25b9d12d9beb9",
+  "metrics": {
+    "recall_at_5": 0.7738095238095238,
+    "recall_at_10": 0.8571428571428571,
+    "mrr": 0.6928571428571428,
+    "precision_at_5": 0.24285714285714285,
+    "temporal_accuracy": 1.0,
+    "supersede_accuracy": 1.0,
+    "relation_accuracy": 1.0,
+    "case_accuracy": 1.0
+  },
+  "expected_metrics_per_case": {
+    "recall-project-code": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 0.2,
+      "precision_at_5": 0.2
+    },
+    "recall-editor-distractors": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "precision_at_5": 0.2
+    },
+    "recall-database-version": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "precision_at_5": 0.2
+    },
+    "synonym-ui-theme": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "precision_at_5": 0.2
+    },
+    "synonym-python-version": {
+      "recall_at_5": 0.0,
+      "recall_at_10": 1.0,
+      "mrr": 0.16666666666666666,
+      "precision_at_5": 0.0
+    },
+    "multi-result-recall": {
+      "recall_at_5": 0.8333333333333334,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "precision_at_5": 1.0
+    },
+    "chinese-fts-allergy": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "precision_at_5": 0.2
+    },
+    "chinese-fts-city": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "precision_at_5": 0.2
+    },
+    "temporal-old-role": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "precision_at_5": 0.3333333333333333,
+      "temporal_accuracy": 1.0
+    },
+    "temporal-new-role": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "precision_at_5": 0.3333333333333333,
+      "temporal_accuracy": 1.0
+    },
+    "temporal-before-validity": {
+      "recall_at_5": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "precision_at_5": 0.0
+    },
+    "supersede-theme-lifecycle": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 0.3333333333333333,
+      "precision_at_5": 0.3333333333333333,
+      "supersede_accuracy": 1.0
+    },
+    "relation-storage-supports": {
+      "relation_accuracy": 1.0
+    },
+    "relation-discovery-supports": {
+      "relation_accuracy": 1.0
+    },
+    "negative-empty-database": {
+      "recall_at_5": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "precision_at_5": 0.0
+    },
+    "negative-temporal-future-preference": {
+      "recall_at_5": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "precision_at_5": 0.0
+    },
+    "recall-with-many-distractors": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "precision_at_5": 0.2
+    }
+  },
+  "tolerance_thresholds": {
+    "recall_at_5": 0.05,
+    "recall_at_10": 0.1,
+    "mrr": 0.05,
+    "precision_at_5": 0.1,
+    "temporal_accuracy": 0.0,
+    "supersede_accuracy": 0.0,
+    "relation_accuracy": 0.0,
+    "case_accuracy": 0.0
+  }
+}
