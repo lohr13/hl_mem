@@ -56,3 +56,4 @@ docs/eval-reports/
 var/watchdog.state
 var/crash-packages/
 
+evaluation/cache/lme_12_backup/
