@@ -21,7 +21,9 @@ from hl_mem.domain.claims.attributes import (
 )
 from hl_mem.domain.entity import load_entity_aliases, normalize_entity_id
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
+DATASET_DIR = ROOT / "evaluation" / "datasets"
+RESULTS_DIR = ROOT / "evaluation" / "results"
 
 _EVALUATION_ENTITY_ALIASES = {
     **load_entity_aliases(),
@@ -140,11 +142,11 @@ class ClaimMatch:
 def parse_args() -> argparse.Namespace:
     """解析 gold、benchmark 路径与 value 匹配阈值。"""
     parser = argparse.ArgumentParser(description="按模型评估 extraction benchmark 的 gold 指标")
-    parser.add_argument("--gold", type=Path, default=SCRIPT_DIR / "gold_dataset.jsonl")
+    parser.add_argument("--gold", type=Path, default=DATASET_DIR / "gold_dataset.jsonl")
     parser.add_argument(
         "--benchmark",
         type=Path,
-        default=SCRIPT_DIR / "extraction_benchmark_results.jsonl",
+        default=RESULTS_DIR / "extraction_benchmark_results.jsonl",
     )
     parser.add_argument("--value-threshold", type=float, default=0.62)
     return parser.parse_args()

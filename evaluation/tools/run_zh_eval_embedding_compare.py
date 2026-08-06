@@ -17,22 +17,22 @@ from typing import Any
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hl_mem import __version__  # noqa: E402
-from hl_mem.components import initialize_process, make_extractor  # noqa: E402
-from hl_mem.config_loader import load_settings  # noqa: E402
-from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402
-from hl_mem.settings import Settings  # noqa: E402
-from scripts.eval_against_gold import match_claims  # noqa: E402
-from scripts.run_embedding_ablation import (  # noqa: E402
+from evaluation.tools.eval_against_gold import match_claims  # noqa: E402
+from evaluation.tools.run_embedding_ablation import (  # noqa: E402
     Cost,
     DashScopeEmbeddingClient,
     EmbeddingConfig,
     embed_remote,
 )
+from hl_mem import __version__  # noqa: E402
+from hl_mem.components import initialize_process, make_extractor  # noqa: E402
+from hl_mem.config_loader import load_settings  # noqa: E402
+from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402
+from hl_mem.settings import Settings  # noqa: E402
 
 DEFAULT_DATASET = ROOT / "evaluation" / "datasets" / "zh_memory_eval.jsonl"
 DEFAULT_OUTPUT = ROOT / "evaluation" / "results" / "zh_eval_embedding_compare.json"
@@ -526,7 +526,7 @@ def _base_report(
             "retrieval_query": "gold claim value",
             "retrieval_scope": "claims extracted from the same case",
             "primary_retrieval_k": PRIMARY_K,
-            "matcher": "scripts.eval_against_gold.match_claims",
+            "matcher": "evaluation.tools.eval_against_gold.match_claims",
             "metric_note": (
                 "Extraction precision/recall/F1 are shared across configs because re-embedding "
                 "does not alter extracted claims; Recall@K and MRR select the embedding config."

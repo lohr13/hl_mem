@@ -23,19 +23,17 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-SCRIPTS = ROOT / "scripts"
-for import_path in (str(SRC), str(SCRIPTS)):
+for import_path in (str(ROOT), str(SRC)):
     if import_path not in sys.path:
         sys.path.insert(0, import_path)
 
-from run_embedding_ablation import (  # noqa: E402
+from evaluation.tools.run_embedding_ablation import (  # noqa: E402
     CONFIGS,
     DashScopeEmbeddingClient,
     _load_env_value,
     _normalize_rows,
     embed_remote,
 )
-
 from hl_mem.recall.reranker import DashScopeReranker  # noqa: E402
 
 DEFAULT_DATASET = ROOT / "evaluation" / "datasets" / "recall_eval_v1.jsonl"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Build Gold v2 directly from the 50 source events.
 
-This builder intentionally reads only ``scripts/extraction_testset.jsonl``.
+This builder intentionally reads only ``evaluation/datasets/extraction_testset.jsonl``.
 All annotations below are independent manual adjudications of the event text;
 no previous Gold dataset is loaded or compared.
 """
@@ -12,8 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-TESTSET_PATH = ROOT / "scripts" / "extraction_testset.jsonl"
+ROOT = Path(__file__).resolve().parents[2]
+TESTSET_PATH = ROOT / "evaluation" / "datasets" / "extraction_testset.jsonl"
 OUTPUT_PATH = ROOT / "evaluation" / "datasets" / "extraction_gold_v2.jsonl"
 
 

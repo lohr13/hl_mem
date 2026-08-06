@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def _load_evaluator():
-    script = Path(__file__).resolve().parents[2] / "scripts" / "eval_against_gold.py"
+    script = Path(__file__).resolve().parents[2] / "evaluation" / "tools" / "eval_against_gold.py"
     spec = importlib.util.spec_from_file_location("eval_against_gold_unittest", script)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"无法加载 {script}")

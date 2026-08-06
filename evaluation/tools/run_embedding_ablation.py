@@ -21,7 +21,7 @@ from typing import Any, Sequence
 import httpx
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 BASE_URL = "https://dashscope.aliyuncs.com"
 COMPATIBLE_PATH = "/compatible-mode/v1/embeddings"
 NATIVE_PATH = "/api/v1/services/embeddings/text-embedding/text-embedding"

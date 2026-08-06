@@ -9,10 +9,10 @@ import sys
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 
-from run_no_answer_calibration import (  # noqa: E402
+from scripts.run_no_answer_calibration import (  # noqa: E402
     binary_metrics,
     scan_and_gate,
     scan_thresholds,

@@ -31,7 +31,7 @@ except ImportError:
 
     _LOCK_IMPL = "msvcrt"
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -44,10 +44,10 @@ from hl_mem.llm.types import StructuredOutputMode  # noqa: E402
 from hl_mem.storage._shared import decode_json  # noqa: E402
 
 DB_PATH = PROJECT_ROOT / "var" / "hl_mem.db"
-TESTSET_PATH = PROJECT_ROOT / "scripts" / "extraction_testset.jsonl"
-RESULTS_PATH = PROJECT_ROOT / "scripts" / "extraction_benchmark_results.jsonl"
-RUNS_ROOT = PROJECT_ROOT / "scripts" / "benchmark_runs"
-LOCK_PATH = PROJECT_ROOT / "scripts" / ".benchmark_extraction.lock"
+TESTSET_PATH = PROJECT_ROOT / "evaluation" / "datasets" / "extraction_testset.jsonl"
+RESULTS_PATH = PROJECT_ROOT / "evaluation" / "results" / "extraction_benchmark_results.jsonl"
+RUNS_ROOT = PROJECT_ROOT / "evaluation" / "results" / "benchmark_runs"
+LOCK_PATH = PROJECT_ROOT / "evaluation" / "cache" / ".benchmark_extraction.lock"
 HERMES_CONFIG_PATH = Path(
     os.getenv(
         "HERMES_CONFIG_PATH",

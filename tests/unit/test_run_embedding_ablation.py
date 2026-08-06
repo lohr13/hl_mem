@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-import importlib.util
 import math
-import sys
 import unittest
-from pathlib import Path
 
 import numpy as np
 
-RUNNER_PATH = Path(__file__).with_name("run_embedding_ablation.py")
-SPEC = importlib.util.spec_from_file_location("run_embedding_ablation", RUNNER_PATH)
-assert SPEC is not None and SPEC.loader is not None
-runner = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = runner
-SPEC.loader.exec_module(runner)
+from evaluation.tools import run_embedding_ablation as runner
 
 
 class RequestConstructionTests(unittest.TestCase):

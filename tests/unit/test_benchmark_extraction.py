@@ -12,7 +12,7 @@ from hl_mem.ingest.llm_extractor import PROMPT_HASH
 
 
 def _load_benchmark_module():
-    script_path = Path(__file__).resolve().parents[2] / "scripts" / "benchmark_extraction.py"
+    script_path = Path(__file__).resolve().parents[2] / "evaluation" / "tools" / "benchmark_extraction.py"
     spec = importlib.util.spec_from_file_location("benchmark_extraction", script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

@@ -16,8 +16,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_script(name: str) -> ModuleType:
-    """按文件名加载 scripts 下的可执行模块。"""
-    path = PROJECT_ROOT / "scripts" / f"{name}.py"
+    """按文件名加载 evaluation/tools 下的可执行模块。"""
+    path = PROJECT_ROOT / "evaluation" / "tools" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

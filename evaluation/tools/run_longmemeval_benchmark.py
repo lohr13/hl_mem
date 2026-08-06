@@ -19,10 +19,16 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from evaluation.tools.run_embedding_ablation import (  # noqa: E402
+    Cost,
+    DashScopeEmbeddingClient,
+    EmbeddingConfig,
+    embed_remote,
+)
 from hl_mem import __version__  # noqa: E402
 from hl_mem.application.ingest import IngestService  # noqa: E402
 from hl_mem.application.recall import RecallService  # noqa: E402
@@ -46,12 +52,6 @@ from hl_mem.llm.types import (  # noqa: E402
 from hl_mem.recall.relation_expansion import RelationExpansionConfig  # noqa: E402
 from hl_mem.settings import Settings  # noqa: E402
 from hl_mem.storage.database import Database  # noqa: E402
-from scripts.run_embedding_ablation import (  # noqa: E402
-    Cost,
-    DashScopeEmbeddingClient,
-    EmbeddingConfig,
-    embed_remote,
-)
 
 DEFAULT_DATASET = ROOT / "evaluation" / "longmemeval" / "longmemeval_s_cleaned.json"
 DEFAULT_OUTPUT = ROOT / "evaluation" / "results" / "longmemeval_s_benchmark.json"

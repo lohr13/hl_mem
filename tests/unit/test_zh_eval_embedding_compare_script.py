@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.run_zh_eval_embedding_compare import (
+from evaluation.tools.run_zh_eval_embedding_compare import (
     _embedding_config,
     build_extraction_content,
     compute_extraction_metrics,

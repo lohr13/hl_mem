@@ -5,11 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from hl_mem.core.vector import pack_vector
-from hl_mem.ingest.chunking import ChunkingPolicy
-from hl_mem.ingest.llm_extractor import LLMExtractor
-from hl_mem.llm.types import LLMRequest, LLMResponse
-from scripts.run_longmemeval_benchmark import (
+from evaluation.tools.run_longmemeval_benchmark import (
     DATABASE_ROOT,
     EMBEDDING_CONFIGS,
     _backup_claims_file,
@@ -18,6 +14,10 @@ from scripts.run_longmemeval_benchmark import (
     _similarity_distribution,
     normalize_case,
 )
+from hl_mem.core.vector import pack_vector
+from hl_mem.ingest.chunking import ChunkingPolicy
+from hl_mem.ingest.llm_extractor import LLMExtractor
+from hl_mem.llm.types import LLMRequest, LLMResponse
 
 
 class _RecordingLLMClient:

@@ -21,7 +21,6 @@ from scripts.ab_test_index_text import (
     parse_args,
     run_ab_test,
 )
-from scripts.diagnose_extraction_gaps import KeywordDomain, diagnose_domains
 
 
 def test_compare_index_text_modes_ranks_each_target() -> None:
@@ -291,65 +290,3 @@ def test_legacy_diagnostic_cli_includes_answerable(
     output = capsys.readouterr().out
     assert "| answerable |" in output
     assert "| legacy |" in output
-
-
-def test_diagnose_domains_reports_coverage_and_uncovered_samples() -> None:
-    """覆盖诊断应按 evidence 关联识别命中但未形成对应 claim 的事件。"""
-    connection = sqlite3.connect(":memory:")
-    connection.row_factory = sqlite3.Row
-    connection.executescript("""
-        CREATE TABLE events (
-            id TEXT PRIMARY KEY,
-            actor_type TEXT,
-            session_id TEXT,
-            event_type TEXT,
-            content_json TEXT,
-            recorded_at TEXT
-        );
-        CREATE TABLE claims (id TEXT PRIMARY KEY, value_json TEXT, subject_entity_id TEXT, predicate TEXT);
-        CREATE TABLE evidence_links (
-            derived_type TEXT,
-            derived_id TEXT,
-            evidence_type TEXT,
-            evidence_id TEXT
-        );
-        """)
-    connection.executemany(
-        "INSERT INTO events VALUES (?,?,?,?,?,?)",
-        [
-            (
-                "e1",
-                "user",
-                "s1",
-                "message",
-                json.dumps({"text": "我在做 lip-rt 唇形同步"}),
-                "2026-07-27T00:00:00Z",
-            ),
-            (
-                "e2",
-                "user",
-                "s1",
-                "message",
-                json.dumps({"text": "MuseTalk 也是候选"}),
-                "2026-07-27T00:00:01Z",
-            ),
-        ],
-    )
-    connection.execute(
-        "INSERT INTO claims VALUES (?,?,?,?)",
-        ("c1", json.dumps("lip-rt 用于唇形同步"), "lip-rt", "事实"),
-    )
-    connection.execute("INSERT INTO evidence_links VALUES ('claim','c1','event','e1')")
-
-    reports = diagnose_domains(
-        connection,
-        [KeywordDomain("lip-sync", ("lip-rt", "唇形同步", "MuseTalk"))],
-        sample_limit=3,
-    )
-
-    report = reports[0]
-    assert report.event_hits == 2
-    assert report.claim_hits == 1
-    assert report.coverage == 0.5
-    assert [sample.event_id for sample in report.samples] == ["e2"]
-    assert report.filter_reasons == {"eligible": 2}

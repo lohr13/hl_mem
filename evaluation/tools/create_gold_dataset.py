@@ -8,7 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
+DATASET_DIR = ROOT / "evaluation" / "datasets"
 
 SELECTED_EVENT_IDS = (
     "cbbc932288a64ff297b333898432f679",
@@ -343,8 +344,8 @@ GOLD_ANNOTATIONS: dict[str, dict[str, Any]] = {
 def parse_args() -> argparse.Namespace:
     """解析输入、输出路径和模板模式。"""
     parser = argparse.ArgumentParser(description="生成 20 条 extraction gold 标注")
-    parser.add_argument("--input", type=Path, default=SCRIPT_DIR / "extraction_testset.jsonl")
-    parser.add_argument("--output", type=Path, default=SCRIPT_DIR / "gold_dataset.jsonl")
+    parser.add_argument("--input", type=Path, default=DATASET_DIR / "extraction_testset.jsonl")
+    parser.add_argument("--output", type=Path, default=DATASET_DIR / "gold_dataset.jsonl")
     parser.add_argument("--template", action="store_true", help="只生成 gold_claims 为空的标注模板")
     return parser.parse_args()
 

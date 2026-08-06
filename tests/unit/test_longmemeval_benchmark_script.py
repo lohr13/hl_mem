@@ -7,10 +7,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from hl_mem.core.vector import pack_vector, unpack_vector
-from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION
-from hl_mem.settings import Settings
-from scripts.run_longmemeval_benchmark import (
+from evaluation.tools.run_longmemeval_benchmark import (
     _case_fingerprint,
     _claim_relevance_scores,
     _config_compare_report,
@@ -22,6 +19,9 @@ from scripts.run_longmemeval_benchmark import (
     normalize_case,
     retrieval_metrics,
 )
+from hl_mem.core.vector import pack_vector, unpack_vector
+from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION
+from hl_mem.settings import Settings
 
 
 def _official_record() -> dict[str, object]:
