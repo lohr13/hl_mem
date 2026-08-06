@@ -33,9 +33,11 @@ class TokenBudget:
         return connection
 
     def can_spend(self, estimated_tokens: int) -> bool:
-        """检查今日剩余预算是否足以覆盖预计 token。"""
+        """检查今日剩余预算是否足以覆盖预计 token。daily_limit<=0 表示无限制。"""
         if estimated_tokens < 0:
             raise ValueError("estimated_tokens must be non-negative")
+        if self.daily_limit <= 0:
+            return True
         return int(self.get_stats()["used_tokens"]) + estimated_tokens <= self.daily_limit
 
     def record_usage(self, actual_tokens: int) -> None:

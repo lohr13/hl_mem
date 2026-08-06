@@ -75,6 +75,7 @@ temporal_ttl_days_high = 14
 poll_interval = 2.0
 maintenance_interval = 600
 job_lease_minutes = 5
+daily_token_limit = 500000  # set 0 to disable limit
 
 [relation]
 discovery_mode = "off"
