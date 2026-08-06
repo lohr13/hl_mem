@@ -107,9 +107,15 @@ packages = ["src/hl_mem"]
 [tool.hatch.build.targets.sdist]
 exclude = [
     "/.env",
+    "/.build-venv",
+    "/.git",
+    "/.github",
+    "/.gitignore",
     "/hl_mem.toml",
     "/hl_mem.toml.bak*",
     "/var",
     "/docs/tasks",
     "/docs/qqbot-codex-integration-research.md",
+    "/evaluation",
+    "/benchmarks",
 ]
