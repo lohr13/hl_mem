@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-TESTSET_PATH = ROOT / "scripts" / "extraction_testset.jsonl"
+TESTSET_PATH = ROOT / "evaluation" / "datasets" / "extraction_testset.jsonl"
 PREDICTIONS_PATH = ROOT / "scripts" / "after_qwen_v0211.jsonl"
 GOLD_PATH = ROOT / "evaluation" / "datasets" / "extraction_gold_v1.jsonl"
 ENTAILMENT_PATH = ROOT / "evaluation" / "datasets" / "entailment_eval_v1.jsonl"

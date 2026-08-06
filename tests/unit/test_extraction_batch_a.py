@@ -85,7 +85,9 @@ def test_http_response_body_is_redacted_and_truncated() -> None:
 def test_gold_dataset_has_20_records_and_all_categories() -> None:
     records = [
         json.loads(line)
-        for line in (PROJECT_ROOT / "scripts" / "gold_dataset.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (PROJECT_ROOT / "evaluation" / "datasets" / "gold_dataset.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
 
