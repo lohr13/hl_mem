@@ -1,6 +1,6 @@
 # v0.20.1 watchdog 与可观测性方案
 
-> 后续状态：本方案中的仓库内 Windows watchdog 已被跨平台 `scripts/healthcheck.py` 和部署层监督取代；当前部署方式见 [`docs/watchdog.md`](../watchdog.md)。以下内容保留为历史设计记录。
+> 后续状态：本方案中的仓库内 Windows watchdog 已被跨平台 `scripts/healthcheck.py` 和部署层监督取代。以下内容保留为历史设计记录。
 
 ## 选择
 

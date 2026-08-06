@@ -58,7 +58,7 @@
 
 - LLM 提取 schema 接受非规范 `canonical_attribute` 字符串，交由领域校验回退，避免提取 Job 因格式偏差直接 dead。
 - `/healthz` 已改为 DB-free async liveness probe，不再因数据库锁或同步线程池饥饿而超时；历史 LLM span 聚合不再放入该响应。
-- 跨平台 `scripts/healthcheck.py` 通过 `/healthz` 返回监督退出码；systemd、Windows 服务管理器或容器编排平台负责定时探测、重启与告警，部署示例见 `docs/watchdog.md`。
+- 跨平台 `scripts/healthcheck.py` 通过 `/healthz` 返回监督退出码；systemd、Windows 服务管理器或容器编排平台负责定时探测、重启与告警。
 - FastAPI P1 请求日志记录 start/end、状态码、单调时钟耗时和受控 `X-Request-ID`，覆盖异常退出路径。
 - v0.20.1 无新增 migration；数据库 schema 保持在 migration 036。
 
@@ -139,7 +139,7 @@
 |------|------|
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更时间线 |
 | [architecture.md](architecture.md) | 当前已实现架构 |
-| [implementation-plan.md](implementation-plan.md) | 实现计划 |
+| [archive/implementation-plan.md](archive/implementation-plan.md) | 已完成里程碑与历史路线图 |
 | [adr/0001-core-strategy.md](adr/0001-core-strategy.md) | 核心策略决策 |
 | [adr/0002-mvp-scope-and-embedding.md](adr/0002-mvp-scope-and-embedding.md) | 首版范围 + Embedding 选型 |
 | [archive/refactor/](archive/refactor/) | 架构重构各阶段历史记录 |

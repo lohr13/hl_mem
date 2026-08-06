@@ -18,7 +18,6 @@ reference while integrating; consult Design, Proposals, and Research when evalua
 
 - [API Endpoints](api.md)
 - [MCP stdio setup](mcp.md)
-- [Deployment Supervision and Health Checks](watchdog.md)
 - [v0.20.2 Release Notes](releases/v0.20.2-recall-quality-supervision.md)
 - [v0.20.1 Release Notes](releases/v0.20.1-watchdog-observability.md)
 - [Changelog](CHANGELOG.md)
@@ -36,9 +35,8 @@ reference while integrating; consult Design, Proposals, and Research when evalua
 
 ## Project
 
-- [Completed Milestones and Roadmap](implementation-plan.md)
 - [Handoff Status](HANDOFF.md)
-- [Historical Archive](archive/)
+- [Historical Archive](archive/) (including completed plans and one-off reports)
 
 日期化的审计与 benchmark 结果可暂留在文档根目录作为当前运行证据；已完成的执行计划、研究草稿和 Codex
 任务说明应移入 `archive/tasks/` 或 `archive/research/`，不作为当前行为的规范来源。

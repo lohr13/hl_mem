@@ -81,7 +81,7 @@ The plugin is installed under `<HERMES_HOME>/plugins/hl_mem/`; restart Hermes af
 
 ### Always-on deployment and systemd
 
-Use the stdlib-only `scripts/healthcheck.py` to probe `/healthz`, and leave restart and alerting to systemd, Windows service management, or the container orchestrator. A systemd unit's `WorkingDirectory` must contain `hl_mem.toml` and the optional `.env`. See [Deployment Supervision and Health Checks](docs/watchdog.md) for the complete unit and cross-platform examples.
+Use the stdlib-only `scripts/healthcheck.py` to probe `/healthz`, and leave restart and alerting to systemd, Windows service management, or the container orchestrator. A systemd unit's `WorkingDirectory` must contain `hl_mem.toml` and the optional `.env`.
 
 See the [API reference](docs/api.md) for complete REST request contracts.
 
@@ -138,7 +138,6 @@ The current baseline is v0.23.0 with 36 immutable, forward-only migrations.
 | [Architecture](docs/architecture.md) | Layers, modules, pipelines, storage, and lifecycle |
 | [API reference](docs/api.md) | REST endpoints and request conventions |
 | [MCP guide](docs/mcp.md) | stdio arguments, Codex/Claude/Cursor setup, and tool-error behavior |
-| [Deployment supervision](docs/watchdog.md) | Cross-platform health probe and systemd, Windows, and container examples |
 | [Compatibility policy](docs/compatibility.md) | Versioning and public contract guarantees |
 | [Capability matrix](docs/capability-matrix.md) | Maturity, defaults, and evidence |
 | [Changelog](docs/CHANGELOG.md) | Release history |

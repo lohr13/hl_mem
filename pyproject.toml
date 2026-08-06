@@ -115,7 +115,6 @@ exclude = [
     "/hl_mem.toml.bak*",
     "/var",
     "/docs/tasks",
-    "/docs/qqbot-codex-integration-research.md",
     "/evaluation",
     "/benchmarks",
 ]

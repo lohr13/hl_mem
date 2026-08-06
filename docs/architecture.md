@@ -5,8 +5,8 @@
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
-[capability matrix](capability-matrix.md); future work is kept in [proposals](proposals/) and the
-[implementation plan](implementation-plan.md).
+[capability matrix](capability-matrix.md); future work is kept in [proposals](proposals/), while completed plans are
+retained in the [historical archive](archive/).
 
 ## 1. System Boundary
 
@@ -281,8 +281,8 @@ automatic decisions; LLM spans record operation, provider, model, status, token 
 route reports process-local component metrics and reads the unresolved conflict count through the application lifecycle
 connection; it does not call external providers. `/v1/stats`, offline evaluation, and the LongMemEval adapter provide
 broader database-backed operational and quality visibility.
-The stdlib-only probe described in [watchdog.md](watchdog.md) exposes `/healthz` to deployment supervision on every
-platform; systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
+The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
+systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
 Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by_model` to `injected`, preserving existing
 values while making the field describe the actual host/model delivery boundary.

@@ -81,7 +81,7 @@ uv run python install_to_hermes.py --hermes-home <HERMES_HOME>
 
 ### 常驻部署与 systemd
 
-常驻部署使用 `scripts/healthcheck.py` 探测 `/healthz`，将重启和告警交给 systemd、Windows 服务管理器或容器编排平台。systemd 的 `WorkingDirectory` 必须包含 `hl_mem.toml` 和可选 `.env`；完整单元模板与跨平台示例见 [服务监督与健康检查](docs/watchdog.md)。
+常驻部署使用 `scripts/healthcheck.py` 探测 `/healthz`，将重启和告警交给 systemd、Windows 服务管理器或容器编排平台。systemd 的 `WorkingDirectory` 必须包含 `hl_mem.toml` 和可选 `.env`。
 
 REST 的完整请求契约见 [API 文档](docs/api.md)。
 
@@ -138,7 +138,6 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | [架构](docs/architecture.md) | 分层、模块、写入/召回管线、存储和生命周期 |
 | [API](docs/api.md) | REST 端点和请求约定 |
 | [MCP](docs/mcp.md) | stdio 启动参数、Codex/Claude/Cursor 配置与工具错误语义 |
-| [服务监督与健康检查](docs/watchdog.md) | 跨平台健康探针及 systemd、Windows、容器部署示例 |
 | [兼容性策略](docs/compatibility.md) | 版本和公共契约保证 |
 | [能力矩阵](docs/capability-matrix.md) | 成熟度、默认值和验证证据 |
 | [变更日志](docs/CHANGELOG.md) | 发布历史 |
