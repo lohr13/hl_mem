@@ -403,7 +403,12 @@ class RecallService:
                 for item in additions
             ]
 
-        initial_trigger = QueryExpander.trigger_for(query, self.settings.query_expansion_mode)
+        context_available = self.settings.query_context_mode != "off"
+        initial_trigger = QueryExpander.trigger_for(
+            query,
+            self.settings.query_expansion_mode,
+            context_available=context_available,
+        )
         if initial_trigger is not None and self.query_expander is not None:
             additions, blobs = expand_for(initial_trigger)
             weighted_queries.extend(additions)
@@ -420,6 +425,7 @@ class RecallService:
                     "auto",
                     candidate_count=candidate_count,
                     candidate_floor=self.settings.query_expansion_candidate_floor,
+                    context_available=context_available,
                 )
                 return expand_for(trigger) if trigger is not None else ([], [])
 

@@ -190,7 +190,7 @@ def test_missing_session_and_context_read_failure_fall_back(tmp_path, monkeypatc
     assert client.requests == []
 
 
-def test_context_mode_off_does_not_read_events(tmp_path, monkeypatch) -> None:
+def test_context_mode_off_does_not_read_events_or_expand_coreference(tmp_path, monkeypatch) -> None:
     database = Database(tmp_path / "off.db")
     client = _CapturingClient()
     settings = replace(Settings(), query_expansion_mode="auto", query_context_mode="off")
@@ -208,7 +208,7 @@ def test_context_mode_off_does_not_read_events(tmp_path, monkeypatch) -> None:
             query_expander=QueryExpander(client),
         ).recall("之前讨论的那个方案", session_id="session-1")
 
-    assert len(client.requests) == 1
+    assert client.requests == []
 
 
 def test_settings_query_context_defaults() -> None:

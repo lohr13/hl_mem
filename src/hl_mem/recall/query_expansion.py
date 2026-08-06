@@ -61,6 +61,7 @@ class QueryExpander:
         *,
         candidate_count: int | None = None,
         candidate_floor: int = 8,
+        context_available: bool = False,
     ) -> str | None:
         """返回当前模式下的扩展触发原因。"""
         if mode == "off":
@@ -69,9 +70,7 @@ class QueryExpander:
             return "always"
         normalized = unicodedata.normalize("NFKC", query).strip()
         if any(term in normalized for term in _COREFERENCE_TERMS):
-            return "coreference"
-        if len(normalized) < 10:
-            return "short_query"
+            return "coreference" if context_available else None
         if candidate_count is not None and candidate_count < candidate_floor:
             return "low_recall"
         return None

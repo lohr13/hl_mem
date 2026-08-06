@@ -41,9 +41,16 @@ class _Client:
 
 
 def test_auto_trigger_boundaries_and_coreference() -> None:
-    assert QueryExpander.trigger_for("123456789", "auto") == "short_query"
-    assert QueryExpander.trigger_for("1234567890", "auto") is None
-    assert QueryExpander.trigger_for("之前讨论的那个生产环境部署方案", "auto") == "coreference"
+    assert QueryExpander.trigger_for("用户名", "auto") is None
+    assert QueryExpander.trigger_for("之前讨论的那个生产环境部署方案", "auto") is None
+    assert (
+        QueryExpander.trigger_for(
+            "之前讨论的那个生产环境部署方案",
+            "auto",
+            context_available=True,
+        )
+        == "coreference"
+    )
     assert QueryExpander.trigger_for("普通且足够具体的查询文本", "off") is None
     assert QueryExpander.trigger_for("普通且足够具体的查询文本", "always") == "always"
     assert (
