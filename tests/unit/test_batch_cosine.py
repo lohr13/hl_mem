@@ -72,6 +72,80 @@ def test_vector_search_uses_claim_id_for_tied_scores(tmp_path) -> None:
     ]
 
 
+def test_vector_search_light_scan_oversamples_before_materializing_rows(tmp_path) -> None:
+    """轻量扫描应回表足量候选，以补偿完整可见性过滤。"""
+    database = Database(tmp_path / "two-stage-vector.db")
+    connection = database.open()
+    try:
+        repository = ClaimRepository(connection, vector_batch_size=7)
+        base = {
+            "namespace_key": "default",
+            "subject_entity_id": "subject",
+            "predicate": "fact",
+            "recorded_from": "2026-01-01T00:00:00+00:00",
+            "status": "active",
+            "embedding_dense": pack_vector([1.0, 0.0]),
+        }
+        for index in range(52):
+            repository.insert_claim(
+                {
+                    **base,
+                    "id": f"claim-{index:02d}",
+                    "value": f"value-{index:02d}",
+                    "recorded_to": "2026-02-01T00:00:00+00:00" if index < 50 else None,
+                }
+            )
+
+        statements: list[str] = []
+        connection.set_trace_callback(statements.append)
+        results = repository.search_claims_vector(
+            pack_vector([1.0, 0.0]),
+            limit=2,
+            as_of="2026-08-01T00:00:00+00:00",
+            intent="current_state",
+            known_as_of="2026-08-01T00:00:00+00:00",
+        )
+        connection.set_trace_callback(None)
+
+        selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
+        assert selects[0].startswith("SELECT id, embedding_dense FROM claims")
+        assert selects[1].startswith("SELECT * FROM claims WHERE id IN (")
+        assert len(selects) == 2
+        assert [(claim["id"], claim["value"], claim["_score"]) for claim in results] == [
+            ("claim-50", "value-50", 1.0),
+            ("claim-51", "value-51", 1.0),
+        ]
+    finally:
+        database.close()
+
+
+def test_vector_search_zero_limit_returns_empty(tmp_path) -> None:
+    """零上限应保持空结果，且无需执行向量扫描。"""
+    database = Database(tmp_path / "zero-limit-vector.db")
+    connection = database.open()
+    try:
+        repository = ClaimRepository(connection)
+        repository.insert_claim(
+            {
+                "id": "claim",
+                "namespace_key": "default",
+                "subject_entity_id": "subject",
+                "predicate": "fact",
+                "value": "value",
+                "recorded_from": "2026-01-01T00:00:00+00:00",
+                "status": "active",
+                "embedding_dense": pack_vector([1.0, 0.0]),
+            }
+        )
+        statements: list[str] = []
+        connection.set_trace_callback(statements.append)
+
+        assert repository.search_claims_vector(pack_vector([1.0, 0.0]), limit=0) == []
+        assert not any(statement.lstrip().upper().startswith("SELECT") for statement in statements)
+    finally:
+        database.close()
+
+
 def test_different_batch_sizes_produce_identical_results() -> None:
     """batch size 仅控制临时矩阵，不应改变分数。"""
     query = pack_vector([1.0, -2.0, 0.5])

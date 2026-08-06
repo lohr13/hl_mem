@@ -354,32 +354,41 @@ class ClaimRepository:
     ) -> list[dict[str, Any]]:
         """对可见 Claim 执行本地余弦全量扫描并截断。"""
         limit = self.recall_vector_scan_limit if limit is None else limit
+        if limit <= 0:
+            return []
         # A 100k x 2048 float32 full scan is about 819 MB; indexed retrieval must
         # be reconsidered before deployments approach that scale.
         reference = as_of or datetime.now(timezone.utc).isoformat()
         selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
         statuses = _recall_statuses_sql(selected_intent)
         cursor = self.connection.execute(
-            f"SELECT * FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
+            f"SELECT id, embedding_dense FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
             "AND namespace_key=? "
             "AND (valid_from IS NULL OR valid_from<=?) AND (valid_to IS NULL OR valid_to>?)",
             (namespace, reference, reference),
         )
-        scored_claims: list[tuple[dict[str, Any], float]] = []
+        scored_claims: list[tuple[str, float]] = []
         while rows := cursor.fetchmany(self.vector_batch_size):
-            claims = [
-                claim
-                for claim in self._decode_rows(rows)
-                if claim_is_visible(claim, reference, known_as_of, selected_intent)
-            ]
             scores = batch_cosine_similarity(
                 query_blob,
-                [claim["embedding_dense"] for claim in claims],
+                [row["embedding_dense"] for row in rows],
                 self.vector_batch_size,
             )
-            scored_claims.extend(zip(claims, scores))
-        scored_claims.sort(key=lambda item: (-item[1], str(item[0]["id"])))
-        return [{**claim, "_score": score} for claim, score in scored_claims[:limit]]
+            scored_claims.extend((str(row["id"]), score) for row, score in zip(rows, scores))
+        scored_claims.sort(key=lambda item: (-item[1], item[0]))
+
+        candidate_limit = max(limit * 3, limit + 50)
+        candidates = scored_claims[:candidate_limit]
+        claims_by_id = self.batch_get_claims([claim_id for claim_id, _score in candidates])
+        results: list[dict[str, Any]] = []
+        for claim_id, score in candidates:
+            claim = claims_by_id.get(claim_id)
+            if claim is None or not claim_is_visible(claim, reference, known_as_of, selected_intent):
+                continue
+            results.append({**claim, "_score": score})
+            if len(results) >= limit:
+                break
+        return results
 
     def search(
         self,
