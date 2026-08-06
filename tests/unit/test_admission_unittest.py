@@ -221,6 +221,77 @@ class CompactExtractionTest(unittest.TestCase):
 
         self.assertEqual(claims, [])
 
+    def test_compact_choice_restores_database_slot_and_object_entity(self) -> None:
+        response = {
+            "claims": [
+                {
+                    "subject": "hl_mem",
+                    "value": "hl_mem 使用 PostgreSQL 数据库",
+                    "kind": "choice",
+                    "confidence": 0.95,
+                    "notability": "high",
+                    "evidence_quote": "hl_mem 使用 PostgreSQL 数据库",
+                }
+            ],
+            "should_memorize": True,
+        }
+
+        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract(
+            "hl_mem 使用 PostgreSQL 数据库"
+        )
+
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(claims[0].predicate, "使用")
+        self.assertEqual(claims[0].canonical_attribute, "choice.database")
+        self.assertEqual(claims[0].canonical_slot, "choice.database")
+        self.assertEqual(claims[0].qualifiers, {"project": "hl_mem"})
+        self.assertIn("PostgreSQL", claims[0].entities or [])
+
+    def test_compact_config_restores_required_service_qualifier(self) -> None:
+        response = {
+            "claims": [
+                {
+                    "subject": "hl_mem",
+                    "value": "hl_mem 服务端口为 8200",
+                    "kind": "config",
+                    "confidence": 0.95,
+                    "notability": "medium",
+                    "evidence_quote": "hl_mem 服务端口为 8200",
+                }
+            ],
+            "should_memorize": True,
+        }
+
+        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract("hl_mem 服务端口为 8200")
+
+        self.assertEqual(claims[0].canonical_attribute, "config.port")
+        self.assertEqual(claims[0].canonical_slot, "config.port")
+        self.assertEqual(claims[0].qualifiers, {"service": "hl_mem"})
+
+    def test_compact_plan_restores_absolute_time_range(self) -> None:
+        value = "数据迁移安排在 2026-08-20 至 2026-08-21"
+        response = {
+            "claims": [
+                {
+                    "subject": "用户",
+                    "value": value,
+                    "kind": "plan",
+                    "confidence": 0.9,
+                    "notability": "medium",
+                    "evidence_quote": value,
+                }
+            ],
+            "should_memorize": True,
+        }
+
+        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract(
+            value,
+            {"occurred_at": "2026-08-06T10:00:00+08:00"},
+        )
+
+        self.assertEqual(claims[0].occurred_start, "2026-08-20T00:00:00+08:00")
+        self.assertEqual(claims[0].occurred_end, "2026-08-21T00:00:00+08:00")
+
     def test_legacy_response_still_uses_existing_parser(self) -> None:
         response = {
             "claims": [

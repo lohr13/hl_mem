@@ -118,7 +118,7 @@ class CompactExtractedClaimSchema(BaseModel):
 
     subject: str = Field(min_length=1, max_length=200)
     value: str = Field(min_length=1)
-    kind: Literal["preference", "architecture", "identity", "config", "fact", "plan"]
+    kind: Literal["preference", "architecture", "identity", "config", "fact", "plan", "choice"]
     confidence: float = Field(ge=0.0, le=1.0)
     notability: Literal["high", "medium", "low"]
     evidence_quote: str = Field(min_length=1)

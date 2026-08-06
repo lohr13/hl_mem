@@ -9,6 +9,7 @@ import re
 import unicodedata
 from copy import deepcopy
 from dataclasses import asdict, replace
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from pydantic import ValidationError as PydanticValidationError
@@ -90,7 +91,7 @@ SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有�
     {
       "subject": "主体名称",
       "value": "原子事实描述",
-      "kind": "preference|architecture|identity|config|fact|plan",
+      "kind": "preference|architecture|identity|config|fact|plan|choice",
       "confidence": 0.0,
       "notability": "high|medium|low",
       "evidence_quote": "原文中支持这条 claim 的片段"
@@ -119,6 +120,7 @@ kind 分类：
 - config：端口、路径、模型名、API 地址等技术配置。
 - fact：其他稳定的客观事实。
 - plan：已确认的计划和截止日期。
+- choice：已生效的数据库、模型、工具或 provider 技术选型。
 
 notability 分级：
 - high：核心身份、永久偏好、关键架构决策。
@@ -210,6 +212,7 @@ _KIND_MAP: dict[str, tuple[str, str, str, str]] = {
     "config": ("配置", "config.other", "permanent", "stable"),
     "fact": ("事实", "fact.other", "permanent", "stable"),
     "plan": ("计划", "plan.other", "temporal", "stable"),
+    "choice": ("使用", "choice.tool", "permanent", "stable"),
 }
 _KIND_TOPIC_TAG = {
     "preference": "preference",
@@ -218,14 +221,29 @@ _KIND_TOPIC_TAG = {
     "config": "config",
     "fact": "fact",
     "plan": "plan",
+    "choice": "choice",
 }
 _NOTABILITY_IMPORTANCE = {"high": 0.9, "medium": 0.6, "low": 0.3}
+_ENV_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
+_ABSOLUTE_DATE_RE = re.compile(
+    r"(?P<year>\d{4})(?:-|/|年)(?P<month>\d{1,2})(?:-|/|月)(?P<day>\d{1,2})日?"
+    r"(?:[ T](?P<hour>\d{1,2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?)?"
+)
+_TECH_ENTITY_RE = re.compile(
+    r"(?ix)\b(?:"
+    r"PostgreSQL|SQLite|MySQL|Redis|FastAPI|Uvicorn|PyTorch|Django|Flask|"
+    r"OpenAI|Anthropic|DashScope|Qwen(?:[\w.-]+)?|GPT(?:[\w.-]+)?|"
+    r"Claude(?:[\w.-]+)?|Gemini(?:[\w.-]+)?|DeepSeek(?:[\w.-]+)?"
+    r")\b"
+)
+_BACKTICK_ENTITY_RE = re.compile(r"`([^`\r\n]{2,100})`")
+_RELATIVE_DATE_OFFSETS = {"今天": 0, "明天": 1, "后天": 2, "下周": 7}
 _LEGACY_PREDICATE_KIND = {
     "偏好": "preference",
     "身份": "identity",
     "配置": "config",
     "计划": "plan",
-    "使用": "architecture",
+    "使用": "choice",
 }
 
 
@@ -256,6 +274,7 @@ def _postprocess_rules_fingerprint() -> dict[str, Any]:
         "compact_kind_map": _KIND_MAP,
         "compact_kind_topic_tag": _KIND_TOPIC_TAG,
         "notability_importance": _NOTABILITY_IMPORTANCE,
+        "relative_date_offsets": _RELATIVE_DATE_OFFSETS,
         "admission": admission_rules_fingerprint(),
         "unsettled_confidence_ceiling": _UNSETTLED_CONFIDENCE_CEILING,
         "repair_enum_mappings": ENUM_MAPPINGS,
@@ -275,6 +294,10 @@ def _postprocess_rules_fingerprint() -> dict[str, Any]:
             "runtime_configuration": _regex_fingerprint(_RUNTIME_CONFIGURATION_RE),
             "tool_snapshot": _regex_fingerprint(_TOOL_SNAPSHOT_RE),
             "quoted_report": _regex_fingerprint(_QUOTED_REPORT_RE),
+            "compact_env_key": _regex_fingerprint(_ENV_KEY_RE),
+            "compact_absolute_date": _regex_fingerprint(_ABSOLUTE_DATE_RE),
+            "compact_tech_entity": _regex_fingerprint(_TECH_ENTITY_RE),
+            "compact_backtick_entity": _regex_fingerprint(_BACKTICK_ENTITY_RE),
             "subject_environment_variable": _regex_fingerprint(_ENVIRONMENT_VARIABLE_PATTERN),
             "subject_filename": _regex_fingerprint(_FILE_SUBJECT_PATTERN),
             "subject_pascal_case": _regex_fingerprint(_PASCAL_CASE_SUBJECT_PATTERN),
@@ -601,7 +624,81 @@ class LLMExtractor:
         self.last_output_tokens += int(getattr(self.verifier, "last_output_tokens", 0))
         self._llm_call_count += int(getattr(self.verifier, "last_call_count", 0))
 
-    def _postprocess_claim(self, raw: dict[str, Any], source_text: str) -> dict[str, Any] | None:
+    @staticmethod
+    def _infer_compact_qualifiers(attribute: str, subject: str, value: str) -> dict[str, str]:
+        """为 operational slot 确定性补齐最小实例 qualifier。"""
+        definition = SLOT_REGISTRY.get(attribute)
+        if definition is None or not definition.required_qualifiers:
+            return {}
+        qualifiers: dict[str, str] = {}
+        for key in definition.required_qualifiers:
+            if key == "key":
+                match = _ENV_KEY_RE.search(value)
+                qualifiers[key] = match.group(0) if match is not None else subject
+            elif key == "plan":
+                qualifiers[key] = value[:200]
+            else:
+                qualifiers[key] = subject
+        return qualifiers
+
+    @staticmethod
+    def _infer_compact_occurrence(text: str, occurred_at: str | None) -> tuple[str | None, str | None]:
+        """从绝对/相对日期与对话时间推断 claim 的发生区间。"""
+        base: datetime | None = None
+        if occurred_at:
+            try:
+                base = datetime.fromisoformat(str(occurred_at).replace("Z", "+00:00"))
+                if base.tzinfo is None:
+                    base = base.replace(tzinfo=timezone.utc)
+            except ValueError:
+                base = None
+        tz = base.tzinfo if base is not None else timezone.utc
+        moments: list[datetime] = []
+        for match in _ABSOLUTE_DATE_RE.finditer(text):
+            try:
+                moment = datetime(
+                    int(match.group("year")),
+                    int(match.group("month")),
+                    int(match.group("day")),
+                    int(match.group("hour") or 0),
+                    int(match.group("minute") or 0),
+                    int(match.group("second") or 0),
+                    tzinfo=tz,
+                )
+            except ValueError:
+                continue
+            if moment not in moments:
+                moments.append(moment)
+        if moments:
+            return moments[0].isoformat(), moments[1].isoformat() if len(moments) > 1 else None
+        if base is not None:
+            for signal, days in _RELATIVE_DATE_OFFSETS.items():
+                if signal in text:
+                    moment = (base + timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    return moment.isoformat(), None
+        return None, None
+
+    @staticmethod
+    def _extract_compact_entities(subject: str, value: str) -> list[str]:
+        """从 value 中提取受控技术名和显式标识，保留标准 subject。"""
+        entities = [subject]
+        candidates = [match.group(0) for match in _TECH_ENTITY_RE.finditer(value)]
+        candidates.extend(match.group(1).strip() for match in _BACKTICK_ENTITY_RE.finditer(value))
+        seen = {subject.casefold()}
+        for candidate in candidates:
+            canonical = ALIASES.get(candidate.casefold(), candidate)
+            key = canonical.casefold()
+            if key and key not in seen:
+                seen.add(key)
+                entities.append(canonical)
+        return entities
+
+    def _postprocess_claim(
+        self,
+        raw: dict[str, Any],
+        source_text: str,
+        occurred_at: str | None = None,
+    ) -> dict[str, Any] | None:
         """把 LLM 的 6 字段候选准入并映射为现有完整 claim schema。"""
         try:
             candidate = MemoryCandidate(
@@ -639,14 +736,12 @@ class LLMExtractor:
         predicate, canonical_attribute, scope, volatility = _KIND_MAP[candidate.kind]
         subject = normalize_entity_id(candidate.subject)
         inferred_attribute = infer_canonical_attribute(predicate, subject, candidate.value, {})
-        slot_definition = SLOT_REGISTRY.get(inferred_attribute)
-        canonical_slot = (
-            inferred_attribute
-            if slot_definition is not None
-            and slot_definition.is_operational
-            and not slot_definition.required_qualifiers
-            else None
-        )
+        fallback_attribute = PREDICATE_ATTRIBUTE_MAP[predicate][1]
+        if inferred_attribute not in {"custom.unknown", fallback_attribute}:
+            canonical_attribute = inferred_attribute
+        qualifiers = self._infer_compact_qualifiers(canonical_attribute, subject, candidate.value)
+        canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
+        occurred_start, occurred_end = self._infer_compact_occurrence(candidate.evidence_quote, occurred_at)
         topic_tags = normalize_topic_tags(
             [
                 _KIND_TOPIC_TAG[candidate.kind],
@@ -660,15 +755,15 @@ class LLMExtractor:
             "canonical_slot": canonical_slot,
             "topic_tags": topic_tags,
             "value": candidate.value,
-            "qualifiers": {},
+            "qualifiers": qualifiers,
             "confidence": candidate.confidence,
             "volatility": volatility,
             "reason": decision.reason,
             "scope": scope,
             "importance": _NOTABILITY_IMPORTANCE[candidate.notability],
-            "occurred_start": None,
-            "occurred_end": None,
-            "entities": [subject],
+            "occurred_start": occurred_start,
+            "occurred_end": occurred_end,
+            "entities": self._extract_compact_entities(subject, candidate.value),
         }
 
     @staticmethod
@@ -745,7 +840,7 @@ class LLMExtractor:
         for item in result.claims:
             raw_claim = item.model_dump()
             if compact_response:
-                postprocessed = self._postprocess_claim(raw_claim, chunk.text)
+                postprocessed = self._postprocess_claim(raw_claim, chunk.text, occurred_at)
                 if postprocessed is None:
                     continue
                 raw_claim = postprocessed

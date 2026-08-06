@@ -11,7 +11,7 @@ from typing import Any
 
 from hl_mem.domain.claims.attributes import MUTUALLY_EXCLUSIVE_SLOTS
 
-VALID_KINDS = frozenset({"preference", "architecture", "identity", "config", "fact", "plan"})
+VALID_KINDS = frozenset({"preference", "architecture", "identity", "config", "fact", "plan", "choice"})
 VALID_NOTABILITY = frozenset({"high", "medium", "low"})
 LOW_VALUE_HEALTH_STATES = frozenset({"ok", "running", "stopped", "健康", "正常"})
 NUMERIC_OR_VERSION_RE = re.compile(r"[0-9.]+")
