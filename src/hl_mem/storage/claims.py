@@ -15,7 +15,7 @@ from hl_mem.errors import ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
 from hl_mem.protocols import ClaimRow, EmbedderProtocol
 from hl_mem.recall.lexicalizer import prepare_fts_document, prepare_fts_query
-from hl_mem.settings import Settings
+from hl_mem.settings import Settings, VectorBackend
 from hl_mem.storage._shared import (
     decode_json,
     encode_json,
@@ -23,6 +23,7 @@ from hl_mem.storage._shared import (
     is_fts_syntax_error,
     row_to_dict,
 )
+from hl_mem.storage.sqlite_vec import SQLiteVecVectorBackend
 
 _CURRENT_STATUS_SQL = "('active')"
 _HISTORICAL_STATUS_SQL = "('active','archived','superseded','expired')"
@@ -52,9 +53,17 @@ class ClaimRepository:
         if vector_batch_size < 1:
             raise ValueError("vector_batch_size must be positive")
         self.vector_batch_size = vector_batch_size
-        resolved_settings = settings or Settings()
+        resolved_settings = settings or getattr(connection, "hl_mem_settings", None) or Settings()
         self.recall_default_limit = resolved_settings.recall_default_limit
         self.recall_vector_scan_limit = resolved_settings.recall_vector_scan_limit
+        self.vector_backend: SQLiteVecVectorBackend | None = None
+        if VectorBackend(resolved_settings.vector_backend) is VectorBackend.SQLITE_VEC:
+            self.vector_backend = SQLiteVecVectorBackend(
+                connection,
+                embedding_dim=resolved_settings.embedding_dim,
+                embedding_model=resolved_settings.embedding_model,
+                scan_fallback=self._search_claims_vector_scan,
+            )
 
     def insert_claim(self, claim: dict[str, Any], commit: bool = True) -> bool:
         """编码结构化字段，并在同一事务同步写入 tokenized FTS v2。"""
@@ -91,6 +100,8 @@ class ClaimRepository:
                     "INSERT INTO claims_tags_fts_v2(rowid,tags_text) VALUES(?,?)",
                     (row["rowid"], tags_text),
                 )
+                if self.vector_backend is not None:
+                    self.vector_backend.insert(str(stored["id"]))
             if commit:
                 self.connection.commit()
             return created
@@ -352,6 +363,40 @@ class ClaimRepository:
         known_as_of: str | None = None,
         namespace: str = "default",
     ) -> list[dict[str, Any]]:
+        """按配置委托 sqlite-vec，默认保留本地余弦扫描。"""
+        effective_limit = self.recall_vector_scan_limit if limit is None else limit
+        reference = as_of or datetime.now(timezone.utc).isoformat()
+        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        if self.vector_backend is not None:
+            return cast(
+                list[dict[str, Any]],
+                self.vector_backend.search(
+                    query_blob,
+                    effective_limit,
+                    reference,
+                    selected_intent,
+                    known_as_of,
+                    namespace,
+                ),
+            )
+        return self._search_claims_vector_scan(
+            query_blob,
+            effective_limit,
+            reference,
+            selected_intent,
+            known_as_of,
+            namespace,
+        )
+
+    def _search_claims_vector_scan(
+        self,
+        query_blob: bytes,
+        limit: int | None = None,
+        as_of: str | None = None,
+        intent: RecallIntent | str | None = None,
+        known_as_of: str | None = None,
+        namespace: str = "default",
+    ) -> list[dict[str, Any]]:
         """对可见 Claim 执行本地余弦全量扫描并截断。"""
         limit = self.recall_vector_scan_limit if limit is None else limit
         if limit <= 0:
@@ -389,6 +434,16 @@ class ClaimRepository:
             if len(results) >= limit:
                 break
         return results
+
+    def sync_vector(self, claim_id: str) -> None:
+        """在调用方事务内同步 Claim 当前 embedding/namespace。"""
+        if self.vector_backend is not None:
+            self.vector_backend.update(claim_id)
+
+    def delete_vector(self, claim_id: str) -> None:
+        """在调用方事务内移除 Claim 的派生向量。"""
+        if self.vector_backend is not None:
+            self.vector_backend.delete(claim_id)
 
     def search(
         self,
@@ -614,6 +669,8 @@ class ClaimRepository:
             "UPDATE claims SET status='retracted',embedding_dense=NULL,embedding_sparse=NULL WHERE id=?",
             (claim_id,),
         )
+        if cursor.rowcount == 1:
+            self.delete_vector(claim_id)
         self.connection.commit()
         return cursor.rowcount == 1
 

@@ -124,6 +124,7 @@ class ClaimRow(TypedDict, total=False):
     recorded_to: str | None
     access_count: int
     helpful_rate: float
+    _score: float
     score: float
     features: dict[str, float]
 

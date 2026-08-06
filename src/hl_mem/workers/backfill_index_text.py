@@ -14,6 +14,7 @@ from hl_mem.domain.claims.claim import IndexTextMode, build_index_text
 from hl_mem.llm.client import classify_provider_error
 from hl_mem.protocols import EmbedderProtocol
 from hl_mem.recall.lexicalizer import prepare_fts_document
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.index_integrity import check_index_integrity
 
 
@@ -145,6 +146,7 @@ def backfill_index_text(
     current_cursor = cursor or ""
     safe_cursor = cursor
     cursor_blocked = False
+    repository = ClaimRepository(connection)
     max_embed_batch = max(1, int(getattr(embedder, "MAX_BATCH_SIZE", batch_size)))
     target_text_digest = hashlib.sha256()
 
@@ -274,6 +276,7 @@ def backfill_index_text(
                         "INSERT OR REPLACE INTO claims_fts_v2(rowid,terms) VALUES(?,?)",
                         (row["claim_rowid"], prepare_fts_document(target)),
                     )
+                    repository.sync_vector(str(row["id"]))
                     applied += 1
                 else:
                     failed += 1

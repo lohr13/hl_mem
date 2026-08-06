@@ -36,7 +36,7 @@ class CorrectionService:
     ) -> None:
         self.connection = connection
         self.embedder = embedder
-        self.settings = settings or Settings()
+        self.settings = settings or getattr(connection, "hl_mem_settings", None) or Settings()
 
     def apply(
         self,
@@ -60,7 +60,7 @@ class CorrectionService:
         if existing is not None:
             return existing
 
-        repository = ClaimRepository(self.connection)
+        repository = ClaimRepository(self.connection, settings=self.settings)
         old_claim = repository.get_claim(memory_id)
         if old_claim is None:
             raise NotFoundError(f"memory not found: {memory_id}")
@@ -245,7 +245,7 @@ class CorrectionService:
         existing = self._existing_result(memory_id, "retract", None, idempotency_key)
         if existing is not None:
             return existing
-        repository = ClaimRepository(self.connection)
+        repository = ClaimRepository(self.connection, settings=self.settings)
         claim = repository.get_claim(memory_id)
         if claim is None:
             raise NotFoundError(f"memory not found: {memory_id}")
@@ -278,6 +278,7 @@ class CorrectionService:
             )
             if cursor.rowcount != 1:
                 raise NotFoundError(f"memory not found: {memory_id}")
+            repository.delete_vector(memory_id)
             stale_observations(self.connection, memory_id, commit=False)
             self.connection.commit()
         except Exception:

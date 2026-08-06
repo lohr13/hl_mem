@@ -31,6 +31,7 @@ class ForgetService:
             )
             if cursor.rowcount != 1:
                 raise NotFoundError(f"memory not found: {memory_id}")
+            repository.delete_vector(memory_id)
             stale_observations(self.connection, memory_id, commit=False)
             self.connection.commit()
         except Exception:

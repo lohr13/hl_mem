@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=2,<3"]
+sqlite-vec = ["sqlite-vec>=0.1.9,<0.2"]
 
 [project.urls]
 Homepage = "https://github.com/lohr13/hl_mem"

@@ -9,16 +9,28 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from hl_mem.settings import Settings
+from hl_mem.settings import Settings, VectorBackend
 from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
 from hl_mem.storage.migrations.backfill_conflict_key_v3 import backfill_conflict_keys_v3
 from hl_mem.storage.migrations.fact_hash_v2 import backfill_fact_hash_v2
+from hl_mem.storage.migrations.sqlite_vec import (
+    disable_sqlite_vec,
+    ensure_vector_control_schema,
+    migrate_sqlite_vec,
+)
+from hl_mem.storage.sqlite_vec import load_sqlite_vec_extension
 from hl_mem.storage.tokenized_fts import ensure_tokenized_fts_v2
 
 
 def default_database_path(settings: Settings | None = None) -> Path:
     """返回 Settings 中声明的数据库路径。"""
     return Path((settings or Settings()).database_path)
+
+
+class HLMemoryConnection(sqlite3.Connection):
+    """携带创建时 Settings 的 SQLite connection。"""
+
+    hl_mem_settings: Settings
 
 
 class Database:
@@ -33,6 +45,7 @@ class Database:
         settings: Settings | None = None,
     ) -> None:
         resolved_settings = settings or Settings()
+        self.settings = resolved_settings
         self.path = str(Path(path) if path is not None else default_database_path(resolved_settings))
         self.pool_size = pool_size if pool_size is not None else resolved_settings.database_pool_size
         self.busy_timeout_seconds = (
@@ -52,10 +65,18 @@ class Database:
             self.path,
             timeout=self.busy_timeout_seconds,
             check_same_thread=False,
+            factory=HLMemoryConnection,
         )
+        connection.hl_mem_settings = self.settings
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+        try:
+            if VectorBackend(self.settings.vector_backend) is VectorBackend.SQLITE_VEC:
+                load_sqlite_vec_extension(connection)
+        except Exception:
+            connection.close()
+            raise
         with self._lock:
             self._connections.add(connection)
         return connection
@@ -66,7 +87,12 @@ class Database:
         with self._lock:
             if self._migrated:
                 return
-            connection = sqlite3.connect(self.path, timeout=self.busy_timeout_seconds)
+            connection = sqlite3.connect(
+                self.path,
+                timeout=self.busy_timeout_seconds,
+                factory=HLMemoryConnection,
+            )
+            connection.hl_mem_settings = self.settings
             connection.row_factory = sqlite3.Row
             try:
                 if connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 0:
@@ -76,6 +102,8 @@ class Database:
                 connection.execute("PRAGMA journal_mode=WAL")
                 connection.execute("PRAGMA foreign_keys=ON")
                 connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+                if VectorBackend(self.settings.vector_backend) is VectorBackend.SQLITE_VEC:
+                    load_sqlite_vec_extension(connection)
                 self._migrate(connection)
                 self._migrated = True
             finally:
@@ -148,6 +176,17 @@ class Database:
             backfill_conflict_keys_v3(connection)
         if connection.execute("SELECT 1 FROM schema_migrations WHERE version='036_tokenized_fts_v2'").fetchone():
             ensure_tokenized_fts_v2(connection)
+        ensure_vector_control_schema(connection)
+        if VectorBackend(self.settings.vector_backend) is VectorBackend.SQLITE_VEC:
+            extension_version = load_sqlite_vec_extension(connection)
+            migrate_sqlite_vec(
+                connection,
+                self.settings.embedding_dim,
+                self.settings.embedding_model,
+                extension_version,
+            )
+        else:
+            disable_sqlite_vec(connection)
 
     def close(self) -> None:
         """关闭本实例创建的全部连接。"""

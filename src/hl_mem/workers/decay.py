@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from hl_mem.domain.claims.retention import is_protected_attribute
 from hl_mem.lifecycle import assert_transition
+from hl_mem.storage.claims import ClaimRepository
 
 
 def _parse(value: str) -> datetime:
@@ -97,6 +98,7 @@ def decay_claims(
         "temporal": (temporal_decay_days, temporal_archive_days),
         "permanent": (permanent_decay_days, permanent_archive_days),
     }
+    repository = ClaimRepository(connection)
     decayed = archived = 0
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -151,6 +153,8 @@ def decay_claims(
                     "WHERE id=? AND status IN ('active','disputed')",
                     (claim["id"],),
                 )
+                if cursor.rowcount == 1:
+                    repository.delete_vector(str(claim["id"]))
                 archived += cursor.rowcount
                 continue
             if inactive_days <= decay_after:

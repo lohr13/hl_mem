@@ -35,6 +35,7 @@ class VectorBackend(StrEnum):
     """支持的向量检索后端。"""
 
     SQLITE_SCAN = "sqlite_scan"
+    SQLITE_VEC = "sqlite_vec"
 
 
 def is_placeholder_secret(value: str | None) -> bool:
@@ -499,6 +500,10 @@ class Settings:
 
     def validate(self) -> None:
         """校验配置组合以及已启用组件的密钥。"""
+        try:
+            VectorBackend(self.vector_backend)
+        except ValueError as error:
+            raise ConfigurationError("recall.vector_backend must be 'sqlite_scan' or 'sqlite_vec'") from error
         required_secrets: dict[str, tuple[str | None, list[str]]] = {}
         llm_disable_modes: list[str] = []
         if self.extractor_mode != "fake":
