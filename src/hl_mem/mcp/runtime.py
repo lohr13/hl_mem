@@ -9,9 +9,15 @@ from pathlib import Path
 from typing import Any, Protocol, Sequence
 
 import anyio
-import mcp.types as types
-from mcp.server import Server, ServerRequestContext
-from mcp.server.stdio import stdio_server
+
+try:
+    import mcp.types as types
+    from mcp.server import Server, ServerRequestContext
+    from mcp.server.stdio import stdio_server
+
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
 
 from hl_mem import __version__
 from hl_mem.config_loader import load_settings
@@ -89,6 +95,9 @@ async def run_stdio(memory: MemoryToolBackend) -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Load one Settings snapshot and start the MCP stdio runtime."""
+    if not MCP_AVAILABLE:
+        raise SystemExit("mcp package not installed. Install with: pip install 'hl-mem[mcp]'")
+
     parser = argparse.ArgumentParser(prog="hl-mem-mcp")
     parser.add_argument("--version", action="version", version=f"hl_mem MCP {__version__}")
     parser.add_argument("--config", type=Path)
