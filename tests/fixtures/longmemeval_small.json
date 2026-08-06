@@ -1,0 +1,67 @@
+[
+  {
+    "question_id": "fixture-preference",
+    "category": "preference",
+    "haystack_sessions": [
+      [
+        {
+          "message_id": "m1",
+          "role": "user",
+          "content": "我喜欢深色主题。",
+          "timestamp": "2025-01-01T08:00:00+00:00"
+        },
+        {
+          "message_id": "m2",
+          "role": "assistant",
+          "content": "记住了。"
+        }
+      ]
+    ],
+    "question": "用户喜欢什么主题？",
+    "answer": "深色主题",
+    "answer_message_ids": ["m1"]
+  },
+  {
+    "question_id": "fixture-update",
+    "category": "temporal_update",
+    "haystack_sessions": [
+      [
+        {
+          "message_id": "old",
+          "role": "user",
+          "content": "现在使用 Vim。",
+          "timestamp": "2025-02-01T08:00:00+00:00"
+        },
+        {
+          "message_id": "new",
+          "role": "user",
+          "content": "现在使用 Neovim。",
+          "timestamp": "2025-03-01T08:00:00+00:00",
+          "supersedes_message_id": "old"
+        }
+      ]
+    ],
+    "question": "用户现在使用什么编辑器？",
+    "answer": "Neovim",
+    "answer_message_ids": ["new"],
+    "as_of": "2025-03-02T00:00:00+00:00"
+  },
+  {
+    "question_id": "fixture-expiry",
+    "category": "temporal",
+    "haystack_sessions": [
+      [
+        {
+          "message_id": "status",
+          "role": "user",
+          "content": "构建服务现在挂了。",
+          "timestamp": "2025-04-01T08:00:00+00:00",
+          "valid_to": "2025-04-02T08:00:00+00:00"
+        }
+      ]
+    ],
+    "question": "哪个服务挂了？",
+    "answer": "构建服务",
+    "answer_message_ids": ["status"]
+  }
+]

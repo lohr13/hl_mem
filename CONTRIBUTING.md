@@ -7,7 +7,7 @@
 需要 Python 3.11+、Git 和 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
-git clone git@github.com:REDACTED_USER/hl_mem.git
+git clone git@github.com:lohr13/hl_mem.git
 cd hl_mem
 uv sync --extra dev
 cp .env.example .env

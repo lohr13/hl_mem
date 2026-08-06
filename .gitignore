@@ -49,5 +49,5 @@ docs/eval-reports/
 
 # cc-connect runtime artifacts (not part of this repo)
 .cc-connect/
-evaluation/datasets/
+
 evaluation/baselines/
