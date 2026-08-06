@@ -19,9 +19,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/REDACTED_USER/hl_mem"
-Repository = "https://github.com/REDACTED_USER/hl_mem"
-Changelog = "https://github.com/REDACTED_USER/hl_mem/blob/main/docs/CHANGELOG.md"
+Homepage = "https://github.com/lohr13/hl_mem"
+Repository = "https://github.com/lohr13/hl_mem"
+Changelog = "https://github.com/lohr13/hl_mem/blob/main/docs/CHANGELOG.md"
 
 [project.scripts]
 hl-mem = "hl_mem.cli:main"

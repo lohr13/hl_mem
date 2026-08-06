@@ -55,7 +55,7 @@ jobs:
           name: python-package-distributions
           path: dist/
       # 首次创建 PyPI 项目前，需在账户 Publishing 页面添加 pending publisher；项目存在后可在设置中维护。
-      # 需绑定 GitHub publisher（owner REDACTED_USER、repository hl_mem、workflow publish.yml、environment pypi）。
+      # 需绑定 GitHub publisher（owner lohr13、repository hl_mem、workflow publish.yml、environment pypi）。
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/

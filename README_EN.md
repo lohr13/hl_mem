@@ -3,7 +3,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Version: 0.23.0](https://img.shields.io/badge/version-0.23.0-blue.svg)](docs/CHANGELOG.md)
-[![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
+[![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
 
@@ -52,7 +52,7 @@ Recall prints the Claim ID, score, and evidence references together:
 ### Install from source
 
 ```bash
-git clone https://github.com/REDACTED_USER/hl_mem.git
+git clone https://github.com/lohr13/hl_mem.git
 cd hl_mem
 uv sync
 uv run hlmem init --offline
