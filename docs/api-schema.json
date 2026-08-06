@@ -1,23 +1,983 @@
 {
+  "openapi": "3.1.0",
+  "info": {
+    "title": "HL-Mem",
+    "version": "0.23.0"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Healthz",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Healthz Healthz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/events": {
+      "post": {
+        "summary": "Post Event",
+        "operationId": "post_event_v1_events_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Post Event V1 Events Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/extract/dry-run": {
+      "post": {
+        "summary": "Dry Run Extract",
+        "description": "提取候选 claims 与 token 用量，但不持久化记忆数据。",
+        "operationId": "dry_run_extract_v1_extract_dry_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunExtractionInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Dry Run Extract V1 Extract Dry Run Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/consolidate": {
+      "post": {
+        "summary": "Consolidate",
+        "description": "创建带显式作用域的冲突归并任务。",
+        "operationId": "consolidate_v1_consolidate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsolidationScopeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Consolidate V1 Consolidate Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/recall": {
+      "post": {
+        "summary": "Recall",
+        "operationId": "recall_v1_recall_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RecallOutput"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ContextPacketRecallOutput"
+                    }
+                  ],
+                  "title": "Response Recall V1 Recall Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes": {
+      "post": {
+        "summary": "Create Episode",
+        "operationId": "create_episode_v1_episodes_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EpisodeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Episode V1 Episodes Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List Episodes",
+        "operationId": "list_episodes_v1_episodes_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "deprecated": true,
+              "title": "Tenant Id"
+            },
+            "deprecated": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Episodes V1 Episodes Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/feedback": {
+      "post": {
+        "summary": "Post Feedback",
+        "operationId": "post_feedback_v1_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Post Feedback V1 Feedback Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes/{episode_id}/traces": {
+      "post": {
+        "summary": "Add Episode Trace",
+        "operationId": "add_episode_trace_v1_episodes__episode_id__traces_post",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Episode Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TraceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add Episode Trace V1 Episodes  Episode Id  Traces Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes/{episode_id}": {
+      "patch": {
+        "summary": "Update Episode",
+        "operationId": "update_episode_v1_episodes__episode_id__patch",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Episode Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EpisodeUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Episode V1 Episodes  Episode Id  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Get Episode",
+        "operationId": "get_episode_v1_episodes__episode_id__get",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Episode Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Episode V1 Episodes  Episode Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/policies": {
+      "get": {
+        "summary": "List Policies",
+        "operationId": "list_policies_v1_policies_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "active",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "deprecated": true,
+              "title": "Tenant Id"
+            },
+            "deprecated": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Policies V1 Policies Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories": {
+      "get": {
+        "summary": "List Memories",
+        "description": "按 namespace/status 分页列出 Claim 记忆。",
+        "operationId": "list_memories_v1_memories_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(active|candidate|disputed|superseded|expired|archived|retracted)$",
+              "default": "active",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "deprecated": true,
+              "title": "Tenant Id"
+            },
+            "deprecated": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryListOutput"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save Memory",
+        "operationId": "save_memory_v1_memories_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemorySaveOutput"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key payload conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/{memory_id}": {
+      "get": {
+        "summary": "Get Memory",
+        "description": "返回单条 Claim 的完整公开详情。",
+        "operationId": "get_memory_v1_memories__memory_id__get",
+        "parameters": [
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memory Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDetailOutput"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Forget",
+        "operationId": "forget_v1_memories__memory_id__delete",
+        "parameters": [
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memory Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Forget V1 Memories  Memory Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/{memory_id}/correct": {
+      "post": {
+        "summary": "Correct Memory",
+        "description": "按既定契约仅替换 Claim 内容，并原子建立替代证据链。",
+        "operationId": "correct_memory_v1_memories__memory_id__correct_post",
+        "parameters": [
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memory Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryCorrectionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryCorrectionOutput"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stats": {
+      "get": {
+        "summary": "Stats",
+        "operationId": "stats_v1_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Stats V1 Stats Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs": {
+      "get": {
+        "summary": "Jobs",
+        "operationId": "jobs_v1_jobs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Jobs V1 Jobs Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "components": {
     "schemas": {
       "ClaimOutput": {
-        "description": "公开召回 Claim 的兼容输出契约。",
         "properties": {
-          "canonical_attribute": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "兼容字段；新客户端应使用 canonical_slot 与 topic_tags。",
-            "title": "Canonical Attribute"
+          "type": {
+            "type": "string",
+            "const": "claim",
+            "title": "Type",
+            "default": "claim"
           },
-          "canonical_slot": {
+          "memory_type": {
+            "type": "string",
+            "const": "claim",
+            "title": "Memory Type",
+            "default": "claim"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "features": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Features"
+          },
+          "status": {
             "anyOf": [
               {
                 "type": "string"
@@ -26,7 +986,7 @@
                 "type": "null"
               }
             ],
-            "title": "Canonical Slot"
+            "title": "Status"
           },
           "confidence": {
             "anyOf": [
@@ -39,20 +999,69 @@
             ],
             "title": "Confidence"
           },
-          "conflicts": {
+          "canonical_attribute": {
             "anyOf": [
               {
-                "items": {
-                  "additionalProperties": true,
-                  "type": "object"
-                },
-                "type": "array"
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Conflicts"
+            "title": "Canonical Attribute",
+            "description": "兼容字段；新客户端应使用 canonical_slot 与 topic_tags。",
+            "deprecated": true
+          },
+          "canonical_slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Slot"
+          },
+          "topic_tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Topic Tags"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "occurred_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Start"
+          },
+          "occurred_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred End"
           },
           "entities": {
             "anyOf": [
@@ -68,72 +1077,6 @@
             ],
             "title": "Entities"
           },
-          "evidence": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Evidence",
-            "type": "array"
-          },
-          "features": {
-            "additionalProperties": {
-              "type": "number"
-            },
-            "title": "Features",
-            "type": "object"
-          },
-          "feedback_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Feedback Id"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "memory_type": {
-            "const": "claim",
-            "default": "claim",
-            "title": "Memory Type",
-            "type": "string"
-          },
-          "occurred_end": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Occurred End"
-          },
-          "occurred_start": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Occurred Start"
-          },
-          "relations": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Relations",
-            "type": "array"
-          },
           "replacement": {
             "anyOf": [
               {
@@ -146,20 +1089,24 @@
             ],
             "title": "Replacement"
           },
-          "reranker_raw_score": {
+          "evidence": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "feedback_id": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Reranker Raw Score"
-          },
-          "score": {
-            "title": "Score",
-            "type": "number"
+            "title": "Feedback Id"
           },
           "score_path": {
             "anyOf": [
@@ -172,89 +1119,64 @@
             ],
             "title": "Score Path"
           },
-          "status": {
+          "reranker_raw_score": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "number"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Status"
+            "title": "Reranker Raw Score"
           },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          },
-          "topic_tags": {
+          "relations": {
             "items": {
-              "type": "string"
+              "additionalProperties": true,
+              "type": "object"
             },
-            "title": "Topic Tags",
-            "type": "array"
+            "type": "array",
+            "title": "Relations"
           },
-          "type": {
-            "const": "claim",
-            "default": "claim",
-            "title": "Type",
-            "type": "string"
-          },
-          "valid_from": {
+          "conflicts": {
             "anyOf": [
               {
-                "type": "string"
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Valid From"
+            "title": "Conflicts"
           }
         },
+        "type": "object",
         "required": [
           "id",
           "text",
           "score"
         ],
         "title": "ClaimOutput",
-        "type": "object"
+        "description": "公开召回 Claim 的兼容输出契约。"
       },
       "ConsolidationScopeInput": {
-        "description": "手动归并任务的显式作用域。",
         "properties": {
-          "max_pairs": {
-            "default": 500,
-            "minimum": 1.0,
-            "title": "Max Pairs",
-            "type": "integer"
-          },
           "namespace": {
-            "default": "default",
+            "type": "string",
             "maxLength": 100,
             "minLength": 1,
             "title": "Namespace",
-            "type": "string"
-          },
-          "similarity_ceiling": {
-            "default": 0.95,
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Similarity Ceiling",
-            "type": "number"
-          },
-          "similarity_threshold": {
-            "default": 0.72,
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Similarity Threshold",
-            "type": "number"
+            "default": "default"
           },
           "slot_filter": {
             "anyOf": [
               {
-                "maxLength": 200,
-                "type": "string"
+                "type": "string",
+                "maxLength": 200
               },
               {
                 "type": "null"
@@ -275,38 +1197,36 @@
               }
             ],
             "title": "Tag Filter"
+          },
+          "max_pairs": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Pairs",
+            "default": 500
+          },
+          "similarity_threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Similarity Threshold",
+            "default": 0.72
+          },
+          "similarity_ceiling": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Similarity Ceiling",
+            "default": 0.95
           }
         },
+        "type": "object",
         "title": "ConsolidationScopeInput",
-        "type": "object"
+        "description": "手动归并任务的显式作用域。"
       },
       "ContextPacketItemOutput": {
-        "additionalProperties": false,
-        "description": "Context Packet v1 中的扁平记忆条目。",
         "properties": {
-          "evidence": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Evidence",
-            "type": "array"
-          },
-          "feedback_id": {
-            "minLength": 1,
-            "pattern": ".*\\S.*",
-            "title": "Feedback Id",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          },
           "type": {
+            "type": "string",
             "enum": [
               "claim",
               "observation",
@@ -314,10 +1234,33 @@
               "episode",
               "trace"
             ],
-            "title": "Type",
-            "type": "string"
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "feedback_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "title": "Feedback Id"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "type",
           "id",
@@ -326,60 +1269,60 @@
           "feedback_id"
         ],
         "title": "ContextPacketItemOutput",
-        "type": "object"
+        "description": "Context Packet v1 中的扁平记忆条目。"
       },
       "ContextPacketOutput": {
-        "additionalProperties": false,
-        "description": "严格冻结的 Context Packet v1 输出契约。",
         "properties": {
+          "schema_major": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Major"
+          },
+          "schema_minor": {
+            "type": "integer",
+            "const": 0,
+            "title": "Schema Minor"
+          },
+          "query_id": {
+            "type": "string",
+            "title": "Query Id"
+          },
           "answerability": {
+            "type": "string",
             "enum": [
               "supported",
               "low_confidence",
               "no_evidence"
             ],
-            "title": "Answerability",
-            "type": "string"
+            "title": "Answerability"
           },
           "feedback_state": {
+            "type": "string",
             "enum": [
               "available",
               "degraded"
             ],
-            "title": "Feedback State",
-            "type": "string"
+            "title": "Feedback State"
           },
           "items": {
             "items": {
               "$ref": "#/components/schemas/ContextPacketItemOutput"
             },
-            "title": "Items",
-            "type": "array"
-          },
-          "query_id": {
-            "title": "Query Id",
-            "type": "string"
-          },
-          "schema_major": {
-            "const": 1,
-            "title": "Schema Major",
-            "type": "integer"
-          },
-          "schema_minor": {
-            "const": 0,
-            "title": "Schema Minor",
-            "type": "integer"
-          },
-          "truncated": {
-            "title": "Truncated",
-            "type": "boolean"
+            "type": "array",
+            "title": "Items"
           },
           "used_tokens_estimate": {
+            "type": "integer",
             "minimum": 0.0,
-            "title": "Used Tokens Estimate",
-            "type": "integer"
+            "title": "Used Tokens Estimate"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "schema_major",
           "schema_minor",
@@ -391,76 +1334,90 @@
           "truncated"
         ],
         "title": "ContextPacketOutput",
-        "type": "object"
+        "description": "严格冻结的 Context Packet v1 输出契约。"
       },
       "ContextPacketRecallOutput": {
-        "additionalProperties": false,
-        "description": "仅返回 Context Packet 的召回响应。",
         "properties": {
           "context_packet": {
             "$ref": "#/components/schemas/ContextPacketOutput"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "context_packet"
         ],
         "title": "ContextPacketRecallOutput",
-        "type": "object"
+        "description": "仅返回 Context Packet 的召回响应。"
       },
       "DryRunExtractionInput": {
-        "description": "Dry-run 提取请求，不触发任何记忆持久化。",
         "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 50000,
+            "minLength": 1,
+            "title": "Text"
+          },
           "context": {
             "additionalProperties": true,
-            "title": "Context",
-            "type": "object"
+            "type": "object",
+            "title": "Context"
           },
           "custom_instructions": {
             "anyOf": [
               {
-                "maxLength": 10000,
-                "type": "string"
+                "type": "string",
+                "maxLength": 10000
               },
               {
                 "type": "null"
               }
             ],
             "title": "Custom Instructions"
-          },
-          "text": {
-            "maxLength": 50000,
-            "minLength": 1,
-            "title": "Text",
-            "type": "string"
           }
         },
+        "type": "object",
         "required": [
           "text"
         ],
         "title": "DryRunExtractionInput",
-        "type": "object"
+        "description": "Dry-run 提取请求，不触发任何记忆持久化。"
       },
       "EpisodeInput": {
-        "description": "创建 Episode 的请求。",
         "properties": {
-          "goal": {
-            "maxLength": 5000,
-            "minLength": 1,
-            "title": "Goal",
-            "type": "string"
-          },
           "namespace": {
-            "default": "default",
+            "type": "string",
             "maxLength": 100,
             "minLength": 1,
             "title": "Namespace",
-            "type": "string"
+            "default": "default"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id",
+            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
+            "deprecated": true
+          },
+          "goal": {
+            "type": "string",
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Goal"
           },
           "session_id": {
             "anyOf": [
               {
-                "maxLength": 200,
-                "type": "string"
+                "type": "string",
+                "maxLength": 200
               },
               {
                 "type": "null"
@@ -471,64 +1428,25 @@
           "task_type": {
             "anyOf": [
               {
-                "maxLength": 50,
-                "type": "string"
+                "type": "string",
+                "maxLength": 50
               },
               {
                 "type": "null"
               }
             ],
             "title": "Task Type"
-          },
-          "tenant_id": {
-            "anyOf": [
-              {
-                "maxLength": 100,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
-            "title": "Tenant Id"
           }
         },
+        "type": "object",
         "required": [
           "goal"
         ],
         "title": "EpisodeInput",
-        "type": "object"
+        "description": "创建 Episode 的请求。"
       },
       "EpisodeUpdate": {
-        "description": "更新 Episode 结果的请求。",
         "properties": {
-          "outcome_summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Outcome Summary"
-          },
-          "reward": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reward"
-          },
           "status": {
             "anyOf": [
               {
@@ -539,61 +1457,59 @@
               }
             ],
             "title": "Status"
+          },
+          "reward": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reward"
+          },
+          "outcome_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Summary"
           }
         },
+        "type": "object",
         "title": "EpisodeUpdate",
-        "type": "object"
+        "description": "更新 Episode 结果的请求。"
       },
       "EventInput": {
-        "description": "事件写入请求。",
         "properties": {
-          "actor_id": {
+          "namespace": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Namespace",
+            "default": "default"
+          },
+          "tenant_id": {
             "anyOf": [
               {
+                "type": "string",
                 "maxLength": 100,
-                "type": "string"
+                "minLength": 1
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Actor Id"
-          },
-          "actor_type": {
-            "default": "user",
-            "maxLength": 50,
-            "title": "Actor Type",
-            "type": "string"
-          },
-          "agent_id": {
-            "anyOf": [
-              {
-                "maxLength": 100,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Id"
-          },
-          "content": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Content"
-          },
-          "event_type": {
-            "default": "message",
-            "maxLength": 50,
-            "title": "Event Type",
-            "type": "string"
+            "title": "Tenant Id",
+            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
+            "deprecated": true
           },
           "id": {
             "anyOf": [
@@ -609,8 +1525,8 @@
           "idempotency_key": {
             "anyOf": [
               {
-                "maxLength": 200,
-                "type": "string"
+                "type": "string",
+                "maxLength": 200
               },
               {
                 "type": "null"
@@ -618,12 +1534,89 @@
             ],
             "title": "Idempotency Key"
           },
-          "namespace": {
-            "default": "default",
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Namespace",
-            "type": "string"
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "event_type": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Event Type",
+            "default": "message"
+          },
+          "actor_type": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Actor Type",
+            "default": "user"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Content"
           },
           "occurred_at": {
             "anyOf": [
@@ -636,41 +1629,11 @@
             ],
             "title": "Occurred At"
           },
-          "project_id": {
-            "anyOf": [
-              {
-                "maxLength": 100,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Project Id"
-          },
-          "sensitivity": {
-            "default": "normal",
-            "maxLength": 20,
-            "title": "Sensitivity",
-            "type": "string"
-          },
-          "session_id": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Session Id"
-          },
           "source_uri": {
             "anyOf": [
               {
-                "maxLength": 2000,
-                "type": "string"
+                "type": "string",
+                "maxLength": 2000
               },
               {
                 "type": "null"
@@ -678,54 +1641,63 @@
             ],
             "title": "Source Uri"
           },
-          "tenant_id": {
-            "anyOf": [
-              {
-                "maxLength": 100,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
-            "title": "Tenant Id"
-          },
-          "user_id": {
-            "anyOf": [
-              {
-                "maxLength": 100,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "User Id"
+          "sensitivity": {
+            "type": "string",
+            "maxLength": 20,
+            "title": "Sensitivity",
+            "default": "normal"
           }
         },
+        "type": "object",
         "title": "EventInput",
-        "type": "object"
+        "description": "事件写入请求。"
       },
       "ExperienceMemoryOutput": {
-        "description": "Tool/Procedure 专用召回的统一 Experience 输出。",
         "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "policy",
+              "episode",
+              "trace"
+            ],
+            "title": "Type"
+          },
+          "memory_type": {
+            "type": "string",
+            "enum": [
+              "policy",
+              "episode",
+              "trace"
+            ],
+            "title": "Memory Type"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
           "evidence": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Evidence",
-            "type": "array"
+            "type": "array",
+            "title": "Evidence"
           },
           "features": {
             "additionalProperties": {
               "type": "number"
             },
-            "title": "Features",
-            "type": "object"
+            "type": "object",
+            "title": "Features"
           },
           "feedback_id": {
             "anyOf": [
@@ -737,38 +1709,9 @@
               }
             ],
             "title": "Feedback Id"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "memory_type": {
-            "enum": [
-              "policy",
-              "episode",
-              "trace"
-            ],
-            "title": "Memory Type",
-            "type": "string"
-          },
-          "score": {
-            "title": "Score",
-            "type": "number"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          },
-          "type": {
-            "enum": [
-              "policy",
-              "episode",
-              "trace"
-            ],
-            "title": "Type",
-            "type": "string"
           }
         },
+        "type": "object",
         "required": [
           "type",
           "memory_type",
@@ -777,24 +1720,26 @@
           "score"
         ],
         "title": "ExperienceMemoryOutput",
-        "type": "object"
+        "description": "Tool/Procedure 专用召回的统一 Experience 输出。"
       },
       "ExplicitCorrectionInput": {
-        "description": "仅由显式授权字段触发的记忆纠正。",
         "properties": {
-          "action": {
-            "enum": [
-              "retract",
-              "replace"
-            ],
-            "title": "Action",
-            "type": "string"
+          "memory_type": {
+            "type": "string",
+            "const": "claim",
+            "title": "Memory Type"
+          },
+          "memory_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Memory Id"
           },
           "corrected_text": {
             "anyOf": [
               {
-                "maxLength": 50000,
-                "type": "string"
+                "type": "string",
+                "maxLength": 50000
               },
               {
                 "type": "null"
@@ -802,42 +1747,62 @@
             ],
             "title": "Corrected Text"
           },
+          "action": {
+            "type": "string",
+            "enum": [
+              "retract",
+              "replace"
+            ],
+            "title": "Action"
+          },
           "idempotency_key": {
             "anyOf": [
               {
+                "type": "string",
                 "maxLength": 200,
-                "minLength": 1,
-                "type": "string"
+                "minLength": 1
               },
               {
                 "type": "null"
               }
             ],
             "title": "Idempotency Key"
-          },
-          "memory_id": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Memory Id",
-            "type": "string"
-          },
-          "memory_type": {
-            "const": "claim",
-            "title": "Memory Type",
-            "type": "string"
           }
         },
+        "type": "object",
         "required": [
           "memory_type",
           "memory_id",
           "action"
         ],
         "title": "ExplicitCorrectionInput",
-        "type": "object"
+        "description": "仅由显式授权字段触发的记忆纠正。"
       },
       "FeedbackInput": {
-        "description": "检索结果反馈请求。",
         "properties": {
+          "feedback_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Feedback Id"
+          },
+          "helpful": {
+            "type": "boolean",
+            "title": "Helpful"
+          },
+          "task_outcome": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Outcome"
+          },
           "correction": {
             "anyOf": [
               {
@@ -847,37 +1812,15 @@
                 "type": "null"
               }
             ]
-          },
-          "feedback_id": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Feedback Id",
-            "type": "string"
-          },
-          "helpful": {
-            "title": "Helpful",
-            "type": "boolean"
-          },
-          "task_outcome": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Outcome"
           }
         },
+        "type": "object",
         "required": [
           "feedback_id",
           "helpful"
         ],
         "title": "FeedbackInput",
-        "type": "object"
+        "description": "检索结果反馈请求。"
       },
       "HTTPValidationError": {
         "properties": {
@@ -885,28 +1828,27 @@
             "items": {
               "$ref": "#/components/schemas/ValidationError"
             },
-            "title": "Detail",
-            "type": "array"
+            "type": "array",
+            "title": "Detail"
           }
         },
-        "title": "HTTPValidationError",
-        "type": "object"
+        "type": "object",
+        "title": "HTTPValidationError"
       },
       "MemoryCorrectionInput": {
-        "description": "按目标 Claim 标识执行仅内容替换。",
         "properties": {
           "corrected_text": {
+            "type": "string",
             "maxLength": 50000,
             "minLength": 1,
-            "title": "Corrected Text",
-            "type": "string"
+            "title": "Corrected Text"
           },
           "idempotency_key": {
             "anyOf": [
               {
+                "type": "string",
                 "maxLength": 200,
-                "minLength": 1,
-                "type": "string"
+                "minLength": 1
               },
               {
                 "type": "null"
@@ -915,117 +1857,61 @@
             "title": "Idempotency Key"
           }
         },
+        "type": "object",
         "required": [
           "corrected_text"
         ],
         "title": "MemoryCorrectionInput",
-        "type": "object"
+        "description": "按目标 Claim 标识执行仅内容替换。"
       },
       "MemoryCorrectionOutput": {
-        "description": "显式纠正事件与新 Claim 标识。",
         "properties": {
           "correction_event_id": {
-            "title": "Correction Event Id",
-            "type": "string"
-          },
-          "created": {
-            "title": "Created",
-            "type": "boolean"
+            "type": "string",
+            "title": "Correction Event Id"
           },
           "new_claim_id": {
-            "title": "New Claim Id",
-            "type": "string"
+            "type": "string",
+            "title": "New Claim Id"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
           }
         },
+        "type": "object",
         "required": [
           "correction_event_id",
           "new_claim_id",
           "created"
         ],
         "title": "MemoryCorrectionOutput",
-        "type": "object"
+        "description": "显式纠正事件与新 Claim 标识。"
       },
       "MemoryDetailOutput": {
-        "description": "单条 Claim 的内容、生命周期、来源与冲突历史。",
         "properties": {
-          "canonical_attribute": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Canonical Attribute"
-          },
-          "canonical_slot": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Canonical Slot"
-          },
-          "confidence": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Confidence"
-          },
-          "conflicts": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Conflicts",
-            "type": "array"
-          },
-          "evidence_links": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Evidence Links",
-            "type": "array"
-          },
-          "expires_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expires At"
-          },
           "id": {
-            "title": "Id",
-            "type": "string"
+            "type": "string",
+            "title": "Id"
           },
-          "importance": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Importance"
+          "text": {
+            "type": "string",
+            "title": "Text"
           },
           "namespace": {
-            "title": "Namespace",
-            "type": "string"
+            "type": "string",
+            "title": "Namespace"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
           },
           "predicate": {
             "anyOf": [
@@ -1040,23 +1926,34 @@
           },
           "qualifiers": {
             "additionalProperties": true,
-            "title": "Qualifiers",
-            "type": "object"
+            "type": "object",
+            "title": "Qualifiers"
           },
-          "recorded_from": {
-            "title": "Recorded From",
-            "type": "string"
+          "status": {
+            "type": "string",
+            "title": "Status"
           },
-          "recorded_to": {
+          "confidence": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "number"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Recorded To"
+            "title": "Confidence"
+          },
+          "importance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Importance"
           },
           "scope": {
             "anyOf": [
@@ -1069,19 +1966,11 @@
             ],
             "title": "Scope"
           },
-          "source_events": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Source Events",
-            "type": "array"
+          "recorded_from": {
+            "type": "string",
+            "title": "Recorded From"
           },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "subject": {
+          "recorded_to": {
             "anyOf": [
               {
                 "type": "string"
@@ -1090,29 +1979,7 @@
                 "type": "null"
               }
             ],
-            "title": "Subject"
-          },
-          "superseded_by_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Superseded By Id"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          },
-          "topic_tags": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Topic Tags",
-            "type": "array"
+            "title": "Recorded To"
           },
           "valid_from": {
             "anyOf": [
@@ -1135,104 +2002,29 @@
               }
             ],
             "title": "Valid To"
-          }
-        },
-        "required": [
-          "id",
-          "text",
-          "namespace",
-          "status",
-          "recorded_from"
-        ],
-        "title": "MemoryDetailOutput",
-        "type": "object"
-      },
-      "MemoryInput": {
-        "description": "显式记忆写入请求。",
-        "properties": {
-          "content": {
+          },
+          "expires_at": {
             "anyOf": [
               {
-                "maxLength": 50000,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Content"
+            "title": "Expires At"
           },
-          "idempotency_key": {
+          "canonical_attribute": {
             "anyOf": [
               {
-                "maxLength": 200,
-                "minLength": 1,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Idempotency Key"
+            "title": "Canonical Attribute"
           },
-          "namespace": {
-            "default": "default",
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Namespace",
-            "type": "string"
-          },
-          "predicate": {
-            "default": "explicit_memory",
-            "maxLength": 100,
-            "title": "Predicate",
-            "type": "string"
-          },
-          "qualifiers": {
-            "additionalProperties": true,
-            "title": "Qualifiers",
-            "type": "object"
-          },
-          "subject": {
-            "default": "用户",
-            "maxLength": 200,
-            "title": "Subject",
-            "type": "string"
-          },
-          "tenant_id": {
-            "anyOf": [
-              {
-                "maxLength": 100,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
-            "title": "Tenant Id"
-          },
-          "text": {
-            "anyOf": [
-              {
-                "maxLength": 50000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Text"
-          }
-        },
-        "title": "MemoryInput",
-        "type": "object"
-      },
-      "MemoryListItemOutput": {
-        "description": "分页记忆列表中的公开 Claim 摘要。",
-        "properties": {
           "canonical_slot": {
             "anyOf": [
               {
@@ -1244,28 +2036,160 @@
             ],
             "title": "Canonical Slot"
           },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "recorded_from": {
-            "title": "Recorded From",
-            "type": "string"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          },
           "topic_tags": {
             "items": {
               "type": "string"
             },
-            "title": "Topic Tags",
-            "type": "array"
+            "type": "array",
+            "title": "Topic Tags"
+          },
+          "superseded_by_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Id"
+          },
+          "evidence_links": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Evidence Links"
+          },
+          "source_events": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Source Events"
+          },
+          "conflicts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Conflicts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "namespace",
+          "status",
+          "recorded_from"
+        ],
+        "title": "MemoryDetailOutput",
+        "description": "单条 Claim 的内容、生命周期、来源与冲突历史。"
+      },
+      "MemoryInput": {
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Namespace",
+            "default": "default"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id",
+            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
+            "deprecated": true
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Subject",
+            "default": "用户"
+          },
+          "predicate": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Predicate",
+            "default": "explicit_memory"
+          },
+          "qualifiers": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Qualifiers"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          }
+        },
+        "type": "object",
+        "title": "MemoryInput",
+        "description": "显式记忆写入请求。"
+      },
+      "MemoryListItemOutput": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "recorded_from": {
+            "type": "string",
+            "title": "Recorded From"
           },
           "valid_from": {
             "anyOf": [
@@ -1277,8 +2201,27 @@
               }
             ],
             "title": "Valid From"
+          },
+          "canonical_slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Slot"
+          },
+          "topic_tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Topic Tags"
           }
         },
+        "type": "object",
         "required": [
           "id",
           "text",
@@ -1286,35 +2229,35 @@
           "recorded_from"
         ],
         "title": "MemoryListItemOutput",
-        "type": "object"
+        "description": "分页记忆列表中的公开 Claim 摘要。"
       },
       "MemoryListOutput": {
-        "description": "稳定 offset 分页的记忆列表响应。",
         "properties": {
-          "limit": {
-            "maximum": 100.0,
-            "minimum": 1.0,
-            "title": "Limit",
-            "type": "integer"
-          },
           "memories": {
             "items": {
               "$ref": "#/components/schemas/MemoryListItemOutput"
             },
-            "title": "Memories",
-            "type": "array"
-          },
-          "offset": {
-            "minimum": 0.0,
-            "title": "Offset",
-            "type": "integer"
+            "type": "array",
+            "title": "Memories"
           },
           "total": {
+            "type": "integer",
             "minimum": 0.0,
-            "title": "Total",
-            "type": "integer"
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset"
           }
         },
+        "type": "object",
         "required": [
           "memories",
           "total",
@@ -1322,30 +2265,70 @@
           "offset"
         ],
         "title": "MemoryListOutput",
-        "type": "object"
+        "description": "稳定 offset 分页的记忆列表响应。"
       },
       "MemorySaveOutput": {
-        "description": "显式记忆写入的真实幂等结果。",
         "properties": {
-          "created": {
-            "title": "Created",
-            "type": "boolean"
-          },
           "id": {
-            "title": "Id",
-            "type": "string"
+            "type": "string",
+            "title": "Id"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
           }
         },
+        "type": "object",
         "required": [
           "id",
           "created"
         ],
         "title": "MemorySaveOutput",
-        "type": "object"
+        "description": "显式记忆写入的真实幂等结果。"
       },
       "RecallInput": {
-        "description": "记忆召回请求。",
         "properties": {
+          "namespace": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Namespace",
+            "default": "default"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id",
+            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
+            "deprecated": true
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
           "as_of": {
             "anyOf": [
               {
@@ -1357,22 +2340,17 @@
             ],
             "title": "As Of"
           },
-          "context_mode": {
+          "session_id": {
             "anyOf": [
               {
-                "pattern": "^(packed)$",
-                "type": "string"
+                "type": "string",
+                "maxLength": 200
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Context Mode"
-          },
-          "debug": {
-            "default": false,
-            "title": "Debug",
-            "type": "boolean"
+            "title": "Session Id"
           },
           "intent": {
             "anyOf": [
@@ -1395,90 +2373,55 @@
             ],
             "title": "Known As Of"
           },
-          "limit": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Limit"
-          },
-          "namespace": {
-            "default": "default",
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Namespace",
-            "type": "string"
-          },
-          "query": {
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Query",
-            "type": "string"
-          },
-          "response_format": {
-            "default": "legacy",
-            "enum": [
-              "legacy",
-              "context_packet",
-              "both"
-            ],
-            "title": "Response Format",
-            "type": "string"
-          },
-          "session_id": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Session Id"
-          },
-          "tenant_id": {
-            "anyOf": [
-              {
-                "maxLength": 100,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "Deprecated compatibility alias for namespace; not a security boundary.",
-            "title": "Tenant Id"
-          },
           "token_budget": {
             "anyOf": [
               {
-                "minimum": 1.0,
-                "type": "integer"
+                "type": "integer",
+                "minimum": 1.0
               },
               {
                 "type": "null"
               }
             ],
             "title": "Token Budget"
+          },
+          "context_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(packed)$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Mode"
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "context_packet",
+              "both"
+            ],
+            "title": "Response Format",
+            "default": "legacy"
+          },
+          "debug": {
+            "type": "boolean",
+            "title": "Debug",
+            "default": false
           }
         },
+        "type": "object",
         "required": [
           "query"
         ],
         "title": "RecallInput",
-        "type": "object"
+        "description": "记忆召回请求。"
       },
       "RecallIntent": {
-        "description": "召回查询意图。",
+        "type": "string",
         "enum": [
           "current_state",
           "historical",
@@ -1487,11 +2430,55 @@
           "procedure"
         ],
         "title": "RecallIntent",
-        "type": "string"
+        "description": "召回查询意图。"
       },
       "RecallOutput": {
-        "description": "REST 与 MCP 共享应用服务返回的召回契约。",
         "properties": {
+          "results": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ClaimOutput"
+                },
+                {
+                  "$ref": "#/components/schemas/ExperienceMemoryOutput"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "observations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Observations"
+          },
+          "policies": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Policies"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "query_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Id"
+          },
           "answerability": {
             "anyOf": [
               {
@@ -1515,57 +2502,6 @@
             ],
             "title": "Context"
           },
-          "context_packet": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ContextPacketOutput"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "observations": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Observations",
-            "type": "array"
-          },
-          "policies": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Policies",
-            "type": "array"
-          },
-          "query_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Query Id"
-          },
-          "results": {
-            "items": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/ClaimOutput"
-                },
-                {
-                  "$ref": "#/components/schemas/ExperienceMemoryOutput"
-                }
-              ]
-            },
-            "title": "Results",
-            "type": "array"
-          },
           "search_trace": {
             "anyOf": [
               {
@@ -1578,11 +2514,18 @@
             ],
             "title": "Search Trace"
           },
-          "total": {
-            "title": "Total",
-            "type": "integer"
+          "context_packet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextPacketOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
+        "type": "object",
         "required": [
           "results",
           "observations",
@@ -1590,34 +2533,21 @@
           "total"
         ],
         "title": "RecallOutput",
-        "type": "object"
+        "description": "REST 与 MCP 共享应用服务返回的召回契约。"
       },
       "TraceInput": {
-        "description": "追加 Episode Trace 的请求。",
         "properties": {
           "action": {
+            "type": "string",
             "maxLength": 10000,
             "minLength": 1,
-            "title": "Action",
-            "type": "string"
-          },
-          "error_signature": {
-            "anyOf": [
-              {
-                "maxLength": 500,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Signature"
+            "title": "Action"
           },
           "observation": {
             "anyOf": [
               {
-                "maxLength": 1000,
-                "type": "string"
+                "type": "string",
+                "maxLength": 1000
               },
               {
                 "type": "null"
@@ -1625,27 +2555,33 @@
             ],
             "title": "Observation"
           },
+          "error_signature": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Signature"
+          },
           "value": {
-            "default": 0.0,
+            "type": "number",
             "title": "Value",
-            "type": "number"
+            "default": 0.0
           }
         },
+        "type": "object",
         "required": [
           "action"
         ],
         "title": "TraceInput",
-        "type": "object"
+        "description": "追加 Episode Trace 的请求。"
       },
       "ValidationError": {
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
           "loc": {
             "items": {
               "anyOf": [
@@ -1657,968 +2593,32 @@
                 }
               ]
             },
-            "title": "Location",
-            "type": "array"
+            "type": "array",
+            "title": "Location"
           },
           "msg": {
-            "title": "Message",
-            "type": "string"
+            "type": "string",
+            "title": "Message"
           },
           "type": {
-            "title": "Error Type",
-            "type": "string"
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
+        "type": "object",
         "required": [
           "loc",
           "msg",
           "type"
         ],
-        "title": "ValidationError",
-        "type": "object"
-      }
-    }
-  },
-  "info": {
-    "title": "HL-Mem",
-    "version": "0.22.0"
-  },
-  "openapi": "3.1.0",
-  "paths": {
-    "/healthz": {
-      "get": {
-        "operationId": "healthz_healthz_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Healthz Healthz Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Healthz"
-      }
-    },
-    "/v1/consolidate": {
-      "post": {
-        "description": "创建带显式作用域的冲突归并任务。",
-        "operationId": "consolidate_v1_consolidate_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsolidationScopeInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Consolidate V1 Consolidate Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Consolidate"
-      }
-    },
-    "/v1/episodes": {
-      "get": {
-        "operationId": "list_episodes_v1_episodes_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Status"
-            }
-          },
-          {
-            "in": "query",
-            "name": "namespace",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 100,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Namespace"
-            }
-          },
-          {
-            "deprecated": true,
-            "in": "query",
-            "name": "tenant_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 100,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "deprecated": true,
-              "title": "Tenant Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Episodes V1 Episodes Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Episodes"
-      },
-      "post": {
-        "operationId": "create_episode_v1_episodes_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EpisodeInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Episode V1 Episodes Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Episode"
-      }
-    },
-    "/v1/episodes/{episode_id}": {
-      "get": {
-        "operationId": "get_episode_v1_episodes__episode_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "episode_id",
-            "required": true,
-            "schema": {
-              "title": "Episode Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Episode V1 Episodes  Episode Id  Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Episode"
-      },
-      "patch": {
-        "operationId": "update_episode_v1_episodes__episode_id__patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "episode_id",
-            "required": true,
-            "schema": {
-              "title": "Episode Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EpisodeUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Update Episode V1 Episodes  Episode Id  Patch",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Update Episode"
-      }
-    },
-    "/v1/episodes/{episode_id}/traces": {
-      "post": {
-        "operationId": "add_episode_trace_v1_episodes__episode_id__traces_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "episode_id",
-            "required": true,
-            "schema": {
-              "title": "Episode Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TraceInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Add Episode Trace V1 Episodes  Episode Id  Traces Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Add Episode Trace"
-      }
-    },
-    "/v1/events": {
-      "post": {
-        "operationId": "post_event_v1_events_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "idempotency-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 200,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Post Event V1 Events Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Post Event"
-      }
-    },
-    "/v1/extract/dry-run": {
-      "post": {
-        "description": "提取候选 claims 与 token 用量，但不持久化记忆数据。",
-        "operationId": "dry_run_extract_v1_extract_dry_run_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DryRunExtractionInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Dry Run Extract V1 Extract Dry Run Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Dry Run Extract"
-      }
-    },
-    "/v1/feedback": {
-      "post": {
-        "operationId": "post_feedback_v1_feedback_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FeedbackInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Post Feedback V1 Feedback Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Post Feedback"
-      }
-    },
-    "/v1/jobs": {
-      "get": {
-        "operationId": "jobs_v1_jobs_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Jobs V1 Jobs Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Jobs"
-      }
-    },
-    "/v1/memories": {
-      "get": {
-        "description": "按 namespace/status 分页列出 Claim 记忆。",
-        "operationId": "list_memories_v1_memories_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "default": "active",
-              "pattern": "^(active|candidate|disputed|superseded|expired|archived|retracted)$",
-              "title": "Status",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "namespace",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 100,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Namespace"
-            }
-          },
-          {
-            "deprecated": true,
-            "in": "query",
-            "name": "tenant_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 100,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "deprecated": true,
-              "title": "Tenant Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryListOutput"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Memories"
-      },
-      "post": {
-        "operationId": "save_memory_v1_memories_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "idempotency-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 200,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MemoryInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemorySaveOutput"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "409": {
-            "description": "Idempotency key payload conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Save Memory"
-      }
-    },
-    "/v1/memories/{memory_id}": {
-      "delete": {
-        "operationId": "forget_v1_memories__memory_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "memory_id",
-            "required": true,
-            "schema": {
-              "title": "Memory Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Forget V1 Memories  Memory Id  Delete",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Forget"
-      },
-      "get": {
-        "description": "返回单条 Claim 的完整公开详情。",
-        "operationId": "get_memory_v1_memories__memory_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "memory_id",
-            "required": true,
-            "schema": {
-              "title": "Memory Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryDetailOutput"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Memory"
-      }
-    },
-    "/v1/memories/{memory_id}/correct": {
-      "post": {
-        "description": "按既定契约仅替换 Claim 内容，并原子建立替代证据链。",
-        "operationId": "correct_memory_v1_memories__memory_id__correct_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "memory_id",
-            "required": true,
-            "schema": {
-              "title": "Memory Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MemoryCorrectionInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryCorrectionOutput"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Correct Memory"
-      }
-    },
-    "/v1/policies": {
-      "get": {
-        "operationId": "list_policies_v1_policies_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "default": "active",
-              "title": "Status",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "namespace",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 100,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Namespace"
-            }
-          },
-          {
-            "deprecated": true,
-            "in": "query",
-            "name": "tenant_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 100,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "deprecated": true,
-              "title": "Tenant Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Policies V1 Policies Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Policies"
-      }
-    },
-    "/v1/recall": {
-      "post": {
-        "operationId": "recall_v1_recall_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RecallInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/RecallOutput"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ContextPacketRecallOutput"
-                    }
-                  ],
-                  "title": "Response Recall V1 Recall Post"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Recall"
-      }
-    },
-    "/v1/stats": {
-      "get": {
-        "operationId": "stats_v1_stats_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Stats V1 Stats Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Stats"
+        "title": "ValidationError"
       }
     }
   }

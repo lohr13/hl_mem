@@ -1,21 +1,32 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-05 · v0.22.0
+> 最后更新：2026-08-06 · v0.23.0
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.22.0
-- **阶段**：v0.22.0 发版准备
+- **版本**：v0.23.0
+- **阶段**：v0.23.0 发版收口
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），36 migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
 
+### 2026-08-06 v0.23.0 提取治理与 Benchmark 基线
+
+- LLM 提取改为约 63 行极简 prompt 与 6 字段 compact schema；`AdmissionPolicy` 统一执行 notability、证据可定位性、敏感值和操作快照准入。
+- 后处理从 compact 输出恢复 choice、qualifiers、时间边界、entities 及完整 Claim schema；旧 14 字段输出走同一准入链路。
+- 稳定 preference/architecture 豁免一次性操作快照规则，数字/IP/端口证据要求精确一致；非空 claims 优先于矛盾的 `should_memorize=false`。
+- native embedding 默认不发送 `text_type`，显式 query/document、sparse 与 instruct 仍可配置；存量向量应按部署最终配置一致地生成或重建。
+- Reranker 的默认型号已迁移，但运行时型号仍由 TOML 配置、密钥仍由 `.env` 或进程环境提供，活文档不依赖具体型号。
+- LongMemEval-S runner 支持 extract-once/config-compare 和 claim/session 双层指标；二元 Recall@K 已正名为 Hit@K，claim relevance 默认阈值为 0.5。
+- 新增 50 case、190 条 gold claim 的中文记忆测试集；12 题阈值分析将 0.40 识别为探索性最优点，当前 runner 保留 0.5 作为较保守默认值。
+- 995 项 unittest 全部通过；v0.23.0 无新增 migration，数据库 schema 保持在 migration 036。
+
 ### 2026-08-05 v0.22.0 Embedding 迁移与安全门
 
-- Embedder 新增 compatible/native 双 API 模式与 query/document `text_type` 角色，生产配置迁移到 `qwen3.7-text-embedding` 2048 维向量。
+- Embedder 新增 compatible/native 双 API 模式与 query/document `text_type` 角色；provider、model 和维度均由 TOML 配置。
 - 提取链新增 fail-open 的 entailment verifier；默认关闭，生产可用 `audit` 只记录支持度结果而不拦截 Claim。
 - dedup 升级为 cosine 候选、确定性安全门、异步 LLM 灰区判断三层链路，`policy_version` 更新为 v2。
 - 新增 claim-pair、recall、extraction/entailment 冻结评测集，以及 embedding 消融和 no-answer calibration 工具。
@@ -79,7 +90,7 @@
 ### 核心功能
 
 - 3 种记忆类型（event + claim + observation）
-- LLM 提取（前序上下文 + 时间锚定 + ADD-only）+ Embedding + Reranker（模型和维度由 TOML 配置）
+- LLM compact 提取 + AdmissionPolicy + 完整 schema 后处理 + Embedding + Reranker（模型和维度由 TOML 配置）
 - 三层去重：fact_hash v2 → conflict_key（白名单互斥）→ semantic (best-match, 0.82)
 - 冲突检测：确定性 ConflictResolver（5 slots）+ LLM ConflictConsolidator（灰区）+ 全未决状态回访与链汇聚收敛
 - 数据质量：实体归一化 + canonical attribute reconcile + scope 后置规则 + TTL policy
@@ -98,7 +109,7 @@
 
 - 多查询召回：默认 `auto`，短/指代查询按需扩展，失败回退原始 query
 - 关系候选发现：默认 `audit`，只记录 proposal，不自动写边
-- Benchmark suite：LongMemEval adapter + extraction/retrieval/lifecycle 三层指标，CLI 按需运行
+- Benchmark suite：LongMemEval-S runner、中文记忆测试集 + extraction/retrieval/lifecycle 三层指标，CLI 按需运行
 - 图片证据入口：视觉描述与证据落库已实现，默认 `off`
 - 反馈驱动维护：usefulness 聚合已接入，默认 `observe`，不影响 TTL/decay
 - Tool/Procedure intent：Experience pipeline 确定性路由，默认 `keyword`

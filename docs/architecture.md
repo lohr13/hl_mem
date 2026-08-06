@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.22.0
-- Updated: 2026-08-04
+- Document baseline: v0.23.0
+- Updated: 2026-08-06
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -78,16 +78,17 @@ src/hl_mem/
 ├── ingest/
 │   ├── budget.py             # Daily token budget
 │   ├── chunking.py           # Structure-aware chunking
+│   ├── admission.py          # Pure deterministic Claim admission policy
 │   ├── embedder.py           # Fake/real embedding implementations
 │   ├── event_filter.py       # Event value filtering
 │   ├── extractors.py         # Fake/LLM extractor interface
-│   └── llm_extractor.py      # Prompted structured extraction
+│   └── llm_extractor.py      # Compact extraction and full-schema post-processing
 ├── llm/
 │   ├── client.py             # Provider-independent LLM client
 │   ├── providers.py          # Bailian, Zhipu, OpenAI-compatible providers
 │   └── types.py              # LLM request/response types
 ├── mcp/
-│   └── server.py             # Five-tool MCP contract
+│   └── server.py             # Seven-tool MCP contract
 ├── observability/            # Audit events and persistent LLM call spans
 ├── recall/
 │   ├── observation.py        # Derived-memory assembly
@@ -161,8 +162,10 @@ Client
   → POST /v1/events
   → idempotent Event insert + durable extract_event Job
   → Worker lease and EventFilter / optional deterministic pre-filter
-  → LLM extraction with preceding context and temporal anchoring
-  → deterministic JSON repair + schema validation + bounded retry
+  → compact six-field LLM extraction with preceding context and temporal anchoring
+  → deterministic JSON repair + compact/legacy schema validation + bounded retry
+  → AdmissionPolicy (notability, evidence, secret, operational-snapshot checks)
+  → full-schema reconstruction (choice, qualifiers, time, entities, slot/tags)
   → subject guard / scope normalization / canonical predicate projection
   → index_text construction (legacy / value_only / natural / answerable)
   → fact_hash v2 exact deduplication
@@ -178,12 +181,14 @@ The Claim mutation sequence—status update, Claim insert, supersede operation, 
 `BEGIN IMMEDIATE` transaction. External calls use configured timeouts and retries; errors are recorded rather than
 silently swallowed. Idempotent retries return the original Event instead of duplicating work.
 
-The extraction output is governed before persistence: invalid or shared placeholder subjects are rebound to a valid
-canonical entity when possible and otherwise isolated per event; canonical attributes project their registered
-predicate; and high-confidence runtime, test, or version signals can downgrade an LLM-proposed permanent scope to
-temporal. Each decision emits an audit reason code. Deterministic JSON repair runs before a bounded schema retry and its
-repair count is exposed to diagnostics. Claim FTS and dense embeddings consume the persisted `index_text`; changing
-`index.text_mode` therefore supports controlled representation A/B without changing the rest of recall.
+The extraction output is governed before persistence. The LLM emits a six-field candidate; a pure `AdmissionPolicy`
+checks notability, locatable evidence, secret/empty values, and completed operational snapshots. Stable preference and
+architecture candidates are not rejected merely because their text contains words such as “fix”, “delete”, or “test”,
+while numeric, IP, and port evidence must match exactly. Compact and legacy output then share the same admission path and
+deterministic post-processing reconstructs choice semantics, qualifiers, occurrence time, entities, slots, and tags.
+Invalid or shared placeholder subjects are rebound to a valid canonical entity when possible and otherwise isolated per
+event. Each decision emits an audit reason code. Claim FTS and dense embeddings consume the persisted `index_text`;
+changing `index.text_mode` therefore supports controlled representation A/B without changing the rest of recall.
 
 Observation and Mental Model derivation is a separate maintenance path, not part of the Claim write transaction. The
 mental-model worker evaluates active evidence after ingestion and writes or refreshes derivations when its evidence rules
@@ -207,7 +212,9 @@ POST /v1/recall
   → optional evidence-aware Context Packet + optional SearchTrace
 ```
 
-Lexical retrieval uses trigram tokenization for Claim/tag Chinese substring behavior; Event FTS remains `unicode61`.
+Lexical retrieval uses deterministic jieba pre-tokenization for claims, events, and tags, then indexes the resulting
+terms in FTS5 `unicode61` tables. Legacy trigram/raw tables remain only for the rollback window and are not queried by the
+production path.
 Dense retrieval scans a configured candidate bound before scoring. Optional provider failures degrade to deterministic or
 original-query paths so the SQLite retrieval core remains available.
 
@@ -281,7 +288,7 @@ Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by
 values while making the field describe the actual host/model delivery boundary.
 
 Migration 036 is the v0.20 schema change: it adds tokenized FTS v2 tables and orphan-cleanup triggers for claims, events,
-and claim tags. v0.22.0 adds no migration.
+and claim tags. v0.23.0 adds no migration.
 
 Backup and restore are whole-database operations:
 

@@ -1,6 +1,6 @@
 # HL-Mem 能力成熟度矩阵
 
-> 基线：v0.22.0。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
+> 基线：v0.23.0。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
 
 ## 成熟度定义
 
@@ -14,7 +14,7 @@
 |---|---|---:|---|---|---|---|
 | 多查询召回 | beta | `auto` | 是，触发后调用 LLM | 是，仅 LLM span/audit | 超时、预算耗尽或解析失败时只使用原始 query | 固定评测集 Recall@K/MRR 不回退，P95 满足预算，连续两个版本无高优先级故障 |
 | 关系候选发现 | beta | `off` | 是，启用后调用 LLM | 是，`audit` 写 proposal/audit；不写关系边 | API 失败时不生成 proposal，核心 Claim 写入继续 | proposal precision 达到发布阈值，重复运行/并发审计稳定，`auto` 灰度无错误边回归 |
-| Benchmark suite | beta | `off`（CLI 按需） | 否；真实 provider 评测需显式配置 | 否，输出报告文件 | 数据集或 adapter 错误时明确失败，不影响服务运行 | 数据集版本化、结果可复现、CI/nightly 基线和回归阈值稳定 |
+| Benchmark suite | beta | `off`（CLI 按需） | 视模式而定；真实提取/向量评测需显式配置 | 仅写隔离的临时 benchmark DB、缓存与报告，不污染生产库 | 数据集、缓存 fingerprint 或 adapter 错误时明确失败，不影响服务运行 | LongMemEval-S extract-once/config-compare 与 50 case、190 gold claim 中文集持续版本化，结果可复现，CI/nightly 基线和回归阈值稳定 |
 | 图片证据入口 | experimental | `off` | 是，开启后调用视觉 LLM | 是，成功描述后写 Event/Evidence/Claim | 描述失败则拒绝该图片提取并保留具体错误；不伪造文本证据 | 来源接入、SSRF/路径边界、安全与质量评测完成，失败率和延迟达到 SLO |
 | 反馈驱动维护 | beta | `observe` | 否 | 是，写 feedback/usefulness；默认不改变 TTL/decay | 归因或聚合失败不影响 recall 主结果，记录错误并可重建 | usefulness 重建一致，离线证明生命周期收益且无错误延寿/衰减，再考虑默认 `on` |
 | Tool/Procedure intent | beta | `keyword` | 否；`auto` 模式可调用 LLM | recall 会更新受控访问/观测数据 | LLM 路由失败回退 keyword；无候选时回退通用召回 | intent precision/recall、procedure 成功率和负向 outcome 处理达到阈值 |
@@ -24,10 +24,10 @@
 | 名称 | 成熟度 | 默认模式 | 外部 API | 写数据库 | 降级行为 | 晋级标准 |
 |---|---|---:|---|---|---|---|
 | Event 幂等摄入与证据链 | stable | `on` | 否 | 是 | 写入或约束失败时事务回滚并返回具体错误 | 保持跨版本事务、幂等、并发和证据完整性回归 |
-| LLM Claim 提取 | stable | `fake`（部署推荐显式设为 `llm`） | 是 | 是 | retry 后失败则 Job 失败，可重试；原始 Event 保留 | 保持 schema 兼容、解析质量和调用可观测性 |
+| LLM Claim 提取 | stable | `fake`（部署推荐显式设为 `llm`） | 是 | 是 | retry 后失败则 Job 失败，可重试；原始 Event 保留 | compact/legacy schema 共用 AdmissionPolicy，保持解析、后处理投影、证据与调用可观测性回归 |
 | Extraction entailment verification | beta | `off`（可配置 `audit`/`enforce`） | 启用后是 | 是，仅 audit | verifier 失败时 fail-open，保留原始提取结果并记录错误 | 冻结评测集质量稳定、额外延迟与 token 成本达到 SLO 后再考虑真正 enforce |
 | Extraction pre-filter | experimental | `off` | 否 | 开启后写 audit | 规则异常时 `error_fallback` 到正常提取 | 生产回放证明显著节省调用且事实漏失低于既定阈值 |
-| Embedding | stable | `fake`（部署推荐显式设为 `real`） | real 模式是 | 是 | compatible/native 调用失败按 retry 策略报错；不写伪向量 | query/document 角色、维度、provider、重建和失败恢复持续受保护 |
+| Embedding | stable | `fake`（部署推荐显式设为 `real`） | real 模式是 | 是 | compatible/native 调用失败按 retry 策略报错；不写伪向量 | native 默认不传 `text_type`；query/document 可显式启用，sparse/instruct 实验变体默认关闭；维度、provider、重建和失败恢复持续受保护 |
 | FTS + Dense + RRF 混合召回 | stable | `on` | Dense 查询本身否 | 是，受控更新访问统计 | 某个可选通道无候选时使用其余通道；核心错误明确失败 | 保持中文/英文、时间、作用域和排序回归 |
 | Tag soft boost | stable | `on` | 否 | 否 | 无 tag 命中即零 boost | 离线排名不回退并保持可解释权重 |
 | 独立 Tag channel | experimental | `off` | 否 | 否 | 关闭或无结果时保持 FTS + Dense 双通道 | 评测证明对主要数据集净增益且无显著延迟/噪声 |

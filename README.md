@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.22.0](https://img.shields.io/badge/version-0.22.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.23.0](https://img.shields.io/badge/version-0.23.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/REDACTED_USER/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -95,6 +95,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `database.path` | `var/hl_mem.db` | SQLite 数据库路径 |
 | `extraction.mode` | `fake` | 提取器：`fake`、`real` 或 `llm` |
 | `embedding.mode` | `fake` | 向量化：`fake` 或 `real` |
+| `embedding.text_type` | 未设置 | native 模式可选 `document` 或 `query`；默认不发送 |
 | `reranker.mode` | `off` | 重排：`off`、`fake`、`on` 或 `real` |
 | `image_describer.mode` | `off` | 图片描述：`off` 或 `on` |
 | `llm.provider` | `dashscope` | `dashscope`、`zhipu` 或 `openai_compatible` |
@@ -110,13 +111,13 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 ## 能力概览
 
 - **记忆正确性**：幂等事件摄入、事务原子写入、精确/语义去重、确定性冲突规则、LLM 灰区归并和受守卫的冲突终态收敛。
-- **提取治理**：确定性的 scope 降级、从规范属性执行 predicate 投影、subject 守卫隔离无效主体，以及有界结构化输出修复。
+- **提取治理**：6 字段 compact 提取、统一 AdmissionPolicy、完整 Claim schema 后处理、确定性的 scope/predicate 投影、subject 守卫和有界结构化输出修复。
 - **时间与证据**：有效时间与记录时间双时间模型、证据链、实体归一化、显式遗忘和 stale 传播。
 - **混合召回**：中文 FTS5、稠密向量、RRF 融合、多因子排序、可选 Reranker、关系/查询扩展和按 Token 预算打包上下文。
 - **生命周期**：importance 联动 TTL、置信度衰减、归档、重分类、反馈效用、审计日志和在线备份。
 - **经验通道**：Episode、Trace、Reward、Policy/Procedure 和派生 Observation。
 - **接口**：FastAPI REST 与 Hermes Provider 为稳定主路径；七工具 MCP stdio 接口处于 Beta。
-- **评测**：离线提取/召回/生命周期指标、召回诊断、索引文本受控 A/B、跨模型提取 Benchmark 和 LongMemEval 适配器。
+- **评测**：离线提取/召回/生命周期指标、LongMemEval-S extract-once/config-compare、50 case 中文记忆测试集、召回诊断和索引文本受控 A/B。
 
 能力成熟度、默认开关和证据见 [能力矩阵](docs/capability-matrix.md)，架构与数据流见 [架构文档](docs/architecture.md)。
 
@@ -126,7 +127,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.22.0，共 36 个不可变、仅向前执行的 Migration。
+当前基线为 v0.23.0，共 36 个不可变、仅向前执行的 Migration。
 
 ## 文档
 

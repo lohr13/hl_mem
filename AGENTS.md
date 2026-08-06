@@ -4,7 +4,7 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v0.22.0（2026-08-05）**
+**当前版本：v0.23.0（2026-08-06）**
 
 ## 技术栈
 
@@ -17,7 +17,7 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 - **TTL**：retention 纯函数（scope × importance 三档）
 - **跨 subject 去重**：DedupJudge（audit-only 默认开启）
 - **包管理**：uv（lockfile: uv.lock）
-- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）730 passed，1 skipped
+- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）995 项 unittest 全部通过
 
 ## 代码结构
 
@@ -40,6 +40,7 @@ src/hl_mem/
 ├── core/                   # 纯数学
 │   └── vector.py              # cosine similarity
 ├── ingest/                 # 数据摄入
+│   ├── admission.py          # 纯函数 Claim 准入策略
 │   ├── llm_extractor.py       # LLM 提取器
 │   ├── extractors.py          # FakeExtractor / LLMExtractor
 │   ├── chunking.py            # 结构感知分块
@@ -104,11 +105,12 @@ src/hl_mem/
 .venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short
 ```
 
-当前：730 passed，1 skipped。
+当前：995 项 unittest 全部通过。
 
 ## 关键设计决策
 
 ### 写入管线
+- 6 字段 compact LLM 提取 → AdmissionPolicy → choice/qualifiers/time/entities 完整 schema 后处理；legacy 输出复用同一准入链路
 - fact_hash v2（JSON 数组有边界哈希）→ conflict_key（canonical attribute slot）→ semantic dedup（cosine > 0.82, best-match）
 - 冲突判定：确定性规则优先（ConflictResolver），灰区走 LLM 四分类（ConflictConsolidator）
 - **事务原子化**：整个写入流程（update_status + insert_claim + supersede + evidence_link）在单一 BEGIN IMMEDIATE 中

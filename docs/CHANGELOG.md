@@ -1,5 +1,33 @@
 # HL-Mem 变更记录
 
+## v0.23.0（2026-08-06）
+
+### 提取质量与准入
+
+- 将约 260 行提取 prompt 精简为约 63 行，LLM 输出收敛为 6 字段 compact schema；旧 14 字段输出继续兼容。
+- 新增纯函数 `AdmissionPolicy`，以 notability、证据可定位性、敏感值和操作快照规则统一约束 dry-run 与生产写入。
+- compact schema 后处理恢复 choice、qualifiers、时间边界和非 subject 实体，使精简输出仍能投影到完整 Claim schema。
+- 修复准入误杀：稳定 preference/architecture 不再被一次性操作词拦截；数字、IP 和端口证据要求精确一致；legacy 输出也进入同一准入链路。
+- 当 `should_memorize=false` 但返回非空 claims 时以 claims 为准，避免模型控制字段与实际结果矛盾导致静默丢失。
+
+### Embedding 与 Reranker
+
+- native embedding 的 `text_type` 默认从 `document` 改为未设置；仅在 TOML 显式配置时发送，compatible 模式行为不变。
+- `text_type`、sparse 和 instruct 实验能力保留为可选配置，默认关闭；12 题 LongMemEval-S 分层选型中，Q1（native、不传 `text_type`）按二元命中口径取得 1.0，该口径现统一命名为 Hit@1。
+- Reranker 默认型号从 `gte-rerank-v2` 迁移到 `qwen3-rerank`；密钥、provider 和 model 仍分别通过 `.env` 与 TOML 配置。
+
+### Benchmark 基础设施
+
+- 新增 LongMemEval-S runner，支持 session 粒度 ingest、extract-once、多 embedding 配置重建、缓存 fingerprint、claim/session 双层指标及可选 QA。
+- 新增 50 case、190 条 gold claim 的中文记忆测试集及 embedding 对比 runner，覆盖偏好、身份、技术配置、日常事实、知识更新和噪音。
+- claim relevance 默认阈值从 0.65 调整为 0.5；12 题阈值分布分析中 0.40 为探索性最优点，0.5 作为更保守的 runner 默认值。
+- 修正检索指标命名：二元命中统一报告 Hit@K，Recall@K 表示相关 Claim 集合覆盖率；固定独立 relevance scorer，避免候选 embedding 同时充当评委。
+
+### 测试与兼容性
+
+- 995 项 unittest 全部通过；新增 AdmissionPolicy 稳定偏好、数字证据精确匹配、compact/legacy 准入一致性及 compact schema 投影回归。
+- 无数据库 migration 变更，schema 仍为 migration 036；REST 和持久化 Claim schema 保持兼容。
+
 ## v0.22.0（2026-08-05）
 
 ### Embedding Model Migration
