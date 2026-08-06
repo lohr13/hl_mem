@@ -26,7 +26,12 @@ var/*.log
 pytest_*.txt
 pending_commits.txt
 tests/eval/reports/*.json
-evaluation/results/
+/evaluation/results/
+/evaluation/cache/
+/evaluation/longmemeval/.cache/
+/evaluation/longmemeval/longmemeval_s*.json
+/docs/tasks/
+/docs/superpowers/
 scripts/*.stdout.log
 scripts/*.stderr.log
 scripts/*.pid
@@ -55,5 +60,3 @@ docs/eval-reports/
 # hlmem watchdog runtime state
 var/watchdog.state
 var/crash-packages/
-
-evaluation/cache/lme_12_backup/
