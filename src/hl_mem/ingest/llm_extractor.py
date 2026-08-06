@@ -829,9 +829,16 @@ class LLMExtractor:
         context = json.dumps(event_context, ensure_ascii=False)
         occurred_at = str(event_context.get("occurred_at", "未知"))
         result = self._request_chunk(chunk, context, occurred_at)
-        if not result.should_memorize:
+        if not result.should_memorize and not result.claims:
             self._memorize_decisions.append((False, "should_memorize=false"))
             return []
+        if not result.should_memorize:
+            current_audit().emit(
+                "extract",
+                "should_memorize_checked",
+                "claims_override_should_memorize_false",
+                detail={"claim_count": len(result.claims)},
+            )
         parsed: list[ExtractedClaim] = []
         source_kind = str(event_context.get("source_kind") or event_context.get("category") or "")
         if re.search(r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)", chunk.text):

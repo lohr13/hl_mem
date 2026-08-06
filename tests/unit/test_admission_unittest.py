@@ -292,6 +292,26 @@ class CompactExtractionTest(unittest.TestCase):
         self.assertEqual(claims[0].occurred_start, "2026-08-20T00:00:00+08:00")
         self.assertEqual(claims[0].occurred_end, "2026-08-21T00:00:00+08:00")
 
+    def test_nonempty_claims_override_should_memorize_false(self) -> None:
+        response = {
+            "claims": [
+                {
+                    "subject": "用户",
+                    "value": "用户偏好简洁回答",
+                    "kind": "preference",
+                    "confidence": 0.9,
+                    "notability": "high",
+                    "evidence_quote": "用户偏好简洁回答",
+                }
+            ],
+            "should_memorize": False,
+        }
+
+        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract("用户偏好简洁回答")
+
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(claims[0].value, "用户偏好简洁回答")
+
     def test_legacy_response_still_uses_existing_parser(self) -> None:
         response = {
             "claims": [
