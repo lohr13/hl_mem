@@ -1,19 +1,19 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-06 · v0.23.0
+> 最后更新：2026-08-06 · v0.23.1
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.23.0
-- **阶段**：v0.23.0 发版收口
+- **版本**：v0.23.1
+- **阶段**：v0.23.1 发版收口
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），36 migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
 
-### 2026-08-06 v0.23.0 提取治理与 Benchmark 基线
+### 2026-08-06 v0.23.1 提取治理与 Benchmark 基线
 
 - LLM 提取改为约 63 行极简 prompt 与 6 字段 compact schema；`AdmissionPolicy` 统一执行 notability、证据可定位性、敏感值和操作快照准入。
 - 后处理从 compact 输出恢复 choice、qualifiers、时间边界、entities 及完整 Claim schema；旧 14 字段输出走同一准入链路。
@@ -22,7 +22,7 @@
 - Reranker 的默认型号已迁移，但运行时型号仍由 TOML 配置、密钥仍由 `.env` 或进程环境提供，活文档不依赖具体型号。
 - LongMemEval-S runner 支持 extract-once/config-compare 和 claim/session 双层指标；二元 Recall@K 已正名为 Hit@K，claim relevance 默认阈值为 0.5。
 - 新增 50 case、190 条 gold claim 的中文记忆测试集；12 题阈值分析将 0.40 识别为探索性最优点，当前 runner 保留 0.5 作为较保守默认值。
-- 995 项 unittest 全部通过；v0.23.0 无新增 migration，数据库 schema 保持在 migration 036。
+- 995 项 unittest 全部通过；v0.23.1 无新增 migration，数据库 schema 保持在 migration 036。
 
 ### 2026-08-05 v0.22.0 Embedding 迁移与安全门
 

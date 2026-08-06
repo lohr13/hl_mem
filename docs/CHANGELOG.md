@@ -1,5 +1,21 @@
 # HL-Mem 变更记录
 
+## v0.23.1（2026-08-06）
+
+### 仓库治理
+- 目录结构精简：benchmarks/ 合并到 evaluation/，评测脚本移入 evaluation/tools/
+- docs/ 精简：一次性报告归档，删除无关文件
+- scripts/ 从 42→~15 个，删除一次性脚本和敏感数据
+- .gitignore 收紧：evaluation/results/cache、docs/tasks、docs/superpowers
+- install_to_hermes.py 移入 scripts/
+- var/ 和 hl_mem.toml 从 git 跟踪中移除
+- Git 历史净化：清除敏感数据（DB 备份、真实路径/用户名、API key）
+- sdist 体积从 246MB→1.5MB（排除 .build-venv/.git/evaluation）
+
+### CI 修复
+- 恢复脱敏后的 CI 测试 fixture
+- 更新 quality-smoke baseline 匹配脱敏数据集
+
 ## v0.23.0（2026-08-06）
 
 ### 提取质量与准入

@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.23.0](https://img.shields.io/badge/version-0.23.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.23.1](https://img.shields.io/badge/version-0.23.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -127,7 +127,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.23.0，共 36 个不可变、仅向前执行的 Migration。
+当前基线为 v0.23.1，共 36 个不可变、仅向前执行的 Migration。
 
 ## 文档
 
