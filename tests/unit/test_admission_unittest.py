@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 import unittest
 
-from hl_mem.ingest.admission import MemoryCandidate, admission_rules_fingerprint, admit_claim
+from hl_mem.ingest.admission import (
+    MemoryCandidate,
+    admission_rules_fingerprint,
+    admit_claim,
+    evidence_quote_matches,
+)
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.types import LLMRequest, LLMResponse
@@ -114,6 +119,27 @@ class AdmissionPolicyTest(unittest.TestCase):
                 )
                 self.assertEqual(decision.reason, "accepted")
 
+    def test_preserves_stable_preferences_and_policies_with_operation_words(self) -> None:
+        stable_claims = (
+            ("preference", "用户偏好提交前先修复 bug"),
+            ("fact", "用户要求删除文件前先备份"),
+            ("architecture", "团队规定每个功能必须新增单元测试"),
+        )
+
+        for kind, value in stable_claims:
+            with self.subTest(kind=kind, value=value):
+                decision = admit_claim(
+                    _candidate(subject="用户", value=value, kind=kind, evidence_quote=value),
+                    value,
+                )
+
+                self.assertEqual(decision.reason, "accepted")
+
+    def test_evidence_requires_exact_structured_numeric_tokens(self) -> None:
+        self.assertTrue(evidence_quote_matches("代理端口为 8200", "当前代理端口为 8200。"))
+        self.assertFalse(evidence_quote_matches("代理端口为 8200", "当前代理端口为 8300。"))
+        self.assertFalse(evidence_quote_matches("代理地址为 127.0.0.1:8200", "代理地址为 127.0.0.1:8300"))
+
     def test_uses_stricter_evidence_threshold(self) -> None:
         self.assertEqual(admission_rules_fingerprint()["evidence_fuzzy_threshold"], 0.80)
 
@@ -208,11 +234,28 @@ class CompactExtractionTest(unittest.TestCase):
             "should_memorize": True,
         }
 
-        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract("历史客户端响应")
+        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract("用户偏好简洁回答")
 
         self.assertEqual(len(claims), 1)
         self.assertEqual(claims[0].predicate, "偏好")
         self.assertEqual(claims[0].value, "用户偏好简洁回答")
+
+    def test_legacy_response_uses_admission_policy(self) -> None:
+        response = {
+            "claims": [
+                {
+                    "subject": "hl_mem",
+                    "predicate": "事实",
+                    "value": "935 tests passed",
+                    "confidence": 0.9,
+                }
+            ],
+            "should_memorize": True,
+        }
+
+        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract("935 tests passed")
+
+        self.assertEqual(claims, [])
 
 
 if __name__ == "__main__":

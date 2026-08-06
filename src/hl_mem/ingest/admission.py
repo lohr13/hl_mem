@@ -20,6 +20,8 @@ SECRET_ASSIGNMENT_RE = re.compile(r"""(?i)["']?(?:password|passwd|api[\s_-]?key)
 SECRET_FIELD_NAME_RE = re.compile(r"(?i)(?:password|passwd|api[\s_-]?key)")
 SK_TOKEN_RE = re.compile(r"(?i)(?<![a-z0-9])sk-[a-z0-9_-]+")
 ALNUM_SECRET_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9]{16,32}(?![A-Za-z0-9])")
+STRUCTURED_NUMBER_RE = re.compile(r"\d+(?:[.:/-]\d+)*")
+_EVIDENCE_PUNCTUATION = frozenset("./:\\-_")
 OPERATIONAL_SNAPSHOT_RE = re.compile(
     r"(?ix)(?:"
     r"\bhealthz\b.{0,24}\b(?:ok|healthy|unhealthy)\b|"
@@ -40,12 +42,14 @@ OPERATIONAL_SNAPSHOT_RE = re.compile(
     r"(?:安装|卸载)(?:脚本|程序).{0,20}(?:print|打印|输出|成功|完成|失败)|"
     r"(?:安装|卸载)(?:已经|已)?(?:成功|完成|失败)|"
     r"(?:print|打印|输出).{0,20}(?:安装|卸载)(?:成功|完成|失败)|"
-    r"(?:已经|已|本次|此次)?(?:修复|fixed)(?:了)?.{0,24}(?:bug|缺陷|错误|不可达代码)|"
-    r"(?:bug|缺陷|错误|不可达代码).{0,24}(?:已经|已)?(?:修复|去掉|删除|移除)|"
-    r"(?:已经|已|本次|此次)?(?:去掉|删除|移除)(?:了)?.{0,24}(?:代码|分支|文件|逻辑|实现|兼容层|脚本)|"
-    r"新增(?:了)?(?:单元|集成|回归)?测试|"
+    r"(?:(?:正在|刚刚|已经|已|本次|此次)(?:修复|fixed)(?:了)?|(?:修复|fixed)了)"
+    r".{0,24}(?:bug|缺陷|错误|不可达代码)|"
+    r"(?:bug|缺陷|错误|不可达代码).{0,24}(?:正在|刚刚|已经|已)(?:修复|去掉|删除|移除)|"
+    r"(?:(?:正在|刚刚|已经|已|本次|此次)(?:去掉|删除|移除)(?:了)?|(?:去掉|删除|移除)了)"
+    r".{0,24}(?:代码|分支|文件|逻辑|实现|兼容层|脚本)|"
+    r"(?:(?:正在|刚刚|已经|已|本次|此次)新增(?:了)?|新增了)(?:单元|集成|回归)?测试|"
     r"(?:单元|集成|回归)测试(?:已经|已|全部)?(?:通过|失败|全绿)|"
-    r"新增(?:了)?文件|"
+    r"(?:(?:正在|刚刚|已经|已|本次|此次)新增(?:了)?|新增了|^新增)文件|"
     r"(?:本次|此次|当前)?.{0,8}代码行数|"
     r"\bcommit\s*(?:hash|id)\b|"
     r"\bcommit\s+[0-9a-f]{7,40}\b|"
@@ -79,13 +83,26 @@ class AdmissionDecision:
 
 
 def _normalized_evidence(value: Any) -> str:
-    """规范化证据文本，忽略空白和标点差异。"""
+    """规范化证据文本，忽略排版差异但保留结构化标点。"""
     normalized = unicodedata.normalize("NFKC", str(value)).casefold()
     return "".join(
         character
         for character in normalized
-        if not character.isspace() and not unicodedata.category(character).startswith(("P", "Z"))
+        if not character.isspace()
+        and (character in _EVIDENCE_PUNCTUATION or not unicodedata.category(character).startswith(("P", "Z")))
     )
+
+
+def _structured_number_tokens(value: str) -> tuple[str, ...]:
+    """提取端口、IP、版本和日期中不可模糊替换的数字 token。"""
+    return tuple(STRUCTURED_NUMBER_RE.findall(value))
+
+
+def _fuzzy_evidence_match(quote: str, candidate: str) -> bool:
+    """只在结构化数字完全一致时允许文本模糊定位。"""
+    if _structured_number_tokens(quote) != _structured_number_tokens(candidate):
+        return False
+    return SequenceMatcher(None, quote, candidate, autojunk=False).ratio() >= _EVIDENCE_FUZZY_THRESHOLD
 
 
 def evidence_quote_matches(evidence_quote: str, source_text: str) -> bool:
@@ -99,7 +116,7 @@ def evidence_quote_matches(evidence_quote: str, source_text: str) -> bool:
     if len(quote) < 6:
         return False
     if len(quote) >= len(source):
-        return SequenceMatcher(None, quote, source, autojunk=False).ratio() >= _EVIDENCE_FUZZY_THRESHOLD
+        return _fuzzy_evidence_match(quote, source)
 
     window_length = len(quote)
     last_start = len(source) - window_length
@@ -107,16 +124,7 @@ def evidence_quote_matches(evidence_quote: str, source_text: str) -> bool:
     starts = list(range(0, last_start + 1, step))
     if starts[-1] != last_start:
         starts.append(last_start)
-    return any(
-        SequenceMatcher(
-            None,
-            quote,
-            source[start : start + window_length],
-            autojunk=False,
-        ).ratio()
-        >= _EVIDENCE_FUZZY_THRESHOLD
-        for start in starts
-    )
+    return any(_fuzzy_evidence_match(quote, source[start : start + window_length]) for start in starts)
 
 
 def low_value_reason(value: Any, canonical_slot: str | None = None) -> str | None:
@@ -190,7 +198,9 @@ def admit_claim(candidate: MemoryCandidate, source_text: str) -> AdmissionDecisi
         return AdmissionDecision(False, credential_reason)
     if not evidence_quote_matches(candidate.evidence_quote, source_text):
         return AdmissionDecision(False, "no_evidence")
-    if OPERATIONAL_SNAPSHOT_RE.search(unicodedata.normalize("NFKC", str(candidate.value))):
+    if candidate.kind not in {"preference", "architecture"} and OPERATIONAL_SNAPSHOT_RE.search(
+        unicodedata.normalize("NFKC", str(candidate.value))
+    ):
         return AdmissionDecision(False, "operational_snapshot")
     if low_value_reason(candidate.value) is not None:
         return AdmissionDecision(False, "low_value")
@@ -211,6 +221,7 @@ def admission_rules_fingerprint() -> dict[str, Any]:
             "secret_field_name": SECRET_FIELD_NAME_RE.pattern,
             "sk_token": SK_TOKEN_RE.pattern,
             "mixed_alnum_secret": ALNUM_SECRET_RE.pattern,
+            "structured_number": STRUCTURED_NUMBER_RE.pattern,
             "operational_snapshot": OPERATIONAL_SNAPSHOT_RE.pattern,
         },
     }

@@ -220,6 +220,13 @@ _KIND_TOPIC_TAG = {
     "plan": "plan",
 }
 _NOTABILITY_IMPORTANCE = {"high": 0.9, "medium": 0.6, "low": 0.3}
+_LEGACY_PREDICATE_KIND = {
+    "偏好": "preference",
+    "身份": "identity",
+    "配置": "config",
+    "计划": "plan",
+    "使用": "architecture",
+}
 
 
 def _regex_fingerprint(pattern: re.Pattern[str]) -> dict[str, Any]:
@@ -664,6 +671,60 @@ class LLMExtractor:
             "entities": [subject],
         }
 
+    @staticmethod
+    def _legacy_admission_candidate(raw: dict[str, Any]) -> MemoryCandidate | None:
+        """把旧版完整 claim 投影为统一准入候选。"""
+        try:
+            attribute = str(raw.get("canonical_attribute") or "").strip().casefold()
+            predicate = str(raw.get("predicate") or "").strip()
+            if attribute == "fact.architecture":
+                kind = "architecture"
+            elif attribute.startswith("preference."):
+                kind = "preference"
+            elif attribute.startswith("identity."):
+                kind = "identity"
+            elif attribute.startswith("config."):
+                kind = "config"
+            elif attribute.startswith("plan."):
+                kind = "plan"
+            else:
+                kind = _LEGACY_PREDICATE_KIND.get(predicate, "fact")
+            importance = float(raw.get("importance", 0.5))
+            notability = "high" if importance >= 0.8 else "low" if importance < 0.2 else "medium"
+            value = str(raw["value"]).strip()
+            return MemoryCandidate(
+                subject=str(raw.get("subject") or "用户").strip(),
+                value=value,
+                kind=kind,
+                confidence=float(raw.get("confidence", 0.5)),
+                notability=notability,
+                evidence_quote=value,
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _record_admission(self, candidate: MemoryCandidate, source_text: str) -> bool:
+        """执行并审计 compact/legacy 共用的准入策略。"""
+        decision = admit_claim(candidate, source_text)
+        current_audit().emit(
+            "extract",
+            "admission_checked",
+            "accepted" if decision.accepted else "rejected",
+            detail={
+                "reason": decision.reason,
+                "kind": candidate.kind,
+                "notability": candidate.notability,
+            },
+        )
+        if not decision.accepted and decision.reason in {
+            "recovery_code",
+            "secret_assignment",
+            "sk_token",
+            "mixed_alnum_token",
+        }:
+            self._secret_rejections[decision.reason] = self._secret_rejections.get(decision.reason, 0) + 1
+        return decision.accepted
+
     def _extract_one_chunk(
         self,
         chunk: ExtractionChunk,
@@ -688,6 +749,10 @@ class LLMExtractor:
                 if postprocessed is None:
                     continue
                 raw_claim = postprocessed
+            else:
+                legacy_candidate = self._legacy_admission_candidate(raw_claim)
+                if legacy_candidate is None or not self._record_admission(legacy_candidate, chunk.text):
+                    continue
             secret_reason = _secret_reason(raw_claim)
             if secret_reason is not None:
                 self._secret_rejections[secret_reason] = self._secret_rejections.get(secret_reason, 0) + 1
