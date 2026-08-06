@@ -19,7 +19,7 @@ class LongMemEvalAdapter:
     FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
     def __init__(self, manifest_path: Path | None = None) -> None:
-        self.manifest_path = manifest_path or Path(__file__).parents[3] / "benchmarks" / "longmemeval" / "manifest.json"
+        self.manifest_path = manifest_path or Path(__file__).parents[3] / "evaluation" / "longmemeval" / "manifest.json"
 
     @classmethod
     def from_fixture(cls, source: Path | None = None) -> Iterable[BenchmarkCase]:

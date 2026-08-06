@@ -7,7 +7,7 @@
 ## 目录与集成点
 
 ```text
-benchmarks/
+evaluation/
 └── longmemeval/
     ├── manifest.json          # 上游版本、许可、原始文件 SHA-256、subset 定义
     ├── core.ids.json          # 固定样本 ID，不复制不必要的上游正文
