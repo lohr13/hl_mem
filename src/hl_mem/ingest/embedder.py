@@ -66,7 +66,7 @@ class Embedder:
 
     def embed_query_batch(self, texts: list[str]) -> list[bytes]:
         result: list[bytes] = []
-        query_text_type = "query" if self.text_type is not None else None
+        query_text_type: Literal["document", "query"] | None = "query" if self.text_type is not None else None
         for start in range(0, len(texts), self.MAX_BATCH_SIZE):
             result.extend(
                 self._request(
