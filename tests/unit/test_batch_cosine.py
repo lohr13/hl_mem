@@ -119,6 +119,43 @@ def test_vector_search_light_scan_oversamples_before_materializing_rows(tmp_path
         database.close()
 
 
+def test_vector_search_materializes_later_batches_until_limit(tmp_path) -> None:
+    """首批候选均不可见时应继续回表，直到达到 limit 或候选耗尽。"""
+    database = Database(tmp_path / "two-stage-vector-pagination.db")
+    connection = database.open()
+    try:
+        repository = ClaimRepository(connection, vector_batch_size=7)
+        base = {
+            "namespace_key": "default",
+            "subject_entity_id": "subject",
+            "predicate": "fact",
+            "recorded_from": "2026-01-01T00:00:00+00:00",
+            "status": "active",
+            "embedding_dense": pack_vector([1.0, 0.0]),
+        }
+        for index in range(54):
+            repository.insert_claim(
+                {
+                    **base,
+                    "id": f"claim-{index:02d}",
+                    "value": f"value-{index:02d}",
+                    "recorded_to": "2026-02-01T00:00:00+00:00" if index < 52 else None,
+                }
+            )
+
+        results = repository.search_claims_vector(
+            pack_vector([1.0, 0.0]),
+            limit=2,
+            as_of="2026-08-01T00:00:00+00:00",
+            intent="current_state",
+            known_as_of="2026-08-01T00:00:00+00:00",
+        )
+
+        assert [claim["id"] for claim in results] == ["claim-52", "claim-53"]
+    finally:
+        database.close()
+
+
 def test_vector_search_zero_limit_returns_empty(tmp_path) -> None:
     """零上限应保持空结果，且无需执行向量扫描。"""
     database = Database(tmp_path / "zero-limit-vector.db")

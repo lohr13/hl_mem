@@ -422,17 +422,24 @@ class ClaimRepository:
             scored_claims.extend((str(row["id"]), score) for row, score in zip(rows, scores))
         scored_claims.sort(key=lambda item: (-item[1], item[0]))
 
-        candidate_limit = max(limit * 3, limit + 50)
-        candidates = scored_claims[:candidate_limit]
-        claims_by_id = self.batch_get_claims([claim_id for claim_id, _score in candidates])
+        batch_size = max(limit * 3, limit + 50)
         results: list[dict[str, Any]] = []
-        for claim_id, score in candidates:
-            claim = claims_by_id.get(claim_id)
-            if claim is None or not claim_is_visible(claim, reference, known_as_of, selected_intent):
-                continue
-            results.append({**claim, "_score": score})
-            if len(results) >= limit:
-                break
+        seen: set[str] = set()
+        offset = 0
+        while len(results) < limit and offset < len(scored_claims):
+            batch = scored_claims[offset : offset + batch_size]
+            offset += len(batch)
+            claims_by_id = self.batch_get_claims([claim_id for claim_id, _score in batch if claim_id not in seen])
+            for claim_id, score in batch:
+                if claim_id in seen:
+                    continue
+                seen.add(claim_id)
+                claim = claims_by_id.get(claim_id)
+                if claim is None or not claim_is_visible(claim, reference, known_as_of, selected_intent):
+                    continue
+                results.append({**claim, "_score": score})
+                if len(results) >= limit:
+                    break
         return results
 
     def sync_vector(self, claim_id: str) -> None:
