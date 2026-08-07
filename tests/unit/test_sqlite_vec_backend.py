@@ -223,6 +223,31 @@ def test_knn_partition_never_returns_another_namespace(tmp_path: Path) -> None:
         database.close()
 
 
+def test_knn_rejects_authoritative_claims_that_no_longer_match_projection(tmp_path: Path) -> None:
+    """即使 dirty 标记被旁路清除，也不能返回已换 namespace 或已清空向量的 Claim。"""
+    database, connection, settings = _open_database(tmp_path)
+    try:
+        repository = ClaimRepository(connection, settings=settings)
+        repository.insert_claim(_claim("moved", (1.0, 0.0, 0.0), settings))
+        repository.insert_claim(_claim("unembedded", (0.8, 0.2, 0.0), settings))
+        connection.execute("UPDATE claims SET namespace_key='private' WHERE id='moved'")
+        connection.execute("UPDATE claims SET embedding_dense=NULL WHERE id='unembedded'")
+        connection.execute("DELETE FROM claim_vector_dirty")
+
+        results = repository.search_claims_vector(
+            pack_vector((1.0, 0.0, 0.0)),
+            2,
+            REFERENCE_TIME,
+            RecallIntent.CURRENT_STATE,
+            None,
+            "default",
+        )
+
+        assert results == []
+    finally:
+        database.close()
+
+
 def test_oversample_cap_falls_back_to_sqlite_scan(tmp_path: Path) -> None:
     database, connection, settings = _open_database(tmp_path)
     try:

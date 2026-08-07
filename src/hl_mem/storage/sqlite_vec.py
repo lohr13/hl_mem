@@ -7,10 +7,11 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any, cast
 
-from hl_mem.domain.temporal import RecallIntent, claim_is_visible
+from hl_mem.domain.temporal import RecallIntent
 from hl_mem.errors import ConfigurationError
 from hl_mem.protocols import ClaimRow
 from hl_mem.storage._shared import decode_json
+from hl_mem.storage.candidate_materializer import materialize_candidates
 from hl_mem.storage.migrations.sqlite_vec import (
     VECTOR_BACKEND_NAME,
     VECTOR_TABLE,
@@ -244,7 +245,8 @@ class SQLiteVecVectorBackend:
     def _has_dirty_rows(self) -> bool:
         return self.connection.execute("SELECT 1 FROM claim_vector_dirty LIMIT 1").fetchone() is not None
 
-    def _load_claims(self, claim_ids: list[str]) -> dict[str, dict[str, Any]]:
+    def batch_get_claims(self, claim_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """批量加载 vec0 候选对应的权威 Claim。"""
         if not claim_ids:
             return {}
         result: dict[str, dict[str, Any]] = {}
@@ -329,20 +331,19 @@ class SQLiteVecVectorBackend:
                 ((str(row["claim_id"]), float(row["distance"])) for row in knn_rows),
                 key=lambda item: (item[1], item[0]),
             )
-            claims = self._load_claims([claim_id for claim_id, _distance in ordered])
-            visible: list[dict[str, Any]] = []
-            for claim_id, distance in ordered:
-                claim = claims.get(claim_id)
-                if (
-                    claim is None
-                    or claim.get("namespace_key") != namespace
-                    or claim.get("embedding_dense") is None
-                    or not claim_is_visible(claim, reference_time, known_as_of, intent)
-                ):
-                    continue
-                visible.append({**claim, "_score": 1.0 - distance})
-                if len(visible) >= limit:
-                    return cast(list[ClaimRow], visible)
+            visible = materialize_candidates(
+                self,
+                [(claim_id, 1.0 - distance) for claim_id, distance in ordered],
+                limit,
+                reference_time,
+                known_as_of,
+                intent,
+                claim_filter=lambda claim: (
+                    claim.get("namespace_key") == namespace and claim.get("embedding_dense") is not None
+                ),
+            )
+            if len(visible) >= limit:
+                return cast(list[ClaimRow], visible)
             if probe_k >= namespace_count:
                 return cast(list[ClaimRow], visible)
         return self._fallback(query_blob, limit, reference_time, intent, known_as_of, namespace)
