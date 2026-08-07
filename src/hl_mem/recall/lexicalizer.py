@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import unicodedata
 from importlib.resources import files
 
@@ -29,6 +30,18 @@ for _term in _load_resource_lines("domain_terms.txt"):
 
 _PORTER_STEMMER = PorterStemmer()
 _ENGLISH_STOPWORD_STEMS = frozenset(_PORTER_STEMMER.stem(w) for w in _ENGLISH_STOPWORDS)
+
+_stemmer_local = threading.local()
+
+
+def _get_stemmer() -> PorterStemmer:
+    """Return a thread-local PorterStemmer (the class is stateful, not thread-safe)."""
+    stemmer = getattr(_stemmer_local, "stemmer", None)
+    if stemmer is None:
+        stemmer = PorterStemmer()
+        _stemmer_local.stemmer = stemmer
+    return stemmer
+
 
 _fts_language_cache: str | None = None
 
@@ -58,7 +71,7 @@ def _stem_english_word(word: str) -> str | None:
     lowered = word.lower()
     if lowered in _ENGLISH_STOPWORDS:
         return None
-    stemmed = _PORTER_STEMMER.stem(lowered)
+    stemmed = _get_stemmer().stem(lowered)
     if stemmed in _ENGLISH_STOPWORD_STEMS:
         return None
     return stemmed
@@ -148,11 +161,11 @@ def tokenize_for_fts(text: str, *, language: str | None = None) -> tuple[str, ..
     # ---- auto mode (default) ----
 
     if _is_chinese_text(normalized):
-        # Mixed or Chinese text: jieba for Chinese spans, stemmer for English identifiers
+        # Mixed or Chinese text: jieba for Chinese spans, identifiers kept raw (original behavior)
         cursor = 0
         for match in _TECHNICAL_IDENTIFIER.finditer(normalized):
             append_chinese_span(normalized[cursor : match.start()])
-            append_identifier_stemmed(match.group(0))
+            append_identifier_raw(match.group(0))
             cursor = match.end()
         append_chinese_span(normalized[cursor:])
     else:
