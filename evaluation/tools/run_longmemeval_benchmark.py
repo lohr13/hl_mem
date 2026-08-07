@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import re
@@ -1795,6 +1796,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "LongMemEval dataset is missing or incomplete; wait for the top-level JSON array to finish downloading"
         )
     settings = load_settings(args.config, args.env_file)
+    settings = dataclasses.replace(settings, vector_backend="sqlite_scan")
     _validate_production_settings(settings)
     initialize_process(settings)
     embedder = make_embedder(settings)

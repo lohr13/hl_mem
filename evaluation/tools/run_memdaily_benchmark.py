@@ -36,23 +36,17 @@ from hl_mem.components import (  # noqa: E402
     initialize_process,
     make_embedder,
     make_extractor,
-    make_llm_client,
     make_query_expander,
     make_reranker,
 )
 from hl_mem.config_loader import load_settings  # noqa: E402
 from hl_mem.evaluation.memdaily import (  # noqa: E402
-    MemDailyAdapter,
     QUESTION_TYPES,
+    MemDailyAdapter,
     parse_memdaily_timestamp,
 )
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402
-from hl_mem.llm.types import (  # noqa: E402
-    LLMMessage,
-    LLMRequest,
-    StructuredOutputMode,
-    StructuredOutputSpec,
-)
+from hl_mem.llm.types import StructuredOutputMode  # noqa: E402
 from hl_mem.recall.relation_expansion import RelationExpansionConfig  # noqa: E402
 from hl_mem.settings import Settings  # noqa: E402
 from hl_mem.storage.database import Database  # noqa: E402
@@ -141,13 +135,11 @@ def load_trajectories(
     return trajectories
 
 
-def _normalize_trajectory(
-    qtype: str, subtype: str, trajectory: Mapping[str, Any]
-) -> MemDailyTrajectory:
+def _normalize_trajectory(qtype: str, subtype: str, trajectory: Mapping[str, Any]) -> MemDailyTrajectory:
     """Convert raw MemDaily trajectory dict to MemDailyTrajectory."""
     tid = int(trajectory.get("tid", 0))
     case_id = f"memdaily:{qtype}:{subtype}:{tid}"
-    namespace = f"eval:memdaily:{qtype}:{subtype}:{tid}"
+    namespace = MemDailyAdapter.case_namespace(qtype, subtype, tid)
 
     message_list = trajectory.get("message_list") or []
     if not isinstance(message_list, Sequence) or isinstance(message_list, (str, bytes)):
@@ -164,9 +156,7 @@ def _normalize_trajectory(
         place = str(msg.get("place") or "")
         occurred_at = parse_memdaily_timestamp(time_str)
         event_id = f"memdaily:{qtype}:{subtype}:{tid}:mid:{mid}"
-        messages.append(
-            MemDailyMessage(mid=mid, event_id=event_id, occurred_at=occurred_at, text=text, place=place)
-        )
+        messages.append(MemDailyMessage(mid=mid, event_id=event_id, occurred_at=occurred_at, text=text, place=place))
         mid_to_event_id[mid] = event_id
 
     qa = trajectory.get("QA") or {}
@@ -185,11 +175,7 @@ def _normalize_trajectory(
     if not isinstance(target_step_ids, Sequence) or isinstance(target_step_ids, (str, bytes)):
         target_step_ids = []
     gold_event_ids = tuple(
-        dict.fromkeys(
-            mid_to_event_id[int(mid)]
-            for mid in target_step_ids
-            if int(mid) in mid_to_event_id
-        )
+        dict.fromkeys(mid_to_event_id[int(mid)] for mid in target_step_ids if int(mid) in mid_to_event_id)
     )
 
     return MemDailyTrajectory(
@@ -214,7 +200,7 @@ def _normalize_trajectory(
 def _normalize_text(text: str) -> str:
     """Normalize text for comparison: strip punctuation, whitespace, lowercase."""
     # Remove common Chinese and English punctuation
-    cleaned = re.sub(r"[，。！？；：、""''（）【】《》\s,.!?;:\"'()\[\]<>]", "", text)
+    cleaned = re.sub(r"""[，。！？；：、"'（）【】《》\s,.!?;:()\[\]<>]""", "", text)
     return cleaned.lower().strip()
 
 
@@ -240,10 +226,6 @@ def score_qa_accuracy(
     if not pred_chars or not gold_chars:
         f1 = 0.0
     else:
-        common = sum(1 for c in pred_chars if c in gold_chars)  # approximate
-        # proper multiset intersection for F1
-        from collections import Counter
-
         pred_counter = Counter(pred_chars)
         gold_counter = Counter(gold_chars)
         overlap = sum((pred_counter & gold_counter).values())
@@ -573,16 +555,9 @@ def _run_qa(
     qa_model = os.environ.get("HL_MEM_EVAL_QA_MODEL", QA_FALLBACK_MODEL)
 
     # Resolve API key: prefer env override, then settings
-    api_key = (
-        os.environ.get("LLM_API_KEY")
-        or os.environ.get("DASHSCOPE_API_KEY")
-        or settings.llm_api_key
-    )
+    api_key = os.environ.get("LLM_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or settings.llm_api_key
     if not api_key:
-        raise RuntimeError(
-            "QA answering requires LLM_API_KEY or DASHSCOPE_API_KEY "
-            "in .env or environment"
-        )
+        raise RuntimeError("QA answering requires LLM_API_KEY or DASHSCOPE_API_KEY " "in .env or environment")
 
     # Resolve base URL: default to the same endpoint as extraction (coding subdomain).
     # The coding key may not work on the standard DashScope endpoint.
@@ -605,9 +580,7 @@ def _run_qa(
     if traj.choices:
         choice_lines = "\n".join(f"  {k}. {v}" for k, v in sorted(traj.choices.items()))
         choice_instruction = (
-            f"\n\n选择题选项:\n{choice_lines}\n"
-            "请选择最合适的选项。回答格式：\n"
-            "选项字母: <字母>\n答案: <答案内容>"
+            f"\n\n选择题选项:\n{choice_lines}\n" "请选择最合适的选项。回答格式：\n" "选项字母: <字母>\n答案: <答案内容>"
         )
 
     system_prompt = (
@@ -615,14 +588,9 @@ def _run_qa(
         "如果记忆中没有相关信息，请回答'信息不足'。"
         "回答要简洁，直接给出答案，不要解释。"
     )
-    user_prompt = (
-        f"记忆片段:\n{context or '(无)'}\n\n"
-        f"问题: {traj.question}{choice_instruction}"
-    )
+    user_prompt = f"记忆片段:\n{context or '(无)'}\n\n" f"问题: {traj.question}{choice_instruction}"
 
-    answer_text, total_tokens = _qa_dashscope_chat(
-        api_key, base_url, qa_model, system_prompt, user_prompt
-    )
+    answer_text, total_tokens = _qa_dashscope_chat(api_key, base_url, qa_model, system_prompt, user_prompt)
 
     # Extract predicted answer and choice letter from text response
     predicted = answer_text.strip()
@@ -724,9 +692,7 @@ def _run_case(
                 raise FileNotFoundError(f"--skip-ingest requires cached database: {db_path}")
             result["ingest"] = {"skipped": True}
 
-        result["retrieval"], result["retrieved"] = _recall_trajectory(
-            connection, traj, settings, embedder, reranker
-        )
+        result["retrieval"], result["retrieved"] = _recall_trajectory(connection, traj, settings, embedder, reranker)
 
         if run_qa:
             result["qa"] = _run_qa(connection, traj, result["retrieved"], settings)
@@ -738,6 +704,7 @@ def _run_case(
             database.close()
         if clean:
             import gc
+
             gc.collect()
             for attempt in range(3):
                 try:
@@ -746,6 +713,7 @@ def _run_case(
                 except PermissionError:
                     if attempt < 2:
                         import time as _t
+
                         _t.sleep(0.5)
                     else:
                         pass  # leave it; --clean will get it next run
@@ -759,31 +727,15 @@ def _run_case(
 def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Aggregate metrics for a group of results (overall or per-type)."""
     successful = [r for r in results if not r.get("error")]
-    qa_results = [r for r in successful if isinstance(r.get("qa"), Mapping)]
+    qa_results = [qa for r in successful if isinstance((qa := r.get("qa")), Mapping)]
     retrieval_results = [r for r in successful if isinstance(r.get("retrieval"), Mapping)]
 
-    def avg(field: str, items: Sequence[Mapping[str, Any]], subkey: str = "qa") -> float | None:
-        values = []
-        for item in items:
-            sub = item.get(subkey)
-            if isinstance(sub, Mapping) and sub.get(field) is not None:
-                val = sub[field]
-                if isinstance(val, (int, float, bool)):
-                    values.append(float(val))
-        return mean(values) if values else None
-
     recall_vals = [
-        float(r["retrieval"]["recall_at_5"])
-        for r in retrieval_results
-        if r["retrieval"].get("recall_at_5") is not None
+        float(r["retrieval"]["recall_at_5"]) for r in retrieval_results if r["retrieval"].get("recall_at_5") is not None
     ]
-    f1_vals = [qa["f1"] for qa in qa_results if qa.get("f1") is not None]
+    f1_vals = [float(qa["f1"]) for qa in qa_results if qa.get("f1") is not None]
     em_vals = [float(qa["exact_match"]) for qa in qa_results if qa.get("exact_match") is not None]
-    choice_vals = [
-        float(qa["choice_correct"])
-        for qa in qa_results
-        if qa.get("choice_correct") is not None
-    ]
+    choice_vals = [float(qa["choice_correct"]) for qa in qa_results if qa.get("choice_correct") is not None]
 
     return {
         "cases": len(results),
@@ -904,10 +856,7 @@ def _generate_markdown(report: Mapping[str, Any]) -> str:
             f1_s = f"{f1:.4f}" if f1 is not None else "N/A"
             r5_s = f"{r5:.4f}" if r5 is not None else "N/A"
             ca_s = f"{ca:.4f}" if ca is not None else "N/A"
-            lines.append(
-                f"| {qtype} | {group.get('cases', 0)} | "
-                f"{acc_s} | {f1_s} | {r5_s} | {ca_s} |"
-            )
+            lines.append(f"| {qtype} | {group.get('cases', 0)} | " f"{acc_s} | {f1_s} | {r5_s} | {ca_s} |")
         lines.append("")
 
     cases = report.get("cases", [])
