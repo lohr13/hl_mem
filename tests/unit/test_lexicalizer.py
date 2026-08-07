@@ -25,6 +25,7 @@ def test_tokenize_for_fts_keeps_identifier_and_adds_its_segments() -> None:
         "text-embedding-v4",
         "text",
         "embedding",
+        "embed",
         "v4",
     )
 
@@ -38,7 +39,7 @@ def test_prepare_fts_document_normalizes_and_deduplicates_stably() -> None:
 
 
 def test_prepare_fts_query_quotes_terms_and_neutralizes_operators() -> None:
-    assert prepare_fts_query('GPU "型号" OR *') == '"GPU" AND "型号" AND "OR"'
+    assert prepare_fts_query('GPU "型号" OR *') == '"GPU" AND "型号"'
 
 
 def test_prepare_fts_functions_return_empty_string_for_empty_query() -> None:

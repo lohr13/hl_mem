@@ -89,7 +89,7 @@ def test_events_backfill_rebuilds_all_rows(
     terms = connection.execute(
         "SELECT terms FROM events_fts_v2 WHERE rowid=(SELECT rowid FROM events WHERE id='event-42')"
     ).fetchone()[0]
-    assert terms == "event memory 42"
+    assert terms == "event memory memori 42"
 
 
 def test_events_backfill_indexes_non_object_or_non_string_text_as_empty_document(
