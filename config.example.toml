@@ -60,6 +60,7 @@ relevance_dense_floor = 0.3
 relevance_relative_drop = 0.30
 relevance_keep_top1 = true
 relevance_intents = ["current_state"]
+fts_language = "auto"
 
 [dedup]
 enabled = true

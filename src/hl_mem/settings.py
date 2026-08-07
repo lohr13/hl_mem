@@ -151,6 +151,7 @@ class Settings:
         metadata={"toml": "relation.conflict_confidence"},
     )
     recall_default_limit: int = field(default=5, metadata={"toml": "recall.default_limit"})
+    fts_language: str = field(default="auto", metadata={"toml": "recall.fts_language"})
     recall_vector_scan_limit: int = field(default=200, metadata={"toml": "recall.vector_scan_limit"})
     recall_dense_enabled: bool = field(default=True, metadata={"toml": "recall.dense_enabled"})
     packed_context_token_budget: int = field(
@@ -500,6 +501,8 @@ class Settings:
 
     def validate(self) -> None:
         """校验配置组合以及已启用组件的密钥。"""
+        if self.fts_language not in {"auto", "zh", "en"}:
+            raise ConfigurationError("recall.fts_language must be 'auto', 'zh', or 'en'")
         try:
             VectorBackend(self.vector_backend)
         except ValueError as error:
@@ -777,6 +780,7 @@ class Settings:
             "relation_discovery_pool_limit": self.relation_discovery_pool_limit,
             "relation_discovery_max_proposals": self.relation_discovery_max_proposals,
             "recall_default_limit": self.recall_default_limit,
+            "fts_language": self.fts_language,
             "recall_vector_scan_limit": self.recall_vector_scan_limit,
             "recall_dense_enabled": self.recall_dense_enabled,
             "tag_boost_enabled": self.tag_boost_enabled,
