@@ -114,9 +114,35 @@ def tokenize_for_fts(text: str, *, language: str | None = None) -> tuple[str, ..
             if stemmed:
                 append(stemmed)
 
+    def append_english_segments_both(span: str) -> None:
+        """Split English text into words, append both raw and stemmed versions.
+
+        Used in ``auto`` mode so that FTS indexes carry the raw surface form
+        (backward-compatible with existing indexes) *and* a stemmed form for
+        cross-morphology matching (running→run, databases→database).
+        """
+        for raw in _ENGLISH_WORD.findall(span):
+            lowered = raw.lower()
+            if lowered in _ENGLISH_STOPWORDS:
+                continue
+            append(lowered)
+            stemmed = _get_stemmer().stem(lowered)
+            if stemmed not in _ENGLISH_STOPWORD_STEMS and stemmed != lowered:
+                append(stemmed)
+
     def append_chinese_span(span: str) -> None:
         for token in _TOKENIZER.cut(span, cut_all=False):
             append(token)
+
+    def append_mixed_span(span: str) -> None:
+        """Chinese span: jieba tokens (unchanged) + raw/stemmed English words.
+
+        Identical to :func:`append_chinese_span` for the jieba path, but also
+        emits raw + stemmed forms for any English words embedded in the span.
+        """
+        for token in _TOKENIZER.cut(span, cut_all=False):
+            append(token)
+        append_english_segments_both(span)
 
     def append_identifier_stemmed(identifier: str) -> None:
         """Split technical identifier into sub-segments and stem English parts."""
@@ -135,6 +161,32 @@ def tokenize_for_fts(text: str, *, language: str | None = None) -> tuple[str, ..
         append(identifier)
         for segment in _IDENTIFIER_SEPARATOR.split(identifier):
             append(segment)
+
+    def append_identifier_both(identifier: str) -> None:
+        """Append raw identifier (full + sub-segments) and stemmed sub-segments.
+
+        Combines :func:`append_identifier_raw` (backward-compatible raw forms)
+        with :func:`append_identifier_stemmed` (stemmed sub-segments for
+        cross-morphology matching). Stopwords are filtered at the segment level
+        so neither raw nor stemmed stopword forms pollute the index.
+        """
+        # If the identifier is a single segment that is a stopword, skip entirely
+        if _IDENTIFIER_SEPARATOR.search(identifier) is None:
+            if identifier.lower() in _ENGLISH_STOPWORDS:
+                return
+        append(identifier)
+        for segment in _IDENTIFIER_SEPARATOR.split(identifier):
+            if not segment:
+                continue
+            seg_lower = segment.lower()
+            if seg_lower in _ENGLISH_STOPWORDS:
+                continue
+            append(segment)
+            if segment[0].isdigit():
+                continue
+            stemmed = _stem_english_word(segment)
+            if stemmed:
+                append(stemmed)
 
     # ---- Dispatch based on mode ----
 
@@ -161,21 +213,25 @@ def tokenize_for_fts(text: str, *, language: str | None = None) -> tuple[str, ..
     # ---- auto mode (default) ----
 
     if _is_chinese_text(normalized):
-        # Mixed or Chinese text: jieba for Chinese spans, identifiers kept raw (original behavior)
+        # Mixed or Chinese text: jieba for Chinese spans, identifiers kept raw
+        # (backward-compatible) plus stemmed sub-segments; embedded English
+        # words also get raw + stemmed forms for cross-morphology matching.
         cursor = 0
         for match in _TECHNICAL_IDENTIFIER.finditer(normalized):
-            append_chinese_span(normalized[cursor : match.start()])
-            append_identifier_raw(match.group(0))
+            append_mixed_span(normalized[cursor : match.start()])
+            append_identifier_both(match.group(0))
             cursor = match.end()
-        append_chinese_span(normalized[cursor:])
+        append_mixed_span(normalized[cursor:])
     else:
-        # Pure English text: extract identifiers and words → stem → filter
+        # Pure English text: identifiers and words both emit raw + stemmed
+        # forms (raw keeps existing FTS indexes valid; stemmed enables
+        # cross-morphology matching).
         cursor = 0
         for match in _TECHNICAL_IDENTIFIER.finditer(normalized):
-            append_english_segments(normalized[cursor : match.start()])
-            append_identifier_stemmed(match.group(0))
+            append_english_segments_both(normalized[cursor : match.start()])
+            append_identifier_both(match.group(0))
             cursor = match.end()
-        append_english_segments(normalized[cursor:])
+        append_english_segments_both(normalized[cursor:])
 
     return tuple(tokens)
 
