@@ -5,7 +5,7 @@ HL-Mem 通过 `hl-mem-mcp` 提供 MCP Python SDK 2.x 的低层 `Server` 和 stdi
 ## 安装与参数
 
 ```bash
-python -m pip install hl-mem
+python -m pip install "hl-mem[mcp]"
 hlmem init --offline
 hl-mem-mcp --help
 ```

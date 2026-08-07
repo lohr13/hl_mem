@@ -67,7 +67,7 @@ uv run hlmem server
 
 ### 连接 Codex、Claude 与 Cursor
 
-安装包同时提供官方 SDK 2.x 的 stdio MCP 入口 `hl-mem-mcp`，可直接连接 Codex、Claude Code、Claude Desktop 或 Cursor。配置示例和七个工具的契约见 [MCP 使用说明](docs/mcp.md)。
+运行 `python -m pip install "hl-mem[mcp]"` 安装 MCP extra 后，可使用官方 SDK 2.x 的 stdio 入口 `hl-mem-mcp` 连接 Codex、Claude Code、Claude Desktop 或 Cursor。配置示例和七个工具的契约见 [MCP 使用说明](docs/mcp.md)。
 
 ### 集成 Hermes
 

@@ -13,13 +13,15 @@ from importlib.metadata import entry_points
 from pathlib import Path
 
 import pytest
-from mcp import Client
-from mcp.shared.exceptions import MCPError
 
 from hl_mem import __version__
 from hl_mem.daily_cli import OFFLINE_CONFIG
 from hl_mem.mcp.server import McpMemoryServer, get_tool_schemas
 from hl_mem.settings import Settings
+
+mcp = pytest.importorskip("mcp")
+Client = mcp.Client
+MCPError = pytest.importorskip("mcp.shared.exceptions").MCPError
 
 
 def test_mcp_runtime_module_is_available() -> None:
