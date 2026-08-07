@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.23.1
-- Updated: 2026-08-06
+- Document baseline: v0.24.0
+- Updated: 2026-08-07
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -15,8 +15,9 @@ execute external tools, store general model knowledge, or train the host Agent. 
 events or recall queries and receive structured memory with temporal and provenance metadata.
 
 SQLite WAL is the supported primary store. FTS5 provides lexical retrieval and vector embeddings are stored as BLOBs for
-bounded brute-force cosine search. External LLM, embedding, reranking, and vision providers are optional capabilities
-injected through settings; they are not storage dependencies.
+the default two-stage exact `sqlite_scan` backend; deployments may explicitly install and select `sqlite_vec` for a native
+vector index while SQLite remains the source of truth. External LLM, embedding, reranking, and vision providers are
+optional capabilities injected through settings; they are not storage dependencies.
 
 HL-Mem is a local, single-tenant service intended to run inside one trusted deployment. `namespace` is a relevance/profile
 label that keeps recall, Episodes, Policies, and maintenance work in separate soft partitions. It is not an authentication,
@@ -108,6 +109,8 @@ src/hl_mem/
 │   ├── jobs.py               # Durable job queue
 │   ├── relation_proposals.py # Auditable relation candidates
 │   ├── usefulness.py         # Feedback usefulness aggregation
+│   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
+│   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
 │   └── migrations/           # 37 immutable SQL migrations (001-037)
 ├── workers/
 │   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
@@ -278,9 +281,9 @@ documentation at `/docs` while the service is running.
 The database layer owns WAL mode, busy timeout, connection lifecycle, online backup, and ordered immutable migrations.
 Workers use durable jobs with leases, heartbeat, stage, and processed/total progress. Audit logs record state changes and
 automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. The async `/healthz`
-route reports process-local component metrics and reads the unresolved conflict count through the application lifecycle
-connection; it does not call external providers. `/v1/stats`, offline evaluation, and the LongMemEval adapter provide
-broader database-backed operational and quality visibility.
+route reports process-local component metrics, the configured vector backend, and the unresolved conflict count through
+the application lifecycle connection; it does not call external providers. `/v1/stats`, offline evaluation, and the
+LongMemEval adapter provide broader database-backed operational and quality visibility.
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
@@ -288,7 +291,12 @@ Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by
 values while making the field describe the actual host/model delivery boundary.
 
 Migration 036 is the v0.20 schema change: it adds tokenized FTS v2 tables and orphan-cleanup triggers for claims, events,
-and claim tags. v0.23.1 adds no migration.
+and claim tags.
+
+Migration 037 is the v0.24 schema change: it adds backend control state and dirty-row triggers without requiring the
+sqlite-vec extension. When `recall.vector_backend = "sqlite_vec"`, the separate `sqlite_vec.py` Python data migration
+creates or rebuilds the dimension-specific derived vector table. Startup drains dirty projections before serving, while
+dirty-query detection can fall back to the exact scan path; the default remains `sqlite_scan`.
 
 Backup and restore are whole-database operations:
 

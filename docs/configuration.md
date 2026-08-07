@@ -1,6 +1,6 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.23.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.24.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
@@ -236,7 +236,7 @@ hl-mem import var/events.jsonl --db var/restored.db
 | `recall.tag_candidate_limit` | 整数 | `20` | >= 1 | `tag_candidate_limit` |
 | `recall.tag_channel_enabled` | 布尔值 | `false` | `true`、`false` | `tag_channel_enabled` |
 | `recall.tag_channel_weight` | 数值 | `0.15` | 0.0 - 1.0 | `tag_channel_weight` |
-| `recall.vector_backend` | 字符串 | `"sqlite_scan"` | `sqlite_scan` | `vector_backend` |
+| `recall.vector_backend` | 字符串 | `"sqlite_scan"` | `sqlite_scan`、`sqlite_vec` | `vector_backend` |
 | `recall.vector_batch_size` | 整数 | `512` | >= 1 | `vector_batch_size` |
 | `recall.vector_scan_limit` | 整数 | `200` | >= 1 | `recall_vector_scan_limit` |
 

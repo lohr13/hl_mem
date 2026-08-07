@@ -1,5 +1,31 @@
 # HL-Mem 变更记录
 
+## v0.24.0（2026-08-07）
+
+### 向量检索与性能
+
+- 默认 `sqlite_scan` 将全行 `SELECT *` 向量扫描改为两阶段执行：先只读取 ID 与向量并批量计算余弦分数，再按候选 ID 回表物化完整 Claim，降低解码与 Python 对象开销。
+- 修复两阶段扫描的可见性边界：回表过滤不足 `limit` 时继续读取下一批评分候选，直到满足上限或候选耗尽，保持历史时间、记录时间与 namespace 过滤后的结果完整性。
+- 新增可选 `sqlite_vec` 后端与 `hl-mem[sqlite-vec]` extra；默认仍为精确 `sqlite_scan`。后端实现覆盖建表/回填、增删改同步、模型与维度漂移守卫、dirty 检测、受控 scan fallback 和扩展加载失败诊断。
+- 抽取公共候选物化器，使 `sqlite_scan` 与 `sqlite_vec` 共用回表、namespace 与双时间可见性规则，减少两条检索路径的语义漂移。
+
+### Query expansion
+
+- 收紧 `auto` 触发：短查询不再单独触发 LLM；指代查询仅在存在可用 session context 时预扩展，避免对“用户名”等短而明确的查询产生无谓调用。
+- 保留 low-recall 边界：context/coreference 扩展未产出有效改写时，原始召回仍可在候选不足后触发 low-recall expansion。
+
+### 可靠性、依赖与可观测性
+
+- 服务启动时自动 drain `claim_vector_dirty`，将旁路 SQL 造成的更新/删除同步到 sqlite-vec 派生投影，避免长期停留在精确扫描回退路径。
+- MCP Python SDK 从核心依赖移至 `mcp` extra，修复与 `claude-agent-sdk` 的 MCP 版本冲突；dev dependency、lockfile、CI 测试导入和中英文安装文档统一接入 `hl-mem[mcp]`。
+- `/healthz` 新增 `vector_backend` 字段，直接报告当前配置的向量后端；doctor 的 migration 识别改用明确的 data-migration 常量，不再误计 Python data migration。
+
+### Migration 与兼容性
+
+- 新增不可变 SQL migration `037_vector_index_control.sql`，将向量后端控制表和 dirty triggers 纳入常规 schema runner；本版本结束时共有 37 个 SQL migration。
+- 新增 `sqlite_vec.py` Python data migration，仅在显式选择 sqlite-vec 时构建可重建的派生向量投影；核心 Claim BLOB 继续作为权威数据。
+- `sqlite_scan` 仍为默认后端，现有部署无需安装本地扩展；MCP 用户升级后需安装 `hl-mem[mcp]`。REST 主契约保持兼容，`/healthz` 仅增加字段。
+
 ## v0.23.1（2026-08-06）
 
 ### 仓库治理

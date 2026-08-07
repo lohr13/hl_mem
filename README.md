@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.23.1](https://img.shields.io/badge/version-0.23.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.24.0](https://img.shields.io/badge/version-0.24.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -11,7 +11,7 @@
 
 ## 中文
 
-HL-Mem 是面向 AI Agent 的本地优先、证据驱动长期记忆系统。它不只是向量数据库：系统把不可变事件提取为带证据链的结构化 Claim，以有效时间和记录时间描述事实变化，并通过独立的 Experience 通道保存 Episode、Trace 和可复用 Policy。默认使用 SQLite WAL、FTS5 和向量 BLOB，无需部署外部数据库服务。
+HL-Mem 是面向 AI Agent 的本地优先、证据驱动长期记忆系统。它不只是向量数据库：系统把不可变事件提取为带证据链的结构化 Claim，以有效时间和记录时间描述事实变化，并通过独立的 Experience 通道保存 Episode、Trace 和可复用 Policy。默认使用 SQLite WAL、FTS5 和向量 BLOB 精确扫描，也可选择 sqlite-vec 后端，无需部署外部数据库服务。
 
 ## 五分钟上手
 
@@ -101,6 +101,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `llm.provider` | `dashscope` | `dashscope`、`zhipu` 或 `openai_compatible` |
 | `llm.structured_mode` | `json_object` | `auto`、`json_object` 或 `json_schema` |
 | `index.text_mode` | `legacy` | `legacy`、`value_only`、`natural` 或 `answerable` |
+| `recall.vector_backend` | `sqlite_scan` | `sqlite_scan`（默认）或需安装 `hl-mem[sqlite-vec]` 的 `sqlite_vec` |
 | `recall.query_expansion_mode` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
 | `relation.discovery_mode` | `off` | 关系发现：`off`、`audit` 或 `auto` |
 | `recall.tag_channel_enabled` | `false` | 是否启用独立 Tag 检索通道 |
@@ -113,7 +114,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 - **记忆正确性**：幂等事件摄入、事务原子写入、精确/语义去重、确定性冲突规则、LLM 灰区归并和受守卫的冲突终态收敛。
 - **提取治理**：6 字段 compact 提取、统一 AdmissionPolicy、完整 Claim schema 后处理、确定性的 scope/predicate 投影、subject 守卫和有界结构化输出修复。
 - **时间与证据**：有效时间与记录时间双时间模型、证据链、实体归一化、显式遗忘和 stale 传播。
-- **混合召回**：中文 FTS5、稠密向量、RRF 融合、多因子排序、可选 Reranker、关系/查询扩展和按 Token 预算打包上下文。
+- **混合召回**：中文 FTS5、两阶段精确向量扫描或可选 sqlite-vec、RRF 融合、多因子排序、可选 Reranker、关系/查询扩展和按 Token 预算打包上下文。
 - **生命周期**：importance 联动 TTL、置信度衰减、归档、重分类、反馈效用、审计日志和在线备份。
 - **经验通道**：Episode、Trace、Reward、Policy/Procedure 和派生 Observation。
 - **接口**：FastAPI REST 与 Hermes Provider 为稳定主路径；七工具 MCP stdio 接口处于 Beta。
@@ -127,7 +128,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.23.1，共 37 个不可变、仅向前执行的 Migration。
+当前基线为 v0.24.0，共 37 个不可变、仅向前执行的 Migration。
 
 ## 文档
 

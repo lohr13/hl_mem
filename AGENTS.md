@@ -4,12 +4,12 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v0.23.1（2026-08-06）**
+**当前版本：v0.24.0（2026-08-07）**
 
 ## 技术栈
 
 - **运行时**：Python 3.11+，FastAPI + uvicorn
-- **存储**：SQLite WAL + FTS5（全文检索）+ 向量 BLOB（暴力余弦，首版）
+- **存储**：SQLite WAL + FTS5（全文检索）+ 向量 BLOB（默认 `sqlite_scan` 两阶段精确扫描；可选 `sqlite_vec` 后端）
 - **LLM 提取**：API 密钥通过 .env 配置，provider/model 通过 TOML 配置，使用结构化 JSON 输出
 - **Embedding**：API 密钥通过 .env 配置，provider/model/维度通过 TOML 配置
 - **Reranker**：API 密钥通过 .env 配置，provider/model 通过 TOML 配置
@@ -68,7 +68,7 @@ src/hl_mem/
 │   ├── relation_proposals.py  # 关系候选审计
 │   ├── usefulness.py          # 反馈效用聚合
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 37 SQL migrations (001-037)
+│   └── migrations/            # 37 SQL migrations (001-037) + Python data migrations
 ├── workers/                # 后台任务
 │   ├── worker.py              # Job 调度器
 │   ├── ttl.py                 # TTL 过期
@@ -154,4 +154,4 @@ src/hl_mem/
 
 ## Migration
 
-37 个 SQL migration（001-037），按版本号顺序执行。不可变。
+37 个 SQL migration（001-037），按版本号顺序执行且不可变；v0.24.0 另新增 `sqlite_vec.py` Python data migration，用于可选向量投影。

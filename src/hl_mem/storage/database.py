@@ -157,8 +157,8 @@ class Database:
                 already_applied = connection.execute(
                     "SELECT 1 FROM schema_migrations WHERE version=?", (version,)
                 ).fetchone()
-                repair_legacy_vector_control = version == "037_vector_index_control" and not self._vector_control_complete(
-                    connection
+                repair_legacy_vector_control = (
+                    version == "037_vector_index_control" and not self._vector_control_complete(connection)
                 )
                 if already_applied and not repair_legacy_vector_control:
                     connection.commit()

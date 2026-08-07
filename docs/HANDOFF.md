@@ -1,17 +1,27 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-06 · v0.23.1
+> 最后更新：2026-08-07 · v0.24.0
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.23.1
-- **阶段**：v0.23.1 发版收口
+- **版本**：v0.24.0
+- **阶段**：v0.24.0 发版收口
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`），37 migrations；实时数据量以数据库只读审计为准
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；37 migrations（SQL 001-037）+ `sqlite_vec.py` data migration；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-07 v0.24.0 向量检索与依赖边界
+
+- `sqlite_scan` 从 `SELECT *` 全量扫描改为“轻量向量评分 + 候选回表”两阶段流程，并在可见性过滤后循环扩大候选，直到满足 `limit` 或耗尽扫描结果。
+- 新增可选 `sqlite_vec` 后端与 `hl-mem[sqlite-vec]` extra；默认仍为精确 `sqlite_scan`，向量维度/模型漂移、dirty 投影和查询降级均有显式守卫。
+- 启动时自动 drain `claim_vector_dirty`，同步更新或删除 sqlite-vec 派生投影，避免旁路 SQL 令服务长期停留在扫描回退路径。
+- query expansion 不再因查询短而直接调用 LLM；指代触发要求存在可用 session context，同时保留原始候选不足时的 low-recall fallback。
+- MCP SDK 从核心依赖移到 `mcp` extra，并完整接入 dev 依赖、CI 与安装文档，消除与 `claude-agent-sdk` 的 MCP 版本冲突。
+- 公共候选物化器统一 `sqlite_scan`/`sqlite_vec` 的回表与时间可见性语义；`/healthz` 新增 `vector_backend`，doctor 正确区分 SQL migration 与 Python data migration。
+- 新增不可变 SQL migration 037 管理向量索引控制表与 dirty triggers；`sqlite_vec.py` 作为独立 Python data migration 构建可选向量投影。
 
 ### 2026-08-06 v0.23.1 提取治理与 Benchmark 基线
 
