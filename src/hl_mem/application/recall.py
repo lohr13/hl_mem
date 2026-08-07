@@ -409,13 +409,15 @@ class RecallService:
             self.settings.query_expansion_mode,
             context_available=context_available,
         )
+        additions_made = False
         if initial_trigger is not None and self.query_expander is not None:
             additions, blobs = expand_for(initial_trigger)
+            additions_made = bool(additions)
             weighted_queries.extend(additions)
             query_blobs.extend(blobs)
 
         low_recall_expander = None
-        if self.settings.query_expansion_mode == "auto" and initial_trigger is None and self.query_expander is not None:
+        if self.settings.query_expansion_mode == "auto" and not additions_made and self.query_expander is not None:
 
             def low_recall_expander(
                 candidate_count: int,
