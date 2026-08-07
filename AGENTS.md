@@ -68,7 +68,7 @@ src/hl_mem/
 │   ├── relation_proposals.py  # 关系候选审计
 │   ├── usefulness.py          # 反馈效用聚合
 │   ├── backup.py              # 在线备份
-│   └── migrations/            # 36 SQL migrations (001-036)
+│   └── migrations/            # 37 SQL migrations (001-037)
 ├── workers/                # 后台任务
 │   ├── worker.py              # Job 调度器
 │   ├── ttl.py                 # TTL 过期
@@ -154,4 +154,4 @@ src/hl_mem/
 
 ## Migration
 
-36 个 SQL migration（001-036），按版本号顺序执行。不可变。
+37 个 SQL migration（001-037），按版本号顺序执行。不可变。

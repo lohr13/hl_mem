@@ -1,4 +1,4 @@
-"""sqlite-vec 的普通控制 schema 与按配置启用的 vec0 migration。"""
+"""按配置启用的 sqlite-vec vec0 provisioning、回填与版本检查。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import struct
 
 from hl_mem.errors import ConfigurationError
 
-DATA_MIGRATION_VERSION = "037_vector_index_control"
 VECTOR_BACKEND_NAME = "sqlite_vec"
 VECTOR_SCHEMA_VERSION = 1
 VECTOR_TABLE = "claims_vec_v1"
@@ -21,41 +20,8 @@ def _started_transaction(connection: sqlite3.Connection) -> bool:
     return True
 
 
-def ensure_vector_control_schema(connection: sqlite3.Connection) -> None:
-    """创建不依赖 sqlite-vec 扩展的控制表，并登记 Python migration。"""
-    started_transaction = _started_transaction(connection)
-    try:
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS schema_migrations ("
-            "version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        )
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS vector_index_state ("
-            "backend TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, "
-            "schema_version INTEGER NOT NULL, build_status TEXT NOT NULL, "
-            "embedding_model TEXT, embedding_dim INTEGER NOT NULL, extension_version TEXT, "
-            "started_at TEXT, ready_at TEXT, last_checked_at TEXT, last_error TEXT)"
-        )
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS claim_vector_dirty ("
-            "claim_id TEXT PRIMARY KEY, reason TEXT NOT NULL, "
-            "queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        )
-        connection.execute(
-            "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
-            (DATA_MIGRATION_VERSION,),
-        )
-        if started_transaction:
-            connection.commit()
-    except Exception:
-        if started_transaction and connection.in_transaction:
-            connection.rollback()
-        raise
-
-
 def disable_sqlite_vec(connection: sqlite3.Connection) -> None:
-    """关闭 dirty trigger 守卫；scan-only 连接无需加载扩展。"""
-    ensure_vector_control_schema(connection)
+    """通过控制状态关闭 dirty trigger 守卫；scan-only 连接无需加载扩展。"""
     started_transaction = _started_transaction(connection)
     connection.execute(
         "UPDATE vector_index_state SET enabled=0,last_checked_at=CURRENT_TIMESTAMP WHERE backend=?",
@@ -81,39 +47,6 @@ def embedding_is_indexable(blob: object, embedding_dim: int) -> bool:
     return squared_norm > 0.0
 
 
-def _install_dirty_triggers(connection: sqlite3.Connection) -> None:
-    connection.execute("DROP TRIGGER IF EXISTS claim_vector_dirty_ai")
-    connection.execute("DROP TRIGGER IF EXISTS claim_vector_dirty_au")
-    connection.execute("DROP TRIGGER IF EXISTS claim_vector_dirty_ad")
-    connection.execute(
-        "CREATE TRIGGER claim_vector_dirty_ai AFTER INSERT ON claims "
-        "WHEN NEW.embedding_dense IS NOT NULL AND EXISTS("
-        "SELECT 1 FROM vector_index_state WHERE backend='sqlite_vec' AND enabled=1) "
-        "BEGIN INSERT INTO claim_vector_dirty(claim_id,reason,queued_at) "
-        "VALUES(NEW.id,'insert',CURRENT_TIMESTAMP) "
-        "ON CONFLICT(claim_id) DO UPDATE SET reason='insert',queued_at=CURRENT_TIMESTAMP; END"
-    )
-    connection.execute(
-        "CREATE TRIGGER claim_vector_dirty_au AFTER UPDATE OF "
-        "embedding_dense,embedding_model,embedding_dim,namespace_key ON claims "
-        "WHEN EXISTS(SELECT 1 FROM vector_index_state WHERE backend='sqlite_vec' AND enabled=1) "
-        "AND (NEW.embedding_dense IS NOT OLD.embedding_dense "
-        "OR NEW.embedding_model IS NOT OLD.embedding_model "
-        "OR NEW.embedding_dim IS NOT OLD.embedding_dim "
-        "OR NEW.namespace_key IS NOT OLD.namespace_key) "
-        "BEGIN INSERT INTO claim_vector_dirty(claim_id,reason,queued_at) "
-        "VALUES(NEW.id,'update',CURRENT_TIMESTAMP) "
-        "ON CONFLICT(claim_id) DO UPDATE SET reason='update',queued_at=CURRENT_TIMESTAMP; END"
-    )
-    connection.execute(
-        "CREATE TRIGGER claim_vector_dirty_ad AFTER DELETE ON claims "
-        "WHEN EXISTS(SELECT 1 FROM vector_index_state WHERE backend='sqlite_vec' AND enabled=1) "
-        "BEGIN INSERT INTO claim_vector_dirty(claim_id,reason,queued_at) "
-        "VALUES(OLD.id,'delete',CURRENT_TIMESTAMP) "
-        "ON CONFLICT(claim_id) DO UPDATE SET reason='delete',queued_at=CURRENT_TIMESTAMP; END"
-    )
-
-
 def _upsert_dirty(connection: sqlite3.Connection, claim_id: str, reason: str) -> None:
     connection.execute(
         "INSERT INTO claim_vector_dirty(claim_id,reason,queued_at) VALUES(?,?,CURRENT_TIMESTAMP) "
@@ -133,12 +66,11 @@ def migrate_sqlite_vec(
     embedding_model: str,
     extension_version: str,
 ) -> None:
-    """幂等创建 vec0、dirty triggers 和存量投影；不修改权威 Claim。"""
+    """幂等创建 vec0 并回填存量投影；不修改权威 Claim。"""
     if embedding_dim < 1:
         raise ConfigurationError("sqlite-vec embedding dimension must be positive")
     if not embedding_model.strip():
         raise ConfigurationError("sqlite-vec embedding model must not be empty")
-    ensure_vector_control_schema(connection)
     state = connection.execute(
         "SELECT * FROM vector_index_state WHERE backend=?",
         (VECTOR_BACKEND_NAME,),
@@ -204,7 +136,6 @@ def migrate_sqlite_vec(
             "started_at=CURRENT_TIMESTAMP,last_checked_at=CURRENT_TIMESTAMP,last_error=NULL",
             (VECTOR_BACKEND_NAME, VECTOR_SCHEMA_VERSION, embedding_model, embedding_dim, extension_version),
         )
-        _install_dirty_triggers(connection)
         connection.execute(f"DELETE FROM {VECTOR_TABLE}")
         connection.execute("DELETE FROM claim_vector_dirty")
         rows = connection.execute(

@@ -16,7 +16,6 @@ from hl_mem.storage.migrations.backfill_conflict_key_v3 import backfill_conflict
 from hl_mem.storage.migrations.fact_hash_v2 import backfill_fact_hash_v2
 from hl_mem.storage.migrations.sqlite_vec import (
     disable_sqlite_vec,
-    ensure_vector_control_schema,
     migrate_sqlite_vec,
 )
 from hl_mem.storage.sqlite_vec import drain_dirty_vectors, load_sqlite_vec_extension
@@ -155,7 +154,13 @@ class Database:
             version = migration.stem
             try:
                 connection.execute("BEGIN IMMEDIATE")
-                if connection.execute("SELECT 1 FROM schema_migrations WHERE version=?", (version,)).fetchone():
+                already_applied = connection.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version=?", (version,)
+                ).fetchone()
+                repair_legacy_vector_control = version == "037_vector_index_control" and not self._vector_control_complete(
+                    connection
+                )
+                if already_applied and not repair_legacy_vector_control:
                     connection.commit()
                     continue
                 statement = ""
@@ -166,7 +171,8 @@ class Database:
                         statement = ""
                 if statement.strip():
                     raise sqlite3.OperationalError(f"incomplete SQL in migration {version}")
-                connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+                if not already_applied:
+                    connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
                 connection.commit()
             except Exception:
                 if connection.in_transaction:
@@ -180,7 +186,6 @@ class Database:
             backfill_conflict_keys_v3(connection)
         if connection.execute("SELECT 1 FROM schema_migrations WHERE version='036_tokenized_fts_v2'").fetchone():
             ensure_tokenized_fts_v2(connection)
-        ensure_vector_control_schema(connection)
         if VectorBackend(self.settings.vector_backend) is VectorBackend.SQLITE_VEC:
             extension_version = load_sqlite_vec_extension(connection)
             migrate_sqlite_vec(
@@ -191,6 +196,26 @@ class Database:
             )
         else:
             disable_sqlite_vec(connection)
+
+    @staticmethod
+    def _vector_control_complete(connection: sqlite3.Connection) -> bool:
+        """识别旧 Python 037 已登记但缺少 SQL trigger 的过渡状态。"""
+        objects = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE "
+                "(type='table' AND name IN ('vector_index_state','claim_vector_dirty')) OR "
+                "(type='trigger' AND name IN "
+                "('claim_vector_dirty_ai','claim_vector_dirty_au','claim_vector_dirty_ad'))"
+            ).fetchall()
+        }
+        return objects == {
+            "vector_index_state",
+            "claim_vector_dirty",
+            "claim_vector_dirty_ai",
+            "claim_vector_dirty_au",
+            "claim_vector_dirty_ad",
+        }
 
     def _drain_dirty_vectors(self, connection: sqlite3.Connection) -> None:
         """在 sqlite-vec 启动完成后修复旁路 SQL 留下的派生投影。"""
