@@ -29,6 +29,7 @@ RelevanceGateMode = Literal["off", "observe", "enforce"]
 ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
 IndexTextMode = Literal["legacy", "value_only", "natural", "answerable"]
+FtsLanguage = Literal["auto", "zh", "en"]
 
 
 class VectorBackend(StrEnum):
@@ -151,7 +152,7 @@ class Settings:
         metadata={"toml": "relation.conflict_confidence"},
     )
     recall_default_limit: int = field(default=5, metadata={"toml": "recall.default_limit"})
-    fts_language: str = field(default="auto", metadata={"toml": "recall.fts_language"})
+    fts_language: FtsLanguage = field(default="auto", metadata={"toml": "recall.fts_language"})
     recall_vector_scan_limit: int = field(default=200, metadata={"toml": "recall.vector_scan_limit"})
     recall_dense_enabled: bool = field(default=True, metadata={"toml": "recall.dense_enabled"})
     packed_context_token_budget: int = field(

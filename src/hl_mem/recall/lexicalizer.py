@@ -10,11 +10,13 @@ from importlib.resources import files
 import jieba
 
 from hl_mem.recall.porter_stemmer import PorterStemmer
-from hl_mem.settings import Settings
+from hl_mem.settings import FtsLanguage, Settings
 
 _TECHNICAL_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:(?:[-_.+/][A-Za-z0-9]+)+)?")
 _IDENTIFIER_SEPARATOR = re.compile(r"[-_.+/]+")
-_ENGLISH_WORD = re.compile(r"[A-Za-z][A-Za-z']*[A-Za-z]|[A-Za-z]")
+# English words (with optional apostrophes) plus standalone numbers, which are
+# kept in the English path to match the zh/jieba behavior (e.g. years, versions).
+_ENGLISH_WORD = re.compile(r"[A-Za-z][A-Za-z']*[A-Za-z]|[A-Za-z]|\d+")
 
 
 def _load_resource_lines(name: str) -> tuple[str, ...]:
@@ -43,10 +45,10 @@ def _get_stemmer() -> PorterStemmer:
     return stemmer
 
 
-_fts_language_cache: str | None = None
+_fts_language_cache: FtsLanguage | None = None
 
 
-def _get_default_fts_language() -> str:
+def _get_default_fts_language() -> FtsLanguage:
     """Lazily read the default fts_language from Settings (avoids import-time cycles)."""
     global _fts_language_cache
     if _fts_language_cache is None:
@@ -77,7 +79,7 @@ def _stem_english_word(word: str) -> str | None:
     return stemmed
 
 
-def tokenize_for_fts(text: str, *, language: str | None = None) -> tuple[str, ...]:
+def tokenize_for_fts(text: str, *, language: FtsLanguage | None = None) -> tuple[str, ...]:
     """Normalize and tokenize text into stable, unique FTS terms.
 
     Parameters
@@ -98,11 +100,17 @@ def tokenize_for_fts(text: str, *, language: str | None = None) -> tuple[str, ..
 
     tokens: list[str] = []
     seen: set[str] = set()
+    # Single ASCII letters (variables like x, version prefixes like v) are noise
+    # in English FTS indexes. zh mode is untouched: Chinese single chars are
+    # meaningful and non-ASCII, so the filter never applies to them.
+    drop_single_letter = mode != "zh"
 
     def append(token: str) -> None:
         candidate = token.strip()
         key = candidate.casefold()
         if not candidate or candidate in _STOPWORDS or not _is_searchable(candidate) or key in seen:
+            return
+        if drop_single_letter and len(key) == 1 and key.isascii() and key.isalpha():
             return
         seen.add(key)
         tokens.append(candidate)

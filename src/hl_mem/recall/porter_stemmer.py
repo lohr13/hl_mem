@@ -85,7 +85,7 @@ class PorterStemmer:
 
     def _setto(self, s: str) -> None:
         length = len(s)
-        self.b = self.b[: self.j + 1] + s + self.b[self.j + length + 1 :]
+        self.b = self.b[: self.j + 1] + s
         self.k = self.j + length
 
     def _r(self, s: str) -> None:
