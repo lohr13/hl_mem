@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import queue
 import sqlite3
 import threading
@@ -18,8 +19,10 @@ from hl_mem.storage.migrations.sqlite_vec import (
     ensure_vector_control_schema,
     migrate_sqlite_vec,
 )
-from hl_mem.storage.sqlite_vec import load_sqlite_vec_extension
+from hl_mem.storage.sqlite_vec import drain_dirty_vectors, load_sqlite_vec_extension
 from hl_mem.storage.tokenized_fts import ensure_tokenized_fts_v2
+
+LOGGER = logging.getLogger(__name__)
 
 
 def default_database_path(settings: Settings | None = None) -> Path:
@@ -105,6 +108,7 @@ class Database:
                 if VectorBackend(self.settings.vector_backend) is VectorBackend.SQLITE_VEC:
                     load_sqlite_vec_extension(connection)
                 self._migrate(connection)
+                self._drain_dirty_vectors(connection)
                 self._migrated = True
             finally:
                 connection.close()
@@ -187,6 +191,27 @@ class Database:
             )
         else:
             disable_sqlite_vec(connection)
+
+    def _drain_dirty_vectors(self, connection: sqlite3.Connection) -> None:
+        """在 sqlite-vec 启动完成后修复旁路 SQL 留下的派生投影。"""
+        if VectorBackend(self.settings.vector_backend) is not VectorBackend.SQLITE_VEC:
+            return
+        if connection.execute("SELECT 1 FROM claim_vector_dirty LIMIT 1").fetchone() is None:
+            return
+        from hl_mem.storage.claims import ClaimRepository
+
+        repository = ClaimRepository(connection, settings=self.settings)
+        synced, deleted, remaining = drain_dirty_vectors(
+            connection,
+            sync_vector=repository.sync_vector,
+            delete_vector=repository.delete_vector,
+        )
+        LOGGER.info(
+            "sqlite_vec dirty drain completed: synced=%d deleted=%d remaining=%d",
+            synced,
+            deleted,
+            remaining,
+        )
 
     def close(self) -> None:
         """关闭本实例创建的全部连接。"""

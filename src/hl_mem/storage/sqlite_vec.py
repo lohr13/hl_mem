@@ -22,6 +22,7 @@ ScanFallback = Callable[
     [bytes, int, str, RecallIntent, str | None, str],
     list[ClaimRow] | list[dict[str, Any]],
 ]
+VectorMutation = Callable[[str], None]
 _OVERSAMPLE_FACTORS = (3, 6, 12)
 _DEFAULT_MAX_PROBE = 2400
 
@@ -96,6 +97,42 @@ def _decode_claim(row: sqlite3.Row) -> dict[str, Any]:
         encoded_entities = claim.pop("entities_json")
         claim["entities"] = decode_json(encoded_entities) if encoded_entities else None
     return claim
+
+
+def drain_dirty_vectors(
+    connection: sqlite3.Connection,
+    *,
+    sync_vector: VectorMutation,
+    delete_vector: VectorMutation,
+) -> tuple[int, int, int]:
+    """事务内修复 dirty Claim 投影，返回同步、删除和未解决数量。"""
+    dirty_rows = connection.execute("SELECT claim_id FROM claim_vector_dirty ORDER BY claim_id").fetchall()
+    if not dirty_rows:
+        return 0, 0, 0
+    started_transaction = not connection.in_transaction
+    if started_transaction:
+        connection.execute("BEGIN IMMEDIATE")
+    synced = 0
+    deleted = 0
+    try:
+        for dirty_row in dirty_rows:
+            claim_id = str(dirty_row["claim_id"] if isinstance(dirty_row, sqlite3.Row) else dirty_row[0])
+            claim = connection.execute("SELECT embedding_dense FROM claims WHERE id=?", (claim_id,)).fetchone()
+            embedding = claim["embedding_dense"] if isinstance(claim, sqlite3.Row) else claim[0] if claim else None
+            if claim is not None and embedding is not None:
+                sync_vector(claim_id)
+                synced += 1
+            else:
+                delete_vector(claim_id)
+                deleted += 1
+        remaining = int(connection.execute("SELECT COUNT(*) FROM claim_vector_dirty").fetchone()[0])
+        if started_transaction:
+            connection.commit()
+        return synced, deleted, remaining
+    except Exception:
+        if started_transaction and connection.in_transaction:
+            connection.rollback()
+        raise
 
 
 class SQLiteVecVectorBackend:

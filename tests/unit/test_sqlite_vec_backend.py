@@ -369,6 +369,42 @@ def test_dirty_probe_falls_back_before_reading_stale_vec_rows(tmp_path: Path) ->
         database.close()
 
 
+def test_database_startup_drains_dirty_updates_and_deletes(tmp_path: Path) -> None:
+    """重启时应修复旁路 SQL 留下的 dirty 投影，而不是永久回退 scan。"""
+    settings = _settings()
+    database_path = tmp_path / "startup-dirty-drain.db"
+    database = Database(database_path, settings=settings)
+    connection = database.open()
+    repository = ClaimRepository(connection, settings=settings)
+    repository.insert_claim(_claim("changed", (1.0, 0.0, 0.0), settings))
+    repository.insert_claim(_claim("deleted", (0.0, 1.0, 0.0), settings))
+    changed_vector = pack_vector((0.0, 0.0, 1.0))
+    connection.execute("UPDATE claims SET embedding_dense=? WHERE id='changed'", (changed_vector,))
+    connection.execute("DELETE FROM claims WHERE id='deleted'")
+    connection.commit()
+    assert {
+        row[0] for row in connection.execute("SELECT claim_id FROM claim_vector_dirty ORDER BY claim_id").fetchall()
+    } == {"changed", "deleted"}
+    database.close()
+
+    restarted = Database(database_path, settings=settings)
+    repaired = restarted.open()
+    try:
+        assert repaired.execute("SELECT 1 FROM claim_vector_dirty LIMIT 1").fetchone() is None
+        assert repaired.execute("SELECT 1 FROM claims_vec_v1 WHERE claim_id='deleted'").fetchone() is None
+        results = ClaimRepository(repaired, settings=settings).search_claims_vector(
+            changed_vector,
+            1,
+            REFERENCE_TIME,
+            RecallIntent.CURRENT_STATE,
+            None,
+            "default",
+        )
+        assert [row["id"] for row in results] == ["changed"]
+    finally:
+        restarted.close()
+
+
 def test_valid_resync_repairs_the_last_degraded_projection(tmp_path: Path) -> None:
     database, connection, settings = _open_database(tmp_path)
     try:
