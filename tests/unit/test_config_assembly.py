@@ -35,7 +35,7 @@ def test_api_worker_mcp_and_provider_reuse_same_settings(tmp_path: Path) -> None
 def test_initialize_process_loads_aliases_from_settings(tmp_path: Path) -> None:
     aliases_path = tmp_path / "aliases.json"
     aliases_path.write_text(
-        json.dumps({"project": "hl_mem"}, ensure_ascii=False),
+        json.dumps({"project": "hl_mem", "i": "Alice"}, ensure_ascii=False),
         encoding="utf-8",
     )
 

@@ -12,8 +12,10 @@ from typing import Any
 PERSONA_ENTITY_ALIASES: dict[str, str] = {
     "我": "user",
     "本人": "user",
+    "我自己": "user",
     "i": "user",
     "me": "user",
+    "my": "user",
     "myself": "user",
     "user": "user",
     "the user": "user",
@@ -90,6 +92,7 @@ def load_entity_aliases(path: str | Path | None = None) -> dict[str, str]:
     aliases = _normalize_default_aliases()
     if path is not None:
         aliases.update(_load_aliases(path))
+        aliases.update(_normalize_aliases(PERSONA_ENTITY_ALIASES))
     return aliases
 
 

@@ -9,7 +9,21 @@ from hl_mem.domain.entity import invalid_subject_reason, normalize_entity_id
 
 @pytest.mark.parametrize(
     "alias",
-    ["我", "本人", "I", "Ｉ", "ME", "myself", "user", "ＵＳＥＲ", "the user", "用户", "当前用户"],
+    [
+        "我",
+        "本人",
+        "我自己",
+        "I",
+        "Ｉ",
+        "ME",
+        "my",
+        "myself",
+        "user",
+        "ＵＳＥＲ",
+        "the user",
+        "用户",
+        "当前用户",
+    ],
 )
 def test_persona_aliases_are_normalized(alias: str) -> None:
     """第一人称和用户标签应在 NFKC/casefold 后统一为 namespace 内的 user。"""
