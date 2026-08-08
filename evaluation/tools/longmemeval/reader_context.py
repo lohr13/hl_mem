@@ -265,7 +265,7 @@ def reader_turn_window(
         start, end = _window_bounds(center, len(messages))
         window_turns = list(range(start, end))
         included_turns.extend(window_turns)
-        for index in window_turns:
+        for index in [center, *(item for item in window_turns if item != center)]:
             message = messages[index]
             if index == center:
                 label = "matched"

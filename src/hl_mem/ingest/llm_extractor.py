@@ -964,7 +964,7 @@ class LLMExtractor:
                 decision = self._record_admission(legacy_candidate, chunk.text)
                 if not decision.accepted:
                     continue
-                raw_claim["reason"] = decision.reason
+                raw_claim.setdefault("reason", decision.reason)
                 raw_claim["memory_layer"] = decision.memory_layer
                 if decision.memory_layer == "episodic":
                     raw_claim["scope"] = "temporal"

@@ -62,7 +62,7 @@ def _shard_report(
         "dataset": {"sha256": dataset_sha256},
         "run": {
             "started_at": "2026-08-08T00:00:00+00:00",
-            "package_version": "v0.24.0",
+            "package_version": f"v{runner.__version__}",
             "limit": run_limit,
             "offset": 0,
             "qa_enabled": qa_enabled,
