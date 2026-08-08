@@ -13,10 +13,12 @@ import shutil
 import sqlite3
 import sys
 import time
+import unicodedata
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from statistics import mean, median
@@ -67,6 +69,11 @@ QA_MAX_ATTEMPTS = 3
 QA_CONTEXT_TOKEN_BUDGET = 6000
 QA_EVIDENCE_EVENT_TOKEN_LIMIT = 1200
 QA_CLAIM_FIELD_TOKEN_LIMIT = 192
+READER_CONTEXT_MODES = ("windowed", "head")
+DEFAULT_READER_CONTEXT_MODE = "windowed"
+QA_EVIDENCE_TURN_RADIUS = 1
+QA_MATCHED_TURN_TOKEN_LIMIT = 640
+QA_ADJACENT_TURN_TOKEN_LIMIT = 192
 DEFAULT_FAIL_STOP_COUNT = 5
 RETRIEVAL_KS = (1, 5, 10)
 JSON_READ_CHARS = 1024 * 1024
@@ -257,6 +264,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--skip-ingest", action="store_true")
     parser.add_argument("--no-qa", action="store_true")
+    parser.add_argument(
+        "--reader-context-mode",
+        choices=READER_CONTEXT_MODES,
+        default=DEFAULT_READER_CONTEXT_MODE,
+        help="reader evidence packing: query-aware turn windows (default) or legacy event head truncation",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--clean", action="store_true")
     parser.add_argument(
@@ -1236,14 +1249,26 @@ def _response_object(content: str | dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _find_http_status_error(error: BaseException) -> httpx.HTTPStatusError | None:
+def _exception_chain(error: BaseException) -> Iterator[BaseException]:
     visited: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in visited:
-        if isinstance(current, httpx.HTTPStatusError):
-            return current
+        yield current
         visited.add(id(current))
         current = current.__cause__ or current.__context__
+
+
+def _find_http_status_error(error: BaseException) -> httpx.HTTPStatusError | None:
+    for current in _exception_chain(error):
+        if isinstance(current, httpx.HTTPStatusError):
+            return current
+    return None
+
+
+def _find_qa_timeout(error: BaseException) -> httpx.ReadTimeout | httpx.ConnectTimeout | None:
+    for current in _exception_chain(error):
+        if isinstance(current, (httpx.ReadTimeout, httpx.ConnectTimeout)):
+            return current
     return None
 
 
@@ -1266,7 +1291,7 @@ def _qa_call_with_retry(
     *,
     max_attempts: int = QA_MAX_ATTEMPTS,
 ) -> _T:
-    """Retry one reader/judge call on HTTP 429 and 5xx responses."""
+    """Retry one reader/judge call on read/connect timeout, HTTP 429, and 5xx."""
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
     for attempt in range(1, max_attempts + 1):
@@ -1274,8 +1299,10 @@ def _qa_call_with_retry(
             return call()
         except Exception as error:
             http_error = _find_http_status_error(error)
+            timeout_error = _find_qa_timeout(error)
             status = http_error.response.status_code if http_error is not None else None
-            if status != 429 and (status is None or status < 500):
+            retryable_status = status == 429 or (status is not None and status >= 500)
+            if not retryable_status and timeout_error is None:
                 raise
             if attempt == max_attempts:
                 raise
@@ -1285,8 +1312,9 @@ def _qa_call_with_retry(
                 if header is not None:
                     retry_after = _retry_after_seconds(header)
             delay = retry_after if retry_after is not None else 2.0 * (2 ** (attempt - 1))
+            error_label = f"HTTP {status}" if retryable_status else type(timeout_error).__name__
             print(
-                f"QA HTTP {status} retry {attempt + 1}/{max_attempts} in {delay:g}s",
+                f"QA {error_label} retry {attempt + 1}/{max_attempts} in {delay:g}s",
                 flush=True,
             )
             time.sleep(delay)
@@ -1420,8 +1448,159 @@ def _event_content_text(content: object) -> str:
     return json.dumps(content, ensure_ascii=False, separators=(",", ":"))
 
 
-def _load_reader_events(connection: Any, event_ids: Sequence[str]) -> list[dict[str, Any]]:
+def _reader_event_needles(
+    retrieved: Sequence[Mapping[str, Any]],
+) -> dict[str, tuple[tuple[str, float], ...]]:
+    by_event: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for item in retrieved:
+        values = ((item.get("value"), 3.0), (item.get("text"), 2.0))
+        for event_id in item.get("evidence_event_ids") or []:
+            key = str(event_id)
+            for value, weight in values:
+                text = str(value or "").strip()
+                if text and (text, weight) not in by_event[key]:
+                    by_event[key].append((text, weight))
+    return {event_id: tuple(needles) for event_id, needles in by_event.items()}
+
+
+def _reader_match_text(value: object) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return " ".join(re.findall(r"[^\W_]+", normalized, flags=re.UNICODE))
+
+
+def _reader_match_units(value: object) -> set[str]:
+    normalized = _reader_match_text(value)
+    units = {token for token in normalized.split() if len(token) >= 2 and not re.fullmatch(r"[\u3400-\u9fff]+", token)}
+    cjk = "".join(re.findall(r"[\u3400-\u9fff]", normalized))
+    if len(cjk) == 1:
+        units.add(cjk)
+    else:
+        units.update(cjk[index : index + 2] for index in range(len(cjk) - 1))
+    return units
+
+
+def _reader_match_score(candidate: object, needle: object) -> float:
+    candidate_text = _reader_match_text(candidate)
+    needle_text = _reader_match_text(needle)
+    if not candidate_text or not needle_text:
+        return 0.0
+    substring_score = 3.0 if needle_text in candidate_text else 0.0
+    if not substring_score and len(candidate_text) >= 6 and candidate_text in needle_text:
+        substring_score = 1.5
+    candidate_units = _reader_match_units(candidate_text)
+    needle_units = _reader_match_units(needle_text)
+    coverage = len(candidate_units & needle_units) / len(needle_units) if needle_units else 0.0
+    similarity = SequenceMatcher(None, candidate_text, needle_text, autojunk=False).ratio()
+    return substring_score + 2.0 * coverage + similarity
+
+
+def _reader_turn_score(
+    content: str,
+    question: str,
+    needles: Sequence[tuple[str, float]],
+) -> float:
+    claim_score = max((weight * _reader_match_score(content, needle) for needle, weight in needles), default=0.0)
+    return claim_score + 0.5 * _reader_match_score(content, question)
+
+
+def _reader_focus_index(content: str, needles: Sequence[tuple[str, float]]) -> int:
+    folded = unicodedata.normalize("NFKC", content).casefold()
+    candidates: list[tuple[int, str]] = []
+    for needle, weight in needles:
+        needle_folded = unicodedata.normalize("NFKC", needle).casefold().strip()
+        if needle_folded:
+            candidates.append((round(weight * len(needle_folded)), needle_folded))
+        candidates.extend((round(weight * len(unit)), unit) for unit in _reader_match_units(needle))
+    for _, token in sorted(candidates, reverse=True):
+        index = folded.find(token)
+        if index >= 0:
+            return index + len(token) // 2
+    return 0
+
+
+def _reader_turn_excerpt(
+    content: str,
+    token_limit: int,
+    needles: Sequence[tuple[str, float]] = (),
+) -> str:
+    if estimate_tokens(content) <= token_limit:
+        return content
+    leading_marker = "[earlier text omitted]\n"
+    trailing_marker = "\n[later text omitted]"
+    char_limit = max(1, token_limit * 2 - len(leading_marker) - len(trailing_marker) - 4)
+    focus = _reader_focus_index(content, needles)
+    start = max(0, min(focus - char_limit // 2, len(content) - char_limit))
+    end = min(len(content), start + char_limit)
+    return (leading_marker if start else "") + content[start:end] + (trailing_marker if end < len(content) else "")
+
+
+def _reader_messages(content: object) -> list[dict[str, str]]:
+    if not isinstance(content, Mapping):
+        return []
+    raw_messages = content.get("messages")
+    if isinstance(raw_messages, (str, bytes)) or not isinstance(raw_messages, Sequence):
+        return []
+    messages: list[dict[str, str]] = []
+    for item in raw_messages:
+        if not isinstance(item, Mapping):
+            continue
+        messages.append(
+            {
+                "role": _normalize_role(item.get("role") or item.get("speaker")),
+                "content": _normalize_content(item.get("content") or item.get("text") or ""),
+            }
+        )
+    return messages
+
+
+def _reader_turn_window(
+    messages: Sequence[Mapping[str, str]],
+    question: str,
+    needles: Sequence[tuple[str, float]],
+) -> tuple[str, dict[str, Any]]:
+    scores = [_reader_turn_score(str(message.get("content") or ""), question, needles) for message in messages]
+    matched_turn = max(range(len(messages)), key=lambda index: scores[index])
+    start = max(0, matched_turn - QA_EVIDENCE_TURN_RADIUS)
+    end = min(len(messages), matched_turn + QA_EVIDENCE_TURN_RADIUS + 1)
+    included_turns = list(range(start, end))
+    matched = messages[matched_turn]
+    parts = [
+        f"[matched turn {matched_turn} {matched.get('role') or 'user'}]\n"
+        + _reader_turn_excerpt(
+            str(matched.get("content") or ""),
+            QA_MATCHED_TURN_TOKEN_LIMIT,
+            needles,
+        )
+    ]
+    for index in included_turns:
+        if index == matched_turn:
+            continue
+        message = messages[index]
+        relation = "previous" if index < matched_turn else "next"
+        parts.append(
+            f"[{relation} turn {index} {message.get('role') or 'user'}]\n"
+            + _reader_turn_excerpt(str(message.get("content") or ""), QA_ADJACENT_TURN_TOKEN_LIMIT)
+        )
+    return "\n\n".join(parts), {
+        "mode": "windowed",
+        "matched_turn": matched_turn,
+        "included_turns": included_turns,
+        "total_turns": len(messages),
+        "match_score": round(scores[matched_turn], 6),
+    }
+
+
+def _load_reader_events(
+    connection: Any,
+    event_ids: Sequence[str],
+    *,
+    question: str = "",
+    event_needles: Mapping[str, Sequence[tuple[str, float]]] | None = None,
+    context_mode: str = DEFAULT_READER_CONTEXT_MODE,
+) -> list[dict[str, Any]]:
     """Batch-load ranked evidence events without expanding beyond each linked event."""
+    if context_mode not in READER_CONTEXT_MODES:
+        raise ValueError(f"unsupported reader context mode: {context_mode!r}")
     if connection is None or not event_ids:
         return []
     placeholders = ",".join("?" for _ in event_ids)
@@ -1442,18 +1621,26 @@ def _load_reader_events(connection: Any, event_ids: Sequence[str]) -> list[dict[
             content = str(row["content_json"] or "")
         locator = content.get("benchmark_locator") if isinstance(content, Mapping) else None
         session_id = locator.get("session_id") if isinstance(locator, Mapping) else None
-        events.append(
-            {
-                "event_id": event_id,
-                "occurred_at": row["occurred_at"],
-                "recorded_at": row["recorded_at"],
-                "event_type": row["event_type"],
-                "actor_type": row["actor_type"],
-                "session_id": session_id,
-                "source_uri": row["source_uri"],
-                "content": _event_content_text(content),
-            }
-        )
+        event = {
+            "event_id": event_id,
+            "occurred_at": row["occurred_at"],
+            "recorded_at": row["recorded_at"],
+            "event_type": row["event_type"],
+            "actor_type": row["actor_type"],
+            "session_id": session_id,
+            "source_uri": row["source_uri"],
+            "content": _event_content_text(content),
+        }
+        messages = _reader_messages(content)
+        if context_mode == "windowed" and messages:
+            window_content, window = _reader_turn_window(
+                messages,
+                question,
+                tuple((event_needles or {}).get(event_id, ())),
+            )
+            event["content"] = window_content
+            event["window"] = window
+        events.append(event)
     return events
 
 
@@ -1461,6 +1648,7 @@ def _render_reader_user_prompt(
     case: LongMemEvalCase,
     claims: Sequence[Mapping[str, Any]],
     events: Sequence[Mapping[str, Any]],
+    context_mode: str = DEFAULT_READER_CONTEXT_MODE,
 ) -> str:
     current_date = case.question_at or datetime.now(timezone.utc).isoformat()
     claims_json = json.dumps(claims, ensure_ascii=False, separators=(",", ":"))
@@ -1468,6 +1656,7 @@ def _render_reader_user_prompt(
     return (
         f"Current Date: {current_date}\n"
         f"Question Type: {case.question_type}\n\n"
+        f"Reader Context Mode: {context_mode}\n\n"
         f"Memory Claims:\n{claims_json or '[]'}\n\n"
         f"Original Evidence Events:\n{events_json or '[]'}\n\n"
         f"Question: {case.question}"
@@ -1479,6 +1668,7 @@ def _fit_reader_event(
     claims: Sequence[Mapping[str, Any]],
     accepted_events: Sequence[Mapping[str, Any]],
     event: Mapping[str, Any],
+    context_mode: str = DEFAULT_READER_CONTEXT_MODE,
 ) -> dict[str, Any] | None:
     original = str(event.get("content") or "")
     max_chars = min(len(original), QA_EVIDENCE_EVENT_TOKEN_LIMIT * 2)
@@ -1491,7 +1681,7 @@ def _fit_reader_event(
         content = original[:length] + ("\n[truncated]" if truncated else "")
         candidate = {**event, "content": content}
         serialized_event = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
-        prompt = _render_reader_user_prompt(case, claims, [*accepted_events, candidate])
+        prompt = _render_reader_user_prompt(case, claims, [*accepted_events, candidate], context_mode)
         if (
             estimate_tokens(serialized_event) <= QA_EVIDENCE_EVENT_TOKEN_LIMIT
             and estimate_tokens(prompt) <= QA_CONTEXT_TOKEN_BUDGET
@@ -1507,17 +1697,26 @@ def _build_reader_user_prompt(
     connection: Any,
     case: LongMemEvalCase,
     retrieved: Sequence[Mapping[str, Any]],
+    context_mode: str = DEFAULT_READER_CONTEXT_MODE,
 ) -> str:
     """Build time/source-aware reader context under a strict total budget."""
+    if context_mode not in READER_CONTEXT_MODES:
+        raise ValueError(f"unsupported reader context mode: {context_mode!r}")
     claims = _reader_claim_records(retrieved)
-    ranked_events = _load_reader_events(connection, _ordered_evidence_ids(retrieved))
+    ranked_events = _load_reader_events(
+        connection,
+        _ordered_evidence_ids(retrieved),
+        question=case.question,
+        event_needles=_reader_event_needles(retrieved),
+        context_mode=context_mode,
+    )
     accepted_events: list[dict[str, Any]] = []
     for event in ranked_events:
-        fitted = _fit_reader_event(case, claims, accepted_events, event)
+        fitted = _fit_reader_event(case, claims, accepted_events, event, context_mode)
         if fitted is None:
             break
         accepted_events.append(fitted)
-    prompt = _render_reader_user_prompt(case, claims, accepted_events)
+    prompt = _render_reader_user_prompt(case, claims, accepted_events, context_mode)
     if estimate_tokens(prompt) <= QA_CONTEXT_TOKEN_BUDGET:
         return prompt
     return _truncate_reader_text(prompt, QA_CONTEXT_TOKEN_BUDGET)
@@ -1633,6 +1832,8 @@ def _run_qa(
     case: LongMemEvalCase,
     retrieved: Sequence[Mapping[str, Any]],
     settings: Settings,
+    *,
+    reader_context_mode: str = DEFAULT_READER_CONTEXT_MODE,
 ) -> dict[str, Any]:
     qa_model = _qa_model()
     api_key = os.environ.get("LLM_API_KEY") or settings.llm_api_key
@@ -1641,16 +1842,19 @@ def _run_qa(
 
     reader_system_prompt = (
         "You answer questions from retrieved long-term-memory claims and their original evidence events. "
-        "Inspect every record and identify evidence that directly or jointly supports the question. "
-        "If the evidence contains the answer, give it clearly and concisely; combine records when needed. "
-        "Use Current Date and each record's occurred, valid, and recorded times to resolve updates, preferring "
-        "the latest applicable explicit fact. You may make deterministic inferences such as coreference "
-        "resolution, simple arithmetic, comparisons, and date calculations. Do not invent missing proper nouns, "
-        "amounts, places, dates, or counts. Say that the information is unavailable only after checking every "
-        "claim and evidence event and finding them genuinely insufficient; do not abstain merely because the "
-        "wording differs. Return only the answer, without analysis or evidence ranks."
+        "Before answering, perform a private Chain-of-Note pass over every relevant record: (1) note each candidate "
+        "answer and its exact relation to the question; (2) label whether it was planned or intended, attempted, "
+        "or actually executed; (3) use occurred, valid, and recorded times plus Current Date to resolve updates; "
+        "and (4) compare the candidates and synthesize only the one whose relation and state answer the question. "
+        "Do not expose these private notes. Keep audition distinct from participation in a production; keep location, "
+        "travel duration, and distance distinct; and never treat a plan as completed execution. Related distractors "
+        "must not override evidence with the exact requested relation. Combine records when needed and allow only "
+        "deterministic coreference resolution, simple arithmetic, comparisons, and date calculations. Do not invent "
+        "missing proper nouns, amounts, places, dates, or counts. Say that the information is unavailable only after "
+        "checking every claim and evidence event and finding them genuinely insufficient; do not abstain merely "
+        "because the wording differs. Return only the final answer, without analysis, private notes, or evidence ranks."
     )
-    reader_user_prompt = _build_reader_user_prompt(connection, case, retrieved)
+    reader_user_prompt = _build_reader_user_prompt(connection, case, retrieved, context_mode=reader_context_mode)
     reader_text, reader_tokens = _qa_call_with_retry(
         lambda: _qa_dashscope_chat(
             api_key,
@@ -1696,6 +1900,7 @@ def _run_case(
     clean: bool,
     case_number: int,
     total_hint: str,
+    reader_context_mode: str = DEFAULT_READER_CONTEXT_MODE,
 ) -> dict[str, Any]:
     database_path, manifest_path = _case_paths(case.case_id)
     result: dict[str, Any] = {
@@ -1751,7 +1956,13 @@ def _run_case(
             reranker,
         )
         if run_qa:
-            result["qa"] = _run_qa(connection, case, result["retrieved"], settings)
+            result["qa"] = _run_qa(
+                connection,
+                case,
+                result["retrieved"],
+                settings,
+                reader_context_mode=reader_context_mode,
+            )
     except Exception as error:
         result["error"] = f"{type(error).__name__}: {error}"
         result["error_type"] = _case_error_type(error)
@@ -2171,6 +2382,7 @@ def _report(
             "fail_stop_count": getattr(args, "fail_stop_count", DEFAULT_FAIL_STOP_COUNT),
             "skip_ingest": args.skip_ingest,
             "qa_enabled": not args.no_qa,
+            "reader_context_mode": getattr(args, "reader_context_mode", DEFAULT_READER_CONTEXT_MODE),
             "clean": args.clean,
             "config_compare": args.config_compare,
             "models": {
@@ -2289,6 +2501,9 @@ def _validate_resume_report(
         raise ValueError("resume output package_version does not match current version")
     if run.get("qa_enabled") is not (not args.no_qa):
         raise ValueError("resume output qa_enabled does not match current run")
+    previous_context_mode = str(run.get("reader_context_mode") or "head")
+    if previous_context_mode != args.reader_context_mode:
+        raise ValueError("resume output reader_context_mode does not match current run")
     if run.get("offset") != args.offset:
         raise ValueError("resume output offset does not match --offset")
     if run.get("limit") != args.limit:
@@ -2365,7 +2580,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         f"LongMemEval-S model={settings.llm_model} embedder={settings.embedding_model} "
         f"prompt={LLM_EXTRACTOR_VERSION} offset={args.offset} limit={total_hint} "
-        f"resume={args.resume} qa={not args.no_qa}",
+        f"resume={args.resume} qa={not args.no_qa} reader_context={args.reader_context_mode}",
         flush=True,
     )
     selected_case_ids: list[str] = []
@@ -2397,6 +2612,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     clean=args.clean,
                     case_number=case_number,
                     total_hint=total_hint,
+                    reader_context_mode=args.reader_context_mode,
                 )
                 results.append(case_result)
                 completed[case.case_id] = case_result

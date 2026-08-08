@@ -79,9 +79,13 @@ def _configuration_identity(report: Mapping[str, Any], path: Path) -> dict[str, 
     package_version = run.get("package_version")
     if not isinstance(package_version, str) or not package_version:
         raise ValueError(f"shard report is missing run.package_version: {path}")
+    reader_context_mode = str(run.get("reader_context_mode") or "head")
+    if reader_context_mode not in {"head", "windowed"}:
+        raise ValueError(f"shard report has unsupported run.reader_context_mode: {path}")
     return {
         **{field: models[field] for field in CONFIGURATION_FIELDS},
         "qa_enabled": qa_enabled,
+        "reader_context_mode": reader_context_mode,
         "package_version": package_version,
     }
 

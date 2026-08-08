@@ -52,6 +52,7 @@ def _shard_report(
     *,
     qa_enabled: bool = True,
     run_limit: int | None = None,
+    reader_context_mode: str = "windowed",
 ) -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -64,6 +65,7 @@ def _shard_report(
             "limit": run_limit,
             "offset": 0,
             "qa_enabled": qa_enabled,
+            "reader_context_mode": reader_context_mode,
             "models": {
                 "extractor": "qwen3.7-plus",
                 "extractor_provider": "dashscope",
@@ -82,6 +84,10 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
+    def test_reader_context_mode_defaults_to_windowed_and_accepts_head(self) -> None:
+        self.assertEqual(runner.parse_args([]).reader_context_mode, "windowed")
+        self.assertEqual(runner.parse_args(["--reader-context-mode", "head"]).reader_context_mode, "head")
+
     def test_offset_applies_before_limit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "dataset.json"
@@ -142,6 +148,8 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(run.call_count, 1)
         self.assertEqual(run.call_args.args[0].case_id, "case-2")
+        self.assertEqual(run.call_args.kwargs["reader_context_mode"], "windowed")
+        self.assertEqual(report["run"]["reader_context_mode"], "windowed")
         self.assertEqual([case["case_id"] for case in report["cases"]], ["case-1", "case-2"])
 
     def test_qa_retry_recovers_from_429(self) -> None:
@@ -198,6 +206,61 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
 
         self.assertEqual(result, "success")
         sleep.assert_called_once_with(2.0)
+
+    def test_qa_retry_recovers_from_read_timeout_with_exponential_backoff(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        attempts = 0
+
+        def call_qa() -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise httpx.ReadTimeout("reader timed out", request=request)
+            return "success"
+
+        with patch.object(runner.time, "sleep") as sleep:
+            result = runner._qa_call_with_retry(call_qa)
+
+        self.assertEqual(result, "success")
+        self.assertEqual(attempts, 3)
+        self.assertEqual(sleep.call_args_list, [call(2.0), call(4.0)])
+
+    def test_qa_retry_finds_wrapped_connect_timeout(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        attempts = 0
+
+        def call_qa() -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                try:
+                    raise httpx.ConnectTimeout("connect timed out", request=request)
+                except httpx.ConnectTimeout as timeout:
+                    raise RuntimeError("reader transport failed") from timeout
+            return "success"
+
+        with patch.object(runner.time, "sleep") as sleep:
+            result = runner._qa_call_with_retry(call_qa)
+
+        self.assertEqual(result, "success")
+        self.assertEqual(attempts, 2)
+        sleep.assert_called_once_with(2.0)
+
+    def test_qa_retry_does_not_retry_other_timeout_types(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        attempts = 0
+
+        def call_qa() -> str:
+            nonlocal attempts
+            attempts += 1
+            raise httpx.WriteTimeout("write timed out", request=request)
+
+        with patch.object(runner.time, "sleep") as sleep:
+            with self.assertRaises(httpx.WriteTimeout):
+                runner._qa_call_with_retry(call_qa)
+
+        self.assertEqual(attempts, 1)
+        sleep.assert_not_called()
 
     def test_reader_context_includes_claim_times_and_original_event_source(self) -> None:
         case = runner.normalize_case(_record("case-context"))
@@ -294,6 +357,161 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         )
         connection.close()
 
+    def test_windowed_reader_context_prioritizes_matching_turn_and_neighbors(self) -> None:
+        case = runner.normalize_case(_record("case-window"))
+        event_id = case.sessions[0].event_id
+        head_noise = "opening small talk " * (runner.QA_EVIDENCE_EVENT_TOKEN_LIMIT * 2)
+        messages = [
+            {"role": "user", "content": head_noise},
+            {"role": "assistant", "content": "We also discussed an unrelated trip to Rome."},
+            {"role": "user", "content": "I had once planned to audition for Hamlet."},
+            {
+                "role": "user",
+                "content": "I actually performed in A Midsummer Night's Dream last summer.",
+            },
+            {"role": "assistant", "content": "That completed performance sounds memorable."},
+        ]
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE events ("
+            "id TEXT PRIMARY KEY,content_json TEXT,occurred_at TEXT,recorded_at TEXT,"
+            "event_type TEXT,actor_type TEXT,source_uri TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            (
+                event_id,
+                json.dumps(
+                    {
+                        "text": "\n".join(f"{item['role']}: {item['content']}" for item in messages),
+                        "messages": messages,
+                        "benchmark_locator": {"session_id": "session-case-window"},
+                    }
+                ),
+                "2023-05-20T02:21:00+00:00",
+                "2023-05-20T02:22:00+00:00",
+                "message",
+                "user",
+                "longmemeval:case-window:session-case-window",
+            ),
+        )
+        retrieved = [
+            {
+                "rank": 1,
+                "claim_id": "claim-performance",
+                "text": "The user performed in A Midsummer Night's Dream last summer.",
+                "value": "performed in A Midsummer Night's Dream",
+                "evidence_event_ids": [event_id],
+            }
+        ]
+
+        windowed = runner._build_reader_user_prompt(connection, case, retrieved, context_mode="windowed")
+        head = runner._build_reader_user_prompt(connection, case, retrieved, context_mode="head")
+        windowed_events = json.loads(windowed.split("Original Evidence Events:\n", 1)[1].split("\n\nQuestion:", 1)[0])
+        head_events = json.loads(head.split("Original Evidence Events:\n", 1)[1].split("\n\nQuestion:", 1)[0])
+
+        self.assertEqual(windowed_events[0]["window"]["matched_turn"], 3)
+        self.assertEqual(windowed_events[0]["window"]["included_turns"], [2, 3, 4])
+        self.assertTrue(windowed_events[0]["content"].startswith("[matched turn 3 user]"))
+        self.assertIn("planned to audition for Hamlet", windowed_events[0]["content"])
+        self.assertIn("performed in A Midsummer Night's Dream", windowed_events[0]["content"])
+        self.assertIn("completed performance", windowed_events[0]["content"])
+        self.assertNotIn("opening small talk", windowed_events[0]["content"])
+        self.assertIn("opening small talk", head_events[0]["content"])
+        self.assertNotIn("A Midsummer Night's Dream", head_events[0]["content"])
+        self.assertLessEqual(runner.estimate_tokens(windowed), runner.QA_CONTEXT_TOKEN_BUDGET)
+        self.assertLessEqual(
+            runner.estimate_tokens(json.dumps(windowed_events[0], ensure_ascii=False, separators=(",", ":"))),
+            runner.QA_EVIDENCE_EVENT_TOKEN_LIMIT,
+        )
+        connection.close()
+
+    def test_windowed_reader_context_falls_back_to_event_text_without_messages(self) -> None:
+        case = runner.normalize_case(_record("case-fallback"))
+        event_id = case.sessions[0].event_id
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE events ("
+            "id TEXT PRIMARY KEY,content_json TEXT,occurred_at TEXT,recorded_at TEXT,"
+            "event_type TEXT,actor_type TEXT,source_uri TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            (
+                event_id,
+                json.dumps({"text": "user: The fallback evidence says I live in Kyoto."}),
+                "2023-05-20T02:21:00+00:00",
+                "2023-05-20T02:22:00+00:00",
+                "message",
+                "user",
+                None,
+            ),
+        )
+
+        prompt = runner._build_reader_user_prompt(
+            connection,
+            case,
+            [{"rank": 1, "text": "The user lives in Kyoto", "evidence_event_ids": [event_id]}],
+            context_mode="windowed",
+        )
+
+        self.assertIn("The fallback evidence says I live in Kyoto", prompt)
+        connection.close()
+
+    def test_windowed_reader_context_centers_a_long_matching_turn_on_the_claim_span(self) -> None:
+        case = runner.normalize_case(_record("case-span"))
+        event_id = case.sessions[0].event_id
+        answer_sentence = "The answer-bearing fact is that I moved to Kyoto in April."
+        messages = [
+            {"role": "assistant", "content": "What changed?"},
+            {
+                "role": "user",
+                "content": ("irrelevant preface " * 500) + answer_sentence + (" trailing detail" * 500),
+            },
+            {"role": "assistant", "content": "Thanks for the update."},
+        ]
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE events ("
+            "id TEXT PRIMARY KEY,content_json TEXT,occurred_at TEXT,recorded_at TEXT,"
+            "event_type TEXT,actor_type TEXT,source_uri TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            (
+                event_id,
+                json.dumps({"text": "unused head", "messages": messages}),
+                "2023-05-20T02:21:00+00:00",
+                "2023-05-20T02:22:00+00:00",
+                "message",
+                "user",
+                None,
+            ),
+        )
+
+        prompt = runner._build_reader_user_prompt(
+            connection,
+            case,
+            [
+                {
+                    "rank": 1,
+                    "text": "The user moved to Kyoto in April.",
+                    "value": "moved to Kyoto in April",
+                    "evidence_event_ids": [event_id],
+                }
+            ],
+            context_mode="windowed",
+        )
+
+        self.assertIn(answer_sentence, prompt)
+        self.assertIn("[earlier text omitted]", prompt)
+        self.assertIn("[later text omitted]", prompt)
+        self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
+        connection.close()
+
     def test_run_qa_uses_plain_chat_and_retries_http_errors(self) -> None:
         case = runner.normalize_case(_record("case-qa"))
         requests: list[httpx.Request] = []
@@ -369,11 +587,43 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             self.assertNotIn("response_format", payload)
         self.assertEqual([json.loads(request.content)["temperature"] for request in requests], [0.1, 0.1, 0.0])
         reader_payload = json.loads(requests[1].content)
-        self.assertIn("Inspect every record", reader_payload["messages"][0]["content"])
+        self.assertIn("candidate answer", reader_payload["messages"][0]["content"])
+        self.assertIn("relation", reader_payload["messages"][0]["content"])
+        self.assertIn("audition", reader_payload["messages"][0]["content"])
+        self.assertIn("participation", reader_payload["messages"][0]["content"])
+        self.assertIn("location, travel duration, and distance", reader_payload["messages"][0]["content"])
+        self.assertIn("planned or intended", reader_payload["messages"][0]["content"])
+        self.assertIn("actually executed", reader_payload["messages"][0]["content"])
         self.assertIn("genuinely insufficient", reader_payload["messages"][0]["content"])
+        self.assertIn("information is unavailable", reader_payload["messages"][0]["content"])
+        self.assertIn("Return only the final answer", reader_payload["messages"][0]["content"])
         self.assertIn("Current Date: 2023-05-30T23:40:00+00:00", reader_payload["messages"][1]["content"])
         judge_payload = json.loads(requests[2].content)
         self.assertIn("official-style LongMemEval", judge_payload["messages"][0]["content"])
+
+    def test_resume_rejects_a_different_reader_context_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.json"
+            dataset.write_text(json.dumps([_record("case-1")]), encoding="utf-8")
+            dataset_sha256 = hashlib.sha256(dataset.read_bytes()).hexdigest()
+            report = _shard_report(
+                dataset_sha256,
+                [_case_result("case-1")],
+                reader_context_mode="head",
+            )
+            args = runner.parse_args(["--dataset", str(dataset), "--resume"])
+            args.dataset_sha256 = dataset_sha256
+            settings = Settings(
+                llm_model="qwen3.7-plus",
+                llm_provider="dashscope",
+                embedding_model="qwen3.7-text-embedding",
+                embedding_dim=2048,
+                embedding_api_mode="native",
+                embedding_text_type=None,
+            )
+
+            with self.assertRaisesRegex(ValueError, "reader_context_mode"):
+                runner._validate_resume_report(report, args, settings)
 
     def test_resume_history_does_not_reopen_circuit_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -497,6 +747,22 @@ class LongMemEvalMergeTests(unittest.TestCase):
                 dataset_sha256,
                 [_case_result("case-2", qa_evaluated=False)],
                 qa_enabled=False,
+            )
+            (root / "shard-a.json").write_text(json.dumps(first), encoding="utf-8")
+            (root / "shard-b.json").write_text(json.dumps(second), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "configuration mismatch"):
+                merger.merge_reports(input_dir=root, pattern="shard-*.json", dataset=dataset)
+
+    def test_merge_rejects_mixed_reader_context_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset, dataset_sha256 = self._write_dataset(root)
+            first = _shard_report(dataset_sha256, [_case_result("case-1")])
+            second = _shard_report(
+                dataset_sha256,
+                [_case_result("case-2")],
+                reader_context_mode="head",
             )
             (root / "shard-a.json").write_text(json.dumps(first), encoding="utf-8")
             (root / "shard-b.json").write_text(json.dumps(second), encoding="utf-8")
