@@ -13,12 +13,15 @@ import sqlite3
 import sys
 import time
 from collections import defaultdict
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from statistics import mean, median
-from typing import Any
+from typing import Any, TypeVar
+
+import httpx
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -64,6 +67,8 @@ THRESHOLD_ANALYSIS_OUTPUT = ROOT / "evaluation" / "results" / "lme_12_threshold_
 DEFAULT_CONFIG = ROOT / "hl_mem.toml"
 DEFAULT_ENV_FILE = ROOT / ".env"
 QA_MODEL = "qwen3.7-plus"
+QA_MAX_ATTEMPTS = 3
+DEFAULT_FAIL_STOP_COUNT = 5
 RETRIEVAL_KS = (1, 5, 10)
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
@@ -72,6 +77,7 @@ CLAIM_RELEVANCE_THRESHOLD = 0.5
 SIMILARITY_THRESHOLDS = (0.2, 0.3, 0.4, 0.5, 0.65)
 RELEVANCE_SCORER_CODE = "V0"
 RELEVANCE_LABEL_VERSION = "claim-answer-cosine-v2"
+_T = TypeVar("_T")
 QUESTION_TYPES = (
     "single-session-user",
     "single-session-assistant",
@@ -236,6 +242,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--offset", type=int, default=0, help="skip the first N dataset cases before applying --limit")
+    parser.add_argument("--resume", action="store_true", help="preserve and skip case_ids already present in --output")
+    parser.add_argument(
+        "--max-runtime-hours",
+        type=float,
+        help="stop gracefully at the next case boundary after this many hours",
+    )
+    parser.add_argument(
+        "--fail-stop-count",
+        type=int,
+        default=DEFAULT_FAIL_STOP_COUNT,
+        help="abort after this many consecutive cases fail with the same error type",
+    )
     parser.add_argument("--skip-ingest", action="store_true")
     parser.add_argument("--no-qa", action="store_true")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -248,10 +267,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def iter_case_records(path: Path, limit: int | None = None) -> Iterator[dict[str, Any]]:
+def iter_case_records(
+    path: Path,
+    limit: int | None = None,
+    offset: int = 0,
+) -> Iterator[dict[str, Any]]:
     """Stream a top-level JSON array and stop without reading its unused tail."""
     if limit is not None and limit < 1:
         raise ValueError("--limit must be a positive integer")
+    if offset < 0:
+        raise ValueError("--offset must be a non-negative integer")
     if not path.is_file():
         raise FileNotFoundError(f"LongMemEval dataset does not exist: {path}")
 
@@ -281,6 +306,7 @@ def iter_case_records(path: Path, limit: int | None = None) -> Iterator[dict[str
             raise ValueError("LongMemEval dataset must be a top-level JSON array")
         position += 1
 
+        skipped = 0
         yielded = 0
         while True:
             while True:
@@ -301,9 +327,12 @@ def iter_case_records(path: Path, limit: int | None = None) -> Iterator[dict[str
                 raise ValueError(f"LongMemEval dataset is incomplete or invalid near EOF: {path}") from error
             if not isinstance(record, dict):
                 raise ValueError("every LongMemEval case must be a JSON object")
+            position = end
+            if skipped < offset:
+                skipped += 1
+                continue
             yield record
             yielded += 1
-            position = end
             if limit is not None and yielded >= limit:
                 return
 
@@ -977,6 +1006,14 @@ def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     temporary.replace(path)
 
 
+def _file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _manifest_identity(
     case: LongMemEvalCase,
     settings: Settings,
@@ -1187,6 +1224,90 @@ def _response_object(content: str | dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _find_http_status_error(error: BaseException) -> httpx.HTTPStatusError | None:
+    visited: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in visited:
+        if isinstance(current, httpx.HTTPStatusError):
+            return current
+        visited.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _retry_after_seconds(value: str) -> float | None:
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+
+
+def _qa_call_with_retry(
+    call: Callable[[], _T],
+    *,
+    max_attempts: int = QA_MAX_ATTEMPTS,
+) -> _T:
+    """Retry one reader/judge call on HTTP 429 and 5xx responses."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return call()
+        except Exception as error:
+            http_error = _find_http_status_error(error)
+            status = http_error.response.status_code if http_error is not None else None
+            if status != 429 and (status is None or status < 500):
+                raise
+            if attempt == max_attempts:
+                raise
+            retry_after = None
+            if http_error is not None:
+                header = http_error.response.headers.get("Retry-After")
+                if header is not None:
+                    retry_after = _retry_after_seconds(header)
+            delay = retry_after if retry_after is not None else 2.0 * (2 ** (attempt - 1))
+            print(
+                f"QA HTTP {status} retry {attempt + 1}/{max_attempts} in {delay:g}s",
+                flush=True,
+            )
+            time.sleep(delay)
+    raise RuntimeError("unreachable")
+
+
+def _case_error_type(error: BaseException) -> str:
+    http_error = _find_http_status_error(error)
+    if http_error is None:
+        return type(error).__name__
+    status = http_error.response.status_code
+    if status in {401, 403}:
+        return f"http_{status}"
+    if status == 429:
+        try:
+            response_text = http_error.response.text.lower()
+        except httpx.ResponseNotRead:
+            response_text = ""
+        return "quota" if any(token in response_text for token in ("quota", "arrearage", "balance")) else "http_429"
+    if status >= 500:
+        return "http_5xx"
+    return f"http_{status}"
+
+
+def _result_error_type(result: Mapping[str, Any]) -> str | None:
+    if not result.get("error"):
+        return None
+    error_type = str(result.get("error_type") or "").strip()
+    if error_type:
+        return error_type
+    return str(result["error"]).partition(":")[0] or "unknown_error"
+
+
 def _run_qa(
     connection: Any,
     case: LongMemEvalCase,
@@ -1194,8 +1315,9 @@ def _run_qa(
     settings: Settings,
 ) -> dict[str, Any]:
     mode = _structured_mode(settings)
-    reader = make_llm_client(settings, connection, operation="benchmark_reader", model=QA_MODEL)
-    judge = make_llm_client(settings, connection, operation="benchmark_judge", model=QA_MODEL)
+    qa_settings = dataclasses.replace(settings, llm_max_attempts=1)
+    reader = make_llm_client(qa_settings, connection, operation="benchmark_reader", model=QA_MODEL)
+    judge = make_llm_client(qa_settings, connection, operation="benchmark_judge", model=QA_MODEL)
     context = "\n".join(f"[{item['rank']}] {item.get('text') or ''}" for item in retrieved)
     reader_spec = StructuredOutputSpec(
         name="longmemeval_reader_answer",
@@ -1207,19 +1329,18 @@ def _run_qa(
             "additionalProperties": False,
         },
     )
-    reader_response = reader.complete(
-        LLMRequest(
-            messages=[
-                LLMMessage(
-                    "system",
-                    "Answer the question using only the supplied memory claims. "
-                    "If the claims do not contain the answer, say that the information is unavailable.",
-                ),
-                LLMMessage("user", f"Memory claims:\n{context or '(none)'}\n\nQuestion: {case.question}"),
-            ],
-            structured_output=reader_spec,
-        )
+    reader_request = LLMRequest(
+        messages=[
+            LLMMessage(
+                "system",
+                "Answer the question using only the supplied memory claims. "
+                "If the claims do not contain the answer, say that the information is unavailable.",
+            ),
+            LLMMessage("user", f"Memory claims:\n{context or '(none)'}\n\nQuestion: {case.question}"),
+        ],
+        structured_output=reader_spec,
     )
+    reader_response = _qa_call_with_retry(lambda: reader.complete(reader_request))
     predicted = str(_response_object(reader_response.content).get("answer") or "").strip()
 
     judge_spec = StructuredOutputSpec(
@@ -1235,22 +1356,21 @@ def _run_qa(
             "additionalProperties": False,
         },
     )
-    judge_response = judge.complete(
-        LLMRequest(
-            messages=[
-                LLMMessage(
-                    "system",
-                    "Judge whether the candidate answer is semantically correct relative to the reference answer. "
-                    "Allow paraphrases, but reject contradictions or missing required facts.",
-                ),
-                LLMMessage(
-                    "user",
-                    f"Question: {case.question}\nReference answer: {case.answer}\nCandidate answer: {predicted}",
-                ),
-            ],
-            structured_output=judge_spec,
-        )
+    judge_request = LLMRequest(
+        messages=[
+            LLMMessage(
+                "system",
+                "Judge whether the candidate answer is semantically correct relative to the reference answer. "
+                "Allow paraphrases, but reject contradictions or missing required facts.",
+            ),
+            LLMMessage(
+                "user",
+                f"Question: {case.question}\nReference answer: {case.answer}\nCandidate answer: {predicted}",
+            ),
+        ],
+        structured_output=judge_spec,
     )
+    judge_response = _qa_call_with_retry(lambda: judge.complete(judge_request))
     judgment = _response_object(judge_response.content)
     if not isinstance(judgment.get("correct"), bool):
         raise ValueError("judge response is missing boolean 'correct'")
@@ -1293,6 +1413,7 @@ def _run_case(
         "retrieved": [],
         "qa": None,
         "error": None,
+        "error_type": None,
     }
     database: Database | None = None
     started = time.perf_counter()
@@ -1335,6 +1456,7 @@ def _run_case(
             result["qa"] = _run_qa(connection, case, result["retrieved"], settings)
     except Exception as error:
         result["error"] = f"{type(error).__name__}: {error}"
+        result["error_type"] = _case_error_type(error)
     finally:
         if database is not None:
             database.close()
@@ -1728,8 +1850,9 @@ def _report(
     results: Sequence[Mapping[str, Any]],
     started_at: str,
     status: str,
+    abort_reason: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    report: dict[str, Any] = {
         "schema_version": 1,
         "benchmark": "LongMemEval-S",
         "status": status,
@@ -1738,19 +1861,26 @@ def _report(
             "path": str(args.dataset.resolve()),
             "bytes": args.dataset.stat().st_size if args.dataset.is_file() else None,
             "complete_json_array": _dataset_complete(args.dataset),
+            "sha256": getattr(args, "dataset_sha256", None),
         },
         "run": {
             "started_at": started_at,
             "package_version": f"v{__version__}",
             "limit": args.limit,
+            "offset": getattr(args, "offset", 0),
+            "resume": getattr(args, "resume", False),
+            "max_runtime_hours": getattr(args, "max_runtime_hours", None),
+            "fail_stop_count": getattr(args, "fail_stop_count", DEFAULT_FAIL_STOP_COUNT),
             "skip_ingest": args.skip_ingest,
             "qa_enabled": not args.no_qa,
             "clean": args.clean,
             "config_compare": args.config_compare,
             "models": {
                 "extractor": settings.llm_model,
+                "extractor_provider": settings.llm_provider,
                 "extractor_version": LLM_EXTRACTOR_VERSION,
                 "embedder": settings.embedding_model,
+                "embedding_dim": settings.embedding_dim,
                 "embedding_api_mode": settings.embedding_api_mode,
                 "embedding_text_type": settings.embedding_text_type,
                 "reranker": settings.reranker_model if settings.reranker_mode != "off" else "off",
@@ -1770,6 +1900,101 @@ def _report(
         "metrics": aggregate_results(results),
         "cases": list(results),
     }
+    if abort_reason is not None:
+        report["run"]["abort_reason"] = abort_reason
+    return report
+
+
+def _load_resume_report(path: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    if not path.is_file():
+        return None, []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"resume output must contain a JSON object: {path}")
+    if payload.get("schema_version") != 1 or payload.get("benchmark") != "LongMemEval-S":
+        raise ValueError(f"resume output is not a LongMemEval-S schema v1 report: {path}")
+    raw_cases = payload.get("cases")
+    if not isinstance(raw_cases, list):
+        raise ValueError(f"resume output cases must be a JSON array: {path}")
+    cases: list[dict[str, Any]] = []
+    case_ids: set[str] = set()
+    for raw_case in raw_cases:
+        if not isinstance(raw_case, dict):
+            raise ValueError(f"resume output contains a non-object case: {path}")
+        case_id = str(raw_case.get("case_id") or "").strip()
+        if not case_id:
+            raise ValueError(f"resume output contains a case without case_id: {path}")
+        if case_id in case_ids:
+            raise ValueError(f"resume output contains duplicate case_id {case_id!r}: {path}")
+        case_ids.add(case_id)
+        cases.append(dict(raw_case))
+    return payload, cases
+
+
+def _resume_model_identity(report: Mapping[str, Any]) -> dict[str, Any]:
+    run = report.get("run")
+    if not isinstance(run, Mapping):
+        raise ValueError("resume output is missing run metadata")
+    models = run.get("models")
+    if not isinstance(models, Mapping):
+        raise ValueError("resume output is missing run.models metadata")
+    fields = (
+        "extractor",
+        "extractor_provider",
+        "extractor_version",
+        "embedder",
+        "embedding_dim",
+        "embedding_api_mode",
+        "embedding_text_type",
+        "reranker",
+        "reader",
+        "judge",
+    )
+    missing = [field for field in fields if field not in models]
+    if missing:
+        raise ValueError(f"resume output is missing model identity fields: {missing}")
+    return {field: models[field] for field in fields}
+
+
+def _validate_resume_report(
+    report: Mapping[str, Any],
+    args: argparse.Namespace,
+    settings: Settings,
+) -> None:
+    dataset = report.get("dataset")
+    previous_sha256 = dataset.get("sha256") if isinstance(dataset, Mapping) else None
+    if not isinstance(previous_sha256, str) or not previous_sha256:
+        raise ValueError("resume output is missing dataset.sha256")
+    if previous_sha256 != args.dataset_sha256:
+        raise ValueError("resume output dataset sha256 does not match --dataset")
+    previous_identity = _resume_model_identity(report)
+    reranker = settings.reranker_model if settings.reranker_mode != "off" else "off"
+    qa_model = QA_MODEL if not args.no_qa else "not_run"
+    expected_identity = {
+        "extractor": settings.llm_model,
+        "extractor_provider": settings.llm_provider,
+        "extractor_version": LLM_EXTRACTOR_VERSION,
+        "embedder": settings.embedding_model,
+        "embedding_dim": settings.embedding_dim,
+        "embedding_api_mode": settings.embedding_api_mode,
+        "embedding_text_type": settings.embedding_text_type,
+        "reranker": reranker,
+        "reader": qa_model,
+        "judge": qa_model,
+    }
+    if previous_identity != expected_identity:
+        raise ValueError("resume output model configuration does not match current settings")
+    run = report.get("run")
+    if not isinstance(run, Mapping):
+        raise ValueError("resume output is missing run metadata")
+    if run.get("package_version") != f"v{__version__}":
+        raise ValueError("resume output package_version does not match current version")
+    if run.get("qa_enabled") is not (not args.no_qa):
+        raise ValueError("resume output qa_enabled does not match current run")
+    if run.get("offset") != args.offset:
+        raise ValueError("resume output offset does not match --offset")
+    if run.get("limit") != args.limit:
+        raise ValueError("resume output limit does not match --limit")
 
 
 def _validate_production_settings(settings: Settings) -> None:
@@ -1791,43 +2016,103 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     if args.limit is not None and args.limit < 1:
         raise ValueError("--limit must be a positive integer")
+    if args.offset < 0:
+        raise ValueError("--offset must be a non-negative integer")
+    if args.max_runtime_hours is not None and args.max_runtime_hours <= 0:
+        raise ValueError("--max-runtime-hours must be positive")
+    if args.fail_stop_count < 1:
+        raise ValueError("--fail-stop-count must be a positive integer")
+    if args.config_compare and (
+        args.offset
+        or args.resume
+        or args.max_runtime_hours is not None
+        or args.fail_stop_count != DEFAULT_FAIL_STOP_COUNT
+    ):
+        raise ValueError(
+            "--offset, --resume, --max-runtime-hours, and non-default --fail-stop-count "
+            "are not supported with --config-compare"
+        )
     if args.limit is None and not _dataset_complete(args.dataset):
         raise ValueError(
             "LongMemEval dataset is missing or incomplete; wait for the top-level JSON array to finish downloading"
         )
+    invocation_started = time.monotonic()
+    args.dataset_sha256 = _file_sha256(args.dataset)
     settings = load_settings(args.config, args.env_file)
     settings = dataclasses.replace(settings, vector_backend="sqlite_scan")
     _validate_production_settings(settings)
     initialize_process(settings)
     embedder = make_embedder(settings)
     reranker = make_reranker(settings)
-    started_at = datetime.now(timezone.utc).isoformat()
+    generated_started_at = datetime.now(timezone.utc).isoformat()
     if args.config_compare:
-        return _run_config_compare(args, settings, embedder, reranker, started_at)
+        return _run_config_compare(args, settings, embedder, reranker, generated_started_at)
+
+    resume_report: dict[str, Any] | None = None
     results: list[dict[str, Any]] = []
+    if args.resume:
+        resume_report, results = _load_resume_report(args.output)
+        if resume_report is not None:
+            _validate_resume_report(resume_report, args, settings)
+    started_at = generated_started_at
+    if resume_report is not None:
+        previous_run = resume_report.get("run")
+        if isinstance(previous_run, Mapping) and isinstance(previous_run.get("started_at"), str):
+            started_at = previous_run["started_at"]
+
+    completed = {str(result["case_id"]): result for result in results}
     total_hint = str(args.limit) if args.limit is not None else "all"
+    runtime_seconds = args.max_runtime_hours * 3600.0 if args.max_runtime_hours is not None else None
 
     print(
         f"LongMemEval-S model={settings.llm_model} embedder={settings.embedding_model} "
-        f"prompt={LLM_EXTRACTOR_VERSION} limit={total_hint} qa={not args.no_qa}",
+        f"prompt={LLM_EXTRACTOR_VERSION} offset={args.offset} limit={total_hint} "
+        f"resume={args.resume} qa={not args.no_qa}",
         flush=True,
     )
+    selected_case_ids: list[str] = []
+    consecutive_failure_type: str | None = None
+    consecutive_failure_count = 0
+    abort_reason: str | None = None
     try:
-        for case_number, record in enumerate(iter_case_records(args.dataset, args.limit), start=1):
+        for case_number, record in enumerate(
+            iter_case_records(args.dataset, args.limit, args.offset),
+            start=1,
+        ):
             case = normalize_case(record)
-            case_result = _run_case(
-                case,
-                settings,
-                embedder,
-                reranker,
-                skip_ingest=args.skip_ingest,
-                run_qa=not args.no_qa,
-                clean=args.clean,
-                case_number=case_number,
-                total_hint=total_hint,
-            )
-            results.append(case_result)
-            _write_json_atomic(args.output, _report(args, settings, results, started_at, "running"))
+            selected_case_ids.append(case.case_id)
+            case_result = completed.get(case.case_id)
+            case_was_run = False
+            if case_result is not None:
+                print(f"[{case_number}/{total_hint}] {case.case_id}: resume skip", flush=True)
+            else:
+                if runtime_seconds is not None and time.monotonic() - invocation_started >= runtime_seconds:
+                    abort_reason = f"max runtime of {args.max_runtime_hours:g} hours reached"
+                    break
+                case_result = _run_case(
+                    case,
+                    settings,
+                    embedder,
+                    reranker,
+                    skip_ingest=args.skip_ingest,
+                    run_qa=not args.no_qa,
+                    clean=args.clean,
+                    case_number=case_number,
+                    total_hint=total_hint,
+                )
+                results.append(case_result)
+                completed[case.case_id] = case_result
+                _write_json_atomic(args.output, _report(args, settings, results, started_at, "running"))
+                case_was_run = True
+                failure_type = _result_error_type(case_result)
+                if failure_type is None:
+                    consecutive_failure_type = None
+                    consecutive_failure_count = 0
+                elif failure_type == consecutive_failure_type:
+                    consecutive_failure_count += 1
+                else:
+                    consecutive_failure_type = failure_type
+                    consecutive_failure_count = 1
             retrieval = case_result.get("retrieval") or {}
             print(
                 f"[{case_number}/{total_hint}] {case.case_id}: "
@@ -1835,13 +2120,36 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"error={case_result.get('error')}",
                 flush=True,
             )
+            if case_was_run and consecutive_failure_count >= args.fail_stop_count:
+                abort_reason = (
+                    f"circuit breaker opened after {consecutive_failure_count} consecutive "
+                    f"{consecutive_failure_type} failures"
+                )
+                break
+            if runtime_seconds is not None and time.monotonic() - invocation_started >= runtime_seconds:
+                abort_reason = f"max runtime of {args.max_runtime_hours:g} hours reached"
+                break
+        if abort_reason is None:
+            unexpected = set(completed) - set(selected_case_ids)
+            if unexpected:
+                raise ValueError(f"resume output contains case_ids outside the selected shard: {sorted(unexpected)}")
     except Exception:
-        if results:
-            _write_json_atomic(args.output, _report(args, settings, results, started_at, "aborted"))
+        _write_json_atomic(
+            args.output,
+            _report(args, settings, results, started_at, "aborted", "unhandled exception"),
+        )
         raise
 
-    if not results:
+    if not selected_case_ids:
         raise ValueError("LongMemEval dataset contains no selected cases")
+    if abort_reason is not None:
+        report = _report(args, settings, results, started_at, "aborted", abort_reason)
+        _write_json_atomic(args.output, report)
+        print(f"aborted reason={abort_reason} cases={len(results)} output={args.output}", flush=True)
+        return 2
+
+    selected_order = {case_id: index for index, case_id in enumerate(selected_case_ids)}
+    results.sort(key=lambda result: selected_order[str(result["case_id"])])
     report = _report(args, settings, results, started_at, "completed")
     _write_json_atomic(args.output, report)
     overall = report["metrics"]["overall"]
