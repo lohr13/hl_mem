@@ -436,9 +436,7 @@ def compute_prompt_hash(
         "system_prompt": system_prompt,
         "response_schema": extraction_response_json_schema() if response_schema is None else response_schema,
         "postprocess_rules": (
-            _postprocess_rules_fingerprint(language_router_version)
-            if postprocess_rules is None
-            else postprocess_rules
+            _postprocess_rules_fingerprint(language_router_version) if postprocess_rules is None else postprocess_rules
         ),
     }
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

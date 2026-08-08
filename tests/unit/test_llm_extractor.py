@@ -207,10 +207,13 @@ def test_prompt_hash_changes_when_schema_or_postprocess_rules_change() -> None:
 
 def test_prompt_hash_includes_explicit_language_router_version() -> None:
     assert LANGUAGE_ROUTER_VERSION == "language-router-v1"
-    assert compute_prompt_hash(
-        SYSTEM_PROMPT,
-        language_router_version="language-router-v2",
-    ) != PROMPT_HASH
+    assert (
+        compute_prompt_hash(
+            SYSTEM_PROMPT,
+            language_router_version="language-router-v2",
+        )
+        != PROMPT_HASH
+    )
 
 
 def test_prompt_hash_includes_predicate_attribute_rules(monkeypatch) -> None:

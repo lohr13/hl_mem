@@ -39,12 +39,9 @@ _EN_MONTHS = {
     "dec": 12,
 }
 _EN_MONTH_DATE_RE = re.compile(
-    rf"(?i)\b(?P<month>{'|'.join(_EN_MONTHS)})\.?\s+"
-    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(?P<year>\d{4}))?\b"
+    rf"(?i)\b(?P<month>{'|'.join(_EN_MONTHS)})\.?\s+" r"(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(?P<year>\d{4}))?\b"
 )
-_US_NUMERIC_DATE_RE = re.compile(
-    r"(?<!\d)(?P<month>\d{1,2})/(?P<day>\d{1,2})/(?P<year>\d{4})(?!\d)"
-)
+_US_NUMERIC_DATE_RE = re.compile(r"(?<!\d)(?P<month>\d{1,2})/(?P<day>\d{1,2})/(?P<year>\d{4})(?!\d)")
 _FIXED_DAY_RE = re.compile(
     r"(?i)(?P<en>\b(?:the day before yesterday|day before yesterday|yesterday|today|tomorrow|"
     r"the day after tomorrow|day after tomorrow)\b)|(?P<zh>前天|昨天|今天|明天|后天)"
@@ -62,8 +59,7 @@ _ZH_OFFSET_RE = re.compile(
 _EN_WEEK_RE = re.compile(r"(?i)\b(?P<direction>last|this|next)\s+week\b")
 _ZH_WEEK_RE = re.compile(r"(?P<direction>上|本|这|下)周(?![一二三四五六日天])")
 _EN_WEEKDAY_RE = re.compile(
-    r"(?i)\b(?P<direction>last|this|next)\s+"
-    r"(?P<weekday>monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+    r"(?i)\b(?P<direction>last|this|next)\s+" r"(?P<weekday>monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
 )
 _ZH_WEEKDAY_RE = re.compile(r"(?P<direction>上|本|这|下)周(?P<weekday>[一二三四五六日天])")
 _RANGE_LEAD_RE = re.compile(r"(?i)(?P<lead>\bfrom|\bbetween|从)\s*$")
@@ -319,11 +315,15 @@ def _absolute_matches(text: str, base: datetime | None) -> list[_TemporalMatch]:
             matches.append(_date_match(match.start(), match.end(), moment))
     for match in _EN_MONTH_DATE_RE.finditer(text):
         raw_year = match.group("year")
-        if raw_year is None and base is None:
-            continue
+        if raw_year is None:
+            if base is None:
+                continue
+            year = base.year
+        else:
+            year = int(raw_year)
         try:
             moment = datetime(
-                int(raw_year) if raw_year is not None else base.year,
+                year,
                 _EN_MONTHS[match.group("month").casefold()],
                 int(match.group("day")),
                 tzinfo=timezone_info,

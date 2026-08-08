@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Iterator
 
 from hl_mem.settings import Settings, VectorBackend
+from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
+from hl_mem.storage.migrations.backfill_conflict_key_v3 import backfill_conflict_keys_v3
 from hl_mem.storage.migrations.backfill_subject_canonicalization import (
     backfill_subject_canonicalization,
 )
-from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
-from hl_mem.storage.migrations.backfill_conflict_key_v3 import backfill_conflict_keys_v3
 from hl_mem.storage.migrations.fact_hash_v2 import backfill_fact_hash_v2
 from hl_mem.storage.migrations.sqlite_vec import (
     disable_sqlite_vec,
@@ -189,7 +189,9 @@ class Database:
             backfill_conflict_keys_v3(connection)
         if connection.execute("SELECT 1 FROM schema_migrations WHERE version='036_tokenized_fts_v2'").fetchone():
             ensure_tokenized_fts_v2(connection)
-        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='038_subject_canonicalization'").fetchone():
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version='038_subject_canonicalization'"
+        ).fetchone():
             backfill_subject_canonicalization(connection)
         if VectorBackend(self.settings.vector_backend) is VectorBackend.SQLITE_VEC:
             extension_version = load_sqlite_vec_extension(connection)
