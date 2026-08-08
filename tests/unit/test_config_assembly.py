@@ -42,5 +42,6 @@ def test_initialize_process_loads_aliases_from_settings(tmp_path: Path) -> None:
     components.initialize_process(Settings(entity_aliases_path=str(aliases_path)))
     try:
         assert normalize_entity_id("PROJECT") == "hl_mem"
+        assert normalize_entity_id("Ｉ") == "user"
     finally:
         components.initialize_process(Settings())

@@ -529,8 +529,8 @@ def _build_claim_drafts(
     index_text_mode: IndexTextMode,
 ) -> _ClaimDraft | StoreClaimResult:
     """阶段 1：规范化提取结果、计算 TTL 并生成 claim 草稿。"""
-    # NOTE: tenant_id/namespace 当前是单租户部署中的软标签，不是隔离边界。
-    # 多租户需要未来引入统一 NamespaceContext 并贯穿后台任务与存储访问。
+    # Claim 的实体、去重与冲突身份由 (namespace_key, subject_entity_id) 共同确定。
+    # 其他多租户安全边界仍需由部署层统一约束，不能仅依赖此处的 namespace。
     namespace = event.get("tenant_id", "default")
     original_subject = extracted.subject
     subject = normalize_entity_id(original_subject)

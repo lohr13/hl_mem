@@ -89,6 +89,28 @@ class ExtractionLanguageRoutingTest(unittest.TestCase):
         self.assertEqual(client.requests[0].messages[0].content, SYSTEM_PROMPT)
         self.assertIn("事件发生时间", client.requests[0].messages[1].content)
 
+    def test_chinese_persona_subject_is_canonicalized_immediately(self) -> None:
+        source = "我昨天组装了 IKEA 书架"
+        client = _RecordingClient(
+            {
+                "claims": [
+                    _compact_claim(
+                        subject="用户",
+                        value="用户组装了 IKEA 书架",
+                        evidence_quote=source,
+                    )
+                ],
+                "should_memorize": True,
+            }
+        )
+
+        claim = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract(
+            source,
+            {"occurred_at": "2026-08-08T12:00:00+08:00"},
+        )[0]
+
+        self.assertEqual(claim.subject, "user")
+
     def test_named_subject_is_not_replaced_with_user(self) -> None:
         source = "The IKEA bookcase took 4 hours to assemble"
         client = _RecordingClient(

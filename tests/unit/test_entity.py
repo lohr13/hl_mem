@@ -9,11 +9,28 @@ from hl_mem.domain.entity import invalid_subject_reason, normalize_entity_id
 
 @pytest.mark.parametrize(
     "alias",
+    ["我", "本人", "I", "Ｉ", "ME", "myself", "user", "ＵＳＥＲ", "the user", "用户", "当前用户"],
+)
+def test_persona_aliases_are_normalized(alias: str) -> None:
+    """第一人称和用户标签应在 NFKC/casefold 后统一为 namespace 内的 user。"""
+    assert normalize_entity_id(alias) == "user"
+
+
+@pytest.mark.parametrize(
+    "alias",
     ["hl_mem 项目", "hl_mem项目", "hl_mem 服务", "hl_mem_plugin", "HL-Mem"],
 )
 def test_hl_mem_aliases_are_normalized(alias: str) -> None:
     """benchmark 中的项目别名应统一归一化。"""
     assert normalize_entity_id(alias) == "hl_mem"
+
+
+def test_unlisted_people_and_products_are_not_merged() -> None:
+    assert normalize_entity_id("Alice") == "alice"
+    assert normalize_entity_id("Bob") == "bob"
+    assert normalize_entity_id("Alice") != normalize_entity_id("Bob")
+    assert normalize_entity_id("IKEA Bookcase") == "ikea bookcase"
+    assert normalize_entity_id("IKEA Bookcase") != normalize_entity_id("IKEA Desk")
 
 
 @pytest.mark.parametrize(

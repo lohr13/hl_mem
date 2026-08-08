@@ -9,7 +9,22 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+PERSONA_ENTITY_ALIASES: dict[str, str] = {
+    "我": "user",
+    "本人": "user",
+    "i": "user",
+    "me": "user",
+    "myself": "user",
+    "user": "user",
+    "the user": "user",
+    "current user": "user",
+    "the current user": "user",
+    "用户": "user",
+    "当前用户": "user",
+}
+
 DEFAULT_ENTITY_ALIASES: dict[str, str] = {
+    **PERSONA_ENTITY_ALIASES,
     "hlmem": "hl_mem",
     "hl_mem": "hl_mem",
     "hl_mem 项目": "hl_mem",
@@ -72,26 +87,42 @@ def _load_aliases(path_value: str | Path) -> dict[str, str]:
 
 def load_entity_aliases(path: str | Path | None = None) -> dict[str, str]:
     """供基础设施层调用：从路径加载实体别名映射。"""
+    aliases = _normalize_default_aliases()
     if path is not None:
-        return _load_aliases(path)
-    return _normalize_default_aliases()
+        aliases.update(_load_aliases(path))
+    return aliases
 
 
 def set_active_aliases(aliases: dict[str, str]) -> None:
     """供启动时注入进程级实体别名映射。"""
     global _active_aliases
-    _active_aliases = aliases
+    _active_aliases = _normalize_aliases(aliases)
+
+
+def _resolved_aliases(aliases: dict[str, str] | None) -> dict[str, str]:
+    if aliases is not None:
+        return _normalize_aliases(aliases)
+    return _active_aliases or _normalize_default_aliases()
+
+
+def normalize_entity_alias(subject: str | None, aliases: dict[str, str] | None = None) -> str:
+    """只应用已知别名，并保留未列入表中的实体显示形式。"""
+    if subject is None:
+        return "unknown"
+    normalized = _normalize_text(subject, casefold=False)
+    if not normalized:
+        return "unknown"
+    return _resolved_aliases(aliases).get(normalized.casefold(), normalized)
 
 
 def normalize_entity_id(subject: str | None, aliases: dict[str, str] | None = None) -> str:
-    """归一化实体标识，并应用显式或进程级别名映射。"""
+    """归一化 namespace 内的实体标签，并应用显式或进程级别名映射。"""
     if subject is None:
         return "unknown"
     normalized = _normalize_text(subject, casefold=True)
     if not normalized:
         return "unknown"
-    alias_map = aliases or _active_aliases or _normalize_default_aliases()
-    return alias_map.get(normalized, normalized)
+    return _resolved_aliases(aliases).get(normalized, normalized)
 
 
 def invalid_subject_reason(subject: str | None) -> str | None:

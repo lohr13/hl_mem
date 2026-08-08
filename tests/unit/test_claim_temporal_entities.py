@@ -12,11 +12,11 @@ from hl_mem.storage.database import Database
 NOW = "2026-07-24T10:00:00+00:00"
 
 
-def _store(connection, claim: ExtractedClaim) -> str:
+def _store(connection, claim: ExtractedClaim, namespace: str = "default") -> str:
     result = IngestService.store_extracted(
         connection,
         claim,
-        {"id": f"event-{claim.value}", "actor_type": "user", "tenant_id": "default"},
+        {"id": f"event-{namespace}-{claim.value}", "actor_type": "user", "tenant_id": namespace},
         NOW,
         FakeEmbedder(8),
     )
@@ -95,6 +95,29 @@ def test_invalid_subjects_from_different_events_are_isolated(tmp_path) -> None:
     second = ClaimRepository(connection).get_claim(second_id)
 
     assert first["subject_entity_id"] != second["subject_entity_id"]
+
+
+def test_persona_subjects_are_canonicalized_but_isolated_by_namespace(tmp_path) -> None:
+    connection = Database(tmp_path / "namespace-persona.db").open()
+    common = {
+        "predicate": "偏好",
+        "value": "深色模式",
+        "canonical_attribute": "preference.ui_theme",
+        "canonical_slot": "preference.ui_theme",
+    }
+    first_id = _store(connection, ExtractedClaim(**common, subject="我"), "tenant-a")
+    second_id = _store(connection, ExtractedClaim(**common, subject="ＵＳＥＲ"), "tenant-b")
+
+    first = ClaimRepository(connection).get_claim(first_id)
+    second = ClaimRepository(connection).get_claim(second_id)
+
+    assert first["subject_entity_id"] == second["subject_entity_id"] == "user"
+    assert first["namespace_key"] == "tenant-a"
+    assert second["namespace_key"] == "tenant-b"
+    assert first["fact_hash"] == second["fact_hash"]
+    assert first["conflict_key"] is not None
+    assert second["conflict_key"] is not None
+    assert first["conflict_key"] != second["conflict_key"]
 
 
 def test_recall_returns_temporal_entities(tmp_path) -> None:

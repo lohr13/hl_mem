@@ -38,6 +38,7 @@ from hl_mem.domain.entity import (
     DEFAULT_ENTITY_ALIASES,
     invalid_subject_reason,
     isolated_subject_id,
+    normalize_entity_alias,
     normalize_entity_id,
 )
 from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
@@ -356,12 +357,8 @@ def detect_extraction_language(text: str) -> Literal["zh", "en"]:
 
 def _normalize_compact_subject(subject: str, language: Literal["zh", "en"]) -> str:
     """只规范第一人称和已知别名，保留命名主体的原文形式。"""
-    normalized = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", subject).strip())
-    if normalized.casefold() in _FIRST_PERSON_SUBJECTS[language]:
-        return "user" if language == "en" else "用户"
-    if normalized.casefold() in DEFAULT_ENTITY_ALIASES:
-        return normalize_entity_id(normalized)
-    return normalized
+    del language
+    return normalize_entity_alias(subject)
 
 
 def _postprocess_rules_fingerprint() -> dict[str, Any]:
