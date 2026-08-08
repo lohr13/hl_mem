@@ -13,6 +13,7 @@ import httpx
 
 from evaluation.tools import merge_longmemeval_results as merger
 from evaluation.tools import run_longmemeval_benchmark as runner
+from hl_mem.http_utils import retry_http
 from hl_mem.settings import Settings
 
 
@@ -296,6 +297,46 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(attempts, 2)
         sleep.assert_called_once_with(2.0)
 
+    def test_shared_http_retry_honors_nested_retry_after(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        response = httpx.Response(429, request=request, headers={"Retry-After": "7"})
+        attempts = 0
+
+        def call_http() -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                try:
+                    raise httpx.HTTPStatusError("rate limited", request=request, response=response)
+                except httpx.HTTPStatusError as error:
+                    raise RuntimeError("wrapped provider failure") from error
+            return "success"
+
+        with patch("hl_mem.http_utils.time.sleep") as sleep:
+            result = retry_http(call_http, retry_after=True)
+
+        self.assertEqual(result, "success")
+        sleep.assert_called_once_with(7.0)
+
+    def test_shared_http_retry_preserves_final_wrapped_timeout_chain(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+
+        def call_http() -> str:
+            try:
+                raise httpx.ReadTimeout("reader timed out", request=request)
+            except httpx.ReadTimeout as error:
+                raise RuntimeError("wrapped reader failure") from error
+
+        with patch("hl_mem.http_utils.time.sleep"):
+            with self.assertRaises(RuntimeError) as raised:
+                retry_http(
+                    call_http,
+                    max_attempts=2,
+                    retry_timeout_types=(httpx.ReadTimeout, httpx.ConnectTimeout),
+                )
+
+        self.assertIsInstance(raised.exception.__cause__, httpx.ReadTimeout)
+
     def test_reader_context_includes_claim_times_and_original_event_source(self) -> None:
         case = runner.normalize_case(_record("case-context"))
         event_id = case.sessions[0].event_id
@@ -492,6 +533,62 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         )
 
         self.assertIn("The fallback evidence says I live in Kyoto", prompt)
+        connection.close()
+
+    def test_windowed_reader_context_combines_far_apart_evidence_turns(self) -> None:
+        record = _record("case-multi-window")
+        record["question"] = "Where did I move and which instrument did I buy?"
+        case = runner.normalize_case(record)
+        event_id = case.sessions[0].event_id
+        messages = [
+            {"role": "assistant", "content": "Let us review your updates."},
+            {"role": "user", "content": "I moved to Kyoto for work."},
+            *({"role": "assistant", "content": f"Unrelated update {index}."} for index in range(2, 8)),
+            {"role": "user", "content": "I bought a cello after the move."},
+            {"role": "assistant", "content": "Thanks for both updates."},
+        ]
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE events ("
+            "id TEXT PRIMARY KEY,content_json TEXT,occurred_at TEXT,recorded_at TEXT,"
+            "event_type TEXT,actor_type TEXT,source_uri TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            (
+                event_id,
+                json.dumps({"text": "unused head", "messages": messages}),
+                "2023-05-20T02:21:00+00:00",
+                "2023-05-20T02:22:00+00:00",
+                "message",
+                "user",
+                None,
+            ),
+        )
+        retrieved = [
+            {
+                "rank": 1,
+                "text": "The user moved to Kyoto for work.",
+                "value": "moved to Kyoto for work",
+                "evidence_event_ids": [event_id],
+            },
+            {
+                "rank": 2,
+                "text": "The user bought a cello after moving.",
+                "value": "bought a cello after the move",
+                "evidence_event_ids": [event_id],
+            },
+        ]
+
+        prompt = runner._build_reader_user_prompt(connection, case, retrieved, context_mode="windowed")
+        events_json = prompt.split("Original Evidence Events:\n", 1)[1].split("\n\nQuestion:", 1)[0]
+        event = json.loads(events_json)[0]
+
+        self.assertIn("I moved to Kyoto for work.", event["content"])
+        self.assertIn("I bought a cello after the move.", event["content"])
+        self.assertEqual(event["window"]["matched_turns"], [1, 8])
+        self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
         connection.close()
 
     def test_windowed_reader_context_centers_a_long_matching_turn_on_the_claim_span(self) -> None:

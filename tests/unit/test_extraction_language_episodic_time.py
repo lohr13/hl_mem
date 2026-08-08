@@ -16,6 +16,7 @@ from hl_mem.application.ingest import IngestService
 from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.embedder import FakeEmbedder
+from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import (
     ENGLISH_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
@@ -144,6 +145,7 @@ class EpisodicExtractionTest(unittest.TestCase):
         claim = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract(source)[0]
 
         self.assertEqual(claim.reason, "accepted_episodic")
+        self.assertEqual(claim.memory_layer, "episodic")
         self.assertEqual(claim.scope, "temporal")
         self.assertEqual(claim.volatility, "ephemeral")
         self.assertEqual(claim.importance, 0.3)
@@ -231,8 +233,126 @@ class EpisodicExtractionTest(unittest.TestCase):
 
         self.assertEqual(expires_at, "2026-05-04T09:00:00+00:00")
 
+    def test_memory_layer_not_reason_selects_the_episodic_fact_anchor(self) -> None:
+        extracted = ExtractedClaim(
+            "事实",
+            "历史上完成了一次搬家",
+            reason="accepted",
+            memory_layer="episodic",
+            scope="temporal",
+            volatility="ephemeral",
+            importance=0.3,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "explicit-layer.db")
+            connection = database.open()
+            event = {
+                "id": "event-explicit-layer",
+                "tenant_id": "default",
+                "actor_type": "user",
+                "event_type": "message",
+                "content": {"text": extracted.value},
+                "occurred_at": "2026-05-01T09:00:00+00:00",
+                "recorded_at": "2026-08-08T09:00:00+00:00",
+            }
+            EventRepository(connection).insert_event(event)
+
+            result = IngestService.store_extracted(
+                connection,
+                extracted,
+                event,
+                "2026-08-08T09:00:00+00:00",
+                FakeEmbedder(8),
+                policy=TTLPolicy(temporal_ttl_days_low=3),
+            )
+            expires_at = connection.execute(
+                "SELECT expires_at FROM claims WHERE id=?",
+                (result.claim_id,),
+            ).fetchone()[0]
+            database.close()
+
+        self.assertEqual(expires_at, "2026-08-11T09:00:00+00:00")
+
+    def test_episodic_plan_ttl_starts_after_future_occurrence_end(self) -> None:
+        extracted = ExtractedClaim(
+            "计划",
+            "参加 8 月发布会",
+            reason="accepted_episodic",
+            memory_layer="episodic",
+            scope="temporal",
+            volatility="ephemeral",
+            importance=0.3,
+            occurred_start="2026-08-20T09:00:00+00:00",
+            occurred_end="2026-08-20T18:00:00+00:00",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "future-plan.db")
+            connection = database.open()
+            event = {
+                "id": "event-future-plan",
+                "tenant_id": "default",
+                "actor_type": "user",
+                "event_type": "message",
+                "content": {"text": extracted.value},
+                "occurred_at": "2026-08-08T09:00:00+00:00",
+                "recorded_at": "2026-08-08T09:00:00+00:00",
+            }
+            EventRepository(connection).insert_event(event)
+
+            result = IngestService.store_extracted(
+                connection,
+                extracted,
+                event,
+                "2026-08-08T09:00:00+00:00",
+                FakeEmbedder(8),
+                policy=TTLPolicy(temporal_ttl_days_low=3),
+            )
+            expires_at = connection.execute(
+                "SELECT expires_at FROM claims WHERE id=?",
+                (result.claim_id,),
+            ).fetchone()[0]
+            database.close()
+
+        self.assertEqual(expires_at, "2026-08-23T18:00:00+00:00")
+
 
 class RelativeOccurrenceTest(unittest.TestCase):
+    def test_explicit_timezone_offsets_are_consumed_without_partial_matching(self) -> None:
+        self.assertEqual(
+            infer_occurrence(
+                "The call starts at 2026-08-20T14:30+02:00",
+                "2026-08-08T18:30:00+08:00",
+            ),
+            ("2026-08-20T14:30:00+02:00", None),
+        )
+        self.assertEqual(
+            infer_occurrence(
+                "The call starts at 2026-08-20T12:30Z",
+                "2026-08-08T18:30:00+08:00",
+            ),
+            ("2026-08-20T12:30:00+00:00", None),
+        )
+
+    def test_multiple_unranged_dates_are_rejected_without_a_unique_claim_target(self) -> None:
+        evidence = "Alice arrives on 2026-08-20 and Bob arrives on 2026-08-21."
+
+        self.assertEqual(
+            infer_occurrence(evidence, "2026-08-08T18:30:00+08:00"),
+            (None, None),
+        )
+
+    def test_claim_value_disambiguates_one_date_from_multi_date_evidence(self) -> None:
+        evidence = "Alice arrives on 2026-08-20 and Bob arrives on 2026-08-21."
+
+        self.assertEqual(
+            infer_occurrence(
+                evidence,
+                "2026-08-08T18:30:00+08:00",
+                claim_value="Bob arrives on 2026-08-21.",
+            ),
+            ("2026-08-21T00:00:00+08:00", "2026-08-22T00:00:00+08:00"),
+        )
+
     def test_compact_extractor_uses_event_time_for_english_relative_date(self) -> None:
         source = "Yesterday I spent 4 hours assembling an IKEA bookcase"
         client = _RecordingClient(
@@ -373,7 +493,7 @@ class RelativeOccurrenceTest(unittest.TestCase):
                 "The deadline was May 20, 2023; the report was revised June 1, 2023.",
                 "2026-08-08T18:30:00+08:00",
             ),
-            ("2023-05-20T00:00:00+08:00", "2023-05-21T00:00:00+08:00"),
+            (None, None),
         )
 
     def test_explicit_datetime_keeps_point_precision(self) -> None:

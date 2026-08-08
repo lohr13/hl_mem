@@ -5,12 +5,13 @@ from __future__ import annotations
 import calendar
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any
 
 _ABSOLUTE_DATE_RE = re.compile(
     r"(?P<year>\d{4})(?:-|/|年)(?P<month>\d{1,2})(?:-|/|月)(?P<day>\d{1,2})日?"
-    r"(?:[ T](?P<hour>\d{1,2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?)?"
+    r"(?:[ T](?P<hour>\d{1,2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?"
+    r"(?P<timezone>Z|[+-]\d{2}:?\d{2})?)?(?![T\d:+-])"
 )
 _EN_MONTHS = {
     "january": 1,
@@ -149,7 +150,7 @@ class _TemporalMatch:
 def relative_time_rules_fingerprint() -> dict[str, Any]:
     """返回影响时间后处理结果的稳定规则。"""
     return {
-        "revision": 2,
+        "revision": 3,
         "patterns": {
             "absolute": _ABSOLUTE_DATE_RE.pattern,
             "english_month_date": _EN_MONTH_DATE_RE.pattern,
@@ -298,6 +299,24 @@ def _absolute_matches(text: str, base: datetime | None) -> list[_TemporalMatch]:
     for match in _ABSOLUTE_DATE_RE.finditer(text):
         has_time = match.group("hour") is not None
         try:
+            matched_timezone = match.group("timezone")
+            match_timezone: tzinfo | None
+            if matched_timezone == "Z":
+                match_timezone = timezone.utc
+            elif matched_timezone:
+                compact_offset = matched_timezone.replace(":", "")
+                direction = 1 if compact_offset[0] == "+" else -1
+                offset_hours = int(compact_offset[1:3])
+                offset_minutes = int(compact_offset[3:5])
+                if offset_hours > 23 or offset_minutes > 59:
+                    raise ValueError("invalid timezone offset")
+                offset = timedelta(
+                    hours=offset_hours,
+                    minutes=offset_minutes,
+                )
+                match_timezone = timezone(direction * offset)
+            else:
+                match_timezone = timezone_info
             moment = datetime(
                 int(match.group("year")),
                 int(match.group("month")),
@@ -305,7 +324,7 @@ def _absolute_matches(text: str, base: datetime | None) -> list[_TemporalMatch]:
                 int(match.group("hour") or 0),
                 int(match.group("minute") or 0),
                 int(match.group("second") or 0),
-                tzinfo=timezone_info,
+                tzinfo=match_timezone,
             )
         except ValueError:
             continue
@@ -373,13 +392,29 @@ def _range_pair(text: str, matches: list[_TemporalMatch]) -> tuple[_TemporalMatc
     return None
 
 
-def infer_occurrence(text: str, occurred_at: str | None) -> tuple[str | None, str | None]:
-    """从 evidence 推断时间区间；相对表达只使用显式事件时间。"""
-    base = _parse_base(occurred_at)
+def _all_matches(text: str, base: datetime | None) -> list[_TemporalMatch]:
     matches = _absolute_matches(text, base)
     if base is not None:
         matches.extend(_relative_matches(text, base))
-    ordered = _non_overlapping(matches)
+    return _non_overlapping(matches)
+
+
+def _match_interval(match: _TemporalMatch) -> tuple[str, str | None]:
+    return (
+        match.occurred_start.isoformat(),
+        match.occurred_end.isoformat() if match.occurred_end is not None else None,
+    )
+
+
+def infer_occurrence(
+    text: str,
+    occurred_at: str | None,
+    *,
+    claim_value: str | None = None,
+) -> tuple[str | None, str | None]:
+    """从 evidence 推断时间区间；多日期必须为范围或由 claim value 唯一定位。"""
+    base = _parse_base(occurred_at)
+    ordered = _all_matches(text, base)
     if not ordered:
         return None, None
     explicit_range = _range_pair(text, ordered)
@@ -387,8 +422,12 @@ def infer_occurrence(text: str, occurred_at: str | None) -> tuple[str | None, st
         left, right = explicit_range
         right_boundary = right.occurred_end or right.occurred_start
         return left.occurred_start.isoformat(), right_boundary.isoformat()
-    first = ordered[0]
-    return (
-        first.occurred_start.isoformat(),
-        first.occurred_end.isoformat() if first.occurred_end is not None else None,
-    )
+    if len(ordered) == 1:
+        return _match_interval(ordered[0])
+    if claim_value:
+        claim_matches = _all_matches(claim_value, base)
+        if len(claim_matches) == 1:
+            target = _match_interval(claim_matches[0])
+            if target in {_match_interval(match) for match in ordered}:
+                return target
+    return None, None

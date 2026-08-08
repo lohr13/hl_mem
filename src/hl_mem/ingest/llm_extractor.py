@@ -53,13 +53,13 @@ from hl_mem.observability.audit import current_audit
 
 from .admission import (
     ALNUM_SECRET_RE,
-    EPISODIC_KINDS,
     LOW_VALUE_HEALTH_STATES,
     NUMERIC_OR_VERSION_RE,
     RECOVERY_CODE_RE,
     SECRET_ASSIGNMENT_RE,
     SECRET_FIELD_NAME_RE,
     SK_TOKEN_RE,
+    AdmissionDecision,
     MemoryCandidate,
     admission_rules_fingerprint,
     admit_claim,
@@ -241,10 +241,6 @@ _EN_FUNCTION_SIGNAL_RE = re.compile(
     r"(?i)\b(?:i|we|you|he|she|it|the|a|an|to|of|in|on|at|for|with|my|our|your|this|that|yesterday|tomorrow)\b"
 )
 LANGUAGE_ROUTER_VERSION = "language-router-v1"
-_FIRST_PERSON_SUBJECTS = {
-    "zh": frozenset({"我", "本人", "我自己"}),
-    "en": frozenset({"i", "me", "my", "myself"}),
-}
 _UNSETTLED_SIGNAL_RE = re.compile(r"可以考虑|建议|考虑|待定|或许|计划中|未执行")
 _SETTLED_SIGNAL_RE = re.compile(
     r"已经确认|已确认|已经批准|已批准|已经执行|已执行|已经实施|已实施|"
@@ -356,9 +352,8 @@ def detect_extraction_language(text: str) -> Literal["zh", "en"]:
     return "zh"
 
 
-def _normalize_compact_subject(subject: str, language: Literal["zh", "en"]) -> str:
+def _normalize_compact_subject(subject: str) -> str:
     """只规范第一人称和已知别名，保留命名主体的原文形式。"""
-    del language
     return normalize_entity_alias(subject)
 
 
@@ -390,7 +385,6 @@ def _postprocess_rules_fingerprint(
         "relative_time": relative_time_rules_fingerprint(),
         "english_system_prompt": ENGLISH_SYSTEM_PROMPT,
         "language_router_version": language_router_version,
-        "first_person_subjects": {key: sorted(values) for key, values in _FIRST_PERSON_SUBJECTS.items()},
         "admission": admission_rules_fingerprint(),
         "unsettled_confidence_ceiling": _UNSETTLED_CONFIDENCE_CEILING,
         "repair_enum_mappings": ENUM_MAPPINGS,
@@ -765,9 +759,13 @@ class LLMExtractor:
         return qualifiers
 
     @staticmethod
-    def _infer_compact_occurrence(text: str, occurred_at: str | None) -> tuple[str | None, str | None]:
+    def _infer_compact_occurrence(
+        text: str,
+        occurred_at: str | None,
+        claim_value: str | None = None,
+    ) -> tuple[str | None, str | None]:
         """从绝对/相对日期与对话时间推断 claim 的发生区间。"""
-        return infer_occurrence(text, occurred_at)
+        return infer_occurrence(text, occurred_at, claim_value=claim_value)
 
     @staticmethod
     def _extract_compact_entities(subject: str, value: str) -> list[str]:
@@ -789,7 +787,6 @@ class LLMExtractor:
         raw: dict[str, Any],
         source_text: str,
         occurred_at: str | None = None,
-        language: Literal["zh", "en"] = "zh",
     ) -> dict[str, Any] | None:
         """把 LLM 的 6 字段候选准入并映射为现有完整 claim schema。"""
         try:
@@ -805,7 +802,7 @@ class LLMExtractor:
             return None
 
         decision = admit_claim(candidate, source_text)
-        episodic = candidate.notability == "low" and candidate.kind in EPISODIC_KINDS
+        episodic = decision.memory_layer == "episodic"
         current_audit().emit(
             "extract",
             "admission_checked",
@@ -814,7 +811,7 @@ class LLMExtractor:
                 "reason": decision.reason,
                 "kind": candidate.kind,
                 "notability": candidate.notability,
-                "memory_layer": "episodic" if episodic else "durable",
+                "memory_layer": decision.memory_layer,
             },
         )
         if not decision.accepted:
@@ -832,14 +829,18 @@ class LLMExtractor:
             scope = "temporal"
             volatility = "ephemeral"
         predicate = normalize_predicate(predicate)
-        subject = _normalize_compact_subject(candidate.subject, language)
+        subject = _normalize_compact_subject(candidate.subject)
         inferred_attribute = infer_canonical_attribute(predicate, subject, candidate.value, {})
         fallback_attribute = PREDICATE_ATTRIBUTE_MAP[predicate][1]
         if inferred_attribute not in {"custom.unknown", fallback_attribute}:
             canonical_attribute = inferred_attribute
         qualifiers = self._infer_compact_qualifiers(canonical_attribute, subject, candidate.value)
         canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
-        occurred_start, occurred_end = self._infer_compact_occurrence(candidate.evidence_quote, occurred_at)
+        occurred_start, occurred_end = self._infer_compact_occurrence(
+            candidate.evidence_quote,
+            occurred_at,
+            candidate.value,
+        )
         topic_tags = normalize_topic_tags(
             [
                 _KIND_TOPIC_TAG[candidate.kind],
@@ -862,6 +863,7 @@ class LLMExtractor:
             "occurred_start": occurred_start,
             "occurred_end": occurred_end,
             "entities": self._extract_compact_entities(subject, candidate.value),
+            "memory_layer": decision.memory_layer,
         }
 
     @staticmethod
@@ -896,7 +898,7 @@ class LLMExtractor:
         except (KeyError, TypeError, ValueError):
             return None
 
-    def _record_admission(self, candidate: MemoryCandidate, source_text: str) -> bool:
+    def _record_admission(self, candidate: MemoryCandidate, source_text: str) -> AdmissionDecision:
         """执行并审计 compact/legacy 共用的准入策略。"""
         decision = admit_claim(candidate, source_text)
         current_audit().emit(
@@ -907,6 +909,7 @@ class LLMExtractor:
                 "reason": decision.reason,
                 "kind": candidate.kind,
                 "notability": candidate.notability,
+                "memory_layer": decision.memory_layer,
             },
         )
         if not decision.accepted and decision.reason in {
@@ -916,7 +919,7 @@ class LLMExtractor:
             "mixed_alnum_token",
         }:
             self._secret_rejections[decision.reason] = self._secret_rejections.get(decision.reason, 0) + 1
-        return decision.accepted
+        return decision
 
     def _extract_one_chunk(
         self,
@@ -946,7 +949,7 @@ class LLMExtractor:
         for item in result.claims:
             raw_claim = item.model_dump()
             if compact_response:
-                postprocessed = self._postprocess_claim(raw_claim, chunk.text, occurred_at, language)
+                postprocessed = self._postprocess_claim(raw_claim, chunk.text, occurred_at)
                 if postprocessed is None:
                     continue
                 raw_claim = postprocessed
@@ -956,8 +959,16 @@ class LLMExtractor:
                     self._secret_rejections[secret_reason] = self._secret_rejections.get(secret_reason, 0) + 1
                     continue
                 legacy_candidate = self._legacy_admission_candidate(raw_claim)
-                if legacy_candidate is None or not self._record_admission(legacy_candidate, chunk.text):
+                if legacy_candidate is None:
                     continue
+                decision = self._record_admission(legacy_candidate, chunk.text)
+                if not decision.accepted:
+                    continue
+                raw_claim["reason"] = decision.reason
+                raw_claim["memory_layer"] = decision.memory_layer
+                if decision.memory_layer == "episodic":
+                    raw_claim["scope"] = "temporal"
+                    raw_claim["volatility"] = "ephemeral"
             secret_reason = _secret_reason(raw_claim)
             if secret_reason is not None:
                 self._secret_rejections[secret_reason] = self._secret_rejections.get(secret_reason, 0) + 1
@@ -1379,4 +1390,5 @@ class LLMExtractor:
             occurred_start=item.get("occurred_start"),
             occurred_end=item.get("occurred_end"),
             entities=entities or None,
+            memory_layer=("episodic" if item.get("memory_layer") == "episodic" else "durable"),
         )

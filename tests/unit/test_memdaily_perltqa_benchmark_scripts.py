@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from evaluation.tools import run_memdaily_benchmark as memdaily_runner
 from evaluation.tools import run_perltqa_benchmark as perltqa_runner
-from hl_mem.evaluation.perltqa import PerLTQACharacter, PerLTQAQuestion
+from hl_mem.evaluation.perltqa import PerLTQACharacter, PerLTQAClaimSpec, PerLTQAQuestion
+from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 
@@ -39,6 +41,41 @@ def _memdaily_trajectory() -> memdaily_runner.MemDailyTrajectory:
 
 
 class MemDailyAggregationTests(unittest.TestCase):
+    def test_ingest_config_fingerprint_covers_every_production_ingest_input(self) -> None:
+        settings = Settings.for_test()
+        baseline = memdaily_runner.ingest_config_fingerprint(settings)
+        variants = (
+            replace(settings, llm_provider="zhipu"),
+            replace(settings, llm_structured_mode="json_schema"),
+            replace(settings, extraction_chunk_target_chars=settings.extraction_chunk_target_chars + 1),
+            replace(settings, extraction_chunk_overlap_turns=settings.extraction_chunk_overlap_turns + 1),
+            replace(settings, extraction_max_split_depth=settings.extraction_max_split_depth + 1),
+            replace(settings, verification_mode="audit"),
+            replace(settings, temporal_ttl_days_low=settings.temporal_ttl_days_low + 1),
+            replace(settings, importance_write_floor=settings.importance_write_floor + 0.01),
+            replace(settings, relation_discovery_mode="audit"),
+            replace(settings, relation_discovery_pool_limit=settings.relation_discovery_pool_limit + 1),
+            replace(settings, relation_discovery_max_proposals=settings.relation_discovery_max_proposals + 1),
+            replace(settings, relation_auto_apply_confidence=settings.relation_auto_apply_confidence - 0.01),
+            replace(settings, relation_conflict_confidence=settings.relation_conflict_confidence - 0.01),
+        )
+
+        for variant in variants:
+            with self.subTest(variant=variant):
+                self.assertNotEqual(memdaily_runner.ingest_config_fingerprint(variant), baseline)
+
+    def test_ingest_config_fingerprint_hashes_external_entity_alias_content(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            aliases_path = Path(directory) / "aliases.json"
+            aliases_path.write_text('{"client":"Customer A"}', encoding="utf-8")
+            settings = replace(Settings.for_test(), entity_aliases_path=str(aliases_path))
+            first = memdaily_runner.ingest_config_fingerprint(settings)
+
+            aliases_path.write_text('{"client":"Customer B"}', encoding="utf-8")
+            second = memdaily_runner.ingest_config_fingerprint(settings)
+
+        self.assertNotEqual(first, second)
+
     def test_aggregate_reads_qa_metrics_from_nested_payload(self) -> None:
         results = [
             {
@@ -198,8 +235,88 @@ class MemDailyAggregationTests(unittest.TestCase):
         self.assertEqual(result["ingest"]["cache_status"], "stale_reingested")
         self.assertIn("database_extractor_version", result["ingest"]["cache_reason"])
 
+    def test_skip_ingest_prints_stale_reason_before_removing_old_database(self) -> None:
+        trajectory = _memdaily_trajectory()
+        settings = Settings.for_test()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            db_path = root / f"{memdaily_runner._safe_case_name(trajectory.case_id)}.db"
+            database = Database(db_path, settings=settings)
+            database.open()
+            database.close()
+            stale = memdaily_runner._cache_identity(trajectory, settings)
+            stale["ingest_config_fingerprint"] = "stale"
+            db_path.with_suffix(".manifest.json").write_text(json.dumps(stale), encoding="utf-8")
+            events: list[tuple[str, str]] = []
+            original_remove = memdaily_runner._remove_db_artifacts
+
+            def record_remove(path: Path) -> None:
+                events.append(("remove", str(path)))
+                original_remove(path)
+
+            def record_print(*values: object, **_kwargs: object) -> None:
+                events.append(("print", " ".join(str(value) for value in values)))
+
+            with (
+                patch.object(memdaily_runner, "DATABASE_ROOT", root),
+                patch.object(memdaily_runner, "_remove_db_artifacts", side_effect=record_remove),
+                patch.object(memdaily_runner, "_ingest_trajectory", return_value={"messages": 1}),
+                patch.object(memdaily_runner, "_recall_trajectory", return_value=({}, [])),
+                patch("builtins.print", side_effect=record_print),
+            ):
+                result = memdaily_runner._run_case(
+                    trajectory,
+                    settings,
+                    object(),
+                    object(),
+                    skip_ingest=True,
+                    run_qa=False,
+                    clean=False,
+                    case_number=1,
+                    total=1,
+                )
+
+        stale_print_index = next(
+            index for index, event in enumerate(events) if event[0] == "print" and "manifest_mismatch" in event[1]
+        )
+        remove_index = next(index for index, event in enumerate(events) if event[0] == "remove")
+        self.assertLess(stale_print_index, remove_index)
+        self.assertIsNone(result["error"])
+
 
 class PerLTQABenchmarkTests(unittest.TestCase):
+    def test_direct_insert_embeds_the_configured_production_index_text(self) -> None:
+        class RecordingEmbedder:
+            model = "recording"
+            dim = 8
+
+            def __init__(self) -> None:
+                self.inputs: list[str] = []
+                self.delegate = FakeEmbedder(self.dim)
+
+            def embed_one(self, text: str) -> bytes:
+                self.inputs.append(text)
+                return self.delegate.embed_one(text)
+
+        character = PerLTQACharacter(
+            name="Alice",
+            claims=(PerLTQAClaimSpec("Gender", "profile", "Alice prefers tea"),),
+            questions=(),
+        )
+        settings = replace(Settings.for_test(), index_text_mode="natural")
+        embedder = RecordingEmbedder()
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "perltqa-index.db", settings=settings)
+            connection = database.open()
+
+            perltqa_runner._build_and_insert_claims(connection, character, settings, embedder)
+
+            index_text = connection.execute("SELECT index_text FROM claims").fetchone()[0]
+            database.close()
+
+        self.assertEqual(index_text, "Alice：Alice prefers tea")
+        self.assertEqual(embedder.inputs, ["Alice：Alice prefers tea"])
+
     def test_reference_mapping_prefers_exact_key_then_falls_back_from_ordinal(self) -> None:
         source_keys = {
             "18_1_1": "aggregate-claim",

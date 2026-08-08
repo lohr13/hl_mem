@@ -13,16 +13,13 @@ import shutil
 import sqlite3
 import sys
 import time
-import unicodedata
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from difflib import SequenceMatcher
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 from statistics import mean, median
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import httpx
 
@@ -30,30 +27,85 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from evaluation.tools.run_embedding_ablation import (  # noqa: E402
+# These imports intentionally follow the ROOT bootstrap so the runner remains
+# directly executable from outside the repository root.
+# isort: off
+from evaluation.tools.longmemeval.judge import (  # noqa: E402, F401
+    LONGMEMEVAL_JUDGE_PROMPT_VERSION,
+    judge_longmemeval_answer as _judge_longmemeval_answer_impl,
+    longmemeval_judge_prompts as _longmemeval_judge_prompts,
+)
+from evaluation.tools.longmemeval.qa_client import (  # noqa: E402, F401
+    qa_call_with_retry,
+    qa_dashscope_chat as _qa_dashscope_chat,
+    qa_model,
+    response_object as _response_object,
+)
+from evaluation.tools.longmemeval.reader_context import (  # noqa: E402, F401
+    DEFAULT_READER_CONTEXT_MODE,
+    QA_ADJACENT_TURN_TOKEN_LIMIT,
+    QA_CLAIM_FIELD_TOKEN_LIMIT,
+    QA_CLAIMS_TOKEN_BUDGET,
+    QA_CONTEXT_TOKEN_BUDGET,
+    QA_EVIDENCE_EVENT_TOKEN_LIMIT,
+    QA_EVIDENCE_MAX_WINDOWS,
+    QA_EVIDENCE_TURN_RADIUS,
+    QA_MATCHED_TURN_TOKEN_LIMIT,
+    READER_CONTEXT_MODES,
+    build_reader_user_prompt as _build_reader_user_prompt,
+    event_content_text as _event_content_text,
+    fit_reader_claim as _fit_reader_claim,
+    fit_reader_claims as _fit_reader_claims,
+    fit_reader_event as _fit_reader_event,
+    load_reader_events as _load_reader_events,
+    normalize_content as _normalize_content,
+    normalize_role as _normalize_role,
+    ordered_evidence_ids as _ordered_evidence_ids,
+    reader_claim_records as _reader_claim_records,
+    reader_event_needles as _reader_event_needles,
+    reader_focus_index as _reader_focus_index,
+    reader_match_score as _reader_match_score,
+    reader_match_text as _reader_match_text,
+    reader_match_units as _reader_match_units,
+    reader_messages as _reader_messages,
+    reader_turn_excerpt as _reader_turn_excerpt,
+    reader_turn_score as _reader_turn_score,
+    reader_turn_window as _reader_turn_window,
+    render_reader_user_prompt as _render_reader_user_prompt,
+    truncate_reader_text as _truncate_reader_text,
+)
+from evaluation.tools.run_embedding_ablation import (  # noqa: E402, F401
     Cost,
     DashScopeEmbeddingClient,
     EmbeddingConfig,
     embed_remote,
 )
-from hl_mem import __version__  # noqa: E402
-from hl_mem.application.context_packet import estimate_tokens  # noqa: E402
-from hl_mem.application.ingest import IngestService  # noqa: E402
-from hl_mem.application.recall import RecallService  # noqa: E402
-from hl_mem.components import (  # noqa: E402
+from hl_mem import __version__  # noqa: E402, F401
+from hl_mem.application.context_packet import estimate_tokens  # noqa: E402, F401
+from hl_mem.application.ingest import IngestService  # noqa: E402, F401
+from hl_mem.application.recall import RecallService  # noqa: E402, F401
+from hl_mem.components import (  # noqa: E402, F401
     initialize_process,
     make_embedder,
     make_extractor,
     make_query_expander,
     make_reranker,
 )
-from hl_mem.config_loader import load_settings  # noqa: E402
-from hl_mem.core.vector import cosine_similarity, pack_vector  # noqa: E402
-from hl_mem.domain.recall import RecallIntent  # noqa: E402
-from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402
-from hl_mem.recall.relation_expansion import RelationExpansionConfig  # noqa: E402
-from hl_mem.settings import Settings  # noqa: E402
-from hl_mem.storage.database import Database  # noqa: E402
+from hl_mem.config_loader import load_settings  # noqa: E402, F401
+from hl_mem.core.vector import cosine_similarity, pack_vector  # noqa: E402, F401
+from hl_mem.domain.recall import RecallIntent  # noqa: E402, F401
+from hl_mem.http_utils import (  # noqa: E402, F401
+    exception_chain as _exception_chain,
+    find_http_exception,
+    find_http_status_error as _find_http_status_error,
+    retry_after_seconds as _retry_after_seconds,
+)
+from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402, F401
+from hl_mem.recall.relation_expansion import RelationExpansionConfig  # noqa: E402, F401
+from hl_mem.settings import Settings  # noqa: E402, F401
+from hl_mem.storage.database import Database  # noqa: E402, F401
+
+# isort: on
 
 DEFAULT_DATASET = ROOT / "evaluation" / "longmemeval" / "longmemeval_s_cleaned.json"
 DEFAULT_OUTPUT = ROOT / "evaluation" / "results" / "longmemeval_s_benchmark.json"
@@ -66,15 +118,6 @@ DEFAULT_CONFIG = ROOT / "hl_mem.toml"
 DEFAULT_ENV_FILE = ROOT / ".env"
 QA_MODEL = "qwen3.7-plus"
 QA_MAX_ATTEMPTS = 3
-QA_CONTEXT_TOKEN_BUDGET = 6000
-QA_EVIDENCE_EVENT_TOKEN_LIMIT = 1200
-QA_CLAIMS_TOKEN_BUDGET = QA_CONTEXT_TOKEN_BUDGET - QA_EVIDENCE_EVENT_TOKEN_LIMIT
-QA_CLAIM_FIELD_TOKEN_LIMIT = 192
-READER_CONTEXT_MODES = ("windowed", "head")
-DEFAULT_READER_CONTEXT_MODE = "windowed"
-QA_EVIDENCE_TURN_RADIUS = 1
-QA_MATCHED_TURN_TOKEN_LIMIT = 640
-QA_ADJACENT_TURN_TOKEN_LIMIT = 192
 DEFAULT_FAIL_STOP_COUNT = 5
 RETRIEVAL_KS = (1, 5, 10)
 JSON_READ_CHARS = 1024 * 1024
@@ -84,7 +127,6 @@ CLAIM_RELEVANCE_THRESHOLD = 0.5
 SIMILARITY_THRESHOLDS = (0.2, 0.3, 0.4, 0.5, 0.65)
 RELEVANCE_SCORER_CODE = "V0"
 RELEVANCE_LABEL_VERSION = "claim-answer-cosine-v2"
-LONGMEMEVAL_JUDGE_PROMPT_VERSION = "official-compatible-v1"
 _T = TypeVar("_T")
 QUESTION_TYPES = (
     "single-session-user",
@@ -377,29 +419,6 @@ def _sequence(value: object, field: str) -> list[Any]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise ValueError(f"{field} must be a list")
     return list(value)
-
-
-def _normalize_role(value: object) -> str:
-    role = str(value or "user").lower()
-    return (
-        {"human": "user", "ai": "assistant"}.get(role, role)
-        if role
-        in {
-            "user",
-            "assistant",
-            "human",
-            "ai",
-            "system",
-            "tool",
-        }
-        else "user"
-    )
-
-
-def _normalize_content(value: object) -> str:
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _timestamp(value: object, fallback_index: int | None = None) -> str:
@@ -1237,54 +1256,11 @@ def _recall_case(
     return metrics, _retrieved_payload(results, case)
 
 
-def _response_object(content: str | dict[str, Any]) -> dict[str, Any]:
-    if isinstance(content, dict):
-        return content
-    text = content.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        text = "\n".join(lines[1:-1]) if len(lines) >= 3 else text
-    payload = json.loads(text)
-    if not isinstance(payload, dict):
-        raise ValueError("LLM structured response must be a JSON object")
-    return payload
-
-
-def _exception_chain(error: BaseException) -> Iterator[BaseException]:
-    visited: set[int] = set()
-    current: BaseException | None = error
-    while current is not None and id(current) not in visited:
-        yield current
-        visited.add(id(current))
-        current = current.__cause__ or current.__context__
-
-
-def _find_http_status_error(error: BaseException) -> httpx.HTTPStatusError | None:
-    for current in _exception_chain(error):
-        if isinstance(current, httpx.HTTPStatusError):
-            return current
-    return None
-
-
 def _find_qa_timeout(error: BaseException) -> httpx.ReadTimeout | httpx.ConnectTimeout | None:
-    for current in _exception_chain(error):
-        if isinstance(current, (httpx.ReadTimeout, httpx.ConnectTimeout)):
-            return current
-    return None
-
-
-def _retry_after_seconds(value: str) -> float | None:
-    try:
-        return max(0.0, float(value))
-    except ValueError:
-        pass
-    try:
-        retry_at = parsedate_to_datetime(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if retry_at.tzinfo is None:
-        retry_at = retry_at.replace(tzinfo=timezone.utc)
-    return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+    return cast(
+        httpx.ReadTimeout | httpx.ConnectTimeout | None,
+        find_http_exception(error, (httpx.ReadTimeout, httpx.ConnectTimeout)),
+    )
 
 
 def _qa_call_with_retry(
@@ -1292,39 +1268,8 @@ def _qa_call_with_retry(
     *,
     max_attempts: int = QA_MAX_ATTEMPTS,
 ) -> _T:
-    """Retry one reader/judge call on read/connect timeout, HTTP 429, and 5xx."""
-    if max_attempts < 1:
-        raise ValueError("max_attempts must be at least 1")
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return call()
-        except Exception as error:
-            http_error = _find_http_status_error(error)
-            status = http_error.response.status_code if http_error is not None else None
-            retryable_status = status == 429 or (status is not None and status >= 500)
-            timeout_error: httpx.ReadTimeout | httpx.ConnectTimeout | None = None
-            if http_error is not None:
-                if not retryable_status:
-                    raise
-            else:
-                timeout_error = _find_qa_timeout(error)
-                if timeout_error is None:
-                    raise
-            if attempt == max_attempts:
-                raise
-            retry_after = None
-            if retryable_status and http_error is not None:
-                header = http_error.response.headers.get("Retry-After")
-                if header is not None:
-                    retry_after = _retry_after_seconds(header)
-            delay = retry_after if retry_after is not None else 2.0 * (2 ** (attempt - 1))
-            error_label = f"HTTP {status}" if retryable_status else type(timeout_error).__name__
-            print(
-                f"QA {error_label} retry {attempt + 1}/{max_attempts} in {delay:g}s",
-                flush=True,
-            )
-            time.sleep(delay)
-    raise RuntimeError("unreachable")
+    """Retry one reader/judge call through the shared HTTP policy."""
+    return qa_call_with_retry(call, max_attempts=max_attempts, sleep=time.sleep)
 
 
 def _case_error_type(error: BaseException) -> str:
@@ -1355,489 +1300,7 @@ def _result_error_type(result: Mapping[str, Any]) -> str | None:
 
 
 def _qa_model() -> str:
-    return os.environ.get("HL_MEM_EVAL_QA_MODEL") or QA_MODEL
-
-
-def _qa_dashscope_chat(
-    api_key: str,
-    base_url: str,
-    model: str,
-    system_prompt: str,
-    user_prompt: str,
-    *,
-    temperature: float = 0.1,
-) -> tuple[str, int]:
-    """Call a DashScope-compatible chat completion without structured output."""
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": temperature,
-        "max_tokens": 512,
-    }
-    with httpx.Client(timeout=60.0) as client:
-        response = client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-
-    answer_text = ""
-    choices = data.get("choices") or []
-    if choices:
-        answer_text = (choices[0].get("message") or {}).get("content") or ""
-    total_tokens = (data.get("usage") or {}).get("total_tokens", 0)
-    return str(answer_text), int(total_tokens)
-
-
-def _truncate_reader_text(value: object, token_limit: int) -> str:
-    """Render one reader field within a deterministic approximate token cap."""
-    if isinstance(value, str):
-        text = value
-    else:
-        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    if estimate_tokens(text) <= token_limit:
-        return text
-    marker = "\n[truncated]"
-    char_limit = max(0, token_limit * 2 - len(marker) - 2)
-    return f"{text[:char_limit]}{marker}"
-
-
-def _reader_claim_records(retrieved: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for item in retrieved:
-        evidence_ids = [str(event_id) for event_id in item.get("evidence_event_ids") or []]
-        records.append(
-            {
-                "rank": item.get("rank"),
-                "claim_id": item.get("claim_id"),
-                "claim": _truncate_reader_text(item.get("text") or "", QA_CLAIM_FIELD_TOKEN_LIMIT),
-                "value": (
-                    _truncate_reader_text(item.get("value"), QA_CLAIM_FIELD_TOKEN_LIMIT)
-                    if item.get("value") is not None
-                    else None
-                ),
-                "status": item.get("status"),
-                "valid_from": item.get("valid_from"),
-                "valid_to": item.get("valid_to"),
-                "recorded_from": item.get("recorded_from"),
-                "recorded_to": item.get("recorded_to"),
-                "occurred_start": item.get("occurred_start"),
-                "occurred_end": item.get("occurred_end"),
-                "evidence_event_ids": list(dict.fromkeys(evidence_ids)),
-            }
-        )
-    return records
-
-
-def _ordered_evidence_ids(retrieved: Sequence[Mapping[str, Any]]) -> list[str]:
-    return list(
-        dict.fromkeys(
-            str(event_id)
-            for item in retrieved
-            for event_id in item.get("evidence_event_ids") or []
-            if event_id is not None and str(event_id)
-        )
-    )
-
-
-def _event_content_text(content: object) -> str:
-    if isinstance(content, Mapping) and isinstance(content.get("text"), str):
-        return str(content["text"])
-    if isinstance(content, str):
-        return content
-    return json.dumps(content, ensure_ascii=False, separators=(",", ":"))
-
-
-def _reader_event_needles(
-    retrieved: Sequence[Mapping[str, Any]],
-) -> dict[str, tuple[tuple[str, float], ...]]:
-    by_event: dict[str, list[tuple[str, float]]] = defaultdict(list)
-    for item in retrieved:
-        values = ((item.get("value"), 3.0), (item.get("text") or item.get("claim"), 2.0))
-        for event_id in item.get("evidence_event_ids") or []:
-            key = str(event_id)
-            for value, weight in values:
-                text = str(value or "").strip()
-                if text and (text, weight) not in by_event[key]:
-                    by_event[key].append((text, weight))
-    return {event_id: tuple(needles) for event_id, needles in by_event.items()}
-
-
-def _reader_match_text(value: object) -> str:
-    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
-    return " ".join(re.findall(r"[^\W_]+", normalized, flags=re.UNICODE))
-
-
-def _reader_match_units(value: object) -> set[str]:
-    normalized = _reader_match_text(value)
-    units = {token for token in normalized.split() if len(token) >= 2 and not re.fullmatch(r"[\u3400-\u9fff]+", token)}
-    cjk = "".join(re.findall(r"[\u3400-\u9fff]", normalized))
-    if len(cjk) == 1:
-        units.add(cjk)
-    else:
-        units.update(cjk[index : index + 2] for index in range(len(cjk) - 1))
-    return units
-
-
-def _reader_match_score(candidate: object, needle: object) -> float:
-    candidate_text = _reader_match_text(candidate)
-    needle_text = _reader_match_text(needle)
-    if not candidate_text or not needle_text:
-        return 0.0
-    substring_score = 3.0 if needle_text in candidate_text else 0.0
-    if not substring_score and len(candidate_text) >= 6 and candidate_text in needle_text:
-        substring_score = 1.5
-    candidate_units = _reader_match_units(candidate_text)
-    needle_units = _reader_match_units(needle_text)
-    coverage = len(candidate_units & needle_units) / len(needle_units) if needle_units else 0.0
-    similarity = SequenceMatcher(None, candidate_text, needle_text, autojunk=False).ratio()
-    return substring_score + 2.0 * coverage + similarity
-
-
-def _reader_turn_score(
-    content: str,
-    question: str,
-    needles: Sequence[tuple[str, float]],
-) -> float:
-    claim_score = max((weight * _reader_match_score(content, needle) for needle, weight in needles), default=0.0)
-    return claim_score + 0.5 * _reader_match_score(content, question)
-
-
-def _reader_focus_index(content: str, needles: Sequence[tuple[str, float]]) -> int:
-    folded = unicodedata.normalize("NFKC", content).casefold()
-    candidates: list[tuple[int, str]] = []
-    for needle, weight in needles:
-        needle_folded = unicodedata.normalize("NFKC", needle).casefold().strip()
-        if needle_folded:
-            candidates.append((round(weight * len(needle_folded)), needle_folded))
-        candidates.extend((round(weight * len(unit)), unit) for unit in _reader_match_units(needle))
-    for _, token in sorted(candidates, reverse=True):
-        index = folded.find(token)
-        if index >= 0:
-            return index + len(token) // 2
-    return 0
-
-
-def _reader_turn_excerpt(
-    content: str,
-    token_limit: int,
-    needles: Sequence[tuple[str, float]] = (),
-) -> str:
-    if estimate_tokens(content) <= token_limit:
-        return content
-    leading_marker = "[earlier text omitted]\n"
-    trailing_marker = "\n[later text omitted]"
-    char_limit = max(1, token_limit * 2 - len(leading_marker) - len(trailing_marker) - 4)
-    focus = _reader_focus_index(content, needles)
-    start = max(0, min(focus - char_limit // 2, len(content) - char_limit))
-    end = min(len(content), start + char_limit)
-    return (leading_marker if start else "") + content[start:end] + (trailing_marker if end < len(content) else "")
-
-
-def _reader_messages(content: object) -> list[dict[str, str]]:
-    if not isinstance(content, Mapping):
-        return []
-    raw_messages = content.get("messages")
-    if isinstance(raw_messages, (str, bytes)) or not isinstance(raw_messages, Sequence):
-        return []
-    messages: list[dict[str, str]] = []
-    for item in raw_messages:
-        if not isinstance(item, Mapping):
-            continue
-        messages.append(
-            {
-                "role": _normalize_role(item.get("role") or item.get("speaker")),
-                "content": _normalize_content(item.get("content") or item.get("text") or ""),
-            }
-        )
-    return messages
-
-
-def _reader_turn_window(
-    messages: Sequence[Mapping[str, str]],
-    question: str,
-    needles: Sequence[tuple[str, float]],
-) -> tuple[str, dict[str, Any]]:
-    scores = [_reader_turn_score(str(message.get("content") or ""), question, needles) for message in messages]
-    matched_turn = max(range(len(messages)), key=lambda index: scores[index])
-    start = max(0, matched_turn - QA_EVIDENCE_TURN_RADIUS)
-    end = min(len(messages), matched_turn + QA_EVIDENCE_TURN_RADIUS + 1)
-    included_turns = list(range(start, end))
-    matched = messages[matched_turn]
-    focus_needles = list(needles)
-    if question.strip():
-        focus_needles.append((question, 0.5))
-    parts = [
-        f"[matched turn {matched_turn} {matched.get('role') or 'user'}]\n"
-        + _reader_turn_excerpt(
-            str(matched.get("content") or ""),
-            QA_MATCHED_TURN_TOKEN_LIMIT,
-            focus_needles,
-        )
-    ]
-    for index in included_turns:
-        if index == matched_turn:
-            continue
-        message = messages[index]
-        relation = "previous" if index < matched_turn else "next"
-        parts.append(
-            f"[{relation} turn {index} {message.get('role') or 'user'}]\n"
-            + _reader_turn_excerpt(str(message.get("content") or ""), QA_ADJACENT_TURN_TOKEN_LIMIT)
-        )
-    return "\n\n".join(parts), {
-        "mode": "windowed",
-        "matched_turn": matched_turn,
-        "included_turns": included_turns,
-        "total_turns": len(messages),
-        "match_score": round(scores[matched_turn], 6),
-    }
-
-
-def _load_reader_events(
-    connection: Any,
-    event_ids: Sequence[str],
-    *,
-    question: str = "",
-    event_needles: Mapping[str, Sequence[tuple[str, float]]] | None = None,
-    context_mode: str = DEFAULT_READER_CONTEXT_MODE,
-) -> list[dict[str, Any]]:
-    """Batch-load ranked evidence events without expanding beyond each linked event."""
-    if context_mode not in READER_CONTEXT_MODES:
-        raise ValueError(f"unsupported reader context mode: {context_mode!r}")
-    if connection is None or not event_ids:
-        return []
-    placeholders = ",".join("?" for _ in event_ids)
-    rows = connection.execute(
-        "SELECT id,content_json,occurred_at,recorded_at,event_type,actor_type,source_uri "
-        f"FROM events WHERE id IN ({placeholders})",
-        tuple(event_ids),
-    ).fetchall()
-    by_id = {str(row["id"]): row for row in rows}
-    events: list[dict[str, Any]] = []
-    for event_id in event_ids:
-        row = by_id.get(event_id)
-        if row is None:
-            continue
-        try:
-            content = json.loads(row["content_json"])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            content = str(row["content_json"] or "")
-        locator = content.get("benchmark_locator") if isinstance(content, Mapping) else None
-        session_id = locator.get("session_id") if isinstance(locator, Mapping) else None
-        event = {
-            "event_id": event_id,
-            "occurred_at": row["occurred_at"],
-            "recorded_at": row["recorded_at"],
-            "event_type": row["event_type"],
-            "actor_type": row["actor_type"],
-            "session_id": session_id,
-            "source_uri": row["source_uri"],
-            "content": _event_content_text(content),
-        }
-        messages = _reader_messages(content)
-        if context_mode == "windowed" and messages:
-            window_content, window = _reader_turn_window(
-                messages,
-                question,
-                tuple((event_needles or {}).get(event_id, ())),
-            )
-            event["content"] = window_content
-            event["window"] = window
-        events.append(event)
-    return events
-
-
-def _render_reader_user_prompt(
-    case: LongMemEvalCase,
-    claims: Sequence[Mapping[str, Any]],
-    events: Sequence[Mapping[str, Any]],
-    context_mode: str = DEFAULT_READER_CONTEXT_MODE,
-) -> str:
-    current_date = case.question_at or datetime.now(timezone.utc).isoformat()
-    claims_json = json.dumps(claims, ensure_ascii=False, separators=(",", ":"))
-    events_json = json.dumps(events, ensure_ascii=False, separators=(",", ":"))
-    return (
-        f"Current Date: {current_date}\n"
-        f"Question Type: {case.question_type}\n\n"
-        f"Reader Context Mode: {context_mode}\n\n"
-        f"Memory Claims:\n{claims_json or '[]'}\n\n"
-        f"Original Evidence Events:\n{events_json or '[]'}\n\n"
-        f"Question: {case.question}"
-    )
-
-
-def _fit_reader_claim(
-    case: LongMemEvalCase,
-    accepted_claims: Sequence[Mapping[str, Any]],
-    claim: Mapping[str, Any],
-    context_mode: str,
-) -> dict[str, Any] | None:
-    evidence_ids = [str(event_id) for event_id in claim.get("evidence_event_ids") or []]
-    low = 0
-    high = len(evidence_ids)
-    best: dict[str, Any] | None = None
-    while low <= high:
-        count = (low + high) // 2
-        candidate = {**claim, "evidence_event_ids": evidence_ids[:count]}
-        omitted = len(evidence_ids) - count
-        if omitted:
-            candidate["evidence_event_ids_omitted"] = omitted
-        prompt = _render_reader_user_prompt(case, [*accepted_claims, candidate], [], context_mode)
-        if estimate_tokens(prompt) <= QA_CLAIMS_TOKEN_BUDGET:
-            best = candidate
-            low = count + 1
-        else:
-            high = count - 1
-    return best
-
-
-def _fit_reader_claims(
-    case: LongMemEvalCase,
-    claims: Sequence[Mapping[str, Any]],
-    context_mode: str,
-) -> list[dict[str, Any]]:
-    accepted: list[dict[str, Any]] = []
-    for claim in claims:
-        fitted = _fit_reader_claim(case, accepted, claim, context_mode)
-        if fitted is None:
-            break
-        accepted.append(fitted)
-    return accepted
-
-
-def _fit_reader_event(
-    case: LongMemEvalCase,
-    claims: Sequence[Mapping[str, Any]],
-    accepted_events: Sequence[Mapping[str, Any]],
-    event: Mapping[str, Any],
-    context_mode: str = DEFAULT_READER_CONTEXT_MODE,
-) -> dict[str, Any] | None:
-    original = str(event.get("content") or "")
-    max_chars = min(len(original), QA_EVIDENCE_EVENT_TOKEN_LIMIT * 2)
-    low = 0
-    high = max_chars
-    best: dict[str, Any] | None = None
-    while low <= high:
-        length = (low + high) // 2
-        truncated = length < len(original)
-        content = original[:length] + ("\n[truncated]" if truncated else "")
-        candidate = {**event, "content": content}
-        serialized_event = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
-        prompt = _render_reader_user_prompt(case, claims, [*accepted_events, candidate], context_mode)
-        if (
-            estimate_tokens(serialized_event) <= QA_EVIDENCE_EVENT_TOKEN_LIMIT
-            and estimate_tokens(prompt) <= QA_CONTEXT_TOKEN_BUDGET
-        ):
-            best = candidate
-            low = length + 1
-        else:
-            high = length - 1
-    return best
-
-
-def _build_reader_user_prompt(
-    connection: Any,
-    case: LongMemEvalCase,
-    retrieved: Sequence[Mapping[str, Any]],
-    context_mode: str = DEFAULT_READER_CONTEXT_MODE,
-) -> str:
-    """Build time/source-aware reader context under a strict total budget."""
-    if context_mode not in READER_CONTEXT_MODES:
-        raise ValueError(f"unsupported reader context mode: {context_mode!r}")
-    claims = _fit_reader_claims(case, _reader_claim_records(retrieved), context_mode)
-    ranked_events = _load_reader_events(
-        connection,
-        _ordered_evidence_ids(claims),
-        question=case.question,
-        event_needles=_reader_event_needles(claims),
-        context_mode=context_mode,
-    )
-    accepted_events: list[dict[str, Any]] = []
-    for event in ranked_events:
-        fitted = _fit_reader_event(case, claims, accepted_events, event, context_mode)
-        if fitted is None:
-            break
-        accepted_events.append(fitted)
-    prompt = _render_reader_user_prompt(case, claims, accepted_events, context_mode)
-    if estimate_tokens(prompt) > QA_CONTEXT_TOKEN_BUDGET:
-        raise RuntimeError("reader context budget invariant violated")
-    return prompt
-
-
-def _longmemeval_judge_prompts(
-    *,
-    case_id: str,
-    question_type: str,
-    question: str,
-    answer: str,
-    predicted_answer: str,
-) -> tuple[str, str]:
-    """Build an official-compatible LongMemEval judge prompt for one case."""
-    normalized_type = question_type.casefold()
-    abstention = "_abs" in case_id.casefold() or normalized_type == "abstention"
-    system_prompt = (
-        "You are an official-style LongMemEval answer judge. Decide whether the model response contains the "
-        "substantive correct answer under the supplied question-type rule. Allow paraphrases and extra information. "
-        "Return only a JSON object in the form "
-        '{"correct": true, "reason": "brief explanation"}. '
-        "The correct field must be the JSON boolean true or false. Do not use Markdown."
-    )
-    if abstention:
-        rule = (
-            "This is an unanswerable question. Mark correct when the model correctly identifies it as unanswerable, "
-            "including responses that say the available information is incomplete or does not contain the requested "
-            "fact. The reference answer is an explanation of why the question cannot be answered, not a fact the model "
-            "must repeat verbatim."
-        )
-        answer_label = "Unanswerability explanation"
-    elif normalized_type in {"single-session-user", "single-session-assistant", "multi-session"}:
-        rule = (
-            "Mark correct if the response contains the substantive correct answer, is equivalent to it, or contains all "
-            "the intermediate steps needed to obtain it. Extra information is allowed unless it clearly contradicts the "
-            "correct answer. A concise response that states the core requested fact remains correct when it omits a "
-            "nonessential qualifier; for example, '45 minutes' contains the core answer in '45 minutes each way'. "
-            "Only mark incorrect when the response clearly contradicts the answer or contains merely a subset of multiple "
-            "facts that the question necessarily requires."
-        )
-        answer_label = "Correct answer"
-    elif normalized_type == "temporal-reasoning":
-        rule = (
-            "Apply the general contains-or-equivalent rule. Extra information is allowed unless contradictory. For a "
-            "requested number of days, weeks, months, or another elapsed-time unit, do not penalize an off-by-one error. "
-            "Only mark incorrect for a clear contradiction or omission of essential required information."
-        )
-        answer_label = "Correct answer"
-    elif normalized_type == "knowledge-update":
-        rule = (
-            "Mark correct if the response contains the updated answer. The response may also mention previous information "
-            "or the old value and remains correct as long as the required updated answer is present. Extra information is "
-            "allowed unless it clearly contradicts which value is current."
-        )
-        answer_label = "Updated correct answer"
-    elif normalized_type == "single-session-preference":
-        rule = (
-            "The reference is a rubric for a desired personalized response. The model does not need to cover every rubric "
-            "point. Mark correct when it correctly recalls and uses the user's personal information in a response that "
-            "satisfies the request; mark incorrect for misuse, contradiction, or no meaningful personalization."
-        )
-        answer_label = "Personalization rubric"
-    else:
-        raise ValueError(f"unsupported LongMemEval question_type: {question_type!r}")
-    user_prompt = (
-        f"Question type: {question_type}\n"
-        f"Evaluation rule: {rule}\n\n"
-        f"Question: {question}\n\n"
-        f"{answer_label}: {answer}\n\n"
-        f"Model response: {predicted_answer}\n\n"
-        "Is the model response correct under the evaluation rule?"
-    )
-    return system_prompt, user_prompt
+    return qa_model(QA_MODEL)
 
 
 def _judge_longmemeval_answer(
@@ -1851,28 +1314,19 @@ def _judge_longmemeval_answer(
     answer: str,
     predicted_answer: str,
 ) -> tuple[dict[str, Any], int]:
-    """Judge one existing LongMemEval answer with retry and response validation."""
-    system_prompt, user_prompt = _longmemeval_judge_prompts(
+    return _judge_longmemeval_answer_impl(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
         case_id=case_id,
         question_type=question_type,
         question=question,
         answer=answer,
         predicted_answer=predicted_answer,
+        call_with_retry=_qa_call_with_retry,
+        chat=_qa_dashscope_chat,
+        decode_response=_response_object,
     )
-    judge_text, judge_tokens = _qa_call_with_retry(
-        lambda: _qa_dashscope_chat(
-            api_key,
-            base_url,
-            model,
-            system_prompt,
-            user_prompt,
-            temperature=0.0,
-        )
-    )
-    judgment = _response_object(judge_text)
-    if not isinstance(judgment.get("correct"), bool):
-        raise ValueError("judge response is missing boolean 'correct'")
-    return judgment, judge_tokens
 
 
 def _run_qa(

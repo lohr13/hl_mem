@@ -7,7 +7,7 @@ import re
 import unicodedata
 from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, Literal
 
 from hl_mem.domain.claims.attributes import MUTUALLY_EXCLUSIVE_SLOTS
 
@@ -81,6 +81,7 @@ class AdmissionDecision:
 
     accepted: bool
     reason: str
+    memory_layer: Literal["durable", "episodic"] = "durable"
 
 
 def _normalized_evidence(value: Any) -> str:
@@ -204,7 +205,7 @@ def admit_claim(candidate: MemoryCandidate, source_text: str) -> AdmissionDecisi
     if low_value_reason(candidate.value) is not None:
         return AdmissionDecision(False, "low_value")
     if candidate.notability == "low" and candidate.kind in EPISODIC_KINDS:
-        return AdmissionDecision(True, "accepted_episodic")
+        return AdmissionDecision(True, "accepted_episodic", "episodic")
     return AdmissionDecision(True, "accepted")
 
 

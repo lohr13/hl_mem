@@ -51,6 +51,19 @@ class AdmissionPolicyTest(unittest.TestCase):
 
         self.assertTrue(decision.accepted)
         self.assertEqual(decision.reason, "accepted")
+        self.assertEqual(decision.memory_layer, "durable")
+
+    def test_low_notability_fact_and_plan_are_explicitly_episodic(self) -> None:
+        for kind in ("fact", "plan"):
+            with self.subTest(kind=kind):
+                decision = admit_claim(
+                    _candidate(kind=kind, notability="low"),
+                    "hl_mem 使用 SQLite WAL 模式",
+                )
+
+                self.assertTrue(decision.accepted)
+                self.assertEqual(decision.reason, "accepted_episodic")
+                self.assertEqual(decision.memory_layer, "episodic")
 
     def test_accepts_low_notability_with_evidence_and_rejects_unlocatable_evidence(self) -> None:
         self.assertEqual(

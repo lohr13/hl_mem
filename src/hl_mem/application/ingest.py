@@ -72,6 +72,23 @@ class StoreClaimResult:
     reason: str
 
 
+def _episodic_retention_anchor(
+    recorded_from: str,
+    *,
+    is_plan: bool,
+    occurred_start: str | None,
+    occurred_end: str | None,
+) -> str:
+    """Anchor facts at ingestion and plans after their latest known occurrence boundary."""
+    if not is_plan:
+        return recorded_from
+    anchors = [recorded_from]
+    for field_name, value in (("occurred_start", occurred_start), ("occurred_end", occurred_end)):
+        if value:
+            anchors.append(normalize_utc_iso(value, field_name))
+    return max(anchors, key=lambda value: datetime.fromisoformat(value.replace("Z", "+00:00")))
+
+
 def new_id() -> str:
     """生成无分隔符的随机标识。"""
     return uuid.uuid4().hex
@@ -600,7 +617,16 @@ def _build_claim_drafts(
         return StoreClaimResult(None, "skipped", "importance_below_write_floor")
     observed_at = normalize_utc_iso(str(event.get("occurred_at", now)), "observed_at")
     recorded_from = normalize_utc_iso(now, "recorded_from")
-    retention_anchor = recorded_from if extracted.reason == "accepted_episodic" else observed_at
+    memory_layer = getattr(extracted, "memory_layer", "durable")
+    if memory_layer == "episodic":
+        retention_anchor = _episodic_retention_anchor(
+            recorded_from,
+            is_plan=canonical_attribute.startswith("plan.") or predicate == "计划",
+            occurred_start=getattr(extracted, "occurred_start", None),
+            occurred_end=getattr(extracted, "occurred_end", None),
+        )
+    else:
+        retention_anchor = observed_at
     expires_at, _expiration_reason = compute_expiration(
         scope=scope,
         importance=importance,

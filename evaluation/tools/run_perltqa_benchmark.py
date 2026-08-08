@@ -157,8 +157,11 @@ def _build_and_insert_claims(
         }
 
         # Build index_text for FTS + use as embedding source
-        claim["index_text"] = build_index_text({**claim, "topic_tags": [claim_spec.category, "perltqa"]})
-        claim["embedding_dense"] = embedder.embed_one(claim_text)
+        claim["index_text"] = build_index_text(
+            {**claim, "topic_tags": [claim_spec.category, "perltqa"]},
+            mode=settings.index_text_mode,
+        )
+        claim["embedding_dense"] = embedder.embed_one(claim["index_text"])
 
         # Insert directly via repository (handles FTS v2 + encoding)
         repo.insert_claim(claim, commit=True)

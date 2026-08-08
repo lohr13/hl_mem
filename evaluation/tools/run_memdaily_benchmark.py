@@ -312,12 +312,84 @@ def _case_fingerprint(traj: MemDailyTrajectory) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _entity_alias_file_identity(path_value: str | None) -> dict[str, str | None] | None:
+    if path_value is None:
+        return None
+    path = Path(path_value).expanduser()
+    resolved = str(path.resolve(strict=False))
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as error:
+        return {"path": resolved, "sha256": None, "error": type(error).__name__}
+    return {"path": resolved, "sha256": digest, "error": None}
+
+
+def _ingest_config_identity(settings: Settings) -> dict[str, Any]:
+    """Return all settings that can change make_extractor/store_extracted results."""
+    retention = dataclasses.asdict(settings.retention_policy())
+    retention["short_ttl_slots"] = sorted(retention["short_ttl_slots"])
+    return {
+        "extractor": {
+            "mode": settings.extractor_mode,
+            "version": LLM_EXTRACTOR_VERSION,
+            "provider": settings.llm_provider,
+            "base_url": settings.llm_base_url,
+            "model": settings.llm_model,
+            "structured_mode": settings.llm_structured_mode,
+            "thinking": settings.enable_llm_thinking,
+            "schema_retries": settings.llm_schema_retries,
+            "timeout": settings.llm_timeout,
+            "max_attempts": settings.llm_max_attempts,
+            "verification_mode": settings.verification_mode,
+            "chunk_target_chars": settings.extraction_chunk_target_chars,
+            "chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
+            "max_split_depth": settings.extraction_max_split_depth,
+        },
+        "embedding": {
+            "mode": settings.embedder_mode,
+            "base_url": settings.embedding_base_url,
+            "model": settings.embedding_model,
+            "dim": settings.embedding_dim,
+            "api_mode": settings.embedding_api_mode,
+            "text_type": settings.embedding_text_type,
+            "connect_timeout": settings.embedding_connect_timeout,
+            "read_timeout": settings.embedding_read_timeout,
+            "max_attempts": settings.embedding_max_attempts,
+        },
+        "index": {
+            "text_mode": settings.index_text_mode,
+            "text_version": settings.index_text_version,
+        },
+        "retention": retention,
+        "entity_alias_file": _entity_alias_file_identity(settings.entity_aliases_path),
+        "relation_discovery": {
+            "mode": settings.relation_discovery_mode,
+            "pool_limit": settings.relation_discovery_pool_limit,
+            "max_proposals": settings.relation_discovery_max_proposals,
+            "auto_apply_confidence": settings.relation_auto_apply_confidence,
+            "conflict_confidence": settings.relation_conflict_confidence,
+        },
+    }
+
+
+def ingest_config_fingerprint(settings: Settings) -> str:
+    """Hash every production ingest input used by the MemDaily cache."""
+    canonical = json.dumps(
+        _ingest_config_identity(settings),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _cache_identity(traj: MemDailyTrajectory, settings: Settings) -> dict[str, Any]:
     """Return every ingest input that must match before a case DB is reusable."""
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "case_id": traj.case_id,
         "case_fingerprint": _case_fingerprint(traj),
+        "ingest_config_fingerprint": ingest_config_fingerprint(settings),
         "extractor_model": settings.llm_model,
         "extractor_version": LLM_EXTRACTOR_VERSION,
         "embedding_model": settings.embedding_model,
@@ -373,6 +445,13 @@ def _remove_db_artifacts(db_path: Path) -> None:
     ):
         if p.resolve().is_relative_to(root):
             p.unlink(missing_ok=True)
+
+
+def _print_stale_cache_reason(traj: MemDailyTrajectory, db_path: Path, reason: str | None) -> None:
+    print(
+        f"{traj.case_id}: --skip-ingest cache stale reason={reason or 'unknown'}; " f"removing {db_path}",
+        flush=True,
+    )
 
 
 def _ingest_trajectory(
@@ -756,11 +835,14 @@ def _run_case(
         DATABASE_ROOT.mkdir(parents=True, exist_ok=True)
         reuse_cache = False
         cache_reason: str | None = None
+        existing_database = db_path.is_file()
         if skip_ingest and db_path.is_file():
             reuse_cache, cache_reason = _validate_cached_ingest(manifest_path, traj, settings)
         elif skip_ingest:
             cache_reason = "database_missing"
         if not reuse_cache:
+            if skip_ingest and existing_database:
+                _print_stale_cache_reason(traj, db_path, cache_reason)
             _remove_db_artifacts(db_path)
 
         database = Database(db_path, settings=settings)
@@ -777,6 +859,7 @@ def _run_case(
                 cache_reason = database_reason
                 database.close()
                 database = None
+                _print_stale_cache_reason(traj, db_path, cache_reason)
                 _remove_db_artifacts(db_path)
                 database = Database(db_path, settings=settings)
                 connection = database.open()

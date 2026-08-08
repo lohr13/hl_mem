@@ -1,5 +1,32 @@
 # HL-Mem 变更记录
 
+## v0.24.1（2026-08-09）
+
+### Migration 038 完整性
+
+- 补全 persona subject 数据迁移：同步规范化 `entities_json` 中的明确 persona，重算 fact/conflict/index 派生身份，并清空受影响 Claim 的 dense/sparse embedding 及模型、维度元数据。
+- 受影响 Claim 显式写入 `claim_vector_dirty`，sqlite-vec 投影不会继续保留旧 subject/index 语义；升级后必须先执行 `hlmem backfill-index-text --mode <当前 index.text_mode> --dry-run`，确认范围后再去掉 `--dry-run` 完成 embedding 回填。
+- 迁移结束时报告同 namespace 的 active 精确重复组与 conflict-key 冲突组，不自动合并或删除 Claim。
+- 数据迁移版本升级为 `038_data_subject_canonicalization_v2`，已运行早期 v1 回填的数据库也会重新失效相关派生数据。
+
+### 摄入、评测与时间语义
+
+- Admission/ExtractedClaim 新增向后兼容的显式 `memory_layer`；episodic fact 从摄入时间计算短 TTL，episodic plan 从 `max(recorded_from, occurred_end, occurred_start)` 计算 grace，TTL 不再依赖 `reason` 文本。
+- MemDaily 缓存指纹覆盖提取 provider/结构化模式、chunk/verification、retention/write floor、外部实体别名文件摘要、索引/embedding 与关系发现配置；`--skip-ingest` 删除 stale 库前打印原因。
+- PerLTQA 直接写入使用生产 `index_text_mode`，并对最终 index text 而非原始 claim 文本生成 embedding。
+- 时间解析完整消费显式 `Z`/UTC offset；无范围的多日期 evidence 必须由 claim value 唯一定位，否则拒绝推断。
+
+### LongMemEval 与共享重试
+
+- LongMemEval runner 拆出 reader context、QA client 与 judge 模块，CLI、参数、报告字段及 runner 兼容导出保持不变。
+- windowed reader 在单个 session 中选择最多三个高分、互不重叠的 turn 窗口，并在原有总 token 预算内合并相距较远的证据。
+- QA reader/judge 复用增强后的 `http_utils.retry_http`，保留嵌套异常链、HTTP 429/5xx、Read/Connect timeout、指数退避和 `Retry-After` 能力。
+
+### 升级注意
+
+- SQL schema 仍为 38 个不可变 migration（001-038），没有新增 SQL migration。
+- ⚠️ 038 Python data migration 会在 `BEGIN IMMEDIATE` 中全表扫描 `claims` 并在处理期间持有写锁。大库应先备份、在维护窗口升级并预留完整扫描时间；升级完成后按上述命令显式回填 embedding。
+
 ## v0.24.0（2026-08-07）
 
 ### 向量检索与性能
