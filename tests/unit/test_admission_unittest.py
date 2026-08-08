@@ -291,7 +291,7 @@ class CompactExtractionTest(unittest.TestCase):
         )
 
         self.assertEqual(claims[0].occurred_start, "2026-08-20T00:00:00+08:00")
-        self.assertEqual(claims[0].occurred_end, "2026-08-21T00:00:00+08:00")
+        self.assertEqual(claims[0].occurred_end, "2026-08-22T00:00:00+08:00")
 
     def test_nonempty_claims_override_should_memorize_false(self) -> None:
         response = {
@@ -335,6 +335,7 @@ class CompactExtractionTest(unittest.TestCase):
         )
 
         self.assertEqual(claims[0].occurred_start, "2026-08-07T00:00:00+08:00")
+        self.assertEqual(claims[0].occurred_end, "2026-08-08T00:00:00+08:00")
 
     def test_compact_extracts_adjacent_technology_entity(self) -> None:
         value = "hl_mem使用PostgreSQL数据库"

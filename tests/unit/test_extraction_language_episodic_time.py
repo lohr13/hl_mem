@@ -231,22 +231,82 @@ class RelativeOccurrenceTest(unittest.TestCase):
         )[0]
 
         self.assertEqual(claim.occurred_start, "2026-08-07T00:00:00+08:00")
+        self.assertEqual(claim.occurred_end, "2026-08-08T00:00:00+08:00")
 
     def test_parses_english_chinese_and_mixed_relative_dates_from_event_time(self) -> None:
         base = "2026-08-08T18:30:00+08:00"
         cases = (
-            ("I finished it yesterday", "2026-08-07T00:00:00+08:00"),
-            ("I bought it last week", "2026-08-01T00:00:00+08:00"),
-            ("I moved three months ago", "2026-05-08T00:00:00+08:00"),
-            ("Let's meet next Friday", "2026-08-14T00:00:00+08:00"),
-            ("I called them last Friday", "2026-08-07T00:00:00+08:00"),
-            ("这是我三个月前买的", "2026-05-08T00:00:00+08:00"),
-            ("昨天 I spent four hours on it", "2026-08-07T00:00:00+08:00"),
+            (
+                "I finished it yesterday",
+                ("2026-08-07T00:00:00+08:00", "2026-08-08T00:00:00+08:00"),
+            ),
+            (
+                "I moved three months ago",
+                ("2026-05-08T00:00:00+08:00", "2026-05-09T00:00:00+08:00"),
+            ),
+            (
+                "Let's meet next Friday",
+                ("2026-08-14T00:00:00+08:00", "2026-08-15T00:00:00+08:00"),
+            ),
+            (
+                "I called them last Friday",
+                ("2026-08-07T00:00:00+08:00", "2026-08-08T00:00:00+08:00"),
+            ),
+            (
+                "这是我三个月前买的",
+                ("2026-05-08T00:00:00+08:00", "2026-05-09T00:00:00+08:00"),
+            ),
+            (
+                "昨天 I spent four hours on it",
+                ("2026-08-07T00:00:00+08:00", "2026-08-08T00:00:00+08:00"),
+            ),
         )
 
         for text, expected in cases:
             with self.subTest(text=text):
-                self.assertEqual(infer_occurrence(text, base), (expected, None))
+                self.assertEqual(infer_occurrence(text, base), expected)
+
+    def test_week_phrases_are_monday_bounded_intervals(self) -> None:
+        base = "2026-08-08T18:30:00+08:00"
+        cases = (
+            ("last week", ("2026-07-27T00:00:00+08:00", "2026-08-03T00:00:00+08:00")),
+            ("this week", ("2026-08-03T00:00:00+08:00", "2026-08-10T00:00:00+08:00")),
+            ("next week", ("2026-08-10T00:00:00+08:00", "2026-08-17T00:00:00+08:00")),
+            ("上周", ("2026-07-27T00:00:00+08:00", "2026-08-03T00:00:00+08:00")),
+        )
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(infer_occurrence(text, base), expected)
+
+    def test_parses_english_absolute_dates_at_date_precision(self) -> None:
+        base = "2026-08-08T18:30:00-05:00"
+        cases = (
+            ("May 20, 2023", ("2023-05-20T00:00:00-05:00", "2023-05-21T00:00:00-05:00")),
+            ("February 15th", ("2026-02-15T00:00:00-05:00", "2026-02-16T00:00:00-05:00")),
+            ("3/15/2023", ("2023-03-15T00:00:00-05:00", "2023-03-16T00:00:00-05:00")),
+        )
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(infer_occurrence(text, base), expected)
+
+    def test_parses_explicit_relative_and_absolute_ranges(self) -> None:
+        base = "2026-08-08T18:30:00+08:00"
+        cases = (
+            (
+                "from last week to yesterday",
+                ("2026-07-27T00:00:00+08:00", "2026-08-08T00:00:00+08:00"),
+            ),
+            (
+                "between May 20, 2023 and May 22, 2023",
+                ("2023-05-20T00:00:00+08:00", "2023-05-23T00:00:00+08:00"),
+            ),
+        )
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(infer_occurrence(text, base), expected)
 
     def test_parses_absolute_date_range_without_using_relative_base(self) -> None:
         self.assertEqual(
@@ -254,18 +314,61 @@ class RelativeOccurrenceTest(unittest.TestCase):
                 "The workshop runs from 2026-08-20 to 2026-08-21",
                 "2026-01-01T00:00:00-05:00",
             ),
-            ("2026-08-20T00:00:00-05:00", "2026-08-21T00:00:00-05:00"),
+            ("2026-08-20T00:00:00-05:00", "2026-08-22T00:00:00-05:00"),
         )
 
-    def test_month_offsets_clamp_to_the_last_valid_day(self) -> None:
+    def test_month_end_leap_year_and_timezone_boundaries(self) -> None:
+        cases = (
+            (
+                "three months ago",
+                "2026-05-31T10:00:00+00:00",
+                ("2026-02-28T00:00:00+00:00", "2026-03-01T00:00:00+00:00"),
+            ),
+            (
+                "one month ago",
+                "2024-03-31T10:00:00+00:00",
+                ("2024-02-29T00:00:00+00:00", "2024-03-01T00:00:00+00:00"),
+            ),
+            (
+                "February 29th",
+                "2024-07-01T10:00:00+00:00",
+                ("2024-02-29T00:00:00+00:00", "2024-03-01T00:00:00+00:00"),
+            ),
+            (
+                "tomorrow",
+                "2026-12-31T23:30:00+14:00",
+                ("2027-01-01T00:00:00+14:00", "2027-01-02T00:00:00+14:00"),
+            ),
+        )
+
+        for text, base, expected in cases:
+            with self.subTest(text=text, base=base):
+                self.assertEqual(infer_occurrence(text, base), expected)
+
+    def test_multiple_unconnected_dates_do_not_create_a_false_range(self) -> None:
         self.assertEqual(
-            infer_occurrence("three months ago", "2026-05-31T10:00:00+00:00"),
-            ("2026-02-28T00:00:00+00:00", None),
+            infer_occurrence(
+                "The deadline was May 20, 2023; the report was revised June 1, 2023.",
+                "2026-08-08T18:30:00+08:00",
+            ),
+            ("2023-05-20T00:00:00+08:00", "2023-05-21T00:00:00+08:00"),
+        )
+
+    def test_explicit_datetime_keeps_point_precision(self) -> None:
+        self.assertEqual(
+            infer_occurrence("2026-08-20 14:30", "2026-08-08T18:30:00+08:00"),
+            ("2026-08-20T14:30:00+08:00", None),
         )
 
     def test_relative_dates_require_valid_event_time(self) -> None:
         self.assertEqual(infer_occurrence("yesterday", None), (None, None))
         self.assertEqual(infer_occurrence("yesterday", "not-a-time"), (None, None))
+        self.assertEqual(infer_occurrence("February 15th", None), (None, None))
+        self.assertEqual(infer_occurrence("February 29th", "2023-01-01T00:00:00+00:00"), (None, None))
+        self.assertEqual(
+            infer_occurrence("May 20, 2023", None),
+            ("2023-05-20T00:00:00+00:00", "2023-05-21T00:00:00+00:00"),
+        )
 
 
 class NaturalIndexDefaultTest(unittest.TestCase):

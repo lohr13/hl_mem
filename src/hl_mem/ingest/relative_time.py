@@ -4,12 +4,46 @@ from __future__ import annotations
 
 import calendar
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any
 
 _ABSOLUTE_DATE_RE = re.compile(
     r"(?P<year>\d{4})(?:-|/|年)(?P<month>\d{1,2})(?:-|/|月)(?P<day>\d{1,2})日?"
     r"(?:[ T](?P<hour>\d{1,2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?)?"
+)
+_EN_MONTHS = {
+    "january": 1,
+    "jan": 1,
+    "february": 2,
+    "feb": 2,
+    "march": 3,
+    "mar": 3,
+    "april": 4,
+    "apr": 4,
+    "may": 5,
+    "june": 6,
+    "jun": 6,
+    "july": 7,
+    "jul": 7,
+    "august": 8,
+    "aug": 8,
+    "september": 9,
+    "sept": 9,
+    "sep": 9,
+    "october": 10,
+    "oct": 10,
+    "november": 11,
+    "nov": 11,
+    "december": 12,
+    "dec": 12,
+}
+_EN_MONTH_DATE_RE = re.compile(
+    rf"(?i)\b(?P<month>{'|'.join(_EN_MONTHS)})\.?\s+"
+    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(?P<year>\d{4}))?\b"
+)
+_US_NUMERIC_DATE_RE = re.compile(
+    r"(?<!\d)(?P<month>\d{1,2})/(?P<day>\d{1,2})/(?P<year>\d{4})(?!\d)"
 )
 _FIXED_DAY_RE = re.compile(
     r"(?i)(?P<en>\b(?:the day before yesterday|day before yesterday|yesterday|today|tomorrow|"
@@ -28,9 +62,13 @@ _ZH_OFFSET_RE = re.compile(
 _EN_WEEK_RE = re.compile(r"(?i)\b(?P<direction>last|this|next)\s+week\b")
 _ZH_WEEK_RE = re.compile(r"(?P<direction>上|本|这|下)周(?![一二三四五六日天])")
 _EN_WEEKDAY_RE = re.compile(
-    r"(?i)\b(?P<direction>last|this|next)\s+" r"(?P<weekday>monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+    r"(?i)\b(?P<direction>last|this|next)\s+"
+    r"(?P<weekday>monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
 )
 _ZH_WEEKDAY_RE = re.compile(r"(?P<direction>上|本|这|下)周(?P<weekday>[一二三四五六日天])")
+_RANGE_LEAD_RE = re.compile(r"(?i)(?P<lead>\bfrom|\bbetween|从)\s*$")
+_DIRECT_RANGE_SEPARATOR_RE = re.compile(r"(?i)^\s*(?:to|through|until|至|到|[-–—])\s*$")
+_BETWEEN_SEPARATOR_RE = re.compile(r"(?i)^\s*(?:and|和|与|及|至|到)\s*$")
 
 _EN_NUMBERS = {
     "zero": 0,
@@ -102,11 +140,24 @@ _EN_WEEKDAYS = {
 _ZH_WEEKDAYS = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
 
 
+@dataclass(frozen=True)
+class _TemporalMatch:
+    """文本中的一个时间表达及其精度区间。"""
+
+    start: int
+    end: int
+    occurred_start: datetime
+    occurred_end: datetime | None
+
+
 def relative_time_rules_fingerprint() -> dict[str, Any]:
-    """返回影响相对时间后处理结果的稳定规则。"""
+    """返回影响时间后处理结果的稳定规则。"""
     return {
+        "revision": 2,
         "patterns": {
             "absolute": _ABSOLUTE_DATE_RE.pattern,
+            "english_month_date": _EN_MONTH_DATE_RE.pattern,
+            "us_numeric_date": _US_NUMERIC_DATE_RE.pattern,
             "fixed_day": _FIXED_DAY_RE.pattern,
             "english_offset": _EN_OFFSET_RE.pattern,
             "chinese_offset": _ZH_OFFSET_RE.pattern,
@@ -114,12 +165,18 @@ def relative_time_rules_fingerprint() -> dict[str, Any]:
             "chinese_week": _ZH_WEEK_RE.pattern,
             "english_weekday": _EN_WEEKDAY_RE.pattern,
             "chinese_weekday": _ZH_WEEKDAY_RE.pattern,
+            "range_lead": _RANGE_LEAD_RE.pattern,
+            "direct_range_separator": _DIRECT_RANGE_SEPARATOR_RE.pattern,
+            "between_separator": _BETWEEN_SEPARATOR_RE.pattern,
         },
+        "english_months": _EN_MONTHS,
         "english_numbers": _EN_NUMBERS,
         "chinese_digits": _ZH_DIGITS,
         "fixed_day_offsets": _FIXED_DAY_OFFSETS,
         "english_weekdays": _EN_WEEKDAYS,
         "chinese_weekdays": _ZH_WEEKDAYS,
+        "date_interval": "half_open_local_day",
+        "week_start": "monday",
     }
 
 
@@ -137,6 +194,11 @@ def _parse_base(value: str | None) -> datetime | None:
 
 def _start_of_day(value: datetime) -> datetime:
     return value.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _date_match(start: int, end: int, value: datetime) -> _TemporalMatch:
+    occurred_start = _start_of_day(value)
+    return _TemporalMatch(start, end, occurred_start, occurred_start + timedelta(days=1))
 
 
 def _english_number(value: str) -> int | None:
@@ -193,73 +255,140 @@ def _qualified_weekday(value: datetime, target: int, direction: str) -> datetime
     return value + timedelta(days=target - value.weekday())
 
 
-def _relative_candidates(text: str, base: datetime) -> list[tuple[int, datetime]]:
-    candidates: list[tuple[int, datetime]] = []
+def _week_match(start: int, end: int, base: datetime, offset: int) -> _TemporalMatch:
+    this_monday = _start_of_day(base) - timedelta(days=base.weekday())
+    occurred_start = this_monday + timedelta(weeks=offset)
+    return _TemporalMatch(start, end, occurred_start, occurred_start + timedelta(days=7))
+
+
+def _relative_matches(text: str, base: datetime) -> list[_TemporalMatch]:
+    matches: list[_TemporalMatch] = []
     for match in _FIXED_DAY_RE.finditer(text):
         phrase = (match.group("en") or match.group("zh")).casefold()
-        candidates.append((match.start(), base + timedelta(days=_FIXED_DAY_OFFSETS[phrase])))
+        matches.append(_date_match(match.start(), match.end(), base + timedelta(days=_FIXED_DAY_OFFSETS[phrase])))
     for match in _EN_OFFSET_RE.finditer(text):
         number_text = match.group("ago_number") or match.group("future_number")
         unit = match.group("ago_unit") or match.group("future_unit")
         amount = _english_number(number_text)
         if amount is not None:
-            candidates.append(
-                (match.start(), _apply_offset(base, -amount if match.group("ago_number") else amount, unit))
-            )
+            moment = _apply_offset(base, -amount if match.group("ago_number") else amount, unit)
+            matches.append(_date_match(match.start(), match.end(), moment))
     for match in _ZH_OFFSET_RE.finditer(text):
         amount = _chinese_number(match.group("number"))
         if amount is not None:
             direction = -1 if match.group("direction") == "前" else 1
-            candidates.append((match.start(), _apply_offset(base, amount * direction, match.group("unit"))))
+            moment = _apply_offset(base, amount * direction, match.group("unit"))
+            matches.append(_date_match(match.start(), match.end(), moment))
     for match in _EN_WEEK_RE.finditer(text):
-        days = {"last": -7, "this": 0, "next": 7}[match.group("direction").casefold()]
-        candidates.append((match.start(), base + timedelta(days=days)))
+        offset = {"last": -1, "this": 0, "next": 1}[match.group("direction").casefold()]
+        matches.append(_week_match(match.start(), match.end(), base, offset))
     for match in _ZH_WEEK_RE.finditer(text):
-        days = {"上": -7, "本": 0, "这": 0, "下": 7}[match.group("direction")]
-        candidates.append((match.start(), base + timedelta(days=days)))
+        offset = {"上": -1, "本": 0, "这": 0, "下": 1}[match.group("direction")]
+        matches.append(_week_match(match.start(), match.end(), base, offset))
     for match in _EN_WEEKDAY_RE.finditer(text):
         target = _EN_WEEKDAYS[match.group("weekday").casefold()]
-        candidates.append((match.start(), _qualified_weekday(base, target, match.group("direction"))))
+        moment = _qualified_weekday(base, target, match.group("direction"))
+        matches.append(_date_match(match.start(), match.end(), moment))
     for match in _ZH_WEEKDAY_RE.finditer(text):
         target = _ZH_WEEKDAYS[match.group("weekday")]
-        candidates.append((match.start(), _qualified_weekday(base, target, match.group("direction"))))
-    return candidates
+        moment = _qualified_weekday(base, target, match.group("direction"))
+        matches.append(_date_match(match.start(), match.end(), moment))
+    return matches
 
 
-def _absolute_moments(text: str, timezone_factory: Callable[..., datetime]) -> list[datetime]:
-    moments: list[datetime] = []
+def _absolute_matches(text: str, base: datetime | None) -> list[_TemporalMatch]:
+    timezone_info = base.tzinfo if base is not None else timezone.utc
+    matches: list[_TemporalMatch] = []
     for match in _ABSOLUTE_DATE_RE.finditer(text):
+        has_time = match.group("hour") is not None
         try:
-            moment = timezone_factory(
+            moment = datetime(
                 int(match.group("year")),
                 int(match.group("month")),
                 int(match.group("day")),
                 int(match.group("hour") or 0),
                 int(match.group("minute") or 0),
                 int(match.group("second") or 0),
+                tzinfo=timezone_info,
             )
         except ValueError:
             continue
-        if moment not in moments:
-            moments.append(moment)
-    return moments
+        if has_time:
+            matches.append(_TemporalMatch(match.start(), match.end(), moment, None))
+        else:
+            matches.append(_date_match(match.start(), match.end(), moment))
+    for match in _EN_MONTH_DATE_RE.finditer(text):
+        raw_year = match.group("year")
+        if raw_year is None and base is None:
+            continue
+        try:
+            moment = datetime(
+                int(raw_year) if raw_year is not None else base.year,
+                _EN_MONTHS[match.group("month").casefold()],
+                int(match.group("day")),
+                tzinfo=timezone_info,
+            )
+        except ValueError:
+            continue
+        matches.append(_date_match(match.start(), match.end(), moment))
+    for match in _US_NUMERIC_DATE_RE.finditer(text):
+        try:
+            moment = datetime(
+                int(match.group("year")),
+                int(match.group("month")),
+                int(match.group("day")),
+                tzinfo=timezone_info,
+            )
+        except ValueError:
+            continue
+        matches.append(_date_match(match.start(), match.end(), moment))
+    return matches
+
+
+def _non_overlapping(matches: list[_TemporalMatch]) -> list[_TemporalMatch]:
+    ordered = sorted(matches, key=lambda item: (item.start, -(item.end - item.start)))
+    selected: list[_TemporalMatch] = []
+    for match in ordered:
+        if selected and match.start < selected[-1].end:
+            continue
+        selected.append(match)
+    return selected
+
+
+def _range_pair(text: str, matches: list[_TemporalMatch]) -> tuple[_TemporalMatch, _TemporalMatch] | None:
+    for left, right in zip(matches, matches[1:]):
+        separator = text[left.end : right.start]
+        lead_match = _RANGE_LEAD_RE.search(text[: left.start])
+        if lead_match is None:
+            is_range = _DIRECT_RANGE_SEPARATOR_RE.fullmatch(separator) is not None
+        elif lead_match.group("lead").casefold() == "between":
+            is_range = _BETWEEN_SEPARATOR_RE.fullmatch(separator) is not None
+        else:
+            is_range = _DIRECT_RANGE_SEPARATOR_RE.fullmatch(separator) is not None
+        if not is_range:
+            continue
+        right_boundary = right.occurred_end or right.occurred_start
+        if right_boundary > left.occurred_start:
+            return left, right
+    return None
 
 
 def infer_occurrence(text: str, occurred_at: str | None) -> tuple[str | None, str | None]:
-    """从 evidence 文本推断日期；相对表达只使用显式事件时间。"""
+    """从 evidence 推断时间区间；相对表达只使用显式事件时间。"""
     base = _parse_base(occurred_at)
-    tz = base.tzinfo if base is not None else timezone.utc
-
-    def make_datetime(year: int, month: int, day: int, hour: int, minute: int, second: int) -> datetime:
-        return datetime(year, month, day, hour, minute, second, tzinfo=tz)
-
-    moments = _absolute_moments(text, make_datetime)
-    if moments:
-        return moments[0].isoformat(), moments[1].isoformat() if len(moments) > 1 else None
-    if base is None:
+    matches = _absolute_matches(text, base)
+    if base is not None:
+        matches.extend(_relative_matches(text, base))
+    ordered = _non_overlapping(matches)
+    if not ordered:
         return None, None
-    candidates = _relative_candidates(text, base)
-    if not candidates:
-        return None, None
-    _position, moment = min(candidates, key=lambda item: item[0])
-    return _start_of_day(moment).isoformat(), None
+    explicit_range = _range_pair(text, ordered)
+    if explicit_range is not None:
+        left, right = explicit_range
+        right_boundary = right.occurred_end or right.occurred_start
+        return left.occurred_start.isoformat(), right_boundary.isoformat()
+    first = ordered[0]
+    return (
+        first.occurred_start.isoformat(),
+        first.occurred_end.isoformat() if first.occurred_end is not None else None,
+    )
