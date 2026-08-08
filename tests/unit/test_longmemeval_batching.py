@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -196,6 +197,81 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
 
         self.assertEqual(result, "success")
         sleep.assert_called_once_with(2.0)
+
+    def test_run_qa_uses_plain_chat_and_retries_http_errors(self) -> None:
+        case = runner.normalize_case(_record("case-qa"))
+        requests: list[httpx.Request] = []
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(503, json={"error": "temporarily unavailable"})
+            if len(requests) == 2:
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "Answer for case-qa"}}],
+                        "usage": {"total_tokens": 11},
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": '```json\n{"correct": true, "reason": "The answers match."}\n```'}}
+                    ],
+                    "usage": {"total_tokens": 13},
+                },
+            )
+
+        clients = [httpx.Client(transport=httpx.MockTransport(handle_request)) for _ in range(3)]
+        settings = Settings(
+            llm_api_key="settings-key",
+            llm_base_url="https://coding.dashscope.aliyuncs.com/v1",
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {"LLM_API_KEY": "environment-key", "HL_MEM_EVAL_QA_MODEL": "qa-override"},
+                clear=True,
+            ),
+            patch.object(runner.httpx, "Client", side_effect=clients),
+            patch.object(
+                runner,
+                "make_llm_client",
+                side_effect=AssertionError("QA must not use the structured LLM client"),
+                create=True,
+            ),
+            patch.object(runner.time, "sleep") as sleep,
+        ):
+            result = runner._run_qa(
+                None,
+                case,
+                [{"rank": 1, "text": "Memory for case-qa"}],
+                settings,
+            )
+
+        self.assertEqual(
+            result,
+            {
+                "model": "qa-override",
+                "predicted_answer": "Answer for case-qa",
+                "correct": True,
+                "reason": "The answers match.",
+                "usage": {"reader_tokens": 11, "judge_tokens": 13, "total_tokens": 24},
+            },
+        )
+        self.assertEqual(len(requests), 3)
+        self.assertEqual(sleep.call_args_list, [call(2.0)])
+        for request in requests:
+            self.assertEqual(str(request.url), "https://coding.dashscope.aliyuncs.com/v1/chat/completions")
+            self.assertEqual(request.headers["Authorization"], "Bearer environment-key")
+            payload = json.loads(request.content)
+            self.assertEqual(payload["model"], "qa-override")
+            self.assertEqual(payload["temperature"], 0.1)
+            self.assertEqual(payload["max_tokens"], 512)
+            self.assertNotIn("response_format", payload)
 
     def test_resume_history_does_not_reopen_circuit_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

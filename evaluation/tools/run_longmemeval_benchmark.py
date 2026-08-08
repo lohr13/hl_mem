@@ -7,6 +7,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -40,19 +41,12 @@ from hl_mem.components import (  # noqa: E402
     initialize_process,
     make_embedder,
     make_extractor,
-    make_llm_client,
     make_query_expander,
     make_reranker,
 )
 from hl_mem.config_loader import load_settings  # noqa: E402
 from hl_mem.core.vector import cosine_similarity, pack_vector  # noqa: E402
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402
-from hl_mem.llm.types import (  # noqa: E402
-    LLMMessage,
-    LLMRequest,
-    StructuredOutputMode,
-    StructuredOutputSpec,
-)
 from hl_mem.recall.relation_expansion import RelationExpansionConfig  # noqa: E402
 from hl_mem.settings import Settings  # noqa: E402
 from hl_mem.storage.database import Database  # noqa: E402
@@ -1203,14 +1197,6 @@ def _recall_case(
     return metrics, _retrieved_payload(results, case)
 
 
-def _structured_mode(settings: Settings) -> StructuredOutputMode:
-    return (
-        StructuredOutputMode.JSON_OBJECT
-        if settings.llm_structured_mode == "json_object"
-        else StructuredOutputMode.JSON_SCHEMA
-    )
-
-
 def _response_object(content: str | dict[str, Any]) -> dict[str, Any]:
     if isinstance(content, dict):
         return content
@@ -1308,81 +1294,101 @@ def _result_error_type(result: Mapping[str, Any]) -> str | None:
     return str(result["error"]).partition(":")[0] or "unknown_error"
 
 
+def _qa_model() -> str:
+    return os.environ.get("HL_MEM_EVAL_QA_MODEL") or QA_MODEL
+
+
+def _qa_dashscope_chat(
+    api_key: str,
+    base_url: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+) -> tuple[str, int]:
+    """Call a DashScope-compatible chat completion without structured output."""
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 512,
+    }
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+    answer_text = ""
+    choices = data.get("choices") or []
+    if choices:
+        answer_text = (choices[0].get("message") or {}).get("content") or ""
+    total_tokens = (data.get("usage") or {}).get("total_tokens", 0)
+    return str(answer_text), int(total_tokens)
+
+
 def _run_qa(
     connection: Any,
     case: LongMemEvalCase,
     retrieved: Sequence[Mapping[str, Any]],
     settings: Settings,
 ) -> dict[str, Any]:
-    mode = _structured_mode(settings)
-    qa_settings = dataclasses.replace(settings, llm_max_attempts=1)
-    reader = make_llm_client(qa_settings, connection, operation="benchmark_reader", model=QA_MODEL)
-    judge = make_llm_client(qa_settings, connection, operation="benchmark_judge", model=QA_MODEL)
-    context = "\n".join(f"[{item['rank']}] {item.get('text') or ''}" for item in retrieved)
-    reader_spec = StructuredOutputSpec(
-        name="longmemeval_reader_answer",
-        preferred_mode=mode,
-        schema={
-            "type": "object",
-            "properties": {"answer": {"type": "string"}},
-            "required": ["answer"],
-            "additionalProperties": False,
-        },
-    )
-    reader_request = LLMRequest(
-        messages=[
-            LLMMessage(
-                "system",
-                "Answer the question using only the supplied memory claims. "
-                "If the claims do not contain the answer, say that the information is unavailable.",
-            ),
-            LLMMessage("user", f"Memory claims:\n{context or '(none)'}\n\nQuestion: {case.question}"),
-        ],
-        structured_output=reader_spec,
-    )
-    reader_response = _qa_call_with_retry(lambda: reader.complete(reader_request))
-    predicted = str(_response_object(reader_response.content).get("answer") or "").strip()
+    qa_model = _qa_model()
+    api_key = os.environ.get("LLM_API_KEY") or settings.llm_api_key
+    if not api_key:
+        raise RuntimeError("QA answering requires LLM_API_KEY in .env or environment")
 
-    judge_spec = StructuredOutputSpec(
-        name="longmemeval_answer_judgment",
-        preferred_mode=mode,
-        schema={
-            "type": "object",
-            "properties": {
-                "correct": {"type": "boolean"},
-                "reason": {"type": "string"},
-            },
-            "required": ["correct", "reason"],
-            "additionalProperties": False,
-        },
+    context = "\n".join(f"[{item['rank']}] {item.get('text') or ''}" for item in retrieved)
+    reader_system_prompt = (
+        "Answer the question using only the supplied memory claims. "
+        "If the claims do not contain the answer, say that the information is unavailable."
     )
-    judge_request = LLMRequest(
-        messages=[
-            LLMMessage(
-                "system",
-                "Judge whether the candidate answer is semantically correct relative to the reference answer. "
-                "Allow paraphrases, but reject contradictions or missing required facts.",
-            ),
-            LLMMessage(
-                "user",
-                f"Question: {case.question}\nReference answer: {case.answer}\nCandidate answer: {predicted}",
-            ),
-        ],
-        structured_output=judge_spec,
+    reader_user_prompt = f"Memory claims:\n{context or '(none)'}\n\nQuestion: {case.question}"
+    reader_text, reader_tokens = _qa_call_with_retry(
+        lambda: _qa_dashscope_chat(
+            api_key,
+            settings.llm_base_url,
+            qa_model,
+            reader_system_prompt,
+            reader_user_prompt,
+        )
     )
-    judge_response = _qa_call_with_retry(lambda: judge.complete(judge_request))
-    judgment = _response_object(judge_response.content)
+    predicted = reader_text.strip()
+
+    judge_system_prompt = (
+        "Judge whether the candidate answer is semantically correct relative to the reference answer. "
+        "Allow paraphrases, but reject contradictions or missing required facts. "
+        'Return only a JSON object in the form {"correct": true, "reason": "..."}. '
+        "The correct field must be the JSON boolean true or false. Do not use Markdown."
+    )
+    judge_user_prompt = f"Question: {case.question}\nReference answer: {case.answer}\nCandidate answer: {predicted}"
+    judge_text, judge_tokens = _qa_call_with_retry(
+        lambda: _qa_dashscope_chat(
+            api_key,
+            settings.llm_base_url,
+            qa_model,
+            judge_system_prompt,
+            judge_user_prompt,
+        )
+    )
+    judgment = _response_object(judge_text)
     if not isinstance(judgment.get("correct"), bool):
         raise ValueError("judge response is missing boolean 'correct'")
     return {
-        "model": QA_MODEL,
+        "model": qa_model,
         "predicted_answer": predicted,
         "correct": judgment["correct"],
         "reason": str(judgment.get("reason") or ""),
         "usage": {
-            "reader_tokens": reader_response.usage_total_tokens,
-            "judge_tokens": judge_response.usage_total_tokens,
-            "total_tokens": reader_response.usage_total_tokens + judge_response.usage_total_tokens,
+            "reader_tokens": reader_tokens,
+            "judge_tokens": judge_tokens,
+            "total_tokens": reader_tokens + judge_tokens,
         },
     }
 
@@ -1884,8 +1890,8 @@ def _report(
                 "embedding_api_mode": settings.embedding_api_mode,
                 "embedding_text_type": settings.embedding_text_type,
                 "reranker": settings.reranker_model if settings.reranker_mode != "off" else "off",
-                "reader": QA_MODEL if not args.no_qa else "not_run",
-                "judge": QA_MODEL if not args.no_qa else "not_run",
+                "reader": _qa_model() if not args.no_qa else "not_run",
+                "judge": _qa_model() if not args.no_qa else "not_run",
             },
             "retrieval_k": list(RETRIEVAL_KS),
             "metric_relevance": {
@@ -1969,7 +1975,7 @@ def _validate_resume_report(
         raise ValueError("resume output dataset sha256 does not match --dataset")
     previous_identity = _resume_model_identity(report)
     reranker = settings.reranker_model if settings.reranker_mode != "off" else "off"
-    qa_model = QA_MODEL if not args.no_qa else "not_run"
+    qa_model = _qa_model() if not args.no_qa else "not_run"
     expected_identity = {
         "extractor": settings.llm_model,
         "extractor_provider": settings.llm_provider,
