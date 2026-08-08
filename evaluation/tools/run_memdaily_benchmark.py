@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import os
 import re
@@ -288,10 +289,88 @@ def _case_db_path(case_id: str) -> Path:
     return DATABASE_ROOT / f"{_safe_case_name(case_id)}.db"
 
 
+def _case_manifest_path(db_path: Path) -> Path:
+    return db_path.with_suffix(".manifest.json")
+
+
+def _case_fingerprint(traj: MemDailyTrajectory) -> str:
+    payload = {
+        "case_id": traj.case_id,
+        "namespace": traj.namespace,
+        "messages": [
+            {
+                "mid": message.mid,
+                "event_id": message.event_id,
+                "occurred_at": message.occurred_at,
+                "text": message.text,
+                "place": message.place,
+            }
+            for message in traj.messages
+        ],
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _cache_identity(traj: MemDailyTrajectory, settings: Settings) -> dict[str, Any]:
+    """Return every ingest input that must match before a case DB is reusable."""
+    return {
+        "schema_version": 1,
+        "case_id": traj.case_id,
+        "case_fingerprint": _case_fingerprint(traj),
+        "extractor_model": settings.llm_model,
+        "extractor_version": LLM_EXTRACTOR_VERSION,
+        "embedding_model": settings.embedding_model,
+        "embedding_dim": settings.embedding_dim,
+        "embedding_api_mode": settings.embedding_api_mode,
+        "embedding_text_type": settings.embedding_text_type,
+        "index_text_mode": settings.index_text_mode,
+        "index_text_version": settings.index_text_version,
+    }
+
+
+def _validate_cached_ingest(
+    manifest_path: Path,
+    traj: MemDailyTrajectory,
+    settings: Settings,
+    connection: Any | None = None,
+) -> tuple[bool, str]:
+    """Validate the manifest and, when open, every stored claim extractor version."""
+    if not manifest_path.is_file():
+        return False, "manifest_missing"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False, "manifest_invalid"
+    if not isinstance(manifest, Mapping):
+        return False, "manifest_invalid"
+    expected = _cache_identity(traj, settings)
+    mismatches = sorted(key for key, value in expected.items() if manifest.get(key) != value)
+    if mismatches:
+        return False, f"manifest_mismatch:{','.join(mismatches)}"
+    if connection is not None:
+        versions = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT DISTINCT COALESCE(extractor_version,'<missing>') FROM claims"
+            ).fetchall()
+        }
+        if versions and versions != {LLM_EXTRACTOR_VERSION}:
+            return False, f"database_extractor_version:{','.join(sorted(versions))}"
+    return True, "cache_valid"
+
+
 def _remove_db_artifacts(db_path: Path) -> None:
     """Remove database and WAL/SHM files, asserting within benchmark dir."""
     root = DATABASE_ROOT.resolve()
-    for p in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
+    manifest_path = _case_manifest_path(db_path)
+    for p in (
+        db_path,
+        Path(f"{db_path}-wal"),
+        Path(f"{db_path}-shm"),
+        manifest_path,
+        manifest_path.with_suffix(f"{manifest_path.suffix}.tmp"),
+    ):
         if p.resolve().is_relative_to(root):
             p.unlink(missing_ok=True)
 
@@ -338,6 +417,8 @@ def _ingest_trajectory(
             "occurred_at": msg.occurred_at,
         }
         service.ingest_event(event)
+        event["extractor"] = "llm"
+        event["extractor_version"] = getattr(extractor, "extractor_version", LLM_EXTRACTOR_VERSION)
         claims = extractor.extract(
             content,
             {
@@ -652,6 +733,7 @@ def _run_case(
 ) -> dict[str, Any]:
     """Execute full pipeline for one trajectory."""
     db_path = _case_db_path(traj.case_id)
+    manifest_path = _case_manifest_path(db_path)
     result: dict[str, Any] = {
         "case_id": traj.case_id,
         "qtype": traj.qtype,
@@ -672,14 +754,42 @@ def _run_case(
     started = time.perf_counter()
     try:
         DATABASE_ROOT.mkdir(parents=True, exist_ok=True)
-        if not skip_ingest:
+        reuse_cache = False
+        cache_reason: str | None = None
+        if skip_ingest and db_path.is_file():
+            reuse_cache, cache_reason = _validate_cached_ingest(manifest_path, traj, settings)
+        elif skip_ingest:
+            cache_reason = "database_missing"
+        if not reuse_cache:
             _remove_db_artifacts(db_path)
 
         database = Database(db_path, settings=settings)
         connection = database.open()
 
-        if not skip_ingest:
-            result["ingest"] = _ingest_trajectory(
+        if reuse_cache:
+            reuse_cache, database_reason = _validate_cached_ingest(
+                manifest_path,
+                traj,
+                settings,
+                connection,
+            )
+            if not reuse_cache:
+                cache_reason = database_reason
+                database.close()
+                database = None
+                _remove_db_artifacts(db_path)
+                database = Database(db_path, settings=settings)
+                connection = database.open()
+
+        if reuse_cache:
+            result["ingest"] = {
+                "skipped": True,
+                "cache_status": "reused",
+                "cache_reason": "cache_valid",
+                "cache_manifest": str(manifest_path),
+            }
+        else:
+            ingest_result = _ingest_trajectory(
                 connection,
                 traj,
                 settings,
@@ -687,10 +797,11 @@ def _run_case(
                 case_number=case_number,
                 total=total,
             )
-        else:
-            if not db_path.is_file():
-                raise FileNotFoundError(f"--skip-ingest requires cached database: {db_path}")
-            result["ingest"] = {"skipped": True}
+            ingest_result["cache_status"] = "stale_reingested" if skip_ingest else "fresh_ingest"
+            ingest_result["cache_reason"] = cache_reason
+            ingest_result["cache_manifest"] = str(manifest_path)
+            result["ingest"] = ingest_result
+            _write_json_atomic(manifest_path, _cache_identity(traj, settings))
 
         result["retrieval"], result["retrieved"] = _recall_trajectory(connection, traj, settings, embedder, reranker)
 

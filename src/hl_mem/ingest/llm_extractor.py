@@ -240,6 +240,7 @@ _ZH_FUNCTION_SIGNAL_RE = re.compile(r"我|我们|你|您|他|她|它|的|了|在
 _EN_FUNCTION_SIGNAL_RE = re.compile(
     r"(?i)\b(?:i|we|you|he|she|it|the|a|an|to|of|in|on|at|for|with|my|our|your|this|that|yesterday|tomorrow)\b"
 )
+LANGUAGE_ROUTER_VERSION = "language-router-v1"
 _FIRST_PERSON_SUBJECTS = {
     "zh": frozenset({"我", "本人", "我自己"}),
     "en": frozenset({"i", "me", "my", "myself"}),
@@ -361,7 +362,9 @@ def _normalize_compact_subject(subject: str, language: Literal["zh", "en"]) -> s
     return normalize_entity_alias(subject)
 
 
-def _postprocess_rules_fingerprint() -> dict[str, Any]:
+def _postprocess_rules_fingerprint(
+    language_router_version: str = LANGUAGE_ROUTER_VERSION,
+) -> dict[str, Any]:
     """返回会改变 LLM 原始输出的稳定规则常量。"""
     return {
         "aliases": ALIASES,
@@ -386,6 +389,7 @@ def _postprocess_rules_fingerprint() -> dict[str, Any]:
         "notability_importance": _NOTABILITY_IMPORTANCE,
         "relative_time": relative_time_rules_fingerprint(),
         "english_system_prompt": ENGLISH_SYSTEM_PROMPT,
+        "language_router_version": language_router_version,
         "first_person_subjects": {key: sorted(values) for key, values in _FIRST_PERSON_SUBJECTS.items()},
         "admission": admission_rules_fingerprint(),
         "unsettled_confidence_ceiling": _UNSETTLED_CONFIDENCE_CEILING,
@@ -425,12 +429,17 @@ def compute_prompt_hash(
     *,
     response_schema: dict[str, Any] | None = None,
     postprocess_rules: dict[str, Any] | None = None,
+    language_router_version: str = LANGUAGE_ROUTER_VERSION,
 ) -> str:
     """计算 prompt、响应 schema 与后处理规则的稳定提取配置指纹。"""
     payload = {
         "system_prompt": system_prompt,
         "response_schema": extraction_response_json_schema() if response_schema is None else response_schema,
-        "postprocess_rules": _postprocess_rules_fingerprint() if postprocess_rules is None else postprocess_rules,
+        "postprocess_rules": (
+            _postprocess_rules_fingerprint(language_router_version)
+            if postprocess_rules is None
+            else postprocess_rules
+        ),
     }
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
@@ -543,6 +552,7 @@ class LLMExtractor:
 
     prompt_hash = PROMPT_HASH
     extractor_version = LLM_EXTRACTOR_VERSION
+    language_router_version = LANGUAGE_ROUTER_VERSION
 
     def __init__(
         self,

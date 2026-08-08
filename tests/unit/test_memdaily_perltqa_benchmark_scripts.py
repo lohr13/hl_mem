@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,32 @@ from evaluation.tools import run_memdaily_benchmark as memdaily_runner
 from evaluation.tools import run_perltqa_benchmark as perltqa_runner
 from hl_mem.evaluation.perltqa import PerLTQACharacter, PerLTQAQuestion
 from hl_mem.settings import Settings
+from hl_mem.storage.database import Database
+
+
+def _memdaily_trajectory() -> memdaily_runner.MemDailyTrajectory:
+    return memdaily_runner.MemDailyTrajectory(
+        case_id="memdaily:simple:events:1",
+        qtype="simple",
+        subtype="events",
+        tid=1,
+        namespace="memdaily-simple-events-1",
+        question="What happened?",
+        answer="An event",
+        question_at="2026-08-02T00:00:00+00:00",
+        ground_truth_choice=None,
+        choices={},
+        messages=(
+            memdaily_runner.MemDailyMessage(
+                mid=1,
+                event_id="memdaily:simple:events:1:mid:1",
+                occurred_at="2026-08-01T00:00:00+00:00",
+                text="An event happened",
+                place="home",
+            ),
+        ),
+        gold_event_ids=("memdaily:simple:events:1:mid:1",),
+    )
 
 
 class MemDailyAggregationTests(unittest.TestCase):
@@ -34,6 +61,142 @@ class MemDailyAggregationTests(unittest.TestCase):
         self.assertEqual(metrics["overall"]["f1"], 0.5)
         self.assertEqual(metrics["overall"]["choice_accuracy"], 0.5)
         self.assertEqual(metrics["by_type"]["simple"]["accuracy"], 0.5)
+
+    def test_cached_ingest_requires_matching_manifest_and_database_version(self) -> None:
+        trajectory = _memdaily_trajectory()
+        settings = Settings.for_test()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            db_path = root / "case.db"
+            manifest_path = root / "case.manifest.json"
+            database = Database(db_path, settings=settings)
+            connection = database.open()
+            connection.execute(
+                "INSERT INTO claims(id,namespace_key,recorded_from,status,extractor_version) VALUES(?,?,?,?,?)",
+                (
+                    "claim-1",
+                    trajectory.namespace,
+                    "2026-08-01T00:00:00+00:00",
+                    "active",
+                    memdaily_runner.LLM_EXTRACTOR_VERSION,
+                ),
+            )
+            connection.commit()
+            manifest_path.write_text(
+                json.dumps(memdaily_runner._cache_identity(trajectory, settings)),
+                encoding="utf-8",
+            )
+
+            reusable, reason = memdaily_runner._validate_cached_ingest(
+                manifest_path,
+                trajectory,
+                settings,
+                connection,
+            )
+            self.assertTrue(reusable)
+            self.assertEqual(reason, "cache_valid")
+
+            connection.execute("UPDATE claims SET extractor_version='llm-v2+stale'")
+            connection.commit()
+            reusable, reason = memdaily_runner._validate_cached_ingest(
+                manifest_path,
+                trajectory,
+                settings,
+                connection,
+            )
+            database.close()
+
+        self.assertFalse(reusable)
+        self.assertIn("database_extractor_version", reason)
+
+    def test_cached_ingest_rejects_missing_corrupt_or_stale_manifest(self) -> None:
+        trajectory = _memdaily_trajectory()
+        settings = Settings.for_test()
+        with tempfile.TemporaryDirectory() as directory:
+            manifest_path = Path(directory) / "case.manifest.json"
+            reusable, reason = memdaily_runner._validate_cached_ingest(
+                manifest_path,
+                trajectory,
+                settings,
+            )
+            self.assertFalse(reusable)
+            self.assertEqual(reason, "manifest_missing")
+
+            manifest_path.write_text("{", encoding="utf-8")
+            reusable, reason = memdaily_runner._validate_cached_ingest(
+                manifest_path,
+                trajectory,
+                settings,
+            )
+            self.assertFalse(reusable)
+            self.assertEqual(reason, "manifest_invalid")
+
+            stale = memdaily_runner._cache_identity(trajectory, settings)
+            stale["extractor_version"] = "llm-v2+stale"
+            manifest_path.write_text(json.dumps(stale), encoding="utf-8")
+            reusable, reason = memdaily_runner._validate_cached_ingest(
+                manifest_path,
+                trajectory,
+                settings,
+            )
+
+        self.assertFalse(reusable)
+        self.assertIn("manifest_mismatch:extractor_version", reason)
+
+    def test_skip_ingest_reingests_when_database_version_is_stale(self) -> None:
+        trajectory = _memdaily_trajectory()
+        settings = Settings.for_test()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            db_path = root / f"{memdaily_runner._safe_case_name(trajectory.case_id)}.db"
+            database = Database(db_path, settings=settings)
+            connection = database.open()
+            connection.execute(
+                "INSERT INTO claims(id,namespace_key,recorded_from,status,extractor_version) VALUES(?,?,?,?,?)",
+                (
+                    "stale-claim",
+                    trajectory.namespace,
+                    "2026-08-01T00:00:00+00:00",
+                    "active",
+                    "llm-v2+stale",
+                ),
+            )
+            connection.commit()
+            database.close()
+            db_path.with_suffix(".manifest.json").write_text(
+                json.dumps(memdaily_runner._cache_identity(trajectory, settings)),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(memdaily_runner, "DATABASE_ROOT", root),
+                patch.object(
+                    memdaily_runner,
+                    "_ingest_trajectory",
+                    return_value={"messages": 1, "stored_claims": 0},
+                ) as ingest,
+                patch.object(
+                    memdaily_runner,
+                    "_recall_trajectory",
+                    return_value=({"recall_at_5": 0.0}, []),
+                ),
+            ):
+                result = memdaily_runner._run_case(
+                    trajectory,
+                    settings,
+                    object(),
+                    object(),
+                    skip_ingest=True,
+                    run_qa=False,
+                    clean=False,
+                    case_number=1,
+                    total=1,
+                )
+
+        ingest.assert_called_once()
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["ingest"]["cache_status"], "stale_reingested")
+        self.assertIn("database_extractor_version", result["ingest"]["cache_reason"])
 
 
 class PerLTQABenchmarkTests(unittest.TestCase):
