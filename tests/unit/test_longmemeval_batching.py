@@ -365,13 +365,15 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             self.assertEqual(request.headers["Authorization"], "Bearer environment-key")
             payload = json.loads(request.content)
             self.assertEqual(payload["model"], "qa-override")
-            self.assertEqual(payload["temperature"], 0.1)
             self.assertEqual(payload["max_tokens"], 512)
             self.assertNotIn("response_format", payload)
+        self.assertEqual([json.loads(request.content)["temperature"] for request in requests], [0.1, 0.1, 0.0])
         reader_payload = json.loads(requests[1].content)
         self.assertIn("Inspect every record", reader_payload["messages"][0]["content"])
         self.assertIn("genuinely insufficient", reader_payload["messages"][0]["content"])
         self.assertIn("Current Date: 2023-05-30T23:40:00+00:00", reader_payload["messages"][1]["content"])
+        judge_payload = json.loads(requests[2].content)
+        self.assertIn("official-style LongMemEval", judge_payload["messages"][0]["content"])
 
     def test_resume_history_does_not_reopen_circuit_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
