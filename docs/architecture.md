@@ -111,7 +111,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 37 immutable SQL migrations (001-037)
+│   └── migrations/           # 38 immutable SQL migrations (001-038)
 ├── workers/
 │   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
 │   ├── ttl.py                # Importance-aware expiry

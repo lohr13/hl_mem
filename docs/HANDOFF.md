@@ -8,7 +8,7 @@
 - **版本**：v0.24.0
 - **阶段**：v0.24.0 发版收口
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；37 migrations（SQL 001-037）+ `sqlite_vec.py` data migration；实时数据量以数据库只读审计为准
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；38 migrations（SQL 001-038）+ Python data migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
