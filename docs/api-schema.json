@@ -126,6 +126,28 @@
             ],
             "title": "Occurred Start"
           },
+          "recorded_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded From"
+          },
+          "recorded_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded To"
+          },
           "relations": {
             "items": {
               "additionalProperties": true,
@@ -210,6 +232,17 @@
               }
             ],
             "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
           }
         },
         "required": [
