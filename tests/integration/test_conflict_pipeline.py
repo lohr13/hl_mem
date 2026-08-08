@@ -25,8 +25,8 @@ def test_preference_state_change_and_history(tmp_path, monkeypatch) -> None:
         worker.run_once()
         worker.run_once()
         current = client.post("/v1/recall", json={"query": "模式偏好"}).json()["results"]
-        assert [item["text"] for item in current if item["type"] == "claim"] == ["用户：浅色模式"]
+        assert [item["text"] for item in current if item["type"] == "claim"] == ["user：浅色模式"]
         history = client.post("/v1/recall", json={"query": "深色", "as_of": "2026-01-15T00:00:00+00:00"}).json()
-        assert any(item.get("text") == "用户：深色模式" for item in history["results"])
-        subject_results = client.post("/v1/recall", json={"query": "用户"}).json()["results"]
-        assert any(item.get("text") == "用户：浅色模式" for item in subject_results)
+        assert any(item.get("text") == "user：深色模式" for item in history["results"])
+        subject_results = client.post("/v1/recall", json={"query": "user"}).json()["results"]
+        assert any(item.get("text") == "user：浅色模式" for item in subject_results)
