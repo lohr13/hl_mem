@@ -21,7 +21,7 @@
 
 prompt 不再要求跳过所有 low notability；low 改为 episodic 标记。确定性准入仍拒绝空值、秘密、无法定位的 evidence、纯数字孤值和运行/CI/健康快照。被接受的 low candidate 使用独立原因码 `accepted_episodic`，便于审计。compact schema 的总上限仍为每 chunk 10 条，不增加 LLM 调用或输出字段。
 
-episodic claim 走现有低 importance TTL（默认 3 天），但 ephemeral 的 TTL 锚点改为 `recorded_from`；这避免导入历史对话时 claim 在刚写入就因旧 `occurred_at` 立即过期。durable/temporal stable claim 继续以 observed time 为锚点，不改变既有语义。
+episodic claim 走现有低 importance TTL（默认 3 天），且仅对准入原因是 `accepted_episodic` 的新细节使用 `recorded_from` 作为 TTL 锚点；这避免导入历史对话时 claim 在刚写入就因旧 `occurred_at` 立即过期，同时不改变既有 ephemeral 服务状态和 durable/temporal stable claim 的 observed-time 语义。
 
 ## 英文与混合相对日期
 

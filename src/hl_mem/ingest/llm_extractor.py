@@ -9,7 +9,6 @@ import re
 import unicodedata
 from copy import deepcopy
 from dataclasses import asdict, replace
-from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from pydantic import ValidationError as PydanticValidationError
@@ -53,6 +52,7 @@ from hl_mem.observability.audit import current_audit
 
 from .admission import (
     ALNUM_SECRET_RE,
+    EPISODIC_KINDS,
     LOW_VALUE_HEALTH_STATES,
     NUMERIC_OR_VERSION_RE,
     RECOVERY_CODE_RE,
@@ -72,6 +72,7 @@ from .chunking import (
     split_extraction_content,
 )
 from .extractors import ExtractedClaim
+from .relative_time import infer_occurrence, relative_time_rules_fingerprint
 from .repair import ENUM_MAPPINGS, TOPIC_TAG_ZH_TO_EN, repair_extraction_json
 from .schemas import (
     CompactExtractionResponseSchema,
@@ -115,6 +116,7 @@ SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有�
     1. subject=用户，value=将参加首席记者能力提升营，kind=plan
     2. subject=首席记者能力提升营，value=规模是六百人，kind=fact
   ✅ 正例：「金融科技精英论坛的持续时间是七天。」→ subject=金融科技精英论坛，value=持续时间是七天，kind=fact
+  ✅ episodic 正例：「我装 IKEA 书架用了 4 小时。」→ subject=用户，value=用户组装 IKEA 书架用了 4 小时，kind=fact，notability=low
   ❌ 反例：只输出「用户将参加首席记者能力提升营」而丢失「规模是六百人」这个数值属性。
   ❌ 反例：把两件事合并为一条 claim（如 value=将参加规模六百人的首席记者能力提升营）。
 - 数值属性（人数、天数、金额等）极易在合并提取中丢失，务必单独成条。
@@ -128,15 +130,15 @@ kind 分类：
 - architecture：已执行的架构决策、系统结构、组件关系。
 - identity：用户名、硬件、角色等身份信息。
 - config：端口、路径、模型名、API 地址等技术配置。
-- fact：其他稳定的客观事实。
+- fact：其他客观事实，包括一次性事件及其可回答细节。
 - plan：已确认的计划和截止日期。
 - choice：已生效的数据库、模型、工具或 provider 技术选型。
 
 notability 分级：
 - high：核心身份、永久偏好、关键架构决策。
 - medium：重要配置、项目特征、一般事实。
-- low：边缘信息、临时状态、低频引用 → 跳过不提取。
-- 不要把 low 候选放入 claims。
+- low：一次性事件及其数字、时间、地点、专名或耗时细节，进入 episodic 层。
+- low 不是“丢弃”；只要有原文证据且不属于下方跳过项，就必须放入 claims。
 
 confidence：
 - 1.0：原文直接、明确陈述，主体和对象无歧义。
@@ -158,7 +160,89 @@ evidence_quote：
 - claims 中每项必须且只能包含上述 6 个字段。
 - kind、notability 和 confidence 必须满足上述枚举与范围。"""
 
+ENGLISH_SYSTEM_PROMPT = """You extract atomic memory claims from conversations for later use.
+
+Return strict JSON only. Do not include explanations, Markdown, or extra fields:
+{
+  "claims": [
+    {
+      "subject": "name of the subject",
+      "value": "self-contained atomic claim",
+      "kind": "preference|architecture|identity|config|fact|plan|choice",
+      "confidence": 0.0,
+      "notability": "high|medium|low",
+      "evidence_quote": "the source passage that supports this claim"
+    }
+  ],
+  "should_memorize": true
+}
+
+Source boundaries:
+- Extract claims only from <extract_from>.
+- Use <context_only> solely to resolve subjects and pronouns. Never use it as evidence.
+- If there is nothing to extract, return {"claims":[],"should_memorize":false}.
+- should_memorize must be true exactly when claims is non-empty.
+
+Atomicity and source-language rules:
+- Each claim must state exactly one fact. Split a sentence whenever it contains multiple facts.
+- If one clause says the user will do X and another gives an attribute of X, emit separate claims.
+- Pay special attention to numbers, durations, dates, places, prices, counts, and named entities; each distinct
+  attribute gets its own claim.
+- Episodic example: "I spent 4 hours assembling an IKEA bookcase" becomes a low-notability fact whose value keeps
+  IKEA, 4 hours, and the assembly event.
+- value must stand on its own and include the subject, relation, object, number, and unit needed to understand it.
+- Use a specific, stable subject name. Resolve first-person references to `user`; never replace a named person,
+  place, organization, product, or project with `user`.
+- subject and value must use the same primary language as <extract_from>. For English input, write natural English.
+  Preserve proper names, numbers, units, dates, paths, identifiers, and quoted wording exactly.
+- Judge only whether the current source supports the claim. Do not compare it with stored memories.
+
+Kinds:
+- preference: the user's preferences, habits, or working style.
+- architecture: implemented architecture decisions, system structure, or component relationships.
+- identity: names, roles, hardware ownership, and other identity information.
+- config: ports, paths, model names, API endpoints, and other technical configuration.
+- fact: other objective facts, including one-off events and their answerable details.
+- plan: confirmed plans and deadlines.
+- choice: an adopted database, model, tool, or provider choice.
+
+Notability:
+- high: core identity, lasting preferences, or major architecture decisions.
+- medium: important configuration, project characteristics, and ordinary facts.
+- low: a one-off event or its number, date, time, place, proper name, duration, cost, or count.
+- Low means episodic, not disposable. Include it when the source supports it and none of the skip rules applies.
+
+Confidence:
+- 1.0: directly and unambiguously stated in the source.
+- 0.8: one clear reading after resolving a pronoun or omission from context.
+- 0.6: reported speech or a weak inference. Omit a claim if its evidence cannot be located.
+
+evidence_quote:
+- Copy or closely quote the shortest passage in <extract_from> that supports this claim.
+- Never quote <context_only>.
+
+Skip:
+- Service-health snapshots, CI test counts, version-query results, work in progress, greetings, and unconfirmed advice.
+- Operational snapshots such as running/stopped/ok, tests passed, an environment variable being cleared, or a restart.
+- An assistant merely repeating the user, examples, hypotheticals, and general knowledge.
+- Secrets such as API keys, tokens, passwords, and recovery codes.
+
+Limits:
+- Maximum 10 claims per chunk.
+- Every claim must contain exactly the six fields shown above.
+- kind, notability, and confidence must use the specified values and ranges."""
+
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
+_HAN_CHARACTER_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_LATIN_WORD_RE = re.compile(r"[A-Za-z]+(?:['’-][A-Za-z]+)*")
+_ZH_FUNCTION_SIGNAL_RE = re.compile(r"我|我们|你|您|他|她|它|的|了|在|是|用|要|会|把|给|这|那|昨天|明天")
+_EN_FUNCTION_SIGNAL_RE = re.compile(
+    r"(?i)\b(?:i|we|you|he|she|it|the|a|an|to|of|in|on|at|for|with|my|our|your|this|that|yesterday|tomorrow)\b"
+)
+_FIRST_PERSON_SUBJECTS = {
+    "zh": frozenset({"我", "本人", "我自己"}),
+    "en": frozenset({"i", "me", "my", "myself"}),
+}
 _UNSETTLED_SIGNAL_RE = re.compile(r"可以考虑|建议|考虑|待定|或许|计划中|未执行")
 _SETTLED_SIGNAL_RE = re.compile(
     r"已经确认|已确认|已经批准|已批准|已经执行|已执行|已经实施|已实施|"
@@ -216,13 +300,13 @@ _LEGACY_CLAIM_DEFAULTS: dict[str, Any] = {
     "importance": 0.5,
 }
 _KIND_MAP: dict[str, tuple[str, str, str, str]] = {
-    "preference": ("偏好", "preference.other", "permanent", "stable"),
-    "architecture": ("事实", "fact.architecture", "permanent", "stable"),
-    "identity": ("身份", "identity.other", "permanent", "stable"),
-    "config": ("配置", "config.other", "permanent", "stable"),
-    "fact": ("事实", "fact.other", "permanent", "stable"),
-    "plan": ("计划", "plan.other", "temporal", "stable"),
-    "choice": ("使用", "choice.tool", "permanent", "stable"),
+    "preference": ("preference", "preference.other", "permanent", "stable"),
+    "architecture": ("fact", "fact.architecture", "permanent", "stable"),
+    "identity": ("identity", "identity.other", "permanent", "stable"),
+    "config": ("config", "config.other", "permanent", "stable"),
+    "fact": ("fact", "fact.other", "permanent", "stable"),
+    "plan": ("plan", "plan.other", "temporal", "stable"),
+    "choice": ("uses", "choice.tool", "permanent", "stable"),
 }
 _KIND_TOPIC_TAG = {
     "preference": "preference",
@@ -235,10 +319,6 @@ _KIND_TOPIC_TAG = {
 }
 _NOTABILITY_IMPORTANCE = {"high": 0.9, "medium": 0.6, "low": 0.3}
 _ENV_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
-_ABSOLUTE_DATE_RE = re.compile(
-    r"(?P<year>\d{4})(?:-|/|年)(?P<month>\d{1,2})(?:-|/|月)(?P<day>\d{1,2})日?"
-    r"(?:[ T](?P<hour>\d{1,2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?)?"
-)
 _TECH_ENTITY_RE = re.compile(
     r"(?ix)(?<![A-Za-z0-9_])(?:"
     r"PostgreSQL|SQLite|MySQL|Redis|FastAPI|Uvicorn|PyTorch|Django|Flask|"
@@ -247,7 +327,6 @@ _TECH_ENTITY_RE = re.compile(
     r")(?![A-Za-z0-9_])"
 )
 _BACKTICK_ENTITY_RE = re.compile(r"`([^`\r\n]{2,100})`")
-_RELATIVE_DATE_OFFSETS = {"今天": 0, "明天": 1, "后天": 2, "下周": 7}
 _LEGACY_PREDICATE_KIND = {
     "偏好": "preference",
     "身份": "identity",
@@ -259,6 +338,30 @@ _LEGACY_PREDICATE_KIND = {
 
 def _regex_fingerprint(pattern: re.Pattern[str]) -> dict[str, Any]:
     return {"pattern": pattern.pattern, "flags": pattern.flags}
+
+
+def detect_extraction_language(text: str) -> Literal["zh", "en"]:
+    """按主要自然语言信号为单个提取分块选择中文或英文。"""
+    normalized = unicodedata.normalize("NFKC", str(text))
+    han_count = len(_HAN_CHARACTER_RE.findall(normalized))
+    latin_word_count = len(_LATIN_WORD_RE.findall(normalized))
+    zh_signal_count = len(_ZH_FUNCTION_SIGNAL_RE.findall(normalized))
+    en_signal_count = len(_EN_FUNCTION_SIGNAL_RE.findall(normalized))
+    if zh_signal_count != en_signal_count:
+        return "zh" if zh_signal_count > en_signal_count else "en"
+    if latin_word_count > han_count:
+        return "en"
+    return "zh"
+
+
+def _normalize_compact_subject(subject: str, language: Literal["zh", "en"]) -> str:
+    """只规范第一人称和已知别名，保留命名主体的原文形式。"""
+    normalized = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", subject).strip())
+    if normalized.casefold() in _FIRST_PERSON_SUBJECTS[language]:
+        return "user" if language == "en" else "用户"
+    if normalized.casefold() in DEFAULT_ENTITY_ALIASES:
+        return normalize_entity_id(normalized)
+    return normalized
 
 
 def _postprocess_rules_fingerprint() -> dict[str, Any]:
@@ -284,7 +387,9 @@ def _postprocess_rules_fingerprint() -> dict[str, Any]:
         "compact_kind_map": _KIND_MAP,
         "compact_kind_topic_tag": _KIND_TOPIC_TAG,
         "notability_importance": _NOTABILITY_IMPORTANCE,
-        "relative_date_offsets": _RELATIVE_DATE_OFFSETS,
+        "relative_time": relative_time_rules_fingerprint(),
+        "english_system_prompt": ENGLISH_SYSTEM_PROMPT,
+        "first_person_subjects": {key: sorted(values) for key, values in _FIRST_PERSON_SUBJECTS.items()},
         "admission": admission_rules_fingerprint(),
         "unsettled_confidence_ceiling": _UNSETTLED_CONFIDENCE_CEILING,
         "repair_enum_mappings": ENUM_MAPPINGS,
@@ -305,9 +410,12 @@ def _postprocess_rules_fingerprint() -> dict[str, Any]:
             "tool_snapshot": _regex_fingerprint(_TOOL_SNAPSHOT_RE),
             "quoted_report": _regex_fingerprint(_QUOTED_REPORT_RE),
             "compact_env_key": _regex_fingerprint(_ENV_KEY_RE),
-            "compact_absolute_date": _regex_fingerprint(_ABSOLUTE_DATE_RE),
             "compact_tech_entity": _regex_fingerprint(_TECH_ENTITY_RE),
             "compact_backtick_entity": _regex_fingerprint(_BACKTICK_ENTITY_RE),
+            "language_han": _regex_fingerprint(_HAN_CHARACTER_RE),
+            "language_latin_word": _regex_fingerprint(_LATIN_WORD_RE),
+            "language_zh_function": _regex_fingerprint(_ZH_FUNCTION_SIGNAL_RE),
+            "language_en_function": _regex_fingerprint(_EN_FUNCTION_SIGNAL_RE),
             "subject_environment_variable": _regex_fingerprint(_ENVIRONMENT_VARIABLE_PATTERN),
             "subject_filename": _regex_fingerprint(_FILE_SUBJECT_PATTERN),
             "subject_pascal_case": _regex_fingerprint(_PASCAL_CASE_SUBJECT_PATTERN),
@@ -654,39 +762,7 @@ class LLMExtractor:
     @staticmethod
     def _infer_compact_occurrence(text: str, occurred_at: str | None) -> tuple[str | None, str | None]:
         """从绝对/相对日期与对话时间推断 claim 的发生区间。"""
-        base: datetime | None = None
-        if occurred_at:
-            try:
-                base = datetime.fromisoformat(str(occurred_at).replace("Z", "+00:00"))
-                if base.tzinfo is None:
-                    base = base.replace(tzinfo=timezone.utc)
-            except ValueError:
-                base = None
-        tz = base.tzinfo if base is not None else timezone.utc
-        moments: list[datetime] = []
-        for match in _ABSOLUTE_DATE_RE.finditer(text):
-            try:
-                moment = datetime(
-                    int(match.group("year")),
-                    int(match.group("month")),
-                    int(match.group("day")),
-                    int(match.group("hour") or 0),
-                    int(match.group("minute") or 0),
-                    int(match.group("second") or 0),
-                    tzinfo=tz,
-                )
-            except ValueError:
-                continue
-            if moment not in moments:
-                moments.append(moment)
-        if moments:
-            return moments[0].isoformat(), moments[1].isoformat() if len(moments) > 1 else None
-        if base is not None:
-            for signal, days in _RELATIVE_DATE_OFFSETS.items():
-                if signal in text:
-                    moment = (base + timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
-                    return moment.isoformat(), None
-        return None, None
+        return infer_occurrence(text, occurred_at)
 
     @staticmethod
     def _extract_compact_entities(subject: str, value: str) -> list[str]:
@@ -708,6 +784,7 @@ class LLMExtractor:
         raw: dict[str, Any],
         source_text: str,
         occurred_at: str | None = None,
+        language: Literal["zh", "en"] = "zh",
     ) -> dict[str, Any] | None:
         """把 LLM 的 6 字段候选准入并映射为现有完整 claim schema。"""
         try:
@@ -723,6 +800,7 @@ class LLMExtractor:
             return None
 
         decision = admit_claim(candidate, source_text)
+        episodic = candidate.notability == "low" and candidate.kind in EPISODIC_KINDS
         current_audit().emit(
             "extract",
             "admission_checked",
@@ -731,6 +809,7 @@ class LLMExtractor:
                 "reason": decision.reason,
                 "kind": candidate.kind,
                 "notability": candidate.notability,
+                "memory_layer": "episodic" if episodic else "durable",
             },
         )
         if not decision.accepted:
@@ -744,7 +823,11 @@ class LLMExtractor:
             return None
 
         predicate, canonical_attribute, scope, volatility = _KIND_MAP[candidate.kind]
-        subject = normalize_entity_id(candidate.subject)
+        if episodic:
+            scope = "temporal"
+            volatility = "ephemeral"
+        predicate = normalize_predicate(predicate)
+        subject = _normalize_compact_subject(candidate.subject, language)
         inferred_attribute = infer_canonical_attribute(predicate, subject, candidate.value, {})
         fallback_attribute = PREDICATE_ATTRIBUTE_MAP[predicate][1]
         if inferred_attribute not in {"custom.unknown", fallback_attribute}:
@@ -838,7 +921,8 @@ class LLMExtractor:
         """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
         context = json.dumps(event_context, ensure_ascii=False)
         occurred_at = str(event_context.get("occurred_at", "未知"))
-        result = self._request_chunk(chunk, context, occurred_at)
+        language = detect_extraction_language(chunk.text)
+        result = self._request_chunk(chunk, context, occurred_at, language)
         if not result.should_memorize and not result.claims:
             self._memorize_decisions.append((False, "should_memorize=false"))
             return []
@@ -857,7 +941,7 @@ class LLMExtractor:
         for item in result.claims:
             raw_claim = item.model_dump()
             if compact_response:
-                postprocessed = self._postprocess_claim(raw_claim, chunk.text, occurred_at)
+                postprocessed = self._postprocess_claim(raw_claim, chunk.text, occurred_at, language)
                 if postprocessed is None:
                     continue
                 raw_claim = postprocessed
@@ -873,7 +957,7 @@ class LLMExtractor:
             if secret_reason is not None:
                 self._secret_rejections[secret_reason] = self._secret_rejections.get(secret_reason, 0) + 1
                 continue
-            claim = self._claim(raw_claim)
+            claim = self._claim(raw_claim, preserve_subject=compact_response)
             normalized_scope, reason_code = normalize_scope(
                 claim.scope,
                 claim.predicate,
@@ -913,6 +997,7 @@ class LLMExtractor:
         chunk: ExtractionChunk,
         context: str,
         occurred_at: str,
+        language: Literal["zh", "en"],
     ) -> CompactExtractionResponseSchema | ExtractionResponseSchema:
         """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
         schema_errors: list[dict[str, Any]] = []
@@ -922,25 +1007,39 @@ class LLMExtractor:
                 self._schema_retry_count += 1
             retry_instruction = ""
             if schema_errors:
-                retry_instruction = self._schema_retry_instruction(previous_output, schema_errors)
+                retry_instruction = self._schema_retry_instruction(previous_output, schema_errors, language)
+            if language == "en":
+                system_prompt = ENGLISH_SYSTEM_PROMPT
+                user_prompt = (
+                    f"Event occurred at: {occurred_at}\n"
+                    f"Event context: {context}\n"
+                    "<context_only>\n"
+                    f"{chunk.context_prefix}\n"
+                    "</context_only>\n"
+                    "Use context_only only to resolve subjects. Do not extract claims from it.\n"
+                    "<extract_from>\n"
+                    f"{chunk.text}\n"
+                    "</extract_from>"
+                    f"{retry_instruction}"
+                )
+            else:
+                system_prompt = SYSTEM_PROMPT
+                user_prompt = (
+                    f"事件发生时间 occurred_at：{occurred_at}\n"
+                    f"事件上下文：{context}\n"
+                    "<context_only>\n"
+                    f"{chunk.context_prefix}\n"
+                    "</context_only>\n"
+                    "context_only 仅用于消解主语，禁止从中提取 claim。\n"
+                    "<extract_from>\n"
+                    f"{chunk.text}\n"
+                    "</extract_from>"
+                    f"{retry_instruction}"
+                )
             request = LLMRequest(
                 messages=[
-                    LLMMessage(role="system", content=SYSTEM_PROMPT),
-                    LLMMessage(
-                        role="user",
-                        content=(
-                            f"事件发生时间 occurred_at：{occurred_at}\n"
-                            f"事件上下文：{context}\n"
-                            "<context_only>\n"
-                            f"{chunk.context_prefix}\n"
-                            "</context_only>\n"
-                            "context_only 仅用于消解主语，禁止从中提取 claim。\n"
-                            "<extract_from>\n"
-                            f"{chunk.text}\n"
-                            "</extract_from>"
-                            f"{retry_instruction}"
-                        ),
-                    ),
+                    LLMMessage(role="system", content=system_prompt),
+                    LLMMessage(role="user", content=user_prompt),
                 ],
                 structured_output=StructuredOutputSpec(
                     name="extraction_response",
@@ -1143,8 +1242,23 @@ class LLMExtractor:
         return details
 
     @staticmethod
-    def _schema_retry_instruction(previous_output: Any, schema_errors: list[dict[str, Any]]) -> str:
+    def _schema_retry_instruction(
+        previous_output: Any,
+        schema_errors: list[dict[str, Any]],
+        language: Literal["zh", "en"] = "zh",
+    ) -> str:
         """构建包含上次 JSON 和可操作错误详情的 schema 重试指令。"""
+        if language == "en":
+            return (
+                "\nThe previous output did not match the schema. Produce a complete JSON response based on it and "
+                "correct only the errors below.\n"
+                "<previous_invalid_json>\n"
+                f"{json.dumps(previous_output, ensure_ascii=False, default=str)}\n"
+                "</previous_invalid_json>\n"
+                "<schema_errors>\n"
+                f"{json.dumps(schema_errors, ensure_ascii=False, default=str)}\n"
+                "</schema_errors>"
+            )
         return (
             "\n上一次输出不符合 schema。请基于上次输出生成完整 JSON，只修正下列错误。\n"
             "<previous_invalid_json>\n"
@@ -1175,13 +1289,17 @@ class LLMExtractor:
         return value
 
     @staticmethod
-    def _claim(item: dict[str, Any]) -> ExtractedClaim:
+    def _claim(item: dict[str, Any], *, preserve_subject: bool = False) -> ExtractedClaim:
         value = str(item.get("value", "")).strip()
         value = ALIASES.get(value.casefold(), value)
         predicate = str(item.get("predicate", "事实")).strip()
         predicate = normalize_predicate(predicate)
         original_subject = str(item.get("subject", "用户"))
-        subject = normalize_entity_id(original_subject)
+        subject = (
+            re.sub(r"\s+", " ", unicodedata.normalize("NFKC", original_subject).strip())
+            if preserve_subject
+            else normalize_entity_id(original_subject)
+        )
         entities = list(item.get("entities") or [])
         invalid_reason = invalid_subject_reason(original_subject)
         if invalid_reason is not None:

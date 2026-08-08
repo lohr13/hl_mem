@@ -69,6 +69,7 @@ class ClaimRepository:
         resolved_settings = settings or getattr(connection, "hl_mem_settings", None) or Settings()
         self.recall_default_limit = resolved_settings.recall_default_limit
         self.recall_vector_scan_limit = resolved_settings.recall_vector_scan_limit
+        self.index_text_mode = resolved_settings.index_text_mode
         self.vector_backend: SQLiteVecVectorBackend | None = None
         if VectorBackend(resolved_settings.vector_backend) is VectorBackend.SQLITE_VEC:
             self.vector_backend = SQLiteVecVectorBackend(
@@ -91,7 +92,7 @@ class ClaimRepository:
                 index_claim["value"] = decode_json(stored["value_json"])
             if "topic_tags" not in index_claim and stored.get("topic_tags_json") is not None:
                 index_claim["topic_tags"] = decode_json(stored["topic_tags_json"])
-            stored["index_text"] = build_index_text(index_claim)
+            stored["index_text"] = build_index_text(index_claim, mode=self.index_text_mode)
         try:
             created = insert_row(self.connection, "claims", stored, commit=False)
             if created:

@@ -176,8 +176,10 @@ hl-mem import var/events.jsonl --db var/restored.db
 |---|---|---|---|---|
 | `index.backfill_batch_size` | 整数 | `100` | >= 1 | `index_backfill_batch_size` |
 | `index.backfill_max_attempts` | 整数 | `3` | >= 1 | `index_backfill_max_attempts` |
-| `index.text_mode` | 字符串 | `"legacy"` | `legacy`、`value_only`、`natural`、`answerable` | `index_text_mode` |
-| `index.text_version` | 字符串 | `"v1"` | 非空字符串 | `index_text_version` |
+| `index.text_mode` | 字符串 | `"natural"` | `legacy`、`value_only`、`natural`、`answerable` | `index_text_mode` |
+| `index.text_version` | 字符串 | `"v2"` | 非空字符串 | `index_text_version` |
+
+`natural` 生成 `subject：value`，不把内部 predicate、slot 或 topic tags 混入 FTS/embedding 文本。已有数据库不会在启动时自动重算 embedding；先运行 `hlmem backfill-index-text --mode natural --dry-run` 查看影响，再显式运行不带 `--dry-run` 的同一命令完成可续跑回填。
 
 ### `[llm]`
 

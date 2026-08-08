@@ -18,10 +18,11 @@ def test_new_feature_modes_use_literal_annotations() -> None:
     assert hints["index_text_mode"] == Literal["legacy", "value_only", "natural", "answerable"]
 
 
-def test_index_text_mode_defaults_to_legacy_and_is_configurable() -> None:
-    """默认保持旧格式，同时允许通过统一配置切换实验模式。"""
-    assert Settings().index_text_mode == "legacy"
-    assert Settings(index_text_mode="natural").index_text_mode == "natural"
+def test_index_text_mode_defaults_to_natural_v2_and_is_configurable() -> None:
+    """默认使用自然语言投影，同时保留显式 legacy 回滚能力。"""
+    assert Settings().index_text_mode == "natural"
+    assert Settings().index_text_version == "v2"
+    assert Settings(index_text_mode="legacy").index_text_mode == "legacy"
 
 
 def test_for_test_returns_safe_non_network_configuration() -> None:

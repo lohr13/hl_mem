@@ -52,10 +52,10 @@ class AdmissionPolicyTest(unittest.TestCase):
         self.assertTrue(decision.accepted)
         self.assertEqual(decision.reason, "accepted")
 
-    def test_rejects_low_notability_and_unlocatable_evidence(self) -> None:
+    def test_accepts_low_notability_with_evidence_and_rejects_unlocatable_evidence(self) -> None:
         self.assertEqual(
             admit_claim(_candidate(notability="low"), "hl_mem 使用 SQLite WAL 模式").reason,
-            "low_notability",
+            "accepted",
         )
         self.assertEqual(
             admit_claim(_candidate(evidence_quote="原文没有这段"), "hl_mem 使用 SQLite WAL 模式").reason,

@@ -44,6 +44,11 @@ pre_filter = false
 chunk_target_chars = 12000
 verification_mode = "off"
 
+[index]
+# natural 仅索引 subject 与原语言 value，避免内部 predicate/slot/tag 模板噪声。
+text_mode = "natural"
+text_version = "v2"
+
 [recall]
 default_limit = 5
 vector_scan_limit = 200

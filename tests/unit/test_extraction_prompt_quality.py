@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from hl_mem.ingest.llm_extractor import SYSTEM_PROMPT
+from hl_mem.ingest.llm_extractor import ENGLISH_SYSTEM_PROMPT, SYSTEM_PROMPT
 
 
 class ExtractionPromptQualityTest(unittest.TestCase):
@@ -29,7 +29,7 @@ class ExtractionPromptQualityTest(unittest.TestCase):
             "architecture：已执行的架构决策、系统结构、组件关系",
             "identity：用户名、硬件、角色等身份信息",
             "config：端口、路径、模型名、API 地址等技术配置",
-            "fact：其他稳定的客观事实",
+            "fact：其他客观事实，包括一次性事件及其可回答细节",
             "plan：已确认的计划和截止日期",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
@@ -50,10 +50,14 @@ class ExtractionPromptQualityTest(unittest.TestCase):
         for expected in (
             "high：核心身份、永久偏好、关键架构决策",
             "medium：重要配置、项目特征、一般事实",
-            "low：边缘信息、临时状态、低频引用 → 跳过不提取",
+            "low：一次性事件及其数字、时间、地点、专名或耗时细节，进入 episodic 层",
             "服务健康快照、CI 测试数量、版本号查询结果、过程进度、纯问候、未确认建议",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
+
+        self.assertIn("Low means episodic, not disposable", ENGLISH_SYSTEM_PROMPT)
+        self.assertIn("IKEA bookcase", ENGLISH_SYSTEM_PROMPT)
+        self.assertIn("IKEA 书架", SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

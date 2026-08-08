@@ -100,13 +100,13 @@ class Settings:
     )
     embedding_read_timeout: float = field(default=30.0, metadata={"toml": "embedding.read_timeout"})
     embedding_max_attempts: int = field(default=3, metadata={"toml": "embedding.max_attempts"})
-    index_text_mode: IndexTextMode = field(default="legacy", metadata={"toml": "index.text_mode"})
+    index_text_mode: IndexTextMode = field(default="natural", metadata={"toml": "index.text_mode"})
     index_backfill_batch_size: int = field(default=100, metadata={"toml": "index.backfill_batch_size"})
     index_backfill_max_attempts: int = field(
         default=3,
         metadata={"toml": "index.backfill_max_attempts"},
     )
-    index_text_version: str = field(default="v1", metadata={"toml": "index.text_version"})
+    index_text_version: str = field(default="v2", metadata={"toml": "index.text_version"})
     reranker_mode: RerankerMode = field(default="off", metadata={"toml": "reranker.mode"})
     reranker_provider: RerankerProvider = field(
         default="dashscope",

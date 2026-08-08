@@ -289,7 +289,7 @@ class IngestService:
         ttl_days: int | None = None,
         policy: TTLPolicy | None = None,
         relation_discovery_mode: str = "off",
-        index_text_mode: IndexTextMode = "legacy",
+        index_text_mode: IndexTextMode = "natural",
     ) -> StoreClaimResult:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
@@ -600,13 +600,14 @@ def _build_claim_drafts(
         return StoreClaimResult(None, "skipped", "importance_below_write_floor")
     observed_at = normalize_utc_iso(str(event.get("occurred_at", now)), "observed_at")
     recorded_from = normalize_utc_iso(now, "recorded_from")
+    retention_anchor = recorded_from if extracted.reason == "accepted_episodic" else observed_at
     expires_at, _expiration_reason = compute_expiration(
         scope=scope,
         importance=importance,
         volatility=extracted.volatility,
         canonical_slot=canonical_slot,
         valid_to=None,
-        observed_at=observed_at,
+        observed_at=retention_anchor,
         recorded_from=recorded_from,
         policy=policy,
         canonical_attribute=canonical_attribute,

@@ -100,7 +100,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `image_describer.mode` | `off` | 图片描述：`off` 或 `on` |
 | `llm.provider` | `dashscope` | `dashscope`、`zhipu` 或 `openai_compatible` |
 | `llm.structured_mode` | `json_object` | `auto`、`json_object` 或 `json_schema` |
-| `index.text_mode` | `legacy` | `legacy`、`value_only`、`natural` 或 `answerable` |
+| `index.text_mode` | `natural` | `legacy`、`value_only`、`natural` 或 `answerable`；natural 只拼 subject 与原语言 value |
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan`（默认）或需安装 `hl-mem[sqlite-vec]` 的 `sqlite_vec` |
 | `recall.query_expansion_mode` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
 | `relation.discovery_mode` | `off` | 关系发现：`off`、`audit` 或 `auto` |
@@ -108,6 +108,13 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 
 真实组件和外部调用路径必须提供各自密钥；失败时不会自动切换为 fake。任意 `HL_MEM_*` 环境变量都不再参与应用 `Settings` 配置。
 代码默认值与示例部署配置刻意分离：`Settings` 的 `recall.default_limit` / `recall.relevance_reranker_floor` 仍为 `20` / `0.4`，而 `config.example.toml` 显式覆盖为 `5` / `0.15`，并保持 `recall.relevance_keep_top1 = true`。query expansion 使用独立可配置模型，单次/总超时为 5/6 秒。
+
+从 legacy 索引迁移既有数据库时，先只读预览，再显式执行回填；回填会同步 `index_text`、FTS 和 dense embedding，使用 real embedder 的部署需提供对应密钥：
+
+```bash
+hlmem backfill-index-text --mode natural --dry-run
+hlmem backfill-index-text --mode natural
+```
 
 ## 能力概览
 

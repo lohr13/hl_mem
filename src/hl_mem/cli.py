@@ -405,7 +405,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     backfill.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     backfill.add_argument("--dry-run", action="store_true")
     backfill.add_argument("--cursor")
-    backfill.add_argument("--mode", choices=("legacy", "answerable"))
+    backfill.add_argument("--mode", choices=("legacy", "value_only", "natural", "answerable"))
     doctor = commands.add_parser("doctor")
     doctor.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--config", type=Path, default=argparse.SUPPRESS)

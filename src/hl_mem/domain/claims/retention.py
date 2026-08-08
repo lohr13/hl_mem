@@ -76,7 +76,7 @@ def compute_expiration(
     canonical_attribute: str | None = None,
 ) -> tuple[str | None, str]:
     """从原始时间锚点计算绝对过期时间及原因码。"""
-    del volatility  # 变化频率不再决定保留期，保留参数用于稳定领域契约。
+    del volatility  # 变化频率不决定通用保留期；episodic 的锚点由提取写入边界显式选择。
     anchor_text = observed_at or recorded_from
     anchor = _parse_iso(anchor_text, "observed_at/recorded_from")
 

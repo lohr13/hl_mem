@@ -13,6 +13,7 @@ from hl_mem.domain.claims.attributes import MUTUALLY_EXCLUSIVE_SLOTS
 
 VALID_KINDS = frozenset({"preference", "architecture", "identity", "config", "fact", "plan", "choice"})
 VALID_NOTABILITY = frozenset({"high", "medium", "low"})
+EPISODIC_KINDS = frozenset({"fact", "plan"})
 LOW_VALUE_HEALTH_STATES = frozenset({"ok", "running", "stopped", "健康", "正常"})
 NUMERIC_OR_VERSION_RE = re.compile(r"[0-9.]+")
 RECOVERY_CODE_RE = re.compile(r"(?i)(?<![a-z0-9])[a-z0-9]{5}-[a-z0-9]{5}(?![a-z0-9])")
@@ -180,8 +181,6 @@ def secret_reason(value: Any) -> str | None:
 
 def admit_claim(candidate: MemoryCandidate, source_text: str) -> AdmissionDecision:
     """纯函数准入判断，同时供 dry-run benchmark 和生产写入使用。"""
-    if candidate.notability == "low":
-        return AdmissionDecision(False, "low_notability")
     if candidate.notability not in VALID_NOTABILITY or candidate.kind not in VALID_KINDS:
         return AdmissionDecision(False, "invalid_candidate")
     if not isinstance(candidate.confidence, (int, float)) or not math.isfinite(candidate.confidence):
@@ -204,6 +203,8 @@ def admit_claim(candidate: MemoryCandidate, source_text: str) -> AdmissionDecisi
         return AdmissionDecision(False, "operational_snapshot")
     if low_value_reason(candidate.value) is not None:
         return AdmissionDecision(False, "low_value")
+    if candidate.notability == "low" and candidate.kind in EPISODIC_KINDS:
+        return AdmissionDecision(True, "accepted_episodic")
     return AdmissionDecision(True, "accepted")
 
 
@@ -212,6 +213,7 @@ def admission_rules_fingerprint() -> dict[str, Any]:
     return {
         "valid_kinds": sorted(VALID_KINDS),
         "valid_notability": sorted(VALID_NOTABILITY),
+        "episodic_kinds": sorted(EPISODIC_KINDS),
         "low_value_health_states": sorted(LOW_VALUE_HEALTH_STATES),
         "evidence_fuzzy_threshold": _EVIDENCE_FUZZY_THRESHOLD,
         "patterns": {
