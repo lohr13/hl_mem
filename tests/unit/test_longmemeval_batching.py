@@ -262,6 +262,40 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(attempts, 1)
         sleep.assert_not_called()
 
+    def test_qa_retry_does_not_retry_http_400_with_nested_read_timeout(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        response = httpx.Response(400, request=request, headers={"Retry-After": "7"})
+        attempts = 0
+
+        def call_qa() -> str:
+            nonlocal attempts
+            attempts += 1
+            timeout = httpx.ReadTimeout("stale timeout context", request=request)
+            raise httpx.HTTPStatusError("bad request", request=request, response=response) from timeout
+
+        with patch.object(runner.time, "sleep") as sleep:
+            with self.assertRaises(httpx.HTTPStatusError):
+                runner._qa_call_with_retry(call_qa)
+
+        self.assertEqual(attempts, 1)
+        sleep.assert_not_called()
+
+    def test_qa_retry_stops_after_the_configured_timeout_attempts(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        attempts = 0
+
+        def call_qa() -> str:
+            nonlocal attempts
+            attempts += 1
+            raise httpx.ReadTimeout("reader timed out", request=request)
+
+        with patch.object(runner.time, "sleep") as sleep:
+            with self.assertRaises(httpx.ReadTimeout):
+                runner._qa_call_with_retry(call_qa, max_attempts=2)
+
+        self.assertEqual(attempts, 2)
+        sleep.assert_called_once_with(2.0)
+
     def test_reader_context_includes_claim_times_and_original_event_source(self) -> None:
         case = runner.normalize_case(_record("case-context"))
         event_id = case.sessions[0].event_id
@@ -511,6 +545,82 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertIn("[later text omitted]", prompt)
         self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
         connection.close()
+
+    def test_windowed_reader_context_uses_question_to_focus_a_paraphrased_long_turn(self) -> None:
+        record = _record("case-question-span")
+        record["question"] = "Which city did I relocate to after leaving Osaka?"
+        case = runner.normalize_case(record)
+        event_id = case.sessions[0].event_id
+        answer_sentence = "After leaving Osaka, I relocated to Kyoto for work."
+        messages = [
+            {
+                "role": "user",
+                "content": ("unrelated housing preface " * 500) + answer_sentence + (" trailing detail" * 500),
+            }
+        ]
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE events ("
+            "id TEXT PRIMARY KEY,content_json TEXT,occurred_at TEXT,recorded_at TEXT,"
+            "event_type TEXT,actor_type TEXT,source_uri TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            (
+                event_id,
+                json.dumps({"text": "unused head", "messages": messages}),
+                "2023-05-20T02:21:00+00:00",
+                "2023-05-20T02:22:00+00:00",
+                "message",
+                "user",
+                None,
+            ),
+        )
+
+        prompt = runner._build_reader_user_prompt(
+            connection,
+            case,
+            [
+                {
+                    "rank": 1,
+                    "text": "The user changed residence for employment.",
+                    "value": "a residential change",
+                    "evidence_event_ids": [event_id],
+                }
+            ],
+            context_mode="windowed",
+        )
+
+        self.assertIn(answer_sentence, prompt)
+        self.assertIn("[earlier text omitted]", prompt)
+        self.assertIn("[later text omitted]", prompt)
+        connection.close()
+
+    def test_reader_context_structurally_caps_claim_metadata_and_preserves_question(self) -> None:
+        record = _record("case-claim-budget")
+        record["question"] = "What is the complete question that must remain at the end?"
+        case = runner.normalize_case(record)
+        retrieved = [
+            {
+                "rank": rank,
+                "claim_id": f"claim-{rank}",
+                "text": f"claim text {rank} " * runner.QA_CLAIM_FIELD_TOKEN_LIMIT,
+                "value": f"claim value {rank} " * runner.QA_CLAIM_FIELD_TOKEN_LIMIT,
+                "evidence_event_ids": [f"event-{rank}-{'x' * 80}-{index}" for index in range(500)],
+            }
+            for rank in range(1, 21)
+        ]
+
+        prompt = runner._build_reader_user_prompt(None, case, retrieved, context_mode="windowed")
+        claims_json = prompt.split("Memory Claims:\n", 1)[1].split("\n\nOriginal Evidence Events:", 1)[0]
+        claims = json.loads(claims_json)
+
+        self.assertGreater(len(claims), 0)
+        self.assertLess(len(claims), len(retrieved))
+        self.assertTrue(any(int(claim.get("evidence_event_ids_omitted", 0)) > 0 for claim in claims))
+        self.assertTrue(prompt.endswith(f"Question: {case.question}"))
+        self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
 
     def test_run_qa_uses_plain_chat_and_retries_http_errors(self) -> None:
         case = runner.normalize_case(_record("case-qa"))
@@ -769,6 +879,28 @@ class LongMemEvalMergeTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "configuration mismatch"):
                 merger.merge_reports(input_dir=root, pattern="shard-*.json", dataset=dataset)
+
+    def test_merge_normalizes_legacy_and_explicit_head_context_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset, dataset_sha256 = self._write_dataset(root)
+            legacy = _shard_report(
+                dataset_sha256,
+                [_case_result("case-1")],
+                reader_context_mode="head",
+            )
+            del legacy["run"]["reader_context_mode"]  # type: ignore[index]
+            explicit = _shard_report(
+                dataset_sha256,
+                [_case_result("case-2")],
+                reader_context_mode="head",
+            )
+            (root / "shard-a.json").write_text(json.dumps(legacy), encoding="utf-8")
+            (root / "shard-b.json").write_text(json.dumps(explicit), encoding="utf-8")
+
+            report = merger.merge_reports(input_dir=root, pattern="shard-*.json", dataset=dataset)
+
+        self.assertEqual(report["run"]["reader_context_mode"], "head")
 
     def test_merge_rejects_case_without_error_field(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

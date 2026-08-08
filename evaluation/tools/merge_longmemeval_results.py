@@ -205,6 +205,8 @@ def merge_reports(
     ]
     if started_values:
         run["started_at"] = min(started_values)
+    if expected_configuration is not None:
+        run["reader_context_mode"] = expected_configuration["reader_context_mode"]
     run.update(
         {
             "limit": len(cases),

@@ -68,6 +68,7 @@ QA_MODEL = "qwen3.7-plus"
 QA_MAX_ATTEMPTS = 3
 QA_CONTEXT_TOKEN_BUDGET = 6000
 QA_EVIDENCE_EVENT_TOKEN_LIMIT = 1200
+QA_CLAIMS_TOKEN_BUDGET = QA_CONTEXT_TOKEN_BUDGET - QA_EVIDENCE_EVENT_TOKEN_LIMIT
 QA_CLAIM_FIELD_TOKEN_LIMIT = 192
 READER_CONTEXT_MODES = ("windowed", "head")
 DEFAULT_READER_CONTEXT_MODE = "windowed"
@@ -1299,15 +1300,20 @@ def _qa_call_with_retry(
             return call()
         except Exception as error:
             http_error = _find_http_status_error(error)
-            timeout_error = _find_qa_timeout(error)
             status = http_error.response.status_code if http_error is not None else None
             retryable_status = status == 429 or (status is not None and status >= 500)
-            if not retryable_status and timeout_error is None:
-                raise
+            timeout_error: httpx.ReadTimeout | httpx.ConnectTimeout | None = None
+            if http_error is not None:
+                if not retryable_status:
+                    raise
+            else:
+                timeout_error = _find_qa_timeout(error)
+                if timeout_error is None:
+                    raise
             if attempt == max_attempts:
                 raise
             retry_after = None
-            if http_error is not None:
+            if retryable_status and http_error is not None:
                 header = http_error.response.headers.get("Retry-After")
                 if header is not None:
                     retry_after = _retry_after_seconds(header)
@@ -1453,7 +1459,7 @@ def _reader_event_needles(
 ) -> dict[str, tuple[tuple[str, float], ...]]:
     by_event: dict[str, list[tuple[str, float]]] = defaultdict(list)
     for item in retrieved:
-        values = ((item.get("value"), 3.0), (item.get("text"), 2.0))
+        values = ((item.get("value"), 3.0), (item.get("text") or item.get("claim"), 2.0))
         for event_id in item.get("evidence_event_ids") or []:
             key = str(event_id)
             for value, weight in values:
@@ -1564,12 +1570,15 @@ def _reader_turn_window(
     end = min(len(messages), matched_turn + QA_EVIDENCE_TURN_RADIUS + 1)
     included_turns = list(range(start, end))
     matched = messages[matched_turn]
+    focus_needles = list(needles)
+    if question.strip():
+        focus_needles.append((question, 0.5))
     parts = [
         f"[matched turn {matched_turn} {matched.get('role') or 'user'}]\n"
         + _reader_turn_excerpt(
             str(matched.get("content") or ""),
             QA_MATCHED_TURN_TOKEN_LIMIT,
-            needles,
+            focus_needles,
         )
     ]
     for index in included_turns:
@@ -1663,6 +1672,45 @@ def _render_reader_user_prompt(
     )
 
 
+def _fit_reader_claim(
+    case: LongMemEvalCase,
+    accepted_claims: Sequence[Mapping[str, Any]],
+    claim: Mapping[str, Any],
+    context_mode: str,
+) -> dict[str, Any] | None:
+    evidence_ids = [str(event_id) for event_id in claim.get("evidence_event_ids") or []]
+    low = 0
+    high = len(evidence_ids)
+    best: dict[str, Any] | None = None
+    while low <= high:
+        count = (low + high) // 2
+        candidate = {**claim, "evidence_event_ids": evidence_ids[:count]}
+        omitted = len(evidence_ids) - count
+        if omitted:
+            candidate["evidence_event_ids_omitted"] = omitted
+        prompt = _render_reader_user_prompt(case, [*accepted_claims, candidate], [], context_mode)
+        if estimate_tokens(prompt) <= QA_CLAIMS_TOKEN_BUDGET:
+            best = candidate
+            low = count + 1
+        else:
+            high = count - 1
+    return best
+
+
+def _fit_reader_claims(
+    case: LongMemEvalCase,
+    claims: Sequence[Mapping[str, Any]],
+    context_mode: str,
+) -> list[dict[str, Any]]:
+    accepted: list[dict[str, Any]] = []
+    for claim in claims:
+        fitted = _fit_reader_claim(case, accepted, claim, context_mode)
+        if fitted is None:
+            break
+        accepted.append(fitted)
+    return accepted
+
+
 def _fit_reader_event(
     case: LongMemEvalCase,
     claims: Sequence[Mapping[str, Any]],
@@ -1702,12 +1750,12 @@ def _build_reader_user_prompt(
     """Build time/source-aware reader context under a strict total budget."""
     if context_mode not in READER_CONTEXT_MODES:
         raise ValueError(f"unsupported reader context mode: {context_mode!r}")
-    claims = _reader_claim_records(retrieved)
+    claims = _fit_reader_claims(case, _reader_claim_records(retrieved), context_mode)
     ranked_events = _load_reader_events(
         connection,
-        _ordered_evidence_ids(retrieved),
+        _ordered_evidence_ids(claims),
         question=case.question,
-        event_needles=_reader_event_needles(retrieved),
+        event_needles=_reader_event_needles(claims),
         context_mode=context_mode,
     )
     accepted_events: list[dict[str, Any]] = []
@@ -1717,9 +1765,9 @@ def _build_reader_user_prompt(
             break
         accepted_events.append(fitted)
     prompt = _render_reader_user_prompt(case, claims, accepted_events, context_mode)
-    if estimate_tokens(prompt) <= QA_CONTEXT_TOKEN_BUDGET:
-        return prompt
-    return _truncate_reader_text(prompt, QA_CONTEXT_TOKEN_BUDGET)
+    if estimate_tokens(prompt) > QA_CONTEXT_TOKEN_BUDGET:
+        raise RuntimeError("reader context budget invariant violated")
+    return prompt
 
 
 def _longmemeval_judge_prompts(

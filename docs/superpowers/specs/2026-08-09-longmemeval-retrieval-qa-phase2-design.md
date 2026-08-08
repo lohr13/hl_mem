@@ -16,7 +16,7 @@ runner 新增 `--reader-context-mode {windowed,head}`，默认 `windowed`。`hea
 
 ## 预算与上下文结构
 
-继续使用 `QA_CONTEXT_TOKEN_BUDGET=6000`、`QA_EVIDENCE_EVENT_TOKEN_LIMIT=1200` 和 claim 字段上限。claim 元数据先进入 prompt；event 按 retrieved rank/evidence 顺序去重加入。windowed evidence 先缩小到最多三个 turns，再经过单 event 和总预算拟合；预算不足时停止追加后续 event，避免上下文膨胀与 lost-in-the-middle。
+继续使用 `QA_CONTEXT_TOKEN_BUDGET=6000`、`QA_EVIDENCE_EVENT_TOKEN_LIMIT=1200` 和 claim 字段上限。claim 元数据先进入 prompt，但为至少一条完整 event 预留 1200 token；过多的 evidence IDs 和低排名 claims 按结构化 JSON 边界裁减，绝不截断完整 prompt，从而始终保留完整问题和可解析的 claims/events。event 按 retrieved rank/evidence 顺序去重加入。windowed evidence 先缩小到最多三个 turns，再经过单 event 和总预算拟合；预算不足时停止追加后续 event，避免上下文膨胀与 lost-in-the-middle。
 
 每条 windowed event 附带 `window` 诊断元数据，包括匹配 turn、相邻 turn 索引、总 turn 数及匹配分数。匹配 turn 内容排在 event content 首部，相邻 turns 带 `previous`/`next` 标签，因此即使需要二次字符截断也优先保留 answer-bearing turn。
 
