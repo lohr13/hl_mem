@@ -85,7 +85,7 @@ def test_claim_fts_quoted_tokens_still_match_text(tmp_path):
     connection = Database(tmp_path / "fts-literal.db").open()
     _claim(connection)
 
-    assert [claim["id"] for claim in ClaimRepository(connection).search_claims_fts("likes tea")] == ["c"]
+    assert [claim["id"] for claim in ClaimRepository(connection).search_claims_fts("user tea")] == ["c"]
 
 
 def test_extracted_fields_are_appended_defaults():

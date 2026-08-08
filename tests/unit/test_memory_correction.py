@@ -153,7 +153,7 @@ def test_correct_memory_api_replaces_only_content_and_rebuilds_derived_fields(tm
         "confidence": 0.72,
     }
     assert new_claim["fact_hash"] == "0788a2c5836ae50f"
-    assert new_claim["index_text"] == ("Alice uses_language Python 3.13 preference.programming_language python backend")
+    assert new_claim["index_text"] == "Alice：Python 3.13"
     assert new_claim["embedding_dense"] == FakeEmbedder(8).embed_one(new_claim["index_text"])
     assert new_claim["embedding_dense"] != old_embedding
     valid_from = datetime.fromisoformat(new_claim["valid_from"])

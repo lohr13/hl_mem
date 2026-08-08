@@ -36,7 +36,7 @@ class _RecordingLLMClient:
 
 
 class PromptRollbackTests(unittest.TestCase):
-    def test_extraction_request_uses_only_original_language_rule(self) -> None:
+    def test_english_extraction_request_uses_native_source_language_rule(self) -> None:
         client = _RecordingLLMClient()
         extractor = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2))
 
@@ -45,8 +45,8 @@ class PromptRollbackTests(unittest.TestCase):
         self.assertIsNotNone(client.last_request)
         system = client.last_request.messages[0].content
         user = client.last_request.messages[1].content
-        self.assertIn("保留用户原始语言：中文原文输出中文，英文原文输出英文。", system)
-        self.assertNotIn("Output claims in the language of the input conversation", system)
+        self.assertIn("subject and value must use the same primary language as <extract_from>", system)
+        self.assertNotIn("保留用户原始语言", system)
         self.assertNotIn("LANGUAGE RULE", system)
         self.assertNotIn("[Language: Match the language", user)
         self.assertNotIn("IMPORTANT: Output all claims in the same language", user)
