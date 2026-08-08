@@ -245,8 +245,9 @@ class RecallService:
         session_id: str | None = None,
         debug: bool = False,
         response_format: str = "legacy",
+        ranking_now: str | None = None,
     ) -> dict[str, Any]:
-        """执行混合召回并返回 claim、策略、证据及查询标识。"""
+        """执行混合召回；ranking_now 仅控制排序时钟，不改变时间可见性。"""
         if response_format not in _RESPONSE_FORMATS:
             raise ValueError(f"unsupported response_format: {response_format}")
         limit = self.settings.recall_default_limit if limit is None else limit
@@ -322,6 +323,7 @@ class RecallService:
                 "short_query": "llm_short",
                 "coreference": "llm_coreference",
                 "low_recall": "llm_low_recall",
+                "low_fts_recall": "llm_low_recall",
                 "always": "llm_short",
             }.get(trigger, "llm_short")
             tracer.trace.expansion_trigger = trigger
@@ -421,12 +423,14 @@ class RecallService:
 
             def low_recall_expander(
                 candidate_count: int,
+                fts_candidate_count: int,
             ) -> tuple[list[WeightedQuery], list[bytes]]:
                 trigger = QueryExpander.trigger_for(
                     query,
                     "auto",
                     candidate_count=candidate_count,
                     candidate_floor=self.settings.query_expansion_candidate_floor,
+                    fts_candidate_count=fts_candidate_count,
                     context_available=context_available,
                 )
                 return expand_for(trigger) if trigger is not None else ([], [])
@@ -442,6 +446,7 @@ class RecallService:
             limit,
             as_of,
             self.reranker,
+            now=ranking_now,
             intent=selected_intent,
             known_as_of=known_as_of,
             namespace=namespace,
@@ -815,6 +820,9 @@ class RecallService:
                 "canonical_slot": claim.get("canonical_slot"),
                 "topic_tags": list(claim.get("topic_tags") or []),
                 "valid_from": claim["valid_from"],
+                "valid_to": claim.get("valid_to"),
+                "recorded_from": claim.get("recorded_from"),
+                "recorded_to": claim.get("recorded_to"),
                 "replacement": replacement,
                 "evidence": evidence,
                 "relations": relations_map.get(claim["id"], []),

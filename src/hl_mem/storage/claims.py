@@ -26,12 +26,24 @@ from hl_mem.storage._shared import (
 from hl_mem.storage.candidate_materializer import materialize_candidates
 from hl_mem.storage.sqlite_vec import SQLiteVecVectorBackend
 
-_CURRENT_STATUS_SQL = "('active')"
+_CURRENT_STATUS_SQL = "('active','superseded','expired')"
 _HISTORICAL_STATUS_SQL = "('active','archived','superseded','expired')"
 
 
 def _recall_statuses_sql(intent: RecallIntent) -> str:
     return _HISTORICAL_STATUS_SQL if intent is RecallIntent.HISTORICAL else _CURRENT_STATUS_SQL
+
+
+def _valid_time_sql(intent: RecallIntent, alias: str = "") -> str:
+    prefix = f"{alias}." if alias else ""
+    started = f"AND ({prefix}valid_from IS NULL OR {prefix}valid_from<=?) "
+    if intent is RecallIntent.HISTORICAL:
+        return started
+    return started + f"AND ({prefix}valid_to IS NULL OR {prefix}valid_to>?) "
+
+
+def _valid_time_parameters(intent: RecallIntent, reference: str) -> tuple[str, ...]:
+    return (reference,) if intent is RecallIntent.HISTORICAL else (reference, reference)
 
 
 @dataclass(frozen=True)
@@ -341,13 +353,13 @@ class ClaimRepository:
     ) -> list[dict[str, Any]]:
         """返回指定双时间视图下仍携带向量的可见 Claim。"""
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        selected_intent = RecallIntent(intent or RecallIntent.CURRENT_STATE)
         statuses = _recall_statuses_sql(selected_intent)
         rows = self.connection.execute(
             f"SELECT * FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
             "AND namespace_key=? "
-            "AND (valid_from IS NULL OR valid_from<=?) AND (valid_to IS NULL OR valid_to>?)",
-            (namespace, reference, reference),
+            f"{_valid_time_sql(selected_intent)}",
+            (namespace, *_valid_time_parameters(selected_intent, reference)),
         ).fetchall()
         return [
             claim
@@ -367,7 +379,7 @@ class ClaimRepository:
         """按配置委托 sqlite-vec，默认保留本地余弦扫描。"""
         effective_limit = self.recall_vector_scan_limit if limit is None else limit
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        selected_intent = RecallIntent(intent or RecallIntent.CURRENT_STATE)
         if self.vector_backend is not None:
             return cast(
                 list[dict[str, Any]],
@@ -405,13 +417,13 @@ class ClaimRepository:
         # A 100k x 2048 float32 full scan is about 819 MB; indexed retrieval must
         # be reconsidered before deployments approach that scale.
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        selected_intent = RecallIntent(intent or RecallIntent.CURRENT_STATE)
         statuses = _recall_statuses_sql(selected_intent)
         cursor = self.connection.execute(
             f"SELECT id, embedding_dense FROM claims WHERE embedding_dense IS NOT NULL AND status IN {statuses} "
             "AND namespace_key=? "
-            "AND (valid_from IS NULL OR valid_from<=?) AND (valid_to IS NULL OR valid_to>?)",
-            (namespace, reference, reference),
+            f"{_valid_time_sql(selected_intent)}",
+            (namespace, *_valid_time_parameters(selected_intent, reference)),
         )
         scored_claims: list[tuple[str, float]] = []
         while rows := cursor.fetchmany(self.vector_batch_size):
@@ -676,21 +688,20 @@ class ClaimRepository:
         """使用 FTS5 查询并应用双时间可见性过滤。"""
         limit = self.recall_default_limit if limit is None else limit
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        selected_intent = RecallIntent(intent or RecallIntent.CURRENT_STATE)
         statuses = _recall_statuses_sql(selected_intent)
         match_sql = (
             "SELECT c.* FROM claims_fts_v2 f JOIN claims c ON c.rowid=f.rowid "
             f"WHERE claims_fts_v2 MATCH ? AND c.status IN {statuses} "
             "AND c.namespace_key=? "
-            "AND (c.valid_from IS NULL OR c.valid_from<=?) "
-            "AND (c.valid_to IS NULL OR c.valid_to>?) "
+            f"{_valid_time_sql(selected_intent, 'c')}"
             "ORDER BY bm25(claims_fts_v2) LIMIT ?"
         )
 
         def execute_match(match_query: str) -> list[sqlite3.Row]:
             return self.connection.execute(
                 match_sql,
-                (match_query, namespace, reference, reference, limit),
+                (match_query, namespace, *_valid_time_parameters(selected_intent, reference), limit),
             ).fetchall()
 
         match_query = prepare_fts_query(query)
@@ -725,7 +736,7 @@ class ClaimRepository:
             return []
         limit = self.recall_default_limit if limit is None else limit
         reference = as_of or datetime.now(timezone.utc).isoformat()
-        selected_intent = RecallIntent(intent or (RecallIntent.HISTORICAL if as_of else RecallIntent.CURRENT_STATE))
+        selected_intent = RecallIntent(intent or RecallIntent.CURRENT_STATE)
         statuses = _recall_statuses_sql(selected_intent)
         match_query = " OR ".join(f'"{tag.replace(chr(34), chr(34) * 2)}"' for tag in dict.fromkeys(query_tags))
         try:
@@ -733,10 +744,9 @@ class ClaimRepository:
                 "SELECT c.* FROM claims_tags_fts_v2 f JOIN claims c ON c.rowid=f.rowid "
                 f"WHERE claims_tags_fts_v2 MATCH ? AND c.status IN {statuses} "
                 "AND c.namespace_key=? "
-                "AND (c.valid_from IS NULL OR c.valid_from<=?) "
-                "AND (c.valid_to IS NULL OR c.valid_to>?) "
+                f"{_valid_time_sql(selected_intent, 'c')}"
                 "ORDER BY bm25(claims_tags_fts_v2) LIMIT ?",
-                (match_query, namespace, reference, reference, limit),
+                (match_query, namespace, *_valid_time_parameters(selected_intent, reference), limit),
             ).fetchall()
         except sqlite3.OperationalError as error:
             if not is_fts_syntax_error(error):

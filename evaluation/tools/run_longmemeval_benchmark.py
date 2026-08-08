@@ -35,6 +35,7 @@ from evaluation.tools.run_embedding_ablation import (  # noqa: E402
     embed_remote,
 )
 from hl_mem import __version__  # noqa: E402
+from hl_mem.application.context_packet import estimate_tokens  # noqa: E402
 from hl_mem.application.ingest import IngestService  # noqa: E402
 from hl_mem.application.recall import RecallService  # noqa: E402
 from hl_mem.components import (  # noqa: E402
@@ -46,6 +47,7 @@ from hl_mem.components import (  # noqa: E402
 )
 from hl_mem.config_loader import load_settings  # noqa: E402
 from hl_mem.core.vector import cosine_similarity, pack_vector  # noqa: E402
+from hl_mem.domain.recall import RecallIntent  # noqa: E402
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402
 from hl_mem.recall.relation_expansion import RelationExpansionConfig  # noqa: E402
 from hl_mem.settings import Settings  # noqa: E402
@@ -62,6 +64,9 @@ DEFAULT_CONFIG = ROOT / "hl_mem.toml"
 DEFAULT_ENV_FILE = ROOT / ".env"
 QA_MODEL = "qwen3.7-plus"
 QA_MAX_ATTEMPTS = 3
+QA_CONTEXT_TOKEN_BUDGET = 6000
+QA_EVIDENCE_EVENT_TOKEN_LIMIT = 1200
+QA_CLAIM_FIELD_TOKEN_LIMIT = 192
 DEFAULT_FAIL_STOP_COUNT = 5
 RETRIEVAL_KS = (1, 5, 10)
 JSON_READ_CHARS = 1024 * 1024
@@ -550,6 +555,16 @@ def normalize_case(record: Mapping[str, Any]) -> LongMemEvalCase:
         gold_event_ids=gold_event_ids,
         gold_session_ids=gold_session_ids,
     )
+
+
+def _longmemeval_recall_intent(case: LongMemEvalCase) -> RecallIntent:
+    """Map benchmark semantics to an explicit recall intent."""
+    question_type = case.question_type.casefold()
+    if "preference" in question_type:
+        return RecallIntent.PREFERENCE
+    if "temporal" in question_type:
+        return RecallIntent.HISTORICAL
+    return RecallIntent.CURRENT_STATE
 
 
 def _result_evidence_ids(result: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1087,6 +1102,7 @@ def _ingest_case(
             "actor_type": "user",
             "content": content,
             "occurred_at": session.occurred_at,
+            "source_uri": f"longmemeval:{case.case_id}:{session.session_id}",
         }
         service.ingest_event(event)
         claims = extractor.extract(
@@ -1140,6 +1156,13 @@ def _retrieved_payload(results: Sequence[Mapping[str, Any]], case: LongMemEvalCa
                 "text": result.get("text"),
                 "value": result.get("value"),
                 "score": result.get("score"),
+                "status": result.get("status"),
+                "valid_from": result.get("valid_from"),
+                "valid_to": result.get("valid_to"),
+                "recorded_from": result.get("recorded_from"),
+                "recorded_to": result.get("recorded_to"),
+                "occurred_start": result.get("occurred_start"),
+                "occurred_end": result.get("occurred_end"),
                 "evidence_event_ids": list(evidence_ids),
                 "evidence_session_ids": [event_to_session[item] for item in evidence_ids if item in event_to_session],
             }
@@ -1173,8 +1196,10 @@ def _recall_case(
         case.question,
         limit=max(RETRIEVAL_KS),
         as_of=case.question_at,
+        intent=_longmemeval_recall_intent(case),
         namespace=case.namespace,
         debug=True,
+        ranking_now=case.question_at,
     )
     raw_results = response.get("results") or []
     results = [dict(item) for item in raw_results if isinstance(item, Mapping)]
@@ -1333,6 +1358,168 @@ def _qa_dashscope_chat(
     return str(answer_text), int(total_tokens)
 
 
+def _truncate_reader_text(value: object, token_limit: int) -> str:
+    """Render one reader field within a deterministic approximate token cap."""
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if estimate_tokens(text) <= token_limit:
+        return text
+    marker = "\n[truncated]"
+    char_limit = max(0, token_limit * 2 - len(marker) - 2)
+    return f"{text[:char_limit]}{marker}"
+
+
+def _reader_claim_records(retrieved: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in retrieved:
+        evidence_ids = [str(event_id) for event_id in item.get("evidence_event_ids") or []]
+        records.append(
+            {
+                "rank": item.get("rank"),
+                "claim_id": item.get("claim_id"),
+                "claim": _truncate_reader_text(item.get("text") or "", QA_CLAIM_FIELD_TOKEN_LIMIT),
+                "value": (
+                    _truncate_reader_text(item.get("value"), QA_CLAIM_FIELD_TOKEN_LIMIT)
+                    if item.get("value") is not None
+                    else None
+                ),
+                "status": item.get("status"),
+                "valid_from": item.get("valid_from"),
+                "valid_to": item.get("valid_to"),
+                "recorded_from": item.get("recorded_from"),
+                "recorded_to": item.get("recorded_to"),
+                "occurred_start": item.get("occurred_start"),
+                "occurred_end": item.get("occurred_end"),
+                "evidence_event_ids": list(dict.fromkeys(evidence_ids)),
+            }
+        )
+    return records
+
+
+def _ordered_evidence_ids(retrieved: Sequence[Mapping[str, Any]]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            str(event_id)
+            for item in retrieved
+            for event_id in item.get("evidence_event_ids") or []
+            if event_id is not None and str(event_id)
+        )
+    )
+
+
+def _event_content_text(content: object) -> str:
+    if isinstance(content, Mapping) and isinstance(content.get("text"), str):
+        return str(content["text"])
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+
+
+def _load_reader_events(connection: Any, event_ids: Sequence[str]) -> list[dict[str, Any]]:
+    """Batch-load ranked evidence events without expanding beyond each linked event."""
+    if connection is None or not event_ids:
+        return []
+    placeholders = ",".join("?" for _ in event_ids)
+    rows = connection.execute(
+        "SELECT id,content_json,occurred_at,recorded_at,event_type,actor_type,source_uri "
+        f"FROM events WHERE id IN ({placeholders})",
+        tuple(event_ids),
+    ).fetchall()
+    by_id = {str(row["id"]): row for row in rows}
+    events: list[dict[str, Any]] = []
+    for event_id in event_ids:
+        row = by_id.get(event_id)
+        if row is None:
+            continue
+        try:
+            content = json.loads(row["content_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            content = str(row["content_json"] or "")
+        locator = content.get("benchmark_locator") if isinstance(content, Mapping) else None
+        session_id = locator.get("session_id") if isinstance(locator, Mapping) else None
+        events.append(
+            {
+                "event_id": event_id,
+                "occurred_at": row["occurred_at"],
+                "recorded_at": row["recorded_at"],
+                "event_type": row["event_type"],
+                "actor_type": row["actor_type"],
+                "session_id": session_id,
+                "source_uri": row["source_uri"],
+                "content": _event_content_text(content),
+            }
+        )
+    return events
+
+
+def _render_reader_user_prompt(
+    case: LongMemEvalCase,
+    claims: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+) -> str:
+    current_date = case.question_at or datetime.now(timezone.utc).isoformat()
+    claims_json = json.dumps(claims, ensure_ascii=False, separators=(",", ":"))
+    events_json = json.dumps(events, ensure_ascii=False, separators=(",", ":"))
+    return (
+        f"Current Date: {current_date}\n"
+        f"Question Type: {case.question_type}\n\n"
+        f"Memory Claims:\n{claims_json or '[]'}\n\n"
+        f"Original Evidence Events:\n{events_json or '[]'}\n\n"
+        f"Question: {case.question}"
+    )
+
+
+def _fit_reader_event(
+    case: LongMemEvalCase,
+    claims: Sequence[Mapping[str, Any]],
+    accepted_events: Sequence[Mapping[str, Any]],
+    event: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    original = str(event.get("content") or "")
+    max_chars = min(len(original), QA_EVIDENCE_EVENT_TOKEN_LIMIT * 2)
+    low = 0
+    high = max_chars
+    best: dict[str, Any] | None = None
+    while low <= high:
+        length = (low + high) // 2
+        truncated = length < len(original)
+        content = original[:length] + ("\n[truncated]" if truncated else "")
+        candidate = {**event, "content": content}
+        serialized_event = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
+        prompt = _render_reader_user_prompt(case, claims, [*accepted_events, candidate])
+        if (
+            estimate_tokens(serialized_event) <= QA_EVIDENCE_EVENT_TOKEN_LIMIT
+            and estimate_tokens(prompt) <= QA_CONTEXT_TOKEN_BUDGET
+        ):
+            best = candidate
+            low = length + 1
+        else:
+            high = length - 1
+    return best
+
+
+def _build_reader_user_prompt(
+    connection: Any,
+    case: LongMemEvalCase,
+    retrieved: Sequence[Mapping[str, Any]],
+) -> str:
+    """Build time/source-aware reader context under a strict total budget."""
+    claims = _reader_claim_records(retrieved)
+    ranked_events = _load_reader_events(connection, _ordered_evidence_ids(retrieved))
+    accepted_events: list[dict[str, Any]] = []
+    for event in ranked_events:
+        fitted = _fit_reader_event(case, claims, accepted_events, event)
+        if fitted is None:
+            break
+        accepted_events.append(fitted)
+    prompt = _render_reader_user_prompt(case, claims, accepted_events)
+    if estimate_tokens(prompt) <= QA_CONTEXT_TOKEN_BUDGET:
+        return prompt
+    return _truncate_reader_text(prompt, QA_CONTEXT_TOKEN_BUDGET)
+
+
 def _run_qa(
     connection: Any,
     case: LongMemEvalCase,
@@ -1344,12 +1531,18 @@ def _run_qa(
     if not api_key:
         raise RuntimeError("QA answering requires LLM_API_KEY in .env or environment")
 
-    context = "\n".join(f"[{item['rank']}] {item.get('text') or ''}" for item in retrieved)
     reader_system_prompt = (
-        "Answer the question using only the supplied memory claims. "
-        "If the claims do not contain the answer, say that the information is unavailable."
+        "You answer questions from retrieved long-term-memory claims and their original evidence events. "
+        "Inspect every record and identify evidence that directly or jointly supports the question. "
+        "If the evidence contains the answer, give it clearly and concisely; combine records when needed. "
+        "Use Current Date and each record's occurred, valid, and recorded times to resolve updates, preferring "
+        "the latest applicable explicit fact. You may make deterministic inferences such as coreference "
+        "resolution, simple arithmetic, comparisons, and date calculations. Do not invent missing proper nouns, "
+        "amounts, places, dates, or counts. Say that the information is unavailable only after checking every "
+        "claim and evidence event and finding them genuinely insufficient; do not abstain merely because the "
+        "wording differs. Return only the answer, without analysis or evidence ranks."
     )
-    reader_user_prompt = f"Memory claims:\n{context or '(none)'}\n\nQuestion: {case.question}"
+    reader_user_prompt = _build_reader_user_prompt(connection, case, retrieved)
     reader_text, reader_tokens = _qa_call_with_retry(
         lambda: _qa_dashscope_chat(
             api_key,

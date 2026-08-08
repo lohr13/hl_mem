@@ -12,7 +12,7 @@ from hl_mem.domain.recall import RecallIntent
 from hl_mem.llm.types import LLMResponse
 from hl_mem.protocols import WeightedQuery
 from hl_mem.recall.query_expansion import QueryExpander
-from hl_mem.recall.staged_pipeline import RRF_K, _weighted_rrf_scores
+from hl_mem.recall.staged_pipeline import RRF_K, RecallConfig, _collect_candidates, _weighted_rrf_scores
 from hl_mem.recall.trace import (
     QueryExpansionTrace,
     SearchPhaseMetrics,
@@ -57,6 +57,26 @@ def test_auto_trigger_boundaries_and_coreference() -> None:
         QueryExpander.trigger_for("普通且足够具体的查询文本", "auto", candidate_count=7, candidate_floor=8)
         == "low_recall"
     )
+    assert (
+        QueryExpander.trigger_for(
+            "Where did I buy the bicycle?",
+            "auto",
+            candidate_count=50,
+            fts_candidate_count=0,
+            fts_candidate_floor=3,
+        )
+        == "low_fts_recall"
+    )
+    assert (
+        QueryExpander.trigger_for(
+            "Where did I buy the bicycle?",
+            "auto",
+            candidate_count=50,
+            fts_candidate_count=3,
+            fts_candidate_floor=3,
+        )
+        is None
+    )
 
 
 def test_expander_cleans_deduplicates_and_limits_results() -> None:
@@ -79,6 +99,8 @@ def test_expander_cleans_deduplicates_and_limits_results() -> None:
     )
     assert "禁止添加人物" in prompt
     assert "namespace" in prompt
+    assert "中文和英文" in prompt
+    assert "每条查询只使用一种语言" in prompt
 
 
 def test_expander_prompt_names_queries_output_contract() -> None:
@@ -232,6 +254,45 @@ def test_weighted_rrf_uses_query_and_channel_weights() -> None:
 
     assert scores["a"] == 1.0 / 61 + 0.6 / 62
     assert scores["b"] == 1.0 / 62 + 0.6 / 61
+
+
+def test_candidate_collection_reports_total_and_fts_counts_to_expander() -> None:
+    dense_claims = [
+        {
+            "id": f"claim-{index}",
+            "status": "active",
+            "valid_from": "2025-01-01T00:00:00Z",
+            "recorded_from": "2025-01-01T00:00:00Z",
+        }
+        for index in range(10)
+    ]
+
+    class Repo:
+        def search_claims_fts(self, *args, **kwargs):
+            return []
+
+        def search_claims_vector(self, *args, **kwargs):
+            return dense_claims
+
+    captured: list[tuple[int, int]] = []
+
+    def expand(total_count: int, fts_count: int):
+        captured.append((total_count, fts_count))
+        return [], []
+
+    _collect_candidates(
+        Repo(),
+        "Where did I buy the bicycle?",
+        b"query",
+        10,
+        "2025-02-01T00:00:00Z",
+        now="2025-02-01T00:00:00Z",
+        intent=RecallIntent.CURRENT_STATE,
+        recall_config=RecallConfig(candidate_floor=10),
+        low_recall_expander=expand,
+    )
+
+    assert captured == [(10, 0)]
 
 
 def test_trace_serializes_expansion_without_changing_legacy_defaults() -> None:

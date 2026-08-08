@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from hl_mem.domain.constants import (
     INTENT_KEYWORDS_ANALOGICAL,
@@ -16,7 +15,7 @@ from hl_mem.domain.constants import (
     PROCEDURE_KEYWORDS,
     TOOL_KEYWORDS,
 )
-from hl_mem.domain.temporal import RecallIntent, parse_utc
+from hl_mem.domain.temporal import RecallIntent
 
 __all__ = ["QueryRoute", "RecallIntent", "route_query", "route_recall_intent"]
 
@@ -35,7 +34,7 @@ def route_query(query: str, reference_time: str | None = None) -> QueryRoute:
     lowered = query.lower()
     if any(word in lowered for word in INTENT_KEYWORDS_PROCEDURAL):
         return QueryRoute("procedure", ("procedure", "fts", "dense"), reference_time)
-    if any(word in lowered for word in INTENT_KEYWORDS_HISTORICAL) or reference_time:
+    if any(word in lowered for word in INTENT_KEYWORDS_HISTORICAL):
         return QueryRoute("historical", ("temporal", "fact", "fts", "dense"), reference_time)
     if any(word in lowered for word in INTENT_KEYWORDS_RELATIONAL):
         return QueryRoute("relation", ("relation", "fact", "fts", "dense"), reference_time)
@@ -45,14 +44,11 @@ def route_query(query: str, reference_time: str | None = None) -> QueryRoute:
 
 
 def route_recall_intent(query: str, as_of: str | None, now: str | None = None) -> RecallIntent:
-    """根据显式历史措辞或过去的 as_of 推断召回意图。"""
+    """根据查询语义推断召回意图；时间快照不改变用户意图。"""
+    # 保留 as_of/now 参数以兼容既有调用；可见性与排序时钟由各自管线消费。
     lowered = query.casefold()
     if any(marker in query for marker in (*INTENT_KEYWORDS_AS_OF, "as_of")):
         return RecallIntent.HISTORICAL
-    if as_of is not None:
-        reference = parse_utc(now) if now else datetime.now(timezone.utc)
-        if parse_utc(as_of) < reference:
-            return RecallIntent.HISTORICAL
     if any(marker in lowered for marker in (*INTENT_KEYWORDS_PREFERENCE, "preference", "prefer", "favorite")):
         return RecallIntent.PREFERENCE
     if any(marker in lowered for marker in TOOL_KEYWORDS):

@@ -11,6 +11,7 @@ from evaluation.tools.run_longmemeval_benchmark import (
     _case_fingerprint,
     _claim_relevance_scores,
     _config_compare_report,
+    _longmemeval_recall_intent,
     _reembed_database,
     _sample_stratified,
     _validate_manifest,
@@ -20,6 +21,7 @@ from evaluation.tools.run_longmemeval_benchmark import (
     retrieval_metrics,
 )
 from hl_mem.core.vector import pack_vector, unpack_vector
+from hl_mem.domain.temporal import RecallIntent
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION
 from hl_mem.settings import Settings
 
@@ -110,6 +112,19 @@ class LongMemEvalParsingTests(unittest.TestCase):
             records = list(iter_case_records(path, limit=1))
 
         self.assertEqual(records, [first])
+
+    def test_question_type_selects_recall_intent_without_using_question_date(self) -> None:
+        record = _official_record()
+        record["question"] = "What was my favorite degree before graduation?"
+        current = normalize_case(record)
+        record["question_type"] = "single-session-preference"
+        preference = normalize_case(record)
+        record["question_type"] = "temporal-reasoning"
+        temporal = normalize_case(record)
+
+        self.assertIs(_longmemeval_recall_intent(current), RecallIntent.CURRENT_STATE)
+        self.assertIs(_longmemeval_recall_intent(preference), RecallIntent.PREFERENCE)
+        self.assertIs(_longmemeval_recall_intent(temporal), RecallIntent.HISTORICAL)
 
 
 class LongMemEvalMetricTests(unittest.TestCase):

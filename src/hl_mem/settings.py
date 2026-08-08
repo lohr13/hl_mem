@@ -195,7 +195,7 @@ class Settings:
     tag_channel_enabled: bool = field(default=False, metadata={"toml": "recall.tag_channel_enabled"})
     tag_channel_weight: float = field(default=0.15, metadata={"toml": "recall.tag_channel_weight"})
     tag_candidate_limit: int = field(default=20, metadata={"toml": "recall.tag_candidate_limit"})
-    # query_expansion: auto 仅在短查询或指代查询时触发 LLM 改写，提升 recall
+    # query_expansion: auto 在指代、总候选不足或 FTS 命中过少时触发受控 LLM 改写
     query_expansion_mode: QueryExpansionMode = field(
         default="auto",
         metadata={"toml": "recall.query_expansion_mode"},

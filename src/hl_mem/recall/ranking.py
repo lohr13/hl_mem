@@ -38,7 +38,12 @@ def memory_features(
 ) -> dict[str, float]:
     """把 Claim 转换为归一化的语义、时效、访问和质量特征。"""
     current = _parse_datetime(now) or datetime.now(timezone.utc)
-    observed = _parse_datetime(claim.get("observed_at")) or _parse_datetime(claim.get("recorded_from"))
+    observed = (
+        _parse_datetime(claim.get("observed_at"))
+        or _parse_datetime(claim.get("occurred_start"))
+        or _parse_datetime(claim.get("valid_from"))
+        or _parse_datetime(claim.get("recorded_from"))
+    )
     recency = 0.0
     if observed is not None:
         age_days = max(0.0, (current - observed).total_seconds() / 86400.0)

@@ -110,6 +110,9 @@ class ClaimOutput(BaseModel):
     canonical_slot: str | None = None
     topic_tags: list[str] = Field(default_factory=list)
     valid_from: str | None = None
+    valid_to: str | None = None
+    recorded_from: str | None = None
+    recorded_to: str | None = None
     occurred_start: str | None = None
     occurred_end: str | None = None
     entities: list[str] | None = None

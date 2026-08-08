@@ -160,6 +160,20 @@ def test_ranking_malformed_date_is_safe():
     assert memory_features({"observed_at": "bad"}, 0.5, 0, NOW)["recency"] == 0
 
 
+def test_ranking_prefers_valid_time_over_later_ingest_time():
+    features = memory_features(
+        {
+            "valid_from": "2026-06-21T00:00:00+00:00",
+            "recorded_from": "2027-01-01T00:00:00+00:00",
+        },
+        0.5,
+        0,
+        NOW,
+    )
+
+    assert features["recency"] == 0.5
+
+
 def test_memory_score_exact_weights_and_semantic_dominates():
     high_semantic = {
         "semantic": 1,

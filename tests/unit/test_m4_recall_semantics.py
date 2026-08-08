@@ -4,9 +4,11 @@ import json
 
 import pytest
 
+from hl_mem.application.recall import RecallService
 from hl_mem.core.vector import pack_vector
 from hl_mem.domain.recall import route_recall_intent
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible, parse_utc
+from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.ttl import expire_claims
@@ -61,7 +63,7 @@ def test_supersede_with_inline_preserves_bitemporal_values_and_is_idempotent(
     [
         ("现在用什么", None, RecallIntent.CURRENT_STATE),
         ("以前用什么", None, RecallIntent.HISTORICAL),
-        ("普通查询", "2025-01-01T00:00:00Z", RecallIntent.HISTORICAL),
+        ("普通查询", "2025-01-01T00:00:00Z", RecallIntent.CURRENT_STATE),
     ],
 )
 def test_route_recall_intent(query, as_of, expected) -> None:
@@ -78,7 +80,9 @@ def test_visibility_uses_half_open_valid_and_recorded_intervals() -> None:
         "recorded_to": "2026-03-01T00:00:00Z",
     }
     assert claim_is_visible(claim, "2026-01-15T00:00:00Z", "2026-02-01T00:00:00Z", RecallIntent.HISTORICAL)
-    assert not claim_is_visible(claim, "2026-02-01T00:00:00Z", None, RecallIntent.HISTORICAL)
+    assert claim_is_visible(claim, "2026-01-15T00:00:00Z", None, RecallIntent.CURRENT_STATE)
+    assert claim_is_visible(claim, "2026-02-01T00:00:00Z", None, RecallIntent.HISTORICAL)
+    assert not claim_is_visible(claim, "2026-02-01T00:00:00Z", None, RecallIntent.CURRENT_STATE)
     assert not claim_is_visible(claim, "2026-01-05T00:00:00Z", "2026-01-05T00:00:00Z", RecallIntent.HISTORICAL)
     assert parse_utc("2026-01-01T08:00:00+08:00") == parse_utc("2026-01-01T00:00:00Z")
     with pytest.raises(ValueError, match="invalid ISO-8601"):
@@ -130,6 +134,57 @@ def test_historical_fts_candidates_include_archived_claims(tmp_path) -> None:
 
     assert [claim["id"] for claim in historical] == ["archived"]
     assert current == []
+
+
+def test_historical_fts_returns_closed_versions_before_as_of(tmp_path) -> None:
+    connection = Database(tmp_path / "closed-history.db").open()
+    _claim(
+        connection,
+        "old",
+        value="legacy archive marker",
+        status="superseded",
+        valid_to="2026-01-15T00:00:00Z",
+    )
+    repository = ClaimRepository(connection)
+
+    historical = repository.search_claims_fts(
+        "archive marker",
+        as_of="2026-02-01T00:00:00Z",
+        intent=RecallIntent.HISTORICAL,
+    )
+    current = repository.search_claims_fts(
+        "archive marker",
+        as_of="2026-02-01T00:00:00Z",
+        intent=RecallIntent.CURRENT_STATE,
+    )
+
+    assert [claim["id"] for claim in historical] == ["old"]
+    assert current == []
+
+
+def test_recall_passes_ranking_now_independently_from_as_of(tmp_path, monkeypatch) -> None:
+    connection = Database(tmp_path / "ranking-clock.db").open()
+    captured: dict[str, object] = {}
+
+    def capture_hybrid(*args, **kwargs):
+        captured["as_of"] = args[4]
+        captured["intent"] = kwargs["intent"]
+        captured["now"] = kwargs["now"]
+        return []
+
+    monkeypatch.setattr("hl_mem.application.recall.hybrid_claims", capture_hybrid)
+    RecallService(connection, FakeEmbedder(4)).recall(
+        "普通查询",
+        as_of="2025-01-01T00:00:00Z",
+        intent=RecallIntent.CURRENT_STATE,
+        ranking_now="2025-01-02T00:00:00Z",
+    )
+
+    assert captured == {
+        "as_of": "2025-01-01T00:00:00Z",
+        "intent": RecallIntent.CURRENT_STATE,
+        "now": "2025-01-02T00:00:00Z",
+    }
 
 
 def test_ttl_closes_valid_interval_but_remains_historically_visible(tmp_path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -198,6 +199,101 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(result, "success")
         sleep.assert_called_once_with(2.0)
 
+    def test_reader_context_includes_claim_times_and_original_event_source(self) -> None:
+        case = runner.normalize_case(_record("case-context"))
+        event_id = case.sessions[0].event_id
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE events ("
+            "id TEXT PRIMARY KEY,content_json TEXT,occurred_at TEXT,recorded_at TEXT,"
+            "event_type TEXT,actor_type TEXT,source_uri TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            (
+                event_id,
+                json.dumps(
+                    {
+                        "text": "user: I bought the blue bicycle at Riverside Cycles.",
+                        "benchmark_locator": {"session_id": "session-case-context"},
+                    }
+                ),
+                "2023-05-20T02:21:00+00:00",
+                "2023-05-20T02:22:00+00:00",
+                "message",
+                "user",
+                "longmemeval://case-context/session-case-context",
+            ),
+        )
+
+        prompt = runner._build_reader_user_prompt(
+            connection,
+            case,
+            [
+                {
+                    "rank": 1,
+                    "claim_id": "claim-1",
+                    "text": "The user bought a blue bicycle.",
+                    "value": "blue bicycle",
+                    "status": "active",
+                    "valid_from": "2023-05-20T02:21:00+00:00",
+                    "valid_to": None,
+                    "recorded_from": "2023-05-20T02:22:00+00:00",
+                    "recorded_to": None,
+                    "evidence_event_ids": [event_id],
+                }
+            ],
+        )
+
+        self.assertIn("Current Date: 2023-05-30T23:40:00+00:00", prompt)
+        self.assertIn('"valid_from":"2023-05-20T02:21:00+00:00"', prompt)
+        self.assertIn("I bought the blue bicycle at Riverside Cycles", prompt)
+        self.assertIn('"session_id":"session-case-context"', prompt)
+        self.assertIn('"source_uri":"longmemeval://case-context/session-case-context"', prompt)
+        self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
+        connection.close()
+
+    def test_reader_context_truncates_large_evidence_within_total_budget(self) -> None:
+        case = runner.normalize_case(_record("case-budget"))
+        event_id = case.sessions[0].event_id
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE events ("
+            "id TEXT PRIMARY KEY,content_json TEXT,occurred_at TEXT,recorded_at TEXT,"
+            "event_type TEXT,actor_type TEXT,source_uri TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            (
+                event_id,
+                json.dumps({"text": "evidence " * (runner.QA_CONTEXT_TOKEN_BUDGET * 2)}),
+                "2023-05-20T02:21:00+00:00",
+                "2023-05-20T02:22:00+00:00",
+                "message",
+                "user",
+                None,
+            ),
+        )
+
+        prompt = runner._build_reader_user_prompt(
+            connection,
+            case,
+            [{"rank": 1, "text": "claim", "evidence_event_ids": [event_id]}],
+        )
+
+        self.assertIn("[truncated]", prompt)
+        self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
+        serialized_events = prompt.split("Original Evidence Events:\n", 1)[1].split("\n\nQuestion:", 1)[0]
+        events = json.loads(serialized_events)
+        self.assertEqual(len(events), 1)
+        self.assertLessEqual(
+            runner.estimate_tokens(json.dumps(events[0], ensure_ascii=False, separators=(",", ":"))),
+            runner.QA_EVIDENCE_EVENT_TOKEN_LIMIT,
+        )
+        connection.close()
+
     def test_run_qa_uses_plain_chat_and_retries_http_errors(self) -> None:
         case = runner.normalize_case(_record("case-qa"))
         requests: list[httpx.Request] = []
@@ -272,6 +368,10 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             self.assertEqual(payload["temperature"], 0.1)
             self.assertEqual(payload["max_tokens"], 512)
             self.assertNotIn("response_format", payload)
+        reader_payload = json.loads(requests[1].content)
+        self.assertIn("Inspect every record", reader_payload["messages"][0]["content"])
+        self.assertIn("genuinely insufficient", reader_payload["messages"][0]["content"])
+        self.assertIn("Current Date: 2023-05-30T23:40:00+00:00", reader_payload["messages"][1]["content"])
 
     def test_resume_history_does_not_reopen_circuit_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

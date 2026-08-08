@@ -39,10 +39,14 @@ def claim_is_visible(
     known_as_of: str | None,
     intent: RecallIntent | str,
 ) -> bool:
-    """按状态、有效时间与记录时间判断 claim 是否可见。"""
+    """按意图、有效时间与记录时间判断 claim 是否可见。"""
     selected_intent = RecallIntent(intent)
     valid_point = parse_utc(valid_as_of)
-    if not _contains(claim.get("valid_from"), claim.get("valid_to"), valid_point):
+    if selected_intent is RecallIntent.HISTORICAL:
+        valid_from = claim.get("valid_from")
+        if valid_from is not None and parse_utc(valid_from) > valid_point:
+            return False
+    elif not _contains(claim.get("valid_from"), claim.get("valid_to"), valid_point):
         return False
     if known_as_of and not _contains(claim.get("recorded_from"), claim.get("recorded_to"), parse_utc(known_as_of)):
         return False
@@ -52,7 +56,10 @@ def claim_is_visible(
         RecallIntent.TOOL,
         RecallIntent.PROCEDURE,
     }:
-        if claim.get("status", "active") != "active":
+        status = claim.get("status", "active")
+        if status not in {"active", "superseded", "expired"}:
+            return False
+        if status != "active" and claim.get("valid_to") is None:
             return False
         expires_at = claim.get("expires_at")
         return not expires_at or parse_utc(expires_at) > valid_point

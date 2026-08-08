@@ -27,6 +27,7 @@ _SOURCE_NAMES = {
     "short_query": "llm_short",
     "coreference": "llm_coreference",
     "low_recall": "llm_low_recall",
+    "low_fts_recall": "llm_low_recall",
     "always": "llm_short",
 }
 _QUERY_SCHEMA = {
@@ -61,6 +62,8 @@ class QueryExpander:
         *,
         candidate_count: int | None = None,
         candidate_floor: int = 8,
+        fts_candidate_count: int | None = None,
+        fts_candidate_floor: int = 3,
         context_available: bool = False,
     ) -> str | None:
         """返回当前模式下的扩展触发原因。"""
@@ -73,6 +76,8 @@ class QueryExpander:
             return "coreference" if context_available else None
         if candidate_count is not None and candidate_count < candidate_floor:
             return "low_recall"
+        if fts_candidate_count is not None and fts_candidate_count < fts_candidate_floor:
+            return "low_fts_recall"
         return None
 
     def expand(
@@ -165,6 +170,8 @@ class QueryExpander:
             '你是查询改写器。仅输出 JSON，格式必须为：{"queries": ["改写查询 1", "改写查询 2"]}。'
             "queries 必须是仅包含字符串的数组，最多包含 2 项，且 JSON 对象不得包含其他字段。"
             "生成语义等价、便于记忆检索的查询。"
+            "当原查询与记忆可能存在中英文语言错配时，在中文和英文之间翻译核心实体与关系；"
+            "最多两条查询应尽量分别覆盖中文和英文，且每条查询只使用一种语言，不能把双语词堆入同一查询。"
             "禁止添加人物、时间、namespace 或原查询未给出的事实；不得改变查询意图和约束。"
         )
         context_text = ""

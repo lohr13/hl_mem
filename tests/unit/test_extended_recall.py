@@ -11,6 +11,13 @@ def test_router_selects_temporal_relation_and_procedure_channels() -> None:
     assert "procedure" in procedure.channels
 
 
+def test_reference_time_does_not_override_semantic_intent() -> None:
+    route = route_query("当前使用什么数据库", "2025-01-01T00:00:00Z")
+
+    assert route.intent == "current_state"
+    assert route.reference_time == "2025-01-01T00:00:00Z"
+
+
 def test_rrf_deduplicates_channels_and_budget_pack_is_deterministic() -> None:
     first = [{"id": "a", "text": "甲"}, {"id": "b", "text": "乙"}]
     second = [{"id": "b", "text": "乙"}, {"id": "c", "text": "丙"}]
