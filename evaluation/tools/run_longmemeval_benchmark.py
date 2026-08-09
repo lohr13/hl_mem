@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean, median
 from typing import Any, TypeVar, cast
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -116,7 +117,6 @@ LME_12_BACKUP_ROOT = ROOT / "evaluation" / "cache" / "lme_12_backup"
 THRESHOLD_ANALYSIS_OUTPUT = ROOT / "evaluation" / "results" / "lme_12_threshold_analysis.json"
 DEFAULT_CONFIG = ROOT / "hl_mem.toml"
 DEFAULT_ENV_FILE = ROOT / ".env"
-QA_MODEL = "qwen3.7-plus"
 QA_MAX_ATTEMPTS = 3
 DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
@@ -1133,6 +1133,29 @@ def _file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+def _normalized_llm_base_url(base_url: str) -> str:
+    parsed = urlsplit(base_url.strip())
+    return parsed._replace(
+        scheme=parsed.scheme.casefold(),
+        netloc=parsed.netloc.casefold(),
+        path=parsed.path.rstrip("/"),
+        fragment="",
+    ).geturl()
+
+
+def _llm_configuration_identity(settings: Settings) -> dict[str, Any]:
+    component_settings = _component_llm_settings(settings)
+    return {
+        "extractor_model": settings.llm_model,
+        "extractor_provider": settings.llm_provider,
+        "extractor_effective_provider": component_settings.llm_provider,
+        "extractor_base_url": _normalized_llm_base_url(settings.llm_base_url),
+        "extractor_structured_mode": settings.llm_structured_mode,
+        "extractor_thinking": settings.enable_llm_thinking,
+        "query_expansion_model": settings.query_expansion_model or settings.llm_model,
+    }
+
+
 def _manifest_identity(
     case: LongMemEvalCase,
     settings: Settings,
@@ -1140,12 +1163,14 @@ def _manifest_identity(
     relevance_scorer: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the fields that make an ingest/relevance cache reusable."""
+    llm_identity = _llm_configuration_identity(settings)
     identity: dict[str, Any] = {
         "case_id": case.case_id,
         "case_fingerprint": _case_fingerprint(case),
         "session_count": len(case.sessions),
         "event_model_version": BENCHMARK_EVENT_MODEL_VERSION,
         "extractor_version": LLM_EXTRACTOR_VERSION,
+        **{key: value for key, value in llm_identity.items() if key != "query_expansion_model"},
         "embedding_model": settings.embedding_model,
         "embedding_dim": settings.embedding_dim,
         "embedding_api_mode": settings.embedding_api_mode,
@@ -1196,7 +1221,11 @@ def _ingest_case(
     total_hint: str,
 ) -> dict[str, Any]:
     service = IngestService(connection)
-    extractor = make_extractor(settings, require_real=True, connection=connection)
+    extractor = make_extractor(
+        _component_llm_settings(settings),
+        require_real=True,
+        connection=connection,
+    )
     stats = {
         "sessions": len(case.sessions),
         "events": sum(len(session.messages) for session in case.sessions),
@@ -1310,7 +1339,7 @@ def _recall_case(
             max_depth=settings.relation_expansion_max_depth,
         ),
         settings,
-        make_query_expander(settings, connection),
+        make_query_expander(_component_llm_settings(settings), connection),
     )
     started = time.perf_counter()
     response = service.recall(
@@ -1388,8 +1417,22 @@ def _result_error_type(result: Mapping[str, Any]) -> str | None:
     return str(result["error"]).partition(":")[0] or "unknown_error"
 
 
-def _qa_model() -> str:
-    return qa_model(QA_MODEL)
+def _qa_model(settings: Settings) -> str:
+    return qa_model(settings.llm_model)
+
+
+def _component_llm_settings(settings: Settings) -> Settings:
+    """Select Bailian's payload dialect without mutating reported configuration."""
+    parsed = urlsplit(settings.llm_base_url)
+    hostname = (parsed.hostname or "").casefold()
+    is_bailian_compatible = parsed.path.rstrip("/").endswith("/compatible-mode/v1") and (
+        hostname == "dashscope.aliyuncs.com"
+        or (hostname.startswith("dashscope-") and hostname.endswith(".aliyuncs.com"))
+        or hostname.endswith(".maas.aliyuncs.com")
+    )
+    if settings.llm_provider == "openai_compatible" and is_bailian_compatible:
+        return dataclasses.replace(settings, llm_provider="dashscope")
+    return settings
 
 
 def _judge_longmemeval_answer(
@@ -1403,6 +1446,26 @@ def _judge_longmemeval_answer(
     answer: str,
     predicted_answer: str,
 ) -> tuple[dict[str, Any], int]:
+    def judge_chat(
+        chat_api_key: str,
+        chat_base_url: str,
+        chat_model: str,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.1,
+    ) -> tuple[str, int]:
+        return _qa_dashscope_chat(
+            chat_api_key,
+            chat_base_url,
+            chat_model,
+            system_prompt,
+            user_prompt,
+            temperature=temperature,
+            enable_thinking=False,
+            json_object=True,
+        )
+
     return _judge_longmemeval_answer_impl(
         api_key=api_key,
         base_url=base_url,
@@ -1413,7 +1476,7 @@ def _judge_longmemeval_answer(
         answer=answer,
         predicted_answer=predicted_answer,
         call_with_retry=_qa_call_with_retry,
-        chat=_qa_dashscope_chat,
+        chat=judge_chat,
         decode_response=_response_object,
     )
 
@@ -1463,7 +1526,7 @@ def _run_qa(
     *,
     reader_context_mode: str = DEFAULT_READER_CONTEXT_MODE,
 ) -> dict[str, Any]:
-    qa_model = _qa_model()
+    qa_model = _qa_model(settings)
     api_key = os.environ.get("LLM_API_KEY") or settings.llm_api_key
     if not api_key:
         raise RuntimeError("QA answering requires LLM_API_KEY in .env or environment")
@@ -1477,6 +1540,7 @@ def _run_qa(
             qa_model,
             reader_system_prompt,
             reader_user_prompt,
+            enable_thinking=False,
         )
     )
     predicted = reader_text.strip()
@@ -1976,6 +2040,7 @@ def _report(
     status: str,
     abort_reason: str | None = None,
 ) -> dict[str, Any]:
+    llm_identity = _llm_configuration_identity(settings)
     report: dict[str, Any] = {
         "schema_version": 1,
         "benchmark": "LongMemEval-S",
@@ -2001,16 +2066,21 @@ def _report(
             "clean": args.clean,
             "config_compare": args.config_compare,
             "models": {
-                "extractor": settings.llm_model,
-                "extractor_provider": settings.llm_provider,
+                "extractor": llm_identity["extractor_model"],
+                "extractor_provider": llm_identity["extractor_provider"],
+                "extractor_effective_provider": llm_identity["extractor_effective_provider"],
+                "extractor_base_url": llm_identity["extractor_base_url"],
+                "extractor_structured_mode": llm_identity["extractor_structured_mode"],
+                "extractor_thinking": llm_identity["extractor_thinking"],
                 "extractor_version": LLM_EXTRACTOR_VERSION,
+                "query_expansion_model": llm_identity["query_expansion_model"],
                 "embedder": settings.embedding_model,
                 "embedding_dim": settings.embedding_dim,
                 "embedding_api_mode": settings.embedding_api_mode,
                 "embedding_text_type": settings.embedding_text_type,
                 "reranker": settings.reranker_model if settings.reranker_mode != "off" else "off",
-                "reader": _qa_model() if not args.no_qa else "not_run",
-                "judge": _qa_model() if not args.no_qa else "not_run",
+                "reader": _qa_model(settings) if not args.no_qa else "not_run",
+                "judge": _qa_model(settings) if not args.no_qa else "not_run",
             },
             "retrieval_k": list(RETRIEVAL_KS),
             "metric_relevance": {
@@ -2066,7 +2136,12 @@ def _resume_model_identity(report: Mapping[str, Any]) -> dict[str, Any]:
     fields = (
         "extractor",
         "extractor_provider",
+        "extractor_effective_provider",
+        "extractor_base_url",
+        "extractor_structured_mode",
+        "extractor_thinking",
         "extractor_version",
+        "query_expansion_model",
         "embedder",
         "embedding_dim",
         "embedding_api_mode",
@@ -2093,12 +2168,18 @@ def _validate_resume_report(
     if previous_sha256 != args.dataset_sha256:
         raise ValueError("resume output dataset sha256 does not match --dataset")
     previous_identity = _resume_model_identity(report)
+    llm_identity = _llm_configuration_identity(settings)
     reranker = settings.reranker_model if settings.reranker_mode != "off" else "off"
-    qa_model = _qa_model() if not args.no_qa else "not_run"
+    qa_model = _qa_model(settings) if not args.no_qa else "not_run"
     expected_identity = {
-        "extractor": settings.llm_model,
-        "extractor_provider": settings.llm_provider,
+        "extractor": llm_identity["extractor_model"],
+        "extractor_provider": llm_identity["extractor_provider"],
+        "extractor_effective_provider": llm_identity["extractor_effective_provider"],
+        "extractor_base_url": llm_identity["extractor_base_url"],
+        "extractor_structured_mode": llm_identity["extractor_structured_mode"],
+        "extractor_thinking": llm_identity["extractor_thinking"],
         "extractor_version": LLM_EXTRACTOR_VERSION,
+        "query_expansion_model": llm_identity["query_expansion_model"],
         "embedder": settings.embedding_model,
         "embedding_dim": settings.embedding_dim,
         "embedding_api_mode": settings.embedding_api_mode,
@@ -2126,8 +2207,8 @@ def _validate_resume_report(
 
 
 def _validate_production_settings(settings: Settings) -> None:
-    if settings.llm_model != QA_MODEL:
-        raise ValueError(f"llm.model must be {QA_MODEL}, found {settings.llm_model}")
+    if "deepseek" in settings.llm_model.casefold() and settings.llm_structured_mode != "json_object":
+        raise ValueError("DeepSeek benchmark extraction requires llm.structured_mode = 'json_object'")
     if settings.embedder_mode != "real":
         raise ValueError("embedding.mode must be real")
     if settings.embedding_model != "qwen3.7-text-embedding":

@@ -31,7 +31,8 @@ def response_object(content: str | dict[str, Any]) -> dict[str, Any]:
 
 def qa_model(default_model: str) -> str:
     """Resolve the optional evaluation-only model override."""
-    return os.environ.get("HL_MEM_EVAL_QA_MODEL") or default_model
+    override = os.environ.get("HL_MEM_EVAL_QA_MODEL", "").strip()
+    return override or default_model
 
 
 def qa_dashscope_chat(
@@ -42,8 +43,13 @@ def qa_dashscope_chat(
     user_prompt: str,
     *,
     temperature: float = 0.1,
+    enable_thinking: bool = False,
+    json_object: bool = False,
+    max_tokens: int = 512,
 ) -> tuple[str, int]:
-    """Call a DashScope-compatible chat completion without structured output."""
+    """Call a DashScope-compatible chat completion with evaluation-safe options."""
+    if max_tokens < 1:
+        raise ValueError("max_tokens must be positive")
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -56,8 +62,11 @@ def qa_dashscope_chat(
             {"role": "user", "content": user_prompt},
         ],
         "temperature": temperature,
-        "max_tokens": 512,
+        "max_tokens": max_tokens,
+        "enable_thinking": enable_thinking,
     }
+    if json_object:
+        payload["response_format"] = {"type": "json_object"}
     with httpx.Client(timeout=60.0) as client:
         response = client.post(url, json=payload, headers=headers)
         response.raise_for_status()

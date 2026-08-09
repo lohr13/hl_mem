@@ -188,7 +188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     api_key = os.environ.get("LLM_API_KEY") or settings.llm_api_key
     if not api_key:
         raise RuntimeError("rejudging requires LLM_API_KEY in .env or environment")
-    model = str(args.model or runner._qa_model())
+    model = str(args.model or runner._qa_model(settings))
     total = sum(
         isinstance(case.get("qa"), Mapping) and isinstance(case["qa"].get("predicted_answer"), str)
         for path in args.inputs

@@ -1,0 +1,43 @@
+# LongMemEval example for Bailian DeepSeek V4 Flash.
+# --env-file loads secret fields only. Process environment values take precedence,
+# so unset an old LLM_API_KEY or explicitly replace it with the intended Bailian key.
+# Reader and judge follow llm.model by default. Set HL_MEM_EVAL_QA_MODEL only when
+# an evaluation-only model override is needed.
+
+[database]
+path = "var/benchmark_lme/deepseek_v4_flash.db"
+
+[llm]
+provider = "openai_compatible"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+model = "deepseek-v4-flash"
+structured_mode = "json_object"
+enable_thinking = false
+timeout = 120
+max_attempts = 3
+schema_retries = 2
+
+[embedding]
+mode = "real"
+base_url = "https://dashscope.aliyuncs.com"
+model = "qwen3.7-text-embedding"
+dim = 2048
+api_mode = "native"
+
+[reranker]
+mode = "on"
+base_url = "https://dashscope.aliyuncs.com"
+model = "qwen3-rerank"
+
+[extraction]
+mode = "llm"
+pre_filter = false
+verification_mode = "off"
+chunk_target_chars = 12000
+
+[recall]
+vector_backend = "sqlite_scan"
+query_expansion_mode = "auto"
+query_expansion_model = "deepseek-v4-flash"
+query_expansion_timeout_seconds = 10.0
+query_expansion_total_timeout_seconds = 15.0

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from evaluation.tools import rejudge_longmemeval_results as rejudge
 from evaluation.tools import run_longmemeval_benchmark as runner
+from hl_mem.settings import Settings
 
 
 class LongMemEvalJudgePromptTests(unittest.TestCase):
@@ -83,6 +86,40 @@ class LongMemEvalJudgePromptTests(unittest.TestCase):
 
 
 class LongMemEvalRejudgeTests(unittest.TestCase):
+    def test_main_does_not_forward_extractor_thinking_to_judge(self) -> None:
+        report = {
+            "schema_version": 1,
+            "benchmark": "LongMemEval-S",
+            "cases": [
+                {
+                    "case_id": "case-1",
+                    "question_type": "single-session-user",
+                    "question": "Q?",
+                    "answer": "A",
+                    "qa": {"predicted_answer": "A", "correct": True},
+                    "error": None,
+                }
+            ],
+        }
+        settings = Settings(llm_api_key="settings-key", enable_llm_thinking=True)
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.json"
+            output = Path(directory) / "output.json"
+            source.write_text(json.dumps(report), encoding="utf-8")
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch.object(rejudge, "load_settings", return_value=settings),
+                patch.object(
+                    runner,
+                    "_judge_longmemeval_answer",
+                    return_value=({"correct": True, "reason": "match"}, 3),
+                ) as judge,
+            ):
+                exit_code = rejudge.main([str(source), "--output", str(output)])
+
+        self.assertEqual(exit_code, 0)
+        self.assertNotIn("enable_thinking", judge.call_args.kwargs)
+
     def test_rejudge_preserves_old_verdict_and_reports_both_flip_directions(self) -> None:
         report = {
             "schema_version": 1,

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from evaluation.tools import run_longmemeval_benchmark as runner
 from evaluation.tools.run_longmemeval_benchmark import (
@@ -21,6 +23,7 @@ from evaluation.tools.run_longmemeval_benchmark import (
     normalize_case,
     retrieval_metrics,
 )
+from hl_mem.config_loader import load_settings
 from hl_mem.core.vector import pack_vector, unpack_vector
 from hl_mem.domain.temporal import RecallIntent
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION
@@ -136,6 +139,82 @@ class LongMemEvalParsingTests(unittest.TestCase):
         self.assertIs(_longmemeval_recall_intent(current), RecallIntent.CURRENT_STATE)
         self.assertIs(_longmemeval_recall_intent(preference), RecallIntent.PREFERENCE)
         self.assertIs(_longmemeval_recall_intent(temporal), RecallIntent.HISTORICAL)
+
+
+class LongMemEvalModelConfigurationTests(unittest.TestCase):
+    @staticmethod
+    def _production_settings(**overrides: object) -> Settings:
+        values: dict[str, object] = {
+            "llm_api_key": "llm-key",
+            "llm_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "llm_model": "deepseek-v4-flash",
+            "llm_provider": "openai_compatible",
+            "llm_structured_mode": "json_object",
+            "enable_llm_thinking": False,
+            "embedder_mode": "real",
+            "embedding_api_key": "embedding-key",
+            "embedding_model": "qwen3.7-text-embedding",
+            "embedding_dim": 2048,
+            "embedding_api_mode": "native",
+        }
+        values.update(overrides)
+        return Settings(**values)
+
+    def test_production_gate_accepts_configured_deepseek_and_arbitrary_models(self) -> None:
+        for model in ("deepseek-v4-flash", "custom-evaluation-model"):
+            with self.subTest(model=model):
+                runner._validate_production_settings(self._production_settings(llm_model=model))
+
+    def test_production_gate_requires_json_object_for_deepseek(self) -> None:
+        for mode in ("auto", "json_schema"):
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(ValueError, "json_object"):
+                    runner._validate_production_settings(self._production_settings(llm_structured_mode=mode))
+
+    def test_bailian_openai_compatible_components_get_explicit_thinking_control(self) -> None:
+        settings = self._production_settings()
+
+        component_settings = runner._component_llm_settings(settings)
+
+        self.assertEqual(settings.llm_provider, "openai_compatible")
+        self.assertEqual(component_settings.llm_provider, "dashscope")
+        self.assertFalse(component_settings.enable_llm_thinking)
+
+    def test_non_bailian_compatible_endpoint_keeps_generic_provider(self) -> None:
+        settings = self._production_settings(llm_base_url="https://dashscope-proxy.example.com/compatible-mode/v1")
+
+        component_settings = runner._component_llm_settings(settings)
+
+        self.assertIs(component_settings, settings)
+        self.assertEqual(component_settings.llm_provider, "openai_compatible")
+
+    def test_qa_model_uses_configured_model_with_arbitrary_environment_override(self) -> None:
+        settings = self._production_settings()
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(runner._qa_model(settings), "deepseek-v4-flash")
+        with patch.dict(os.environ, {"HL_MEM_EVAL_QA_MODEL": "reader-model-v9"}, clear=True):
+            self.assertEqual(runner._qa_model(settings), "reader-model-v9")
+
+    def test_deepseek_example_config_is_benchmark_ready(self) -> None:
+        config_path = runner.ROOT / "evaluation" / "tools" / "configs" / "longmemeval_deepseek_v4_flash.toml"
+
+        settings = load_settings(
+            config_path,
+            runner.ROOT / ".env-not-used",
+            environ={
+                "LLM_API_KEY": "llm-key",
+                "EMBEDDING_API_KEY": "embedding-key",
+                "RERANKER_API_KEY": "reranker-key",
+            },
+        )
+
+        self.assertEqual(settings.llm_provider, "openai_compatible")
+        self.assertEqual(settings.llm_base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.assertEqual(settings.llm_model, "deepseek-v4-flash")
+        self.assertEqual(settings.llm_structured_mode, "json_object")
+        self.assertFalse(settings.enable_llm_thinking)
+        self.assertEqual(settings.query_expansion_model, "deepseek-v4-flash")
+        runner._validate_production_settings(settings)
 
 
 class LongMemEvalMetricTests(unittest.TestCase):
@@ -324,6 +403,51 @@ class LongMemEvalConfigCompareTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "embedding_api_mode"):
                 _validate_manifest(path, case, settings)
+
+    def test_manifest_rejects_each_extractor_payload_change(self) -> None:
+        case = normalize_case(_official_record())
+        settings = Settings(
+            llm_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            llm_model="deepseek-v4-flash",
+            llm_provider="openai_compatible",
+            llm_structured_mode="json_object",
+            enable_llm_thinking=False,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            changes = {
+                "extractor_model": "different-model",
+                "extractor_provider": "dashscope",
+                "extractor_effective_provider": "openai_compatible",
+                "extractor_base_url": "https://example.com/v1",
+                "extractor_structured_mode": "json_schema",
+                "extractor_thinking": True,
+            }
+            for field, value in changes.items():
+                with self.subTest(field=field):
+                    manifest = runner._manifest_identity(case, settings)
+                    manifest[field] = value
+                    path.write_text(json.dumps(manifest), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, field):
+                        _validate_manifest(path, case, settings)
+
+    def test_manifest_records_endpoint_and_effective_provider(self) -> None:
+        case = normalize_case(_official_record())
+        settings = Settings(
+            llm_base_url="https://DASHSCOPE.ALIYUNCS.COM/compatible-mode/v1/",
+            llm_model="deepseek-v4-flash",
+            llm_provider="openai_compatible",
+            llm_structured_mode="json_object",
+            enable_llm_thinking=False,
+        )
+
+        identity = runner._manifest_identity(case, settings)
+
+        self.assertEqual(
+            identity["extractor_base_url"],
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+        self.assertEqual(identity["extractor_effective_provider"], "dashscope")
 
     def test_config_compare_report_uses_fixed_relevance_scorer_metadata(self) -> None:
         case = normalize_case(_official_record())

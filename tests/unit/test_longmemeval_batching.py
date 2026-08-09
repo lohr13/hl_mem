@@ -71,7 +71,12 @@ def _shard_report(
             "models": {
                 "extractor": "qwen3.7-plus",
                 "extractor_provider": "dashscope",
+                "extractor_effective_provider": "dashscope",
+                "extractor_base_url": "https://coding.dashscope.aliyuncs.com/v1",
+                "extractor_structured_mode": "json_object",
+                "extractor_thinking": False,
                 "extractor_version": runner.LLM_EXTRACTOR_VERSION,
+                "query_expansion_model": "qwen3.7-plus",
                 "embedder": "qwen3.7-text-embedding",
                 "embedding_dim": 2048,
                 "embedding_api_mode": "native",
@@ -1007,6 +1012,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         settings = Settings(
             llm_api_key="settings-key",
             llm_base_url="https://coding.dashscope.aliyuncs.com/v1",
+            enable_llm_thinking=True,
         )
 
         with (
@@ -1049,9 +1055,10 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             payload = json.loads(request.content)
             self.assertEqual(payload["model"], "qa-override")
             self.assertEqual(payload["max_tokens"], 512)
-            self.assertNotIn("response_format", payload)
+            self.assertFalse(payload["enable_thinking"])
         self.assertEqual([json.loads(request.content)["temperature"] for request in requests], [0.1, 0.1, 0.0])
         reader_payload = json.loads(requests[1].content)
+        self.assertNotIn("response_format", reader_payload)
         self.assertIn("candidate answer", reader_payload["messages"][0]["content"])
         self.assertIn("relation", reader_payload["messages"][0]["content"])
         self.assertIn("audition", reader_payload["messages"][0]["content"])
@@ -1064,6 +1071,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertIn("Return only the final answer", reader_payload["messages"][0]["content"])
         self.assertIn("Current Date: 2023-05-30T23:40:00+00:00", reader_payload["messages"][1]["content"])
         judge_payload = json.loads(requests[2].content)
+        self.assertEqual(judge_payload["response_format"], {"type": "json_object"})
         self.assertIn("official-style LongMemEval", judge_payload["messages"][0]["content"])
 
     def test_resume_rejects_a_different_reader_context_mode(self) -> None:
@@ -1089,6 +1097,36 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "reader_context_mode"):
                 runner._validate_resume_report(report, args, settings)
+
+    def test_resume_rejects_llm_payload_or_query_expansion_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.json"
+            dataset.write_text(json.dumps([_record("case-1")]), encoding="utf-8")
+            dataset_sha256 = hashlib.sha256(dataset.read_bytes()).hexdigest()
+            args = runner.parse_args(["--dataset", str(dataset), "--resume"])
+            args.dataset_sha256 = dataset_sha256
+            settings = Settings(
+                llm_model="qwen3.7-plus",
+                llm_provider="dashscope",
+                embedding_model="qwen3.7-text-embedding",
+                embedding_dim=2048,
+                embedding_api_mode="native",
+                embedding_text_type=None,
+            )
+            changes = {
+                "extractor_effective_provider": "openai_compatible",
+                "extractor_base_url": "https://example.com/v1",
+                "extractor_structured_mode": "json_schema",
+                "extractor_thinking": True,
+                "query_expansion_model": "different-expander",
+            }
+
+            for field, value in changes.items():
+                with self.subTest(field=field):
+                    report = _shard_report(dataset_sha256, [_case_result("case-1")])
+                    report["run"]["models"][field] = value  # type: ignore[index]
+                    with self.assertRaisesRegex(ValueError, "model configuration"):
+                        runner._validate_resume_report(report, args, settings)
 
     def test_resume_history_does_not_reopen_circuit_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
