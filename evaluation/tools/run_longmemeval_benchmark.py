@@ -2182,6 +2182,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         resume_report, results = _load_resume_report(args.output)
         if resume_report is not None:
             _validate_resume_report(resume_report, args, settings)
+            results = [result for result in results if _result_error_type(result) not in {"http_429", "quota"}]
     started_at = generated_started_at
     if resume_report is not None:
         previous_run = resume_report.get("run")

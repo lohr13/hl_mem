@@ -351,6 +351,66 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(report["run"]["reader_context_mode"], "windowed")
         self.assertEqual([case["case_id"] for case in report["cases"]], ["case-1", "case-2"])
 
+    def test_resume_retries_429_case_after_quota_window(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = root / "dataset.json"
+            output = root / "result.json"
+            dataset.write_text(json.dumps([_record("case-1"), _record("case-2")]), encoding="utf-8")
+            dataset_sha256 = hashlib.sha256(dataset.read_bytes()).hexdigest()
+            limited = _case_result(
+                "case-2",
+                error="HTTPStatusError: too many requests",
+                qa_evaluated=False,
+            )
+            limited["error_type"] = "http_429"
+            output.write_text(
+                json.dumps(
+                    _shard_report(
+                        dataset_sha256,
+                        [_case_result("case-1", qa_evaluated=False), limited],
+                        qa_enabled=False,
+                    )
+                ),
+                encoding="utf-8",
+            )
+            settings = Settings(
+                embedding_model="qwen3.7-text-embedding",
+                embedding_dim=2048,
+                embedding_api_mode="native",
+                embedding_text_type=None,
+            )
+
+            def run_case(case: runner.LongMemEvalCase, *_args: object, **_kwargs: object) -> dict[str, object]:
+                return _case_result(case.case_id, qa_evaluated=False)
+
+            with (
+                patch.object(runner, "load_settings", return_value=settings),
+                patch.object(runner, "_validate_production_settings"),
+                patch.object(runner, "initialize_process"),
+                patch.object(runner, "make_embedder", return_value=object()),
+                patch.object(runner, "make_reranker", return_value=None),
+                patch.object(runner, "_run_case", side_effect=run_case) as run,
+            ):
+                exit_code = runner.main(
+                    [
+                        "--dataset",
+                        str(dataset),
+                        "--output",
+                        str(output),
+                        "--resume",
+                        "--no-qa",
+                    ]
+                )
+
+            report = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0].case_id, "case-2")
+        self.assertEqual([case["case_id"] for case in report["cases"]], ["case-1", "case-2"])
+        self.assertIsNone(report["cases"][1]["error"])
+
     def test_qa_retry_recovers_from_429(self) -> None:
         request = httpx.Request("POST", "https://example.test/chat/completions")
         response = httpx.Response(429, request=request)
