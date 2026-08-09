@@ -169,9 +169,11 @@ def _preference_first(claims: list[dict[str, Any]], limit: int, selected_intent:
     if selected_intent is not RecallIntent.PREFERENCE:
         return claims[:limit]
     preferences = [claim for claim in claims if _is_preference_claim(claim)]
-    others = [claim for claim in claims if not _is_preference_claim(claim)]
     reserved = min(3, limit, len(preferences))
-    return (preferences[:reserved] + preferences[reserved:] + others)[:limit]
+    reserved_preferences = preferences[:reserved]
+    reserved_objects = {id(claim) for claim in reserved_preferences}
+    globally_ranked_remainder = [claim for claim in claims if id(claim) not in reserved_objects]
+    return (reserved_preferences + globally_ranked_remainder)[:limit]
 
 
 def _rrf_scores(channels: list[list[dict[str, Any]]], rank_constant: int) -> dict[str, float]:
