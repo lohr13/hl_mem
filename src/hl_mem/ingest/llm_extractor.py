@@ -153,8 +153,13 @@ evidence_quote：
 跳过：
 - 服务健康快照、CI 测试数量、版本号查询结果、过程进度、纯问候、未确认建议。
 - running/stopped/ok、测试通过数、环境变量已清空、正在重启等操作快照。
-- assistant 对用户原话的简单复述、示例、假设和通用常识。
+- assistant 对用户原话的简单复述、generic chatter、示例、假设和不可复用的通用常识。
 - 密钥、令牌、密码、恢复码等敏感凭据。
+
+assistant durable output：
+- assistant 产出的可再次引用的 durable output 需要提取，即使它不是用户本人陈述的事实。
+- 显式支持表格行、编号列表项、脚本设定、联系人信息、工具到算法的映射等可回答 span。
+- 只提取能独立回答后续问题的最小原子内容；禁止记忆整段 assistant 回答或普通解释性填充。
 
 限制：
 - max 10 claims per chunk。
@@ -225,8 +230,14 @@ evidence_quote:
 Skip:
 - Service-health snapshots, CI test counts, version-query results, work in progress, greetings, and unconfirmed advice.
 - Operational snapshots such as running/stopped/ok, tests passed, an environment variable being cleared, or a restart.
-- An assistant merely repeating the user, examples, hypotheticals, and general knowledge.
+- Generic assistant chatter, mere repetition of the user, examples, hypotheticals, and non-reusable general knowledge.
 - Secrets such as API keys, tokens, passwords, and recovery codes.
+
+Assistant durable output:
+- Extract reusable assistant durable output even when it is not a fact originally stated by the user.
+- Eligible answerable spans include table rows, numbered list items, script settings, contact details, and
+  tool-to-algorithm mappings.
+- Extract only the smallest self-contained span that can answer a later question. Do not memorize the whole assistant answer.
 
 Limits:
 - Maximum 10 claims per chunk.

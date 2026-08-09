@@ -8,6 +8,7 @@ import pytest
 from hl_mem.domain.claims.attributes import PREDICATE_ATTRIBUTE_MAP
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.llm_extractor import (
+    ENGLISH_SYSTEM_PROMPT,
     LANGUAGE_ROUTER_VERSION,
     LLM_EXTRACTOR_VERSION,
     PROMPT_HASH,
@@ -186,6 +187,29 @@ def test_prompt_requires_compact_candidate_fields_only() -> None:
         assert f'"{field}"' in SYSTEM_PROMPT
     assert "canonical_attribute" not in SYSTEM_PROMPT
     assert "topic_tags" not in SYSTEM_PROMPT
+
+
+def test_prompt_extracts_bounded_assistant_durable_outputs() -> None:
+    for signal in (
+        "durable output",
+        "table rows",
+        "numbered list items",
+        "script settings",
+        "contact details",
+        "tool-to-algorithm mappings",
+        "Do not memorize the whole assistant answer",
+    ):
+        assert signal in ENGLISH_SYSTEM_PROMPT
+    for signal in (
+        "可再次引用的 durable output",
+        "表格行",
+        "编号列表项",
+        "脚本设定",
+        "联系人信息",
+        "工具到算法的映射",
+        "禁止记忆整段 assistant 回答",
+    ):
+        assert signal in SYSTEM_PROMPT
 
 
 def test_prompt_hash_is_stable_and_has_expected_format() -> None:

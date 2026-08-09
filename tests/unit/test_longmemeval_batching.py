@@ -85,6 +85,63 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
+    def test_ingest_persists_each_turn_with_real_speaker_and_session_span(self) -> None:
+        record = _record("case-speakers")
+        record["haystack_sessions"] = [
+            [
+                {"role": "user", "content": "Please build a schedule."},
+                {"role": "assistant", "content": "Sunday | Admon | 8am-4pm"},
+            ]
+        ]
+        case = runner.normalize_case(record)
+        settings = Settings.for_test()
+
+        class RecordingExtractor:
+            last_input_tokens = 0
+            last_output_tokens = 0
+            last_usage_tokens = 0
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[dict[str, object], dict[str, object]]] = []
+
+            def extract(
+                self,
+                content: dict[str, object],
+                context: dict[str, object],
+            ) -> list[object]:
+                self.calls.append((content, context))
+                return []
+
+        extractor = RecordingExtractor()
+        with tempfile.TemporaryDirectory() as directory:
+            database = runner.Database(Path(directory) / "speaker.db", settings=settings)
+            connection = database.open()
+            with patch.object(runner, "make_extractor", return_value=extractor):
+                stats = runner._ingest_case(
+                    connection,
+                    case,
+                    settings,
+                    object(),
+                    case_number=1,
+                    total_hint="1",
+                )
+            rows = connection.execute("SELECT id,session_id,actor_type,content_json FROM events ORDER BY id").fetchall()
+            database.close()
+
+        self.assertEqual(stats["sessions"], 1)
+        self.assertEqual(stats["events"], 2)
+        self.assertEqual([row["actor_type"] for row in rows], ["user", "assistant"])
+        self.assertEqual([row["session_id"] for row in rows], ["session-case-speakers"] * 2)
+        self.assertEqual([call[1]["source_role"] for call in extractor.calls], ["user", "assistant"])
+        for index, row in enumerate(rows):
+            content = json.loads(row["content_json"])
+            locator = content["benchmark_locator"]
+            self.assertEqual(row["id"], runner._turn_event_id(case.sessions[0].event_id, index))
+            self.assertEqual(locator["session_id"], "session-case-speakers")
+            self.assertEqual(locator["turn_index"], index)
+            self.assertEqual(locator["span"], [index, index + 1])
+            self.assertEqual(locator["source_role"], ["user", "assistant"][index])
+
     def test_reader_context_mode_defaults_to_windowed_and_accepts_head(self) -> None:
         self.assertEqual(runner.parse_args([]).reader_context_mode, "windowed")
         self.assertEqual(runner.parse_args(["--reader-context-mode", "head"]).reader_context_mode, "head")

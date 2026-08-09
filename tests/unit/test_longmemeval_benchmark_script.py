@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from evaluation.tools import run_longmemeval_benchmark as runner
 from evaluation.tools.run_longmemeval_benchmark import (
     _case_fingerprint,
     _claim_relevance_scores,
@@ -59,7 +60,10 @@ class LongMemEvalParsingTests(unittest.TestCase):
         self.assertEqual(case.sessions[1].session_id, "answer-session")
         self.assertEqual(case.sessions[1].occurred_at, "2023-05-21T03:24:00+00:00")
         self.assertEqual(len(case.sessions[1].messages), 2)
-        self.assertEqual(case.gold_event_ids, (case.sessions[1].event_id,))
+        self.assertEqual(
+            case.gold_event_ids,
+            tuple(runner._turn_event_id(case.sessions[1].event_id, index) for index in range(2)),
+        )
 
     def test_normalize_flat_chat_history_groups_turns_by_session(self) -> None:
         record = {
@@ -89,7 +93,7 @@ class LongMemEvalParsingTests(unittest.TestCase):
         case = normalize_case(record)
 
         self.assertEqual([session.session_id for session in case.sessions], ["s1", "s2"])
-        self.assertEqual(case.gold_event_ids, (case.sessions[1].event_id,))
+        self.assertEqual(case.gold_event_ids, (runner._turn_event_id(case.sessions[1].event_id, 0),))
 
     def test_duplicate_official_session_ids_get_unique_events(self) -> None:
         record = _official_record()
@@ -100,7 +104,14 @@ class LongMemEvalParsingTests(unittest.TestCase):
 
         self.assertEqual([session.session_id for session in case.sessions], ["duplicate", "duplicate#2"])
         self.assertEqual(len(set(session.event_id for session in case.sessions)), 2)
-        self.assertEqual(case.gold_event_ids, tuple(session.event_id for session in case.sessions))
+        self.assertEqual(
+            case.gold_event_ids,
+            tuple(
+                runner._turn_event_id(session.event_id, turn_index)
+                for session in case.sessions
+                for turn_index in range(len(session.messages))
+            ),
+        )
 
     def test_limited_stream_can_read_complete_prefix_of_partial_download(self) -> None:
         first = _official_record()
@@ -231,6 +242,18 @@ class LongMemEvalMetricTests(unittest.TestCase):
 
 
 class LongMemEvalConfigCompareTests(unittest.TestCase):
+    def test_manifest_rejects_legacy_session_as_user_event_model(self) -> None:
+        case = normalize_case(_official_record())
+        settings = Settings()
+        manifest = runner._manifest_identity(case, settings)
+        manifest["event_model_version"] = "session-as-user-v1"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "event_model_version"):
+                _validate_manifest(path, case, settings)
+
     def test_manifest_rejects_embedding_api_or_text_type_changes(self) -> None:
         case = normalize_case(_official_record())
         settings = Settings(

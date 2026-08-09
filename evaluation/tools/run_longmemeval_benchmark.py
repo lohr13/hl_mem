@@ -119,6 +119,7 @@ DEFAULT_ENV_FILE = ROOT / ".env"
 QA_MODEL = "qwen3.7-plus"
 QA_MAX_ATTEMPTS = 3
 DEFAULT_FAIL_STOP_COUNT = 5
+BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
 RETRIEVAL_KS = (1, 5, 10)
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
@@ -179,7 +180,7 @@ EMBEDDING_CONFIGS: dict[str, dict[str, str | None]] = {
 
 @dataclass(frozen=True)
 class SessionInput:
-    """One LongMemEval session represented as one hl_mem event."""
+    """One LongMemEval session with a stable anchor for per-turn events."""
 
     session_id: str
     event_id: str
@@ -449,6 +450,19 @@ def _event_id(case_id: str, session_id: str, index: int) -> str:
     return f"lme:{case_id}:session:{index:03d}:{digest}"
 
 
+def _turn_event_id(session_event_id: str, turn_index: int) -> str:
+    """Derive one stable event ID for a source turn within a session."""
+    return f"{session_event_id}:turn:{turn_index:03d}"
+
+
+def _event_to_session(case: LongMemEvalCase) -> dict[str, str]:
+    return {
+        _turn_event_id(session.event_id, turn_index): session.session_id
+        for session in case.sessions
+        for turn_index in range(len(session.messages))
+    }
+
+
 def _evidence_tokens(value: object) -> list[str]:
     if value is None:
         return []
@@ -575,9 +589,14 @@ def normalize_case(record: Mapping[str, Any]) -> LongMemEvalCase:
     unresolved = [token for token in evidence_tokens if token not in aliases]
     if unresolved:
         raise ValueError(f"case {case_id}: evidence IDs do not map to sessions: {unresolved}")
-    gold_event_ids = tuple(dict.fromkeys(event_id for token in evidence_tokens for event_id in aliases[token]))
-    event_to_session = {session.event_id: session.session_id for session in sessions}
-    gold_session_ids = tuple(event_to_session[event_id] for event_id in gold_event_ids)
+    gold_session_events = tuple(dict.fromkeys(event_id for token in evidence_tokens for event_id in aliases[token]))
+    session_by_event = {session.event_id: session for session in sessions}
+    gold_session_ids = tuple(dict.fromkeys(session_by_event[event_id].session_id for event_id in gold_session_events))
+    gold_event_ids = tuple(
+        _turn_event_id(event_id, turn_index)
+        for event_id in gold_session_events
+        for turn_index in range(len(session_by_event[event_id].messages))
+    )
     question_date = record.get("question_date") or record.get("as_of")
     return LongMemEvalCase(
         case_id=case_id,
@@ -649,7 +668,7 @@ def _claim_similarity_records(
         raise ValueError("similarity embedder returned an unexpected vector count")
     answer_blob = document_blobs[-1] if case.answer.strip() else None
     question_blob = embedder.embed_query(case.question) if case.question.strip() else None
-    event_to_session = {session.event_id: session.session_id for session in case.sessions}
+    event_to_session = _event_to_session(case)
     gold_events = set(case.gold_event_ids)
     records: list[dict[str, Any]] = []
     for claim, claim_blob in zip(claims, document_blobs[: len(values)], strict=True):
@@ -1068,6 +1087,7 @@ def _manifest_identity(
         "case_id": case.case_id,
         "case_fingerprint": _case_fingerprint(case),
         "session_count": len(case.sessions),
+        "event_model_version": BENCHMARK_EVENT_MODEL_VERSION,
         "extractor_version": LLM_EXTRACTOR_VERSION,
         "embedding_model": settings.embedding_model,
         "embedding_dim": settings.embedding_dim,
@@ -1095,13 +1115,17 @@ def _validate_manifest(
         raise ValueError(f"cached ingest manifest does not match current case/config: {mismatches}")
 
 
-def _session_content(session: SessionInput) -> dict[str, Any]:
-    messages = [dict(message) for message in session.messages]
-    text = "\n".join(f"{message['role']}: {message['content']}" for message in messages)
+def _turn_content(session: SessionInput, turn_index: int, message: Mapping[str, str]) -> dict[str, Any]:
+    role = _normalize_role(message.get("role"))
     return {
-        "text": text,
-        "messages": messages,
-        "benchmark_locator": {"session_id": session.session_id},
+        "text": _normalize_content(message.get("content") or ""),
+        "messages": [{"role": role, "content": _normalize_content(message.get("content") or "")}],
+        "benchmark_locator": {
+            "session_id": session.session_id,
+            "turn_index": turn_index,
+            "span": [turn_index, turn_index + 1],
+            "source_role": role,
+        },
     }
 
 
@@ -1118,6 +1142,7 @@ def _ingest_case(
     extractor = make_extractor(settings, require_real=True, connection=connection)
     stats = {
         "sessions": len(case.sessions),
+        "events": sum(len(session.messages) for session in case.sessions),
         "extracted_claims": 0,
         "stored_claims": 0,
         "skipped_claims": 0,
@@ -1127,47 +1152,52 @@ def _ingest_case(
     }
     started = time.perf_counter()
     for index, session in enumerate(case.sessions, start=1):
-        content = _session_content(session)
-        event = {
-            "id": session.event_id,
-            "idempotency_key": f"longmemeval:{case.case_id}:{session.session_id}",
-            "tenant_id": case.namespace,
-            "event_type": "message",
-            "actor_type": "user",
-            "content": content,
-            "occurred_at": session.occurred_at,
-            "source_uri": f"longmemeval:{case.case_id}:{session.session_id}",
-        }
-        service.ingest_event(event)
-        claims = extractor.extract(
-            content,
-            {
-                "actor_type": "user",
-                "event_type": "message",
+        for turn_index, message in enumerate(session.messages):
+            role = _normalize_role(message.get("role"))
+            content = _turn_content(session, turn_index, message)
+            event = {
+                "id": _turn_event_id(session.event_id, turn_index),
+                "idempotency_key": f"longmemeval:{case.case_id}:{session.session_id}:turn:{turn_index}",
+                "tenant_id": case.namespace,
                 "session_id": session.session_id,
+                "event_type": "message",
+                "actor_type": role,
+                "content": content,
                 "occurred_at": session.occurred_at,
-            },
-        )
-        stats["extracted_claims"] += len(claims)
-        stats["input_tokens"] += int(getattr(extractor, "last_input_tokens", 0))
-        stats["output_tokens"] += int(getattr(extractor, "last_output_tokens", 0))
-        stats["total_tokens"] += int(getattr(extractor, "last_usage_tokens", 0))
-        now = datetime.now(timezone.utc).isoformat()
-        for claim in claims:
-            stored = IngestService.store_extracted(
-                connection,
-                claim,
-                event,
-                now,
-                embedder,
-                policy=settings.retention_policy(),
-                relation_discovery_mode=settings.relation_discovery_mode,
-                index_text_mode=settings.index_text_mode,
+                "source_uri": f"longmemeval:{case.case_id}:{session.session_id}:turn:{turn_index}",
+            }
+            service.ingest_event(event)
+            claims = extractor.extract(
+                content,
+                {
+                    "actor_type": role,
+                    "source_role": role,
+                    "event_type": "message",
+                    "session_id": session.session_id,
+                    "turn_index": turn_index,
+                    "occurred_at": session.occurred_at,
+                },
             )
-            if stored.status == "skipped":
-                stats["skipped_claims"] += 1
-            else:
-                stats["stored_claims"] += 1
+            stats["extracted_claims"] += len(claims)
+            stats["input_tokens"] += int(getattr(extractor, "last_input_tokens", 0))
+            stats["output_tokens"] += int(getattr(extractor, "last_output_tokens", 0))
+            stats["total_tokens"] += int(getattr(extractor, "last_usage_tokens", 0))
+            now = datetime.now(timezone.utc).isoformat()
+            for claim in claims:
+                stored = IngestService.store_extracted(
+                    connection,
+                    claim,
+                    event,
+                    now,
+                    embedder,
+                    policy=settings.retention_policy(),
+                    relation_discovery_mode=settings.relation_discovery_mode,
+                    index_text_mode=settings.index_text_mode,
+                )
+                if stored.status == "skipped":
+                    stats["skipped_claims"] += 1
+                else:
+                    stats["stored_claims"] += 1
         if index == 1 or index % 10 == 0 or index == len(case.sessions):
             print(
                 f"[{case_number}/{total_hint}] {case.case_id}: ingest {index}/{len(case.sessions)} "
@@ -1179,7 +1209,7 @@ def _ingest_case(
 
 
 def _retrieved_payload(results: Sequence[Mapping[str, Any]], case: LongMemEvalCase) -> list[dict[str, Any]]:
-    event_to_session = {session.event_id: session.session_id for session in case.sessions}
+    event_to_session = _event_to_session(case)
     payload: list[dict[str, Any]] = []
     for rank, result in enumerate(results, start=1):
         evidence_ids = _result_evidence_ids(result)
