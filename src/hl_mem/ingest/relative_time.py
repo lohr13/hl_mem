@@ -47,12 +47,15 @@ _FIXED_DAY_RE = re.compile(
     r"(?i)(?P<en>\b(?:the day before yesterday|day before yesterday|yesterday|today|tomorrow|"
     r"the day after tomorrow|day after tomorrow)\b)|(?P<zh>前天|昨天|今天|明天|后天)"
 )
-_EN_NUMBER = r"(?:\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+_EN_DIGIT_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
+_EN_NUMBER = rf"(?:{_EN_DIGIT_NUMBER}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
 _EN_NUMBER += r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|"
 _EN_NUMBER += r"sixty|seventy|eighty|ninety)(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?"
 _EN_OFFSET_RE = re.compile(
-    rf"(?ix)\b(?:(?P<ago_number>{_EN_NUMBER})\s+(?P<ago_unit>days?|weeks?|months?|years?)\s+ago|"
-    rf"in\s+(?P<future_number>{_EN_NUMBER})\s+(?P<future_unit>days?|weeks?|months?|years?))\b"
+    rf"(?ix)(?<![\w,])(?:(?P<ago_number>{_EN_NUMBER})\s+"
+    rf"(?P<ago_unit>days?|weeks?|months?|years?)\s+ago|"
+    rf"in\s+(?P<future_number>{_EN_NUMBER})\s+"
+    rf"(?P<future_unit>days?|weeks?|months?|years?))(?![\w,])"
 )
 _ZH_OFFSET_RE = re.compile(
     r"(?P<number>\d+|[零〇一二两三四五六七八九十]+)个?(?P<unit>天|周|星期|个月|月|年)(?P<direction>前|后)"
@@ -135,6 +138,7 @@ _EN_WEEKDAYS = {
     "sunday": 6,
 }
 _ZH_WEEKDAYS = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
+_MAX_CONVERSATION_RELATIVE_YEARS = 999
 
 
 @dataclass(frozen=True)
@@ -150,7 +154,7 @@ class _TemporalMatch:
 def relative_time_rules_fingerprint() -> dict[str, Any]:
     """返回影响时间后处理结果的稳定规则。"""
     return {
-        "revision": 3,
+        "revision": 4,
         "patterns": {
             "absolute": _ABSOLUTE_DATE_RE.pattern,
             "english_month_date": _EN_MONTH_DATE_RE.pattern,
@@ -174,6 +178,7 @@ def relative_time_rules_fingerprint() -> dict[str, Any]:
         "chinese_weekdays": _ZH_WEEKDAYS,
         "date_interval": "half_open_local_day",
         "week_start": "monday",
+        "max_conversation_relative_years": _MAX_CONVERSATION_RELATIVE_YEARS,
     }
 
 
@@ -199,7 +204,7 @@ def _date_match(start: int, end: int, value: datetime) -> _TemporalMatch:
 
 
 def _english_number(value: str) -> int | None:
-    normalized = value.casefold().replace("-", " ")
+    normalized = value.casefold().replace(",", "").replace("-", " ")
     if normalized.isdigit():
         return int(normalized)
     parts = normalized.split()
@@ -225,6 +230,8 @@ def _chinese_number(value: str) -> int | None:
 def _shift_months(value: datetime, months: int) -> datetime:
     month_index = value.year * 12 + value.month - 1 + months
     year, zero_based_month = divmod(month_index, 12)
+    if not datetime.min.year <= year <= datetime.max.year:
+        raise OverflowError(f"shifted year {year} is outside datetime range")
     month = zero_based_month + 1
     day = min(value.day, calendar.monthrange(year, month)[1])
     return value.replace(year=year, month=month, day=day)
@@ -239,6 +246,12 @@ def _apply_offset(value: datetime, amount: int, unit: str) -> datetime:
     if normalized.startswith(("month", "月", "个月")):
         return _shift_months(value, amount)
     return _shift_months(value, amount * 12)
+
+
+def _is_narrative_year_offset(amount: int, unit: str) -> bool:
+    """避免把历史/叙事年龄强制解释为对话相对时间。"""
+    normalized = unit.casefold()
+    return normalized.startswith(("year", "年")) and abs(amount) > _MAX_CONVERSATION_RELATIVE_YEARS
 
 
 def _qualified_weekday(value: datetime, target: int, direction: str) -> datetime:
@@ -262,34 +275,55 @@ def _relative_matches(text: str, base: datetime) -> list[_TemporalMatch]:
     matches: list[_TemporalMatch] = []
     for match in _FIXED_DAY_RE.finditer(text):
         phrase = (match.group("en") or match.group("zh")).casefold()
-        matches.append(_date_match(match.start(), match.end(), base + timedelta(days=_FIXED_DAY_OFFSETS[phrase])))
+        try:
+            matches.append(_date_match(match.start(), match.end(), base + timedelta(days=_FIXED_DAY_OFFSETS[phrase])))
+        except (OverflowError, ValueError):
+            continue
     for match in _EN_OFFSET_RE.finditer(text):
         number_text = match.group("ago_number") or match.group("future_number")
         unit = match.group("ago_unit") or match.group("future_unit")
         amount = _english_number(number_text)
-        if amount is not None:
-            moment = _apply_offset(base, -amount if match.group("ago_number") else amount, unit)
-            matches.append(_date_match(match.start(), match.end(), moment))
+        if amount is not None and not _is_narrative_year_offset(amount, unit):
+            try:
+                moment = _apply_offset(base, -amount if match.group("ago_number") else amount, unit)
+                matches.append(_date_match(match.start(), match.end(), moment))
+            except (OverflowError, ValueError):
+                continue
     for match in _ZH_OFFSET_RE.finditer(text):
         amount = _chinese_number(match.group("number"))
-        if amount is not None:
+        if amount is not None and not _is_narrative_year_offset(amount, match.group("unit")):
             direction = -1 if match.group("direction") == "前" else 1
-            moment = _apply_offset(base, amount * direction, match.group("unit"))
-            matches.append(_date_match(match.start(), match.end(), moment))
+            try:
+                moment = _apply_offset(base, amount * direction, match.group("unit"))
+                matches.append(_date_match(match.start(), match.end(), moment))
+            except (OverflowError, ValueError):
+                continue
     for match in _EN_WEEK_RE.finditer(text):
         offset = {"last": -1, "this": 0, "next": 1}[match.group("direction").casefold()]
-        matches.append(_week_match(match.start(), match.end(), base, offset))
+        try:
+            matches.append(_week_match(match.start(), match.end(), base, offset))
+        except (OverflowError, ValueError):
+            continue
     for match in _ZH_WEEK_RE.finditer(text):
         offset = {"上": -1, "本": 0, "这": 0, "下": 1}[match.group("direction")]
-        matches.append(_week_match(match.start(), match.end(), base, offset))
+        try:
+            matches.append(_week_match(match.start(), match.end(), base, offset))
+        except (OverflowError, ValueError):
+            continue
     for match in _EN_WEEKDAY_RE.finditer(text):
         target = _EN_WEEKDAYS[match.group("weekday").casefold()]
-        moment = _qualified_weekday(base, target, match.group("direction"))
-        matches.append(_date_match(match.start(), match.end(), moment))
+        try:
+            moment = _qualified_weekday(base, target, match.group("direction"))
+            matches.append(_date_match(match.start(), match.end(), moment))
+        except (OverflowError, ValueError):
+            continue
     for match in _ZH_WEEKDAY_RE.finditer(text):
         target = _ZH_WEEKDAYS[match.group("weekday")]
-        moment = _qualified_weekday(base, target, match.group("direction"))
-        matches.append(_date_match(match.start(), match.end(), moment))
+        try:
+            moment = _qualified_weekday(base, target, match.group("direction"))
+            matches.append(_date_match(match.start(), match.end(), moment))
+        except (OverflowError, ValueError):
+            continue
     return matches
 
 

@@ -487,6 +487,49 @@ class RelativeOccurrenceTest(unittest.TestCase):
             with self.subTest(text=text, base=base):
                 self.assertEqual(infer_occurrence(text, base), expected)
 
+    def test_comma_grouped_relative_number_is_parsed_as_one_token(self) -> None:
+        self.assertEqual(
+            infer_occurrence(
+                "The archive was updated 1,000 days ago.",
+                "2026-08-08T18:30:00+00:00",
+            ),
+            ("2023-11-12T00:00:00+00:00", "2023-11-13T00:00:00+00:00"),
+        )
+
+    def test_historical_year_ages_are_ignored_without_comma_tail_matches(self) -> None:
+        base = "2023-05-25T06:08:00+00:00"
+        for text in (
+            "The empire began 7000 years ago.",
+            "The empire began 7,000 years ago.",
+            "The empire began 5,500 years ago.",
+            "from 7000 years ago to about 4000 years ago",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(infer_occurrence(text, base), (None, None))
+
+    def test_invalid_historical_match_does_not_hide_valid_relative_match(self) -> None:
+        self.assertEqual(
+            infer_occurrence(
+                "The ruins are 7,000 years old; I visited them yesterday.",
+                "2023-05-25T06:08:00+00:00",
+            ),
+            ("2023-05-24T00:00:00+00:00", "2023-05-25T00:00:00+00:00"),
+        )
+
+    def test_relative_year_offsets_respect_datetime_bounds(self) -> None:
+        cases = (
+            ("one year ago", "0001-06-15T10:00:00+00:00", (None, None)),
+            ("in one year", "9999-06-15T10:00:00+00:00", (None, None)),
+            (
+                "in one year",
+                "9998-06-15T10:00:00+00:00",
+                ("9999-06-15T00:00:00+00:00", "9999-06-16T00:00:00+00:00"),
+            ),
+        )
+        for text, base, expected in cases:
+            with self.subTest(text=text, base=base):
+                self.assertEqual(infer_occurrence(text, base), expected)
+
     def test_multiple_unconnected_dates_do_not_create_a_false_range(self) -> None:
         self.assertEqual(
             infer_occurrence(
