@@ -124,6 +124,11 @@ RETRIEVAL_KS = (1, 5, 10)
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_RECOMMENDATION_QUESTION_RE = re.compile(
+    r"(?ix)(?:\b(?:recommend|suggest|advice|ideas?|resources?|options?)\b|"
+    r"\b(?:help\s+(?:me|us)\s+)?(?:choose|pick)\b|\bshould\s+(?:i|we)\b|"
+    r"推荐|建议|主意|资源|帮(?:我|我们)?(?:选择|挑选))"
+)
 CLAIM_RELEVANCE_THRESHOLD = 0.5
 SIMILARITY_THRESHOLDS = (0.2, 0.3, 0.4, 0.5, 0.65)
 RELEVANCE_SCORER_CODE = "V0"
@@ -1359,20 +1364,12 @@ def _judge_longmemeval_answer(
     )
 
 
-def _run_qa(
-    connection: Any,
-    case: LongMemEvalCase,
-    retrieved: Sequence[Mapping[str, Any]],
-    settings: Settings,
-    *,
-    reader_context_mode: str = DEFAULT_READER_CONTEXT_MODE,
-) -> dict[str, Any]:
-    qa_model = _qa_model()
-    api_key = os.environ.get("LLM_API_KEY") or settings.llm_api_key
-    if not api_key:
-        raise RuntimeError("QA answering requires LLM_API_KEY in .env or environment")
+def _is_preference_recommendation(case: LongMemEvalCase) -> bool:
+    return "preference" in case.question_type.casefold() and bool(_RECOMMENDATION_QUESTION_RE.search(case.question))
 
-    reader_system_prompt = (
+
+def _reader_system_prompt(case: LongMemEvalCase) -> str:
+    prompt = (
         "You answer questions from retrieved long-term-memory claims and their original evidence events. "
         "Before answering, perform a private Chain-of-Note pass over every relevant record: (1) note each candidate "
         "answer and its exact relation to the question; (2) label whether it was planned or intended, attempted, "
@@ -1386,6 +1383,38 @@ def _run_qa(
         "checking every claim and evidence event and finding them genuinely insufficient; do not abstain merely "
         "because the wording differs. Return only the final answer, without analysis, private notes, or evidence ranks."
     )
+    if _is_preference_recommendation(case):
+        prompt += (
+            " For this preference recommendation, treat the memories as constraints for generation, not as a closed "
+            "catalog of answer strings. You may synthesize a recommendation that satisfies those constraints even when "
+            "the specific proper noun is absent from memory. The final answer must explicitly use the known preferences "
+            "or experiences that justify the recommendation; if no relevant personal constraint is present, say the "
+            "information is unavailable instead of giving an ungrounded generic recommendation."
+        )
+    if "temporal" in case.question_type.casefold():
+        prompt += (
+            " For temporal questions, first select the latest baseline effective at the question time, then apply "
+            "weekday conditions or relative offsets to that baseline; never apply an offset to a superseded baseline. "
+            "For a historical question, select the baseline that was effective at that historical time and never import "
+            "a later current value."
+        )
+    return prompt
+
+
+def _run_qa(
+    connection: Any,
+    case: LongMemEvalCase,
+    retrieved: Sequence[Mapping[str, Any]],
+    settings: Settings,
+    *,
+    reader_context_mode: str = DEFAULT_READER_CONTEXT_MODE,
+) -> dict[str, Any]:
+    qa_model = _qa_model()
+    api_key = os.environ.get("LLM_API_KEY") or settings.llm_api_key
+    if not api_key:
+        raise RuntimeError("QA answering requires LLM_API_KEY in .env or environment")
+
+    reader_system_prompt = _reader_system_prompt(case)
     reader_user_prompt = _build_reader_user_prompt(connection, case, retrieved, context_mode=reader_context_mode)
     reader_text, reader_tokens = _qa_call_with_retry(
         lambda: _qa_dashscope_chat(

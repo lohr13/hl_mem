@@ -85,6 +85,51 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
+    def test_reader_prompt_keeps_factual_questions_closed_book(self) -> None:
+        case = runner.normalize_case(_record("case-factual-reader"))
+
+        prompt = runner._reader_system_prompt(case)
+
+        self.assertIn("Do not invent missing proper nouns", prompt)
+        self.assertNotIn("synthesize a recommendation", prompt)
+
+    def test_reader_prompt_allows_grounded_preference_recommendation_synthesis(self) -> None:
+        record = _record("case-preference-reader")
+        record["question_type"] = "single-session-preference"
+        record["question"] = "Can you suggest a hotel for my upcoming trip to Miami?"
+        case = runner.normalize_case(record)
+
+        prompt = runner._reader_system_prompt(case)
+
+        self.assertIn("treat the memories as constraints", prompt)
+        self.assertIn("synthesize a recommendation", prompt)
+        self.assertIn("specific proper noun is absent", prompt)
+        self.assertIn("explicitly use the known preferences", prompt)
+
+    def test_reader_prompt_does_not_enable_synthesis_for_preference_fact_lookup(self) -> None:
+        record = _record("case-preference-fact")
+        record["question_type"] = "single-session-preference"
+        record["question"] = "Which video editor do I prefer?"
+        case = runner.normalize_case(record)
+
+        prompt = runner._reader_system_prompt(case)
+
+        self.assertNotIn("synthesize a recommendation", prompt)
+
+    def test_temporal_reader_selects_effective_baseline_before_offset(self) -> None:
+        record = _record("case-temporal-reader")
+        record["question_type"] = "temporal-reasoning"
+        record["question"] = "What time do I wake up on Tuesdays and Thursdays?"
+        case = runner.normalize_case(record)
+
+        prompt = runner._reader_system_prompt(case)
+
+        self.assertIn("latest baseline effective at the question time", prompt)
+        self.assertIn("then apply weekday conditions or relative offsets", prompt)
+        self.assertIn("never apply an offset to a superseded baseline", prompt)
+        self.assertIn("historical question", prompt)
+        self.assertIn("never import a later current value", prompt)
+
     def test_ingest_persists_each_turn_with_real_speaker_and_session_span(self) -> None:
         record = _record("case-speakers")
         record["haystack_sessions"] = [
