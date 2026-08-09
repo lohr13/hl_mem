@@ -1,17 +1,26 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-09 · v0.24.1
+> 最后更新：2026-08-09 · v0.24.2
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.24.1
-- **阶段**：v0.24.1 发版收口
+- **版本**：v0.24.2
+- **阶段**：v0.24.2 发版收口
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；38 migrations（SQL 001-038）+ Python data migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-09 v0.24.2 LongMemEval 全量评测前修复
+
+- 时间解析对逗号分组数字、完整边界、超大历史年龄和 `datetime` 上下界 fail-soft；任一坏 match 不再使 Claim/case 崩溃。
+- preference intent 只预留前三个偏好槽位；assistant durable output 有界提取，LongMemEval 改为逐 turn、speaker-aware Event。
+- reader 对事实、偏好推荐和 temporal 问题使用不同约束；当前/历史基准选择与条件偏移的顺序已显式固定。
+- assistant 引用型问题可在 case namespace 内 OR 检索 Top-1 原始 assistant turn，和 Claim 证据去重后共享 1,200-token evidence 配额。
+- coverage、claim retrieval、session retrieval 使用独立分母并报告 R@K 分子/分母；429/quota case 在等待窗口后可用原参数 `--resume` 自动重跑。
+- 无新增 SQL migration、无依赖变化、生产阈值 `0.82/0.92/0.95` 不变；旧 LongMemEval cache 因 turn-event/prompt fingerprint 变化需要重新 ingest。
 
 ### 2026-08-07 v0.24.0 向量检索与依赖边界
 

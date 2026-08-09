@@ -1,5 +1,26 @@
 # HL-Mem 变更记录
 
+## v0.24.2（2026-08-09）
+
+### LongMemEval 全量评测前修复
+
+- 相对时间解析接受规范的逗号分组数字并要求完整 token 边界；超出 `datetime` 年份范围的单个 match 会被跳过，数千年前的历史/叙事年龄不再强制映射为对话相对时间，也不会中断整条 Claim 或整道 case。
+- preference intent 最多只预留前三个偏好结果，余下位置恢复全局/reranker 顺序，让相关事实与计划继续进入 Top-K。
+- assistant 提取由“通用知识一律跳过”调整为只保留可再次引用的 durable span，包括表格行、编号项、脚本设定、联系人和工具映射；仍拒绝 generic chatter 与无边界的整段回答。
+- LongMemEval session 改为逐 turn Event 写入，保留真实 `source_role`/`actor_type`、稳定 session 和 turn/span locator；subject 与 speaker 不再混为一谈。现有事件 schema 已能表达这些字段，无新增 migration；旧 benchmark cache 由 event-model/prompt fingerprint 拒绝复用。
+- reader 按题型分流：事实题维持闭卷确定性推理，偏好推荐题可将已知偏好作为约束合成答案；temporal 题先选择问题时点有效的最新基准，再应用星期条件或相对偏移，历史问题不得借用更晚的当前值。
+
+### 证据召回、指标与运行恢复
+
+- assistant/明确引用先前列表、表格或脚本的问题新增窄版原始事件第二路：在 case namespace 内用 OR 语义检索 Top-1 session/assistant turn，与 claim 证据按 Event ID 去重，并进入既有 1,200-token evidence 配额；没有新增全量 turn-vector schema。
+- extraction coverage 改为覆盖所有成功 case；claim retrieval 与 session retrieval 各用独立 eligibility 分母，报告同时给出 R@K eligible numerator/denominator，避免 claim 标注缺失污染 session 指标。
+- runner 已确认逐 case 原子写入报告、`Retry-After`/退避与熔断行为；`--resume` 现在会保留成功及非 429 结果，但在配额窗口恢复后自动重跑 `http_429`/`quota` case。评测文档补充错峰、单进程/低并发和同参数恢复指引。
+
+### 兼容与发布
+
+- SQL schema 仍为 38 个不可变 migration（001-038），生产阈值 `0.82/0.92/0.95` 未调整，依赖集合未变化。
+- 版本更新为 v0.24.2；新增/更新的 LongMemEval 与时间解析回归由 GitHub Actions 全量测试验证。
+
 ## v0.24.1（2026-08-09）
 
 ### Migration 038 完整性

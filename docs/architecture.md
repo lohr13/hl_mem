@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.24.1
+- Document baseline: v0.24.2
 - Updated: 2026-08-09
 - Deployment baseline: local-first, SQLite-first
 
@@ -283,7 +283,12 @@ Workers use durable jobs with leases, heartbeat, stage, and processed/total prog
 automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. The async `/healthz`
 route reports process-local component metrics, the configured vector backend, and the unresolved conflict count through
 the application lifecycle connection; it does not call external providers. `/v1/stats`, offline evaluation, and the
-LongMemEval adapter provide broader database-backed operational and quality visibility.
+LongMemEval adapter provide broader database-backed operational and quality visibility. LongMemEval ingestion mirrors
+production event semantics: each conversation turn is an Event with its real actor role, while session identity and the
+turn/span locator remain provenance metadata. Its reader consumes Claim evidence first and enables a bounded raw-event
+fallback only for assistant-answer questions or explicit references to an earlier list, table, or script. That fallback
+uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplicates by Event ID, and shares the existing
+1,200-token evidence allowance; it does not introduce a second turn-vector schema.
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 

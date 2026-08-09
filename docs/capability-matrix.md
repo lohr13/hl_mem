@@ -1,6 +1,6 @@
 # HL-Mem 能力成熟度矩阵
 
-> 基线：v0.24.1。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
+> 基线：v0.24.2。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
 
 ## 成熟度定义
 
@@ -14,7 +14,7 @@
 |---|---|---:|---|---|---|---|
 | 多查询召回 | beta | `auto` | 是，触发后调用 LLM | 是，仅 LLM span/audit | 超时、预算耗尽或解析失败时只使用原始 query | 固定评测集 Recall@K/MRR 不回退，P95 满足预算，连续两个版本无高优先级故障 |
 | 关系候选发现 | beta | `off` | 是，启用后调用 LLM | 是，`audit` 写 proposal/audit；不写关系边 | API 失败时不生成 proposal，核心 Claim 写入继续 | proposal precision 达到发布阈值，重复运行/并发审计稳定，`auto` 灰度无错误边回归 |
-| Benchmark suite | beta | `off`（CLI 按需） | 视模式而定；真实提取/向量评测需显式配置 | 仅写隔离的临时 benchmark DB、缓存与报告，不污染生产库 | 数据集、缓存 fingerprint 或 adapter 错误时明确失败，不影响服务运行 | LongMemEval-S extract-once/config-compare 与 50 case、190 gold claim 中文集持续版本化，结果可复现，CI/nightly 基线和回归阈值稳定 |
+| Benchmark suite | beta | `off`（CLI 按需） | 视模式而定；真实提取/向量评测需显式配置 | 仅写隔离的临时 benchmark DB、缓存与报告，不污染生产库 | 数据集、缓存 fingerprint 或 adapter 错误时明确失败；429/quota 熔断后可在窗口恢复时用原参数 `--resume` 重跑限流 case，不影响服务运行 | LongMemEval-S extract-once/config-compare 与 50 case、190 gold claim 中文集持续版本化，结果可复现，CI/nightly 基线和回归阈值稳定 |
 | 图片证据入口 | experimental | `off` | 是，开启后调用视觉 LLM | 是，成功描述后写 Event/Evidence/Claim | 描述失败则拒绝该图片提取并保留具体错误；不伪造文本证据 | 来源接入、SSRF/路径边界、安全与质量评测完成，失败率和延迟达到 SLO |
 | 反馈驱动维护 | beta | `observe` | 否 | 是，写 feedback/usefulness；默认不改变 TTL/decay | 归因或聚合失败不影响 recall 主结果，记录错误并可重建 | usefulness 重建一致，离线证明生命周期收益且无错误延寿/衰减，再考虑默认 `on` |
 | Tool/Procedure intent | beta | `keyword` | 否；`auto` 模式可调用 LLM | recall 会更新受控访问/观测数据 | LLM 路由失败回退 keyword；无候选时回退通用召回 | intent precision/recall、procedure 成功率和负向 outcome 处理达到阈值 |

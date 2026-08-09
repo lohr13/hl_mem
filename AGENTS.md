@@ -4,7 +4,7 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v0.24.0（2026-08-07）**
+**当前版本：v0.24.2（2026-08-09）**
 
 ## 技术栈
 
@@ -17,7 +17,7 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 - **TTL**：retention 纯函数（scope × importance 三档）
 - **跨 subject 去重**：DedupJudge（audit-only 默认开启）
 - **包管理**：uv（lockfile: uv.lock）
-- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）995 项 unittest 全部通过
+- **测试**：pytest + pytest-asyncio（asyncio_mode=auto）1012 项 unittest 由 GitHub Actions 全量验证
 
 ## 代码结构
 
@@ -105,7 +105,7 @@ src/hl_mem/
 .venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short
 ```
 
-当前：995 项 unittest 全部通过。
+当前：1012 项 unittest 由 GitHub Actions 全量验证。
 
 ## 关键设计决策
 
@@ -154,4 +154,4 @@ src/hl_mem/
 
 ## Migration
 
-37 个 SQL migration（001-037），按版本号顺序执行且不可变；v0.24.0 另新增 `sqlite_vec.py` Python data migration，用于可选向量投影。
+38 个 SQL migration（001-038），按版本号顺序执行且不可变；另有 `sqlite_vec.py` 等 Python data migration，用于可选向量投影和派生数据维护。
