@@ -49,7 +49,7 @@ hlmem recall "Alice 喜欢什么"
 
 ## 进阶安装与集成
 
-### 从源码安装
+### 从源码安装/运行
 
 ```bash
 git clone https://github.com/lohr13/hl_mem.git
@@ -60,6 +60,22 @@ uv run hlmem server
 ```
 
 开发环境使用 `uv sync --dev`；安装后可运行 `hlmem doctor` 做只读诊断。SQLite 需要 FTS5，Python 官方发行版通常已包含。
+
+#### 受污染宿主环境
+
+Hermes gateway 等宿主可能向子进程注入指向自身虚拟环境的 `PYTHONPATH` 或 `PYTHONHOME`。此时直接调用本仓库 `.venv` 的 Python，仍可能导入宿主环境中的包，并因 Python 版本不同而加载到不兼容的二进制扩展。从这类宿主运行源码时，请统一通过 launcher 启动：
+
+```bash
+bash scripts/hlmem-python.sh -m hl_mem.cli doctor
+```
+
+Windows `cmd.exe` 对应使用：
+
+```bat
+scripts\hlmem-python.cmd -m hl_mem.cli doctor
+```
+
+launcher 会清除两个污染变量、切换到仓库根目录，并固定使用 `.venv/Scripts/python.exe`。`start_hl_mem.sh` 和 `start_production.bat` 也委托给同一入口。
 
 ### 启用在线模型
 
