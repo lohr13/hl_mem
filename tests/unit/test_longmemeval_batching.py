@@ -13,6 +13,7 @@ import httpx
 
 from evaluation.tools import merge_longmemeval_results as merger
 from evaluation.tools import run_longmemeval_benchmark as runner
+from evaluation.tools.longmemeval import reader_context
 from hl_mem.http_utils import retry_http
 from hl_mem.settings import Settings
 
@@ -85,6 +86,101 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
+    def test_assistant_raw_fallback_has_narrow_trigger(self) -> None:
+        assistant_record = _record("case-assistant-trigger")
+        assistant_record["question_type"] = "single-session-assistant"
+        assistant_case = runner.normalize_case(assistant_record)
+        explicit_record = _record("case-explicit-trigger")
+        explicit_record["question"] = "In the table you provided earlier, what was the seventh item?"
+        explicit_case = runner.normalize_case(explicit_record)
+        factual_case = runner.normalize_case(_record("case-no-trigger"))
+
+        self.assertTrue(reader_context.assistant_raw_fallback_requested(assistant_case))
+        self.assertTrue(reader_context.assistant_raw_fallback_requested(explicit_case))
+        self.assertFalse(reader_context.assistant_raw_fallback_requested(factual_case))
+
+    def test_assistant_raw_fallback_is_namespace_scoped_or_fts_and_budgeted(self) -> None:
+        record = _record("case-raw-assistant")
+        record["question_type"] = "single-session-assistant"
+        record["question"] = "What was the seventh home-based job you provided in the list?"
+        case = runner.normalize_case(record)
+        target_event_id = "target-assistant-turn"
+        target_text = (
+            "Here are home-based jobs:\n"
+            "1. Virtual Assistant\n2. Tutor\n3. Bookkeeper\n4. Designer\n"
+            "5. Translator\n6. Editor\n7. Transcriptionist"
+        )
+        leaked_text = "seventh home-based job provided list: Secret cross-tenant answer"
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = runner.Database(Path(directory) / "raw.db", settings=Settings.for_test())
+            connection = database.open()
+            service = runner.IngestService(connection)
+            for event in (
+                {
+                    "id": "cross-tenant",
+                    "tenant_id": "eval:longmemeval:other-case",
+                    "session_id": "leaked-session",
+                    "event_type": "message",
+                    "actor_type": "assistant",
+                    "content": {"text": leaked_text},
+                },
+                {
+                    "id": target_event_id,
+                    "tenant_id": case.namespace,
+                    "session_id": "answer-session",
+                    "event_type": "message",
+                    "actor_type": "assistant",
+                    "content": {
+                        "text": target_text,
+                        "benchmark_locator": {
+                            "session_id": "answer-session",
+                            "turn_index": 1,
+                            "span": [1, 2],
+                            "source_role": "assistant",
+                        },
+                    },
+                },
+                {
+                    "id": "same-namespace-user",
+                    "tenant_id": case.namespace,
+                    "session_id": "user-session",
+                    "event_type": "message",
+                    "actor_type": "user",
+                    "content": {"text": "seventh home-based job provided list"},
+                },
+            ):
+                service.ingest_event(event)
+
+            prompt = runner._build_reader_user_prompt(
+                connection,
+                case,
+                [
+                    {
+                        "rank": 1,
+                        "claim_id": "weak-claim",
+                        "text": "A list of remote work existed.",
+                        "value": "remote work list",
+                        "evidence_event_ids": [target_event_id],
+                    }
+                ],
+                context_mode="windowed",
+            )
+            database.close()
+
+        events_json = prompt.split("Original Evidence Events:\n", 1)[1].split("\n\nQuestion:", 1)[0]
+        events = json.loads(events_json)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_id"], target_event_id)
+        self.assertEqual(events[0]["retrieval_source"], "assistant_raw_fallback")
+        self.assertIn("7. Transcriptionist", events[0]["content"])
+        self.assertNotIn("Secret cross-tenant answer", prompt)
+        self.assertLessEqual(
+            runner.estimate_tokens(json.dumps(events[0], ensure_ascii=False, separators=(",", ":"))),
+            runner.QA_EVIDENCE_EVENT_TOKEN_LIMIT,
+        )
+        self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
+
     def test_reader_prompt_keeps_factual_questions_closed_book(self) -> None:
         case = runner.normalize_case(_record("case-factual-reader"))
 

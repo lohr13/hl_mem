@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import unicodedata
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -12,6 +13,7 @@ from difflib import SequenceMatcher
 from typing import Any, Protocol
 
 from hl_mem.application.context_packet import estimate_tokens
+from hl_mem.recall.lexicalizer import tokenize_for_fts
 
 QA_CONTEXT_TOKEN_BUDGET = 6000
 QA_EVIDENCE_EVENT_TOKEN_LIMIT = 1200
@@ -24,12 +26,126 @@ QA_MATCHED_TURN_TOKEN_LIMIT = 640
 QA_ADJACENT_TURN_TOKEN_LIMIT = 192
 QA_EVIDENCE_MAX_WINDOWS = 3
 _WINDOW_CONTENT_TOKEN_LIMIT = QA_EVIDENCE_EVENT_TOKEN_LIMIT - 192
+_ASSISTANT_FTS_CANDIDATE_LIMIT = 32
+_ASSISTANT_EXCERPT_TOKEN_LIMIT = QA_EVIDENCE_EVENT_TOKEN_LIMIT - 192
+_ASSISTANT_ARTIFACT_RE = re.compile(
+    r"\b(?:list|table|script|outline|steps?|items?|options?|recommendations?)\b"
+    r"|(?:列表|表格|脚本|清单|第\s*[一二三四五六七八九十\d]+\s*(?:项|条|个))",
+    re.IGNORECASE,
+)
+_ASSISTANT_PROVENANCE_RE = re.compile(
+    r"\b(?:you|your)\b.{0,48}\b(?:provided|gave|shared|created|wrote|suggested|mentioned)\b"
+    r"|\b(?:previously|earlier|before|above)\b"
+    r"|(?:你|您).{0,24}(?:提供|给出|分享|创建|写|建议|提到)"
+    r"|(?:之前|先前|前面|上次)",
+    re.IGNORECASE,
+)
+_ENGLISH_ORDINALS = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
 
 
 class ReaderCase(Protocol):
     question_at: str | None
     question_type: str
     question: str
+
+
+def assistant_raw_fallback_requested(case: ReaderCase) -> bool:
+    """Return whether the narrow assistant-turn retrieval road is warranted."""
+    if "assistant" in str(case.question_type or "").casefold():
+        return True
+    question = str(case.question or "")
+    return bool(_ASSISTANT_ARTIFACT_RE.search(question) and _ASSISTANT_PROVENANCE_RE.search(question))
+
+
+def _or_fts_query(text: str) -> str:
+    return " OR ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokenize_for_fts(text))
+
+
+def _question_ordinal(question: str) -> int | None:
+    numeric = re.search(r"\b(\d{1,3})(?:st|nd|rd|th)\b", question, re.IGNORECASE)
+    if numeric:
+        return int(numeric.group(1))
+    folded = question.casefold()
+    for word, number in _ENGLISH_ORDINALS.items():
+        if re.search(rf"\b{word}\b", folded):
+            return number
+    chinese = re.search(r"第\s*(\d{1,3})\s*(?:项|条|个)?", question)
+    return int(chinese.group(1)) if chinese else None
+
+
+def _ordinal_item_needle(question: str, content: str) -> str | None:
+    ordinal = _question_ordinal(question)
+    if ordinal is None:
+        return None
+    item = re.search(rf"(?m)^\s*{ordinal}\s*[.)、:：-]\s*([^\r\n]+)", content)
+    return item.group(0).strip() if item else None
+
+
+def load_assistant_raw_fallback(connection: Any, case: ReaderCase) -> dict[str, Any] | None:
+    """Retrieve one namespace-scoped assistant turn with query-term OR semantics."""
+    if connection is None or not assistant_raw_fallback_requested(case):
+        return None
+    namespace = str(getattr(case, "namespace", "") or "")
+    match_query = _or_fts_query(str(case.question or ""))
+    if not namespace or not match_query:
+        return None
+    try:
+        rows = connection.execute(
+            "SELECT e.id,e.content_json,e.occurred_at,e.recorded_at,e.event_type,"
+            "e.actor_type,e.source_uri,e.session_id,bm25(events_fts_v2) AS fts_score "
+            "FROM events_fts_v2 JOIN events e ON e.rowid=events_fts_v2.rowid "
+            "WHERE events_fts_v2 MATCH ? AND e.tenant_id=? AND e.actor_type='assistant' "
+            "ORDER BY fts_score,e.occurred_at DESC,e.id LIMIT ?",
+            (match_query, namespace, _ASSISTANT_FTS_CANDIDATE_LIMIT),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    if not rows:
+        return None
+
+    # The highest-ranked turn identifies the Top-1 session; it is also the
+    # highest-ranked assistant turn within that session under the same order.
+    row = rows[0]
+    try:
+        content = json.loads(row["content_json"])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        content = str(row["content_json"] or "")
+    text = event_content_text(content)
+    ordinal_needle = _ordinal_item_needle(case.question, text)
+    needles: list[tuple[str, float]] = []
+    if ordinal_needle:
+        needles.append((ordinal_needle, 4.0))
+    needles.append((case.question, 1.0))
+    excerpt = reader_turn_excerpt(text, _ASSISTANT_EXCERPT_TOKEN_LIMIT, needles)
+    locator = content.get("benchmark_locator") if isinstance(content, Mapping) else None
+    located_session = locator.get("session_id") if isinstance(locator, Mapping) else None
+    return {
+        "event_id": str(row["id"]),
+        "occurred_at": row["occurred_at"],
+        "recorded_at": row["recorded_at"],
+        "event_type": row["event_type"],
+        "actor_type": row["actor_type"],
+        "session_id": located_session or row["session_id"],
+        "source_uri": row["source_uri"],
+        "retrieval_source": "assistant_raw_fallback",
+        "content": excerpt,
+        "window": {
+            "mode": "assistant_raw_fts",
+            "candidate_count": len(rows),
+            "fts_score": row["fts_score"],
+        },
+    }
 
 
 def normalize_role(value: object) -> str:
@@ -447,6 +563,7 @@ def build_reader_user_prompt(
     if context_mode not in READER_CONTEXT_MODES:
         raise ValueError(f"unsupported reader context mode: {context_mode!r}")
     claims = fit_reader_claims(case, reader_claim_records(retrieved), context_mode)
+    assistant_event = load_assistant_raw_fallback(connection, case)
     ranked_events = load_reader_events(
         connection,
         ordered_evidence_ids(claims),
@@ -454,6 +571,11 @@ def build_reader_user_prompt(
         event_needles=reader_event_needles(claims),
         context_mode=context_mode,
     )
+    if assistant_event is not None:
+        ranked_events = [
+            assistant_event,
+            *(event for event in ranked_events if event.get("event_id") != assistant_event["event_id"]),
+        ]
     accepted_events: list[dict[str, Any]] = []
     for event in ranked_events:
         fitted = fit_reader_event(case, claims, accepted_events, event, context_mode)
