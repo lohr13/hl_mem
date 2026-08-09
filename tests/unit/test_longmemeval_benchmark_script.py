@@ -149,6 +149,8 @@ class LongMemEvalMetricTests(unittest.TestCase):
             results,
             ("gold",),
             relevance_by_claim_id={"same-session-noise": 0.2, "answering-claim": 0.9},
+            gold_session_ids=("gold-session",),
+            event_to_session={"gold": "gold-session", "distractor": "other-session"},
         )
 
         self.assertTrue(metrics["eligible"])
@@ -158,6 +160,21 @@ class LongMemEvalMetricTests(unittest.TestCase):
         self.assertEqual(metrics["first_relevant_rank"], 2)
         self.assertEqual(metrics["session_recall_at_1"], 1.0)
         self.assertEqual(metrics["session_mrr"], 1.0)
+
+    def test_session_recall_counts_sessions_instead_of_turn_events(self) -> None:
+        metrics = retrieval_metrics(
+            [{"id": "claim", "evidence": [{"type": "event", "id": "gold-turn-2"}]}],
+            ("gold-turn-1", "gold-turn-2"),
+            relevance_by_claim_id={"claim": 0.9},
+            gold_session_ids=("gold-session",),
+            event_to_session={
+                "gold-turn-1": "gold-session",
+                "gold-turn-2": "gold-session",
+            },
+        )
+
+        self.assertEqual(metrics["session_recall_at_1"], 1.0)
+        self.assertEqual(metrics["session_hit_at_1"], 1.0)
 
     def test_claim_recall_counts_all_relevant_claims_while_hit_stays_binary(self) -> None:
         results = [{"id": "first"}, {"id": "noise"}, {"id": "second"}]
@@ -204,16 +221,25 @@ class LongMemEvalMetricTests(unittest.TestCase):
         self.assertAlmostEqual(scores["place"], 1.0)
         self.assertAlmostEqual(scores["music"], 0.0)
 
-    def test_aggregate_excludes_abstention_from_retrieval_denominator(self) -> None:
+    def test_aggregate_uses_independent_coverage_claim_and_session_denominators(self) -> None:
         cases = [
             {
                 "question_type": "single-session-user",
                 "retrieval": {
                     "eligible": True,
+                    "session_eligible": False,
+                    "answer_covered_by_extracted_claims": True,
                     "recall_at_1": 1.0,
                     "recall_at_5": 1.0,
                     "recall_at_10": 1.0,
                     "mrr": 1.0,
+                    "session_recall_at_1": None,
+                    "session_recall_at_5": None,
+                    "session_recall_at_10": None,
+                    "session_hit_at_1": None,
+                    "session_hit_at_5": None,
+                    "session_hit_at_10": None,
+                    "session_mrr": None,
                 },
                 "qa": {"correct": True},
                 "error": None,
@@ -222,10 +248,19 @@ class LongMemEvalMetricTests(unittest.TestCase):
                 "question_type": "abstention",
                 "retrieval": {
                     "eligible": False,
+                    "session_eligible": True,
+                    "answer_covered_by_extracted_claims": False,
                     "recall_at_1": None,
                     "recall_at_5": None,
                     "recall_at_10": None,
                     "mrr": None,
+                    "session_recall_at_1": 0.5,
+                    "session_recall_at_5": 1.0,
+                    "session_recall_at_10": 1.0,
+                    "session_hit_at_1": 1.0,
+                    "session_hit_at_5": 1.0,
+                    "session_hit_at_10": 1.0,
+                    "session_mrr": 0.5,
                 },
                 "qa": {"correct": False},
                 "error": None,
@@ -236,7 +271,17 @@ class LongMemEvalMetricTests(unittest.TestCase):
 
         self.assertEqual(summary["overall"]["cases"], 2)
         self.assertEqual(summary["overall"]["retrieval_eligible_cases"], 1)
+        self.assertEqual(summary["overall"]["retrieval_eligible_numerator"], 1)
+        self.assertEqual(summary["overall"]["retrieval_eligible_denominator"], 2)
         self.assertEqual(summary["overall"]["recall_at_10"], 1.0)
+        self.assertEqual(summary["overall"]["recall_at_10_eligible_numerator"], 1)
+        self.assertEqual(summary["overall"]["recall_at_10_eligible_denominator"], 2)
+        self.assertEqual(summary["overall"]["extraction_coverage_numerator"], 1)
+        self.assertEqual(summary["overall"]["extraction_coverage_denominator"], 2)
+        self.assertEqual(summary["overall"]["answer_covered_by_extracted_claims"], 0.5)
+        self.assertEqual(summary["overall"]["session_retrieval_eligible_numerator"], 1)
+        self.assertEqual(summary["overall"]["session_retrieval_eligible_denominator"], 2)
+        self.assertEqual(summary["overall"]["session_recall_at_1"], 0.5)
         self.assertEqual(summary["overall"]["qa_accuracy"], 0.5)
         self.assertIn("abstention", summary["by_type"])
 

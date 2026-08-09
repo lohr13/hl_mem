@@ -780,8 +780,11 @@ def _threshold_analysis(
 def _session_retrieval_metrics(
     results: Sequence[Mapping[str, Any]],
     gold_event_ids: Sequence[str],
+    *,
+    gold_session_ids: Sequence[str] | None = None,
+    event_to_session: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    gold = set(gold_event_ids)
+    gold = set(gold_session_ids if gold_session_ids is not None else gold_event_ids)
     if not gold:
         return {
             "eligible": False,
@@ -791,13 +794,21 @@ def _session_retrieval_metrics(
             "first_relevant_rank": None,
         }
     metrics: dict[str, Any] = {"eligible": True}
+
+    def result_sessions(result: Mapping[str, Any]) -> set[str]:
+        evidence_ids = _result_evidence_ids(result)
+        if gold_session_ids is None:
+            return set(evidence_ids)
+        mapping = event_to_session or {}
+        return {mapping[event_id] for event_id in evidence_ids if event_id in mapping}
+
     for k in RETRIEVAL_KS:
-        found = {event_id for result in results[:k] for event_id in _result_evidence_ids(result)}
+        found = {session_id for result in results[:k] for session_id in result_sessions(result)}
         hits = found & gold
         metrics[f"recall_at_{k}"] = len(hits) / len(gold)
         metrics[f"hit_at_{k}"] = float(bool(hits))
     first_rank = next(
-        (rank for rank, result in enumerate(results, start=1) if set(_result_evidence_ids(result)) & gold),
+        (rank for rank, result in enumerate(results, start=1) if result_sessions(result) & gold),
         None,
     )
     metrics["mrr"] = 1.0 / first_rank if first_rank is not None else 0.0
@@ -811,9 +822,16 @@ def retrieval_metrics(
     *,
     relevance_by_claim_id: Mapping[str, float] | None = None,
     relevance_threshold: float = CLAIM_RELEVANCE_THRESHOLD,
+    gold_session_ids: Sequence[str] | None = None,
+    event_to_session: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Compute claim-level retrieval metrics plus session-level diagnostics."""
-    session = _session_retrieval_metrics(results, gold_event_ids)
+    session = _session_retrieval_metrics(
+        results,
+        gold_event_ids,
+        gold_session_ids=gold_session_ids,
+        event_to_session=event_to_session,
+    )
     if relevance_by_claim_id is None:
         metrics = dict(session)
     else:
@@ -845,10 +863,16 @@ def retrieval_metrics(
 
 def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     successful = [result for result in results if not result.get("error")]
+    retrieval_all = [result["retrieval"] for result in successful if isinstance(result.get("retrieval"), Mapping)]
     retrieval = [
         result["retrieval"]
         for result in successful
         if isinstance(result.get("retrieval"), Mapping) and result["retrieval"].get("eligible")
+    ]
+    session_retrieval = [
+        result["retrieval"]
+        for result in successful
+        if isinstance(result.get("retrieval"), Mapping) and result["retrieval"].get("session_eligible")
     ]
     qa = [
         result["qa"]
@@ -860,21 +884,49 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         values = [float(item[field]) for item in items if item.get(field) is not None]
         return mean(values) if values else None
 
-    return {
+    coverage_values = [
+        (
+            bool((result.get("retrieval") or {}).get("answer_covered_by_extracted_claims"))
+            if isinstance(result.get("retrieval"), Mapping)
+            else False
+        )
+        for result in successful
+    ]
+    summary: dict[str, Any] = {
         "cases": len(results),
         "successful_cases": len(successful),
         "failed_cases": len(results) - len(successful),
+        "retrieval_reported_cases": len(retrieval_all),
         "retrieval_eligible_cases": len(retrieval),
+        "retrieval_eligible_numerator": len(retrieval),
+        "retrieval_eligible_denominator": len(successful),
         **{f"recall_at_{k}": average(f"recall_at_{k}", retrieval) for k in RETRIEVAL_KS},
         **{f"hit_rate_at_{k}": average(f"hit_at_{k}", retrieval) for k in RETRIEVAL_KS},
         "mrr": average("mrr", retrieval),
-        **{f"session_recall_at_{k}": average(f"session_recall_at_{k}", retrieval) for k in RETRIEVAL_KS},
-        **{f"session_hit_rate_at_{k}": average(f"session_hit_at_{k}", retrieval) for k in RETRIEVAL_KS},
-        "session_mrr": average("session_mrr", retrieval),
-        "answer_covered_by_extracted_claims": average("answer_covered_by_extracted_claims", retrieval),
+        "session_retrieval_eligible_cases": len(session_retrieval),
+        "session_retrieval_eligible_numerator": len(session_retrieval),
+        "session_retrieval_eligible_denominator": len(successful),
+        **{f"session_recall_at_{k}": average(f"session_recall_at_{k}", session_retrieval) for k in RETRIEVAL_KS},
+        **{f"session_hit_rate_at_{k}": average(f"session_hit_at_{k}", session_retrieval) for k in RETRIEVAL_KS},
+        "session_mrr": average("session_mrr", session_retrieval),
+        "extraction_coverage_numerator": sum(coverage_values),
+        "extraction_coverage_denominator": len(coverage_values),
+        "answer_covered_by_extracted_claims": mean(coverage_values) if coverage_values else None,
         "qa_evaluated_cases": len(qa),
         "qa_accuracy": mean(float(item["correct"]) for item in qa) if qa else None,
     }
+    for k in RETRIEVAL_KS:
+        claim_values = [item.get(f"recall_at_{k}") for item in retrieval if item.get(f"recall_at_{k}") is not None]
+        summary[f"recall_at_{k}_eligible_numerator"] = len(claim_values)
+        summary[f"recall_at_{k}_eligible_denominator"] = len(successful)
+        session_values = [
+            item.get(f"session_recall_at_{k}")
+            for item in session_retrieval
+            if item.get(f"session_recall_at_{k}") is not None
+        ]
+        summary[f"session_recall_at_{k}_eligible_numerator"] = len(session_values)
+        summary[f"session_recall_at_{k}_eligible_denominator"] = len(successful)
+    return summary
 
 
 def aggregate_results(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -1283,6 +1335,8 @@ def _recall_case(
         results,
         case.gold_event_ids,
         relevance_by_claim_id=relevance_by_claim_id if case.answer.strip() else None,
+        gold_session_ids=case.gold_session_ids,
+        event_to_session=_event_to_session(case),
     )
     metrics.update(
         retrieved_claims=len(results),
