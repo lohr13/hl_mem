@@ -8,31 +8,39 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_windows_startup_uses_repository_relative_entrypoint() -> None:
+def test_windows_startup_delegates_to_isolated_repository_launcher() -> None:
     script = (ROOT / "start_production.bat").read_text(encoding="utf-8")
+    launcher = (ROOT / "scripts" / "hlmem-python.cmd").read_text(encoding="utf-8")
 
     assert "%~dp0" in script
-    assert ".venv\\Scripts\\python.exe" in script
+    assert "scripts\\hlmem-python.cmd" in script
     assert "hl_mem.toml" in script
     assert "start_server.py" in script
     assert "HL_MEM_" not in script
     assert "D:\\workspace" not in script
     assert "uvicorn" not in script
+    assert "%~dp0.." in launcher
+    assert ".venv\\Scripts\\python.exe" in launcher
+    assert 'set "PYTHONPATH="' in launcher
+    assert 'set "PYTHONHOME="' in launcher
 
 
-def test_shell_startup_supports_posix_and_windows_virtualenvs() -> None:
+def test_shell_startup_delegates_to_isolated_repository_launcher() -> None:
     script_path = ROOT / "start_hl_mem.sh"
     script = script_path.read_text(encoding="utf-8")
+    launcher = (ROOT / "scripts" / "hlmem-python.sh").read_text(encoding="utf-8")
 
     assert b"\r\n" not in script_path.read_bytes()
     assert "BASH_SOURCE[0]" in script
-    assert ".venv/bin/python" in script
-    assert ".venv/Scripts/python.exe" in script
+    assert "scripts/hlmem-python.sh" in script
     assert "hl_mem.toml" in script
     assert "start_server.py" in script
     assert "HL_MEM_" not in script
     assert "/d/workspace" not in script
     assert not (ROOT / "start_v017.sh").exists()
+    assert "BASH_SOURCE[0]" in launcher
+    assert ".venv/Scripts/python.exe" in launcher
+    assert "unset PYTHONPATH PYTHONHOME" in launcher
 
 
 def test_server_entrypoint_enables_hl_mem_info_logging_without_touching_uvicorn() -> None:
