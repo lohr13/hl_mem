@@ -41,9 +41,11 @@ def test_dry_run_returns_claims_without_storing(tmp_path, monkeypatch) -> None:
         response = client.post("/v1/extract/dry-run", json={"text": "I prefer dark mode"})
         after = client.get("/v1/stats").json()
 
+    expected_claim = asdict(ExtractedClaim(predicate="preference", value="dark mode"))
+    expected_claim.pop("source_event_indices")
     assert response.status_code == 200
     assert response.json() == {
-        "claims": [asdict(ExtractedClaim(predicate="preference", value="dark mode"))],
+        "claims": [expected_claim],
         "usage": {"total_tokens": 9, "input_tokens": 6, "output_tokens": 3},
     }
     assert after["claims"] == before["claims"]

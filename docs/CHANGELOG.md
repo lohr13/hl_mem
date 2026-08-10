@@ -9,7 +9,7 @@
 - compact extraction 增加 `source_event_indices`，Claim 可链接窗口内一个或多个真实来源 Event；speaker、turn、发生时间与证据映射不再因合并提取丢失。
 - LongMemEval 改为排队 Event 后驱动生产 Worker，生产与 benchmark 不再维护两条提取路径。
 - 新增批量原子性、窗口边界、会话隔离、speaker/turn prompt、来源校验、多 Event evidence 与 benchmark 对齐回归测试。
-- 无数据库 schema 变更，SQL migration 仍为 38 个；新增配置仅为 `extraction.batch_max_events` 与 `extraction.batch_max_wait_seconds`。
+- Migration 039 为 Event 增加 nullable `metadata_json`，仅保存 turn 等非正文 locator；新增配置仅为 `extraction.batch_max_events` 与 `extraction.batch_max_wait_seconds`。
 
 ## v0.24.2（2026-08-09）
 

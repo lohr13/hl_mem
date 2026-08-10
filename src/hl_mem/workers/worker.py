@@ -496,12 +496,12 @@ class Worker:
                     "success",
                     detail={"actual_tokens": total_tokens, **self.budget.get_stats()},
                 )
-                for event, _ in prepared:
+                for event in extraction_sources:
                     event["extractor"] = "llm"
                     event["extractor_version"] = self.extractor.extractor_version
             elif explicit_bypass:
-                prepared[0][0]["extractor"] = "explicit"
-                prepared[0][0]["extractor_version"] = "explicit-v1"
+                extraction_sources[0]["extractor"] = "explicit"
+                extraction_sources[0]["extractor_version"] = "explicit-v1"
             stored = 0
             rejections: list[dict[str, Any]] = []
             for claim in extracted:

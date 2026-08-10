@@ -13,7 +13,7 @@
 - 不修改评测数据集、检索阈值或 QA 判定。
 - 保留 `/v1/events`、单 Event job payload、导入归档和现有数据库兼容。
 - 窗口固定为 `max_events=4`、`max_wait_seconds=2.0`；不增加 idle/token/adaptive 参数。
-- 不新增 SQL migration；Event turn 使用既有 `metadata_json`。
+- 新增最小 SQL migration 039，为 Event 增加 nullable `metadata_json`；不新增 batch 表或状态列。
 - 本地不运行 pytest；测试先写，静态检查后由 GitHub Actions 验证。
 - 不触碰工作区已有的 3 个未跟踪评测文件。
 
@@ -213,7 +213,7 @@ Run Ruff and compileall. Expected: exit 0.
 - Modify: `docs/capability-matrix.md`
 
 **Interfaces:**
-- Produces: release identity v0.25.0; OpenAPI 17 routes; 38 migrations unchanged.
+- Produces: release identity v0.25.0; OpenAPI 17 routes; 39 migrations including Event metadata.
 
 - [ ] **Step 1: Update version and docs**
 
@@ -229,7 +229,7 @@ Run `ruff check`, `ruff format --check`, `mypy` if configured, `python -m compil
 
 - [ ] **Step 4: Review requirements and diff**
 
-Confirm every design constraint has a code/test/doc owner, no evaluation thresholds changed, no migration exists, and unrelated untracked files are absent from the diff.
+Confirm every design constraint has a code/test/doc owner, no evaluation thresholds changed, only migration 039 was added, and unrelated untracked files are absent from the diff.
 
 - [ ] **Step 5: Commit and push**
 

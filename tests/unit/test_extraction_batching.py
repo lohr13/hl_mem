@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -167,7 +168,7 @@ def test_settings_expose_only_two_microbatch_controls() -> None:
     assert not hasattr(settings, "extraction_batch_idle_seconds")
 
     with pytest.raises(ConfigurationError, match="between 1 and 4"):
-        Settings.for_test(extraction_batch_max_events=5).validate()
+        replace(settings, extraction_batch_max_events=5).validate()
 
 
 def test_lease_groups_four_ordered_events_from_one_session(tmp_path) -> None:
@@ -247,7 +248,7 @@ def test_bulk_completion_and_failure_cover_every_leased_job(tmp_path) -> None:
 
 
 def test_batch_ingest_is_atomic_when_second_job_enqueue_fails(tmp_path, monkeypatch) -> None:
-    app = create_app(Settings.for_test(database_path=str(tmp_path / "atomic-api.db")))
+    app = create_app(replace(Settings.for_test(), database_path=str(tmp_path / "atomic-api.db")))
     original = IngestService._queue_event
     calls = 0
 
@@ -277,7 +278,7 @@ def test_batch_ingest_is_atomic_when_second_job_enqueue_fails(tmp_path, monkeypa
 
 
 def test_batch_ingest_preserves_metadata_and_existing_job_contract(tmp_path) -> None:
-    app = create_app(Settings.for_test(database_path=str(tmp_path / "batch-api.db")))
+    app = create_app(replace(Settings.for_test(), database_path=str(tmp_path / "batch-api.db")))
     payload = {
         "events": [
             {
@@ -477,7 +478,7 @@ def test_worker_extracts_one_structured_turn_and_persists_per_event_evidence(tmp
     client = _FakeLLMClient(response)
     extractor = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2))
     worker = Worker(
-        Settings.for_test(database_path=str(database_path)),
+        replace(Settings.for_test(), database_path=str(database_path)),
         connection=connection,
         extractor=extractor,
         embedder=FakeEmbedder(),
@@ -536,7 +537,7 @@ def test_worker_filters_each_event_before_building_batch(tmp_path) -> None:
     )
     client = _FakeLLMClient(_compact_response(indices=[0]))
     worker = Worker(
-        Settings.for_test(database_path=str(database_path)),
+        replace(Settings.for_test(), database_path=str(database_path)),
         connection=connection,
         extractor=LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)),
         embedder=FakeEmbedder(),

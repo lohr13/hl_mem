@@ -1006,7 +1006,9 @@ def test_sync_turn_episode_failure_does_not_fail_event_sync(monkeypatch) -> None
     provider.sync_turn("user request", "assistant response", messages=messages)
 
     assert provider._failure_count == 0
-    assert [payload["actor_type"] for _, payload in event_requests] == [
+    assert len(event_requests) == 1
+    assert event_requests[0][0].endswith("/v1/events/batch")
+    assert [payload["actor_type"] for payload in event_requests[0][1]["events"]] == [
         "user",
         "assistant",
     ]

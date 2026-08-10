@@ -193,7 +193,11 @@ class IngestService:
         if custom_instructions is not None:
             extraction_context["custom_instructions"] = custom_instructions
         claims = extractor.extract({"text": text}, extraction_context)
-        serialized_claims = [asdict(claim) if is_dataclass(claim) else dict(claim) for claim in claims]
+        serialized_claims = []
+        for claim in claims:
+            serialized = asdict(claim) if is_dataclass(claim) else dict(claim)
+            serialized.pop("source_event_indices", None)
+            serialized_claims.append(serialized)
         return {
             "claims": serialized_claims,
             "usage": {

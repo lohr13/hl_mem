@@ -47,7 +47,7 @@ LongMemEval runner 只构造并摄入生产 Event，不再直接调用 `extracto
 - 多 job lease 只由 Worker 显式开启；旧 job、导入归档和失败重试继续可处理。
 - LLM 调用期间不持有 SQLite 写事务；claim/evidence 仍使用已有短事务。
 - 同批失败时所有租约 job 一起 retry/dead，避免部分窗口被静默遗漏。Claim/evidence 自身已有幂等与去重，重试安全边界不变。
-- 新增 API 与 metadata 字段是向后兼容扩展；数据库已有 `metadata_json`，无需 migration。
+- 新增 API 与 metadata 字段是向后兼容扩展；Migration 039 仅为 Event 增加 nullable `metadata_json`，不新增状态表或双写模型。
 
 ## 取舍
 
@@ -66,6 +66,6 @@ LongMemEval runner 只构造并摄入生产 Event，不再直接调用 `extracto
 
 ## 版本、工作量与回退
 
-该变更新增 API、配置与 prompt schema，版本升为 v0.25.0。无 migration，仍为 38 个 SQL migrations。
+该变更新增 API、配置与 prompt schema，版本升为 v0.25.0。新增最小 Migration 039 持久化 turn locator，共 39 个 SQL migrations。
 
 预计修改 12～16 个生产、测试和文档文件，核心代码约 300～450 行。主要风险是多 job lease 的并发终态和来源索引误绑；对应回退点是把 `batch_max_events` 设为 1（恢复逐 Event 调度），或整体回退该提交。旧 API 和数据库不需要降级处理。

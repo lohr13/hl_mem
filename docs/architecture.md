@@ -111,7 +111,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 38 immutable SQL migrations (001-038)
+│   └── migrations/           # 39 immutable SQL migrations (001-039)
 ├── workers/
 │   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
 │   ├── ttl.py                # Importance-aware expiry
@@ -311,6 +311,9 @@ Migration 037 is the v0.24 schema change: it adds backend control state and dirt
 sqlite-vec extension. When `recall.vector_backend = "sqlite_vec"`, the separate `sqlite_vec.py` Python data migration
 creates or rebuilds the dimension-specific derived vector table. Startup drains dirty projections before serving, while
 dirty-query detection can fall back to the exact scan path; the default remains `sqlite_scan`.
+
+Migration 039 is the v0.25 schema change: it adds nullable `events.metadata_json` for non-content source locators such as
+turn IDs. Event text and FTS semantics remain unchanged.
 
 Backup and restore are whole-database operations:
 
