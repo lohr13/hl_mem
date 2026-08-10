@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import httpx
 
@@ -35,6 +36,91 @@ def find_http_exception(
 ) -> BaseException | None:
     """Find the first selected transport exception in an exception chain."""
     return next((item for item in exception_chain(error) if isinstance(item, exception_types)), None)
+
+
+def sanitize_http_response_body(body: str, *, limit: int = 500, secrets: Iterable[str] = ()) -> str:
+    """Redact common credentials before retaining a bounded provider response."""
+    if limit < 0:
+        raise ValueError("HTTP response body limit must be non-negative")
+    sanitized = body
+    for secret in sorted({value for value in secrets if value}, key=len, reverse=True):
+        sanitized = sanitized.replace(secret, "[REDACTED]")
+    sanitized = re.sub(
+        r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?bearer\s+)[^\s,\"']+",
+        r"\1[REDACTED]",
+        sanitized,
+    )
+    sanitized = re.sub(
+        r"(?i)((?:api[_-]?key|access[_-]?token|secret)[\"']?\s*[:=]\s*[\"']?)[^\s,\"']+",
+        r"\1[REDACTED]",
+        sanitized,
+    )
+    sanitized = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-[REDACTED]", sanitized)
+    return sanitized[:limit]
+
+
+def _provider_error_fields(
+    response: httpx.Response,
+    *,
+    secrets: Iterable[str] = (),
+) -> tuple[str | None, str | None]:
+    try:
+        payload = response.json()
+    except (TypeError, ValueError, httpx.ResponseNotRead):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    raw_error = payload.get("error")
+    error_payload = raw_error if isinstance(raw_error, dict) else {}
+    raw_code = payload.get("code") or error_payload.get("code")
+    raw_request_id = payload.get("request_id") or payload.get("requestId") or error_payload.get("request_id")
+    provider_code = (
+        sanitize_http_response_body(str(raw_code), limit=128, secrets=secrets) if raw_code is not None else None
+    )
+    request_id = (
+        sanitize_http_response_body(str(raw_request_id), limit=256, secrets=secrets)
+        if raw_request_id is not None
+        else None
+    )
+    return provider_code or None, request_id or None
+
+
+def http_error_diagnostics(
+    error: BaseException,
+    *,
+    body_limit: int = 500,
+    secrets: Iterable[str] = (),
+) -> dict[str, Any] | None:
+    """Return safe diagnostics for the first HTTP status error in a cause chain."""
+    status_error = find_http_status_error(error)
+    if status_error is None:
+        return None
+    response = status_error.response
+    secret_values = tuple(value for value in secrets if value)
+    provider_code, body_request_id = _provider_error_fields(response, secrets=secret_values)
+    header_request_id = next(
+        (
+            response.headers.get(header)
+            for header in ("x-request-id", "x-dashscope-request-id", "request-id")
+            if response.headers.get(header)
+        ),
+        None,
+    )
+    request_id = (
+        sanitize_http_response_body(str(header_request_id), limit=256, secrets=secret_values)
+        if header_request_id
+        else body_request_id
+    )
+    try:
+        response_body = sanitize_http_response_body(response.text, limit=body_limit, secrets=secret_values)
+    except httpx.ResponseNotRead:
+        response_body = None
+    return {
+        "http_status": response.status_code,
+        "provider_code": provider_code,
+        "request_id": request_id or None,
+        "response_body": response_body,
+    }
 
 
 def retry_after_seconds(value: str, *, now: datetime | None = None) -> float | None:

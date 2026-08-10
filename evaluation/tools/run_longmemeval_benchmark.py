@@ -17,6 +17,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from statistics import mean, median
 from typing import Any, TypeVar, cast
@@ -99,6 +100,7 @@ from hl_mem.http_utils import (  # noqa: E402, F401
     exception_chain as _exception_chain,
     find_http_exception,
     find_http_status_error as _find_http_status_error,
+    http_error_diagnostics as _http_error_diagnostics,
     retry_after_seconds as _retry_after_seconds,
 )
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402, F401
@@ -615,6 +617,32 @@ def normalize_case(record: Mapping[str, Any]) -> LongMemEvalCase:
     )
 
 
+def _evaluation_eligibility(case: LongMemEvalCase) -> dict[str, Any]:
+    """Separate precise-timestamp contradictions from temporal retrieval quality."""
+    eligible: dict[str, Any] = {
+        "status": "eligible",
+        "temporal_gate_eligible": True,
+        "reason_code": None,
+    }
+    if "temporal" not in case.question_type.casefold() or not case.question_at:
+        return eligible
+    try:
+        question_at = datetime.fromisoformat(case.question_at.replace("Z", "+00:00"))
+        gold_sessions = [session for session in case.sessions if session.session_id in case.gold_session_ids]
+        gold_times = [datetime.fromisoformat(session.occurred_at.replace("Z", "+00:00")) for session in gold_sessions]
+    except (TypeError, ValueError):
+        return eligible
+    if gold_times and all(item > question_at and item.date() == question_at.date() for item in gold_times):
+        return {
+            "status": "invalid_ambiguous",
+            "temporal_gate_eligible": False,
+            "reason_code": "gold_sessions_after_question_same_day",
+            "question_at": case.question_at,
+            "earliest_gold_session_at": min(gold_times).isoformat(),
+        }
+    return eligible
+
+
 def _longmemeval_recall_intent(case: LongMemEvalCase) -> RecallIntent:
     """Map benchmark semantics to an explicit recall intent."""
     question_type = case.question_type.casefold()
@@ -863,6 +891,19 @@ def retrieval_metrics(
 
 def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     successful = [result for result in results if not result.get("error")]
+    gate_eligible = [
+        result
+        for result in results
+        if not isinstance(result.get("evaluation_eligibility"), Mapping)
+        or result["evaluation_eligibility"].get("temporal_gate_eligible") is not False
+    ]
+    gate_successful = [result for result in gate_eligible if not result.get("error")]
+    gate_excluded = [
+        result
+        for result in results
+        if isinstance(result.get("evaluation_eligibility"), Mapping)
+        and result["evaluation_eligibility"].get("temporal_gate_eligible") is False
+    ]
     retrieval_all = [result["retrieval"] for result in successful if isinstance(result.get("retrieval"), Mapping)]
     retrieval = [
         result["retrieval"]
@@ -874,9 +915,19 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         for result in successful
         if isinstance(result.get("retrieval"), Mapping) and result["retrieval"].get("session_eligible")
     ]
+    gate_retrieval_all = [
+        result["retrieval"] for result in gate_successful if isinstance(result.get("retrieval"), Mapping)
+    ]
+    gate_retrieval = [item for item in gate_retrieval_all if item.get("eligible")]
+    gate_session_retrieval = [item for item in gate_retrieval_all if item.get("session_eligible")]
     qa = [
         result["qa"]
         for result in successful
+        if isinstance(result.get("qa"), Mapping) and isinstance(result["qa"].get("correct"), bool)
+    ]
+    gate_qa = [
+        result["qa"]
+        for result in gate_successful
         if isinstance(result.get("qa"), Mapping) and isinstance(result["qa"].get("correct"), bool)
     ]
 
@@ -914,6 +965,26 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "answer_covered_by_extracted_claims": mean(coverage_values) if coverage_values else None,
         "qa_evaluated_cases": len(qa),
         "qa_accuracy": mean(float(item["correct"]) for item in qa) if qa else None,
+        "gate_eligible_cases": len(gate_eligible),
+        "gate_excluded_cases": len(gate_excluded),
+        "gate_excluded_case_ids": [str(item.get("case_id") or "") for item in gate_excluded],
+        "gate_retrieval_reported_cases": len(gate_retrieval_all),
+        "gate_retrieval_eligible_cases": len(gate_retrieval),
+        **{f"gate_recall_at_{k}": average(f"recall_at_{k}", gate_retrieval) for k in RETRIEVAL_KS},
+        **{f"gate_hit_rate_at_{k}": average(f"hit_at_{k}", gate_retrieval) for k in RETRIEVAL_KS},
+        "gate_mrr": average("mrr", gate_retrieval),
+        "gate_session_retrieval_eligible_cases": len(gate_session_retrieval),
+        **{
+            f"gate_session_recall_at_{k}": average(f"session_recall_at_{k}", gate_session_retrieval)
+            for k in RETRIEVAL_KS
+        },
+        **{
+            f"gate_session_hit_rate_at_{k}": average(f"session_hit_at_{k}", gate_session_retrieval)
+            for k in RETRIEVAL_KS
+        },
+        "gate_session_mrr": average("session_mrr", gate_session_retrieval),
+        "gate_qa_evaluated_cases": len(gate_qa),
+        "gate_qa_accuracy": mean(float(item["correct"]) for item in gate_qa) if gate_qa else None,
     }
     for k in RETRIEVAL_KS:
         claim_values = [item.get(f"recall_at_{k}") for item in retrieval if item.get(f"recall_at_{k}") is not None]
@@ -1211,6 +1282,86 @@ def _turn_content(session: SessionInput, turn_index: int, message: Mapping[str, 
     }
 
 
+def _claim_inflation_diagnostics(connection: Any, stats: Mapping[str, int]) -> dict[str, Any]:
+    """Measure claim density and lexical adjacent-turn restatement candidates."""
+
+    def ratio(numerator: int, denominator: int) -> float | None:
+        return round(numerator / denominator, 6) if denominator else None
+
+    rows = connection.execute(
+        "SELECT c.id,c.subject_entity_id,c.canonical_attribute,c.index_text,"
+        "e.session_id,e.content_json FROM claims c "
+        "JOIN evidence_links l ON l.derived_type='claim' AND l.derived_id=c.id AND l.evidence_type='event' "
+        "JOIN events e ON e.id=l.evidence_id "
+        "ORDER BY c.id,e.id"
+    ).fetchall()
+    claims: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        try:
+            content = json.loads(row["content_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        locator = content.get("benchmark_locator") if isinstance(content, Mapping) else None
+        turn_index = locator.get("turn_index") if isinstance(locator, Mapping) else None
+        located_session = locator.get("session_id") if isinstance(locator, Mapping) else None
+        session_id = str(located_session or row["session_id"] or "").strip()
+        if not session_id or not isinstance(turn_index, int) or isinstance(turn_index, bool):
+            continue
+        claim = claims.setdefault(
+            str(row["id"]),
+            {
+                "subject": str(row["subject_entity_id"] or ""),
+                "attribute": str(row["canonical_attribute"] or ""),
+                "text": _reader_match_text(row["index_text"] or ""),
+                "locations": set(),
+            },
+        )
+        claim["locations"].add((session_id, turn_index))
+
+    adjacent_pairs: set[tuple[str, str]] = set()
+    claims_by_location: dict[tuple[str, int], set[str]] = {}
+    for claim_id, claim in claims.items():
+        for location in claim["locations"]:
+            claims_by_location.setdefault(location, set()).add(claim_id)
+    for (session_id, turn_index), left_ids in claims_by_location.items():
+        right_ids = claims_by_location.get((session_id, turn_index + 1), set())
+        for left_id in left_ids:
+            left = claims[left_id]
+            if not left["text"]:
+                continue
+            for right_id in right_ids:
+                if left_id == right_id:
+                    continue
+                right = claims[right_id]
+                if (left["subject"], left["attribute"]) != (right["subject"], right["attribute"]):
+                    continue
+                if (
+                    right["text"]
+                    and SequenceMatcher(
+                        None,
+                        left["text"],
+                        right["text"],
+                        autojunk=False,
+                    ).ratio()
+                    >= 0.82
+                ):
+                    adjacent_pairs.add(tuple(sorted((left_id, right_id))))
+
+    events = int(stats.get("events", 0))
+    sessions = int(stats.get("sessions", 0))
+    extracted = int(stats.get("extracted_claims", 0))
+    stored = int(stats.get("stored_claims", 0))
+    return {
+        "extracted_claims_per_event": ratio(extracted, events),
+        "stored_claims_per_event": ratio(stored, events),
+        "stored_claims_per_session": ratio(stored, sessions),
+        "adjacent_restatement_candidates": len(adjacent_pairs),
+        "adjacent_restatement_definition": (
+            "same subject and canonical_attribute, adjacent session turns, lexical similarity >= 0.82; diagnostic only"
+        ),
+    }
+
+
 def _ingest_case(
     connection: Any,
     case: LongMemEvalCase,
@@ -1290,6 +1441,7 @@ def _ingest_case(
                 f"claims={stats['extracted_claims']}",
                 flush=True,
             )
+    stats.update(_claim_inflation_diagnostics(connection, stats))
     stats["elapsed_seconds"] = round(time.perf_counter() - started, 3)
     return stats
 
@@ -1406,6 +1558,20 @@ def _case_error_type(error: BaseException) -> str:
     if status >= 500:
         return "http_5xx"
     return f"http_{status}"
+
+
+def _http_diagnostic_secrets(settings: Settings) -> tuple[str, ...]:
+    values = (
+        settings.llm_api_key,
+        settings.embedding_api_key,
+        settings.reranker_api_key,
+        settings.image_describer_api_key,
+        os.environ.get("LLM_API_KEY"),
+        os.environ.get("EMBEDDING_API_KEY"),
+        os.environ.get("RERANKER_API_KEY"),
+        os.environ.get("IMAGE_API_KEY"),
+    )
+    return tuple(dict.fromkeys(value for value in values if value))
 
 
 def _result_error_type(result: Mapping[str, Any]) -> str | None:
@@ -1589,6 +1755,7 @@ def _run_case(
         "answer": case.answer,
         "session_count": len(case.sessions),
         "gold_session_ids": list(case.gold_session_ids),
+        "evaluation_eligibility": _evaluation_eligibility(case),
         "database": str(database_path.relative_to(ROOT)),
         "ingest": None,
         "retrieval": None,
@@ -1596,6 +1763,7 @@ def _run_case(
         "qa": None,
         "error": None,
         "error_type": None,
+        "error_diagnostics": None,
     }
     database: Database | None = None
     started = time.perf_counter()
@@ -1645,6 +1813,10 @@ def _run_case(
     except Exception as error:
         result["error"] = f"{type(error).__name__}: {error}"
         result["error_type"] = _case_error_type(error)
+        result["error_diagnostics"] = _http_error_diagnostics(
+            error,
+            secrets=_http_diagnostic_secrets(settings),
+        )
     finally:
         if database is not None:
             database.close()
@@ -1775,12 +1947,15 @@ def _config_case_result(
         "answer": case.answer,
         "session_count": len(case.sessions),
         "gold_session_ids": list(case.gold_session_ids),
+        "evaluation_eligibility": _evaluation_eligibility(case),
         "database": str(variant_path.relative_to(ROOT)),
         "reembedding": None,
         "retrieval": None,
         "retrieved": [],
         "qa": None,
         "error": None,
+        "error_type": None,
+        "error_diagnostics": None,
     }
     database: Database | None = None
     started = time.perf_counter()
@@ -1799,6 +1974,11 @@ def _config_case_result(
         )
     except Exception as error:
         result["error"] = f"{type(error).__name__}: {error}"
+        result["error_type"] = _case_error_type(error)
+        result["error_diagnostics"] = _http_error_diagnostics(
+            error,
+            secrets=_http_diagnostic_secrets(settings),
+        )
     finally:
         if database is not None:
             database.close()

@@ -544,6 +544,62 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(attempts, 1)
         sleep.assert_not_called()
 
+    def test_case_result_persists_sanitized_http_diagnostics(self) -> None:
+        case = runner.normalize_case(_record("case-http-diagnostics"))
+        opaque_secret = "provider-secret-without-standard-prefix"
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        response = httpx.Response(
+            400,
+            request=request,
+            headers={"x-request-id": "header-request-id"},
+            json={
+                "error": {
+                    "code": "DataInspectionFailed",
+                    "message": (
+                        "api_key=sk-secret123456 Authorization: Bearer token-value "
+                        f"opaque_token={opaque_secret} " + "x" * 600
+                    ),
+                },
+                "request_id": "body-request-id",
+            },
+        )
+        status_error = httpx.HTTPStatusError("bad request", request=request, response=response)
+
+        class FailingDatabase:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def open(self) -> object:
+                raise RuntimeError("wrapped extraction failure") from status_error
+
+            def close(self) -> None:
+                pass
+
+        with (
+            patch.object(runner, "Database", FailingDatabase),
+            patch.object(runner, "_remove_case_artifacts"),
+        ):
+            result = runner._run_case(
+                case,
+                Settings(llm_api_key=opaque_secret),
+                object(),
+                None,
+                skip_ingest=False,
+                run_qa=False,
+                clean=False,
+                case_number=1,
+                total_hint="1",
+            )
+
+        diagnostics = result["error_diagnostics"]
+        self.assertEqual(diagnostics["http_status"], 400)
+        self.assertEqual(diagnostics["provider_code"], "DataInspectionFailed")
+        self.assertEqual(diagnostics["request_id"], "header-request-id")
+        self.assertLessEqual(len(diagnostics["response_body"]), 500)
+        self.assertNotIn("secret123456", diagnostics["response_body"])
+        self.assertNotIn("token-value", diagnostics["response_body"])
+        self.assertNotIn(opaque_secret, diagnostics["response_body"])
+
     def test_qa_retry_stops_after_the_configured_timeout_attempts(self) -> None:
         request = httpx.Request("POST", "https://example.test/chat/completions")
         attempts = 0
@@ -764,6 +820,106 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             runner.QA_EVIDENCE_EVENT_TOKEN_LIMIT,
         )
         connection.close()
+
+    def test_windowed_reader_context_reconstructs_adjacent_turn_events_by_session(self) -> None:
+        record = _record("case-session-window")
+        record["question"] = "What type of rice is my favorite?"
+        case = runner.normalize_case(record)
+        session_id = "rice-session"
+        messages = [
+            {"role": "user", "content": "Unrelated opening."},
+            {"role": "assistant", "content": "Unrelated response."},
+            {"role": "user", "content": "More unrelated context."},
+            {"role": "assistant", "content": "Another unrelated response."},
+            {
+                "role": "user",
+                "content": "I cook Japanese dishes with my favorite Japanese short-grain rice.",
+            },
+            {"role": "assistant", "content": "That rice works well for Japanese dishes."},
+            {"role": "user", "content": "I plan to make onigiri for lunch."},
+            {"role": "assistant", "content": "Use sticky rice for shaping onigiri."},
+            {"role": "user", "content": "I will try shaping onigiri again."},
+            {"role": "assistant", "content": "Store each onigiri separately."},
+            {"role": "user", "content": "I will wrap them individually."},
+            {"role": "assistant", "content": "They keep for several days."},
+        ]
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE events ("
+            "id TEXT PRIMARY KEY,tenant_id TEXT,session_id TEXT,content_json TEXT,"
+            "occurred_at TEXT,recorded_at TEXT,event_type TEXT,actor_type TEXT,source_uri TEXT)"
+        )
+        event_ids: list[str] = []
+        for turn_index, message in enumerate(messages):
+            event_id = f"rice-turn-{turn_index}"
+            event_ids.append(event_id)
+            connection.execute(
+                "INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    event_id,
+                    case.namespace,
+                    session_id,
+                    json.dumps(
+                        {
+                            "text": message["content"],
+                            "messages": [message],
+                            "benchmark_locator": {"session_id": session_id, "turn_index": turn_index},
+                        }
+                    ),
+                    "2023-05-20T02:21:00+00:00",
+                    "2023-05-20T02:22:00+00:00",
+                    "message",
+                    message["role"],
+                    f"longmemeval:case-session-window:{session_id}:turn:{turn_index}",
+                ),
+            )
+        retrieved = [
+            {
+                "rank": 1,
+                "text": "The user plans to make onigiri for lunch.",
+                "value": "make onigiri for lunch",
+                "evidence_event_ids": [event_ids[6]],
+            },
+            {
+                "rank": 2,
+                "text": "The user will try shaping onigiri again.",
+                "value": "try shaping onigiri again",
+                "evidence_event_ids": [event_ids[8]],
+            },
+            {
+                "rank": 3,
+                "text": "Onigiri keeps for several days.",
+                "value": "keeps for several days",
+                "evidence_event_ids": [event_ids[11]],
+            },
+        ]
+
+        prompt = runner._build_reader_user_prompt(connection, case, retrieved, context_mode="windowed")
+        events_json = prompt.split("Original Evidence Events:\n", 1)[1].split("\n\nQuestion:", 1)[0]
+        events = json.loads(events_json)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["session_id"], session_id)
+        self.assertIn("favorite Japanese short-grain rice", events[0]["content"])
+        self.assertIn(4, events[0]["window"]["included_turns"])
+        self.assertEqual(events[0]["window"]["total_turns"], len(messages))
+        self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
+        connection.close()
+
+    def test_reader_turn_radius_uses_numeric_turn_index_gaps(self) -> None:
+        content, window = runner._reader_turn_window(
+            [
+                {"role": "user", "content": "My favorite rice is Japanese short-grain rice."},
+                {"role": "assistant", "content": "A later non-adjacent event."},
+            ],
+            "What type of rice is my favorite?",
+            [("Japanese short-grain rice", 1.0)],
+            turn_indices=[4, 6],
+        )
+
+        self.assertEqual(window["included_turns"], [4])
+        self.assertNotIn("later non-adjacent", content)
 
     def test_windowed_reader_context_falls_back_to_event_text_without_messages(self) -> None:
         case = runner.normalize_case(_record("case-fallback"))

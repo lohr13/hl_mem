@@ -133,6 +133,46 @@ def _conversation_context(turn: dict[str, Any]) -> str:
     return json.dumps(context_turn, ensure_ascii=False, sort_keys=True)
 
 
+def _serialized_turn(turn: dict[str, Any]) -> str:
+    return json.dumps(turn, ensure_ascii=False, sort_keys=True)
+
+
+def _split_oversized_conversation_turn(turn: dict[str, Any], target_chars: int) -> list[str]:
+    """Split one long textual turn into independently valid bounded JSON units."""
+    serialized = _serialized_turn(turn)
+    if len(serialized) <= target_chars:
+        return [serialized]
+    content_key = next((key for key in ("content", "text") if isinstance(turn.get(key), str)), None)
+    if content_key is None:
+        raise ValueError("oversized conversation turn has no splittable text field")
+    source = str(turn[content_key])
+    empty_turn = {**turn, content_key: ""}
+    if len(_serialized_turn(empty_turn)) >= target_chars:
+        raise ValueError("chunk target is too small for the conversation turn JSON envelope")
+
+    units: list[str] = []
+    offset = 0
+    while offset < len(source):
+        low = 1
+        high = len(source) - offset
+        best: str | None = None
+        best_length = 0
+        while low <= high:
+            length = (low + high) // 2
+            candidate = _serialized_turn({**turn, content_key: source[offset : offset + length]})
+            if len(candidate) <= target_chars:
+                best = candidate
+                best_length = length
+                low = length + 1
+            else:
+                high = length - 1
+        if best is None or best_length < 1:
+            raise ValueError("chunk target cannot fit any conversation turn content")
+        units.append(best)
+        offset += best_length
+    return units
+
+
 def split_extraction_content(
     content: dict[str, Any] | str,
     policy: ChunkingPolicy,
@@ -141,7 +181,13 @@ def split_extraction_content(
     structure = detect_content_structure(content)
     if structure is ContentStructure.CONVERSATION:
         turns = _conversation_turns(content) or []
-        units = [json.dumps(turn, ensure_ascii=False, sort_keys=True) for turn in turns]
+        turn_units = [
+            (turn_index, unit)
+            for turn_index, turn in enumerate(turns)
+            for unit in _split_oversized_conversation_turn(turn, policy.target_chars)
+        ]
+        units = [unit for _, unit in turn_units]
+        unit_turn_indexes = [turn_index for turn_index, _ in turn_units]
         separator = "\n"
     else:
         text = _content_text(content)
@@ -160,17 +206,22 @@ def split_extraction_content(
     chunks: list[ExtractionChunk] = []
     for chunk_index, (start, end) in enumerate(ranges):
         context_prefix = ""
-        if structure is ContentStructure.CONVERSATION and start > 0 and policy.overlap_turns:
-            context_start = max(0, start - policy.overlap_turns)
+        chunk_start_unit = start
+        chunk_end_unit = end
+        if structure is ContentStructure.CONVERSATION:
+            chunk_start_unit = unit_turn_indexes[start]
+            chunk_end_unit = unit_turn_indexes[end - 1] + 1
+        if structure is ContentStructure.CONVERSATION and chunk_start_unit > 0 and policy.overlap_turns:
+            context_start = max(0, chunk_start_unit - policy.overlap_turns)
             turns = _conversation_turns(content) or []
-            context_prefix = "\n".join(_conversation_context(turn) for turn in turns[context_start:start])
+            context_prefix = "\n".join(_conversation_context(turn) for turn in turns[context_start:chunk_start_unit])
         chunks.append(
             ExtractionChunk(
                 index=chunk_index,
                 text=separator.join(units[start:end]),
                 structure=structure,
-                start_unit=start,
-                end_unit=end,
+                start_unit=chunk_start_unit,
+                end_unit=chunk_end_unit,
                 context_prefix=context_prefix,
             )
         )

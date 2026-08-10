@@ -89,6 +89,25 @@ def test_large_conversation_contains_each_turn_once_as_extractable_content() -> 
     assert extracted_turns == turns
 
 
+def test_oversized_conversation_turn_is_split_into_bounded_json_units() -> None:
+    """单个超长 turn 也必须保持 JSON 可解析并服从字符上限。"""
+    target_chars = 500
+    original = ("COVID notes with mortality figures. " * 600).strip()
+
+    chunks = split_extraction_content(
+        {"messages": [{"role": "user", "content": original}]},
+        ChunkingPolicy(target_chars, 0, 3),
+    )
+
+    units = [line for chunk in chunks for line in chunk.text.splitlines() if line]
+    fragments = [json.loads(unit) for unit in units]
+    assert len(chunks) > 1
+    assert all(len(chunk.text) <= target_chars for chunk in chunks)
+    assert all(len(unit) <= target_chars for unit in units)
+    assert all(fragment["role"] == "user" for fragment in fragments)
+    assert "".join(str(fragment["content"]) for fragment in fragments) == original
+
+
 def test_text_prefers_paragraph_boundaries_and_can_be_bisected() -> None:
     """普通文本优先按段落切块，生成块仍可继续二分。"""
     content = "第一段。" * 8 + "\n\n" + "第二段。" * 8

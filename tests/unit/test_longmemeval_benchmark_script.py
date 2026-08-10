@@ -218,6 +218,31 @@ class LongMemEvalModelConfigurationTests(unittest.TestCase):
 
 
 class LongMemEvalMetricTests(unittest.TestCase):
+    def test_temporal_gate_marks_same_day_future_gold_sessions_ambiguous(self) -> None:
+        record = _official_record()
+        record["question_id"] = "gpt4_2f56ae70"
+        record["question_type"] = "temporal-reasoning"
+        record["question_date"] = "2023/05/26 (Fri) 00:18"
+        record["answer_session_ids"] = ["gold-a", "gold-b"]
+        record["haystack_session_ids"] = ["gold-a", "gold-b"]
+        record["haystack_dates"] = ["2023/05/26 (Fri) 01:08", "2023/05/26 (Fri) 08:25"]
+        record["haystack_sessions"] = [
+            [{"role": "user", "content": "Started a trial."}],
+            [{"role": "user", "content": "Discussed the trial."}],
+        ]
+        ambiguous = normalize_case(record)
+
+        eligibility = runner._evaluation_eligibility(ambiguous)
+
+        self.assertEqual(eligibility["status"], "invalid_ambiguous")
+        self.assertFalse(eligibility["temporal_gate_eligible"])
+        self.assertEqual(eligibility["reason_code"], "gold_sessions_after_question_same_day")
+
+        record["question_id"] = "valid-temporal"
+        record["haystack_dates"] = ["2023/05/25 (Thu) 01:08", "2023/05/26 (Fri) 00:10"]
+        valid = normalize_case(record)
+        self.assertTrue(runner._evaluation_eligibility(valid)["temporal_gate_eligible"])
+
     def test_claim_relevance_is_primary_and_session_relevance_is_auxiliary(self) -> None:
         results = [
             {"id": "same-session-noise", "evidence": [{"type": "event", "id": "gold"}]},
@@ -363,6 +388,102 @@ class LongMemEvalMetricTests(unittest.TestCase):
         self.assertEqual(summary["overall"]["session_recall_at_1"], 0.5)
         self.assertEqual(summary["overall"]["qa_accuracy"], 0.5)
         self.assertIn("abstention", summary["by_type"])
+
+    def test_aggregate_reports_gate_accuracy_without_ambiguous_temporal_case(self) -> None:
+        cases = [
+            {
+                "case_id": "eligible",
+                "question_type": "temporal-reasoning",
+                "retrieval": {
+                    "eligible": True,
+                    "session_eligible": True,
+                    "recall_at_1": 1.0,
+                    "session_recall_at_1": 1.0,
+                    "mrr": 1.0,
+                    "session_mrr": 1.0,
+                },
+                "qa": {"correct": True},
+                "error": None,
+                "evaluation_eligibility": {"status": "eligible", "temporal_gate_eligible": True},
+            },
+            {
+                "case_id": "ambiguous",
+                "question_type": "temporal-reasoning",
+                "retrieval": {
+                    "eligible": True,
+                    "session_eligible": True,
+                    "recall_at_1": 0.0,
+                    "session_recall_at_1": 0.0,
+                    "mrr": 0.0,
+                    "session_mrr": 0.0,
+                },
+                "qa": {"correct": False},
+                "error": None,
+                "evaluation_eligibility": {
+                    "status": "invalid_ambiguous",
+                    "temporal_gate_eligible": False,
+                    "reason_code": "gold_sessions_after_question_same_day",
+                },
+            },
+        ]
+
+        temporal = aggregate_results(cases)["by_type"]["temporal-reasoning"]
+
+        self.assertEqual(temporal["qa_accuracy"], 0.5)
+        self.assertEqual(temporal["gate_eligible_cases"], 1)
+        self.assertEqual(temporal["gate_excluded_cases"], 1)
+        self.assertEqual(temporal["gate_excluded_case_ids"], ["ambiguous"])
+        self.assertEqual(temporal["gate_qa_accuracy"], 1.0)
+        self.assertEqual(temporal["recall_at_1"], 0.5)
+        self.assertEqual(temporal["session_recall_at_1"], 0.5)
+        self.assertEqual(temporal["gate_recall_at_1"], 1.0)
+        self.assertEqual(temporal["gate_session_recall_at_1"], 1.0)
+        self.assertEqual(temporal["gate_mrr"], 1.0)
+        self.assertEqual(temporal["gate_session_mrr"], 1.0)
+
+    def test_claim_inflation_diagnostics_counts_only_adjacent_restatements(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.executescript(
+            "CREATE TABLE claims ("
+            "id TEXT PRIMARY KEY,subject_entity_id TEXT,canonical_attribute TEXT,index_text TEXT);"
+            "CREATE TABLE evidence_links ("
+            "derived_type TEXT,derived_id TEXT,evidence_type TEXT,evidence_id TEXT);"
+            "CREATE TABLE events (id TEXT PRIMARY KEY,session_id TEXT,content_json TEXT);"
+        )
+        connection.executemany(
+            "INSERT INTO events VALUES(?,?,?)",
+            [
+                ("e0", "s1", json.dumps({"benchmark_locator": {"session_id": "s1", "turn_index": 0}})),
+                ("e1", "s1", json.dumps({"benchmark_locator": {"session_id": "s1", "turn_index": 1}})),
+                ("e5", "s1", json.dumps({"benchmark_locator": {"session_id": "s1", "turn_index": 5}})),
+                ("other", "s2", json.dumps({"benchmark_locator": {"session_id": "s2", "turn_index": 1}})),
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO claims VALUES(?,?,?,?)",
+            [
+                ("c0", "user", "preference.food", "user prefers Japanese short-grain rice"),
+                ("c1", "user", "preference.food", "the user prefers Japanese short grain rice"),
+                ("c5", "user", "preference.food", "user prefers Japanese short-grain rice"),
+                ("c-other", "user", "preference.food", "user prefers Japanese short-grain rice"),
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO evidence_links VALUES('claim',?,'event',?)",
+            [("c0", "e0"), ("c1", "e1"), ("c5", "e5"), ("c-other", "other")],
+        )
+
+        diagnostics = runner._claim_inflation_diagnostics(
+            connection,
+            {"events": 4, "sessions": 2, "extracted_claims": 8, "stored_claims": 4},
+        )
+
+        self.assertEqual(diagnostics["extracted_claims_per_event"], 2.0)
+        self.assertEqual(diagnostics["stored_claims_per_event"], 1.0)
+        self.assertEqual(diagnostics["stored_claims_per_session"], 2.0)
+        self.assertEqual(diagnostics["adjacent_restatement_candidates"], 1)
+        connection.close()
 
 
 class LongMemEvalConfigCompareTests(unittest.TestCase):

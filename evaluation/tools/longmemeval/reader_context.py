@@ -334,7 +334,27 @@ def _window_bounds(center: int, message_count: int) -> tuple[int, int]:
     )
 
 
-def _top_non_overlapping_centers(scores: Sequence[float]) -> list[int]:
+def _window_positions(
+    center: int,
+    message_count: int,
+    turn_indices: Sequence[int] | None,
+) -> list[int]:
+    if turn_indices is None:
+        start, end = _window_bounds(center, message_count)
+        return list(range(start, end))
+    center_turn = turn_indices[center]
+    return [
+        index
+        for index, turn_index in enumerate(turn_indices)
+        if abs(turn_index - center_turn) <= QA_EVIDENCE_TURN_RADIUS
+    ]
+
+
+def _top_non_overlapping_centers(
+    scores: Sequence[float],
+    *,
+    turn_indices: Sequence[int] | None = None,
+) -> list[int]:
     ranked = sorted(range(len(scores)), key=lambda index: (-scores[index], index))
     if not ranked:
         return []
@@ -343,11 +363,8 @@ def _top_non_overlapping_centers(scores: Sequence[float]) -> list[int]:
     for index in ranked:
         if selected and scores[index] < meaningful_score:
             break
-        start, end = _window_bounds(index, len(scores))
-        if any(
-            start < selected_end and selected_start < end
-            for selected_start, selected_end in (_window_bounds(center, len(scores)) for center in selected)
-        ):
+        window = set(_window_positions(index, len(scores), turn_indices))
+        if any(window.intersection(_window_positions(center, len(scores), turn_indices)) for center in selected):
             continue
         selected.append(index)
         if len(selected) == QA_EVIDENCE_MAX_WINDOWS:
@@ -362,13 +379,44 @@ def _window_limits(window_count: int) -> tuple[int, int]:
     return matched, adjacent
 
 
+def _prefer_question_center(
+    messages: Sequence[Mapping[str, str]],
+    question: str,
+    centers: Sequence[int],
+    turn_indices: Sequence[int] | None,
+) -> list[int]:
+    """Promote a strong question match already covered only as an adjacent turn."""
+    if not question.strip() or not centers:
+        return list(centers)
+    question_scores = [reader_match_score(str(message.get("content") or ""), question) for message in messages]
+    question_center = max(range(len(question_scores)), key=lambda index: (question_scores[index], -index))
+    if question_scores[question_center] < 1.25 or question_center in centers:
+        return list(centers)
+    promoted = list(centers)
+    for position, center in enumerate(promoted):
+        if question_center in _window_positions(center, len(messages), turn_indices):
+            promoted[position] = question_center
+            return promoted
+    return promoted
+
+
 def reader_turn_window(
     messages: Sequence[Mapping[str, str]],
     question: str,
     needles: Sequence[tuple[str, float]],
+    *,
+    turn_indices: Sequence[int] | None = None,
 ) -> tuple[str, dict[str, Any]]:
+    if turn_indices is not None and len(turn_indices) != len(messages):
+        raise ValueError("turn_indices must align with messages")
+    displayed_turns = list(turn_indices) if turn_indices is not None else list(range(len(messages)))
     scores = [reader_turn_score(str(message.get("content") or ""), question, needles) for message in messages]
-    centers_by_score = _top_non_overlapping_centers(scores)
+    centers_by_score = _prefer_question_center(
+        messages,
+        question,
+        _top_non_overlapping_centers(scores, turn_indices=turn_indices),
+        turn_indices,
+    )
     primary = centers_by_score[0]
     centers = sorted(centers_by_score)
     matched_limit, adjacent_limit = _window_limits(len(centers))
@@ -378,11 +426,11 @@ def reader_turn_window(
     parts: list[str] = []
     included_turns: list[int] = []
     for center in centers:
-        start, end = _window_bounds(center, len(messages))
-        window_turns = list(range(start, end))
+        window_turns = _window_positions(center, len(messages), turn_indices)
         included_turns.extend(window_turns)
         for index in [center, *(item for item in window_turns if item != center)]:
             message = messages[index]
+            displayed_turn = displayed_turns[index]
             if index == center:
                 label = "matched"
                 token_limit = matched_limit
@@ -392,7 +440,7 @@ def reader_turn_window(
                 token_limit = adjacent_limit
                 excerpt_needles = ()
             parts.append(
-                f"[{label} turn {index} {message.get('role') or 'user'}]\n"
+                f"[{label} turn {displayed_turn} {message.get('role') or 'user'}]\n"
                 + reader_turn_excerpt(
                     str(message.get("content") or ""),
                     token_limit,
@@ -402,13 +450,102 @@ def reader_turn_window(
     content = "\n\n".join(parts)
     return content, {
         "mode": "windowed",
-        "matched_turn": primary,
-        "matched_turns": centers,
-        "included_turns": sorted(set(included_turns)),
+        "matched_turn": displayed_turns[primary],
+        "matched_turns": [displayed_turns[index] for index in centers],
+        "included_turns": sorted({displayed_turns[index] for index in included_turns}),
         "total_turns": len(messages),
         "match_score": round(scores[primary], 6),
-        "match_scores": [{"turn": center, "score": round(scores[center], 6)} for center in centers],
+        "match_scores": [{"turn": displayed_turns[center], "score": round(scores[center], 6)} for center in centers],
     }
+
+
+def _load_ranked_event_rows(connection: Any, event_ids: Sequence[str]) -> dict[str, Any]:
+    placeholders = ",".join("?" for _ in event_ids)
+    try:
+        rows = connection.execute(
+            "SELECT id,tenant_id,session_id AS stored_session_id,content_json,occurred_at,recorded_at,"
+            "event_type,actor_type,source_uri "
+            f"FROM events WHERE id IN ({placeholders})",
+            tuple(event_ids),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = connection.execute(
+            "SELECT id,NULL AS tenant_id,NULL AS stored_session_id,content_json,occurred_at,recorded_at,"
+            "event_type,actor_type,source_uri "
+            f"FROM events WHERE id IN ({placeholders})",
+            tuple(event_ids),
+        ).fetchall()
+    return {str(row["id"]): row for row in rows}
+
+
+def _decoded_event_content(row: Any) -> object:
+    try:
+        return json.loads(row["content_json"])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return str(row["content_json"] or "")
+
+
+def _benchmark_locator(content: object) -> Mapping[str, Any] | None:
+    locator = content.get("benchmark_locator") if isinstance(content, Mapping) else None
+    return locator if isinstance(locator, Mapping) else None
+
+
+def _event_session_key(row: Any, content: object) -> tuple[str, str] | None:
+    locator = _benchmark_locator(content)
+    locator_session = locator.get("session_id") if locator is not None else None
+    session_id = str(locator_session or row["stored_session_id"] or "").strip()
+    tenant_id = str(row["tenant_id"] or "").strip()
+    turn_index = locator.get("turn_index") if locator is not None else None
+    if not tenant_id or not session_id or not isinstance(turn_index, int) or isinstance(turn_index, bool):
+        return None
+    return tenant_id, session_id
+
+
+def _event_record(row: Any, content: object, *, event_id: str | None = None) -> dict[str, Any]:
+    locator = _benchmark_locator(content)
+    located_session = locator.get("session_id") if locator is not None else None
+    return {
+        "event_id": event_id or str(row["id"]),
+        "occurred_at": row["occurred_at"],
+        "recorded_at": row["recorded_at"],
+        "event_type": row["event_type"],
+        "actor_type": row["actor_type"],
+        "session_id": located_session or row["stored_session_id"],
+        "source_uri": row["source_uri"],
+        "content": event_content_text(content),
+    }
+
+
+def _load_session_turns(
+    connection: Any,
+    key: tuple[str, str],
+) -> tuple[list[dict[str, str]], list[int], dict[int, str]] | None:
+    tenant_id, session_id = key
+    rows = connection.execute(
+        "SELECT id,content_json,actor_type FROM events WHERE tenant_id=? AND session_id=?",
+        (tenant_id, session_id),
+    ).fetchall()
+    turns: list[tuple[int, str, dict[str, str]]] = []
+    for row in rows:
+        content = _decoded_event_content(row)
+        locator = _benchmark_locator(content)
+        turn_index = locator.get("turn_index") if locator is not None else None
+        if not isinstance(turn_index, int) or isinstance(turn_index, bool):
+            return None
+        messages = reader_messages(content)
+        if len(messages) != 1:
+            return None
+        turns.append((turn_index, str(row["id"]), messages[0]))
+    if not turns:
+        return None
+    turns.sort(key=lambda item: (item[0], item[1]))
+    if len({turn_index for turn_index, _, _ in turns}) != len(turns):
+        return None
+    return (
+        [message for _, _, message in turns],
+        [turn_index for turn_index, _, _ in turns],
+        {turn_index: event_id for turn_index, event_id, _ in turns},
+    )
 
 
 def load_reader_events(
@@ -419,39 +556,61 @@ def load_reader_events(
     event_needles: Mapping[str, Sequence[tuple[str, float]]] | None = None,
     context_mode: str = DEFAULT_READER_CONTEXT_MODE,
 ) -> list[dict[str, Any]]:
-    """Batch-load ranked evidence events without expanding beyond each linked event."""
+    """Batch-load ranked evidence, rebuilding turn-event sessions for windowing."""
     if context_mode not in READER_CONTEXT_MODES:
         raise ValueError(f"unsupported reader context mode: {context_mode!r}")
     if connection is None or not event_ids:
         return []
-    placeholders = ",".join("?" for _ in event_ids)
-    rows = connection.execute(
-        "SELECT id,content_json,occurred_at,recorded_at,event_type,actor_type,source_uri "
-        f"FROM events WHERE id IN ({placeholders})",
-        tuple(event_ids),
-    ).fetchall()
-    by_id = {str(row["id"]): row for row in rows}
+    by_id = _load_ranked_event_rows(connection, event_ids)
+    decoded = {event_id: _decoded_event_content(row) for event_id, row in by_id.items()}
+    grouped_event_ids: dict[tuple[str, str], list[str]] = defaultdict(list)
+    if context_mode == "windowed":
+        for event_id in event_ids:
+            row = by_id.get(event_id)
+            if row is None:
+                continue
+            key = _event_session_key(row, decoded[event_id])
+            if key is not None:
+                grouped_event_ids[key].append(event_id)
     events: list[dict[str, Any]] = []
+    emitted_sessions: set[tuple[str, str]] = set()
     for event_id in event_ids:
         row = by_id.get(event_id)
         if row is None:
             continue
-        try:
-            content = json.loads(row["content_json"])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            content = str(row["content_json"] or "")
-        locator = content.get("benchmark_locator") if isinstance(content, Mapping) else None
-        session_id = locator.get("session_id") if isinstance(locator, Mapping) else None
-        event = {
-            "event_id": event_id,
-            "occurred_at": row["occurred_at"],
-            "recorded_at": row["recorded_at"],
-            "event_type": row["event_type"],
-            "actor_type": row["actor_type"],
-            "session_id": session_id,
-            "source_uri": row["source_uri"],
-            "content": event_content_text(content),
-        }
+        content = decoded[event_id]
+        key = _event_session_key(row, content) if context_mode == "windowed" else None
+        if key is not None and key not in emitted_sessions:
+            session_turns = _load_session_turns(connection, key)
+            if session_turns is not None:
+                messages, turn_indices, event_id_by_turn = session_turns
+                linked_ids = grouped_event_ids[key]
+                needles = list(
+                    dict.fromkeys(
+                        needle for linked_id in linked_ids for needle in tuple((event_needles or {}).get(linked_id, ()))
+                    )
+                )
+                window_content, window = reader_turn_window(
+                    messages,
+                    question,
+                    needles,
+                    turn_indices=turn_indices,
+                )
+                window["included_event_ids"] = [
+                    event_id_by_turn[turn_index]
+                    for turn_index in window["included_turns"]
+                    if turn_index in event_id_by_turn
+                ]
+                event = _event_record(row, content, event_id=linked_ids[0])
+                event["evidence_event_ids"] = linked_ids
+                event["content"] = window_content
+                event["window"] = window
+                events.append(event)
+                emitted_sessions.add(key)
+                continue
+        if key is not None and key in emitted_sessions:
+            continue
+        event = _event_record(row, content)
         messages = reader_messages(content)
         if context_mode == "windowed" and messages:
             window_content, window = reader_turn_window(
