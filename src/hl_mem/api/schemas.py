@@ -52,9 +52,16 @@ class EventInput(NamespaceInput):
     actor_type: str = Field(default="user", max_length=50)
     actor_id: str | None = Field(default=None, max_length=100)
     content: dict[str, Any] | str = Field(default_factory=dict)
+    metadata: dict[str, Any] | None = None
     occurred_at: str | None = None
     source_uri: str | None = Field(default=None, max_length=2000)
     sensitivity: str = Field(default="normal", max_length=20)
+
+
+class EventBatchInput(BaseModel):
+    """单次原子写入的有界 Event 集合。"""
+
+    events: list[EventInput] = Field(min_length=1, max_length=4)
 
 
 class DryRunExtractionInput(BaseModel):

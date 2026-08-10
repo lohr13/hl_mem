@@ -9,7 +9,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Sequence
 
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import (
@@ -159,6 +159,7 @@ def _canonical_event_payload(
         "actor_type": event.get("actor_type", "user"),
         "actor_id": event.get("actor_id"),
         "content": content,
+        "metadata": event.get("metadata") or {},
         "source_uri": event.get("source_uri"),
         "sensitivity": event.get("sensitivity", "normal"),
     }
@@ -208,52 +209,74 @@ class IngestService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """写入事件并创建提取任务，返回事件标识及是否新建。"""
-        key = idempotency_key or event.get("idempotency_key")
-        event_id = event.get("id") or new_id()
+        queued_event = dict(event)
+        if idempotency_key is not None:
+            queued_event["idempotency_key"] = idempotency_key
+        return self.ingest_events([queued_event])[0]
+
+    def ingest_events(self, events_to_ingest: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """在一个事务中写入一组 Event，并继续为每个 Event 保留独立提取 job。"""
+        if not events_to_ingest:
+            raise ValidationError("events must not be empty")
         timestamp = _now()
-        content = event.get("content", {})
-        content = content if isinstance(content, dict) else {"text": content}
-        namespace = _event_namespace(event)
-        stored_event = {field: value for field, value in event.items() if field not in {"content", "id", "namespace"}}
-        stored_event.update(
-            id=event_id,
-            idempotency_key=key,
-            tenant_id=namespace,
-            content=content,
-            occurred_at=event.get("occurred_at") or timestamp,
-            recorded_at=timestamp,
-        )
+        prepared: list[tuple[dict[str, Any], dict[str, Any], str | None]] = []
+        for event in events_to_ingest:
+            key = event.get("idempotency_key")
+            event_id = event.get("id") or new_id()
+            content = event.get("content", {})
+            content = content if isinstance(content, dict) else {"text": content}
+            namespace = _event_namespace(event)
+            stored_event = {
+                field: value
+                for field, value in event.items()
+                if field not in {"content", "id", "namespace"} and not (field == "metadata" and value is None)
+            }
+            stored_event.update(
+                id=event_id,
+                idempotency_key=key,
+                tenant_id=namespace,
+                content=content,
+                occurred_at=event.get("occurred_at") or timestamp,
+                recorded_at=timestamp,
+            )
+            prepared.append((event, stored_event, key))
+        results: list[dict[str, Any]] = []
         self.connection.execute("BEGIN IMMEDIATE")
         try:
-            events = EventRepository(self.connection)
-            if key:
-                existing_id = events.find_id_by_idempotency_key(key)
-                if existing_id:
-                    existing = events.get_event(existing_id)
-                    if existing is None:
-                        raise RuntimeError(f"idempotent event disappeared: {existing_id}")
-                    include_id = event.get("id") is not None
-                    include_occurred_at = event.get("occurred_at") is not None
-                    if _canonical_event_payload(
-                        existing,
-                        include_id=include_id,
-                        include_occurred_at=include_occurred_at,
-                    ) != _canonical_event_payload(
-                        stored_event,
-                        include_id=include_id,
-                        include_occurred_at=include_occurred_at,
-                    ):
-                        raise ConflictError(f"idempotency key {key!r} was already used with a different event payload")
-                    self.connection.commit()
-                    return {"id": existing_id, "created": False}
-            created = events.insert_event(stored_event, commit=False)
-            if created:
-                self._queue_event(event_id, timestamp, commit=False)
+            repository = EventRepository(self.connection)
+            for original, stored_event, key in prepared:
+                event_id = str(stored_event["id"])
+                if key:
+                    existing_id = repository.find_id_by_idempotency_key(str(key))
+                    if existing_id:
+                        existing = repository.get_event(existing_id)
+                        if existing is None:
+                            raise RuntimeError(f"idempotent event disappeared: {existing_id}")
+                        include_id = original.get("id") is not None
+                        include_occurred_at = original.get("occurred_at") is not None
+                        if _canonical_event_payload(
+                            existing,
+                            include_id=include_id,
+                            include_occurred_at=include_occurred_at,
+                        ) != _canonical_event_payload(
+                            stored_event,
+                            include_id=include_id,
+                            include_occurred_at=include_occurred_at,
+                        ):
+                            raise ConflictError(
+                                f"idempotency key {key!r} was already used with a different event payload"
+                            )
+                        results.append({"id": existing_id, "created": False})
+                        continue
+                created = repository.insert_event(stored_event, commit=False)
+                if created:
+                    self._queue_event(event_id, timestamp, commit=False)
+                results.append({"id": event_id, "created": created})
             self.connection.commit()
         except Exception:
             self.connection.rollback()
             raise
-        return {"id": event_id, "created": created}
+        return results
 
     def save_explicit_memory(
         self,
@@ -307,10 +330,17 @@ class IngestService:
         policy: TTLPolicy | None = None,
         relation_discovery_mode: str = "off",
         index_text_mode: IndexTextMode = "natural",
+        source_events: Sequence[dict[str, Any]] | None = None,
     ) -> StoreClaimResult:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
         claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
+        evidence_events = list(source_events or [event])
+        if not evidence_events:
+            raise ValidationError("source_events must not be empty")
+        primary_namespace = _event_namespace(event)
+        if any(_event_namespace(source) != primary_namespace for source in evidence_events):
+            raise ValidationError("all source events for a claim must share one namespace")
         effective_policy = policy or Settings().retention_policy()
         if ttl_days is not None:
             effective_policy = TTLPolicy(
@@ -378,8 +408,7 @@ class IngestService:
                 )
             )
             if exact:
-                _link_event(evidence, exact["id"], event["id"], commit=False)
-                _link_image_descriptions(evidence, exact["id"], event, commit=False)
+                _link_source_events(evidence, exact["id"], evidence_events, commit=False)
                 result_id = exact["id"]
                 connection.commit()
                 emit_audit_events()
@@ -407,8 +436,7 @@ class IngestService:
                     )
                 )
                 if resolution == "entails":
-                    _link_event(evidence, current["id"], event["id"], commit=False)
-                    _link_image_descriptions(evidence, current["id"], event, commit=False)
+                    _link_source_events(evidence, current["id"], evidence_events, commit=False)
                     result_id = current["id"]
                     connection.commit()
                     emit_audit_events()
@@ -455,8 +483,7 @@ class IngestService:
                     )
                 )
                 if duplicate_id and not is_semantic_candidate:
-                    _link_event(evidence, duplicate_id, event["id"], commit=False)
-                    _link_image_descriptions(evidence, duplicate_id, event, commit=False)
+                    _link_source_events(evidence, duplicate_id, evidence_events, commit=False)
                     result_id = duplicate_id
                     connection.commit()
                     emit_audit_events()
@@ -473,8 +500,7 @@ class IngestService:
             if not inserted:
                 winner = claims.find_by_fact_hash(namespace, claim["fact_hash"])
                 if winner:
-                    _link_event(evidence, winner["id"], event["id"], commit=False)
-                    _link_image_descriptions(evidence, winner["id"], event, commit=False)
+                    _link_source_events(evidence, winner["id"], evidence_events, commit=False)
                     result_id = winner["id"]
                 connection.commit()
                 emit_audit_events()
@@ -515,8 +541,7 @@ class IngestService:
                     now,
                     commit=False,
                 )
-            _link_event(evidence, claim["id"], event["id"], commit=False)
-            _link_image_descriptions(evidence, claim["id"], event, commit=False)
+            _link_source_events(evidence, claim["id"], evidence_events, commit=False)
             connection.commit()
         except Exception:
             connection.rollback()
@@ -753,6 +778,26 @@ def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: 
         },
         commit=commit,
     )
+
+
+def _link_source_events(
+    repo: EvidenceRepository,
+    claim_id: str,
+    events: Sequence[dict[str, Any]],
+    *,
+    commit: bool = False,
+) -> None:
+    """稳定去重并链接 claim 的全部原始 Event 与图片派生证据。"""
+    seen: set[str] = set()
+    for event in events:
+        event_id = str(event["id"])
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        _link_event(repo, claim_id, event_id, commit=False)
+        _link_image_descriptions(repo, claim_id, event, commit=False)
+    if commit:
+        repo.connection.commit()
 
 
 def _link_image_descriptions(

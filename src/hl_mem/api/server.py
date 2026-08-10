@@ -26,6 +26,7 @@ from hl_mem.api.schemas import (
     DryRunExtractionInput,
     EpisodeInput,
     EpisodeUpdate,
+    EventBatchInput,
     EventInput,
     FeedbackInput,
     MemoryCorrectionInput,
@@ -275,6 +276,39 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             },
         )
         return result
+
+    @app.post("/v1/events/batch")
+    def post_event_batch(
+        payload: EventBatchInput,
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
+        """原子写入一个有界 Event 集合；现有单 Event API 保持不变。"""
+        events: list[dict[str, Any]] = []
+        for item in payload.events:
+            event = item.model_dump(exclude={"namespace", "tenant_id"})
+            event["tenant_id"] = item.effective_namespace
+            events.append(event)
+        results = IngestService(connection).ingest_events(events)
+        for item, result in zip(payload.events, results, strict=True):
+            content = item.content if isinstance(item.content, dict) else {"text": item.content}
+            content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
+            audit.emit(
+                "ingest",
+                "accepted",
+                "queued" if result["created"] else "duplicate",
+                trace_id=result["id"],
+                event_id=result["id"],
+                tenant_id=item.effective_namespace,
+                detail={
+                    "event_type": item.event_type,
+                    "actor_type": item.actor_type,
+                    "content_chars": len(content_json),
+                    "content_hash": hashlib.sha256(content_json.encode()).hexdigest(),
+                    "sensitivity": item.sensitivity,
+                    "batch_size": len(payload.events),
+                },
+            )
+        return {"events": results}
 
     @app.post("/v1/extract/dry-run")
     def dry_run_extract(

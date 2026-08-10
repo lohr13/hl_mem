@@ -137,12 +137,18 @@ hl-mem import var/events.jsonl --db var/restored.db
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
+| `extraction.batch_max_events` | 整数 | `4` | 1 - 4 | `extraction_batch_max_events` |
+| `extraction.batch_max_wait_seconds` | 数值 | `2.0` | >= 0 | `extraction_batch_max_wait_seconds` |
 | `extraction.chunk_overlap_turns` | 整数 | `2` | >= 0 | `extraction_chunk_overlap_turns` |
 | `extraction.chunk_target_chars` | 整数 | `12000` | >= 1 | `extraction_chunk_target_chars` |
 | `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
 | `extraction.mode` | 字符串 | `"fake"` | `fake`、`real`、`llm` | `extractor_mode` |
 | `extraction.pre_filter` | 布尔值 | `false` | `true`、`false` | `extract_pre_filter` |
 | `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
+
+Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_max_events` 时立即提取，否则最多等待
+`batch_max_wait_seconds`。显式记忆、无 session 事件和非 message 事件不等待。Hermes 的 `sync_turn` 会原子写入
+user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并；Claim 仍分别链接实际来源 Event。
 
 ### `[hermes]`
 

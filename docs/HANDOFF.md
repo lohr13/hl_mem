@@ -1,12 +1,12 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-10 · v0.24.2
+> 最后更新：2026-08-10 · v0.25.0
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.24.2
-- **阶段**：v0.24.2 发版收口
+- **版本**：v0.25.0
+- **阶段**：v0.25.0 提取架构收口
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；38 migrations（SQL 001-038）+ Python data migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口

@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.24.2](https://img.shields.io/badge/version-0.24.2-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.25.0](https://img.shields.io/badge/version-0.25.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -94,6 +94,8 @@ variables. Common keys are listed below.
 |---|---:|---|
 | `database.path` | `var/hl_mem.db` | SQLite database path |
 | `extraction.mode` | `fake` | `fake`, `real`, or `llm` |
+| `extraction.batch_max_events` | `4` | Maximum same-session Events per extraction call |
+| `extraction.batch_max_wait_seconds` | `2.0` | Maximum wait for a non-full extraction window |
 | `embedding.mode` | `fake` | `fake` or `real` |
 | `embedding.text_type` | unset | Optional `document` or `query` in native mode; omitted by default |
 | `reranker.mode` | `off` | `off`, `fake`, `on`, or `real` |
@@ -112,7 +114,7 @@ timeouts.
 ## Capabilities
 
 - **Memory correctness:** idempotent event ingestion, atomic writes, exact/semantic deduplication, deterministic conflict rules, LLM-assisted gray-zone consolidation, and guarded terminal conflict convergence.
-- **Extraction governance:** six-field compact extraction, a shared AdmissionPolicy, full Claim-schema post-processing, deterministic scope/predicate projection, subject guards, and bounded structured-output repair.
+- **Extraction governance:** bounded same-session microbatches, seven-field compact extraction with source-event mapping, a shared AdmissionPolicy, full Claim-schema post-processing, deterministic scope/predicate projection, subject guards, and bounded structured-output repair.
 - **Time and evidence:** valid and recorded time, evidence lineage, entity normalization, explicit forgetting, and stale propagation.
 - **Hybrid recall:** Chinese-aware FTS5, two-stage exact vector scanning or optional sqlite-vec, RRF fusion, multi-factor ranking, optional reranking, relation/query expansion, and token-budgeted context packing.
 - **Lifecycle:** importance-aware TTL, confidence decay, archival, reclassification, feedback usefulness, audit logs, and online backups.
@@ -128,7 +130,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.24.2 with 38 immutable, forward-only migrations.
+The current baseline is v0.25.0 with 38 immutable, forward-only migrations.
 
 ## Documentation
 

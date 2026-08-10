@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import threading
+import uuid
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
@@ -263,19 +264,24 @@ class HLMemProvider:
         previous_session = self._session_id
         self._session_id = active_session
         try:
-            user_written = self._sync_post(
-                "/v1/events",
-                self._hermes_event_payload("user", content, namespace=namespace),
-            )
-            assistant_written = self._sync_post(
-                "/v1/events",
+            turn_id = str(kwargs.get("turn_id") or uuid.uuid4().hex)
+            events = [
+                self._hermes_event_payload(
+                    "user",
+                    content,
+                    namespace=namespace,
+                    metadata={"turn_id": turn_id},
+                    idempotency_key=f"hermes-turn:{active_session}:{turn_id}:user",
+                ),
                 self._hermes_event_payload(
                     "assistant",
                     assistant_content or "",
                     namespace=namespace,
+                    metadata={"turn_id": turn_id},
+                    idempotency_key=f"hermes-turn:{active_session}:{turn_id}:assistant",
                 ),
-            )
-            if user_written or assistant_written:
+            ]
+            if self._sync_post("/v1/events/batch", {"events": events}):
                 self._prefetch_cache.invalidate_session(active_session)
         finally:
             self._session_id = previous_session or active_session
@@ -842,6 +848,8 @@ class HLMemProvider:
         qualifiers: dict[str, Any] | None = None,
         *,
         namespace: str = "default",
+        metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "event_type": "message",
@@ -852,4 +860,8 @@ class HLMemProvider:
         }
         if qualifiers:
             payload["content"]["qualifiers"] = qualifiers
+        if metadata:
+            payload["metadata"] = metadata
+        if idempotency_key:
+            payload["idempotency_key"] = idempotency_key
         return payload

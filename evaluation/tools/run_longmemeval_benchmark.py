@@ -37,7 +37,7 @@ from evaluation.tools.longmemeval.judge import (  # noqa: E402, F401
     judge_longmemeval_answer as _judge_longmemeval_answer_impl,
     longmemeval_judge_prompts as _longmemeval_judge_prompts,
 )
-from evaluation.tools.longmemeval.extraction_fragments import fragment_turn_content  # noqa: E402
+from evaluation.tools.longmemeval.extraction_fragments import fragment_turn_content  # noqa: E402, F401
 from evaluation.tools.longmemeval.qa_client import (  # noqa: E402, F401
     qa_call_with_retry,
     qa_dashscope_chat as _qa_dashscope_chat,
@@ -108,9 +108,11 @@ from hl_mem.http_utils import (  # noqa: E402, F401
     retry_after_seconds as _retry_after_seconds,
 )
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402, F401
+from hl_mem.observability.audit import NullAuditLogger  # noqa: E402
 from hl_mem.recall.relation_expansion import RelationExpansionConfig  # noqa: E402, F401
 from hl_mem.settings import Settings  # noqa: E402, F401
 from hl_mem.storage.database import Database  # noqa: E402, F401
+from hl_mem.workers.worker import Worker  # noqa: E402
 
 # isort: on
 
@@ -126,7 +128,7 @@ DEFAULT_ENV_FILE = ROOT / ".env"
 QA_MAX_ATTEMPTS = 3
 DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
-EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "semantic-turn-fragments-v1"
+EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
 READER_CONTEXT_PROTOCOL_VERSION = "session-turn-window-v2"
 CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
@@ -1422,6 +1424,19 @@ def _cached_ingest_diagnostics(
     }
 
 
+class _UnlimitedBenchmarkBudget:
+    """Benchmark 统计真实 usage，但不把多个 case 绑定到在线日预算。"""
+
+    def can_spend(self, _tokens: int) -> bool:
+        return True
+
+    def record_usage(self, _tokens: int) -> None:
+        return None
+
+    def get_stats(self) -> dict[str, int]:
+        return {"used": 0, "limit": 0, "remaining": 0}
+
+
 def _ingest_case(
     connection: Any,
     case: LongMemEvalCase,
@@ -1460,56 +1475,45 @@ def _ingest_case(
                 "event_type": "message",
                 "actor_type": role,
                 "content": content,
+                "metadata": {"turn_index": turn_index},
                 "occurred_at": session.occurred_at,
                 "source_uri": f"longmemeval:{case.case_id}:{session.session_id}:turn:{turn_index}",
             }
             service.ingest_event(event)
-            extraction_context = {
-                "actor_type": role,
-                "source_role": role,
-                "event_type": "message",
-                "session_id": session.session_id,
-                "turn_index": turn_index,
-                "occurred_at": session.occurred_at,
-            }
-            fragments = fragment_turn_content(
-                content,
-                target_chars=settings.extraction_chunk_target_chars,
-                previous_turns=session.messages[:turn_index],
-                overlap_turns=settings.extraction_chunk_overlap_turns,
-            )
-            claims = []
-            for fragment in fragments:
-                fragment_context = dict(extraction_context)
-                if len(fragments) > 1:
-                    fragment_context["extraction_continuity"] = fragment.continuity
-                claims.extend(extractor.extract(fragment.content, fragment_context))
-                stats["input_tokens"] += int(getattr(extractor, "last_input_tokens", 0))
-                stats["output_tokens"] += int(getattr(extractor, "last_output_tokens", 0))
-                stats["total_tokens"] += int(getattr(extractor, "last_usage_tokens", 0))
-            stats["extracted_claims"] += len(claims)
-            now = datetime.now(timezone.utc).isoformat()
-            for claim in claims:
-                stored = IngestService.store_extracted(
-                    connection,
-                    claim,
-                    event,
-                    now,
-                    embedder,
-                    policy=settings.retention_policy(),
-                    relation_discovery_mode=settings.relation_discovery_mode,
-                    index_text_mode=settings.index_text_mode,
-                )
-                if stored.status == "skipped":
-                    stats["skipped_claims"] += 1
-                else:
-                    stats["accepted_claim_writes"] += 1
         if index == 1 or index % 10 == 0 or index == len(case.sessions):
             print(
-                f"[{case_number}/{total_hint}] {case.case_id}: ingest {index}/{len(case.sessions)} "
-                f"claims={stats['extracted_claims']}",
+                f"[{case_number}/{total_hint}] {case.case_id}: queued {index}/{len(case.sessions)} sessions",
                 flush=True,
             )
+    worker = Worker(
+        settings,
+        connection=connection,
+        extractor=extractor,
+        embedder=embedder,
+        image_describer=None,
+        budget=_UnlimitedBenchmarkBudget(),
+        audit_logger=NullAuditLogger(),
+    )
+    try:
+        while True:
+            result = worker.run_once(force_extraction=True)
+            if result["status"] == "idle":
+                break
+            if result["status"] != "succeeded":
+                raise RuntimeError(
+                    f"production extraction worker failed for {case.case_id}: "
+                    f"{result.get('error') or result['status']}"
+                )
+            if "events" not in result:
+                continue
+            stats["extracted_claims"] += int(result.get("claims", 0))
+            stats["accepted_claim_writes"] += int(result.get("stored", 0))
+            stats["skipped_claims"] += int(result.get("skipped", 0))
+            stats["input_tokens"] += int(result.get("input_tokens", 0))
+            stats["output_tokens"] += int(result.get("output_tokens", 0))
+            stats["total_tokens"] += int(result.get("total_tokens", 0))
+    finally:
+        worker.close()
     stats.update(_claim_inflation_diagnostics(connection, stats))
     stats["elapsed_seconds"] = round(time.perf_counter() - started, 3)
     return stats

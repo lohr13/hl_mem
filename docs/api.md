@@ -1,6 +1,6 @@
 # HL-Mem REST API
 
-HL-Mem exposes a FastAPI application with 16 routes. From a working directory containing the required `hl_mem.toml`,
+HL-Mem exposes a FastAPI application with 17 routes. From a working directory containing the required `hl_mem.toml`,
 start the service with `uv run python start_server.py`; the default address is `http://127.0.0.1:8200`. Interactive
 OpenAPI documentation is available at `/docs` while the service is running.
 
@@ -30,6 +30,7 @@ OpenAPI documentation is available at `/docs` while the service is running.
 |---|---|---|
 | `GET` | `/healthz` | Check liveness, version, settings, in-memory metrics, and unresolved conflict count |
 | `POST` | `/v1/events` | Idempotently ingest an event and enqueue its extraction job |
+| `POST` | `/v1/events/batch` | Atomically ingest 1-4 events and enqueue their extraction jobs |
 | `POST` | `/v1/extract/dry-run` | Extract candidate claims and token usage without persisting memory data |
 | `POST` | `/v1/consolidate` | Enqueue conflict consolidation for an explicit namespace/slot/tag scope |
 | `POST` | `/v1/recall` | Retrieve evidence-aware memory through hybrid search and optional reranking |
@@ -63,7 +64,13 @@ curl -X POST http://127.0.0.1:8200/v1/events \
 ```
 
 Important fields include namespace/user/project/agent/session identifiers, `event_type`, `actor_type`, `content`,
-`occurred_at`, `source_uri`, and `sensitivity`. Ingestion returns the event identifier and whether it was newly created.
+`occurred_at`, `source_uri`, `sensitivity`, and optional `metadata`. Ingestion returns the event identifier and whether it
+was newly created.
+
+`POST /v1/events/batch` accepts `{"events": [...]}` with one to four normal Event payloads and returns
+`{"events": [{"id": ..., "created": ...}, ...]}`. The whole request is atomic. It is intended for a user/assistant
+turn pair; each item carries its own idempotency key and may share a `metadata.turn_id`. Existing single-Event clients
+remain compatible.
 
 ### Save an explicit memory
 

@@ -1,5 +1,16 @@
 # HL-Mem 变更记录
 
+## v0.25.0（2026-08-10）
+
+### 提取架构最终版
+
+- Hermes `sync_turn` 通过新增的原子批量端点一次写入 user/assistant Event；原有单 Event API 保持兼容。
+- Worker 对同 namespace/session 的消息执行最多 4 Event、最多等待 2 秒的有界微批；显式记忆、非消息及无 session Event 仍实时直达。
+- compact extraction 增加 `source_event_indices`，Claim 可链接窗口内一个或多个真实来源 Event；speaker、turn、发生时间与证据映射不再因合并提取丢失。
+- LongMemEval 改为排队 Event 后驱动生产 Worker，生产与 benchmark 不再维护两条提取路径。
+- 新增批量原子性、窗口边界、会话隔离、speaker/turn prompt、来源校验、多 Event evidence 与 benchmark 对齐回归测试。
+- 无数据库 schema 变更，SQL migration 仍为 38 个；新增配置仅为 `extraction.batch_max_events` 与 `extraction.batch_max_wait_seconds`。
+
 ## v0.24.2（2026-08-09）
 
 ### LongMemEval 全量评测前修复

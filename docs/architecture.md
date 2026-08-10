@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.24.2
-- Updated: 2026-08-09
+- Document baseline: v0.25.0
+- Updated: 2026-08-10
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -57,7 +57,7 @@ services own use cases and transaction boundaries; repositories own persistence.
 src/hl_mem/
 ├── adapters/hermes/          # Hermes provider, client, episode mapping, thin plugin delegate
 ├── api/
-│   ├── server.py             # FastAPI assembly, middleware, exception mapping, 16 REST routes
+│   ├── server.py             # FastAPI assembly, middleware, exception mapping, 17 REST routes
 │   └── schemas.py            # Pydantic request and response contracts
 ├── application/
 │   ├── context_packet.py     # Context Packet v1 assembly and exposure materialization
@@ -162,10 +162,11 @@ delivered item so later feedback can be attributed to that exposure.
 
 ```text
 Client
-  → POST /v1/events
-  → idempotent Event insert + durable extract_event Job
-  → Worker lease and EventFilter / optional deterministic pre-filter
-  → compact six-field LLM extraction with preceding context and temporal anchoring
+  → POST /v1/events or atomic POST /v1/events/batch
+  → idempotent Event insert + one durable extract_event Job per Event
+  → Worker atomically leases a bounded same-session window (max 4 Events / max 2 seconds)
+  → per-Event EventFilter / optional deterministic pre-filter
+  → compact seven-field LLM extraction with speaker, turn, source_event_indices and temporal anchoring
   → deterministic JSON repair + compact/legacy schema validation + bounded retry
   → AdmissionPolicy (notability, evidence, secret, operational-snapshot checks)
   → full-schema reconstruction (choice, qualifiers, time, entities, slot/tags)
@@ -176,7 +177,7 @@ Client
   → LLM four-way consolidation for gray-zone conflicts
   → best-match semantic deduplication (configured threshold; default 0.82)
   → entity normalization + slot/tags + retention/expiry calculation
-  → embedding generation and evidence links
+  → embedding generation and one evidence link per declared source Event
   → Claim commit
 ```
 
@@ -184,14 +185,21 @@ The Claim mutation sequence—status update, Claim insert, supersede operation, 
 `BEGIN IMMEDIATE` transaction. External calls use configured timeouts and retries; errors are recorded rather than
 silently swallowed. Idempotent retries return the original Event instead of duplicating work.
 
-The extraction output is governed before persistence. The LLM emits a six-field candidate; a pure `AdmissionPolicy`
+The extraction output is governed before persistence. The LLM emits a seven-field candidate; a pure `AdmissionPolicy`
 checks notability, locatable evidence, secret/empty values, and completed operational snapshots. Stable preference and
 architecture candidates are not rejected merely because their text contains words such as “fix”, “delete”, or “test”,
 while numeric, IP, and port evidence must match exactly. Compact and legacy output then share the same admission path and
 deterministic post-processing reconstructs choice semantics, qualifiers, occurrence time, entities, slots, and tags.
 Invalid or shared placeholder subjects are rebound to a valid canonical entity when possible and otherwise isolated per
-event. Each decision emits an audit reason code. Claim FTS and dense embeddings consume the persisted `index_text`;
+event. `source_event_indices` is validated against the current window, used to select evidence text for admission, and
+persisted as separate Event evidence links; speaker remains an Event property instead of being conflated with Claim
+subject. Each decision emits an audit reason code. Claim FTS and dense embeddings consume the persisted `index_text`;
 changing `index.text_mode` therefore supports controlled representation A/B without changing the rest of recall.
+
+The bounded window has only two controls: count and maximum wait. An idle timer is intentionally absent because
+`sync_turn` already writes the user/assistant pair atomically; adding another debounce state would increase starvation and
+recovery complexity without improving evidence semantics. Explicit memories, non-message Events, and Events without a
+session take the immediate single-Event path. LongMemEval queues the same Events and drains this same Worker path.
 
 Observation and Mental Model derivation is a separate maintenance path, not part of the Claim write transaction. The
 mental-model worker evaluates active evidence after ingestion and writes or refreshes derivations when its evidence rules
@@ -258,6 +266,7 @@ dependent derivations stale.
 |---|---|---|
 | `GET` | `/healthz` | Process/component liveness, in-memory metrics, and unresolved conflict count |
 | `POST` | `/v1/events` | Idempotent Event ingestion |
+| `POST` | `/v1/events/batch` | Atomic ingestion of a bounded Event group |
 | `POST` | `/v1/extract/dry-run` | Non-persistent Claim extraction |
 | `POST` | `/v1/consolidate` | Scoped conflict-consolidation job |
 | `POST` | `/v1/recall` | Hybrid, evidence-aware recall |

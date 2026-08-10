@@ -577,6 +577,25 @@
         "title": "EpisodeUpdate",
         "type": "object"
       },
+      "EventBatchInput": {
+        "description": "单次原子写入的有界 Event 集合。",
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventInput"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "title": "EventBatchInput",
+        "type": "object"
+      },
       "EventInput": {
         "description": "事件写入请求。",
         "properties": {
@@ -650,6 +669,18 @@
               }
             ],
             "title": "Idempotency Key"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
           },
           "namespace": {
             "default": "default",
@@ -1714,7 +1745,7 @@
   },
   "info": {
     "title": "HL-Mem",
-    "version": "0.24.2"
+    "version": "0.25.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2114,6 +2145,47 @@
           }
         },
         "summary": "Post Event"
+      }
+    },
+    "/v1/events/batch": {
+      "post": {
+        "description": "原子写入一个有界 Event 集合；现有单 Event API 保持不变。",
+        "operationId": "post_event_batch_v1_events_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventBatchInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Event Batch V1 Events Batch Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Event Batch"
       }
     },
     "/v1/extract/dry-run": {

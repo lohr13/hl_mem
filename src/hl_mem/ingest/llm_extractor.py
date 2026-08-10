@@ -96,7 +96,8 @@ SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有�
       "kind": "preference|architecture|identity|config|fact|plan|choice",
       "confidence": 0.0,
       "notability": "high|medium|low",
-      "evidence_quote": "原文中支持这条 claim 的片段"
+      "evidence_quote": "原文中支持这条 claim 的片段",
+      "source_event_indices": [0]
     }
   ],
   "should_memorize": true
@@ -150,6 +151,10 @@ evidence_quote：
 - 必须逐字或近似摘自 <extract_from>，并能在原文中定位。
 - 引用足以支持本条 claim 的最短片段，不要引用 <context_only>。
 
+source_event_indices：
+- 必须列出支持 claim 的 event_index；不得猜测 speaker、turn 或时间。
+- evidence_quote 必须出现在所引用的事件中；跨事件事实可列出多个索引。
+
 跳过：
 - 服务健康快照、CI 测试数量、版本号查询结果、过程进度、纯问候、未确认建议。
 - running/stopped/ok、测试通过数、环境变量已清空、正在重启等操作快照。
@@ -162,8 +167,8 @@ assistant durable output：
 - 只提取能独立回答后续问题的最小原子内容；禁止记忆整段 assistant 回答或普通解释性填充。
 
 限制：
-- max 10 claims per chunk。
-- claims 中每项必须且只能包含上述 6 个字段。
+- max 20 claims per chunk。
+- claims 中每项必须且只能包含上述 7 个字段。
 - kind、notability 和 confidence 必须满足上述枚举与范围。"""
 
 ENGLISH_SYSTEM_PROMPT = """You extract atomic memory claims from conversations for later use.
@@ -177,7 +182,8 @@ Return strict JSON only. Do not include explanations, Markdown, or extra fields:
       "kind": "preference|architecture|identity|config|fact|plan|choice",
       "confidence": 0.0,
       "notability": "high|medium|low",
-      "evidence_quote": "the source passage that supports this claim"
+      "evidence_quote": "the source passage that supports this claim",
+      "source_event_indices": [0]
     }
   ],
   "should_memorize": true
@@ -227,6 +233,10 @@ evidence_quote:
 - Copy or closely quote the shortest passage in <extract_from> that supports this claim.
 - Never quote <context_only>.
 
+source_event_indices:
+- List the event_index values that support the claim. Never infer speaker, turn, or time.
+- The evidence quote must occur in the referenced events. Cross-event facts may list multiple indices.
+
 Skip:
 - Service-health snapshots, CI test counts, version-query results, work in progress, greetings, and unconfirmed advice.
 - Operational snapshots such as running/stopped/ok, tests passed, an environment variable being cleared, or a restart.
@@ -240,8 +250,8 @@ Assistant durable output:
 - Extract only the smallest self-contained span that can answer a later question. Do not memorize the whole assistant answer.
 
 Limits:
-- Maximum 10 claims per chunk.
-- Every claim must contain exactly the six fields shown above.
+- Maximum 20 claims per chunk.
+- Every claim must contain exactly the seven fields shown above.
 - kind, notability, and confidence must use the specified values and ranges."""
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
@@ -875,6 +885,7 @@ class LLMExtractor:
             "occurred_end": occurred_end,
             "entities": self._extract_compact_entities(subject, candidate.value),
             "memory_layer": decision.memory_layer,
+            "source_event_indices": raw["source_event_indices"],
         }
 
     @staticmethod
@@ -938,7 +949,8 @@ class LLMExtractor:
         event_context: dict[str, Any],
     ) -> list[ExtractedClaim]:
         """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
-        context = json.dumps(event_context, ensure_ascii=False)
+        prompt_context = {key: value for key, value in event_context.items() if not key.startswith("_")}
+        context = json.dumps(prompt_context, ensure_ascii=False)
         occurred_at = str(event_context.get("occurred_at", "未知"))
         language = detect_extraction_language(chunk.text)
         result = self._request_chunk(chunk, context, occurred_at, language)
@@ -959,8 +971,18 @@ class LLMExtractor:
         compact_response = isinstance(result, CompactExtractionResponseSchema)
         for item in result.claims:
             raw_claim = item.model_dump()
+            source_mapping = self._source_mapping(
+                raw_claim,
+                event_context,
+                indices_supplied="source_event_indices" in item.model_fields_set,
+                fallback_text=chunk.text,
+                fallback_occurred_at=occurred_at,
+            )
+            if source_mapping is None:
+                continue
+            source_text, source_occurred_at, source_actor_type = source_mapping
             if compact_response:
-                postprocessed = self._postprocess_claim(raw_claim, chunk.text, occurred_at)
+                postprocessed = self._postprocess_claim(raw_claim, source_text, source_occurred_at)
                 if postprocessed is None:
                     continue
                 raw_claim = postprocessed
@@ -972,7 +994,7 @@ class LLMExtractor:
                 legacy_candidate = self._legacy_admission_candidate(raw_claim)
                 if legacy_candidate is None:
                     continue
-                decision = self._record_admission(legacy_candidate, chunk.text)
+                decision = self._record_admission(legacy_candidate, source_text)
                 if not decision.accepted:
                     continue
                 raw_claim.setdefault("reason", decision.reason)
@@ -993,7 +1015,7 @@ class LLMExtractor:
                 claim.value,
                 claim.qualifiers,
                 canonical_attribute=claim.canonical_attribute,
-                actor_type=str(event_context.get("actor_type") or event_context.get("actor") or ""),
+                actor_type=source_actor_type,
                 event_type=str(event_context.get("event_type") or ""),
                 source_kind=source_kind,
             )
@@ -1018,6 +1040,56 @@ class LLMExtractor:
             )
         )
         return retained
+
+    @staticmethod
+    def _source_mapping(
+        raw_claim: dict[str, Any],
+        event_context: dict[str, Any],
+        *,
+        indices_supplied: bool,
+        fallback_text: str,
+        fallback_occurred_at: str,
+    ) -> tuple[str, str, str] | None:
+        """校验批内来源索引，并返回仅由声明来源组成的准入文本与元数据。"""
+        source_events = event_context.get("_source_events")
+        if not isinstance(source_events, list) or not source_events:
+            raw_claim["source_event_indices"] = list(raw_claim.get("source_event_indices") or [0])
+            return (
+                fallback_text,
+                fallback_occurred_at,
+                str(event_context.get("actor_type") or event_context.get("actor") or ""),
+            )
+        if len(source_events) > 1 and not indices_supplied:
+            return None
+        raw_indices = raw_claim.get("source_event_indices") or [0]
+        if not isinstance(raw_indices, list):
+            return None
+        indices: list[int] = []
+        for value in raw_indices:
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value >= len(source_events):
+                return None
+            if value not in indices:
+                indices.append(value)
+        if not indices:
+            return None
+        selected = [source_events[index] for index in indices]
+        if not all(isinstance(item, dict) for item in selected):
+            return None
+        raw_claim["source_event_indices"] = indices
+        primary = selected[0]
+        return (
+            "\n".join(LLMExtractor._source_event_text(item) for item in selected),
+            str(primary.get("occurred_at") or fallback_occurred_at),
+            str(primary.get("actor_type") or primary.get("speaker") or ""),
+        )
+
+    @staticmethod
+    def _source_event_text(event: dict[str, Any]) -> str:
+        content = event.get("content", {})
+        if isinstance(content, dict):
+            text = content.get("text")
+            return str(text) if text is not None else json.dumps(content, ensure_ascii=False, sort_keys=True)
+        return str(content)
 
     def _request_chunk(
         self,
@@ -1155,7 +1227,7 @@ class LLMExtractor:
     def _merge_chunk_claims(chunks: list[list[ExtractedClaim]]) -> list[ExtractedClaim]:
         """按规范化事实字段稳定合并同一次分块提取的结果。"""
         merged: list[ExtractedClaim] = []
-        seen: set[tuple[str, str, str, str, str]] = set()
+        positions: dict[tuple[str, str, str, str, str], int] = {}
         for claims in chunks:
             for claim in claims:
                 key = (
@@ -1173,15 +1245,19 @@ class LLMExtractor:
                         ),
                     ),
                 )
-                if key in seen:
+                if key in positions:
+                    position = positions[key]
+                    existing = merged[position]
+                    indices = tuple(dict.fromkeys((*existing.source_event_indices, *claim.source_event_indices)))
+                    merged[position] = replace(existing, source_event_indices=indices)
                     continue
-                seen.add(key)
+                positions[key] = len(merged)
                 merged.append(claim)
         return merged
 
     @staticmethod
     def _uses_compact_schema(payload: dict[str, Any]) -> bool:
-        """区分当前 6 字段响应与需要兼容的旧响应。"""
+        """区分当前 7 字段响应与需要兼容的旧响应。"""
         claims = payload.get("claims")
         if not isinstance(claims, list):
             return False
@@ -1402,4 +1478,5 @@ class LLMExtractor:
             occurred_end=item.get("occurred_end"),
             entities=entities or None,
             memory_layer=("episodic" if item.get("memory_layer") == "episodic" else "durable"),
+            source_event_indices=tuple(item.get("source_event_indices") or ()),
         )

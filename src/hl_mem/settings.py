@@ -368,6 +368,14 @@ class Settings:
         default=3,
         metadata={"toml": "extraction.max_split_depth"},
     )
+    extraction_batch_max_events: int = field(
+        default=4,
+        metadata={"toml": "extraction.batch_max_events"},
+    )
+    extraction_batch_max_wait_seconds: float = field(
+        default=2.0,
+        metadata={"toml": "extraction.batch_max_wait_seconds"},
+    )
     worker_poll_interval: float = field(default=2.0, metadata={"toml": "worker.poll_interval"})
     worker_maintenance_interval: float = field(
         default=600.0,
@@ -713,6 +721,10 @@ class Settings:
             raise ConfigurationError("extraction.chunk_overlap_turns must be non-negative")
         if self.extraction_max_split_depth < 0:
             raise ConfigurationError("extraction.max_split_depth must be non-negative")
+        if not 1 <= self.extraction_batch_max_events <= 4:
+            raise ConfigurationError("extraction.batch_max_events must be between 1 and 4")
+        if self.extraction_batch_max_wait_seconds < 0:
+            raise ConfigurationError("extraction.batch_max_wait_seconds must be non-negative")
         if self.verification_mode not in {"off", "audit", "enforce"}:
             raise ConfigurationError("extraction.verification_mode must be 'off', 'audit', or 'enforce'")
         if (
@@ -822,6 +834,8 @@ class Settings:
             "extraction_chunk_target_chars": self.extraction_chunk_target_chars,
             "extraction_chunk_overlap_turns": self.extraction_chunk_overlap_turns,
             "extraction_max_split_depth": self.extraction_max_split_depth,
+            "extraction_batch_max_events": self.extraction_batch_max_events,
+            "extraction_batch_max_wait_seconds": self.extraction_batch_max_wait_seconds,
         }
 
     def retention_policy(self) -> TTLPolicy:

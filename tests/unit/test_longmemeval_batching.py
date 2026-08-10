@@ -299,9 +299,9 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             def extract(
                 self,
                 content: dict[str, object],
-                context: dict[str, object],
+                context: dict[str, object] | None = None,
             ) -> list[object]:
-                self.calls.append((content, context))
+                self.calls.append((content, context or {}))
                 return []
 
         extractor = RecordingExtractor()
@@ -317,22 +317,26 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
                     case_number=1,
                     total_hint="1",
                 )
-            rows = connection.execute("SELECT id,session_id,actor_type,content_json FROM events ORDER BY id").fetchall()
+            rows = connection.execute(
+                "SELECT id,session_id,actor_type,content_json,metadata_json FROM events ORDER BY id"
+            ).fetchall()
             database.close()
 
         self.assertEqual(stats["sessions"], 1)
         self.assertEqual(stats["events"], 2)
         self.assertEqual([row["actor_type"] for row in rows], ["user", "assistant"])
         self.assertEqual([row["session_id"] for row in rows], ["session-case-speakers"] * 2)
-        self.assertEqual([call[1]["source_role"] for call in extractor.calls], ["user", "assistant"])
+        self.assertEqual(len(extractor.calls), 2)
         for index, row in enumerate(rows):
             content = json.loads(row["content_json"])
+            metadata = json.loads(row["metadata_json"])
             locator = content["benchmark_locator"]
             self.assertEqual(row["id"], runner._turn_event_id(case.sessions[0].event_id, index))
             self.assertEqual(locator["session_id"], "session-case-speakers")
             self.assertEqual(locator["turn_index"], index)
             self.assertEqual(locator["span"], [index, index + 1])
             self.assertEqual(locator["source_role"], ["user", "assistant"][index])
+            self.assertEqual(metadata["turn_index"], index)
 
     def test_reader_context_mode_defaults_to_windowed_and_accepts_head(self) -> None:
         self.assertEqual(runner.parse_args([]).reader_context_mode, "windowed")

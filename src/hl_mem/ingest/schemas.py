@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias, get_args
+from typing import Annotated, Any, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -98,6 +98,11 @@ class ExtractedClaimSchema(BaseModel):
     occurred_start: str | None = None
     occurred_end: str | None = None
     entities: list[str] | None = None
+    source_event_indices: list[Annotated[int, Field(ge=0)]] = Field(
+        default_factory=lambda: [0],
+        min_length=1,
+        max_length=4,
+    )
 
 
 class ExtractionResponseSchema(BaseModel):
@@ -122,6 +127,11 @@ class CompactExtractedClaimSchema(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     notability: Literal["high", "medium", "low"]
     evidence_quote: str = Field(min_length=1)
+    source_event_indices: list[Annotated[int, Field(ge=0)]] = Field(
+        default_factory=lambda: [0],
+        min_length=1,
+        max_length=4,
+    )
 
 
 class CompactExtractionResponseSchema(BaseModel):
@@ -129,7 +139,7 @@ class CompactExtractionResponseSchema(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    claims: list[CompactExtractedClaimSchema] = Field(max_length=10)
+    claims: list[CompactExtractedClaimSchema] = Field(max_length=20)
     should_memorize: bool
 
 

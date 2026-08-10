@@ -33,6 +33,7 @@ class ExtractedClaim:
     occurred_end: str | None = None
     entities: list[str] | None = None
     memory_layer: Literal["durable", "episodic"] = "durable"
+    source_event_indices: tuple[int, ...] = ()
 
 
 class FakeExtractor:

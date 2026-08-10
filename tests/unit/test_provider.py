@@ -248,8 +248,58 @@ def test_write_hooks_propagate_only_trusted_host_namespace(monkeypatch) -> None:
     )
 
     event_payloads = [payload for url, payload in requests if url.endswith("/v1/events")]
-    assert len(event_payloads) == 5
+    batch_payloads = [payload for url, payload in requests if url.endswith("/v1/events/batch")]
+    assert len(event_payloads) == 3
+    assert len(batch_payloads) == 1
     assert {payload["namespace"] for payload in event_payloads} == {"project-a"}
+    assert {event["namespace"] for event in batch_payloads[0]["events"]} == {"project-a"}
+
+
+def test_sync_turn_posts_one_atomic_pair_with_shared_turn_metadata(monkeypatch) -> None:
+    requests = []
+
+    def post(url, **kwargs):
+        requests.append((url, kwargs["json"]))
+        return Response()
+
+    monkeypatch.setattr(httpx, "post", post)
+    provider = HLMemProvider("unused.db", "http://memory.test/", timeout=2.0)
+
+    provider.sync_turn(
+        "用户消息",
+        "助手消息",
+        session_id="session-1",
+        namespace="project-a",
+        turn_id=7,
+    )
+
+    assert requests == [
+        (
+            "http://memory.test/v1/events/batch",
+            {
+                "events": [
+                    {
+                        "event_type": "message",
+                        "actor_type": "user",
+                        "content": {"text": "用户消息"},
+                        "session_id": "session-1",
+                        "namespace": "project-a",
+                        "metadata": {"turn_id": "7"},
+                        "idempotency_key": "hermes-turn:session-1:7:user",
+                    },
+                    {
+                        "event_type": "message",
+                        "actor_type": "assistant",
+                        "content": {"text": "助手消息"},
+                        "session_id": "session-1",
+                        "namespace": "project-a",
+                        "metadata": {"turn_id": "7"},
+                        "idempotency_key": "hermes-turn:session-1:7:assistant",
+                    },
+                ]
+            },
+        )
+    ]
 
 
 def test_provider_uses_configurable_default_timeout() -> None:

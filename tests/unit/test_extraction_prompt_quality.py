@@ -18,8 +18,9 @@ class ExtractionPromptQualityTest(unittest.TestCase):
             '"kind"',
             '"notability"',
             '"evidence_quote"',
+            '"source_event_indices"',
             "confidence",
-            "max 10 claims per chunk",
+            "max 20 claims per chunk",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
 

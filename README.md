@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.24.2](https://img.shields.io/badge/version-0.24.2-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.25.0](https://img.shields.io/badge/version-0.25.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -110,6 +110,8 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 |---|---:|---|
 | `database.path` | `var/hl_mem.db` | SQLite 数据库路径 |
 | `extraction.mode` | `fake` | 提取器：`fake`、`real` 或 `llm` |
+| `extraction.batch_max_events` | `4` | 同 session 单次提取的 Event 上限 |
+| `extraction.batch_max_wait_seconds` | `2.0` | 未满窗口的最长等待时间 |
 | `embedding.mode` | `fake` | 向量化：`fake` 或 `real` |
 | `embedding.text_type` | 未设置 | native 模式可选 `document` 或 `query`；默认不发送 |
 | `reranker.mode` | `off` | 重排：`off`、`fake`、`on` 或 `real` |
@@ -151,7 +153,7 @@ hlmem backfill-index-text --mode natural
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.24.2，共 38 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.25.0，共 38 个不可变、仅向前执行的 SQL Migration。
 
 ## 文档
 
