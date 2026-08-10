@@ -42,8 +42,9 @@ timeout_seconds = 20.0
 mode = "llm"
 pre_filter = false
 chunk_target_chars = 12000
-batch_max_events = 4
-batch_max_wait_seconds = 2.0
+# Larger/longer microbatches reduce LLM call cost but increase extraction latency.
+batch_max_events = 5
+batch_max_wait_seconds = 120.0
 verification_mode = "off"
 
 [index]

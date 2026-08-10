@@ -94,8 +94,8 @@ variables. Common keys are listed below.
 |---|---:|---|
 | `database.path` | `var/hl_mem.db` | SQLite database path |
 | `extraction.mode` | `fake` | `fake`, `real`, or `llm` |
-| `extraction.batch_max_events` | `4` | Maximum same-session Events per extraction call |
-| `extraction.batch_max_wait_seconds` | `2.0` | Maximum wait for a non-full extraction window |
+| `extraction.batch_max_events` | `5` | Maximum same-session Events per extraction call |
+| `extraction.batch_max_wait_seconds` | `120.0` | Maximum wait for a non-full extraction window |
 | `embedding.mode` | `fake` | `fake` or `real` |
 | `embedding.text_type` | unset | Optional `document` or `query` in native mode; omitted by default |
 | `reranker.mode` | `off` | `off`, `fake`, `on`, or `real` |

@@ -110,8 +110,8 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 |---|---:|---|
 | `database.path` | `var/hl_mem.db` | SQLite 数据库路径 |
 | `extraction.mode` | `fake` | 提取器：`fake`、`real` 或 `llm` |
-| `extraction.batch_max_events` | `4` | 同 session 单次提取的 Event 上限 |
-| `extraction.batch_max_wait_seconds` | `2.0` | 未满窗口的最长等待时间 |
+| `extraction.batch_max_events` | `5` | 同 session 单次提取的 Event 上限 |
+| `extraction.batch_max_wait_seconds` | `120.0` | 未满窗口的最长等待时间 |
 | `embedding.mode` | `fake` | 向量化：`fake` 或 `real` |
 | `embedding.text_type` | 未设置 | native 模式可选 `document` 或 `query`；默认不发送 |
 | `reranker.mode` | `off` | 重排：`off`、`fake`、`on` 或 `real` |

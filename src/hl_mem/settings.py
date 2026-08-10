@@ -368,12 +368,16 @@ class Settings:
         default=3,
         metadata={"toml": "extraction.max_split_depth"},
     )
+    # Higher limits amortize LLM call cost across more same-session Events,
+    # while smaller limits reduce extraction latency and per-call payload size.
     extraction_batch_max_events: int = field(
-        default=4,
+        default=5,
         metadata={"toml": "extraction.batch_max_events"},
     )
+    # Longer waits improve the chance of filling a microbatch at the cost of
+    # delaying extraction for low-traffic sessions.
     extraction_batch_max_wait_seconds: float = field(
-        default=2.0,
+        default=120.0,
         metadata={"toml": "extraction.batch_max_wait_seconds"},
     )
     worker_poll_interval: float = field(default=2.0, metadata={"toml": "worker.poll_interval"})
@@ -721,8 +725,8 @@ class Settings:
             raise ConfigurationError("extraction.chunk_overlap_turns must be non-negative")
         if self.extraction_max_split_depth < 0:
             raise ConfigurationError("extraction.max_split_depth must be non-negative")
-        if not 1 <= self.extraction_batch_max_events <= 4:
-            raise ConfigurationError("extraction.batch_max_events must be between 1 and 4")
+        if not 1 <= self.extraction_batch_max_events <= 32:
+            raise ConfigurationError("extraction.batch_max_events must be between 1 and 32")
         if self.extraction_batch_max_wait_seconds < 0:
             raise ConfigurationError("extraction.batch_max_wait_seconds must be non-negative")
         if self.verification_mode not in {"off", "audit", "enforce"}:

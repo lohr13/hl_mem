@@ -163,12 +163,13 @@ def _lease_batch(
 def test_settings_expose_only_two_microbatch_controls() -> None:
     settings = Settings.for_test()
 
-    assert settings.extraction_batch_max_events == 4
-    assert settings.extraction_batch_max_wait_seconds == 2.0
+    assert settings.extraction_batch_max_events == 5
+    assert settings.extraction_batch_max_wait_seconds == 120.0
     assert not hasattr(settings, "extraction_batch_idle_seconds")
 
-    with pytest.raises(ConfigurationError, match="between 1 and 4"):
-        replace(settings, extraction_batch_max_events=5).validate()
+    replace(settings, extraction_batch_max_events=32).validate()
+    with pytest.raises(ConfigurationError, match="between 1 and 32"):
+        replace(settings, extraction_batch_max_events=33).validate()
 
 
 def test_lease_groups_four_ordered_events_from_one_session(tmp_path) -> None:
