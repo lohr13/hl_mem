@@ -1307,7 +1307,7 @@ def _claim_inflation_diagnostics(connection: Any, stats: Mapping[str, Any]) -> d
     stored = int(stored_row[0]) if stored_row is not None else 0
 
     rows = connection.execute(
-        "SELECT c.id,c.subject_entity_id,c.canonical_attribute,c.index_text,"
+        "SELECT c.id,c.subject_entity_id,c.canonical_attribute,c.index_text,c.status,"
         "e.session_id,e.content_json FROM claims c "
         "JOIN evidence_links l ON l.derived_type='claim' AND l.derived_id=c.id AND l.evidence_type='event' "
         "JOIN events e ON e.id=l.evidence_id "
@@ -1331,6 +1331,7 @@ def _claim_inflation_diagnostics(connection: Any, stats: Mapping[str, Any]) -> d
             {
                 "subject": str(row["subject_entity_id"] or ""),
                 "attribute": str(row["canonical_attribute"] or ""),
+                "status": str(row["status"] or ""),
                 "text": _reader_match_text(row["index_text"] or ""),
                 "locations": set(),
             },
@@ -1352,7 +1353,11 @@ def _claim_inflation_diagnostics(connection: Any, stats: Mapping[str, Any]) -> d
                 if left_id == right_id:
                     continue
                 right = claims[right_id]
-                if (left["subject"], left["attribute"]) != (right["subject"], right["attribute"]):
+                if (left["subject"], left["attribute"], left["status"]) != (
+                    right["subject"],
+                    right["attribute"],
+                    right["status"],
+                ):
                     continue
                 if (
                     right["text"]
@@ -1378,7 +1383,7 @@ def _claim_inflation_diagnostics(connection: Any, stats: Mapping[str, Any]) -> d
         "stored_claims_per_session": ratio(stored, sessions),
         "adjacent_restatement_candidates": len(adjacent_pairs),
         "adjacent_restatement_definition": (
-            "same subject and canonical_attribute, adjacent session turns, "
+            "same subject, canonical_attribute and non-terminal lifecycle status, adjacent session turns, "
             f"diagnostic lexical threshold >= {CLAIM_RESTATEMENT_LEXICAL_THRESHOLD:g}; "
             "not the production semantic/cosine dedup threshold"
         ),

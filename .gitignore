@@ -11,6 +11,7 @@ build/
 hl_mem_test.db
 hl_mem_budget_test.json
 .env
+.env.dsv4
 .env.bak*
 hl_mem.toml
 *.db
@@ -21,6 +22,7 @@ hl_mem.toml
 pytest_*.txt
 pending_commits.txt
 tests/eval/reports/*.json
+/evaluation/datasets/
 /evaluation/results/
 /evaluation/cache/
 /evaluation/longmemeval/.cache/

@@ -16,6 +16,17 @@
 - extraction coverage 改为覆盖所有成功 case；claim retrieval 与 session retrieval 各用独立 eligibility 分母，报告同时给出 R@K eligible numerator/denominator，避免 claim 标注缺失污染 session 指标。
 - runner 已确认逐 case 原子写入报告、`Retry-After`/退避与熔断行为；`--resume` 现在会保留成功及非 429 结果，但在配额窗口恢复后自动重跑 `http_429`/`quota` case。评测文档补充错峰、单进程/低并发和同参数恢复指引。
 
+### DeepSeek V4 Flash 与 holdout 诊断加固（2026-08-10）
+
+- `bdd8391` 新增百炼 OpenAI-compatible `deepseek-v4-flash` benchmark 配置与任意 QA model override；显式控制 extractor/reader/judge 的 thinking 参数，并把 endpoint、effective provider、extractor payload、QA/query-expansion model 纳入 manifest/resume identity，避免跨模型或跨请求配置复用缓存。
+- `43bb3ae` 修复 holdout50 诊断链：超长 conversation turn 可拆为有界 JSON 单元，windowed reader 按 session 与数值 turn index 重建相邻证据；同时加入 temporal gate 歧义标记、脱敏 HTTP 错误诊断和相邻 turn Claim 复述膨胀指标。
+- `aaf4440` 将 hard split 加固为可无损还原的 `semantic-turn-fragments-v1`，并把 fragment/reader 协议与 chunk target/overlap 纳入 cache、resume 和 merge 身份；诊断统一做结构化敏感字段脱敏，Claim 密度改按物理行与缓存实值计算，legacy resume 对不可得指标显式留空，temporal gate 按问题时区比较同日边界。
+- CI 收口恢复 `benchmark_extraction.sanitize_http_response_body` 兼容导出，并让相邻复述候选仅在相同的非终态 lifecycle status 内比较，避免 candidate/disputed 之间交叉计数。
+
+### 仓库治理
+
+- `.env.dsv4` 与 `/evaluation/datasets/` 纳入忽略规则；本地评测数据和未跟踪 proposal 移出仓库，`evaluation/results/dsv4flash_reader_investigation.md` 停止 Git 跟踪但保留本地副本。`/evaluation/results/` 的既有忽略规则保持不变。
+
 ### 兼容与发布
 
 - SQL schema 仍为 38 个不可变 migration（001-038），生产阈值 `0.82/0.92/0.95` 未调整，依赖集合未变化。

@@ -1,6 +1,6 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-09 · v0.24.2
+> 最后更新：2026-08-10 · v0.24.2
 
 ## 当前状态
 
@@ -12,6 +12,14 @@
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-10 v0.24.2 DeepSeek 与 holdout 诊断收口
+
+- `bdd8391` 增加 DeepSeek V4 Flash benchmark 配置、显式 thinking 控制和 QA model override；manifest/resume identity 覆盖 endpoint、effective provider、extractor payload 与 QA/query-expansion model，禁止跨配置复用缓存。
+- `43bb3ae` 修复 holdout50 的超长 turn 分块、按 session/turn index 重建 reader 相邻证据、temporal 歧义 gate、脱敏 HTTP 错误取证和 Claim 膨胀诊断。
+- `aaf4440` 交付可无损还原的 `semantic-turn-fragments-v1`，将 fragment/reader 协议及 chunk 参数纳入 cache/resume/merge 身份；物理 Claim 密度、legacy resume 空值、结构化诊断脱敏和问题时区边界均已加固。
+- CI 收口恢复 extraction benchmark 的旧诊断函数兼容导出，并按非终态 lifecycle status 隔离相邻复述候选，避免 candidate/disputed 交叉计数。
+- 仓库治理已将 `.env.dsv4`、`evaluation/datasets/` 纳入忽略；24 个 dataset 文件及 LongMemEval fixture 外移到 `C:/Users/Administrator/hl_mem_eval_data/`，两份未跟踪 proposal 外移到 `C:/Users/Administrator/hl_mem_docs/`；reader investigation 停止 Git 跟踪并保留本地文件。
 
 ### 2026-08-09 v0.24.2 LongMemEval 全量评测前修复
 

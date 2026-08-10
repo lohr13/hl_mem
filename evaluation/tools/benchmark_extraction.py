@@ -41,6 +41,7 @@ from evaluation.tools.http_diagnostics import (  # noqa: E402
     evaluation_http_error_diagnostics,
     sanitize_diagnostic_text,
 )
+from hl_mem.http_utils import sanitize_http_response_body  # noqa: E402, F401
 from hl_mem.ingest.chunking import ChunkingPolicy  # noqa: E402
 from hl_mem.ingest.llm_extractor import PROMPT_HASH, LLMExtractor  # noqa: E402
 from hl_mem.llm.client import LLMClient  # noqa: E402
