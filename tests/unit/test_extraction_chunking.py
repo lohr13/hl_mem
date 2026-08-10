@@ -47,8 +47,8 @@ def test_short_text_uses_single_chunk() -> None:
     assert chunks[0].structure is ContentStructure.TEXT
 
 
-def test_conversation_preserves_turns_and_overlap_is_context_only() -> None:
-    """对话分块不拆 turn，重叠 turn 仅作为上下文。"""
+def test_conversation_preserves_turn_order_and_overlap_is_context_only() -> None:
+    """对话分块保持 turn 顺序；仅超长 turn 可拆，重叠 turn 只作上下文。"""
     content = {
         "messages": [
             {"role": "user", "content": "a" * 12},
@@ -61,7 +61,8 @@ def test_conversation_preserves_turns_and_overlap_is_context_only() -> None:
 
     assert detect_content_structure(content) is ContentStructure.CONVERSATION
     assert len(chunks) >= 2
-    assert json.loads(chunks[0].text.splitlines()[0]) == content["messages"][0]
+    extracted_turns = [json.loads(line) for chunk in chunks for line in chunk.text.splitlines() if line]
+    assert extracted_turns == content["messages"]
     assert json.loads(chunks[1].context_prefix.splitlines()[-1]) in content["messages"][:2]
     assert chunks[1].context_prefix not in chunks[1].text
 

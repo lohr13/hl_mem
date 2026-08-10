@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sqlite3
@@ -243,6 +244,124 @@ class LongMemEvalMetricTests(unittest.TestCase):
         valid = normalize_case(record)
         self.assertTrue(runner._evaluation_eligibility(valid)["temporal_gate_eligible"])
 
+    def test_temporal_gate_keeps_mixed_past_and_future_gold_sessions(self) -> None:
+        record = _official_record()
+        record["question_type"] = "temporal-reasoning"
+        record["question_date"] = "2023/05/26 (Fri) 12:00"
+        record["answer_session_ids"] = ["gold-before", "gold-after"]
+        record["haystack_session_ids"] = ["gold-before", "gold-after"]
+        record["haystack_dates"] = ["2023/05/26 (Fri) 11:59", "2023/05/26 (Fri) 12:01"]
+        record["haystack_sessions"] = [
+            [{"role": "user", "content": "Earlier evidence."}],
+            [{"role": "user", "content": "Later evidence."}],
+        ]
+
+        eligibility = runner._evaluation_eligibility(normalize_case(record))
+
+        self.assertEqual(eligibility["status"], "eligible")
+        self.assertTrue(eligibility["temporal_gate_eligible"])
+
+    def test_temporal_gate_keeps_future_gold_for_non_temporal_question(self) -> None:
+        record = _official_record()
+        record["question_type"] = "multi-session"
+        record["question_date"] = "2023/05/26 (Fri) 12:00"
+        record["haystack_dates"] = ["2023/05/26 (Fri) 12:01", "2023/05/26 (Fri) 12:02"]
+
+        eligibility = runner._evaluation_eligibility(normalize_case(record))
+
+        self.assertEqual(eligibility["status"], "eligible")
+        self.assertTrue(eligibility["temporal_gate_eligible"])
+
+    def test_temporal_gate_keeps_cross_day_future_gold(self) -> None:
+        record = _official_record()
+        record["question_type"] = "temporal-reasoning"
+        record["question_date"] = "2023/05/26 (Fri) 23:59"
+        record["haystack_dates"] = ["2023/05/27 (Sat) 00:01", "2023/05/27 (Sat) 00:02"]
+
+        eligibility = runner._evaluation_eligibility(normalize_case(record))
+
+        self.assertEqual(eligibility["status"], "eligible")
+        self.assertTrue(eligibility["temporal_gate_eligible"])
+
+    def test_temporal_gate_compares_same_day_in_question_timezone(self) -> None:
+        case = normalize_case(_official_record())
+        case = dataclasses.replace(
+            case,
+            question_type="temporal-reasoning",
+            question_at="2023-05-26T23:30:00-02:00",
+            sessions=tuple(
+                (
+                    dataclasses.replace(session, occurred_at="2023-05-27T01:45:00+00:00")
+                    if session.session_id in case.gold_session_ids
+                    else session
+                )
+                for session in case.sessions
+            ),
+        )
+
+        eligibility = runner._evaluation_eligibility(case)
+
+        self.assertEqual(eligibility["status"], "invalid_ambiguous")
+        self.assertFalse(eligibility["temporal_gate_eligible"])
+
+    @unittest.skipUnless(
+        (runner.ROOT / "evaluation" / "datasets" / "holdout50_all.json").is_file(),
+        "requires the local holdout50 dataset",
+    )
+    def test_holdout50_temporal_gate_excludes_the_reviewed_dataset_ids(self) -> None:
+        dataset = runner.ROOT / "evaluation" / "datasets" / "holdout50_all.json"
+        excluded: set[str] = set()
+        for record in iter_case_records(dataset):
+            case = normalize_case(record)
+            if runner._evaluation_eligibility(case)["temporal_gate_eligible"] is False:
+                excluded.add(case.case_id)
+
+        self.assertEqual(excluded, {"gpt4_2f56ae70", "gpt4_5dcc0aab"})
+
+    def test_reviewed_temporal_ids_are_excluded_without_external_dataset_fixture(self) -> None:
+        reviewed_dates = {
+            "gpt4_5dcc0aab": (
+                "2023/05/24 (Wed) 09:14",
+                (
+                    "2023/05/24 (Wed) 18:32",
+                    "2023/05/24 (Wed) 10:58",
+                    "2023/05/24 (Wed) 14:49",
+                    "2023/05/24 (Wed) 20:15",
+                    "2023/05/24 (Wed) 19:37",
+                ),
+            ),
+            "gpt4_2f56ae70": (
+                "2023/05/26 (Fri) 00:18",
+                (
+                    "2023/05/26 (Fri) 23:40",
+                    "2023/05/26 (Fri) 01:08",
+                    "2023/05/26 (Fri) 08:25",
+                ),
+            ),
+        }
+        excluded: set[str] = set()
+        for case_id, (question_date, gold_dates) in reviewed_dates.items():
+            record = _official_record()
+            gold_ids = [f"gold-{index}" for index in range(len(gold_dates))]
+            record.update(
+                {
+                    "question_id": case_id,
+                    "question_type": "temporal-reasoning",
+                    "question_date": question_date,
+                    "answer_session_ids": gold_ids,
+                    "haystack_session_ids": gold_ids,
+                    "haystack_dates": list(gold_dates),
+                    "haystack_sessions": [
+                        [{"role": "user", "content": f"gold evidence {index}"}] for index in range(len(gold_dates))
+                    ],
+                }
+            )
+            case = normalize_case(record)
+            if runner._evaluation_eligibility(case)["temporal_gate_eligible"] is False:
+                excluded.add(case.case_id)
+
+        self.assertEqual(excluded, {"gpt4_2f56ae70", "gpt4_5dcc0aab"})
+
     def test_claim_relevance_is_primary_and_session_relevance_is_auxiliary(self) -> None:
         results = [
             {"id": "same-session-noise", "evidence": [{"type": "event", "id": "gold"}]},
@@ -441,12 +560,27 @@ class LongMemEvalMetricTests(unittest.TestCase):
         self.assertEqual(temporal["gate_mrr"], 1.0)
         self.assertEqual(temporal["gate_session_mrr"], 1.0)
 
-    def test_claim_inflation_diagnostics_counts_only_adjacent_restatements(self) -> None:
+    def test_aggregate_treats_legacy_resume_case_without_eligibility_as_gate_eligible(self) -> None:
+        legacy = {
+            "case_id": "legacy",
+            "question_type": "temporal-reasoning",
+            "retrieval": {"eligible": True, "session_eligible": False, "recall_at_1": 1.0, "mrr": 1.0},
+            "qa": {"correct": True},
+            "error": None,
+        }
+
+        temporal = aggregate_results([legacy])["by_type"]["temporal-reasoning"]
+
+        self.assertEqual(temporal["gate_eligible_cases"], 1)
+        self.assertEqual(temporal["gate_excluded_cases"], 0)
+        self.assertEqual(temporal["gate_qa_accuracy"], 1.0)
+
+    def test_claim_inflation_uses_physical_claim_rows_instead_of_write_results(self) -> None:
         connection = sqlite3.connect(":memory:")
         connection.row_factory = sqlite3.Row
         connection.executescript(
             "CREATE TABLE claims ("
-            "id TEXT PRIMARY KEY,subject_entity_id TEXT,canonical_attribute TEXT,index_text TEXT);"
+            "id TEXT PRIMARY KEY,subject_entity_id TEXT,canonical_attribute TEXT,index_text TEXT,status TEXT);"
             "CREATE TABLE evidence_links ("
             "derived_type TEXT,derived_id TEXT,evidence_type TEXT,evidence_id TEXT);"
             "CREATE TABLE events (id TEXT PRIMARY KEY,session_id TEXT,content_json TEXT);"
@@ -461,12 +595,12 @@ class LongMemEvalMetricTests(unittest.TestCase):
             ],
         )
         connection.executemany(
-            "INSERT INTO claims VALUES(?,?,?,?)",
+            "INSERT INTO claims VALUES(?,?,?,?,?)",
             [
-                ("c0", "user", "preference.food", "user prefers Japanese short-grain rice"),
-                ("c1", "user", "preference.food", "the user prefers Japanese short grain rice"),
-                ("c5", "user", "preference.food", "user prefers Japanese short-grain rice"),
-                ("c-other", "user", "preference.food", "user prefers Japanese short-grain rice"),
+                ("c0", "user", "preference.food", "user prefers Japanese short-grain rice", "active"),
+                ("c1", "user", "preference.food", "the user prefers Japanese short grain rice", "active"),
+                ("c5", "user", "preference.food", "user prefers Japanese short-grain rice", "superseded"),
+                ("c-other", "user", "preference.food", "user prefers Japanese short-grain rice", "retracted"),
             ],
         )
         connection.executemany(
@@ -476,14 +610,190 @@ class LongMemEvalMetricTests(unittest.TestCase):
 
         diagnostics = runner._claim_inflation_diagnostics(
             connection,
-            {"events": 4, "sessions": 2, "extracted_claims": 8, "stored_claims": 4},
+            {"events": 4, "sessions": 2, "extracted_claims": 8, "accepted_claim_writes": 99},
         )
 
+        self.assertEqual(diagnostics["stored_claims"], 4)
         self.assertEqual(diagnostics["extracted_claims_per_event"], 2.0)
         self.assertEqual(diagnostics["stored_claims_per_event"], 1.0)
         self.assertEqual(diagnostics["stored_claims_per_session"], 2.0)
         self.assertEqual(diagnostics["adjacent_restatement_candidates"], 1)
+        self.assertIn("diagnostic lexical threshold", diagnostics["adjacent_restatement_definition"])
         connection.close()
+
+    def test_claim_inflation_deduplicates_links_and_ignores_one_claim_across_turns(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.executescript(
+            "CREATE TABLE claims ("
+            "id TEXT PRIMARY KEY,subject_entity_id TEXT,canonical_attribute TEXT,index_text TEXT,status TEXT);"
+            "CREATE TABLE evidence_links ("
+            "derived_type TEXT,derived_id TEXT,evidence_type TEXT,evidence_id TEXT);"
+            "CREATE TABLE events (id TEXT PRIMARY KEY,session_id TEXT,content_json TEXT);"
+        )
+        connection.executemany(
+            "INSERT INTO events VALUES(?,?,?)",
+            [
+                ("e0", "s1", json.dumps({"benchmark_locator": {"session_id": "s1", "turn_index": 0}})),
+                ("e1", "s1", json.dumps({"benchmark_locator": {"session_id": "s1", "turn_index": 1}})),
+            ],
+        )
+        connection.execute(
+            "INSERT INTO claims VALUES(?,?,?,?,?)",
+            ("shared", "user", "preference.food", "user prefers rice", "active"),
+        )
+        connection.executemany(
+            "INSERT INTO evidence_links VALUES('claim','shared','event',?)",
+            [("e0",), ("e0",), ("e1",)],
+        )
+
+        diagnostics = runner._claim_inflation_diagnostics(connection, {"events": 2, "sessions": 1})
+
+        self.assertEqual(diagnostics["stored_claims"], 1)
+        self.assertEqual(diagnostics["adjacent_restatement_candidates"], 0)
+        connection.close()
+
+    def test_claim_inflation_excludes_terminal_statuses_from_restatement_candidates(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.executescript(
+            "CREATE TABLE claims ("
+            "id TEXT PRIMARY KEY,subject_entity_id TEXT,canonical_attribute TEXT,index_text TEXT,status TEXT);"
+            "CREATE TABLE evidence_links ("
+            "derived_type TEXT,derived_id TEXT,evidence_type TEXT,evidence_id TEXT);"
+            "CREATE TABLE events (id TEXT PRIMARY KEY,session_id TEXT,content_json TEXT);"
+            'INSERT INTO events VALUES(\'e0\',\'s1\',\'{"benchmark_locator":{"session_id":"s1","turn_index":0}}\');'
+            'INSERT INTO events VALUES(\'e1\',\'s1\',\'{"benchmark_locator":{"session_id":"s1","turn_index":1}}\');'
+        )
+        for index, status in enumerate(("superseded", "expired", "archived", "retracted")):
+            left = f"{status}-left"
+            right = f"{status}-right"
+            connection.executemany(
+                "INSERT INTO claims VALUES(?,?,?,?,?)",
+                [
+                    (left, "user", "preference.food", f"user prefers rice {index}", status),
+                    (right, "user", "preference.food", f"user prefers rice {index}", status),
+                ],
+            )
+            connection.executemany(
+                "INSERT INTO evidence_links VALUES('claim',?,'event',?)",
+                [(left, "e0"), (right, "e1")],
+            )
+        for status in ("candidate", "disputed"):
+            left = f"{status}-left"
+            right = f"{status}-right"
+            connection.executemany(
+                "INSERT INTO claims VALUES(?,?,?,?,?)",
+                [
+                    (left, "user", "preference.food", f"{status} user prefers rice", status),
+                    (right, "user", "preference.food", f"{status} user prefers rice", status),
+                ],
+            )
+            connection.executemany(
+                "INSERT INTO evidence_links VALUES('claim',?,'event',?)",
+                [(left, "e0"), (right, "e1")],
+            )
+
+        diagnostics = runner._claim_inflation_diagnostics(connection, {"events": 2, "sessions": 1})
+
+        self.assertEqual(diagnostics["stored_claims"], 12)
+        self.assertEqual(diagnostics["adjacent_restatement_candidates"], 2)
+        connection.close()
+
+    def test_cached_ingest_computes_stored_density_and_marks_extracted_density_unavailable(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.executescript(
+            "CREATE TABLE claims ("
+            "id TEXT PRIMARY KEY,subject_entity_id TEXT,canonical_attribute TEXT,index_text TEXT,status TEXT);"
+            "CREATE TABLE evidence_links ("
+            "derived_type TEXT,derived_id TEXT,evidence_type TEXT,evidence_id TEXT);"
+            "CREATE TABLE events (id TEXT PRIMARY KEY,session_id TEXT,content_json TEXT);"
+            "INSERT INTO claims VALUES('c0','user','preference.food','user prefers rice','active');"
+        )
+        case = normalize_case(_official_record())
+
+        cached = runner._cached_ingest_diagnostics(connection, case, "manifest.json")
+
+        self.assertTrue(cached["skipped"])
+        self.assertEqual(cached["claim_inflation_diagnostics_status"], "computed_from_cache")
+        self.assertIsNone(cached["extracted_claims_per_event"])
+        self.assertEqual(cached["stored_claims"], 1)
+        self.assertEqual(cached["stored_claims_per_event"], 0.333333)
+        connection.close()
+
+
+class LongMemEvalExtractionFragmentTests(unittest.TestCase):
+    def test_fragments_prefer_semantic_boundaries_and_round_trip_nested_unicode_content(self) -> None:
+        source = (
+            r"第一段包含“引号”和路径 C:\Users\示例。第二句仍在这里。"
+            "\n\nSecond paragraph has a complete sentence. Another sentence follows. "
+        ) * 8
+        alternate = ("Alternate text is independently preserved. It also ends on sentences. ") * 7
+        content = {
+            "text": source,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": source,
+                    "text": alternate,
+                    "metadata": {"nested": {"tags": ["unicode-中文", 'quote-"', "slash-\\"]}},
+                }
+            ],
+            "benchmark_locator": {"session_id": "session-1", "turn_index": 2},
+        }
+
+        fragments = runner.fragment_turn_content(
+            content,
+            target_chars=700,
+            previous_turns=[
+                {"role": "user", "content": "old-0"},
+                {"role": "assistant", "content": "old-1"},
+            ],
+            overlap_turns=1,
+        )
+
+        self.assertGreater(len(fragments), 1)
+        self.assertTrue(all(len(json.dumps(item.content, ensure_ascii=False)) <= 700 for item in fragments))
+        self.assertEqual("".join(item.content["text"] for item in fragments), source)
+        self.assertEqual("".join(item.content["messages"][0]["content"] for item in fragments), source)
+        self.assertEqual("".join(item.content["messages"][0]["text"] for item in fragments), alternate)
+        self.assertTrue(
+            all(item.content["messages"][0]["metadata"] == content["messages"][0]["metadata"] for item in fragments)
+        )
+        self.assertEqual(
+            {field for item in fragments for field in item.continuity["fragment_source_fields"]},
+            {"messages[0].content", "messages[0].text", "text"},
+        )
+        self.assertTrue(
+            all(
+                (item.content["messages"][0]["content"] or item.content["messages"][0]["text"]).endswith(
+                    ("。", "。\n\n", ". ", ".\n\n")
+                )
+                for item in fragments[:-1]
+            )
+        )
+        for index, item in enumerate(fragments):
+            self.assertEqual(json.loads(json.dumps(item.content, ensure_ascii=False)), item.content)
+            self.assertEqual(item.continuity["fragment_index"], index)
+            self.assertEqual(item.continuity["total_fragments"], len(fragments))
+            self.assertEqual(
+                item.continuity["context_only_previous_turns"],
+                [{"role": "assistant", "content": "old-1"}],
+            )
+
+    def test_oversized_non_text_envelope_remains_one_lossless_json_fragment(self) -> None:
+        content = {
+            "messages": [{"role": "tool", "payload": {"blob": ["x" * 200, {"deep": "y" * 200}]}}],
+            "benchmark_locator": {"session_id": "session-1", "turn_index": 0},
+        }
+
+        fragments = runner.fragment_turn_content(content, target_chars=100)
+
+        self.assertEqual(len(fragments), 1)
+        self.assertEqual(fragments[0].content, content)
+        self.assertTrue(fragments[0].continuity["oversized_envelope"])
+        self.assertEqual(json.loads(json.dumps(fragments[0].content)), content)
 
 
 class LongMemEvalConfigCompareTests(unittest.TestCase):
@@ -497,6 +807,18 @@ class LongMemEvalConfigCompareTests(unittest.TestCase):
             path.write_text(json.dumps(manifest), encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "event_model_version"):
+                _validate_manifest(path, case, settings)
+
+    def test_manifest_rejects_cache_without_fragment_protocol_identity(self) -> None:
+        case = normalize_case(_official_record())
+        settings = Settings()
+        manifest = runner._manifest_identity(case, settings)
+        del manifest["extraction_fragment_protocol"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "extraction_fragment_protocol"):
                 _validate_manifest(path, case, settings)
 
     def test_manifest_rejects_embedding_api_or_text_type_changes(self) -> None:

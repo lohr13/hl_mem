@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import sqlite3
 import subprocess
 import sys
@@ -33,9 +32,15 @@ except ImportError:
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from evaluation.tools.http_diagnostics import (  # noqa: E402
+    evaluation_http_error_diagnostics,
+    sanitize_diagnostic_text,
+)
 from hl_mem.ingest.chunking import ChunkingPolicy  # noqa: E402
 from hl_mem.ingest.llm_extractor import PROMPT_HASH, LLMExtractor  # noqa: E402
 from hl_mem.llm.client import LLMClient  # noqa: E402
@@ -74,7 +79,10 @@ def exclusive_run_lock(path: Path = LOCK_PATH) -> Iterator[None]:
         lock_file.seek(0)
         try:
             if _LOCK_IMPL == "fcntl":
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(  # type: ignore[attr-defined]
+                    lock_file.fileno(),
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+                )
             else:
                 msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError as error:
@@ -87,7 +95,7 @@ def exclusive_run_lock(path: Path = LOCK_PATH) -> Iterator[None]:
     finally:
         try:
             if _LOCK_IMPL == "fcntl":
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
             else:
                 lock_file.seek(0)
                 msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
@@ -381,11 +389,17 @@ def run_single_extraction(extractor: LLMExtractor, content: str, context: dict[s
             }
         )
     except Exception as error:
-        metrics["extraction_error"] = f"{type(error).__name__}: {str(error)[:200]}"
-        http_error = find_http_status_error(error)
-        if http_error is not None:
-            metrics["http_status_code"] = http_error.response.status_code
-            metrics["http_response_body"] = sanitize_http_response_body(http_error.response.text)
+        api_key = str(getattr(extractor.llm_client, "api_key", "") or "")
+        secrets = (api_key,) if api_key else ()
+        metrics["extraction_error"] = sanitize_diagnostic_text(
+            f"{type(error).__name__}: {error}",
+            limit=200,
+            secrets=secrets,
+        )
+        diagnostics = evaluation_http_error_diagnostics(error, secrets=secrets)
+        if diagnostics is not None:
+            metrics["http_status_code"] = diagnostics["http_status"]
+            metrics["http_response_body"] = diagnostics["response_body"]
     schema_error_paths = [
         ".".join(str(part) for part in error.get("loc", ()))
         for error in getattr(extractor, "_last_schema_errors", [])
@@ -394,34 +408,6 @@ def run_single_extraction(extractor: LLMExtractor, content: str, context: dict[s
     metrics["schema_error_paths"] = schema_error_paths or None
     metrics["latency_ms"] = round((time.perf_counter() - started) * 1000)
     return metrics
-
-
-def sanitize_http_response_body(body: str) -> str:
-    """脱敏并截断 HTTP 错误响应，避免 benchmark 产物泄露凭据。"""
-    sanitized = re.sub(
-        r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?bearer\s+)[^\s,\"']+",
-        r"\1[REDACTED]",
-        body,
-    )
-    sanitized = re.sub(
-        r"(?i)((?:api[_-]?key|access[_-]?token|secret)[\"']?\s*[:=]\s*[\"']?)[^\s,\"']+",
-        r"\1[REDACTED]",
-        sanitized,
-    )
-    sanitized = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-[REDACTED]", sanitized)
-    return sanitized[:500]
-
-
-def find_http_status_error(error: BaseException) -> httpx.HTTPStatusError | None:
-    """沿异常因果链提取被包装的 HTTPStatusError。"""
-    visited: set[int] = set()
-    current: BaseException | None = error
-    while current is not None and id(current) not in visited:
-        if isinstance(current, httpx.HTTPStatusError):
-            return current
-        visited.add(id(current))
-        current = current.__cause__ or current.__context__
-    return None
 
 
 def print_summary(results: list[dict[str, Any]]) -> None:

@@ -42,3 +42,11 @@ runner 每完成一个 case 都会原子更新报告；resume 会校验数据集
 - extraction coverage 的分母是所有成功 case，不依赖 claim relevance eligibility。
 - claim R@K/MRR 只在 claim `eligible` case 上聚合；session R@K/MRR 使用独立的 `session_eligible` 分母。
 - 报告中的 claim/session `*_eligible_numerator` 与 `*_eligible_denominator` 明确给出每个 K 的有效分子、分母；不要把两类 eligibility 混用。
+
+## LongMemEval 提取分块与诊断协议
+
+- benchmark 仍原样持久化 turn event；仅在调用 extractor 时，对超过字符预算的单 turn 生成临时 fragment。fragment 优先在段落、句子或词边界结束，无法容纳的纯非文本 envelope 保持单个无损 JSON，不静默丢字段。
+- 临时 fragment 的 `fragment_index`、`total_fragments`、字段来源、前后续接标记和相邻 turn context 只放入本次提取上下文，不写回 event。每个可分 fragment 都是合法 JSON；即使 `content` 与 `text` 异值，也可分别按原顺序无损还原。
+- 本次分块协议标识为 `semantic-turn-fragments-v1`，reader 协议标识为 `session-turn-window-v1`；manifest/resume identity 同时记录分块 target/overlap。它们与 43bb3ae 的 hard-split 结果不可混合，旧缓存或缺少协议身份的旧 resume 报告会被拒绝，需重新生成。
+- `stored_claims_per_event` 使用 `claims` 表实际物理行数，不使用 `store_extracted()` 的 `status="stored"` 返回次数。0.82 仅是相邻复述诊断的词法阈值，不是生产 semantic/cosine dedup 阈值。
+- `--skip-ingest` 会从缓存数据库重算物理 claim 指标；resume case 缺少这些字段时，读取阶段显式写入 `unavailable_legacy_resume` 和空值而不推测历史数值；若报告还缺少当前协议身份，后续 resume 校验会拒绝整份报告。

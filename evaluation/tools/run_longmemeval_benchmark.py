@@ -37,6 +37,7 @@ from evaluation.tools.longmemeval.judge import (  # noqa: E402, F401
     judge_longmemeval_answer as _judge_longmemeval_answer_impl,
     longmemeval_judge_prompts as _longmemeval_judge_prompts,
 )
+from evaluation.tools.longmemeval.extraction_fragments import fragment_turn_content  # noqa: E402
 from evaluation.tools.longmemeval.qa_client import (  # noqa: E402, F401
     qa_call_with_retry,
     qa_dashscope_chat as _qa_dashscope_chat,
@@ -82,6 +83,10 @@ from evaluation.tools.run_embedding_ablation import (  # noqa: E402, F401
     EmbeddingConfig,
     embed_remote,
 )
+from evaluation.tools.http_diagnostics import (  # noqa: E402, F401
+    evaluation_http_error_diagnostics as _evaluation_http_error_diagnostics,
+    sanitize_diagnostic_text,
+)
 from hl_mem import __version__  # noqa: E402, F401
 from hl_mem.application.context_packet import estimate_tokens  # noqa: E402, F401
 from hl_mem.application.ingest import IngestService  # noqa: E402, F401
@@ -100,7 +105,6 @@ from hl_mem.http_utils import (  # noqa: E402, F401
     exception_chain as _exception_chain,
     find_http_exception,
     find_http_status_error as _find_http_status_error,
-    http_error_diagnostics as _http_error_diagnostics,
     retry_after_seconds as _retry_after_seconds,
 )
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402, F401
@@ -122,6 +126,9 @@ DEFAULT_ENV_FILE = ROOT / ".env"
 QA_MAX_ATTEMPTS = 3
 DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
+EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "semantic-turn-fragments-v1"
+READER_CONTEXT_PROTOCOL_VERSION = "session-turn-window-v1"
+CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
@@ -291,7 +298,7 @@ class ConfigCompareEmbedder:
         return self._embed("query", texts)
 
     def cost_snapshot(self) -> dict[str, int | float]:
-        return self.cost.as_dict()
+        return cast(dict[str, int | float], self.cost.as_dict())
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -632,7 +639,12 @@ def _evaluation_eligibility(case: LongMemEvalCase) -> dict[str, Any]:
         gold_times = [datetime.fromisoformat(session.occurred_at.replace("Z", "+00:00")) for session in gold_sessions]
     except (TypeError, ValueError):
         return eligible
-    if gold_times and all(item > question_at and item.date() == question_at.date() for item in gold_times):
+    if question_at.tzinfo is None:
+        question_at = question_at.replace(tzinfo=timezone.utc)
+    gold_times = [item if item.tzinfo is not None else item.replace(tzinfo=timezone.utc) for item in gold_times]
+    if gold_times and all(
+        item > question_at and item.astimezone(question_at.tzinfo).date() == question_at.date() for item in gold_times
+    ):
         return {
             "status": "invalid_ambiguous",
             "temporal_gate_eligible": False,
@@ -1241,6 +1253,9 @@ def _manifest_identity(
         "session_count": len(case.sessions),
         "event_model_version": BENCHMARK_EVENT_MODEL_VERSION,
         "extractor_version": LLM_EXTRACTOR_VERSION,
+        "extraction_fragment_protocol": EXTRACTION_FRAGMENT_PROTOCOL_VERSION,
+        "extraction_chunk_target_chars": settings.extraction_chunk_target_chars,
+        "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
         **{key: value for key, value in llm_identity.items() if key != "query_expansion_model"},
         "embedding_model": settings.embedding_model,
         "embedding_dim": settings.embedding_dim,
@@ -1282,17 +1297,21 @@ def _turn_content(session: SessionInput, turn_index: int, message: Mapping[str, 
     }
 
 
-def _claim_inflation_diagnostics(connection: Any, stats: Mapping[str, int]) -> dict[str, Any]:
+def _claim_inflation_diagnostics(connection: Any, stats: Mapping[str, Any]) -> dict[str, Any]:
     """Measure claim density and lexical adjacent-turn restatement candidates."""
 
-    def ratio(numerator: int, denominator: int) -> float | None:
-        return round(numerator / denominator, 6) if denominator else None
+    def ratio(numerator: int | None, denominator: int) -> float | None:
+        return round(numerator / denominator, 6) if numerator is not None and denominator else None
+
+    stored_row = connection.execute("SELECT COUNT(*) FROM claims").fetchone()
+    stored = int(stored_row[0]) if stored_row is not None else 0
 
     rows = connection.execute(
         "SELECT c.id,c.subject_entity_id,c.canonical_attribute,c.index_text,"
         "e.session_id,e.content_json FROM claims c "
         "JOIN evidence_links l ON l.derived_type='claim' AND l.derived_id=c.id AND l.evidence_type='event' "
         "JOIN events e ON e.id=l.evidence_id "
+        "WHERE c.status IN ('active','candidate','disputed') "
         "ORDER BY c.id,e.id"
     ).fetchall()
     claims: dict[str, dict[str, Any]] = {}
@@ -1343,22 +1362,58 @@ def _claim_inflation_diagnostics(connection: Any, stats: Mapping[str, int]) -> d
                         right["text"],
                         autojunk=False,
                     ).ratio()
-                    >= 0.82
+                    >= CLAIM_RESTATEMENT_LEXICAL_THRESHOLD
                 ):
-                    adjacent_pairs.add(tuple(sorted((left_id, right_id))))
+                    adjacent_pairs.add((min(left_id, right_id), max(left_id, right_id)))
 
     events = int(stats.get("events", 0))
     sessions = int(stats.get("sessions", 0))
-    extracted = int(stats.get("extracted_claims", 0))
-    stored = int(stats.get("stored_claims", 0))
+    raw_extracted = stats.get("extracted_claims")
+    extracted = int(raw_extracted) if isinstance(raw_extracted, int) and not isinstance(raw_extracted, bool) else None
     return {
+        "claim_inflation_diagnostics_status": "computed",
+        "stored_claims": stored,
         "extracted_claims_per_event": ratio(extracted, events),
         "stored_claims_per_event": ratio(stored, events),
         "stored_claims_per_session": ratio(stored, sessions),
         "adjacent_restatement_candidates": len(adjacent_pairs),
         "adjacent_restatement_definition": (
-            "same subject and canonical_attribute, adjacent session turns, lexical similarity >= 0.82; diagnostic only"
+            "same subject and canonical_attribute, adjacent session turns, "
+            f"diagnostic lexical threshold >= {CLAIM_RESTATEMENT_LEXICAL_THRESHOLD:g}; "
+            "not the production semantic/cosine dedup threshold"
         ),
+    }
+
+
+def _claim_diagnostic_defaults(status: str) -> dict[str, Any]:
+    return {
+        "claim_inflation_diagnostics_status": status,
+        "stored_claims": None,
+        "extracted_claims_per_event": None,
+        "stored_claims_per_event": None,
+        "stored_claims_per_session": None,
+        "adjacent_restatement_candidates": None,
+        "adjacent_restatement_definition": None,
+    }
+
+
+def _cached_ingest_diagnostics(
+    connection: Any,
+    case: LongMemEvalCase,
+    manifest_reference: str,
+) -> dict[str, Any]:
+    stats: dict[str, Any] = {
+        "sessions": len(case.sessions),
+        "events": sum(len(session.messages) for session in case.sessions),
+        "extracted_claims": None,
+    }
+    diagnostics = _claim_inflation_diagnostics(connection, stats)
+    diagnostics["claim_inflation_diagnostics_status"] = "computed_from_cache"
+    return {
+        "skipped": True,
+        "cache_manifest": manifest_reference,
+        **stats,
+        **diagnostics,
     }
 
 
@@ -1377,11 +1432,11 @@ def _ingest_case(
         require_real=True,
         connection=connection,
     )
-    stats = {
+    stats: dict[str, Any] = {
         "sessions": len(case.sessions),
         "events": sum(len(session.messages) for session in case.sessions),
         "extracted_claims": 0,
-        "stored_claims": 0,
+        "accepted_claim_writes": 0,
         "skipped_claims": 0,
         "input_tokens": 0,
         "output_tokens": 0,
@@ -1404,21 +1459,30 @@ def _ingest_case(
                 "source_uri": f"longmemeval:{case.case_id}:{session.session_id}:turn:{turn_index}",
             }
             service.ingest_event(event)
-            claims = extractor.extract(
+            extraction_context = {
+                "actor_type": role,
+                "source_role": role,
+                "event_type": "message",
+                "session_id": session.session_id,
+                "turn_index": turn_index,
+                "occurred_at": session.occurred_at,
+            }
+            fragments = fragment_turn_content(
                 content,
-                {
-                    "actor_type": role,
-                    "source_role": role,
-                    "event_type": "message",
-                    "session_id": session.session_id,
-                    "turn_index": turn_index,
-                    "occurred_at": session.occurred_at,
-                },
+                target_chars=settings.extraction_chunk_target_chars,
+                previous_turns=session.messages[:turn_index],
+                overlap_turns=settings.extraction_chunk_overlap_turns,
             )
+            claims = []
+            for fragment in fragments:
+                fragment_context = dict(extraction_context)
+                if len(fragments) > 1:
+                    fragment_context["extraction_continuity"] = fragment.continuity
+                claims.extend(extractor.extract(fragment.content, fragment_context))
+                stats["input_tokens"] += int(getattr(extractor, "last_input_tokens", 0))
+                stats["output_tokens"] += int(getattr(extractor, "last_output_tokens", 0))
+                stats["total_tokens"] += int(getattr(extractor, "last_usage_tokens", 0))
             stats["extracted_claims"] += len(claims)
-            stats["input_tokens"] += int(getattr(extractor, "last_input_tokens", 0))
-            stats["output_tokens"] += int(getattr(extractor, "last_output_tokens", 0))
-            stats["total_tokens"] += int(getattr(extractor, "last_usage_tokens", 0))
             now = datetime.now(timezone.utc).isoformat()
             for claim in claims:
                 stored = IngestService.store_extracted(
@@ -1434,7 +1498,7 @@ def _ingest_case(
                 if stored.status == "skipped":
                     stats["skipped_claims"] += 1
                 else:
-                    stats["stored_claims"] += 1
+                    stats["accepted_claim_writes"] += 1
         if index == 1 or index % 10 == 0 or index == len(case.sessions):
             print(
                 f"[{case_number}/{total_hint}] {case.case_id}: ingest {index}/{len(case.sessions)} "
@@ -1539,7 +1603,7 @@ def _qa_call_with_retry(
     max_attempts: int = QA_MAX_ATTEMPTS,
 ) -> _T:
     """Retry one reader/judge call through the shared HTTP policy."""
-    return qa_call_with_retry(call, max_attempts=max_attempts, sleep=time.sleep)
+    return cast(_T, qa_call_with_retry(call, max_attempts=max_attempts, sleep=time.sleep))
 
 
 def _case_error_type(error: BaseException) -> str:
@@ -1584,7 +1648,7 @@ def _result_error_type(result: Mapping[str, Any]) -> str | None:
 
 
 def _qa_model(settings: Settings) -> str:
-    return qa_model(settings.llm_model)
+    return str(qa_model(settings.llm_model))
 
 
 def _component_llm_settings(settings: Settings) -> Settings:
@@ -1621,29 +1685,35 @@ def _judge_longmemeval_answer(
         *,
         temperature: float = 0.1,
     ) -> tuple[str, int]:
-        return _qa_dashscope_chat(
-            chat_api_key,
-            chat_base_url,
-            chat_model,
-            system_prompt,
-            user_prompt,
-            temperature=temperature,
-            enable_thinking=False,
-            json_object=True,
+        return cast(
+            tuple[str, int],
+            _qa_dashscope_chat(
+                chat_api_key,
+                chat_base_url,
+                chat_model,
+                system_prompt,
+                user_prompt,
+                temperature=temperature,
+                enable_thinking=False,
+                json_object=True,
+            ),
         )
 
-    return _judge_longmemeval_answer_impl(
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        case_id=case_id,
-        question_type=question_type,
-        question=question,
-        answer=answer,
-        predicted_answer=predicted_answer,
-        call_with_retry=_qa_call_with_retry,
-        chat=judge_chat,
-        decode_response=_response_object,
+    return cast(
+        tuple[dict[str, Any], int],
+        _judge_longmemeval_answer_impl(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            case_id=case_id,
+            question_type=question_type,
+            question=question,
+            answer=answer,
+            predicted_answer=predicted_answer,
+            call_with_retry=_qa_call_with_retry,
+            chat=judge_chat,
+            decode_response=_response_object,
+        ),
     )
 
 
@@ -1698,7 +1768,9 @@ def _run_qa(
         raise RuntimeError("QA answering requires LLM_API_KEY in .env or environment")
 
     reader_system_prompt = _reader_system_prompt(case)
-    reader_user_prompt = _build_reader_user_prompt(connection, case, retrieved, context_mode=reader_context_mode)
+    reader_user_prompt = _build_reader_user_prompt(
+        connection, cast(Any, case), retrieved, context_mode=reader_context_mode
+    )
     reader_text, reader_tokens = _qa_call_with_retry(
         lambda: _qa_dashscope_chat(
             api_key,
@@ -1773,13 +1845,23 @@ def _run_case(
             if not database_path.is_file():
                 raise FileNotFoundError(f"--skip-ingest requires cached database: {database_path}")
             _validate_manifest(manifest_path, case, settings)
-            result["ingest"] = {"skipped": True, "cache_manifest": str(manifest_path.relative_to(ROOT))}
+            result["ingest"] = {
+                "skipped": True,
+                "cache_manifest": str(manifest_path.relative_to(ROOT)),
+                **_claim_diagnostic_defaults("unavailable_cache_open_failed"),
+            }
         else:
             _remove_case_artifacts(database_path, manifest_path)
 
         database = Database(database_path, settings=settings)
         connection = database.open()
-        if not skip_ingest:
+        if skip_ingest:
+            result["ingest"] = _cached_ingest_diagnostics(
+                connection,
+                case,
+                str(manifest_path.relative_to(ROOT)),
+            )
+        else:
             result["ingest"] = _ingest_case(
                 connection,
                 case,
@@ -1811,11 +1893,15 @@ def _run_case(
                 reader_context_mode=reader_context_mode,
             )
     except Exception as error:
-        result["error"] = f"{type(error).__name__}: {error}"
+        diagnostic_secrets = _http_diagnostic_secrets(settings)
+        result["error"] = sanitize_diagnostic_text(
+            f"{type(error).__name__}: {error}",
+            secrets=diagnostic_secrets,
+        )
         result["error_type"] = _case_error_type(error)
-        result["error_diagnostics"] = _http_error_diagnostics(
+        result["error_diagnostics"] = _evaluation_http_error_diagnostics(
             error,
-            secrets=_http_diagnostic_secrets(settings),
+            secrets=diagnostic_secrets,
         )
     finally:
         if database is not None:
@@ -1973,11 +2059,15 @@ def _config_case_result(
             relevance_by_claim_id=base["relevance_by_claim_id"],
         )
     except Exception as error:
-        result["error"] = f"{type(error).__name__}: {error}"
+        diagnostic_secrets = _http_diagnostic_secrets(settings)
+        result["error"] = sanitize_diagnostic_text(
+            f"{type(error).__name__}: {error}",
+            secrets=diagnostic_secrets,
+        )
         result["error_type"] = _case_error_type(error)
-        result["error_diagnostics"] = _http_error_diagnostics(
+        result["error_diagnostics"] = _evaluation_http_error_diagnostics(
             error,
-            secrets=_http_diagnostic_secrets(settings),
+            secrets=diagnostic_secrets,
         )
     finally:
         if database is not None:
@@ -2040,6 +2130,10 @@ def _config_compare_report(
             "clean": args.clean,
             "extractor": settings.llm_model,
             "extractor_version": LLM_EXTRACTOR_VERSION,
+            "event_model_version": BENCHMARK_EVENT_MODEL_VERSION,
+            "extraction_fragment_protocol": EXTRACTION_FRAGMENT_PROTOCOL_VERSION,
+            "extraction_chunk_target_chars": settings.extraction_chunk_target_chars,
+            "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
             "relevance_scorer": _relevance_scorer_metadata(),
             "relevance_threshold": CLAIM_RELEVANCE_THRESHOLD,
             "primary_metric_relevance": (
@@ -2253,6 +2347,10 @@ def _report(
                 "extractor_structured_mode": llm_identity["extractor_structured_mode"],
                 "extractor_thinking": llm_identity["extractor_thinking"],
                 "extractor_version": LLM_EXTRACTOR_VERSION,
+                "extraction_fragment_protocol": EXTRACTION_FRAGMENT_PROTOCOL_VERSION,
+                "extraction_chunk_target_chars": settings.extraction_chunk_target_chars,
+                "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
+                "reader_context_protocol": READER_CONTEXT_PROTOCOL_VERSION,
                 "query_expansion_model": llm_identity["query_expansion_model"],
                 "embedder": settings.embedding_model,
                 "embedding_dim": settings.embedding_dim,
@@ -2280,6 +2378,25 @@ def _report(
     return report
 
 
+def _resume_case_with_claim_diagnostic_defaults(raw_case: Mapping[str, Any]) -> dict[str, Any]:
+    case = dict(raw_case)
+    raw_ingest = case.get("ingest")
+    if not isinstance(raw_ingest, Mapping):
+        return case
+    ingest = dict(raw_ingest)
+    defaults = _claim_diagnostic_defaults("unavailable_legacy_resume")
+    diagnostic_fields = tuple(field for field in defaults if field != "claim_inflation_diagnostics_status")
+    if all(field in ingest for field in diagnostic_fields):
+        ingest.setdefault("claim_inflation_diagnostics_status", "computed_legacy_resume")
+    else:
+        # Legacy reports can contain the old write-result-based ratios.  If the
+        # complete physical-row diagnostic is absent, do not preserve or infer
+        # any member of that metric family.
+        ingest = {**ingest, **defaults}
+    case["ingest"] = ingest
+    return case
+
+
 def _load_resume_report(path: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     if not path.is_file():
         return None, []
@@ -2302,7 +2419,7 @@ def _load_resume_report(path: Path) -> tuple[dict[str, Any] | None, list[dict[st
         if case_id in case_ids:
             raise ValueError(f"resume output contains duplicate case_id {case_id!r}: {path}")
         case_ids.add(case_id)
-        cases.append(dict(raw_case))
+        cases.append(_resume_case_with_claim_diagnostic_defaults(raw_case))
     return payload, cases
 
 
@@ -2321,6 +2438,10 @@ def _resume_model_identity(report: Mapping[str, Any]) -> dict[str, Any]:
         "extractor_structured_mode",
         "extractor_thinking",
         "extractor_version",
+        "extraction_fragment_protocol",
+        "extraction_chunk_target_chars",
+        "extraction_chunk_overlap_turns",
+        "reader_context_protocol",
         "query_expansion_model",
         "embedder",
         "embedding_dim",
@@ -2359,6 +2480,10 @@ def _validate_resume_report(
         "extractor_structured_mode": llm_identity["extractor_structured_mode"],
         "extractor_thinking": llm_identity["extractor_thinking"],
         "extractor_version": LLM_EXTRACTOR_VERSION,
+        "extraction_fragment_protocol": EXTRACTION_FRAGMENT_PROTOCOL_VERSION,
+        "extraction_chunk_target_chars": settings.extraction_chunk_target_chars,
+        "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
+        "reader_context_protocol": READER_CONTEXT_PROTOCOL_VERSION,
         "query_expansion_model": llm_identity["query_expansion_model"],
         "embedder": settings.embedding_model,
         "embedding_dim": settings.embedding_dim,

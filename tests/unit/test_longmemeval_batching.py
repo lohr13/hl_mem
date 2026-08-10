@@ -76,6 +76,10 @@ def _shard_report(
                 "extractor_structured_mode": "json_object",
                 "extractor_thinking": False,
                 "extractor_version": runner.LLM_EXTRACTOR_VERSION,
+                "extraction_fragment_protocol": runner.EXTRACTION_FRAGMENT_PROTOCOL_VERSION,
+                "extraction_chunk_target_chars": 12_000,
+                "extraction_chunk_overlap_turns": 2,
+                "reader_context_protocol": runner.READER_CONTEXT_PROTOCOL_VERSION,
                 "query_expansion_model": "qwen3.7-plus",
                 "embedder": "qwen3.7-text-embedding",
                 "embedding_dim": 2048,
@@ -91,6 +95,44 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
+    def test_resume_defaults_missing_claim_inflation_metrics_without_inventing_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "legacy.json"
+            output.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmark": "LongMemEval-S",
+                        "cases": [
+                            {
+                                "case_id": "legacy",
+                                "ingest": {
+                                    "sessions": 1,
+                                    "events": 2,
+                                    "extracted_claims_per_event": 3.0,
+                                    "stored_claims_per_event": 2.0,
+                                    "stored_claims_per_session": 4.0,
+                                    "adjacent_restatement_candidates": 7,
+                                    "adjacent_restatement_definition": "legacy write-result metric",
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            _, cases = runner._load_resume_report(output)
+
+        ingest = cases[0]["ingest"]
+        self.assertEqual(ingest["claim_inflation_diagnostics_status"], "unavailable_legacy_resume")
+        self.assertIsNone(ingest["stored_claims"])
+        self.assertIsNone(ingest["extracted_claims_per_event"])
+        self.assertIsNone(ingest["stored_claims_per_event"])
+        self.assertIsNone(ingest["stored_claims_per_session"])
+        self.assertIsNone(ingest["adjacent_restatement_candidates"])
+        self.assertIsNone(ingest["adjacent_restatement_definition"])
+
     def test_assistant_raw_fallback_has_narrow_trigger(self) -> None:
         assistant_record = _record("case-assistant-trigger")
         assistant_record["question_type"] = "single-session-assistant"
@@ -549,28 +591,37 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         opaque_secret = "provider-secret-without-standard-prefix"
         request = httpx.Request("POST", "https://example.test/chat/completions")
         response = httpx.Response(
-            400,
+            429,
             request=request,
-            headers={"x-request-id": "header-request-id"},
             json={
                 "error": {
-                    "code": "DataInspectionFailed",
+                    "code": "RateLimitExceeded",
                     "message": (
-                        "api_key=sk-secret123456 Authorization: Bearer token-value "
+                        'api_key="sk-secret123456" Authorization: Bearer token-value '
                         f"opaque_token={opaque_secret} " + "x" * 600
                     ),
                 },
+                "Access_Token": "access-value",
+                "PASSWORD": "password-value",
+                "token": "generic-token-value",
                 "request_id": "body-request-id",
             },
         )
-        status_error = httpx.HTTPStatusError("bad request", request=request, response=response)
+        status_error = httpx.HTTPStatusError(
+            'rate limited password="error-password" token=error-token sk-error123456',
+            request=request,
+            response=response,
+        )
 
         class FailingDatabase:
             def __init__(self, *_args: object, **_kwargs: object) -> None:
                 pass
 
             def open(self) -> object:
-                raise RuntimeError("wrapped extraction failure") from status_error
+                raise RuntimeError(
+                    'wrapped extraction failure password="error password secret" '
+                    'token="error token secret" sk-error123456'
+                ) from status_error
 
             def close(self) -> None:
                 pass
@@ -592,13 +643,51 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             )
 
         diagnostics = result["error_diagnostics"]
-        self.assertEqual(diagnostics["http_status"], 400)
-        self.assertEqual(diagnostics["provider_code"], "DataInspectionFailed")
-        self.assertEqual(diagnostics["request_id"], "header-request-id")
+        self.assertEqual(diagnostics["http_status"], 429)
+        self.assertEqual(diagnostics["provider_code"], "RateLimitExceeded")
+        self.assertEqual(diagnostics["request_id"], "body-request-id")
         self.assertLessEqual(len(diagnostics["response_body"]), 500)
-        self.assertNotIn("secret123456", diagnostics["response_body"])
-        self.assertNotIn("token-value", diagnostics["response_body"])
-        self.assertNotIn(opaque_secret, diagnostics["response_body"])
+        for secret in (
+            "secret123456",
+            "token-value",
+            opaque_secret,
+            "access-value",
+            "password-value",
+            "generic-token-value",
+            "error password secret",
+            "password secret",
+            "error token secret",
+            "token secret",
+            "error123456",
+        ):
+            self.assertNotIn(secret, diagnostics["response_body"])
+            self.assertNotIn(secret, result["error"])
+
+    def test_http_diagnostics_sanitizes_non_json_response_body(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        response = httpx.Response(
+            400,
+            request=request,
+            text=(
+                "PASSWORD='plain password secret' token=\"plain token secret\" "
+                "access-token: access-token-value credential=credential-value sk-live12345678"
+            ),
+        )
+        error = httpx.HTTPStatusError("bad request", request=request, response=response)
+
+        diagnostics = runner._evaluation_http_error_diagnostics(error)
+
+        self.assertEqual(diagnostics["http_status"], 400)
+        for secret in (
+            "plain password secret",
+            "password secret",
+            "plain token secret",
+            "token secret",
+            "access-token-value",
+            "credential-value",
+            "live12345678",
+        ):
+            self.assertNotIn(secret, diagnostics["response_body"])
 
     def test_qa_retry_stops_after_the_configured_timeout_attempts(self) -> None:
         request = httpx.Request("POST", "https://example.test/chat/completions")
@@ -1254,6 +1343,27 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "reader_context_mode"):
                 runner._validate_resume_report(report, args, settings)
 
+    def test_resume_rejects_report_without_fragment_protocol_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.json"
+            dataset.write_text(json.dumps([_record("case-1")]), encoding="utf-8")
+            dataset_sha256 = hashlib.sha256(dataset.read_bytes()).hexdigest()
+            report = _shard_report(dataset_sha256, [_case_result("case-1")])
+            del report["run"]["models"]["extraction_fragment_protocol"]  # type: ignore[index]
+            args = runner.parse_args(["--dataset", str(dataset), "--resume"])
+            args.dataset_sha256 = dataset_sha256
+            settings = Settings(
+                llm_model="qwen3.7-plus",
+                llm_provider="dashscope",
+                embedding_model="qwen3.7-text-embedding",
+                embedding_dim=2048,
+                embedding_api_mode="native",
+                embedding_text_type=None,
+            )
+
+            with self.assertRaisesRegex(ValueError, "extraction_fragment_protocol"):
+                runner._validate_resume_report(report, args, settings)
+
     def test_resume_rejects_llm_payload_or_query_expansion_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "dataset.json"
@@ -1391,6 +1501,19 @@ class LongMemEvalMergeTests(unittest.TestCase):
             first = _shard_report(dataset_sha256, [_case_result("case-1")])
             second = _shard_report(dataset_sha256, [_case_result("case-2")])
             second["run"]["models"]["embedder"] = "different-model"  # type: ignore[index]
+            (root / "shard-a.json").write_text(json.dumps(first), encoding="utf-8")
+            (root / "shard-b.json").write_text(json.dumps(second), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "configuration mismatch"):
+                merger.merge_reports(input_dir=root, pattern="shard-*.json", dataset=dataset)
+
+    def test_merge_rejects_mixed_fragment_protocols(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset, dataset_sha256 = self._write_dataset(root)
+            first = _shard_report(dataset_sha256, [_case_result("case-1")])
+            second = _shard_report(dataset_sha256, [_case_result("case-2")])
+            second["run"]["models"]["extraction_fragment_protocol"] = "hard-split-v0"  # type: ignore[index]
             (root / "shard-a.json").write_text(json.dumps(first), encoding="utf-8")
             (root / "shard-b.json").write_text(json.dumps(second), encoding="utf-8")
 
