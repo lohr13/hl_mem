@@ -127,7 +127,7 @@ QA_MAX_ATTEMPTS = 3
 DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
 EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "semantic-turn-fragments-v1"
-READER_CONTEXT_PROTOCOL_VERSION = "session-turn-window-v1"
+READER_CONTEXT_PROTOCOL_VERSION = "session-turn-window-v2"
 CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
 JSON_READ_CHARS = 1024 * 1024
@@ -1731,7 +1731,7 @@ def _reader_system_prompt(case: LongMemEvalCase) -> str:
         "You answer questions from retrieved long-term-memory claims and their original evidence events. "
         "Before answering, perform a private Chain-of-Note pass over every relevant record: (1) note each candidate "
         "answer and its exact relation to the question; (2) label whether it was planned or intended, attempted, "
-        "or actually executed; (3) use occurred, valid, and recorded times plus Current Date to resolve updates; "
+        "or actually executed; (3) use occurred and valid times plus Current Date to resolve updates; "
         "and (4) compare the candidates and synthesize only the one whose relation and state answer the question. "
         "Do not expose these private notes. Keep audition distinct from participation in a production; keep location, "
         "travel duration, and distance distinct; and never treat a plan as completed execution. Related distractors "

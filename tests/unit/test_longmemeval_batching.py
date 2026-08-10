@@ -220,6 +220,8 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["event_id"], target_event_id)
         self.assertEqual(events[0]["retrieval_source"], "assistant_raw_fallback")
+        self.assertIn("occurred_at", events[0])
+        self.assertNotIn("recorded_at", events[0])
         self.assertIn("7. Transcriptionist", events[0]["content"])
         self.assertNotIn("Secret cross-tenant answer", prompt)
         self.assertLessEqual(
@@ -234,6 +236,8 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         prompt = runner._reader_system_prompt(case)
 
         self.assertIn("Do not invent missing proper nouns", prompt)
+        self.assertIn("use occurred and valid times plus Current Date", prompt)
+        self.assertNotIn("recorded", prompt.casefold())
         self.assertNotIn("synthesize a recommendation", prompt)
 
     def test_reader_prompt_allows_grounded_preference_recommendation_synthesis(self) -> None:
@@ -745,7 +749,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
 
         self.assertIsInstance(raised.exception.__cause__, httpx.ReadTimeout)
 
-    def test_reader_context_includes_claim_times_and_original_event_source(self) -> None:
+    def test_reader_context_excludes_ingest_times_but_keeps_benchmark_times_and_source(self) -> None:
         case = runner.normalize_case(_record("case-context"))
         event_id = case.sessions[0].event_id
         connection = sqlite3.connect(":memory:")
@@ -766,7 +770,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
                     }
                 ),
                 "2023-05-20T02:21:00+00:00",
-                "2023-05-20T02:22:00+00:00",
+                "2026-08-10T02:22:00+00:00",
                 "message",
                 "user",
                 "longmemeval://case-context/session-case-context",
@@ -785,15 +789,23 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
                     "status": "active",
                     "valid_from": "2023-05-20T02:21:00+00:00",
                     "valid_to": None,
-                    "recorded_from": "2023-05-20T02:22:00+00:00",
-                    "recorded_to": None,
+                    "recorded_from": "2026-08-10T02:22:00+00:00",
+                    "recorded_to": "2026-08-11T02:22:00+00:00",
                     "evidence_event_ids": [event_id],
                 }
             ],
         )
 
+        claims_json = prompt.split("Memory Claims:\n", 1)[1].split("\n\nOriginal Evidence Events:", 1)[0]
+        claims = json.loads(claims_json)
+        events_json = prompt.split("Original Evidence Events:\n", 1)[1].split("\n\nQuestion:", 1)[0]
+        events = json.loads(events_json)
         self.assertIn("Current Date: 2023-05-30T23:40:00+00:00", prompt)
-        self.assertIn('"valid_from":"2023-05-20T02:21:00+00:00"', prompt)
+        self.assertEqual(claims[0]["valid_from"], "2023-05-20T02:21:00+00:00")
+        self.assertNotIn("recorded_from", claims[0])
+        self.assertNotIn("recorded_to", claims[0])
+        self.assertEqual(events[0]["occurred_at"], "2023-05-20T02:21:00+00:00")
+        self.assertNotIn("recorded_at", events[0])
         self.assertIn("I bought the blue bicycle at Riverside Cycles", prompt)
         self.assertIn('"session_id":"session-case-context"', prompt)
         self.assertIn('"source_uri":"longmemeval://case-context/session-case-context"', prompt)
@@ -1384,6 +1396,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
                 "extractor_base_url": "https://example.com/v1",
                 "extractor_structured_mode": "json_schema",
                 "extractor_thinking": True,
+                "reader_context_protocol": "session-turn-window-v1",
                 "query_expansion_model": "different-expander",
             }
 
