@@ -227,6 +227,48 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
         self.assertEqual([claim["id"] for claim in folded], ["high"])
         self.assertEqual(folded[0]["_equivalent_claim_ids"], ["low"])
 
+    def test_fold_dynamically_collapses_safe_cross_subject_near_copy(self) -> None:
+        vector = pack_vector([1.0, 0.0])
+        base = {
+            "namespace_key": "default",
+            "predicate": "fact",
+            "canonical_attribute": "fact.other",
+            "canonical_slot": None,
+            "qualifiers": {},
+            "status": "active",
+            "valid_from": "2026-01-01T00:00:00+00:00",
+            "valid_to": None,
+            "embedding_dense": vector,
+        }
+        claims = [
+            {
+                **base,
+                "id": "high",
+                "subject_entity_id": "user",
+                "value": "User's tank is 20 gallons",
+                "_score": 0.9,
+            },
+            {
+                **base,
+                "id": "low",
+                "subject_entity_id": "user's tank",
+                "value": "The user's tank size is 20 gallons.",
+                "_score": 0.8,
+            },
+            {
+                **base,
+                "id": "different-number",
+                "subject_entity_id": "user's other tank",
+                "value": "The user's tank size is 30 gallons.",
+                "_score": 0.7,
+            },
+        ]
+
+        folded = fold_similar_claims(claims, 0.95)
+
+        self.assertEqual([claim["id"] for claim in folded], ["high", "different-number"])
+        self.assertEqual(folded[0]["_equivalent_claim_ids"], ["low"])
+
     def test_recall_loads_only_deterministically_confirmed_equivalent_pairs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = Database(Path(directory) / "equivalent-pairs.db").open()

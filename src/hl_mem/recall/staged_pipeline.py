@@ -901,6 +901,7 @@ def fold_similar_claims(
     }
     kept: list[dict[str, Any]] = []
     kept_candidates: dict[tuple[Any, ...], list[tuple[dict[str, Any], tuple[float, ...]]]] = {}
+    kept_near_copy_candidates: list[tuple[dict[str, Any], tuple[float, ...]]] = []
     equivalent_representatives: dict[str, dict[str, Any]] = {}
     for claim in fold_candidates:
         claim_id = str(claim["id"])
@@ -912,6 +913,26 @@ def fold_similar_claims(
         equivalent_representatives[group_root] = claim
         bucket = _fold_bucket(claim)
         vector = decoded.get(claim_id)
+        near_copy_representative = None
+        if vector is not None:
+            near_copy_representative = next(
+                (
+                    retained_claim
+                    for retained_claim, retained_vector in kept_near_copy_candidates
+                    if is_safe_near_duplicate(
+                        claim,
+                        retained_claim,
+                        similarity=normalized_cosine_similarity(vector, retained_vector),
+                        semantic_threshold=threshold,
+                        allow_subject_mismatch=True,
+                    )
+                ),
+                None,
+            )
+        if near_copy_representative is not None:
+            _append_folded_claim(near_copy_representative, claim)
+            equivalent_representatives[group_root] = near_copy_representative
+            continue
         similar_representative = None
         if bucket is not None and vector is not None:
             similar_representative = next(
@@ -932,6 +953,8 @@ def fold_similar_claims(
         kept.append(claim)
         if bucket is not None and vector is not None:
             kept_candidates.setdefault(bucket, []).append((claim, vector))
+        if vector is not None:
+            kept_near_copy_candidates.append((claim, vector))
     kept.extend(untouched)
     original_order = {str(claim["id"]): index for index, claim in enumerate(claims)}
     return sorted(kept, key=lambda item: original_order[str(item["id"])])
