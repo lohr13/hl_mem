@@ -8,7 +8,7 @@ import sqlite3
 import time
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
 
 from hl_mem.core.vector import cosine_similarity
@@ -223,8 +223,9 @@ class IngestService:
         if not events_to_ingest:
             raise ValidationError("events must not be empty")
         timestamp = _now()
+        timestamp_value = datetime.fromisoformat(timestamp)
         prepared: list[tuple[dict[str, Any], dict[str, Any], str | None]] = []
-        for event in events_to_ingest:
+        for index, event in enumerate(events_to_ingest):
             key = event.get("idempotency_key")
             event_id = event.get("id") or new_id()
             content = event.get("content", {})
@@ -235,13 +236,14 @@ class IngestService:
                 for field, value in event.items()
                 if field not in {"content", "id", "namespace"} and not (field == "metadata" and value is None)
             }
+            recorded_at = (timestamp_value + timedelta(microseconds=index)).isoformat()
             stored_event.update(
                 id=event_id,
                 idempotency_key=key,
                 tenant_id=namespace,
                 content=content,
                 occurred_at=event.get("occurred_at") or timestamp,
-                recorded_at=timestamp,
+                recorded_at=recorded_at,
             )
             prepared.append((event, stored_event, key))
         results: list[dict[str, Any]] = []
@@ -274,7 +276,7 @@ class IngestService:
                         continue
                 created = repository.insert_event(stored_event, commit=False)
                 if created:
-                    self._queue_event(event_id, timestamp, commit=False)
+                    self._queue_event(event_id, str(stored_event["recorded_at"]), commit=False)
                 results.append({"id": event_id, "created": created})
             self.connection.commit()
         except Exception:

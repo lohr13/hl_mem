@@ -283,20 +283,36 @@ def test_batch_ingest_preserves_metadata_and_existing_job_contract(tmp_path) -> 
     payload = {
         "events": [
             {
-                "id": "u",
-                "idempotency_key": "turn:u",
+                "id": "u1",
+                "idempotency_key": "turn:u1",
                 "session_id": "s",
                 "actor_type": "user",
-                "metadata": {"turn_id": "turn-7"},
-                "content": {"text": "user"},
+                "metadata": {"turn_id": "turn-1"},
+                "content": {"text": "user one"},
             },
             {
-                "id": "a",
-                "idempotency_key": "turn:a",
+                "id": "a1",
+                "idempotency_key": "turn:a1",
                 "session_id": "s",
                 "actor_type": "assistant",
-                "metadata": {"turn_id": "turn-7"},
-                "content": {"text": "assistant"},
+                "metadata": {"turn_id": "turn-1"},
+                "content": {"text": "assistant one"},
+            },
+            {
+                "id": "u2",
+                "idempotency_key": "turn:u2",
+                "session_id": "s",
+                "actor_type": "user",
+                "metadata": {"turn_id": "turn-2"},
+                "content": {"text": "user two"},
+            },
+            {
+                "id": "a2",
+                "idempotency_key": "turn:a2",
+                "session_id": "s",
+                "actor_type": "assistant",
+                "metadata": {"turn_id": "turn-2"},
+                "content": {"text": "assistant two"},
             },
         ]
     }
@@ -304,16 +320,25 @@ def test_batch_ingest_preserves_metadata_and_existing_job_contract(tmp_path) -> 
         response = client.post("/v1/events/batch", json=payload)
 
     assert response.status_code == 200
-    assert response.json() == {"events": [{"id": "u", "created": True}, {"id": "a", "created": True}]}
+    assert response.json() == {
+        "events": [
+            {"id": "u1", "created": True},
+            {"id": "a1", "created": True},
+            {"id": "u2", "created": True},
+            {"id": "a2", "created": True},
+        ]
+    }
     connection = app.state.db.open()
-    rows = connection.execute("SELECT id,metadata_json FROM events ORDER BY id").fetchall()
+    rows = connection.execute("SELECT id,metadata_json FROM events ORDER BY recorded_at,id").fetchall()
     assert [(row["id"], json.loads(row["metadata_json"])["turn_id"]) for row in rows] == [
-        ("a", "turn-7"),
-        ("u", "turn-7"),
+        ("u1", "turn-1"),
+        ("a1", "turn-1"),
+        ("u2", "turn-2"),
+        ("a2", "turn-2"),
     ]
     jobs = connection.execute("SELECT job_type,payload_json FROM jobs ORDER BY id").fetchall()
     assert {row["job_type"] for row in jobs} == {"extract_event"}
-    assert {json.loads(row["payload_json"])["event_id"] for row in jobs} == {"u", "a"}
+    assert {json.loads(row["payload_json"])["event_id"] for row in jobs} == {"u1", "a1", "u2", "a2"}
 
     leased = JobRepository(connection).lease_job(
         _iso(300),
@@ -323,7 +348,7 @@ def test_batch_ingest_preserves_metadata_and_existing_job_contract(tmp_path) -> 
         force_extraction=True,
     )
     assert leased is not None
-    assert leased["payload"] == {"event_ids": ["u", "a"]}
+    assert leased["payload"] == {"event_ids": ["u1", "a1", "u2", "a2"]}
 
 
 def test_llm_claim_keeps_valid_source_event_indices() -> None:
