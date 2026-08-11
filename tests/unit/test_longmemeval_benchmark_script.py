@@ -211,7 +211,7 @@ class LongMemEvalModelConfigurationTests(unittest.TestCase):
 
         self.assertEqual(settings.llm_provider, "openai_compatible")
         self.assertEqual(settings.llm_base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.assertEqual(settings.llm_model, "deepseek-v4-flash")
+        self.assertEqual(settings.llm_model, "deepseek-v4-flash-0731")
         self.assertEqual(settings.llm_structured_mode, "json_object")
         self.assertFalse(settings.enable_llm_thinking)
         self.assertEqual(settings.query_expansion_model, "deepseek-v4-flash")
