@@ -95,6 +95,79 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
+    def test_retrieved_payload_persists_raw_ranking_observability(self) -> None:
+        case = runner.LongMemEvalCase(
+            case_id="trace-case",
+            question_type="multi-session",
+            question="What happened?",
+            answer="An answer",
+            question_at=None,
+            sessions=(),
+            gold_event_ids=(),
+            gold_session_ids=(),
+        )
+        results = [
+            {
+                "id": "claim-1",
+                "text": "user: an answer",
+                "value": "an answer",
+                "score": 0.73,
+                "score_path": "reranker_applied",
+                "reranker_raw_score": 0.81,
+                "features": {"semantic": 0.67, "recency": 0.4},
+                "evidence": [],
+            }
+        ]
+        search_trace = {
+            "candidates": {
+                "claim-1": {
+                    "channels": {"original:fts": 4, "original:dense": 2},
+                    "channel_scores": {"original:fts": -1.2, "original:dense": 0.67},
+                    "pre_rank": 3,
+                    "pre_score": 0.61,
+                    "rerank_rank": 1,
+                    "rerank_score": 0.81,
+                    "final_rank": 1,
+                    "included": True,
+                    "filter_reasons": [],
+                }
+            }
+        }
+
+        payload = runner._retrieved_payload(results, case, search_trace=search_trace)
+
+        self.assertEqual(
+            payload[0],
+            {
+                "rank": 1,
+                "final_rank": 1,
+                "recall_final_rank": 1,
+                "claim_id": "claim-1",
+                "text": "user: an answer",
+                "value": "an answer",
+                "score": 0.73,
+                "score_path": "reranker_applied",
+                "dense_score": 0.67,
+                "reranker_raw_score": 0.81,
+                "pre_rank": 3,
+                "pre_score": 0.61,
+                "reranker_rank": 1,
+                "features": {"semantic": 0.67, "recency": 0.4},
+                "channel_ranks": {"original:fts": 4, "original:dense": 2},
+                "channel_scores": {"original:fts": -1.2, "original:dense": 0.67},
+                "filter_reasons": [],
+                "status": None,
+                "valid_from": None,
+                "valid_to": None,
+                "recorded_from": None,
+                "recorded_to": None,
+                "occurred_start": None,
+                "occurred_end": None,
+                "evidence_event_ids": [],
+                "evidence_session_ids": [],
+            },
+        )
+
     def test_benchmark_worker_falls_back_per_event_on_data_inspection_failure(self) -> None:
         request = httpx.Request("POST", "https://example.test/chat/completions")
         response = httpx.Response(

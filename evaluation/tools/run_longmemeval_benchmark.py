@@ -1653,18 +1653,53 @@ def _ingest_case(
     return stats
 
 
-def _retrieved_payload(results: Sequence[Mapping[str, Any]], case: LongMemEvalCase) -> list[dict[str, Any]]:
+def _retrieved_payload(
+    results: Sequence[Mapping[str, Any]],
+    case: LongMemEvalCase,
+    *,
+    search_trace: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     event_to_session = _event_to_session(case)
+    raw_candidates = search_trace.get("candidates") if search_trace is not None else None
+    trace_candidates = raw_candidates if isinstance(raw_candidates, Mapping) else {}
     payload: list[dict[str, Any]] = []
     for rank, result in enumerate(results, start=1):
         evidence_ids = _result_evidence_ids(result)
+        claim_id = str(result.get("id"))
+        raw_candidate = trace_candidates.get(claim_id)
+        candidate = raw_candidate if isinstance(raw_candidate, Mapping) else {}
+        raw_channels = candidate.get("channels")
+        channel_ranks = dict(raw_channels) if isinstance(raw_channels, Mapping) else {}
+        raw_channel_scores = candidate.get("channel_scores")
+        channel_scores = dict(raw_channel_scores) if isinstance(raw_channel_scores, Mapping) else {}
+        dense_scores = [
+            float(score)
+            for channel, score in channel_scores.items()
+            if (channel == "dense" or str(channel).endswith(":dense")) and isinstance(score, (int, float))
+        ]
+        raw_features = result.get("features")
+        features = dict(raw_features) if isinstance(raw_features, Mapping) else {}
+        raw_filter_reasons = candidate.get("filter_reasons")
+        filter_reasons = list(raw_filter_reasons) if isinstance(raw_filter_reasons, list) else []
         payload.append(
             {
                 "rank": rank,
+                "final_rank": rank,
+                "recall_final_rank": candidate.get("final_rank"),
                 "claim_id": result.get("id"),
                 "text": result.get("text"),
                 "value": result.get("value"),
                 "score": result.get("score"),
+                "score_path": result.get("score_path"),
+                "dense_score": max(dense_scores) if dense_scores else None,
+                "reranker_raw_score": result.get("reranker_raw_score", candidate.get("rerank_score")),
+                "pre_rank": candidate.get("pre_rank"),
+                "pre_score": candidate.get("pre_score"),
+                "reranker_rank": candidate.get("rerank_rank"),
+                "features": features,
+                "channel_ranks": channel_ranks,
+                "channel_scores": channel_scores,
+                "filter_reasons": filter_reasons,
                 "status": result.get("status"),
                 "valid_from": result.get("valid_from"),
                 "valid_to": result.get("valid_to"),
@@ -1730,8 +1765,14 @@ def _recall_case(
     metrics.update(
         retrieved_claims=len(results),
         elapsed_seconds=round(time.perf_counter() - started, 3),
+        search_trace=response.get("search_trace"),
     )
-    return metrics, _retrieved_payload(results, case)
+    search_trace = response.get("search_trace")
+    return metrics, _retrieved_payload(
+        results,
+        case,
+        search_trace=search_trace if isinstance(search_trace, Mapping) else None,
+    )
 
 
 def _find_qa_timeout(error: BaseException) -> httpx.ReadTimeout | httpx.ConnectTimeout | None:
