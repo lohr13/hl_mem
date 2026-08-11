@@ -133,6 +133,9 @@ EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
 READER_CONTEXT_PROTOCOL_VERSION = "session-turn-window-v2"
 CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
+READER_EVIDENCE_LIMIT = max(RETRIEVAL_KS)
+_PRODUCTION_PREFERENCE_RESERVED = 3
+_EVALUATION_PREFERENCE_RESERVED = 1
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -666,6 +669,48 @@ def _longmemeval_recall_intent(case: LongMemEvalCase) -> RecallIntent:
     if "temporal" in question_type:
         return RecallIntent.HISTORICAL
     return RecallIntent.CURRENT_STATE
+
+
+def _reader_recall_limit(case: LongMemEvalCase) -> int:
+    if "preference" not in case.question_type.casefold():
+        return READER_EVIDENCE_LIMIT
+    return READER_EVIDENCE_LIMIT + _PRODUCTION_PREFERENCE_RESERVED - _EVALUATION_PREFERENCE_RESERVED
+
+
+def _result_score(result: Mapping[str, Any]) -> float:
+    try:
+        score = float(result.get("score") or 0.0)
+    except (TypeError, ValueError):
+        return float("-inf")
+    return score if score == score else float("-inf")
+
+
+def _is_preference_result(result: Mapping[str, Any]) -> bool:
+    return any(
+        str(result.get(field) or "").casefold().startswith("preference.")
+        for field in ("canonical_slot", "canonical_attribute")
+    )
+
+
+def _preference_first(
+    results: Sequence[dict[str, Any]],
+    limit: int,
+    case: LongMemEvalCase,
+) -> list[dict[str, Any]]:
+    if "preference" not in case.question_type.casefold():
+        return list(results[:limit])
+    globally_ranked = [
+        item
+        for _, item in sorted(
+            enumerate(results),
+            key=lambda pair: (-_result_score(pair[1]), pair[0]),
+        )
+    ]
+    preferred = next((item for item in globally_ranked if _is_preference_result(item)), None)
+    if preferred is None:
+        return globally_ranked[:limit]
+    remainder = [item for item in globally_ranked if item is not preferred]
+    return [preferred, *remainder][:limit]
 
 
 def _result_evidence_ids(result: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1570,7 +1615,7 @@ def _recall_case(
     started = time.perf_counter()
     response = service.recall(
         case.question,
-        limit=max(RETRIEVAL_KS),
+        limit=_reader_recall_limit(case),
         as_of=case.question_at,
         intent=_longmemeval_recall_intent(case),
         namespace=case.namespace,
@@ -1583,6 +1628,7 @@ def _recall_case(
     for result in results:
         claim_id = str(result.get("id"))
         result["value"] = claim_values.get(claim_id)
+    results = _preference_first(results, READER_EVIDENCE_LIMIT, case)
     if relevance_by_claim_id is None and case.answer.strip():
         scorer = relevance_embedder or embedder
         relevance_by_claim_id = _claim_relevance_scores(claim_values, case.answer, scorer)
