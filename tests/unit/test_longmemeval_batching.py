@@ -316,6 +316,8 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertNotIn("recorded", prompt.casefold())
         self.assertNotIn("synthesize a recommendation", prompt)
         self.assertNotIn("For count or sum questions", prompt)
+        self.assertIn("Count repeated phrasings of the same fact only once", prompt)
+        self.assertIn("number, date, weekday, entity, or qualifier differs", prompt)
 
     def test_reader_prompt_allows_grounded_preference_recommendation_synthesis(self) -> None:
         record = _record("case-preference-reader")
@@ -365,8 +367,9 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         preference_case = runner.normalize_case(preference_record)
         factual_case = runner.normalize_case(_record("case-factual-limit"))
 
-        self.assertEqual(runner._reader_recall_limit(preference_case), 12)
-        self.assertEqual(runner._reader_recall_limit(factual_case), 10)
+        self.assertEqual(runner.RETRIEVAL_KS, (1, 5, 10))
+        self.assertEqual(runner._reader_recall_limit(preference_case), 17)
+        self.assertEqual(runner._reader_recall_limit(factual_case), 15)
 
     def test_temporal_reader_selects_effective_baseline_before_offset(self) -> None:
         record = _record("case-temporal-reader")

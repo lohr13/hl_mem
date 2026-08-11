@@ -133,7 +133,7 @@ EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
 READER_CONTEXT_PROTOCOL_VERSION = "session-turn-window-v2"
 CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
-READER_EVIDENCE_LIMIT = max(RETRIEVAL_KS)
+READER_EVIDENCE_LIMIT = 15
 _PRODUCTION_PREFERENCE_RESERVED = 3
 _EVALUATION_PREFERENCE_RESERVED = 1
 JSON_READ_CHARS = 1024 * 1024
@@ -1797,7 +1797,9 @@ def _reader_system_prompt(case: LongMemEvalCase) -> str:
         "deterministic coreference resolution, simple arithmetic, comparisons, and date calculations. Do not invent "
         "missing proper nouns, amounts, places, dates, or counts. Say that the information is unavailable only after "
         "checking every claim and evidence event and finding them genuinely insufficient; do not abstain merely "
-        "because the wording differs. Return only the final answer, without analysis, private notes, or evidence ranks."
+        "because the wording differs. Count repeated phrasings of the same fact only once and prefer the most complete "
+        "version; never automatically merge records whose number, date, weekday, entity, or qualifier differs. Return "
+        "only the final answer, without analysis, private notes, or evidence ranks."
     )
     if _is_preference_recommendation(case):
         prompt += (
