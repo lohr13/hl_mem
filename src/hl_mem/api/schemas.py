@@ -107,6 +107,7 @@ class ClaimOutput(BaseModel):
     text: str
     score: float
     features: dict[str, float] = Field(default_factory=dict)
+    equivalent_claim_ids: list[str] = Field(default_factory=list)
     status: str | None = None
     confidence: float | None = None
     canonical_attribute: str | None = Field(

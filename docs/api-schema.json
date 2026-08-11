@@ -68,6 +68,13 @@
             ],
             "title": "Entities"
           },
+          "equivalent_claim_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Equivalent Claim Ids",
+            "type": "array"
+          },
           "evidence": {
             "items": {
               "additionalProperties": true,

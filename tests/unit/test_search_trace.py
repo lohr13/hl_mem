@@ -11,6 +11,7 @@ import pytest
 from hl_mem.application.recall import RecallService
 from hl_mem.ingest.embedder import FakeEmbedder, pack_vector
 from hl_mem.recall.recall_pipeline import hybrid_claims
+from hl_mem.recall.staged_pipeline import RecallConfig
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
@@ -22,6 +23,7 @@ def _claim(claim_id: str, *, status: str = "active") -> dict[str, object]:
         "id": claim_id,
         "subject_entity_id": "user",
         "predicate": "preference",
+        "value": "secret value",
         "value_json": '"secret value"',
         "embedding_dense": pack_vector([1.0]),
         "status": status,
@@ -101,12 +103,13 @@ def test_hybrid_claims_records_candidates_without_sensitive_text() -> None:
         None,
         now="2026-07-24T00:00:00+00:00",
         tracer=tracer,
+        recall_config=RecallConfig(dedup_threshold=0.95),
     )
     serialized = json.dumps(tracer.to_dict())
 
     assert [claim["id"] for claim in results] == ["first"]
     assert tracer.to_dict()["candidates"]["filtered"]["filter_reasons"] == ["status_filtered"]
-    assert tracer.to_dict()["candidates"]["last"]["filter_reasons"] == ["final_limit"]
+    assert tracer.to_dict()["candidates"]["last"]["filter_reasons"] == ["equivalent_folded"]
     assert tracer.to_dict()["phases"]["fusion_us"] >= 0
     assert "plaintext query" not in serialized
     assert "secret value" not in serialized

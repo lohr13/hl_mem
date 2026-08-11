@@ -824,6 +824,7 @@ class RecallService:
                 "score_path": str(claim.get("_score_path", "reranker_fallback")),
                 "reranker_raw_score": claim.get("_reranker_raw_score"),
                 "features": dict(claim.get("_features") or {}),
+                "equivalent_claim_ids": list(claim.get("_equivalent_claim_ids") or []),
                 "status": claim["status"],
                 "confidence": claim["confidence"],
                 "canonical_attribute": claim.get("canonical_attribute"),

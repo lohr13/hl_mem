@@ -703,6 +703,7 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
     tracer = ctx.tracer
     if tracer is not None:
         final_ids = {str(claim["id"]) for claim in final}
+        folded_alias_ids = {str(alias_id) for claim in folded for alias_id in claim.get("_equivalent_claim_ids") or []}
         if ctx.reranked:
             reranked_ids = {str(claim["id"]) for claim, _ in ctx.valid_reranked}
             for claim in ctx.ranked_claims:
@@ -711,7 +712,10 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
         for claim in ctx.ranked_claims:
             claim_id = str(claim["id"])
             if claim_id not in final_ids and claim_id in tracer.trace.candidates:
-                tracer.record_filter(claim_id, "final_limit")
+                tracer.record_filter(
+                    claim_id,
+                    "equivalent_folded" if claim_id in folded_alias_ids else "final_limit",
+                )
         tracer.record_final(final)
         tracer.trace.outcome = ctx.outcome
         tracer.trace.phases.total_us = (time.perf_counter_ns() - ctx.total_started) // 1000

@@ -121,6 +121,8 @@ class RecallScoreOutputTest(unittest.TestCase):
             {(item["type"], item["id"]) for item in result["evidence"]},
             {("event", "event-1"), ("event", "event-2")},
         )
+        self.assertEqual(result["equivalent_claim_ids"], ["alias"])
+        self.assertEqual(ClaimOutput.model_validate(result).equivalent_claim_ids, ["alias"])
 
 
 if __name__ == "__main__":
