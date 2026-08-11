@@ -206,49 +206,57 @@ def review_pending_near_duplicates(
     if limit < 1:
         raise ValueError("dedup review limit must be positive")
 
-    pending_rows = connection.execute(
-        "SELECT id,left_claim_id,right_claim_id,similarity FROM dedup_pairs "
-        "WHERE decision IS NULL AND similarity>=? "
-        "ORDER BY similarity DESC,created_at,id LIMIT ?",
-        (threshold, limit),
-    ).fetchall()
-    repository = ClaimRepository(connection)
-    claim_ids = {str(claim_id) for row in pending_rows for claim_id in (row["left_claim_id"], row["right_claim_id"])}
-    claims = repository.batch_get_claims(sorted(claim_ids))
-    equivalent_pair_ids: list[str] = []
-    missing = 0
-    for row in pending_rows:
-        left = claims.get(row["left_claim_id"])
-        right = claims.get(row["right_claim_id"])
-        if left is None or right is None:
-            missing += 1
-            continue
-        if is_safe_near_duplicate(
-            left,
-            right,
-            similarity=float(row["similarity"]),
-            semantic_threshold=threshold,
-            allow_subject_mismatch=True,
-        ):
-            equivalent_pair_ids.append(str(row["id"]))
-
+    pending_rows: list[sqlite3.Row] = []
     equivalent = 0
+    missing = 0
     stamp = reviewed_at or _now()
-    if equivalent_pair_ids:
-        connection.execute("BEGIN IMMEDIATE")
-        try:
-            for pair_id in equivalent_pair_ids:
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        pending_rows = connection.execute(
+            "SELECT id,left_claim_id,right_claim_id,similarity FROM dedup_pairs "
+            "WHERE decision IS NULL AND similarity>=? "
+            "ORDER BY CASE WHEN reviewed_at IS NULL THEN 0 ELSE 1 END,"
+            "reviewed_at,similarity DESC,created_at,id LIMIT ?",
+            (threshold, limit),
+        ).fetchall()
+        repository = ClaimRepository(connection)
+        claim_ids = {
+            str(claim_id) for row in pending_rows for claim_id in (row["left_claim_id"], row["right_claim_id"])
+        }
+        claims = repository.batch_get_claims(sorted(claim_ids))
+        for row in pending_rows:
+            left = claims.get(row["left_claim_id"])
+            right = claims.get(row["right_claim_id"])
+            if left is None or right is None:
+                missing += 1
+                connection.execute(
+                    "UPDATE dedup_pairs SET reviewed_at=? WHERE id=? AND decision IS NULL",
+                    (stamp, row["id"]),
+                )
+                continue
+            if is_safe_near_duplicate(
+                left,
+                right,
+                similarity=float(row["similarity"]),
+                semantic_threshold=threshold,
+                allow_subject_mismatch=True,
+            ):
                 cursor = connection.execute(
                     "UPDATE dedup_pairs SET decision='equivalent',judge_confidence=similarity,"
                     "judge_reason=?,judge_model=NULL,reviewed_at=? "
                     "WHERE id=? AND decision IS NULL",
-                    (DETERMINISTIC_NEAR_COPY_REASON, stamp, pair_id),
+                    (DETERMINISTIC_NEAR_COPY_REASON, stamp, row["id"]),
                 )
                 equivalent += cursor.rowcount
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
+            else:
+                connection.execute(
+                    "UPDATE dedup_pairs SET reviewed_at=? WHERE id=? AND decision IS NULL",
+                    (stamp, row["id"]),
+                )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
 
     return {
         "scanned": len(pending_rows),

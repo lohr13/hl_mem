@@ -311,6 +311,7 @@ def test_review_pending_near_duplicates_marks_only_safe_pair_equivalent(tmp_path
     assert rows["safe-pair"]["judge_model"] is None
     assert rows["safe-pair"]["reviewed_at"] == "2026-08-12T00:00:00+00:00"
     assert rows["protected-atom-pair"]["decision"] is None
+    assert rows["protected-atom-pair"]["reviewed_at"] == "2026-08-12T00:00:00+00:00"
     assert repo.get_claim("left")["status"] == "active"
     assert repo.get_claim("near")["status"] == "active"
     assert not _apply_equivalent_pair(
@@ -321,6 +322,77 @@ def test_review_pending_near_duplicates_marks_only_safe_pair_equivalent(tmp_path
         applied_at="2026-08-12T00:01:00+00:00",
         min_confidence=0.95,
     )
+    connection.close()
+
+
+def test_review_pending_near_duplicates_rotates_deferred_pairs(tmp_path) -> None:
+    connection = Database(tmp_path / "dedup-maintenance-rotation.db").open()
+    repo = ClaimRepository(connection)
+    recorded_from = "2026-01-01T00:00:00+00:00"
+    common = {
+        "namespace_key": "default",
+        "subject_entity_id": "user",
+        "predicate": "fact",
+        "qualifiers": {},
+        "recorded_from": recorded_from,
+        "valid_from": recorded_from,
+        "status": "active",
+        "canonical_attribute": "fact.other",
+        "canonical_slot": None,
+    }
+    repo.insert_claim({**common, "id": "base", "value": "The tank size is 10 gallons"})
+    repo.insert_claim({**common, "id": "twenty", "value": "The tank size is 20 gallons"})
+    repo.insert_claim({**common, "id": "thirty", "value": "The tank size is 30 gallons"})
+    connection.executemany(
+        "INSERT INTO dedup_pairs("
+        "id,pair_key,left_claim_id,right_claim_id,similarity,policy_version,created_at"
+        ") VALUES (?,?,?,?,?,?,?)",
+        [
+            (
+                "higher-similarity",
+                compute_dedup_pair_key("base", "twenty"),
+                "base",
+                "twenty",
+                0.999,
+                "v2",
+                recorded_from,
+            ),
+            (
+                "lower-similarity",
+                compute_dedup_pair_key("base", "thirty"),
+                "base",
+                "thirty",
+                0.998,
+                "v2",
+                recorded_from,
+            ),
+        ],
+    )
+    connection.commit()
+
+    first = review_pending_near_duplicates(
+        connection,
+        threshold=0.92,
+        limit=1,
+        reviewed_at="2026-08-12T00:00:00+00:00",
+    )
+    second = review_pending_near_duplicates(
+        connection,
+        threshold=0.92,
+        limit=1,
+        reviewed_at="2026-08-12T00:01:00+00:00",
+    )
+    reviewed = {
+        row["id"]: row["reviewed_at"]
+        for row in connection.execute("SELECT id,reviewed_at FROM dedup_pairs ORDER BY id").fetchall()
+    }
+
+    assert first == {"scanned": 1, "equivalent": 0, "deferred": 1, "missing": 0}
+    assert second == {"scanned": 1, "equivalent": 0, "deferred": 1, "missing": 0}
+    assert reviewed == {
+        "higher-similarity": "2026-08-12T00:00:00+00:00",
+        "lower-similarity": "2026-08-12T00:01:00+00:00",
+    }
     connection.close()
 
 
