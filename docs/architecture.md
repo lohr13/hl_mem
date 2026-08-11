@@ -255,8 +255,9 @@ compatible namespace, predicate, canonical slot/attribute, qualifiers, and valid
 agreement must also preserve protected numbers, versions, dates/weekdays, paths, polarity, quoted values, and obvious
 proper names. Ingestion may reuse an existing same-subject Claim and add evidence. Maintenance only reviews an existing,
 bounded `dedup_pairs` candidate set and records a deterministic `equivalent` edge; it never scans all Claim pairs, calls an
-LLM, deletes a Claim, or supersedes one. Recall rechecks those deterministic edges inside its existing candidate bound,
-keeps the highest-ranked representative, and unions evidence in memory. Pairs that fail any guard remain independently
+LLM, deletes a Claim, or supersedes one. Recall rechecks those deterministic edges inside its existing candidate bound and
+applies the same predicate dynamically within that bound when a cross-subject near-copy has no persisted edge. It keeps
+the highest-ranked representative and unions evidence in memory. Pairs that fail any guard remain independently
 retrievable. The older optional cross-subject LLM audit worker remains separate, and deterministic near-copy decisions are
 excluded from its physical apply path.
 

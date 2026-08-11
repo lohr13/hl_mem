@@ -68,6 +68,10 @@ dedup 与 conflict 统计，run metadata 保存协议版本；协议不一致的
 因为其候选 embedding 会被逐配置替换，复用生产 embedding 生成的 pair 会污染 A/B。当前 40/50 是该协议加入前的
 冻结全量基线；在重新跑完 50 题前不得报告新的总体分数。
 
+对于尚未形成 `dedup_pairs` 的跨 subject 近复述，生产 recall 仍会在现有 `recall.dedup_candidate_limit` 窗口内用
+同一确定性安全门动态折叠；这不是全库扫描，也不写回 pair。`eeda8a6d` 的局部重放由这条兜底释放了一个 Top-10
+位置并恢复为正确答案，但单例结果不得外推为新的 holdout50 分数。
+
 ## LongMemEval 提取分块与诊断协议
 
 - benchmark 仍原样持久化 turn event；仅在调用 extractor 时，对超过字符预算的单 turn 生成临时 fragment。fragment 优先在段落、句子或词边界结束，无法容纳的纯非文本 envelope 保持单个无损 JSON，不静默丢字段。

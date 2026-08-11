@@ -22,7 +22,7 @@
 
 - 摄入在既有 subject、predicate、canonical slot/attribute、qualifiers 与有效时间守卫之后，新增保守的近复述复用：仅当词法近似、dense cosine 与数字、日期、星期、路径、否定词和专名等 protected atoms 同时一致时，复用已有 Claim 并追加 evidence；未增加提取 prompt 或 LLM 调用。
 - Worker 维护循环每轮最多读取 `dedup.scan_limit` 条现有 pending `dedup_pairs`，用同一确定性规则标记安全 pair 为 `equivalent`。该路径不删除、不 supersede、不改写 Claim，也不会把规则确认结果送入旧的物理自动合并路径；不能确证的 pair 保持 pending。
-- 召回在既有候选窗口内折叠已确认且再次通过安全门的等价组，保留最高分代表项并去重汇总组内 evidence。没有新增数据库表、排序通道、权重或阈值；不同数字、限定条件、时间区间和专名继续分开返回。
+- 召回在既有候选窗口内折叠已确认且再次通过安全门的等价组；对尚未形成 pair 的跨 subject 近复述，也只在同一有界窗口内用相同安全门动态兜底。两条路径都保留最高分代表项并去重汇总组内 evidence。没有新增数据库表、排序通道、权重或阈值；不同数字、限定条件、时间区间和专名继续分开返回。
 - 标准 LongMemEval case 在 fresh ingest 或 `--skip-ingest` cache 打开后、召回前执行一次 `deterministic-dedup-conflicts-v1` 轻量维护，只包含确定性 dedup review 与 `auto_resolve_conflicts`，并把统计写入 case 结果。embedding config-compare 保持隔离，不复用生产 embedding 产生的 pair。
 
 ### LongMemEval 评测工具链与基线
@@ -32,6 +32,7 @@
 - 冻结 holdout50 基线为 **40/50（80%）**：`deepseek-v4-flash-0731`、reader thinking、Top-10、自有 judge。temporal gate 排除 2 道问题时点无有效答案的诊断口径为 **40/48（83.3%）**，只用于误差分析，不替代官方 50 题分母。
 - 已知限制：内容审查隔离跳过 2 个输入 Event；剩余错误集中在 multi-session 聚合、temporal 计算和少量 single-session 细粒度限定词。benchmark reader 窗口与生产 recall/context packing 是两套契约，不应把 80% 直接解释为生产端到端准确率。
 - 上述重复治理尚未重跑完整 holdout50；40/50 仍是冻结且可比较的最近全量基线，不能把局部 aquarium Top-10 变化外推为新的总体分数。
+- `eeda8a6d` 临时数据库局部重放中，20-gallon 近复述被折叠后释放一个 Top-10 位置，第二缸的 betta 线索进入窗口，reader/judge 从 16/错误恢复为 17/正确。该单例只验证机制，不构成新基线。
 
 ### 升级与发布说明
 
