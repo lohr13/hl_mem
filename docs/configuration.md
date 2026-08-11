@@ -120,7 +120,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `embedding.dim` | 整数 | `2048` | 任意整数 | `embedding_dim` |
 | `embedding.max_attempts` | 整数 | `3` | 任意整数 | `embedding_max_attempts` |
 | `embedding.mode` | 字符串 | `"fake"` | `fake`、`real` | `embedder_mode` |
-| `embedding.model` | 字符串 | `Settings` 内置值（可配置） | 任意字符串 | `embedding_model` |
+| `embedding.model` | 字符串 | `"text-embedding-v4"` | 任意字符串 | `embedding_model` |
 | `embedding.read_timeout` | 数值 | `30.0` | 任意数值 | `embedding_read_timeout` |
 | `embedding.text_type` | 字符串 | 未设置 | `document`、`query`；可省略 | `embedding_text_type` |
 
@@ -175,7 +175,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `image_describer.max_bytes` | 整数 | `10485760` | >= 1 | `image_max_bytes` |
 | `image_describer.max_parts` | 整数 | `4` | >= 1 | `image_max_parts` |
 | `image_describer.mode` | 字符串 | `"off"` | `off`、`on` | `image_describer_mode` |
-| `image_describer.model` | 字符串 | `Settings` 内置值（可配置） | 任意字符串 | `image_describer_model` |
+| `image_describer.model` | 字符串 | `"qwen3.7-plus"` | 任意字符串 | `image_describer_model` |
 | `image_describer.provider` | 字符串 | `"dashscope"` | `dashscope` | `image_describer_provider` |
 | `image_describer.timeout_seconds` | 数值 | `20.0` | > 0 | `image_describer_timeout_seconds` |
 
@@ -197,7 +197,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.base_url` | 字符串 | `"https://coding.dashscope.aliyuncs.com/v1"` | 任意字符串 | `llm_base_url` |
 | `llm.enable_thinking` | 布尔值 | `false` | `true`、`false` | `enable_llm_thinking` |
 | `llm.max_attempts` | 整数 | `3` | >= 1 | `llm_max_attempts` |
-| `llm.model` | 字符串 | `Settings` 内置值（可配置） | 非空字符串 | `llm_model` |
+| `llm.model` | 字符串 | `"qwen3.7-plus"` | 非空字符串 | `llm_model` |
 | `llm.provider` | 字符串 | `"dashscope"` | `dashscope`、`zhipu`、`openai_compatible` | `llm_provider` |
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |
@@ -215,6 +215,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `recall.expansion_circuit_failure_threshold` | 整数 | `5` | >= 1 | `expansion_circuit_failure_threshold` |
 | `recall.expansion_circuit_open_seconds` | 数值 | `60.0` | > 0 | `expansion_circuit_open_seconds` |
 | `recall.feedback_min_samples` | 整数 | `3` | >= 1 | `feedback_min_samples` |
+| `recall.fts_language` | 字符串 | `"auto"` | `auto`、`zh`、`en` | `fts_language` |
 | `recall.packed_context_token_budget` | 整数 | `2000` | >= 1 | `packed_context_token_budget` |
 | `recall.preference_recency_boost` | 数值 | `0.12` | 0.0 - 1.0 | `preference_recency_boost` |
 | `recall.procedure_candidate_limit` | 整数 | `30` | > 0 | `procedure_candidate_limit` |
@@ -239,7 +240,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `recall.relevance_intents` | 字符串 数组 | `["current_state"]` | 非空数组；元素为 current_state、preference、historical、tool、procedure | `relevance_intents` |
 | `recall.relevance_keep_top1` | 布尔值 | `true` | `true`、`false` | `relevance_keep_top1` |
 | `recall.relevance_relative_drop` | 数值 | `0.15` | 0.0 - 1.0 | `relevance_relative_drop` |
-| `recall.relevance_reranker_floor` | 数值 | `0.4` | 0.0 - 1.0 | `relevance_reranker_floor` |
+| `recall.relevance_reranker_floor` | 数值 | `0.15` | 0.0 - 1.0 | `relevance_reranker_floor` |
 | `recall.side_effect_backoff_seconds` | 数值 | `0.05` | >= 0 | `recall_side_effect_backoff_seconds` |
 | `recall.side_effect_max_attempts` | 整数 | `3` | >= 1 | `recall_side_effect_max_attempts` |
 | `recall.tag_boost_enabled` | 布尔值 | `true` | `true`、`false` | `tag_boost_enabled` |
@@ -269,7 +270,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 |---|---|---|---|---|
 | `reranker.base_url` | 字符串 | `"https://dashscope.aliyuncs.com"` | 任意字符串 | `reranker_base_url` |
 | `reranker.mode` | 字符串 | `"off"` | `off`、`fake`、`on`、`real` | `reranker_mode` |
-| `reranker.model` | 字符串 | `Settings` 内置值（可配置） | 任意字符串 | `reranker_model` |
+| `reranker.model` | 字符串 | `"qwen3-rerank"` | 任意字符串 | `reranker_model` |
 | `reranker.provider` | 字符串 | `"dashscope"` | `dashscope` | `reranker_provider` |
 
 Reranker 的具体型号通过 `reranker.model` 配置；API 密钥由 `RERANKER_API_KEY` 提供。升级时以当前 `Settings` 或部署

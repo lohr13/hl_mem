@@ -176,7 +176,7 @@ Client
   → canonical attribute + conflict_key deterministic conflict resolution
   → LLM four-way consolidation for gray-zone conflicts
   → conservative same-subject near-copy reuse (structure + lexical + cosine + protected atoms)
-  → best-match semantic deduplication (configured threshold; default 0.82)
+  → best-match semantic candidate generation (domain constant 0.82)
   → entity normalization + slot/tags + retention/expiry calculation
   → embedding generation and one evidence link per declared source Event
   → Claim commit
@@ -196,6 +196,12 @@ event. `source_event_indices` is validated against the current window, used to s
 persisted as separate Event evidence links; speaker remains an Event property instead of being conflated with Claim
 subject. Each decision emits an audit reason code. Claim FTS and dense embeddings consume the persisted `index_text`;
 changing `index.text_mode` therefore supports controlled representation A/B without changing the rest of recall.
+
+The localized Chinese and English prompts share atomicity rules for compound facts, explicit actions/relationships,
+one-off events, and enumerations. The current identity is `PROMPT_HASH=86c522e45f92` and
+`LLM_EXTRACTOR_VERSION=llm-v2+86c522e45f92`. A raw structured response containing exactly the 20 allowed Claims emits a
+`claim_limit_reached` audit warning because the model may have silently omitted additional facts; the schema limit itself
+remains unchanged.
 
 The bounded window has only two controls: count and maximum wait. An idle timer is intentionally absent because
 `sync_turn` already writes the user/assistant pair atomically; adding another debounce state would increase starvation and
@@ -253,14 +259,15 @@ dual-time closure for the loser.
 Near-copy control deliberately shares one conservative predicate across ingestion, maintenance, and recall. It requires
 compatible namespace, predicate, canonical slot/attribute, qualifiers, and validity; high cosine and lexical near-copy
 agreement must also preserve the order and multiplicity of protected numbers, versions, dates/weekdays, paths, polarity,
-relative day periods, quoted values, obvious proper names, and entity mentions in the Claim value. Cross-subject folding is limited to a value-verified `user` to `user's <entity>`
-projection; arbitrary people are never merged. Ingestion may reuse an existing same-subject Claim and add evidence. Maintenance only reviews an existing,
+relative day periods, quoted values, obvious proper names, and entity mentions in the Claim value. Cross-subject folding
+is limited to a value-verified `user` to `user's <entity>` projection; arbitrary people are never merged. Ingestion may
+reuse an existing same-subject Claim and add evidence. Maintenance only reviews an existing,
 bounded `dedup_pairs` candidate set and records a deterministic `equivalent` edge; it never scans all Claim pairs, calls an
 LLM, deletes a Claim, or supersedes one. Deferred candidates rotate by `reviewed_at` so one unsafe high-similarity pair
 cannot starve the queue. Recall rechecks those deterministic edges inside its existing candidate bound and
 applies the same predicate dynamically within that bound when a cross-subject near-copy has no persisted edge. It keeps
-the highest-ranked representative, exposes folded member IDs, and unions evidence in memory. Pairs that fail any guard remain independently
-retrievable. The older optional cross-subject LLM audit worker remains separate, and deterministic near-copy decisions are
+the highest-ranked representative, exposes folded member IDs, and unions evidence in memory. Pairs that fail any guard
+remain independently retrievable. The older optional cross-subject LLM audit worker remains separate, and deterministic near-copy decisions are
 excluded from its physical apply path.
 
 Retention is a pure function of scope and importance. Ephemeral memories expire; temporal and permanent memories decay on

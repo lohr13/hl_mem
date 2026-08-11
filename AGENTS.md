@@ -15,7 +15,7 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 - **Reranker**：API 密钥通过 .env 配置，provider/model 通过 TOML 配置
 - **分类体系**：SLOT_REGISTRY（15 operational slot + 40 topic tags；Phase 18 已接入检索，soft boost 默认开启，独立 tag channel 默认关闭待评测）
 - **TTL**：retention 纯函数（scope × importance 三档）
-- **跨 subject 去重**：DedupJudge（audit-only 默认开启）
+- **近重复治理**：摄入层确定性 near-copy 复用 + 维护层 `dedup_pairs` 轮转审查 + 召回层有界动态折叠；旧 DedupJudge 保持 audit-only
 - **包管理**：uv（lockfile: uv.lock）
 - **测试**：pytest + pytest-asyncio（asyncio_mode=auto），全量 unittest 由 GitHub Actions 验证
 
@@ -24,7 +24,7 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 ```
 src/hl_mem/
 ├── api/                    # FastAPI 适配层
-│   ├── server.py              # REST API (16 routes)
+│   ├── server.py              # REST API (17 routes)
 │   └── schemas.py             # Pydantic DTO
 ├── application/            # 共享应用服务
 │   ├── ingest.py              # IngestService
@@ -110,8 +110,8 @@ src/hl_mem/
 ## 关键设计决策
 
 ### 写入管线
-- 6 字段 compact LLM 提取 → AdmissionPolicy → choice/qualifiers/time/entities 完整 schema 后处理；legacy 输出复用同一准入链路
-- fact_hash v2（JSON 数组有边界哈希）→ conflict_key（canonical attribute slot）→ semantic dedup（cosine > 0.82, best-match）
+- 7 字段 compact LLM 提取 → AdmissionPolicy → choice/qualifiers/time/entities 完整 schema 后处理；legacy 输出复用同一准入链路
+- fact_hash v2（JSON 数组有边界哈希）→ conflict_key（canonical attribute slot）→ 保守 near-copy 复用或 `dedup_pairs` 候选
 - 冲突判定：确定性规则优先（ConflictResolver），灰区走 LLM 四分类（ConflictConsolidator）
 - **事务原子化**：整个写入流程（update_status + insert_claim + supersede + evidence_link）在单一 BEGIN IMMEDIATE 中
 
@@ -119,6 +119,7 @@ src/hl_mem/
 - FTS5 全文检索 + dense vector 余弦相似度 → RRF 融合
 - 多因子排序：recency / importance / access_count / scope / helpful_rate
 - 可选 Reranker（密钥与 provider/model 由配置提供）
+- 候选窗内对确定性等价组折叠，保留最高分代表并汇总 evidence
 - 双时间过滤：valid_from/valid_to + recorded_from/recorded_to
 - **上下文预算**：token_budget + context_mode="packed" + 跨类型配额
 - 偏好专用召回 intent（RecallIntent.PREFERENCE）
@@ -140,17 +141,12 @@ src/hl_mem/
 
 ## 配置
 
-环境变量（关键项）：
-- `HL_MEM_ENV` — dev/production
-- `HL_MEM_DB_PATH` — SQLite 路径
-- `HL_MEM_EMBEDDER` — fake/real
-- `HL_MEM_RERANKER` — off/fake/on/real
-- `LLM_API_KEY` — 百炼 Coding AK
-- `EMBEDDING_API_KEY` — 百炼通用 AK
-- `HL_MEM_DECAY_TEMPORAL_DAYS` / `HL_MEM_DECAY_PERMANENT_DAYS` — 衰减策略
-- `HL_MEM_DEDUP_THRESHOLD` — 语义去重阈值
+非敏感配置只从工作目录的 `hl_mem.toml` 读取；所有 `HL_MEM_*` 环境变量均不参与 `Settings`。四个密钥可来自
+`.env` 或同名进程环境变量：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`。
 
-集中配置：`config.py`（常量）+ `settings.py`（Settings 校验）+ `components.py`（工厂）
+重复治理的主要键为 `dedup.enabled/threshold/scan_limit/audit_only` 与
+`recall.dedup_threshold/dedup_candidate_limit`。完整配置以 `settings.py` 与 `docs/configuration.md` 为准；
+`config.py` 只保留领域常量，`components.py` 负责组件工厂。
 
 ## Migration
 

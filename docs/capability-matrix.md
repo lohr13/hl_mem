@@ -24,7 +24,7 @@
 | 名称 | 成熟度 | 默认模式 | 外部 API | 写数据库 | 降级行为 | 晋级标准 |
 |---|---|---:|---|---|---|---|
 | Event 幂等摄入与证据链 | stable | `on` | 否 | 是 | 写入或约束失败时事务回滚并返回具体错误 | 保持跨版本事务、幂等、并发和证据完整性回归 |
-| LLM Claim 提取 | stable | `fake`（部署推荐显式设为 `llm`） | 是 | 是 | retry 后失败则 Job 失败，可重试；原始 Event 保留 | compact/legacy schema 共用 AdmissionPolicy，保持解析、后处理投影、证据与调用可观测性回归 |
+| LLM Claim 提取 | stable | `fake`（部署推荐显式设为 `llm`） | 是 | 是 | retry 后失败则 Job 失败，可重试；原始 Event 保留；恰好命中 20 条上限时告警但不伪造余项 | compact/legacy schema 共用 AdmissionPolicy；双语复合事实、关系与枚举原子性保持一致；解析、后处理投影、证据与调用可观测性受回归保护 |
 | Extraction entailment verification | beta | `off`（可配置 `audit`/`enforce`） | 启用后是 | 是，仅 audit | verifier 失败时 fail-open，保留原始提取结果并记录错误 | 冻结评测集质量稳定、额外延迟与 token 成本达到 SLO 后再考虑真正 enforce |
 | Extraction pre-filter | experimental | `off` | 否 | 开启后写 audit | 规则异常时 `error_fallback` 到正常提取 | 生产回放证明显著节省调用且事实漏失低于既定阈值 |
 | Embedding | stable | `fake`（部署推荐显式设为 `real`） | real 模式是 | 是 | compatible/native 调用失败按 retry 策略报错；不写伪向量 | native 默认不传 `text_type`；query/document 可显式启用，sparse/instruct 实验变体默认关闭；维度、provider、重建和失败恢复持续受保护 |
@@ -35,7 +35,7 @@
 | Reranker | beta | `off`（可配置 fake/on/real） | real 模式是 | 否 | retry/超时后保留融合前排序 | 相关性净增益、P95 和 API 故障率达到 SLO |
 | 双时间与作用域过滤 | stable | `on` | 否 | 是 | 不降级；非法时间/作用域明确失败 | 保持历史查询、可见性与并发回归 |
 | TTL / decay / archive | stable | `auto` | 否 | 是 | 单 Job 失败可重试，CAS/事务避免部分更新 | 保持扫描完整性、双时间和访问 bonus 回归 |
-| Semantic dedup | beta | `audit`（安全门 + LLM 灰区） | 判断灰区时是 | 是，写 dedup audit；自动模式可 supersede | 确定性 distinct 不调用 LLM；LLM 失败保留 uncertain，不自动删除 | precision、人工复核率和错误 supersede 低于阈值 |
+| Near-copy / semantic dedup | beta | 确定性摄入复用与召回折叠 `on`；LLM 灰区 `audit` | 仅旧灰区审计路径是 | 摄入可追加 evidence；维护写等价边；召回折叠不写库 | 任一结构或 protected-atom 守卫失败即保留独立 Claim；pending pair 轮转；LLM 失败保留 uncertain | 近重复 precision、Top-K 多样性、人工复核率和错误折叠/supersede 低于阈值 |
 | 冲突处理 | stable | `auto`（确定性优先） | 灰区是 | 是 | LLM 失败保留未决 case；维护任务会回访全部未决状态，人工可从 CLI 审核并裁决 | 保持 supersede 链汇聚、胜败者终态、证据和事务回归 |
 | Episode / Trace | stable | `on` | 否 | 是 | 不影响 Claim 主通道；非法状态转换明确失败 | 保持 API、状态机、reward 与 usefulness 回归 |
 | Policy / Procedure 归纳 | beta | `auto`（定时 Job） | 是 | 是 | 归纳失败保留 Episode，Job 可重试且不发布新策略 | 多 Episode 支撑、成功率、退役与审计指标达到阈值 |

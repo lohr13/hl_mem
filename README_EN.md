@@ -101,19 +101,21 @@ variables. Common keys are listed below.
 | `reranker.mode` | `off` | `off`, `fake`, `on`, or `real` |
 | `image_describer.mode` | `off` | `off` or `on` |
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan` (default) or `sqlite_vec`, which requires `hl-mem[sqlite-vec]` |
+| `recall.dedup_threshold` | `0.95` | Near-copy folding threshold inside the bounded candidate window; `0` disables folding |
+| `recall.dedup_candidate_limit` | `100` | Maximum recall candidates considered for near-copy folding |
 | `recall.query_expansion_mode` | `auto` | `off`, `auto`, or `always` |
+| `dedup.scan_limit` | `200` | Maximum pending `dedup_pairs` reviewed per maintenance pass |
 | `relation.discovery_mode` | `off` | `off`, `audit`, or `auto` |
 
 Real components and external-call paths must be supplied with their own key; there is no automatic fake fallback.
-`HL_MEM_*` environment variables no longer participate in application `Settings` configuration. Code defaults intentionally differ from the
-example deployment: `Settings` keeps `recall.default_limit` / `recall.relevance_reranker_floor` at `20` / `0.4`, while
-`config.example.toml` explicitly sets `5` / `0.15` and keeps
-`recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model with 5/6-second per-call/total
-timeouts.
+`HL_MEM_*` environment variables no longer participate in application `Settings` configuration. `Settings` and
+`config.example.toml` both use `5` / `0.15` for `recall.default_limit` / `recall.relevance_reranker_floor`; the example
+deployment only raises `recall.relevance_relative_drop` from the code default `0.15` to `0.30` and keeps
+`recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model with 5/6-second per-call/total timeouts.
 
 ### Upgrading from v0.24.0
 
-v0.25.0 is the first tagged release candidate after v0.24.0; v0.24.1 and v0.24.2 were repository-only transition
+v0.25.0 is the first candidate planned for a tag after v0.24.0 and is not tagged yet; v0.24.1 and v0.24.2 were repository-only transition
 versions. Back up the database and stop the API, workers, and other writers before upgrading. Migration 038 scans and
 canonicalizes stored Claim subjects under `BEGIN IMMEDIATE`, and migration 039 adds nullable Event `metadata_json`.
 Plan a maintenance window for a large database; migrations are forward-only. The default `auto` FTS query supports both
@@ -121,8 +123,8 @@ legacy raw-only and current raw-plus-stem indexes, so morphology compatibility a
 
 ## Capabilities
 
-- **Memory correctness:** idempotent event ingestion, atomic writes, exact/semantic deduplication, deterministic conflict rules, LLM-assisted gray-zone consolidation, and guarded terminal conflict convergence.
-- **Extraction governance:** bounded same-session microbatches, seven-field compact extraction with source-event mapping, a shared AdmissionPolicy, full Claim-schema post-processing, deterministic scope/predicate projection, subject guards, and bounded structured-output repair.
+- **Memory correctness:** idempotent event ingestion, atomic writes, exact deduplication, conservative near-copy control across ingestion reuse, maintenance equivalence edges, and recall folding, plus deterministic conflict rules, LLM-assisted gray-zone consolidation, and guarded terminal conflict convergence.
+- **Extraction governance:** bounded same-session microbatches, seven-field compact extraction with source-event mapping, a shared AdmissionPolicy, bilingual atomicity rules for compound facts, relationships, and enumerations, an audit warning at the 20-claim output boundary, full Claim-schema post-processing, deterministic scope/predicate projection, subject guards, and bounded structured-output repair.
 - **Time and evidence:** valid and recorded time, evidence lineage, entity normalization, explicit forgetting, and stale propagation.
 - **Hybrid recall:** Chinese-aware FTS5, two-stage exact vector scanning or optional sqlite-vec, RRF fusion, multi-factor ranking, optional reranking, relation/query expansion, and token-budgeted context packing.
 - **Lifecycle:** importance-aware TTL, confidence decay, archival, reclassification, feedback usefulness, audit logs, and online backups.

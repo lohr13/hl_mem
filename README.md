@@ -120,12 +120,17 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `llm.structured_mode` | `json_object` | `auto`、`json_object` 或 `json_schema` |
 | `index.text_mode` | `natural` | `legacy`、`value_only`、`natural` 或 `answerable`；natural 只拼 subject 与原语言 value |
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan`（默认）或需安装 `hl-mem[sqlite-vec]` 的 `sqlite_vec` |
+| `recall.dedup_threshold` | `0.95` | 候选窗内近重复折叠阈值；设为 `0` 关闭折叠 |
+| `recall.dedup_candidate_limit` | `100` | 每次召回参与近重复折叠判定的候选上限 |
 | `recall.query_expansion_mode` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
+| `dedup.scan_limit` | `200` | 每轮维护最多审查的 pending `dedup_pairs` 数量 |
 | `relation.discovery_mode` | `off` | 关系发现：`off`、`audit` 或 `auto` |
 | `recall.tag_channel_enabled` | `false` | 是否启用独立 Tag 检索通道 |
 
 真实组件和外部调用路径必须提供各自密钥；失败时不会自动切换为 fake。任意 `HL_MEM_*` 环境变量都不再参与应用 `Settings` 配置。
-代码默认值与示例部署配置刻意分离：`Settings` 的 `recall.default_limit` / `recall.relevance_reranker_floor` 仍为 `20` / `0.4`，而 `config.example.toml` 显式覆盖为 `5` / `0.15`，并保持 `recall.relevance_keep_top1 = true`。query expansion 使用独立可配置模型，单次/总超时为 5/6 秒。
+`Settings` 与 `config.example.toml` 的 `recall.default_limit` / `recall.relevance_reranker_floor` 均为 `5` / `0.15`；
+示例部署仅把 `recall.relevance_relative_drop` 从代码默认 `0.15` 显式调整为 `0.30`，并保持
+`recall.relevance_keep_top1 = true`。query expansion 使用独立可配置模型，单次/总超时为 5/6 秒。
 
 从 legacy 索引迁移既有数据库时，先只读预览，再显式执行回填；回填会同步 `index_text`、FTS 和 dense embedding，使用 real embedder 的部署需提供对应密钥：
 
@@ -136,15 +141,15 @@ hlmem backfill-index-text --mode natural
 
 ### 从 v0.24.0 升级
 
-v0.25.0 是 v0.24.0 之后的首个带 tag 候选版本；v0.24.1/v0.24.2 只是仓库内过渡版本。升级前请备份并停止
+v0.25.0 是 v0.24.0 之后首个计划打 tag 的候选版本，当前尚未打 tag；v0.24.1/v0.24.2 只是仓库内过渡版本。升级前请备份并停止
 API、Worker 和其他写入者。migration 038 会在 `BEGIN IMMEDIATE` 中扫描并规范化存量 Claim subject，
 migration 039 为 Event 增加 nullable `metadata_json`；大库应安排维护窗口，数据库不支持向后迁移。
 默认 `auto` FTS 查询同时兼容旧 raw-only 与新 raw+stem 索引，因此无需仅为词形兼容强制重建。
 
 ## 能力概览
 
-- **记忆正确性**：幂等事件摄入、事务原子写入、精确/语义去重、确定性冲突规则、LLM 灰区归并和受守卫的冲突终态收敛。
-- **提取治理**：6 字段 compact 提取、统一 AdmissionPolicy、完整 Claim schema 后处理、确定性的 scope/predicate 投影、subject 守卫和有界结构化输出修复。
+- **记忆正确性**：幂等事件摄入、事务原子写入、精确去重，以及覆盖摄入复用、维护等价边和召回折叠的保守近重复治理；确定性冲突规则、LLM 灰区归并和受守卫的冲突终态收敛。
+- **提取治理**：7 字段 compact 提取、统一 AdmissionPolicy、完整 Claim schema 后处理、双语复合事实/关系/枚举原子性规则、20 条输出边界审计、确定性的 scope/predicate 投影、subject 守卫和有界结构化输出修复。
 - **时间与证据**：有效时间与记录时间双时间模型、证据链、实体归一化、显式遗忘和 stale 传播。
 - **混合召回**：中文 FTS5、两阶段精确向量扫描或可选 sqlite-vec、RRF 融合、多因子排序、可选 Reranker、关系/查询扩展和按 Token 预算打包上下文。
 - **生命周期**：importance 联动 TTL、置信度衰减、归档、重分类、反馈效用、审计日志和在线备份。

@@ -50,6 +50,12 @@ runner 每完成一个 case 都会原子更新报告；resume 会校验数据集
 - 内容审查隔离跳过 2 个输入 Event；这是结果解释所需的已知限制，不得静默省略。
 - reader、excerpt 和 ordinal fallback 位于 `evaluation/tools/`，不是生产 `POST /v1/recall` 的回答生成层；benchmark Top-10 与生产可配置召回及 token packing 不可混为同一口径。
 
+### 当前提取身份
+
+- 当前 `PROMPT_HASH` 为 `86c522e45f92`，`LLM_EXTRACTOR_VERSION` 为 `llm-v2+86c522e45f92`；旧值 `fff10cabee53` 的提取缓存会按既有 manifest/fingerprint 规则拒绝复用。
+- 中英文 prompt 都要求拆分复合事实、单独保留明确关系/动作与一次性事件，并逐项保留枚举数量和单位；只在原文明示时提取总数。
+- 原始结构化响应恰好达到 20 条上限时记录 `extract/possible_under_extraction/claim_limit_reached`。这只是可能漏提取的审计信号，不会自动重试、扩容或补造 Claim。
+
 ### 排序可观测性
 
 每个 case 的 retrieval 记录保存完整 `search_trace`；`retrieved` 中的每条候选同时保存 dense 通道原始分、

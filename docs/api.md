@@ -118,7 +118,9 @@ curl -X POST http://127.0.0.1:8200/v1/recall \
 
 The response contains ranked `results`, derived `observations`, applicable `policies`, `total`, and an optional packed
 `context`. Set `debug` to `true` to include `search_trace`. Each Claim result can include scores, ranking features,
-temporal fields, canonical slot/tags, relations, conflicts, and evidence.
+temporal fields, canonical slot/tags, relations, conflicts, `equivalent_claim_ids`, and evidence. A non-empty
+`equivalent_claim_ids` list means recall kept this highest-ranked representative after conservative near-copy folding;
+its evidence list includes deduplicated evidence from folded members.
 
 `response_format` accepts `legacy`, `context_packet`, or `both` and defaults to `legacy`. `context_packet` returns only
 the optional `context_packet` envelope; `both` returns it alongside the legacy fields. Context Packet v1 has exactly

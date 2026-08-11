@@ -9,7 +9,13 @@
 - compact extraction 增加 `source_event_indices`，Claim 可链接窗口内一个或多个真实来源 Event；speaker、turn、发生时间与证据映射不再因合并提取丢失。
 - LongMemEval 改为排队 Event 后驱动生产 Worker，生产与 benchmark 不再维护两条提取路径。
 - 新增批量原子性、窗口边界、会话隔离、speaker/turn prompt、来源校验、多 Event evidence 与 benchmark 对齐回归测试。
-- Migration 039 为 Event 增加 nullable `metadata_json`，仅保存 turn 等非正文 locator；新增配置仅为 `extraction.batch_max_events` 与 `extraction.batch_max_wait_seconds`。
+- Migration 039 为 Event 增加 nullable `metadata_json`，仅保存 turn 等非正文 locator；该提取架构新增配置仅为 `extraction.batch_max_events` 与 `extraction.batch_max_wait_seconds`。
+
+### 双语提取语义与上限审计
+
+- `b143daf` 对齐中英文原子性语义：英文补齐复合事实正反例，两种语言都明确要求单独保留已发生/已确认的关系动作、一次性事件，以及枚举中每个可独立回答项的数量和单位；仅当原文明示总数时才提取总数。
+- 结构化响应恰好达到 20 条 schema 上限时新增 `extract/possible_under_extraction/claim_limit_reached` 审计告警，不增加调用、不放宽 schema，也不改变生产阈值。
+- 当前 `PROMPT_HASH` 为 `86c522e45f92`，提取器身份为 `llm-v2+86c522e45f92`；此前的 `fff10cabee53` 缓存按既有 fingerprint 规则失效。固定小样本 A/B 中三个英文关系/枚举样本保持正确，中文关系+枚举组合样本仍为空，因此本变更不能宣称已消除所有关系漏提取。
 
 ### 发布前兼容性与可靠性收口
 
@@ -24,6 +30,7 @@
 - Worker 维护循环每轮最多读取 `dedup.scan_limit` 条现有 pending `dedup_pairs`，用同一确定性规则标记安全 pair 为 `equivalent`；未审候选优先，不能确证的 pair 保持 pending 并按 `reviewed_at` 轮转。该路径不删除、不 supersede、不改写 Claim，也不会把规则确认结果送入旧的物理自动合并路径。
 - 召回在既有候选窗口内折叠已确认且再次通过安全门的等价组；对尚未形成 pair 的跨 subject 近复述，也只在同一有界窗口内用相同安全门动态兜底。跨 subject 仅接受文本可证明的 `user ↔ user's <entity>` 投影，protected atoms 的顺序和次数必须相同。两条路径都保留最高分代表项、公开 `equivalent_claim_ids`、在 trace 标记 `equivalent_folded`，并去重汇总组内 evidence。没有新增数据库表、排序通道、权重或阈值；不同数字、限定条件、时间区间和专名继续分开返回。
 - 标准 LongMemEval case 在 fresh ingest 或 `--skip-ingest` cache 打开后、召回前执行一次 `deterministic-dedup-conflicts-v1` 轻量维护，只包含确定性 dedup review 与 `auto_resolve_conflicts`，并把统计写入 case 结果。embedding config-compare 保持隔离，不复用生产 embedding 产生的 pair。
+- 上述双层治理实现链截至 `1e8e1fd`：中文邻接英文实体、数字和版本也纳入 protected atoms；未新增 LLM pair judge、全库两两扫描或物理删除路径。
 
 ### LongMemEval 评测工具链与基线
 
@@ -36,7 +43,7 @@
 
 ### 升级与发布说明
 
-- v0.24.1/v0.24.2 是仓库内过渡版本，从未建立 Git tag；v0.25.0 是 v0.24.0 之后的首个对外候选版本。
+- v0.24.1/v0.24.2 是仓库内过渡版本，从未建立 Git tag；v0.25.0 是 v0.24.0 之后的首个对外候选版本，当前仍未打 tag。`1e8e1fd` 与 `b143daf` 均纳入该候选版本，不另起 v0.25.1。
 - 升级会顺序执行 migration 038 的 persona subject Python 数据回写与 migration 039 的 nullable Event metadata 列。大库应先备份、停止其他写入者并预留 migration 038 全表扫描和写锁时间；数据库 migration 仅向前，不支持降级。
 - 本版本共 39 个不可变 SQL migration（001-039）；REST 单 Event API、依赖集合及生产阈值 `0.82/0.92/0.95` 保持不变。
 

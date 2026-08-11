@@ -22,8 +22,10 @@ preserved by supported migrations, but direct SQL access and internal table layo
 
 ## Configuration
 
-`.env.example` is the canonical configuration catalog. Stable environment variables may be renamed only with a
-deprecation alias. Beta and experimental variables may change as documented in the changelog.
+`Settings` and `docs/configuration.md` are the canonical non-secret configuration catalog, and `config.example.toml`
+provides a deployable example. `.env.example` contains only the four provider credential names; arbitrary `HL_MEM_*`
+environment variables do not configure the application. Stable TOML keys and credential names may be renamed only with a
+deprecation alias. Beta and experimental keys may change as documented in the changelog.
 
 ## Import and export
 
