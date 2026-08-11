@@ -1038,6 +1038,52 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(window["included_turns"], [4])
         self.assertNotIn("later non-adjacent", content)
 
+    def test_reader_needles_fold_obvious_same_session_duplicates(self) -> None:
+        folded = reader_context.fold_reader_needles(
+            [
+                ("Inherited grandmother's vintage diamond necklace", 2.0),
+                ("Inherited grandmother's vintage diamond necklace.", 3.0),
+                ("The necklace was appraised at $4,000", 2.0),
+            ]
+        )
+
+        self.assertEqual(len(folded), 2)
+        self.assertEqual(folded[0], ("Inherited grandmother's vintage diamond necklace.", 3.0))
+        self.assertEqual(folded[1][0], "The necklace was appraised at $4,000")
+
+    def test_matched_user_turn_focuses_question_before_claim_needles(self) -> None:
+        content = (
+            "What did I inherit from my grandmother? "
+            + "opening context " * 90
+            + "Inherited grandmother's vintage diamond necklace."
+        )
+
+        excerpt, _ = reader_context.reader_turn_window(
+            [{"role": "user", "content": content}],
+            "What did I inherit from my grandmother?",
+            [("Inherited grandmother's vintage diamond necklace", 20.0)],
+        )
+
+        self.assertIn("What did I inherit from my grandmother?", excerpt)
+        self.assertNotIn("vintage diamond necklace", excerpt)
+
+    def test_reader_excerpt_preserves_sentence_start_before_truncation(self) -> None:
+        content = (
+            "old context " * 30
+            + ". My grandmother's vintage diamond necklace, which had been in the family for three generations "
+            + "and was carefully stored in a velvet box, was appraised after I inherited it. "
+            + "later context " * 30
+        )
+
+        excerpt = reader_context.reader_turn_excerpt(
+            content,
+            128,
+            [("was appraised after I inherited it", 3.0)],
+        )
+
+        self.assertIn("My grandmother's vintage diamond necklace", excerpt)
+        self.assertNotIn("context . My grandmother", excerpt)
+
     def test_windowed_reader_context_falls_back_to_event_text_without_messages(self) -> None:
         case = runner.normalize_case(_record("case-fallback"))
         event_id = case.sessions[0].event_id

@@ -239,6 +239,37 @@ def reader_match_text(value: object) -> str:
     return " ".join(re.findall(r"[^\W_]+", normalized, flags=re.UNICODE))
 
 
+def fold_reader_needles(
+    needles: Sequence[tuple[str, float]],
+) -> list[tuple[str, float]]:
+    """Fold only obvious wording duplicates used to focus one session excerpt."""
+    folded: list[tuple[str, float]] = []
+    normalized: list[str] = []
+    for needle, weight in needles:
+        text = str(needle or "").strip()
+        match_text = reader_match_text(text)
+        if not match_text:
+            continue
+        duplicate_index: int | None = None
+        for index, existing in enumerate(normalized):
+            shorter, longer = sorted((match_text, existing), key=len)
+            containment = shorter in longer and len(shorter) >= max(8, round(len(longer) * 0.9))
+            similarity = SequenceMatcher(None, match_text, existing, autojunk=False).ratio()
+            if match_text == existing or containment or similarity >= 0.92:
+                duplicate_index = index
+                break
+        if duplicate_index is None:
+            folded.append((text, weight))
+            normalized.append(match_text)
+            continue
+        old_text, old_weight = folded[duplicate_index]
+        if len(text) > len(old_text):
+            normalized[duplicate_index] = match_text
+            old_text = text
+        folded[duplicate_index] = (old_text, max(old_weight, weight))
+    return folded
+
+
 def reader_match_units(value: object) -> set[str]:
     normalized = reader_match_text(value)
     units = {token for token in normalized.split() if len(token) >= 2 and not re.fullmatch(r"[\u3400-\u9fff]+", token)}
@@ -280,6 +311,9 @@ def reader_focus_index(content: str, needles: Sequence[tuple[str, float]]) -> in
     for needle, weight in needles:
         needle_folded = unicodedata.normalize("NFKC", needle).casefold().strip()
         if needle_folded:
+            index = folded.find(needle_folded)
+            if index >= 0:
+                return index + len(needle_folded) // 2
             candidates.append((round(weight * len(needle_folded)), needle_folded))
         candidates.extend((round(weight * len(unit)), unit) for unit in reader_match_units(needle))
     for _, token in sorted(candidates, reverse=True):
@@ -287,6 +321,14 @@ def reader_focus_index(content: str, needles: Sequence[tuple[str, float]]) -> in
         if index >= 0:
             return index + len(token) // 2
     return 0
+
+
+def _sentence_aligned_excerpt_start(content: str, start: int, focus: int, char_limit: int) -> int:
+    if start <= 0:
+        return 0
+    boundaries = list(re.finditer(r"[.!?。！？\n]+\s*", content[:start]))
+    sentence_start = boundaries[-1].end() if boundaries else 0
+    return sentence_start if focus < sentence_start + char_limit else start
 
 
 def reader_turn_excerpt(
@@ -301,6 +343,7 @@ def reader_turn_excerpt(
     char_limit = max(1, token_limit * 2 - len(leading_marker) - len(trailing_marker) - 4)
     focus = reader_focus_index(content, needles)
     start = max(0, min(focus - char_limit // 2, len(content) - char_limit))
+    start = _sentence_aligned_excerpt_start(content, start, focus, char_limit)
     end = min(len(content), start + char_limit)
     return (leading_marker if start else "") + content[start:end] + (trailing_marker if end < len(content) else "")
 
@@ -417,9 +460,7 @@ def reader_turn_window(
     primary = centers_by_score[0]
     centers = sorted(centers_by_score)
     matched_limit, adjacent_limit = _window_limits(len(centers))
-    focus_needles = list(needles)
-    if question.strip():
-        focus_needles.append((question, 0.5))
+    folded_needles = fold_reader_needles(needles)
     parts: list[str] = []
     included_turns: list[int] = []
     for center in centers:
@@ -431,7 +472,10 @@ def reader_turn_window(
             if index == center:
                 label = "matched"
                 token_limit = matched_limit
-                excerpt_needles: Sequence[tuple[str, float]] = focus_needles
+                if question.strip() and normalize_role(message.get("role")) == "user":
+                    excerpt_needles = [(question, 0.5), *folded_needles]
+                else:
+                    excerpt_needles = [*folded_needles, (question, 0.5)] if question.strip() else folded_needles
             else:
                 label = "previous" if index < center else "next"
                 token_limit = adjacent_limit
@@ -581,10 +625,8 @@ def load_reader_events(
             if session_turns is not None:
                 messages, turn_indices, event_id_by_turn = session_turns
                 linked_ids = grouped_event_ids[key]
-                needles = list(
-                    dict.fromkeys(
-                        needle for linked_id in linked_ids for needle in tuple((event_needles or {}).get(linked_id, ()))
-                    )
+                needles = fold_reader_needles(
+                    [needle for linked_id in linked_ids for needle in tuple((event_needles or {}).get(linked_id, ()))]
                 )
                 window_content, window = reader_turn_window(
                     messages,
