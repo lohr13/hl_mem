@@ -42,6 +42,12 @@ def test_prepare_fts_query_quotes_terms_and_neutralizes_operators() -> None:
     assert prepare_fts_query('GPU "型号" OR *') == '"GPU" AND "型号"'
 
 
+def test_prepare_fts_query_groups_auto_raw_and_stem_variants() -> None:
+    assert prepare_fts_query("running databases", language="auto") == (
+        '("running" AND "databases") OR ("run" AND "databas")'
+    )
+
+
 def test_prepare_fts_functions_return_empty_string_for_empty_query() -> None:
     assert prepare_fts_document(" \t\n") == ""
     assert prepare_fts_query("") == ""

@@ -95,6 +95,19 @@ def test_claim_searches_read_only_v2_indexes(connection) -> None:
     assert [claim["id"] for claim in repository.search_claims_tags(["missing", "config.model"])] == ["claim-search-v2"]
 
 
+def test_auto_query_matches_old_raw_and_new_stemmed_claim_indexes(connection) -> None:
+    repository = ClaimRepository(connection)
+    assert repository.insert_claim(_claim("old-raw", "running databases"))
+    assert repository.insert_claim(_claim("new-stemmed", "runs database"))
+    old_rowid = connection.execute("SELECT rowid FROM claims WHERE id='old-raw'").fetchone()[0]
+    connection.execute("UPDATE claims_fts_v2 SET terms='running databases' WHERE rowid=?", (old_rowid,))
+    connection.commit()
+
+    matches = repository.search_claims_fts("running databases")
+
+    assert {claim["id"] for claim in matches} == {"old-raw", "new-stemmed"}
+
+
 def test_insert_event_writes_v2_index_in_caller_transaction(connection) -> None:
     repository = EventRepository(connection)
 

@@ -249,6 +249,46 @@ def prepare_fts_document(text: str) -> str:
     return " ".join(tokenize_for_fts(text))
 
 
-def prepare_fts_query(text: str) -> str:
-    """Return a safely quoted AND query for an FTS5 MATCH expression."""
-    return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokenize_for_fts(text))
+def _join_fts_terms(tokens: tuple[str, ...]) -> str:
+    return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+
+
+def _auto_query_variants(text: str) -> tuple[tuple[str, ...], ...]:
+    """Return conjunctive raw and stemmed branches for ``auto`` queries.
+
+    Version 0.24.0 indexes contain only raw English terms, while newer indexes
+    contain raw and stemmed forms. Keeping each form in its own AND branch lets
+    one query match both layouts without weakening multi-term queries into a
+    global OR.
+    """
+    auto_tokens = tokenize_for_fts(text, language="auto")
+    raw_keys = {token.casefold() for token in tokenize_for_fts(text, language="zh")}
+    stem_keys = {token.casefold() for token in tokenize_for_fts(text, language="en")}
+    # The English tokenizer intentionally ignores CJK spans. They constrain both
+    # branches of a mixed-language query.
+    stem_keys.update(token.casefold() for token in auto_tokens if any("\u4e00" <= char <= "\u9fff" for char in token))
+
+    raw_tokens = tuple(token for token in auto_tokens if token.casefold() in raw_keys)
+    stem_tokens = tuple(token for token in auto_tokens if token.casefold() in stem_keys)
+    variants: list[tuple[str, ...]] = []
+    seen: set[tuple[str, ...]] = set()
+    for tokens in (raw_tokens, stem_tokens):
+        if not tokens:
+            continue
+        key = tuple(token.casefold() for token in tokens)
+        if key not in seen:
+            seen.add(key)
+            variants.append(tokens)
+    return tuple(variants)
+
+
+def prepare_fts_query(text: str, *, language: FtsLanguage | None = None) -> str:
+    """Return a safely quoted conjunctive FTS5 MATCH expression."""
+    mode = language or _get_default_fts_language()
+    if mode != "auto":
+        return _join_fts_terms(tokenize_for_fts(text, language=mode))
+
+    branches = tuple(_join_fts_terms(tokens) for tokens in _auto_query_variants(text))
+    if len(branches) < 2:
+        return branches[0] if branches else ""
+    return " OR ".join(f"({branch})" for branch in branches)
