@@ -177,6 +177,75 @@ def test_safe_near_duplicate_preserves_distinct_named_entities() -> None:
     )
 
 
+def test_safe_near_duplicate_preserves_atom_order_negation_and_cjk_time() -> None:
+    common = {
+        "namespace_key": "default",
+        "subject_entity_id": "user",
+        "predicate": "fact",
+        "canonical_attribute": "fact.other",
+        "canonical_slot": None,
+        "qualifiers": {},
+        "status": "active",
+        "valid_from": "2026-01-01T00:00:00+00:00",
+        "valid_to": None,
+    }
+    distinct_pairs = [
+        (
+            "Take 1 tablet at 2 pm every weekday after breakfast and record the result in the health journal.",
+            "Take 2 tablets at 1 pm every weekday after breakfast and record the result in the health journal.",
+        ),
+        (
+            "Alice reports to Bob regarding this project and sends the same detailed weekly status update every Friday.",
+            "Bob reports to Alice regarding this project and sends the same detailed weekly status update every Friday.",
+        ),
+        (
+            "The policy does allow this operation under normal conditions for all standard production deployments.",
+            "The policy doesn't allow this operation under normal conditions for all standard production deployments.",
+        ),
+        (
+            "用户周一不服用抗菌药，并在早餐后把结果详细记录到健康日志中。",
+            "用户周二服用抗菌药，并在早餐后把结果详细记录到健康日志中。",
+        ),
+    ]
+
+    for left_value, right_value in distinct_pairs:
+        assert not is_safe_near_duplicate(
+            {**common, "value": left_value},
+            {**common, "value": right_value},
+            similarity=0.99,
+            semantic_threshold=0.92,
+        )
+
+
+def test_cross_subject_near_duplicate_requires_verified_user_projection() -> None:
+    common = {
+        "namespace_key": "default",
+        "predicate": "fact",
+        "value": "Prefers decaf coffee for the regular morning order",
+        "canonical_attribute": "preference.food",
+        "canonical_slot": None,
+        "qualifiers": {},
+        "status": "active",
+        "valid_from": "2026-01-01T00:00:00+00:00",
+        "valid_to": None,
+    }
+
+    assert not is_safe_near_duplicate(
+        {**common, "subject_entity_id": "Alice", "entities": ["Alice"]},
+        {**common, "subject_entity_id": "Bob", "entities": ["Bob"]},
+        similarity=0.99,
+        semantic_threshold=0.92,
+        allow_subject_mismatch=True,
+    )
+    assert not is_safe_near_duplicate(
+        {**common, "subject_entity_id": "user", "entities": ["user"]},
+        {**common, "subject_entity_id": "user's friend", "entities": ["user's friend"]},
+        similarity=0.99,
+        semantic_threshold=0.92,
+        allow_subject_mismatch=True,
+    )
+
+
 def test_review_pending_near_duplicates_marks_only_safe_pair_equivalent(tmp_path) -> None:
     connection = Database(tmp_path / "dedup-maintenance.db").open()
     repo = ClaimRepository(connection)

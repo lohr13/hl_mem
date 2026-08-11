@@ -29,9 +29,10 @@ _PROTECTED_LITERAL_PATTERN = re.compile(
     r"(?<!\w)(?:v?\d+(?:\.\d+)+|\d+)(?!\w)|(?:[A-Za-z]:\\|/)[^\s\"']+",
     re.IGNORECASE,
 )
-_QUOTED_VALUE_PATTERN = re.compile(r'"([^"\r\n]+)"|\'([^\'\r\n]+)\'')
+_QUOTED_VALUE_PATTERN = re.compile(r'"([^"\r\n]+)"|“([^”\r\n]+)”|(?<!\w)\'([^\'\r\n]+)\'(?!\w)')
 _WORD_PATTERN = re.compile(r"[\w]+(?:[-'][\w]+)*", re.UNICODE)
 _PROPER_NAME_PATTERN = re.compile(r"(?<![\w])(?:[A-Z][A-Za-z0-9_-]{2,})(?![\w])")
+_CJK_PROTECTED_PATTERN = re.compile(r"没有|禁止|不|没|未|无|(?:星期|周)[一二三四五六日天]")
 _PROTECTED_WORDS = {
     "january",
     "february",
@@ -57,8 +58,22 @@ _PROTECTED_WORDS = {
     "never",
     "without",
     "cannot",
+    "can't",
+    "couldn't",
+    "didn't",
+    "doesn't",
+    "don't",
     "false",
+    "hadn't",
+    "hasn't",
+    "haven't",
+    "isn't",
     "true",
+    "shouldn't",
+    "wasn't",
+    "weren't",
+    "won't",
+    "wouldn't",
 }
 _GENERIC_CAPITALIZED_WORDS = {"a", "an", "i", "the", "this", "that", "user"}
 
@@ -81,19 +96,84 @@ def _near_copy_text(value: Any) -> str | None:
 
 def _protected_atoms(value: str) -> tuple[str, ...]:
     normalized = unicodedata.normalize("NFKC", value)
-    atoms = {match.casefold() for match in _PROTECTED_LITERAL_PATTERN.findall(normalized)}
-    for double_quoted, single_quoted in _QUOTED_VALUE_PATTERN.findall(normalized):
-        quoted = (double_quoted or single_quoted).strip().casefold()
+    positioned_atoms: list[tuple[int, int, str]] = []
+    for match in _PROTECTED_LITERAL_PATTERN.finditer(normalized):
+        positioned_atoms.append((match.start(), match.end(), f"literal:{match.group(0).casefold()}"))
+    for match in _QUOTED_VALUE_PATTERN.finditer(normalized):
+        quoted = next((group for group in match.groups() if group is not None), "").strip().casefold()
         if quoted:
-            atoms.add(f"quoted:{quoted}")
-    words = {word.casefold() for word in _WORD_PATTERN.findall(normalized)}
-    atoms.update(f"word:{word}" for word in words & _PROTECTED_WORDS)
-    atoms.update(
-        f"name:{name.casefold()}"
-        for name in _PROPER_NAME_PATTERN.findall(normalized)
-        if name.casefold() not in _GENERIC_CAPITALIZED_WORDS
+            positioned_atoms.append((match.start(), match.end(), f"quoted:{quoted}"))
+    for match in _WORD_PATTERN.finditer(normalized):
+        word = match.group(0).casefold()
+        if word in _PROTECTED_WORDS:
+            positioned_atoms.append((match.start(), match.end(), f"word:{word}"))
+    for match in _CJK_PROTECTED_PATTERN.finditer(normalized):
+        positioned_atoms.append((match.start(), match.end(), f"cjk:{match.group(0)}"))
+    for match in _PROPER_NAME_PATTERN.finditer(normalized):
+        name = match.group(0).casefold()
+        if name not in _GENERIC_CAPITALIZED_WORDS and name not in _PROTECTED_WORDS:
+            positioned_atoms.append((match.start(), match.end(), f"name:{name}"))
+    positioned_atoms.sort(key=lambda atom: (atom[0], atom[1], atom[2]))
+    return tuple(atom[2] for atom in positioned_atoms)
+
+
+def _verified_user_projection(
+    left_subject: str,
+    right_subject: str,
+    left_value: str,
+    right_value: str,
+) -> tuple[str, str] | None:
+    if left_subject == "user" and right_subject.startswith("user's "):
+        user_subject, projected_subject = left_subject, right_subject
+    elif right_subject == "user" and left_subject.startswith("user's "):
+        user_subject, projected_subject = right_subject, left_subject
+    else:
+        return None
+    projected_suffix = projected_subject.removeprefix("user's ").strip()
+    suffix_text = _near_copy_text(projected_suffix)
+    left_text = _near_copy_text(left_value)
+    right_text = _near_copy_text(right_value)
+    if suffix_text is None or left_text is None or right_text is None:
+        return None
+    suffix_tokens = suffix_text.split()
+    if not suffix_tokens:
+        return None
+    left_tokens = set(left_text.split())
+    right_tokens = set(right_text.split())
+    if not all(token in left_tokens and token in right_tokens for token in suffix_tokens):
+        return None
+    return user_subject, projected_subject
+
+
+def _normalized_entities(claim: dict[str, Any]) -> tuple[str, ...] | None:
+    raw_entities = claim.get("entities")
+    if raw_entities in (None, []):
+        return ()
+    if not isinstance(raw_entities, (list, tuple)) or not all(isinstance(entity, str) for entity in raw_entities):
+        return None
+    return tuple(sorted({normalize_entity_id(entity) for entity in raw_entities}))
+
+
+def _entities_compatible(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    projection: tuple[str, str] | None,
+) -> bool:
+    left_entities = _normalized_entities(left)
+    right_entities = _normalized_entities(right)
+    if left_entities is None or right_entities is None:
+        return False
+    if left_entities == right_entities:
+        return True
+    if projection is None or not left_entities or not right_entities:
+        return False
+    allowed_entities = set(projection)
+    return (
+        set(left_entities).issubset(allowed_entities)
+        and set(right_entities).issubset(allowed_entities)
+        and normalize_entity_id(left.get("subject_entity_id")) in left_entities
+        and normalize_entity_id(right.get("subject_entity_id")) in right_entities
     )
-    return tuple(sorted(atoms))
 
 
 def _valid_intervals_overlap(left: dict[str, Any], right: dict[str, Any]) -> bool:
@@ -128,9 +208,20 @@ def is_safe_near_duplicate(
         return False
     if str(left.get("namespace_key", "default")) != str(right.get("namespace_key", "default")):
         return False
-    if not allow_subject_mismatch and normalize_entity_id(left.get("subject_entity_id")) != normalize_entity_id(
-        right.get("subject_entity_id")
-    ):
+    left_value = left.get("value")
+    right_value = right.get("value")
+    if not isinstance(left_value, str) or not isinstance(right_value, str):
+        return False
+    left_subject = normalize_entity_id(left.get("subject_entity_id"))
+    right_subject = normalize_entity_id(right.get("subject_entity_id"))
+    projection: tuple[str, str] | None = None
+    if left_subject != right_subject:
+        if not allow_subject_mismatch:
+            return False
+        projection = _verified_user_projection(left_subject, right_subject, left_value, right_value)
+        if projection is None:
+            return False
+    if not _entities_compatible(left, right, projection):
         return False
     if normalize_predicate(str(left.get("predicate") or "")) != normalize_predicate(str(right.get("predicate") or "")):
         return False
@@ -143,10 +234,6 @@ def is_safe_near_duplicate(
     if not isinstance(left_qualifiers, dict) or not isinstance(right_qualifiers, dict):
         return False
     if left_qualifiers != right_qualifiers or not _valid_intervals_overlap(left, right):
-        return False
-    left_value = left.get("value")
-    right_value = right.get("value")
-    if not isinstance(left_value, str) or not isinstance(right_value, str):
         return False
     left_text = _near_copy_text(left_value)
     right_text = _near_copy_text(right_value)
