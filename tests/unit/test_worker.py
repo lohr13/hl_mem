@@ -293,3 +293,27 @@ def test_maintenance_failure_rolls_back_and_does_not_stop_later_items(
     ]
     assert "worker_maintenance_failed item=cleanup_stale_temporal_claims" in caplog.text
     worker.database.close()
+
+
+def test_maintenance_reviews_pending_near_duplicates_without_llm(monkeypatch, tmp_path) -> None:
+    worker = Worker(
+        replace(
+            Settings.for_test(),
+            database_path=str(tmp_path / "maintenance-dedup.db"),
+            dedup_enabled=True,
+            dedup_threshold=0.93,
+            dedup_scan_limit=17,
+        )
+    )
+    calls: list[tuple[float, int]] = []
+
+    def review(_connection, *, threshold, limit):
+        calls.append((threshold, limit))
+        return {"scanned": 0, "equivalent": 0, "deferred": 0, "missing": 0}
+
+    monkeypatch.setattr(worker_module, "review_pending_near_duplicates", review)
+
+    worker._run_maintenance()
+
+    assert calls == [(0.93, 17)]
+    worker.database.close()

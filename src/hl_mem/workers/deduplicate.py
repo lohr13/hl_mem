@@ -10,8 +10,10 @@ from typing import Any, Callable
 from hl_mem.domain.claims.dedup import (
     DEDUP_EMBEDDING_TEXT_VERSION,
     DEDUP_POLICY_VERSION,
+    DETERMINISTIC_NEAR_COPY_REASON,
     Deduplicator,
     compute_dedup_pair_key,
+    is_safe_near_duplicate,
 )
 from hl_mem.llm.client import LLMClient
 from hl_mem.protocols import EmbedderProtocol
@@ -148,8 +150,15 @@ def deduplicate_claims(
         equivalent_rows = connection.execute(
             "SELECT * FROM dedup_pairs WHERE namespace_key=? AND decision='equivalent' "
             "AND policy_version=? AND judge_confidence>=? AND applied_at IS NULL "
+            "AND COALESCE(judge_reason,'')<>? "
             "ORDER BY reviewed_at,created_at,id LIMIT ?",
-            (namespace, POLICY_VERSION, auto_merge_min_confidence, limit),
+            (
+                namespace,
+                POLICY_VERSION,
+                auto_merge_min_confidence,
+                DETERMINISTIC_NEAR_COPY_REASON,
+                limit,
+            ),
         ).fetchall()
         equivalent_total = len(equivalent_rows)
         for processed, equivalent_row in enumerate(equivalent_rows, start=1):
@@ -184,6 +193,71 @@ def deduplicate_claims(
     }
 
 
+def review_pending_near_duplicates(
+    connection: sqlite3.Connection,
+    *,
+    threshold: float = 0.92,
+    limit: int = 200,
+    reviewed_at: str | None = None,
+) -> dict[str, int]:
+    """Confirm only conservative near-copy pairs without mutating either claim."""
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("dedup threshold must be between 0 and 1")
+    if limit < 1:
+        raise ValueError("dedup review limit must be positive")
+
+    pending_rows = connection.execute(
+        "SELECT id,left_claim_id,right_claim_id,similarity FROM dedup_pairs "
+        "WHERE decision IS NULL AND similarity>=? "
+        "ORDER BY similarity DESC,created_at,id LIMIT ?",
+        (threshold, limit),
+    ).fetchall()
+    repository = ClaimRepository(connection)
+    claim_ids = {str(claim_id) for row in pending_rows for claim_id in (row["left_claim_id"], row["right_claim_id"])}
+    claims = repository.batch_get_claims(sorted(claim_ids))
+    equivalent_pair_ids: list[str] = []
+    missing = 0
+    for row in pending_rows:
+        left = claims.get(row["left_claim_id"])
+        right = claims.get(row["right_claim_id"])
+        if left is None or right is None:
+            missing += 1
+            continue
+        if is_safe_near_duplicate(
+            left,
+            right,
+            similarity=float(row["similarity"]),
+            semantic_threshold=threshold,
+            allow_subject_mismatch=True,
+        ):
+            equivalent_pair_ids.append(str(row["id"]))
+
+    equivalent = 0
+    stamp = reviewed_at or _now()
+    if equivalent_pair_ids:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for pair_id in equivalent_pair_ids:
+                cursor = connection.execute(
+                    "UPDATE dedup_pairs SET decision='equivalent',judge_confidence=similarity,"
+                    "judge_reason=?,judge_model=NULL,reviewed_at=? "
+                    "WHERE id=? AND decision IS NULL",
+                    (DETERMINISTIC_NEAR_COPY_REASON, stamp, pair_id),
+                )
+                equivalent += cursor.rowcount
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
+    return {
+        "scanned": len(pending_rows),
+        "equivalent": equivalent,
+        "deferred": len(pending_rows) - missing - equivalent,
+        "missing": missing,
+    }
+
+
 def _apply_equivalent_pair(
     connection: sqlite3.Connection,
     pair_id: str,
@@ -196,7 +270,7 @@ def _apply_equivalent_pair(
     connection.execute("BEGIN IMMEDIATE")
     try:
         pair = connection.execute(
-            "SELECT decision,judge_confidence,policy_version,applied_at FROM dedup_pairs WHERE id=?",
+            "SELECT decision,judge_confidence,judge_reason,policy_version,applied_at " "FROM dedup_pairs WHERE id=?",
             (pair_id,),
         ).fetchone()
         repository = ClaimRepository(connection)
@@ -209,6 +283,7 @@ def _apply_equivalent_pair(
         stale = (
             pair["decision"] != "equivalent"
             or float(pair["judge_confidence"] or 0.0) < min_confidence
+            or pair["judge_reason"] == DETERMINISTIC_NEAR_COPY_REASON
             or pair["policy_version"] != POLICY_VERSION
             or pair["applied_at"] is not None
             or current_left["status"] != "active"

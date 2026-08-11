@@ -37,7 +37,11 @@ from hl_mem.workers.consolidate import (
     enqueue_daily_consolidation,
 )
 from hl_mem.workers.decay import cleanup_stale_temporal_claims, decay_claims
-from hl_mem.workers.deduplicate import deduplicate_claims, enqueue_daily_deduplication
+from hl_mem.workers.deduplicate import (
+    deduplicate_claims,
+    enqueue_daily_deduplication,
+    review_pending_near_duplicates,
+)
 from hl_mem.workers.discover_relations import discover_relations
 from hl_mem.workers.induce_policies import (
     enqueue_daily_policy_induction,
@@ -311,6 +315,20 @@ class Worker:
             (
                 "scan_derived_memories",
                 lambda: DerivedMemoryMaintainer(self.connection).scan_and_build(maintenance_now),
+            ),
+            *(
+                [
+                    (
+                        "review_pending_near_duplicates",
+                        lambda: review_pending_near_duplicates(
+                            self.connection,
+                            threshold=self.settings.dedup_threshold,
+                            limit=self.settings.dedup_scan_limit,
+                        ),
+                    )
+                ]
+                if self.settings.dedup_enabled
+                else []
             ),
             (
                 "auto_resolve_conflicts",

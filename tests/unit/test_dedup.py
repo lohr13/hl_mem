@@ -6,7 +6,11 @@ from hl_mem.domain.claims.dedup import (
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
-from hl_mem.workers.deduplicate import _apply_equivalent_pair, deduplicate_claims
+from hl_mem.workers.deduplicate import (
+    _apply_equivalent_pair,
+    deduplicate_claims,
+    review_pending_near_duplicates,
+)
 
 
 def _base_claim(embedder: FakeEmbedder) -> dict:
@@ -171,6 +175,84 @@ def test_safe_near_duplicate_preserves_distinct_named_entities() -> None:
         similarity=0.99,
         semantic_threshold=0.92,
     )
+
+
+def test_review_pending_near_duplicates_marks_only_safe_pair_equivalent(tmp_path) -> None:
+    connection = Database(tmp_path / "dedup-maintenance.db").open()
+    repo = ClaimRepository(connection)
+    recorded_from = "2026-01-01T00:00:00+00:00"
+    common = {
+        "namespace_key": "default",
+        "subject_entity_id": "user",
+        "predicate": "fact",
+        "qualifiers": {},
+        "recorded_from": recorded_from,
+        "valid_from": recorded_from,
+        "status": "active",
+        "canonical_attribute": "fact.other",
+        "canonical_slot": None,
+    }
+    repo.insert_claim({**common, "id": "left", "value": "User's tank is 20 gallons"})
+    repo.insert_claim({**common, "id": "near", "value": "The user's tank size is 20 gallons."})
+    repo.insert_claim({**common, "id": "different", "value": "The user's tank size is 30 gallons."})
+    connection.executemany(
+        "INSERT INTO dedup_pairs("
+        "id,pair_key,left_claim_id,right_claim_id,similarity,policy_version,created_at"
+        ") VALUES (?,?,?,?,?,?,?)",
+        [
+            (
+                "safe-pair",
+                compute_dedup_pair_key("left", "near"),
+                "left",
+                "near",
+                0.99,
+                "v2",
+                recorded_from,
+            ),
+            (
+                "protected-atom-pair",
+                compute_dedup_pair_key("left", "different"),
+                "left",
+                "different",
+                0.995,
+                "v2",
+                recorded_from,
+            ),
+        ],
+    )
+    connection.commit()
+
+    result = review_pending_near_duplicates(
+        connection,
+        threshold=0.92,
+        limit=2,
+        reviewed_at="2026-08-12T00:00:00+00:00",
+    )
+    rows = {
+        row["id"]: row
+        for row in connection.execute(
+            "SELECT id,decision,judge_confidence,judge_reason,judge_model,reviewed_at " "FROM dedup_pairs ORDER BY id"
+        ).fetchall()
+    }
+
+    assert result == {"scanned": 2, "equivalent": 1, "deferred": 1, "missing": 0}
+    assert rows["safe-pair"]["decision"] == "equivalent"
+    assert rows["safe-pair"]["judge_confidence"] == 0.99
+    assert rows["safe-pair"]["judge_reason"] == "deterministic_near_copy_v1"
+    assert rows["safe-pair"]["judge_model"] is None
+    assert rows["safe-pair"]["reviewed_at"] == "2026-08-12T00:00:00+00:00"
+    assert rows["protected-atom-pair"]["decision"] is None
+    assert repo.get_claim("left")["status"] == "active"
+    assert repo.get_claim("near")["status"] == "active"
+    assert not _apply_equivalent_pair(
+        connection,
+        "safe-pair",
+        repo.get_claim("left"),
+        repo.get_claim("near"),
+        applied_at="2026-08-12T00:01:00+00:00",
+        min_confidence=0.95,
+    )
+    connection.close()
 
 
 def test_apply_equivalent_pair_rechecks_qualifiers(tmp_path) -> None:
