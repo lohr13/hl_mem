@@ -69,8 +69,8 @@ was newly created.
 
 `POST /v1/events/batch` accepts `{"events": [...]}` with one to four normal Event payloads and returns
 `{"events": [{"id": ..., "created": ...}, ...]}`. The whole request is atomic. It is intended for a user/assistant
-turn pair; each item carries its own idempotency key and may share a `metadata.turn_id`. Existing single-Event clients
-remain compatible.
+turn pair; each item carries its own idempotency key and may share a `metadata.turn_id`. The request array order is
+preserved when extraction jobs form a same-session window. Existing single-Event clients remain compatible.
 
 ### Save an explicit memory
 

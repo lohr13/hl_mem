@@ -1,6 +1,6 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.24.2 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.25.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
@@ -60,6 +60,7 @@ hl-mem import var/events.jsonl --db var/restored.db
 
 若 Event 已由旧版 importer 或 `--skip-extraction-jobs` 导入，但稳定 extraction job 缺失，随后执行普通 import
 会验证 Event payload 并补建 job；同 ID 不同 payload 会明确失败，不会被当作重复记录静默跳过。
+Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn locator 等 metadata 会在导入/导出后原样保留。
 
 `--skip-extraction-jobs` 只用于不希望重建 Claims 的取证恢复。该模式仅导入 Events、不会排队提取，并明确
 输出 `claims_not_rebuilt=true`。
@@ -321,12 +322,15 @@ TOML 为准，活文档不固定具体型号。
 | `worker.consolidate_cron` | 字符串 | `"03:30"` | 任意字符串 | `consolidate_cron` |
 | `worker.daily_token_limit` | 整数 | `500000` | 任意整数 | `daily_token_limit` |
 | `worker.induce_policies_cron` | 字符串 | `"04:00"` | 任意字符串 | `induce_policies_cron` |
-| `worker.job_lease_minutes` | 整数 | `5` | 任意整数 | `worker_job_lease_minutes` |
+| `worker.job_lease_minutes` | 整数 | `5` | >= 1 | `worker_job_lease_minutes` |
 | `worker.maintenance_interval` | 数值 | `600.0` | 任意数值 | `worker_maintenance_interval` |
 | `worker.policy_induction_lookback_days` | 整数 | `7` | >= 1 | `policy_induction_lookback_days` |
 | `worker.policy_induction_min_episodes` | 整数 | `3` | >= 1 | `policy_induction_min_episodes` |
 | `worker.poll_interval` | 数值 | `2.0` | 任意数值 | `worker_poll_interval` |
 | `worker.reclassify_cron` | 字符串 | `"04:30"` | 任意字符串 | `reclassify_cron` |
+
+Worker 在任务执行期间按 lease 时长的三分之一周期续租全部同窗口 job；进度回调也会续租。若 token ownership
+在终态写入前丢失，本次执行返回 `lease_lost`，不会把更新 0 行误报为成功。
 
 ## 字段联动
 

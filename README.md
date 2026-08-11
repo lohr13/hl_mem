@@ -134,6 +134,13 @@ hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
 ```
 
+### 从 v0.24.0 升级
+
+v0.25.0 是 v0.24.0 之后的首个带 tag 候选版本；v0.24.1/v0.24.2 只是仓库内过渡版本。升级前请备份并停止
+API、Worker 和其他写入者。migration 038 会在 `BEGIN IMMEDIATE` 中扫描并规范化存量 Claim subject，
+migration 039 为 Event 增加 nullable `metadata_json`；大库应安排维护窗口，数据库不支持向后迁移。
+默认 `auto` FTS 查询同时兼容旧 raw-only 与新 raw+stem 索引，因此无需仅为词形兼容强制重建。
+
 ## 能力概览
 
 - **记忆正确性**：幂等事件摄入、事务原子写入、精确/语义去重、确定性冲突规则、LLM 灰区归并和受守卫的冲突终态收敛。
@@ -144,6 +151,11 @@ hlmem backfill-index-text --mode natural
 - **经验通道**：Episode、Trace、Reward、Policy/Procedure 和派生 Observation。
 - **接口**：FastAPI REST 与 Hermes Provider 为稳定主路径；七工具 MCP stdio 接口处于 Beta。
 - **评测**：离线提取/召回/生命周期指标、LongMemEval-S extract-once/config-compare、50 case 中文记忆测试集、召回诊断和索引文本受控 A/B。
+
+LongMemEval holdout50 的冻结官方口径为 **40/50（80%）**：`deepseek-v4-flash-0731`、全部 reader 开启
+thinking、Top-10 evidence、自有 judge；temporal gate 排除 2 道问题时点无有效答案的诊断口径为
+40/48（83.3%），不替代官方分数。内容审查隔离跳过了 2 个输入 Event。benchmark reader 与生产
+recall/context packing 是两套契约，该成绩不能直接视为生产端到端准确率。
 
 能力成熟度、默认开关和证据见 [能力矩阵](docs/capability-matrix.md)，架构与数据流见 [架构文档](docs/architecture.md)。
 

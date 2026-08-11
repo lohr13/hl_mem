@@ -223,9 +223,11 @@ POST /v1/recall
   → optional evidence-aware Context Packet + optional SearchTrace
 ```
 
-Lexical retrieval uses deterministic jieba pre-tokenization for claims, events, and tags, then indexes the resulting
-terms in FTS5 `unicode61` tables. Legacy trigram/raw tables remain only for the rollback window and are not queried by the
-production path.
+Lexical retrieval uses deterministic pre-tokenization selected by the active `recall.fts_language`: jieba for Chinese,
+Porter stemming for English, and mixed raw-plus-stem terms in `auto`. Claims and Events pass the same active setting to
+write, query, and rebuild paths. An `auto` query keeps raw terms and stemmed terms in separate conjunctive branches, so
+v0.24.0 raw-only rows and current raw-plus-stem rows remain searchable without weakening every token to a global OR.
+Legacy trigram/raw tables remain only for the rollback window and are not queried by the production path.
 Dense retrieval scans a configured candidate bound before scoring. Optional provider failures degrade to deterministic or
 original-query paths so the SQLite retrieval core remains available.
 
@@ -288,7 +290,9 @@ documentation at `/docs` while the service is running.
 ## 9. Storage and Operations
 
 The database layer owns WAL mode, busy timeout, connection lifecycle, online backup, and ordered immutable migrations.
-Workers use durable jobs with leases, heartbeat, stage, and processed/total progress. Audit logs record state changes and
+Workers use durable jobs with leases, heartbeat, stage, and processed/total progress. A separate connection renews every
+job in a leased extraction window while work is running; token-guarded terminal updates must cover the complete window or
+the worker reports `lease_lost` instead of success. Audit logs record state changes and
 automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. The async `/healthz`
 route reports process-local component metrics, the configured vector backend, and the unresolved conflict count through
 the application lifecycle connection; it does not call external providers. `/v1/stats`, offline evaluation, and the
@@ -312,8 +316,14 @@ sqlite-vec extension. When `recall.vector_backend = "sqlite_vec"`, the separate 
 creates or rebuilds the dimension-specific derived vector table. Startup drains dirty projections before serving, while
 dirty-query detection can fall back to the exact scan path; the default remains `sqlite_scan`.
 
+Migration 038 registers the namespace-local persona subject canonicalization. Its SQL file is intentionally a no-op;
+startup runs the corresponding Python data migration so JSON-derived hashes, FTS text, embeddings, and sqlite-vec dirty
+state are rewritten consistently. The migration scans stored Claims under a write transaction, so large databases need a
+backup and maintenance window.
+
 Migration 039 is the v0.25 schema change: it adds nullable `events.metadata_json` for non-content source locators such as
-turn IDs. Event text and FTS semantics remain unchanged.
+turn IDs. Event text and FTS semantics remain unchanged; JSONL archives include metadata in round-trip and conflict
+equivalence checks.
 
 Backup and restore are whole-database operations:
 

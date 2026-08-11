@@ -111,6 +111,14 @@ example deployment: `Settings` keeps `recall.default_limit` / `recall.relevance_
 `recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model with 5/6-second per-call/total
 timeouts.
 
+### Upgrading from v0.24.0
+
+v0.25.0 is the first tagged release candidate after v0.24.0; v0.24.1 and v0.24.2 were repository-only transition
+versions. Back up the database and stop the API, workers, and other writers before upgrading. Migration 038 scans and
+canonicalizes stored Claim subjects under `BEGIN IMMEDIATE`, and migration 039 adds nullable Event `metadata_json`.
+Plan a maintenance window for a large database; migrations are forward-only. The default `auto` FTS query supports both
+legacy raw-only and current raw-plus-stem indexes, so morphology compatibility alone does not require a forced rebuild.
+
 ## Capabilities
 
 - **Memory correctness:** idempotent event ingestion, atomic writes, exact/semantic deduplication, deterministic conflict rules, LLM-assisted gray-zone consolidation, and guarded terminal conflict convergence.
@@ -121,6 +129,12 @@ timeouts.
 - **Experience:** Episodes, Traces, rewards, Policies/Procedures, and derived Observations.
 - **Interfaces:** FastAPI REST and the Hermes Provider are stable paths; the seven-tool MCP stdio interface is beta.
 - **Evaluation:** offline extraction/recall/lifecycle metrics, LongMemEval-S extract-once/config comparison, a 50-case Chinese memory set, recall diagnostics, and controlled index-text A/B tests.
+
+The frozen official LongMemEval holdout50 baseline is **40/50 (80%)**, using `deepseek-v4-flash-0731`, thinking for every
+reader call, Top-10 evidence, and the project judge. A temporal-gate diagnostic that excludes two questions with no valid
+answer at the question time is 40/48 (83.3%); it does not replace the official score. Content-review isolation skipped two
+input Events. The benchmark reader and production recall/context packing are separate contracts, so this score is not a
+production end-to-end accuracy claim.
 
 See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, and evidence, and the [architecture guide](docs/architecture.md) for data flows.
 

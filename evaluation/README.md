@@ -43,6 +43,20 @@ runner 每完成一个 case 都会原子更新报告；resume 会校验数据集
 - claim R@K/MRR 只在 claim `eligible` case 上聚合；session R@K/MRR 使用独立的 `session_eligible` 分母。
 - 报告中的 claim/session `*_eligible_numerator` 与 `*_eligible_denominator` 明确给出每个 K 的有效分子、分母；不要把两类 eligibility 混用。
 
+### v0.25.0 holdout50 冻结基线
+
+- 官方 50 题口径：**40/50（80%）**。配置为 `deepseek-v4-flash-0731`，所有 reader 调用开启 thinking，judge 关闭 thinking，reader evidence 固定 Top-10。
+- temporal gate 诊断口径：40/48（83.3%）。它排除 2 道问题时点无有效答案的题，只用于误差分析，发布报告必须同时给出且优先报告官方 40/50。
+- 内容审查隔离跳过 2 个输入 Event；这是结果解释所需的已知限制，不得静默省略。
+- reader、excerpt 和 ordinal fallback 位于 `evaluation/tools/`，不是生产 `POST /v1/recall` 的回答生成层；benchmark Top-10 与生产可配置召回及 token packing 不可混为同一口径。
+
+### 排序可观测性
+
+每个 case 的 retrieval 记录保存完整 `search_trace`；`retrieved` 中的每条候选同时保存 dense 通道原始分、
+`reranker_raw_score`、各通道 rank/score、reranker 前后 rank、recall 最终 rank、reader 最终顺序和
+`score_path`。归因时应优先使用这些原始字段，不要从最终混合分反推 dense 或 reranker 行为。旧报告缺少字段时
+必须标为不可得，不能补算或猜测。
+
 ## LongMemEval 提取分块与诊断协议
 
 - benchmark 仍原样持久化 turn event；仅在调用 extractor 时，对超过字符预算的单 turn 生成临时 fragment。fragment 优先在段落、句子或词边界结束，无法容纳的纯非文本 envelope 保持单个无损 JSON，不静默丢字段。

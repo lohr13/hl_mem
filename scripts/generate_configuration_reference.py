@@ -106,6 +106,7 @@ CONSTRAINTS = {
     "retention.feedback_bonus_cap_days": ">= 0",
     "worker.policy_induction_lookback_days": ">= 1",
     "worker.policy_induction_min_episodes": ">= 1",
+    "worker.job_lease_minutes": ">= 1",
 }
 
 

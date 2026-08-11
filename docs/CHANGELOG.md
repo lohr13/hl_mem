@@ -1,15 +1,35 @@
 # HL-Mem 变更记录
 
-## v0.25.0（2026-08-10）
+## v0.25.0（2026-08-12）
 
 ### 提取架构最终版
 
 - Hermes `sync_turn` 通过新增的原子批量端点一次写入 user/assistant Event；原有单 Event API 保持兼容。
-- Worker 对同 namespace/session 的消息执行最多 4 Event、最多等待 2 秒的有界微批；显式记忆、非消息及无 session Event 仍实时直达。
+- Worker 对同 namespace/session 的消息执行默认最多 5 Event、最多等待 120 秒的有界微批；显式记忆、非消息及无 session Event 仍实时直达。
 - compact extraction 增加 `source_event_indices`，Claim 可链接窗口内一个或多个真实来源 Event；speaker、turn、发生时间与证据映射不再因合并提取丢失。
 - LongMemEval 改为排队 Event 后驱动生产 Worker，生产与 benchmark 不再维护两条提取路径。
 - 新增批量原子性、窗口边界、会话隔离、speaker/turn prompt、来源校验、多 Event evidence 与 benchmark 对齐回归测试。
 - Migration 039 为 Event 增加 nullable `metadata_json`，仅保存 turn 等非正文 locator；新增配置仅为 `extraction.batch_max_events` 与 `extraction.batch_max_wait_seconds`。
+
+### 发布前兼容性与可靠性收口
+
+- `auto` 英文 FTS 查询改为 raw 全词 AND 与 stem 全词 AND 两个分支，既能命中 v0.24.0 存量 raw-only 索引，也保持新索引的跨词形召回；Claim、Event 和启动重建路径统一使用当前 Database 的 `recall.fts_language`。
+- `/v1/events/batch` 以微秒级内部 `recorded_at` 保留请求数组顺序，避免四条交替 user/assistant Event 被角色排序打乱；整个批次与 extraction job 仍在同一事务中提交。
+- JSONL Event 归档纳入 `metadata_json` 的导入、导出和同 ID 冲突判定；Worker 在长任务期间续租全部 job，并在终态更新未持有 lease 时返回 `lease_lost`，不再报告伪成功。
+- compact/legacy extraction 的 `source_event_indices` 上限与可配置微批上限统一为 32；结构化输出的 20 claims 上限及生产去重/冲突阈值未改变。
+
+### LongMemEval 评测工具链与基线
+
+- benchmark reader 全题型开启 thinking，并为 reasoning 与正文分别设置受控预算；judge 与 extractor 保持关闭 thinking。reader 使用 LongMemEval 官方 Top-10 evidence 口径，并保留重复事实只计一次、count/更新题规则、相邻 turn excerpt 与 assistant ordinal 回退。
+- 超量 claims 自适应拆分、内容审查拒绝事件隔离、HTTP 非 2xx 脱敏诊断与 cache/resume 身份已收口；结果文件新增每条候选的 dense 原始分、reranker 原始分、通道来源、最终顺序和完整 `search_trace`。
+- 冻结 holdout50 基线为 **40/50（80%）**：`deepseek-v4-flash-0731`、reader thinking、Top-10、自有 judge。temporal gate 排除 2 道问题时点无有效答案的诊断口径为 **40/48（83.3%）**，只用于误差分析，不替代官方 50 题分母。
+- 已知限制：内容审查隔离跳过 2 个输入 Event；剩余错误集中在 multi-session 聚合、temporal 计算和少量 single-session 细粒度限定词。benchmark reader 窗口与生产 recall/context packing 是两套契约，不应把 80% 直接解释为生产端到端准确率。
+
+### 升级与发布说明
+
+- v0.24.1/v0.24.2 是仓库内过渡版本，从未建立 Git tag；v0.25.0 是 v0.24.0 之后的首个对外候选版本。
+- 升级会顺序执行 migration 038 的 persona subject Python 数据回写与 migration 039 的 nullable Event metadata 列。大库应先备份、停止其他写入者并预留 migration 038 全表扫描和写锁时间；数据库 migration 仅向前，不支持降级。
+- 本版本共 39 个不可变 SQL migration（001-039）；REST 单 Event API、依赖集合及生产阈值 `0.82/0.92/0.95` 保持不变。
 
 ## v0.24.2（2026-08-09）
 
