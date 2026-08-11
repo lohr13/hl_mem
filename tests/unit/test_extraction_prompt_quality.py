@@ -60,6 +60,28 @@ class ExtractionPromptQualityTest(unittest.TestCase):
         self.assertIn("IKEA bookcase", ENGLISH_SYSTEM_PROMPT)
         self.assertIn("IKEA 书架", SYSTEM_PROMPT)
 
+    def test_prompts_align_compound_relation_and_enumeration_guidance(self) -> None:
+        """双语提示都应保护复合属性、关系动作和枚举原子项。"""
+        for expected in (
+            "只输出「用户将参加首席记者能力提升营」",
+            "参加 Emily 的婚礼",
+            "把旧靴子退回 Zara",
+            "一次性事件也不得省略",
+            "枚举中的每个可独立回答项",
+            "不得计算原文未明确陈述的总数",
+        ):
+            self.assertIn(expected, SYSTEM_PROMPT)
+
+        for expected in (
+            "emit only that the user will attend the Lead Reporters Development Camp",
+            "attended Emily's wedding",
+            "return the old boots to Zara",
+            "Do not omit one-off events",
+            "Each independently answerable item in an enumeration",
+            "Do not calculate a total that the source does not explicitly state",
+        ):
+            self.assertIn(expected, ENGLISH_SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()

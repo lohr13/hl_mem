@@ -112,16 +112,20 @@ SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有�
 原子事实规则：
 - 每条 claim 只表达一个原子事实；一句话有多个事实时拆开，避免漏项。
 - 复合句拆分（关键）：当一个子句陈述「用户要做X」，另一个子句描述X的属性时，必须拆成两条独立的 claim。
-  常见句式：「我要参加的X，它的[属性]是Y」「X的规模/持续时间/地点/费用是Y」「我计划参加X，举办地点在Z」
-  属性包括但不限于：规模（人数）、持续时间、地点、时间、费用、人数、主办方。
   ✅ 正例：「我将要参加的首席记者能力提升营，它的规模是六百人。」→ 拆成两条：
     1. subject=用户，value=将参加首席记者能力提升营，kind=plan
     2. subject=首席记者能力提升营，value=规模是六百人，kind=fact
-  ✅ 正例：「金融科技精英论坛的持续时间是七天。」→ subject=金融科技精英论坛，value=持续时间是七天，kind=fact
-  ✅ episodic 正例：「我装 IKEA 书架用了 4 小时。」→ subject=用户，value=用户组装 IKEA 书架用了 4 小时，kind=fact，notability=low
   ❌ 反例：只输出「用户将参加首席记者能力提升营」而丢失「规模是六百人」这个数值属性。
   ❌ 反例：把两件事合并为一条 claim（如 value=将参加规模六百人的首席记者能力提升营）。
+- 明确动作/关系（关键）：原文明确表达主体与他人、物品、组织或事件之间已发生或已确认的动作/关系时，必须单独提取，保留主体、动作、对象及专名。
+  ✅ 「我上周参加 Emily 的婚礼。」→ subject=用户，value=用户上周参加 Emily 的婚礼，kind=fact，notability=low
+  ✅ 「我需要把旧靴子退回 Zara。」→ subject=用户，value=用户需要把旧靴子退回 Zara，kind=plan，notability=low
+  参加、归还、拥有、任职、拜访等明确动作/关系即使是一次性事件也不得省略。
+- 枚举与总数（关键）：枚举中的每个可独立回答项及其数量、单位必须分别保留，不得用模糊汇总替代。
+  ✅ 「鱼缸里有五条霓虹灯鱼、三条孔雀鱼。」→ 分别提取五条霓虹灯鱼和三条孔雀鱼。
+  原文明说总数时提取该总数；只说组成项时不得计算原文未明确陈述的总数。
 - 数值属性（人数、天数、金额等）极易在合并提取中丢失，务必单独成条。
+- ✅ episodic 正例：「我装 IKEA 书架用了 4 小时。」→ subject=用户，value=用户组装 IKEA 书架用了 4 小时，kind=fact，notability=low
 - value 必须脱离上下文仍可理解，包含必要的主体、关系、对象和单位。
 - subject 用标准名称（hl_mem、Hermes、用户、Codex 等），不用代词。
 - 保留用户原始语言：中文原文输出中文，英文原文输出英文。
@@ -197,7 +201,21 @@ Source boundaries:
 
 Atomicity and source-language rules:
 - Each claim must state exactly one fact. Split a sentence whenever it contains multiple facts.
-- If one clause says the user will do X and another gives an attribute of X, emit separate claims.
+- Compound-clause splitting is critical: if one clause says the user will do X and another gives an attribute of X,
+  emit separate claims.
+  Example: "I will attend the Lead Reporters Development Camp, which has 600 participants" becomes two claims:
+  1. subject=user, value=The user will attend the Lead Reporters Development Camp, kind=plan
+  2. subject=Lead Reporters Development Camp, value=The camp has 600 participants, kind=fact
+  Counterexample: do not emit only that the user will attend the Lead Reporters Development Camp and lose the count.
+  Counterexample: do not merge both facts into "The user will attend the 600-participant camp."
+- Explicit actions and relationships are critical: when the source clearly states a completed or confirmed action or
+  relationship between a subject and another person, item, organization, or event, emit it as a separate claim and
+  preserve the subject, action, object, and proper names.
+  Examples: "I attended Emily's wedding last weekend" and "I need to return the old boots to Zara."
+  Do not omit one-off events involving attendance, returns, ownership, employment, or visits.
+- Each independently answerable item in an enumeration must be preserved separately with its exact quantity and unit;
+  never replace the items with a vague summary. Extract an explicitly stated total when present.
+  Do not calculate a total that the source does not explicitly state when it gives only the component items.
 - Pay special attention to numbers, durations, dates, places, prices, counts, and named entities; each distinct
   attribute gets its own claim.
 - Episodic example: "I spent 4 hours assembling an IKEA bookcase" becomes a low-notability fact whose value keeps
@@ -973,6 +991,20 @@ class LLMExtractor:
         occurred_at = str(event_context.get("occurred_at", "未知"))
         language = detect_extraction_language(chunk.text)
         result = self._request_chunk(chunk, context, occurred_at, language)
+        if len(result.claims) == 20:
+            current_audit().emit(
+                "extract",
+                "possible_under_extraction",
+                "claim_limit_reached",
+                detail={
+                    "claim_count": len(result.claims),
+                    "schema_limit": 20,
+                    "chunk_index": chunk.index,
+                    "start_unit": chunk.start_unit,
+                    "end_unit": chunk.end_unit,
+                    "source_length": len(chunk.text),
+                },
+            )
         if not result.should_memorize and not result.claims:
             self._memorize_decisions.append((False, "should_memorize=false"))
             return []

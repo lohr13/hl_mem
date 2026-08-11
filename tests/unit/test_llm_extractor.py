@@ -137,6 +137,51 @@ def test_extract_metrics_count_schema_retries_and_repairs(caplog) -> None:
     assert payload["total_tokens"] == 8
 
 
+def test_exact_claim_limit_emits_possible_under_extraction_audit() -> None:
+    """恰好命中 schema 上限时应告警可能存在模型自行省略。"""
+    values = [f"The user recorded collection item {index} with quantity {index + 1}" for index in range(20)]
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": "user",
+                    "value": value,
+                    "kind": "fact",
+                    "confidence": 1.0,
+                    "notability": "medium",
+                    "evidence_quote": value,
+                    "source_event_indices": [0],
+                }
+                for value in values
+            ],
+            "should_memorize": True,
+        }
+    )
+    source = "\n".join(values)
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claims = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract(source)
+
+    assert len(claims) == 20
+    warnings = [event for event in audit.events if event[1] == "possible_under_extraction"]
+    assert warnings == [
+        (
+            "extract",
+            "possible_under_extraction",
+            "claim_limit_reached",
+            {
+                "claim_count": 20,
+                "schema_limit": 20,
+                "chunk_index": 0,
+                "start_unit": 0,
+                "end_unit": 1,
+                "source_length": len(source),
+            },
+        )
+    ]
+
+
 def test_occurred_at_is_injected_into_user_prompt() -> None:
     client = _FakeLLMClient('{"claims":[],"should_memorize":true}')
     extractor = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2))
