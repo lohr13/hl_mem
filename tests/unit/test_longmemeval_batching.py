@@ -242,6 +242,70 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         )
         self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
 
+    def test_assistant_ordinal_fallback_pairs_question_turn_with_next_assistant(self) -> None:
+        record = _record("case-ordinal-pair")
+        record["question_type"] = "single-session-assistant"
+        record["question"] = "What was the seventh home-based job in the numbered list you provided?"
+        case = runner.normalize_case(record)
+        target_text = (
+            "Here is the numbered list of home-based jobs:\n"
+            "1. Tutor\n2. Editor\n3. Designer\n4. Bookkeeper\n"
+            "5. Translator\n6. Researcher\n7. Transcriptionist"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = runner.Database(Path(directory) / "ordinal.db", settings=Settings.for_test())
+            connection = database.open()
+            service = runner.IngestService(connection)
+            for event in (
+                {
+                    "id": "matched-user-turn",
+                    "tenant_id": case.namespace,
+                    "session_id": "target-session",
+                    "event_type": "message",
+                    "actor_type": "user",
+                    "content": {
+                        "text": "Please provide a numbered list of home-based jobs.",
+                        "benchmark_locator": {"session_id": "target-session", "turn_index": 4},
+                    },
+                },
+                {
+                    "id": "paired-assistant-turn",
+                    "tenant_id": case.namespace,
+                    "session_id": "target-session",
+                    "event_type": "message",
+                    "actor_type": "assistant",
+                    "content": {
+                        "text": target_text,
+                        "benchmark_locator": {"session_id": "target-session", "turn_index": 5},
+                    },
+                },
+                {
+                    "id": "fts-distractor",
+                    "tenant_id": case.namespace,
+                    "session_id": "other-session",
+                    "event_type": "message",
+                    "actor_type": "assistant",
+                    "content": {
+                        "text": (
+                            "What was the seventh home-based job in the numbered list you provided?\n" "7. Wrong answer"
+                        ),
+                        "benchmark_locator": {"session_id": "other-session", "turn_index": 9},
+                    },
+                },
+            ):
+                service.ingest_event(event)
+
+            event = reader_context.load_assistant_raw_fallback(connection, case)
+            database.close()
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event["event_id"], "paired-assistant-turn")
+        self.assertEqual(event["window"]["mode"], "assistant_raw_ordinal_pair")
+        self.assertIn("7. Transcriptionist", event["content"])
+        self.assertNotIn("Wrong answer", event["content"])
+
     def test_reader_prompt_keeps_factual_questions_closed_book(self) -> None:
         case = runner.normalize_case(_record("case-factual-reader"))
 

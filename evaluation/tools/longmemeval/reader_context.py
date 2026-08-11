@@ -92,6 +92,46 @@ def _ordinal_item_needle(question: str, content: str) -> str | None:
     return item.group(0).strip() if item else None
 
 
+def _load_ordinal_assistant_pair(
+    connection: Any,
+    case: ReaderCase,
+    namespace: str,
+    match_query: str,
+) -> tuple[Any, int, float] | None:
+    if "assistant" not in str(case.question_type or "").casefold() or _question_ordinal(case.question) is None:
+        return None
+    try:
+        user_rows = connection.execute(
+            "SELECT e.id,e.content_json,e.occurred_at,e.recorded_at,e.event_type,"
+            "e.actor_type,e.source_uri,e.session_id,bm25(events_fts_v2) AS fts_score "
+            "FROM events_fts_v2 JOIN events e ON e.rowid=events_fts_v2.rowid "
+            "WHERE events_fts_v2 MATCH ? AND e.tenant_id=? AND e.actor_type='user' "
+            "ORDER BY fts_score,e.occurred_at DESC,e.id LIMIT ?",
+            (match_query, namespace, _ASSISTANT_FTS_CANDIDATE_LIMIT),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    for user_row in user_rows:
+        user_content = _decoded_event_content(user_row)
+        user_locator = _benchmark_locator(user_content)
+        user_turn = user_locator.get("turn_index") if user_locator is not None else None
+        session_id = str(user_row["session_id"] or "").strip()
+        if not session_id or not isinstance(user_turn, int) or isinstance(user_turn, bool):
+            continue
+        assistant_rows = connection.execute(
+            "SELECT id,content_json,occurred_at,recorded_at,event_type,actor_type,source_uri,session_id "
+            "FROM events WHERE tenant_id=? AND session_id=? AND actor_type='assistant' ORDER BY id",
+            (namespace, session_id),
+        ).fetchall()
+        for assistant_row in assistant_rows:
+            assistant_content = _decoded_event_content(assistant_row)
+            assistant_locator = _benchmark_locator(assistant_content)
+            assistant_turn = assistant_locator.get("turn_index") if assistant_locator is not None else None
+            if assistant_turn == user_turn + 1:
+                return assistant_row, len(user_rows), float(user_row["fts_score"])
+    return None
+
+
 def load_assistant_raw_fallback(connection: Any, case: ReaderCase) -> dict[str, Any] | None:
     """Retrieve one namespace-scoped assistant turn with query-term OR semantics."""
     if connection is None or not assistant_raw_fallback_requested(case):
@@ -100,23 +140,29 @@ def load_assistant_raw_fallback(connection: Any, case: ReaderCase) -> dict[str, 
     match_query = _or_fts_query(str(case.question or ""))
     if not namespace or not match_query:
         return None
-    try:
-        rows = connection.execute(
-            "SELECT e.id,e.content_json,e.occurred_at,e.recorded_at,e.event_type,"
-            "e.actor_type,e.source_uri,e.session_id,bm25(events_fts_v2) AS fts_score "
-            "FROM events_fts_v2 JOIN events e ON e.rowid=events_fts_v2.rowid "
-            "WHERE events_fts_v2 MATCH ? AND e.tenant_id=? AND e.actor_type='assistant' "
-            "ORDER BY fts_score,e.occurred_at DESC,e.id LIMIT ?",
-            (match_query, namespace, _ASSISTANT_FTS_CANDIDATE_LIMIT),
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return None
-    if not rows:
-        return None
-
-    # The highest-ranked turn identifies the Top-1 session; it is also the
-    # highest-ranked assistant turn within that session under the same order.
-    row = rows[0]
+    paired = _load_ordinal_assistant_pair(connection, case, namespace, match_query)
+    if paired is not None:
+        row, candidate_count, fts_score = paired
+        mode = "assistant_raw_ordinal_pair"
+    else:
+        try:
+            rows = connection.execute(
+                "SELECT e.id,e.content_json,e.occurred_at,e.recorded_at,e.event_type,"
+                "e.actor_type,e.source_uri,e.session_id,bm25(events_fts_v2) AS fts_score "
+                "FROM events_fts_v2 JOIN events e ON e.rowid=events_fts_v2.rowid "
+                "WHERE events_fts_v2 MATCH ? AND e.tenant_id=? AND e.actor_type='assistant' "
+                "ORDER BY fts_score,e.occurred_at DESC,e.id LIMIT ?",
+                (match_query, namespace, _ASSISTANT_FTS_CANDIDATE_LIMIT),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return None
+        if not rows:
+            return None
+        # Preserve the existing OR-FTS Top-1 behavior when no ordinal pair exists.
+        row = rows[0]
+        candidate_count = len(rows)
+        fts_score = float(row["fts_score"])
+        mode = "assistant_raw_fts"
     try:
         content = json.loads(row["content_json"])
     except (TypeError, ValueError, json.JSONDecodeError):
@@ -140,9 +186,9 @@ def load_assistant_raw_fallback(connection: Any, case: ReaderCase) -> dict[str, 
         "retrieval_source": "assistant_raw_fallback",
         "content": excerpt,
         "window": {
-            "mode": "assistant_raw_fts",
-            "candidate_count": len(rows),
-            "fts_score": row["fts_score"],
+            "mode": mode,
+            "candidate_count": candidate_count,
+            "fts_score": fts_score,
         },
     }
 
