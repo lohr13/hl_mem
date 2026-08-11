@@ -35,11 +35,6 @@ def qa_model(default_model: str) -> str:
     return override or default_model
 
 
-def reader_thinking_enabled(question_type: str) -> bool:
-    """Enable reasoning only for multi-session benchmark readers."""
-    return str(question_type or "").strip().casefold() == "multi-session"
-
-
 def qa_dashscope_chat(
     api_key: str,
     base_url: str,

@@ -13,7 +13,7 @@ import httpx
 
 from evaluation.tools import merge_longmemeval_results as merger
 from evaluation.tools import run_longmemeval_benchmark as runner
-from evaluation.tools.longmemeval import qa_client, reader_context
+from evaluation.tools.longmemeval import reader_context
 from hl_mem.http_utils import retry_http
 from hl_mem.settings import Settings
 
@@ -95,18 +95,6 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
-    def test_reader_thinking_is_enabled_only_for_multi_session(self) -> None:
-        self.assertTrue(qa_client.reader_thinking_enabled("multi-session"))
-        for question_type in (
-            "single-session-user",
-            "single-session-assistant",
-            "single-session-preference",
-            "knowledge-update",
-            "temporal-reasoning",
-        ):
-            with self.subTest(question_type=question_type):
-                self.assertFalse(qa_client.reader_thinking_enabled(question_type))
-
     def test_resume_defaults_missing_claim_inflation_metrics_without_inventing_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "legacy.json"
@@ -1419,8 +1407,10 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertTrue(prompt.endswith(f"Question: {case.question}"))
         self.assertLessEqual(runner.estimate_tokens(prompt), runner.QA_CONTEXT_TOKEN_BUDGET)
 
-    def test_run_qa_uses_plain_chat_and_retries_http_errors(self) -> None:
-        case = runner.normalize_case(_record("case-qa"))
+    def test_run_qa_enables_temporal_reader_thinking_and_keeps_judge_off(self) -> None:
+        record = _record("case-qa")
+        record["question_type"] = "temporal-reasoning"
+        case = runner.normalize_case(record)
         requests: list[httpx.Request] = []
 
         def handle_request(request: httpx.Request) -> httpx.Response:

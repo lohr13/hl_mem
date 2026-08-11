@@ -42,7 +42,6 @@ from evaluation.tools.longmemeval.qa_client import (  # noqa: E402, F401
     qa_call_with_retry,
     qa_dashscope_chat as _qa_dashscope_chat,
     qa_model,
-    reader_thinking_enabled,
     response_object as _response_object,
 )
 from evaluation.tools.longmemeval.reader_context import (  # noqa: E402, F401
@@ -1853,7 +1852,7 @@ def _run_qa(
             qa_model,
             reader_system_prompt,
             reader_user_prompt,
-            enable_thinking=reader_thinking_enabled(case.question_type),
+            enable_thinking=True,
         )
     )
     predicted = reader_text.strip()
