@@ -264,6 +264,16 @@ def test_ingest_deduplicator_preserves_swapped_entity_roles(tmp_path) -> None:
             "用户将Redis迁移到MySQL，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
             "用户将MySQL迁移到Redis，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
         ),
+        (
+            ["user"],
+            "用户的水箱容量是20加仑，并要求团队完成详细检查、风险清单和后续计划，再把所有结论同步到共享项目文档中。",
+            "用户的水箱容量是30加仑，并要求团队完成详细检查、风险清单和后续计划，再把所有结论同步到共享项目文档中。",
+        ),
+        (
+            ["user"],
+            "用户确认系统版本v1.2已经发布，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
+            "用户确认系统版本v1.3已经发布，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
+        ),
     ]
     for index, (entities, left_value, right_value) in enumerate(cases):
         connection = Database(tmp_path / f"dedup-entity-order-{index}.db").open()

@@ -130,13 +130,50 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
                 "entities": ["user", "Redis", "MySQL"],
                 "_score": 0.6,
             },
+            {
+                **common,
+                "id": "tank-20",
+                "value": "用户的水箱容量是20加仑，并要求团队完成详细检查、风险清单和后续计划，再把所有结论同步到共享项目文档中。",
+                "entities": ["user"],
+                "_score": 0.5,
+            },
+            {
+                **common,
+                "id": "tank-30",
+                "value": "用户的水箱容量是30加仑，并要求团队完成详细检查、风险清单和后续计划，再把所有结论同步到共享项目文档中。",
+                "entities": ["user"],
+                "_score": 0.4,
+            },
+            {
+                **common,
+                "id": "version-1-2",
+                "value": "用户确认系统版本v1.2已经发布，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
+                "entities": ["user"],
+                "_score": 0.3,
+            },
+            {
+                **common,
+                "id": "version-1-3",
+                "value": "用户确认系统版本v1.3已经发布，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
+                "entities": ["user"],
+                "_score": 0.2,
+            },
         ]
 
         folded = fold_similar_claims(claims, 0.95)
 
         self.assertEqual(
             [claim["id"] for claim in folded],
-            ["zhang-to-li", "li-to-zhang", "redis-to-mysql", "mysql-to-redis"],
+            [
+                "zhang-to-li",
+                "li-to-zhang",
+                "redis-to-mysql",
+                "mysql-to-redis",
+                "tank-20",
+                "tank-30",
+                "version-1-2",
+                "version-1-3",
+            ],
         )
 
     def test_fold_preserves_different_predicates_and_disputed_claims(self) -> None:

@@ -26,7 +26,7 @@ DETERMINISTIC_NEAR_COPY_REASON = "deterministic_near_copy_v1"
 NEAR_COPY_LEXICAL_THRESHOLD = 0.90
 
 _PROTECTED_LITERAL_PATTERN = re.compile(
-    r"(?<!\w)(?:v?\d+(?:\.\d+)+|\d+)(?!\w)|(?:[A-Za-z]:\\|/)[^\s\"']+",
+    r"(?<![A-Za-z0-9_])(?:v?\d+(?:\.\d+)+|\d+)(?![A-Za-z0-9_])|(?:[A-Za-z]:\\|/)[^\s\"']+",
     re.IGNORECASE,
 )
 _QUOTED_VALUE_PATTERN = re.compile(r'"([^"\r\n]+)"|“([^”\r\n]+)”|(?<!\w)\'([^\'\r\n]+)\'(?!\w)')
