@@ -32,7 +32,10 @@ _PROTECTED_LITERAL_PATTERN = re.compile(
 _QUOTED_VALUE_PATTERN = re.compile(r'"([^"\r\n]+)"|“([^”\r\n]+)”|(?<!\w)\'([^\'\r\n]+)\'(?!\w)')
 _WORD_PATTERN = re.compile(r"[\w]+(?:[-'][\w]+)*", re.UNICODE)
 _PROPER_NAME_PATTERN = re.compile(r"(?<![\w])(?:[A-Z][A-Za-z0-9_-]{2,})(?![\w])")
-_CJK_PROTECTED_PATTERN = re.compile(r"没有|禁止|不|没|未|无|(?:星期|周)[一二三四五六日天]")
+_CJK_PROTECTED_PATTERN = re.compile(
+    r"大前天|前天|昨天|今天|明天|后天|早晨|早上|上午|中午|下午|傍晚|晚上|凌晨|"
+    r"没有|禁止|不|没|未|无|(?:星期|周)[一二三四五六日天]"
+)
 _PROTECTED_WORDS = {
     "january",
     "february",
@@ -46,6 +49,13 @@ _PROTECTED_WORDS = {
     "october",
     "november",
     "december",
+    "today",
+    "tomorrow",
+    "yesterday",
+    "morning",
+    "afternoon",
+    "evening",
+    "night",
     "monday",
     "tuesday",
     "wednesday",
@@ -154,17 +164,39 @@ def _normalized_entities(claim: dict[str, Any]) -> tuple[str, ...] | None:
     return tuple(sorted({normalize_entity_id(entity) for entity in raw_entities}))
 
 
+def _entity_mention_signature(value: str, entities: tuple[str, ...]) -> tuple[str, ...]:
+    normalized_value = unicodedata.normalize("NFKC", value).casefold()
+    mentions: set[tuple[int, int, str]] = set()
+    for entity in entities:
+        normalized_entity = unicodedata.normalize("NFKC", entity).casefold().strip()
+        if not normalized_entity:
+            continue
+        escaped = re.escape(normalized_entity)
+        if any("a" <= character <= "z" or character.isdigit() for character in normalized_entity):
+            pattern = re.compile(rf"(?<!\w){escaped}(?!\w)")
+        else:
+            pattern = re.compile(escaped)
+        for match in pattern.finditer(normalized_value):
+            mentions.add((match.start(), match.end(), entity))
+    return tuple(mention[2] for mention in sorted(mentions))
+
+
 def _entities_compatible(
     left: dict[str, Any],
     right: dict[str, Any],
     projection: tuple[str, str] | None,
+    left_value: str,
+    right_value: str,
 ) -> bool:
     left_entities = _normalized_entities(left)
     right_entities = _normalized_entities(right)
     if left_entities is None or right_entities is None:
         return False
     if left_entities == right_entities:
-        return True
+        return _entity_mention_signature(left_value, left_entities) == _entity_mention_signature(
+            right_value,
+            right_entities,
+        )
     if projection is None or not left_entities or not right_entities:
         return False
     allowed_entities = set(projection)
@@ -221,7 +253,7 @@ def is_safe_near_duplicate(
         projection = _verified_user_projection(left_subject, right_subject, left_value, right_value)
         if projection is None:
             return False
-    if not _entities_compatible(left, right, projection):
+    if not _entities_compatible(left, right, projection, left_value, right_value):
         return False
     if normalize_predicate(str(left.get("predicate") or "")) != normalize_predicate(str(right.get("predicate") or "")):
         return False

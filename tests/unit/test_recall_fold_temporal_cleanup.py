@@ -44,22 +44,83 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
 
     def test_fold_keeps_highest_scored_claim_per_similar_group(self) -> None:
         vector = pack_vector([1.0, 0.0])
+        common = {
+            "namespace_key": "default",
+            "subject_entity_id": "Codex",
+            "predicate": "事实",
+            "canonical_attribute": "fact.other",
+            "canonical_slot": None,
+            "qualifiers": {},
+            "status": "active",
+            "valid_from": "2026-01-01T00:00:00+00:00",
+            "valid_to": None,
+        }
         claims = [
-            {"id": "vt-high", "_score": 0.9, "embedding_dense": vector},
-            {"id": "vt-low", "_score": 0.7, "embedding_dense": vector},
             {
+                **common,
+                "id": "vt-high",
+                "value": "Windows VT 序列不支持部分控制代码",
+                "_score": 0.9,
+                "embedding_dense": vector,
+            },
+            {
+                **common,
+                "id": "vt-low",
+                "value": "The Windows VT 序列不支持部分控制代码。",
+                "_score": 0.7,
+                "embedding_dense": vector,
+            },
+            {
+                **common,
                 "id": "architecture-1",
+                "value": "hl_mem application 服务层采用分层架构",
                 "_score": 0.8,
                 "embedding_dense": pack_vector([0.0, 1.0]),
             },
             {
+                **common,
                 "id": "architecture-2",
+                "value": "The hl_mem application 服务层采用分层架构。",
                 "_score": 0.6,
                 "embedding_dense": pack_vector([0.1, 0.9]),
             },
         ]
         folded = fold_similar_claims(claims, 0.95)
         self.assertEqual([claim["id"] for claim in folded], ["vt-high", "architecture-1"])
+
+    def test_fold_preserves_swapped_cjk_entity_roles(self) -> None:
+        vector = pack_vector([1.0, 0.0])
+        common = {
+            "namespace_key": "default",
+            "subject_entity_id": "user",
+            "predicate": "事实",
+            "canonical_attribute": "fact.other",
+            "canonical_slot": None,
+            "qualifiers": {},
+            "entities": ["user", "张三", "李四"],
+            "status": "active",
+            "valid_from": "2026-01-01T00:00:00+00:00",
+            "valid_to": None,
+            "embedding_dense": vector,
+        }
+        claims = [
+            {
+                **common,
+                "id": "zhang-to-li",
+                "value": "用户把张三介绍给李四，并要求他们共同完成本周的详细项目状态报告，随后还需要核对每项进度、风险和下周计划，并把所有结论同步到团队共享的项目文档中。",
+                "_score": 0.9,
+            },
+            {
+                **common,
+                "id": "li-to-zhang",
+                "value": "用户把李四介绍给张三，并要求他们共同完成本周的详细项目状态报告，随后还需要核对每项进度、风险和下周计划，并把所有结论同步到团队共享的项目文档中。",
+                "_score": 0.8,
+            },
+        ]
+
+        folded = fold_similar_claims(claims, 0.95)
+
+        self.assertEqual([claim["id"] for claim in folded], ["zhang-to-li", "li-to-zhang"])
 
     def test_fold_preserves_different_predicates_and_disputed_claims(self) -> None:
         """高相似向量不得隐藏相反 predicate 或 disputed 候选。"""
@@ -368,11 +429,11 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
                 "embedding_dense": embedding,
             }
             for claim_id, value, embedding in (
-                ("vt-1", "Windows VT 序列限制", vector),
-                ("vt-2", "Windows VT 序列不支持", vector),
-                ("app-1", "hl_mem application 层架构", pack_vector([0.0, 1.0])),
-                ("app-2", "application 服务层结构", pack_vector([0.01, 0.99])),
-                ("app-3", "application 分层结构", pack_vector([0.02, 0.98])),
+                ("vt-1", "Windows VT 序列不支持部分控制代码", vector),
+                ("vt-2", "The Windows VT 序列不支持部分控制代码。", vector),
+                ("app-1", "hl_mem application 服务层采用分层架构", pack_vector([0.0, 1.0])),
+                ("app-2", "The hl_mem application 服务层采用分层架构。", pack_vector([0.01, 0.99])),
+                ("app-3", "hl_mem application 服务层采用清晰分层架构", pack_vector([0.02, 0.98])),
             )
         ]
 

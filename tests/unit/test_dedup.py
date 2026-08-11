@@ -206,6 +206,10 @@ def test_safe_near_duplicate_preserves_atom_order_negation_and_cjk_time() -> Non
             "用户周一不服用抗菌药，并在早餐后把结果详细记录到健康日志中。",
             "用户周二服用抗菌药，并在早餐后把结果详细记录到健康日志中。",
         ),
+        (
+            "用户今天上午服用抗菌药，并在早餐后把结果详细记录到健康日志中。",
+            "用户今天下午服用抗菌药，并在早餐后把结果详细记录到健康日志中。",
+        ),
     ]
 
     for left_value, right_value in distinct_pairs:
@@ -244,6 +248,46 @@ def test_cross_subject_near_duplicate_requires_verified_user_projection() -> Non
         semantic_threshold=0.92,
         allow_subject_mismatch=True,
     )
+
+
+def test_ingest_deduplicator_preserves_swapped_entity_roles(tmp_path) -> None:
+    connection = Database(tmp_path / "dedup-entity-order.db").open()
+    repo = ClaimRepository(connection)
+    embedder = FakeEmbedder(8)
+    vector = embedder.embed_one("constant-vector")
+    common = {
+        "namespace_key": "default",
+        "subject_entity_id": "user",
+        "predicate": "事实",
+        "canonical_attribute": "fact.other",
+        "canonical_slot": None,
+        "qualifiers": {},
+        "status": "active",
+        "recorded_from": "2026-01-01T00:00:00+00:00",
+        "valid_from": "2026-01-01T00:00:00+00:00",
+        "valid_to": None,
+        "embedding_dense": vector,
+    }
+    repo.insert_claim(
+        {
+            **common,
+            "id": "zhang-to-li",
+            "value": "用户把张三介绍给李四，并要求他们共同完成本周的详细项目状态报告，随后还需要核对每项进度、风险和下周计划，并把所有结论同步到团队共享的项目文档中。",
+            "entities_json": '["user","张三","李四"]',
+        }
+    )
+    candidate = {
+        **common,
+        "id": "li-to-zhang",
+        "value": "用户把李四介绍给张三，并要求他们共同完成本周的详细项目状态报告，随后还需要核对每项进度、风险和下周计划，并把所有结论同步到团队共享的项目文档中。",
+        "entities": ["user", "张三", "李四"],
+    }
+
+    assert Deduplicator(repo, embedder, threshold=0.95).find_duplicate(candidate) == (
+        "zhang-to-li",
+        "semantic_candidate",
+    )
+    connection.close()
 
 
 def test_review_pending_near_duplicates_marks_only_safe_pair_equivalent(tmp_path) -> None:
