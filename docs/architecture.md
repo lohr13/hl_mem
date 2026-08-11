@@ -252,12 +252,14 @@ dual-time closure for the loser.
 
 Near-copy control deliberately shares one conservative predicate across ingestion, maintenance, and recall. It requires
 compatible namespace, predicate, canonical slot/attribute, qualifiers, and validity; high cosine and lexical near-copy
-agreement must also preserve protected numbers, versions, dates/weekdays, paths, polarity, quoted values, and obvious
-proper names. Ingestion may reuse an existing same-subject Claim and add evidence. Maintenance only reviews an existing,
+agreement must also preserve the order and multiplicity of protected numbers, versions, dates/weekdays, paths, polarity,
+quoted values, and obvious proper names. Cross-subject folding is limited to a value-verified `user` to `user's <entity>`
+projection; arbitrary people are never merged. Ingestion may reuse an existing same-subject Claim and add evidence. Maintenance only reviews an existing,
 bounded `dedup_pairs` candidate set and records a deterministic `equivalent` edge; it never scans all Claim pairs, calls an
-LLM, deletes a Claim, or supersedes one. Recall rechecks those deterministic edges inside its existing candidate bound and
+LLM, deletes a Claim, or supersedes one. Deferred candidates rotate by `reviewed_at` so one unsafe high-similarity pair
+cannot starve the queue. Recall rechecks those deterministic edges inside its existing candidate bound and
 applies the same predicate dynamically within that bound when a cross-subject near-copy has no persisted edge. It keeps
-the highest-ranked representative and unions evidence in memory. Pairs that fail any guard remain independently
+the highest-ranked representative, exposes folded member IDs, and unions evidence in memory. Pairs that fail any guard remain independently
 retrievable. The older optional cross-subject LLM audit worker remains separate, and deterministic near-copy decisions are
 excluded from its physical apply path.
 

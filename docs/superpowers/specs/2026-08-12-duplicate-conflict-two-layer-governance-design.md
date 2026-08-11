@@ -21,12 +21,13 @@
 
 `is_safe_near_duplicate(left, right, similarity, semantic_threshold, allow_subject_mismatch)` 只在以下条件全部成立时返回真：
 
-- 两条 Claim 都不是 disputed，namespace 相同；入库路径还要求规范化 subject 相同。
+- 两条 Claim 都不是 disputed，namespace 相同；入库路径还要求规范化 subject 相同。维护/召回若 subject 不同，
+  只接受 value 同时明确包含投影实体的 `user ↔ user's <entity>`，不接受任意跨人物折叠。
 - normalized predicate、canonical slot、canonical attribute、qualifiers 一致。
 - value 都是非空字符串，有效时间区间重叠。
 - cosine 不低于调用方已有阈值：入库/维护使用 `dedup.threshold`，召回使用 `recall.dedup_threshold`。
 - NFKC + casefold + 空白/标点归一后的字符近似度不低于固定保守值 `0.90`。
-- 数字、版本、路径、月份、星期、否定词、引号内容和明显专名等 protected atoms 完全一致。
+- 数字、版本、路径、月份、星期、否定词、引号内容和明显专名等 protected atoms 按原文顺序及出现次数完全一致。
 
 该规则是充分条件，不是完整语义判定。未命中只表示“无法无 LLM 安全确认”，不得自动判 distinct。
 
@@ -38,7 +39,10 @@
 
 ### 维护兜底
 
-新增 `review_pending_near_duplicates()`：按 similarity、created_at 排序读取最多 `dedup.scan_limit` 条 pending pair，使用已保存 similarity 和 Claim 内容做确定性审查。命中后写 `decision='equivalent'`、规则版本和 reviewed_at；不命中保持 pending，供现有可选后台 judge 或人工审计。
+新增 `review_pending_near_duplicates()`：优先读取从未审查的 pending pair，再按最旧 `reviewed_at` 轮转，单轮最多
+`dedup.scan_limit` 条；使用已保存 similarity 和 Claim 内容做确定性审查。命中后写
+`decision='equivalent'`、规则版本和 reviewed_at；不命中保持 pending 并更新 reviewed_at，避免高相似但不安全的
+pair 永久堵住后续候选，仍可供现有可选后台 judge 或人工审计。
 
 该项加入 `_run_maintenance`，默认每 600 秒触发。候选由入库增量产生，因此维护成本受 scan limit 约束，不随全库 Claim 数形成 O(n²) 扫描。
 
@@ -46,7 +50,7 @@ near-copy equivalent 只作逻辑分组。即使 `dedup.audit_only=false`，现�
 
 ### 召回折叠与证据
 
-`ClaimRepository` 批量返回候选 Claim 间已确认的 equivalent pair。`fold_similar_claims()` 先合并持久化边，再对候选窗口应用相同 near-copy 安全门；每组保留排序最高者，并在内部 `_equivalent_ids` 记录被折叠成员。
+`ClaimRepository` 批量返回候选 Claim 间已确认的 equivalent pair。`fold_similar_claims()` 先合并持久化边，再对候选窗口应用相同 near-copy 安全门；每组保留排序最高者，并在内部 `_equivalent_claim_ids` 记录被折叠成员。
 
 `RecallService._assemble_results()` 用代表 Claim 与 `_equivalent_ids` 一次批量读取 evidence，按证据标识去重后返回，并公开 `equivalent_claim_ids` 供调试。数据库中的原 Claim、状态和时间字段均不修改。
 
