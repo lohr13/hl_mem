@@ -1481,7 +1481,10 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             self.assertEqual(request.headers["Authorization"], "Bearer environment-key")
             payload = json.loads(request.content)
             self.assertEqual(payload["model"], "qa-override")
-            self.assertEqual(payload["max_tokens"], 512)
+        self.assertEqual(
+            [json.loads(request.content)["max_tokens"] for request in requests],
+            [4096, 4096, 512],
+        )
         self.assertEqual(
             [json.loads(request.content)["enable_thinking"] for request in requests],
             [True, True, False],

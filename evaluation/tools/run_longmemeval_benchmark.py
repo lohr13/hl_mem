@@ -1853,6 +1853,7 @@ def _run_qa(
             reader_system_prompt,
             reader_user_prompt,
             enable_thinking=True,
+            max_tokens=4096,
         )
     )
     predicted = reader_text.strip()
