@@ -175,6 +175,7 @@ Client
   → fact_hash v2 exact deduplication
   → canonical attribute + conflict_key deterministic conflict resolution
   → LLM four-way consolidation for gray-zone conflicts
+  → conservative same-subject near-copy reuse (structure + lexical + cosine + protected atoms)
   → best-match semantic deduplication (configured threshold; default 0.82)
   → entity normalization + slot/tags + retention/expiry calculation
   → embedding generation and one evidence link per declared source Event
@@ -218,6 +219,7 @@ POST /v1/recall
   → reciprocal-rank fusion (RRF)
   → recency + importance + access + scope + helpfulness scoring
   → optional reranking (model configured via TOML)
+  → bounded equivalent-group folding with evidence union
   → relation, Observation, and Experience expansion
   → response shaping: legacy results or token-budgeted packet/both/Hermes delivery
   → optional evidence-aware Context Packet + optional SearchTrace
@@ -247,6 +249,16 @@ audited conflict consolidator. Automatic maintenance revisits every unresolved `
 `manual_required` case, follows supersede chains, and resolves converged endpoints or a surviving non-terminal endpoint.
 Manual `keep_left`/`keep_right` decisions apply the same winner/loser terminal semantics, including `superseded_by_id` and
 dual-time closure for the loser.
+
+Near-copy control deliberately shares one conservative predicate across ingestion, maintenance, and recall. It requires
+compatible namespace, predicate, canonical slot/attribute, qualifiers, and validity; high cosine and lexical near-copy
+agreement must also preserve protected numbers, versions, dates/weekdays, paths, polarity, quoted values, and obvious
+proper names. Ingestion may reuse an existing same-subject Claim and add evidence. Maintenance only reviews an existing,
+bounded `dedup_pairs` candidate set and records a deterministic `equivalent` edge; it never scans all Claim pairs, calls an
+LLM, deletes a Claim, or supersedes one. Recall rechecks those deterministic edges inside its existing candidate bound,
+keeps the highest-ranked representative, and unions evidence in memory. Pairs that fail any guard remain independently
+retrievable. The older optional cross-subject LLM audit worker remains separate, and deterministic near-copy decisions are
+excluded from its physical apply path.
 
 Retention is a pure function of scope and importance. Ephemeral memories expire; temporal and permanent memories decay on
 different schedules; access and sufficiently supported helpful feedback can extend useful life within configured caps.

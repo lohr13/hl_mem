@@ -57,6 +57,17 @@ runner 每完成一个 case 都会原子更新报告；resume 会校验数据集
 `score_path`。归因时应优先使用这些原始字段，不要从最终混合分反推 dense 或 reranker 行为。旧报告缺少字段时
 必须标为不可得，不能补算或猜测。
 
+### 召回前轻量维护
+
+标准 LongMemEval runner 在每个 case 的 fresh ingest 完成后，或打开 `--skip-ingest` 缓存数据库后、召回前，执行一次
+`deterministic-dedup-conflicts-v1` 维护协议。它只调用有界、无 LLM 的 pending near-copy review 和生产
+`auto_resolve_conflicts`；不会运行 TTL、decay、purge、派生记忆扫描或日任务。case 结果的 `maintenance` 字段保存
+dedup 与 conflict 统计，run metadata 保存协议版本；协议不一致的 resume 报告会被拒绝。
+
+`--skip-ingest` 因此会对缓存数据库做幂等维护写入，而不只是只读检索。embedding config-compare 不执行该步骤，
+因为其候选 embedding 会被逐配置替换，复用生产 embedding 生成的 pair 会污染 A/B。当前 40/50 是该协议加入前的
+冻结全量基线；在重新跑完 50 题前不得报告新的总体分数。
+
 ## LongMemEval 提取分块与诊断协议
 
 - benchmark 仍原样持久化 turn event；仅在调用 extractor 时，对超过字符预算的单 turn 生成临时 fragment。fragment 优先在段落、句子或词边界结束，无法容纳的纯非文本 envelope 保持单个无损 JSON，不静默丢字段。
