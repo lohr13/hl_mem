@@ -10,7 +10,7 @@ from importlib.resources import files
 import jieba
 
 from hl_mem.recall.porter_stemmer import PorterStemmer
-from hl_mem.settings import FtsLanguage, Settings
+from hl_mem.settings import FtsLanguage
 
 _TECHNICAL_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:(?:[-_.+/][A-Za-z0-9]+)+)?")
 _IDENTIFIER_SEPARATOR = re.compile(r"[-_.+/]+")
@@ -45,17 +45,6 @@ def _get_stemmer() -> PorterStemmer:
     return stemmer
 
 
-_fts_language_cache: FtsLanguage | None = None
-
-
-def _get_default_fts_language() -> FtsLanguage:
-    """Lazily read the default fts_language from Settings (avoids import-time cycles)."""
-    global _fts_language_cache
-    if _fts_language_cache is None:
-        _fts_language_cache = Settings().fts_language
-    return _fts_language_cache
-
-
 def _is_searchable(token: str) -> bool:
     return any(character.isalnum() for character in token)
 
@@ -87,16 +76,16 @@ def tokenize_for_fts(text: str, *, language: FtsLanguage | None = None) -> tuple
     text:
         Raw input text.
     language:
-        Override the tokenizer mode. When ``None`` (default), the value from
-        :attr:`Settings.fts_language` is used. ``"auto"`` detects Chinese vs
-        English per text; ``"zh"`` forces jieba; ``"en"`` forces the English
-        stemmer.
+        Override the tokenizer mode. ``None`` uses the library default
+        ``"auto"``; repositories pass their active application setting
+        explicitly. ``"auto"`` detects Chinese vs English per text; ``"zh"``
+        forces jieba; ``"en"`` forces the English stemmer.
     """
     normalized = unicodedata.normalize("NFKC", text)
     if not normalized.strip():
         return ()
 
-    mode = language or _get_default_fts_language()
+    mode = language or "auto"
 
     tokens: list[str] = []
     seen: set[str] = set()
@@ -244,9 +233,9 @@ def tokenize_for_fts(text: str, *, language: FtsLanguage | None = None) -> tuple
     return tuple(tokens)
 
 
-def prepare_fts_document(text: str) -> str:
+def prepare_fts_document(text: str, *, language: FtsLanguage | None = None) -> str:
     """Return a whitespace-delimited token stream for FTS document storage."""
-    return " ".join(tokenize_for_fts(text))
+    return " ".join(tokenize_for_fts(text, language=language))
 
 
 def _join_fts_terms(tokens: tuple[str, ...]) -> str:
@@ -284,7 +273,7 @@ def _auto_query_variants(text: str) -> tuple[tuple[str, ...], ...]:
 
 def prepare_fts_query(text: str, *, language: FtsLanguage | None = None) -> str:
     """Return a safely quoted conjunctive FTS5 MATCH expression."""
-    mode = language or _get_default_fts_language()
+    mode = language or "auto"
     if mode != "auto":
         return _join_fts_terms(tokenize_for_fts(text, language=mode))
 

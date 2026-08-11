@@ -8,6 +8,7 @@ from collections.abc import Iterator
 import pytest
 
 from hl_mem.recall.lexicalizer import prepare_fts_document
+from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
@@ -136,3 +137,30 @@ def test_event_search_reads_only_v2_index(connection) -> None:
     connection.commit()
 
     assert [event["id"] for event in repository.search_events_fts("中文 GPU")] == ["event-search-v2"]
+
+
+def test_repositories_use_database_fts_language_setting(tmp_path) -> None:
+    database = Database(tmp_path / "english-fts.db", settings=Settings(fts_language="en"))
+    connection = database.open()
+    try:
+        claims = ClaimRepository(connection)
+        events = EventRepository(connection)
+        assert claims.insert_claim(_claim("english-claim", "running databases"))
+        assert events.insert_event(_event("english-event", "running databases"))
+
+        assert (
+            connection.execute(
+                "SELECT terms FROM claims_fts_v2 WHERE rowid=(SELECT rowid FROM claims WHERE id='english-claim')"
+            ).fetchone()[0]
+            == "run databas"
+        )
+        assert (
+            connection.execute(
+                "SELECT terms FROM events_fts_v2 WHERE rowid=(SELECT rowid FROM events WHERE id='english-event')"
+            ).fetchone()[0]
+            == "run databas"
+        )
+        assert [claim["id"] for claim in claims.search_claims_fts("runs database")] == ["english-claim"]
+        assert [event["id"] for event in events.search_events_fts("runs database")] == ["english-event"]
+    finally:
+        database.close()

@@ -7,9 +7,15 @@ import sqlite3
 from typing import Literal
 
 from hl_mem.recall.lexicalizer import prepare_fts_document
+from hl_mem.settings import FtsLanguage
 
 BackfillChannel = Literal["claims", "events", "tags"]
 CHANNELS: tuple[BackfillChannel, ...] = ("claims", "events", "tags")
+
+
+def _fts_language(connection: sqlite3.Connection) -> FtsLanguage:
+    settings = getattr(connection, "hl_mem_settings", None)
+    return settings.fts_language if settings is not None else "auto"
 
 
 def event_text_for_fts(content_json: str | bytes | bytearray) -> str:
@@ -22,21 +28,23 @@ def event_text_for_fts(content_json: str | bytes | bytearray) -> str:
 
 
 def _backfill_claims(connection: sqlite3.Connection) -> int:
+    language = _fts_language(connection)
     connection.execute("DELETE FROM claims_fts_v2")
     rows = connection.execute("SELECT rowid, index_text FROM claims").fetchall()
     connection.executemany(
         "INSERT INTO claims_fts_v2(rowid, terms) VALUES(?, ?)",
-        ((row[0], prepare_fts_document(row[1] or "")) for row in rows),
+        ((row[0], prepare_fts_document(row[1] or "", language=language)) for row in rows),
     )
     return len(rows)
 
 
 def _backfill_events(connection: sqlite3.Connection) -> int:
+    language = _fts_language(connection)
     connection.execute("DELETE FROM events_fts_v2")
     rows = connection.execute("SELECT rowid, content_json FROM events").fetchall()
     connection.executemany(
         "INSERT INTO events_fts_v2(rowid, terms) VALUES(?, ?)",
-        ((row[0], prepare_fts_document(event_text_for_fts(row[1]))) for row in rows),
+        ((row[0], prepare_fts_document(event_text_for_fts(row[1]), language=language)) for row in rows),
     )
     return len(rows)
 

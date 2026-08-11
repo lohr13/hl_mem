@@ -70,6 +70,7 @@ class ClaimRepository:
         self.recall_default_limit = resolved_settings.recall_default_limit
         self.recall_vector_scan_limit = resolved_settings.recall_vector_scan_limit
         self.index_text_mode = resolved_settings.index_text_mode
+        self.fts_language = resolved_settings.fts_language
         self.vector_backend: SQLiteVecVectorBackend | None = None
         if VectorBackend(resolved_settings.vector_backend) is VectorBackend.SQLITE_VEC:
             self.vector_backend = SQLiteVecVectorBackend(
@@ -108,7 +109,10 @@ class ClaimRepository:
                 tags_text = " ".join(dict.fromkeys(tag for tag in raw_tags if isinstance(tag, str)))
                 self.connection.execute(
                     "INSERT INTO claims_fts_v2(rowid,terms) VALUES(?,?)",
-                    (row["rowid"], prepare_fts_document(row["index_text"] or "")),
+                    (
+                        row["rowid"],
+                        prepare_fts_document(row["index_text"] or "", language=self.fts_language),
+                    ),
                 )
                 self.connection.execute(
                     "INSERT INTO claims_tags_fts_v2(rowid,tags_text) VALUES(?,?)",
@@ -705,7 +709,7 @@ class ClaimRepository:
                 (match_query, namespace, *_valid_time_parameters(selected_intent, reference), limit),
             ).fetchall()
 
-        match_query = prepare_fts_query(query)
+        match_query = prepare_fts_query(query, language=self.fts_language)
         if not match_query:
             return []
         try:

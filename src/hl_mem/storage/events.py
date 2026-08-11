@@ -11,6 +11,7 @@ from typing import Any
 
 from hl_mem.protocols import ImageDescription
 from hl_mem.recall.lexicalizer import prepare_fts_document, prepare_fts_query
+from hl_mem.settings import Settings
 from hl_mem.storage._shared import (
     decode_json,
     encode_json,
@@ -24,8 +25,10 @@ from hl_mem.storage.tokenized_fts import event_text_for_fts
 class EventRepository:
     """提供事件写入、读取和全文检索。"""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, settings: Settings | None = None) -> None:
         self.connection = connection
+        resolved_settings = settings or getattr(connection, "hl_mem_settings", None) or Settings()
+        self.fts_language = resolved_settings.fts_language
 
     def insert_event(self, event: dict[str, Any], commit: bool = True) -> bool:
         """写入事件，并在同一事务同步写入 tokenized FTS v2。"""
@@ -47,7 +50,13 @@ class EventRepository:
                     raise RuntimeError(f"inserted event is missing: {stored['id']}")
                 self.connection.execute(
                     "INSERT INTO events_fts_v2(rowid,terms) VALUES(?,?)",
-                    (row["rowid"], prepare_fts_document(event_text_for_fts(row["content_json"]))),
+                    (
+                        row["rowid"],
+                        prepare_fts_document(
+                            event_text_for_fts(row["content_json"]),
+                            language=self.fts_language,
+                        ),
+                    ),
                 )
             if commit:
                 self.connection.commit()
@@ -170,7 +179,7 @@ class EventRepository:
 
     def search_events_fts(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """执行安全的事件全文检索。"""
-        match_query = prepare_fts_query(query)
+        match_query = prepare_fts_query(query, language=self.fts_language)
         if not match_query:
             return []
         try:
