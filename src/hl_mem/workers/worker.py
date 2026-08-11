@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import logging
+import threading
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -53,6 +54,72 @@ LOGGER = logging.getLogger(__name__)
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _lease_deadline(settings: Settings, now: datetime | None = None) -> str:
+    anchor = now or datetime.now(timezone.utc)
+    return (anchor + timedelta(minutes=settings.worker_job_lease_minutes)).isoformat()
+
+
+class _LeaseHeartbeat:
+    """Periodically renew a job lease on a separate database connection."""
+
+    def __init__(
+        self,
+        database: Database | None,
+        settings: Settings,
+        job_ids: list[str],
+        lease_token: str,
+    ) -> None:
+        self.database = database
+        self.settings = settings
+        self.job_ids = job_ids
+        self.lease_token = lease_token
+        self.interval_seconds = max(1.0, settings.worker_job_lease_minutes * 60.0 / 3.0)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._error: str | None = None
+
+    def start(self) -> None:
+        if self.database is None:
+            return
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"hl-mem-lease-{self.job_ids[0]}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
+
+    def raise_if_failed(self) -> None:
+        if self._error is not None:
+            raise RuntimeError(self._error)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            heartbeat_at = _now()
+            try:
+                assert self.database is not None
+                with self.database.connect() as connection:
+                    renewed = JobRepository(connection).renew_lease(
+                        self.job_ids,
+                        self.lease_token,
+                        leased_until=_lease_deadline(self.settings),
+                        heartbeat_at=heartbeat_at,
+                    )
+            except Exception as error:  # pragma: no cover - timing and storage dependent
+                # A short SQLite writer conflict must not turn completed work
+                # into a retry. Keep attempting; terminal ownership is checked
+                # by row count both here and before completion.
+                LOGGER.warning("job_lease_heartbeat_failed job=%s error=%s", self.job_ids[0], error)
+                continue
+            if renewed != len(self.job_ids):
+                self._error = "job lease ownership lost during execution"
+                return
 
 
 def enqueue_daily_reclassify(connection: Any, now: str, cron: str) -> bool:
@@ -126,7 +193,7 @@ class Worker:
     def run_once(self, *, force_extraction: bool = True) -> dict[str, Any]:
         now = _now()
         self.worker_runtime.heartbeat(now)
-        lease = (datetime.now(timezone.utc) + timedelta(minutes=self.settings.worker_job_lease_minutes)).isoformat()
+        lease = _lease_deadline(self.settings)
         job = self.jobs.lease_job(
             lease,
             now,
@@ -138,21 +205,38 @@ class Worker:
             return {"status": "idle"}
         lease_token = job["lease_token"]
         leased_job_ids = list(job.get("leased_job_ids") or [job["id"]])
-        self.jobs.update_progress(
-            job["id"],
-            lease_token,
-            stage="leased",
-            heartbeat_at=now,
-        )
+        heartbeat = _LeaseHeartbeat(self.database, self.settings, leased_job_ids, lease_token)
         try:
-            result = dispatch_job(self, job)
-            self.jobs.complete_jobs(leased_job_ids, _now(), lease_token)
+            renewed = self.jobs.renew_lease(
+                leased_job_ids,
+                lease_token,
+                leased_until=lease,
+                heartbeat_at=now,
+            )
+            progress_updated = self.jobs.update_progress(
+                job["id"],
+                lease_token,
+                stage="leased",
+                heartbeat_at=now,
+            )
+            if renewed != len(leased_job_ids) or not progress_updated:
+                raise RuntimeError("job lease ownership lost before dispatch")
+            heartbeat.start()
+            try:
+                result = dispatch_job(self, job)
+            finally:
+                heartbeat.stop()
+            heartbeat.raise_if_failed()
+            completed = self.jobs.complete_jobs(leased_job_ids, _now(), lease_token)
+            if completed != len(leased_job_ids):
+                raise RuntimeError("job lease ownership lost before completion")
             return {"status": "succeeded", "job_id": job["id"], **result}
         except Exception as error:
-            self.jobs.fail_jobs(leased_job_ids, str(error), _now(), lease_token)
+            heartbeat.stop()
+            failed = self.jobs.fail_jobs(leased_job_ids, str(error), _now(), lease_token)
             current = self.connection.execute("SELECT status,attempts FROM jobs WHERE id=?", (job["id"],)).fetchone()
             return {
-                "status": current["status"] if current else "unknown",
+                "status": current["status"] if failed and current else "lease_lost",
                 "job_id": job["id"],
                 "attempts": current["attempts"] if current else 0,
                 "error": str(error),
@@ -806,14 +890,24 @@ def _job_progress_callback(worker: Worker, job: dict[str, Any]) -> Callable[[str
     """创建受 lease token 保护的任务进度回调。"""
 
     def update(stage: str, processed: int, total: int) -> None:
-        worker.jobs.update_progress(
+        heartbeat_at = _now()
+        job_ids = list(job.get("leased_job_ids") or [job["id"]])
+        renewed = worker.jobs.renew_lease(
+            job_ids,
+            job["lease_token"],
+            leased_until=_lease_deadline(worker.settings),
+            heartbeat_at=heartbeat_at,
+        )
+        updated = worker.jobs.update_progress(
             job["id"],
             job["lease_token"],
             stage=stage,
             processed=processed,
             total=total,
-            heartbeat_at=_now(),
+            heartbeat_at=heartbeat_at,
         )
+        if renewed != len(job_ids) or not updated:
+            raise RuntimeError("job lease ownership lost while reporting progress")
 
     return update
 

@@ -229,6 +229,21 @@ def test_lease_prevents_second_worker_from_taking_running_job(tmp_path) -> None:
     assert JobRepository(second_db.open()).lease_job("2999-01-01T00:00:00+00:00", now) is None
 
 
+def test_lost_lease_never_reports_success(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "lost-lease.db"
+    connection = Database(path).open()
+    queue(connection)
+    worker = Worker(Settings(database_path=str(path), embedding_dim=8))
+    monkeypatch.setattr(worker.jobs, "complete_jobs", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(worker.jobs, "fail_jobs", lambda *_args, **_kwargs: 0)
+
+    result = worker.run_once()
+
+    assert result["status"] == "lease_lost"
+    assert "lease ownership lost" in result["error"]
+    worker.close()
+
+
 def test_maintenance_failure_rolls_back_and_does_not_stop_later_items(
     monkeypatch,
     tmp_path,

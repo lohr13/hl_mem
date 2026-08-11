@@ -56,6 +56,31 @@ def test_update_progress_rejected_without_lease(tmp_path) -> None:
     assert connection.execute("SELECT processed FROM jobs WHERE id='job-1'").fetchone()[0] == 0
 
 
+def test_renew_lease_extends_only_current_owner(tmp_path) -> None:
+    connection, repository, job = _lease_job(tmp_path)
+
+    assert (
+        repository.renew_lease(
+            [job["id"]],
+            job["lease_token"],
+            leased_until="2026-07-24T02:00:00+00:00",
+            heartbeat_at="2026-07-24T00:30:00+00:00",
+        )
+        == 1
+    )
+    assert (
+        repository.renew_lease(
+            [job["id"]],
+            "wrong-token",
+            leased_until="2026-07-24T03:00:00+00:00",
+            heartbeat_at="2026-07-24T00:31:00+00:00",
+        )
+        == 0
+    )
+    row = connection.execute("SELECT leased_until,heartbeat_at FROM jobs WHERE id='job-1'").fetchone()
+    assert tuple(row) == ("2026-07-24T02:00:00+00:00", "2026-07-24T00:30:00+00:00")
+
+
 def test_progress_fields_in_job_dict(tmp_path) -> None:
     """任务字典应包含进度字段并解码 detail JSON。"""
     _connection, repository, job = _lease_job(tmp_path)

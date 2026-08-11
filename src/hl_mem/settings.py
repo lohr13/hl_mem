@@ -729,6 +729,8 @@ class Settings:
             raise ConfigurationError("extraction.batch_max_events must be between 1 and 32")
         if self.extraction_batch_max_wait_seconds < 0:
             raise ConfigurationError("extraction.batch_max_wait_seconds must be non-negative")
+        if self.worker_job_lease_minutes < 1:
+            raise ConfigurationError("worker.job_lease_minutes must be positive")
         if self.verification_mode not in {"off", "audit", "enforce"}:
             raise ConfigurationError("extraction.verification_mode must be 'off', 'audit', or 'enforce'")
         if (

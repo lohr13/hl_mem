@@ -244,6 +244,26 @@ class JobRepository:
         self.connection.commit()
         return cursor.rowcount == 1
 
+    def renew_lease(
+        self,
+        job_ids: list[str],
+        lease_token: str,
+        *,
+        leased_until: str,
+        heartbeat_at: str,
+    ) -> int:
+        """Extend a running lease while preserving token-based ownership."""
+        if not job_ids:
+            return 0
+        placeholders = ",".join("?" for _ in job_ids)
+        cursor = self.connection.execute(
+            "UPDATE jobs SET leased_until=?,heartbeat_at=?,updated_at=? "
+            f"WHERE id IN ({placeholders}) AND lease_token=? AND status='running'",
+            (leased_until, heartbeat_at, heartbeat_at, *job_ids, lease_token),
+        )
+        self.connection.commit()
+        return cursor.rowcount
+
     def retry_failed(self) -> int:
         """将失败任务重置为待处理状态，由调用方提交事务。"""
         cursor = self.connection.execute("UPDATE jobs SET status='pending',last_error=NULL WHERE status='failed'")

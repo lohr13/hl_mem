@@ -170,6 +170,8 @@ def test_settings_expose_only_two_microbatch_controls() -> None:
     replace(settings, extraction_batch_max_events=32).validate()
     with pytest.raises(ConfigurationError, match="between 1 and 32"):
         replace(settings, extraction_batch_max_events=33).validate()
+    with pytest.raises(ConfigurationError, match="worker.job_lease_minutes must be positive"):
+        replace(settings, worker_job_lease_minutes=0).validate()
 
 
 def test_lease_groups_four_ordered_events_from_one_session(tmp_path) -> None:
