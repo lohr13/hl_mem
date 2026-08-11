@@ -13,7 +13,7 @@ import httpx
 
 from evaluation.tools import merge_longmemeval_results as merger
 from evaluation.tools import run_longmemeval_benchmark as runner
-from evaluation.tools.longmemeval import reader_context
+from evaluation.tools.longmemeval import qa_client, reader_context
 from hl_mem.http_utils import retry_http
 from hl_mem.settings import Settings
 
@@ -95,6 +95,18 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
+    def test_reader_thinking_is_enabled_only_for_multi_session(self) -> None:
+        self.assertTrue(qa_client.reader_thinking_enabled("multi-session"))
+        for question_type in (
+            "single-session-user",
+            "single-session-assistant",
+            "single-session-preference",
+            "knowledge-update",
+            "temporal-reasoning",
+        ):
+            with self.subTest(question_type=question_type):
+                self.assertFalse(qa_client.reader_thinking_enabled(question_type))
+
     def test_resume_defaults_missing_claim_inflation_metrics_without_inventing_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "legacy.json"
@@ -1316,7 +1328,10 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             payload = json.loads(request.content)
             self.assertEqual(payload["model"], "qa-override")
             self.assertEqual(payload["max_tokens"], 512)
-            self.assertFalse(payload["enable_thinking"])
+        self.assertEqual(
+            [json.loads(request.content)["enable_thinking"] for request in requests],
+            [True, True, False],
+        )
         self.assertEqual([json.loads(request.content)["temperature"] for request in requests], [0.1, 0.1, 0.0])
         reader_payload = json.loads(requests[1].content)
         self.assertNotIn("response_format", reader_payload)
