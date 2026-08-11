@@ -262,6 +262,7 @@ _EN_FUNCTION_SIGNAL_RE = re.compile(
     r"(?i)\b(?:i|we|you|he|she|it|the|a|an|to|of|in|on|at|for|with|my|our|your|this|that|yesterday|tomorrow)\b"
 )
 LANGUAGE_ROUTER_VERSION = "language-router-v1"
+CLAIM_COUNT_OVERFLOW_POLICY_VERSION = "claim-count-auto-split-v1"
 _UNSETTLED_SIGNAL_RE = re.compile(r"可以考虑|建议|考虑|待定|或许|计划中|未执行")
 _SETTLED_SIGNAL_RE = re.compile(
     r"已经确认|已确认|已经批准|已批准|已经执行|已执行|已经实施|已实施|"
@@ -407,6 +408,7 @@ def _postprocess_rules_fingerprint(
         "english_system_prompt": ENGLISH_SYSTEM_PROMPT,
         "language_router_version": language_router_version,
         "admission": admission_rules_fingerprint(),
+        "claim_count_overflow_policy": CLAIM_COUNT_OVERFLOW_POLICY_VERSION,
         "unsettled_confidence_ceiling": _UNSETTLED_CONFIDENCE_CEILING,
         "repair_enum_mappings": ENUM_MAPPINGS,
         "repair_topic_tag_mappings": TOPIC_TAG_ZH_TO_EN,
@@ -605,7 +607,7 @@ class LLMExtractor:
         self._secret_rejections: dict[str, int] = {}
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
-        """同步分块提取事实，并在输出截断时递归二分恢复。"""
+        """同步分块提取事实，并在输出截断或 claim 数超限时递归二分恢复。"""
         self.last_usage_tokens = 0
         self.last_input_tokens = 0
         self.last_output_tokens = 0
@@ -663,7 +665,7 @@ class LLMExtractor:
         event_context: dict[str, Any],
         depth: int,
     ) -> list[ExtractedClaim]:
-        """提取单块；仅输出截断时按策略递归二分。"""
+        """提取单块；输出截断或 claim 数超限时按策略递归二分。"""
         try:
             claims = self._extract_one_chunk(chunk, event_context)
             if self.verifier is None or self.verification_mode == "off":
@@ -674,6 +676,23 @@ class LLMExtractor:
             if depth >= self.chunking_policy.max_split_depth or split is None:
                 raise LLMOutputTruncatedError(
                     "LLM output remains truncated after auto split: "
+                    f"chunk={chunk.index}, start_unit={chunk.start_unit}, "
+                    f"end_unit={chunk.end_unit}, depth={depth}"
+                ) from error
+            left, right = split
+            return self._merge_chunk_claims(
+                [
+                    self._extract_chunk_with_auto_split(left, event_context, depth + 1),
+                    self._extract_chunk_with_auto_split(right, event_context, depth + 1),
+                ]
+            )
+        except LLMSchemaValidationError as error:
+            if not self._is_claim_count_overflow(error):
+                raise
+            split = bisect_extraction_chunk(chunk)
+            if depth >= self.chunking_policy.max_split_depth or split is None:
+                raise LLMSchemaValidationError(
+                    "LLM response claims remain over limit after auto split: "
                     f"chunk={chunk.index}, start_unit={chunk.start_unit}, "
                     f"end_unit={chunk.end_unit}, depth={depth}"
                 ) from error
@@ -1176,6 +1195,12 @@ class LLMExtractor:
                     raise LLMOutputTruncatedError(
                         f"LLM output appears truncated: provider={self.llm_client.provider.name}, model={self.model}"
                     ) from error
+                if self._is_claim_count_overflow(error):
+                    raise LLMSchemaValidationError(
+                        "LLM response claims exceed the per-chunk schema limit; auto split required: "
+                        f"provider={self.llm_client.provider.name}, model={self.model}, "
+                        f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
+                    ) from error
                 previous_output = previous_output_payload
                 schema_errors = self._schema_error_details(error, previous_output)
                 if attempt == self.schema_retries:
@@ -1305,6 +1330,20 @@ class LLMExtractor:
         if isinstance(error, PydanticValidationError):
             return [f"{'.'.join(str(part) for part in item['loc'])}:{item['type']}" for item in error.errors()]
         return [f"response:{type(error).__name__}"]
+
+    @staticmethod
+    def _is_claim_count_overflow(error: BaseException) -> bool:
+        """识别 claims 根数组超过 schema 上限，供密度自适应分块使用。"""
+        current: BaseException | None = error
+        visited: set[int] = set()
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            if isinstance(current, PydanticValidationError) and any(
+                tuple(item["loc"]) == ("claims",) and item["type"] == "too_long" for item in current.errors()
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
     @staticmethod
     def _schema_error_details(error: Exception, payload: Any) -> list[dict[str, Any]]:

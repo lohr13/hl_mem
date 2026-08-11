@@ -154,6 +154,59 @@ def test_truncated_output_is_bisected_and_usage_is_accumulated() -> None:
     assert extractor.last_usage_tokens == 33
 
 
+def test_claim_count_overflow_is_bisected_without_schema_retry() -> None:
+    """A dense chunk should split instead of asking the model to rewrite more than 20 claims."""
+
+    def compact_claim(value: str, evidence_quote: str) -> dict[str, object]:
+        return {
+            "subject": "user",
+            "value": value,
+            "kind": "preference",
+            "confidence": 1.0,
+            "notability": "high",
+            "evidence_quote": evidence_quote,
+            "source_event_indices": [0],
+        }
+
+    overflow = json.dumps(
+        {
+            "claims": [compact_claim(f"overflow-{index}", "User likes tea") for index in range(21)],
+            "should_memorize": True,
+        }
+    )
+    tea = json.dumps(
+        {
+            "claims": [compact_claim("User likes tea", "User likes tea")],
+            "should_memorize": True,
+        }
+    )
+    coffee = json.dumps(
+        {
+            "claims": [compact_claim("User likes coffee", "User likes coffee")],
+            "should_memorize": True,
+        }
+    )
+    client = _SequenceClient(
+        [
+            LLMResponse(overflow, "stop", 10),
+            LLMResponse(tea, "stop", 11),
+            LLMResponse(coffee, "stop", 12),
+        ]
+    )
+    extractor = LLMExtractor(
+        client,
+        ChunkingPolicy(1_000, 0, 2),
+        schema_retries=2,
+    )
+
+    claims = extractor.extract("User likes tea.\n\nUser likes coffee.")
+
+    assert {claim.value for claim in claims} == {"User likes tea", "User likes coffee"}
+    assert len(client.requests) == 3
+    assert extractor._schema_retry_count == 0
+    assert extractor.last_usage_tokens == 33
+
+
 def test_truncation_at_max_depth_reports_chunk_location() -> None:
     """达到递归上限时错误包含 chunk 范围与深度。"""
     client = _SequenceClient([LLMResponse("", "max_tokens", 7)])
