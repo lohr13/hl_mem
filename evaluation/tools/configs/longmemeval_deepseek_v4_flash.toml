@@ -10,7 +10,7 @@ path = "var/benchmark_lme/deepseek_v4_flash.db"
 [llm]
 provider = "openai_compatible"
 base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-model = "deepseek-v4-flash"
+model = "deepseek-v4-flash-0731"
 structured_mode = "json_object"
 enable_thinking = false
 timeout = 120
