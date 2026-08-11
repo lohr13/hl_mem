@@ -172,6 +172,7 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
                 "subject_entity_id": "user",
                 "canonical_slot": "preference.general",
                 "predicate": "偏好",
+                "value": "用户偏好深色主题",
                 "status": "active",
                 "_score": 1.0 - index / 1_000,
                 "embedding_dense": vector,
@@ -189,6 +190,51 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
 
         self.assertEqual(decode.call_count, 100)
         self.assertEqual(len(folded), 51)
+
+    def test_fold_preserves_ordered_atoms_and_negation(self) -> None:
+        vector = pack_vector([1.0, 0.0])
+        base = {
+            "namespace_key": "default",
+            "subject_entity_id": "user",
+            "predicate": "fact",
+            "canonical_attribute": "fact.other",
+            "canonical_slot": None,
+            "qualifiers": {},
+            "status": "active",
+            "valid_from": "2026-01-01T00:00:00+00:00",
+            "valid_to": None,
+            "embedding_dense": vector,
+        }
+        claims = [
+            {
+                **base,
+                "id": "ordered-one",
+                "value": "Take 1 tablet at 2 pm after breakfast every weekday and record the result.",
+                "_score": 0.9,
+            },
+            {
+                **base,
+                "id": "ordered-two",
+                "value": "Take 2 tablets at 1 pm after breakfast every weekday and record the result.",
+                "_score": 0.8,
+            },
+            {
+                **base,
+                "id": "allows",
+                "value": "The policy does allow this operation under normal production conditions.",
+                "_score": 0.7,
+            },
+            {
+                **base,
+                "id": "denies",
+                "value": "The policy doesn't allow this operation under normal production conditions.",
+                "_score": 0.6,
+            },
+        ]
+
+        folded = fold_similar_claims(claims, 0.95)
+
+        self.assertEqual([claim["id"] for claim in folded], ["ordered-one", "ordered-two", "allows", "denies"])
 
     def test_fold_uses_confirmed_equivalent_pair_across_subjects(self) -> None:
         base = {
