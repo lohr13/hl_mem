@@ -1487,6 +1487,79 @@ class _UnlimitedBenchmarkBudget:
         return {"used": 0, "limit": 0, "remaining": 0}
 
 
+def _data_inspection_code(error: httpx.HTTPStatusError) -> str | None:
+    """Return the provider code only for an explicit content-inspection rejection."""
+    response = error.response
+    if response is None or response.status_code != 400:
+        return None
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("error")
+    code = detail.get("code") if isinstance(detail, dict) else payload.get("code")
+    normalized = str(code or "").strip().casefold()
+    return normalized if normalized == "data_inspection_failed" else None
+
+
+class _BenchmarkWorker(Worker):
+    """Keep an evaluation case running when one source event is provider-rejected."""
+
+    _SUM_FIELDS = (
+        "events",
+        "eligible_events",
+        "claims",
+        "stored",
+        "skipped",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "content_inspection_skipped_events",
+    )
+
+    def _extract_window(self, event_ids: list[str], job_id: str | None) -> dict[str, Any]:
+        try:
+            return super()._extract_window(event_ids, job_id)
+        except httpx.HTTPStatusError as error:
+            code = _data_inspection_code(error)
+            if code is None:
+                raise
+            extractor = getattr(self, "extractor", None)
+            failed_usage = {
+                "input_tokens": int(getattr(extractor, "last_input_tokens", 0)),
+                "output_tokens": int(getattr(extractor, "last_output_tokens", 0)),
+                "total_tokens": int(getattr(extractor, "last_usage_tokens", 0)),
+            }
+            if len(event_ids) == 1:
+                return {
+                    "events": 1,
+                    "eligible_events": 1,
+                    "claims": 0,
+                    "stored": 0,
+                    "skipped": 0,
+                    "rejections": [],
+                    **failed_usage,
+                    "content_inspection_skipped_events": 1,
+                    "content_inspection_codes": [code],
+                }
+
+            parts = [self._extract_window([event_id], job_id) for event_id in event_ids]
+            merged: dict[str, Any] = {
+                field: sum(int(part.get(field, 0)) for part in parts) for field in self._SUM_FIELDS
+            }
+            for field, value in failed_usage.items():
+                merged[field] += value
+            merged["rejections"] = [rejection for part in parts for rejection in list(part.get("rejections") or [])]
+            merged["content_inspection_codes"] = list(
+                dict.fromkeys(
+                    code_value for part in parts for code_value in list(part.get("content_inspection_codes") or [])
+                )
+            )
+            return merged
+
+
 def _ingest_case(
     connection: Any,
     case: LongMemEvalCase,
@@ -1511,6 +1584,8 @@ def _ingest_case(
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
+        "content_inspection_skipped_events": 0,
+        "content_inspection_codes": [],
     }
     started = time.perf_counter()
     for index, session in enumerate(case.sessions, start=1):
@@ -1535,7 +1610,7 @@ def _ingest_case(
                 f"[{case_number}/{total_hint}] {case.case_id}: queued {index}/{len(case.sessions)} sessions",
                 flush=True,
             )
-    worker = Worker(
+    worker = _BenchmarkWorker(
         settings,
         connection=connection,
         extractor=extractor,
@@ -1562,6 +1637,15 @@ def _ingest_case(
             stats["input_tokens"] += int(result.get("input_tokens", 0))
             stats["output_tokens"] += int(result.get("output_tokens", 0))
             stats["total_tokens"] += int(result.get("total_tokens", 0))
+            stats["content_inspection_skipped_events"] += int(result.get("content_inspection_skipped_events", 0))
+            stats["content_inspection_codes"] = list(
+                dict.fromkeys(
+                    [
+                        *stats["content_inspection_codes"],
+                        *list(result.get("content_inspection_codes") or []),
+                    ]
+                )
+            )
     finally:
         worker.close()
     stats.update(_claim_inflation_diagnostics(connection, stats))

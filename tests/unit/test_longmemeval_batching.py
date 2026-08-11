@@ -95,6 +95,66 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
+    def test_benchmark_worker_falls_back_per_event_on_data_inspection_failure(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        response = httpx.Response(
+            400,
+            request=request,
+            json={"error": {"code": "data_inspection_failed", "message": "rejected"}},
+        )
+        inspection_error = httpx.HTTPStatusError("rejected", request=request, response=response)
+        calls: list[list[str]] = []
+
+        def extract_window(
+            _worker: object,
+            event_ids: list[str],
+            _job_id: str | None,
+        ) -> dict[str, object]:
+            calls.append(event_ids)
+            if "bad" in event_ids:
+                raise inspection_error
+            return {
+                "events": 1,
+                "eligible_events": 1,
+                "claims": 2,
+                "stored": 2,
+                "skipped": 0,
+                "rejections": [],
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+            }
+
+        worker = runner._BenchmarkWorker.__new__(runner._BenchmarkWorker)
+        with patch.object(runner.Worker, "_extract_window", autospec=True, side_effect=extract_window):
+            result = worker._extract_window(["bad", "good"], "job-1")
+
+        self.assertEqual(calls, [["bad", "good"], ["bad"], ["good"]])
+        self.assertEqual(result["events"], 2)
+        self.assertEqual(result["claims"], 2)
+        self.assertEqual(result["stored"], 2)
+        self.assertEqual(result["content_inspection_skipped_events"], 1)
+        self.assertEqual(result["content_inspection_codes"], ["data_inspection_failed"])
+        self.assertEqual(result["total_tokens"], 15)
+
+    def test_benchmark_worker_does_not_swallow_other_http_400_errors(self) -> None:
+        request = httpx.Request("POST", "https://example.test/chat/completions")
+        response = httpx.Response(
+            400,
+            request=request,
+            json={"error": {"code": "invalid_parameter", "message": "bad option"}},
+        )
+        parameter_error = httpx.HTTPStatusError("bad option", request=request, response=response)
+        worker = runner._BenchmarkWorker.__new__(runner._BenchmarkWorker)
+
+        with (
+            patch.object(runner.Worker, "_extract_window", autospec=True, side_effect=parameter_error),
+            self.assertRaises(httpx.HTTPStatusError) as caught,
+        ):
+            worker._extract_window(["event-1"], "job-1")
+
+        self.assertIs(caught.exception, parameter_error)
+
     def test_resume_defaults_missing_claim_inflation_metrics_without_inventing_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "legacy.json"
