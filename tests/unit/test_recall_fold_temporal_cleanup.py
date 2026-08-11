@@ -116,11 +116,28 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
                 "value": "用户把李四介绍给张三，并要求他们共同完成本周的详细项目状态报告，随后还需要核对每项进度、风险和下周计划，并把所有结论同步到团队共享的项目文档中。",
                 "_score": 0.8,
             },
+            {
+                **common,
+                "id": "redis-to-mysql",
+                "value": "用户将Redis迁移到MySQL，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
+                "entities": ["user", "Redis", "MySQL"],
+                "_score": 0.7,
+            },
+            {
+                **common,
+                "id": "mysql-to-redis",
+                "value": "用户将MySQL迁移到Redis，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
+                "entities": ["user", "Redis", "MySQL"],
+                "_score": 0.6,
+            },
         ]
 
         folded = fold_similar_claims(claims, 0.95)
 
-        self.assertEqual([claim["id"] for claim in folded], ["zhang-to-li", "li-to-zhang"])
+        self.assertEqual(
+            [claim["id"] for claim in folded],
+            ["zhang-to-li", "li-to-zhang", "redis-to-mysql", "mysql-to-redis"],
+        )
 
     def test_fold_preserves_different_predicates_and_disputed_claims(self) -> None:
         """高相似向量不得隐藏相反 predicate 或 disputed 候选。"""

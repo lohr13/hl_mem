@@ -1,3 +1,5 @@
+import json
+
 from hl_mem.domain.claims.dedup import (
     Deduplicator,
     compute_dedup_pair_key,
@@ -251,43 +253,56 @@ def test_cross_subject_near_duplicate_requires_verified_user_projection() -> Non
 
 
 def test_ingest_deduplicator_preserves_swapped_entity_roles(tmp_path) -> None:
-    connection = Database(tmp_path / "dedup-entity-order.db").open()
-    repo = ClaimRepository(connection)
-    embedder = FakeEmbedder(8)
-    vector = embedder.embed_one("constant-vector")
-    common = {
-        "namespace_key": "default",
-        "subject_entity_id": "user",
-        "predicate": "事实",
-        "canonical_attribute": "fact.other",
-        "canonical_slot": None,
-        "qualifiers": {},
-        "status": "active",
-        "recorded_from": "2026-01-01T00:00:00+00:00",
-        "valid_from": "2026-01-01T00:00:00+00:00",
-        "valid_to": None,
-        "embedding_dense": vector,
-    }
-    repo.insert_claim(
-        {
-            **common,
-            "id": "zhang-to-li",
-            "value": "用户把张三介绍给李四，并要求他们共同完成本周的详细项目状态报告，随后还需要核对每项进度、风险和下周计划，并把所有结论同步到团队共享的项目文档中。",
-            "entities_json": '["user","张三","李四"]',
+    cases = [
+        (
+            ["user", "张三", "李四"],
+            "用户把张三介绍给李四，并要求他们共同完成本周的详细项目状态报告，随后还需要核对每项进度、风险和下周计划，并把所有结论同步到团队共享的项目文档中。",
+            "用户把李四介绍给张三，并要求他们共同完成本周的详细项目状态报告，随后还需要核对每项进度、风险和下周计划，并把所有结论同步到团队共享的项目文档中。",
+        ),
+        (
+            ["user", "Redis", "MySQL"],
+            "用户将Redis迁移到MySQL，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
+            "用户将MySQL迁移到Redis，并要求团队完成详细兼容性检查、风险清单和回滚计划，再把所有结论同步到共享项目文档中。",
+        ),
+    ]
+    for index, (entities, left_value, right_value) in enumerate(cases):
+        connection = Database(tmp_path / f"dedup-entity-order-{index}.db").open()
+        repo = ClaimRepository(connection)
+        embedder = FakeEmbedder(8)
+        vector = embedder.embed_one("constant-vector")
+        common = {
+            "namespace_key": "default",
+            "subject_entity_id": "user",
+            "predicate": "事实",
+            "canonical_attribute": "fact.other",
+            "canonical_slot": None,
+            "qualifiers": {},
+            "status": "active",
+            "recorded_from": "2026-01-01T00:00:00+00:00",
+            "valid_from": "2026-01-01T00:00:00+00:00",
+            "valid_to": None,
+            "embedding_dense": vector,
         }
-    )
-    candidate = {
-        **common,
-        "id": "li-to-zhang",
-        "value": "用户把李四介绍给张三，并要求他们共同完成本周的详细项目状态报告，随后还需要核对每项进度、风险和下周计划，并把所有结论同步到团队共享的项目文档中。",
-        "entities": ["user", "张三", "李四"],
-    }
+        repo.insert_claim(
+            {
+                **common,
+                "id": "left",
+                "value": left_value,
+                "entities_json": json.dumps(entities, ensure_ascii=False),
+            }
+        )
+        candidate = {
+            **common,
+            "id": "right",
+            "value": right_value,
+            "entities": entities,
+        }
 
-    assert Deduplicator(repo, embedder, threshold=0.95).find_duplicate(candidate) == (
-        "zhang-to-li",
-        "semantic_candidate",
-    )
-    connection.close()
+        assert Deduplicator(repo, embedder, threshold=0.95).find_duplicate(candidate) == (
+            "left",
+            "semantic_candidate",
+        )
+        connection.close()
 
 
 def test_review_pending_near_duplicates_marks_only_safe_pair_equivalent(tmp_path) -> None:

@@ -31,7 +31,7 @@ _PROTECTED_LITERAL_PATTERN = re.compile(
 )
 _QUOTED_VALUE_PATTERN = re.compile(r'"([^"\r\n]+)"|“([^”\r\n]+)”|(?<!\w)\'([^\'\r\n]+)\'(?!\w)')
 _WORD_PATTERN = re.compile(r"[\w]+(?:[-'][\w]+)*", re.UNICODE)
-_PROPER_NAME_PATTERN = re.compile(r"(?<![\w])(?:[A-Z][A-Za-z0-9_-]{2,})(?![\w])")
+_PROPER_NAME_PATTERN = re.compile(r"(?<![A-Za-z0-9_])(?:[A-Z][A-Za-z0-9_-]{2,})(?![A-Za-z0-9_])")
 _CJK_PROTECTED_PATTERN = re.compile(
     r"大前天|前天|昨天|今天|明天|后天|早晨|早上|上午|中午|下午|傍晚|晚上|凌晨|"
     r"没有|禁止|不|没|未|无|(?:星期|周)[一二三四五六日天]"
@@ -172,10 +172,9 @@ def _entity_mention_signature(value: str, entities: tuple[str, ...]) -> tuple[st
         if not normalized_entity:
             continue
         escaped = re.escape(normalized_entity)
-        if any("a" <= character <= "z" or character.isdigit() for character in normalized_entity):
-            pattern = re.compile(rf"(?<!\w){escaped}(?!\w)")
-        else:
-            pattern = re.compile(escaped)
+        left_boundary = r"(?<![A-Za-z0-9_])" if re.match(r"[a-z0-9_]", normalized_entity[0]) else ""
+        right_boundary = r"(?![A-Za-z0-9_])" if re.match(r"[a-z0-9_]", normalized_entity[-1]) else ""
+        pattern = re.compile(f"{left_boundary}{escaped}{right_boundary}")
         for match in pattern.finditer(normalized_value):
             mentions.add((match.start(), match.end(), entity))
     return tuple(mention[2] for mention in sorted(mentions))
