@@ -171,6 +171,66 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(order, ["ingest", "maintenance", "recall"])
         self.assertEqual(result["maintenance"], {"protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION})
 
+    def test_run_case_repeats_maintenance_for_cached_database(self) -> None:
+        case = runner.normalize_case(_record("case-cached-maintenance-order"))
+        database_path = runner.DATABASE_ROOT / "case-cached-maintenance-order-test.db"
+        manifest_path = runner.DATABASE_ROOT / "case-cached-maintenance-order-test.manifest.json"
+        order: list[str] = []
+
+        class FakeDatabase:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def open(self) -> object:
+                return object()
+
+            def close(self) -> None:
+                pass
+
+        def cached(*_args: object, **_kwargs: object) -> dict[str, object]:
+            order.append("cache")
+            return {"skipped": True}
+
+        def maintain(*_args: object, **_kwargs: object) -> dict[str, object]:
+            order.append("maintenance")
+            return {"protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION}
+
+        def recall(*_args: object, **_kwargs: object) -> tuple[dict[str, object], list[object]]:
+            order.append("recall")
+            return {}, []
+
+        runner.DATABASE_ROOT.mkdir(parents=True, exist_ok=True)
+        database_path.touch()
+        try:
+            with (
+                patch.object(runner, "Database", FakeDatabase),
+                patch.object(runner, "_case_paths", return_value=(database_path, manifest_path)),
+                patch.object(runner, "_validate_manifest"),
+                patch.object(runner, "_cached_ingest_diagnostics", side_effect=cached),
+                patch.object(runner, "_run_case_maintenance", side_effect=maintain),
+                patch.object(runner, "_recall_case", side_effect=recall),
+            ):
+                for _ in range(2):
+                    result = runner._run_case(
+                        case,
+                        Settings.for_test(),
+                        object(),
+                        None,
+                        skip_ingest=True,
+                        run_qa=False,
+                        clean=False,
+                        case_number=1,
+                        total_hint="1",
+                    )
+        finally:
+            database_path.unlink(missing_ok=True)
+
+        self.assertEqual(
+            order,
+            ["cache", "maintenance", "recall", "cache", "maintenance", "recall"],
+        )
+        self.assertEqual(result["maintenance"], {"protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION})
+
     def test_retrieved_payload_persists_raw_ranking_observability(self) -> None:
         case = runner.LongMemEvalCase(
             case_id="trace-case",
