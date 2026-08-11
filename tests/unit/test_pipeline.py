@@ -136,6 +136,55 @@ def test_semantic_candidate_is_inserted_and_queued_for_async_judgment(tmp_path) 
     database.close()
 
 
+def test_safe_near_copy_reuses_claim_and_merges_evidence_before_insert(tmp_path) -> None:
+    class ConstantEmbedder(FakeEmbedder):
+        def embed_one(self, _text: str) -> bytes:
+            return super().embed_one("constant-vector")
+
+    database = Database(tmp_path / "near-copy-ingest.db")
+    connection = database.open()
+    embedder = ConstantEmbedder(8)
+    event = {
+        "tenant_id": "default",
+        "actor_type": "user",
+        "occurred_at": "2026-07-21T10:00:00+00:00",
+    }
+    first = store_extracted(
+        connection,
+        ExtractedClaim(
+            "事实",
+            "User's tank is 20 gallons",
+            subject="user",
+            canonical_attribute="fact.other",
+        ),
+        {**event, "id": "event-near-copy-1"},
+        "2026-07-21T10:01:00+00:00",
+        embedder,
+    )
+    second = store_extracted(
+        connection,
+        ExtractedClaim(
+            "事实",
+            "The user's tank size is 20 gallons.",
+            subject="user",
+            canonical_attribute="fact.other",
+        ),
+        {**event, "id": "event-near-copy-2"},
+        "2026-07-21T10:02:00+00:00",
+        embedder,
+    )
+
+    assert second.claim_id == first.claim_id
+    assert second.reason == "semantic_duplicate"
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
+    assert (
+        connection.execute("SELECT count(*) FROM evidence_links WHERE derived_id=?", (first.claim_id,)).fetchone()[0]
+        == 2
+    )
+    assert connection.execute("SELECT count(*) FROM dedup_pairs").fetchone()[0] == 0
+    database.close()
+
+
 def test_fact_hash_match_does_not_merge_different_task_qualifiers(tmp_path) -> None:
     database = Database(tmp_path / "fact-hash-qualifier-guard.db")
     connection = database.open()

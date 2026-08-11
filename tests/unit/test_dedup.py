@@ -1,4 +1,8 @@
-from hl_mem.domain.claims.dedup import Deduplicator, compute_dedup_pair_key
+from hl_mem.domain.claims.dedup import (
+    Deduplicator,
+    compute_dedup_pair_key,
+    is_safe_near_duplicate,
+)
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
@@ -79,6 +83,94 @@ def test_deterministic_check_rejects_subject_slot_predicate_and_qualifier_mismat
         == "distinct"
     )
     assert Deduplicator._deterministic_check(base, dict(base)) == "equivalent"
+
+
+def test_safe_near_duplicate_requires_structure_lexical_similarity_and_protected_atoms() -> None:
+    base = {
+        "namespace_key": "default",
+        "subject_entity_id": "user",
+        "predicate": "事实",
+        "value": "User's tank is 20 gallons on Monday",
+        "canonical_attribute": "fact.other",
+        "canonical_slot": None,
+        "qualifiers": {},
+        "status": "active",
+        "valid_from": "2026-01-01T00:00:00+00:00",
+        "valid_to": None,
+    }
+    near_copy = {
+        **base,
+        "value": "The user's tank size is 20 gallons on Monday.",
+    }
+
+    assert is_safe_near_duplicate(
+        base,
+        near_copy,
+        similarity=0.97,
+        semantic_threshold=0.92,
+    )
+    assert not is_safe_near_duplicate(
+        base,
+        {**near_copy, "value": "The user's tank size is 30 gallons on Monday."},
+        similarity=0.99,
+        semantic_threshold=0.92,
+    )
+    assert not is_safe_near_duplicate(
+        base,
+        {**near_copy, "qualifiers": {"tank": "office"}},
+        similarity=0.99,
+        semantic_threshold=0.92,
+    )
+    assert not is_safe_near_duplicate(
+        base,
+        {**near_copy, "subject_entity_id": "assistant"},
+        similarity=0.99,
+        semantic_threshold=0.92,
+    )
+    assert is_safe_near_duplicate(
+        base,
+        {**near_copy, "subject_entity_id": "user's tank"},
+        similarity=0.99,
+        semantic_threshold=0.92,
+        allow_subject_mismatch=True,
+    )
+    assert not is_safe_near_duplicate(
+        base,
+        {**near_copy, "status": "disputed"},
+        similarity=0.99,
+        semantic_threshold=0.92,
+    )
+    assert not is_safe_near_duplicate(
+        {**base, "valid_to": "2026-02-01T00:00:00+00:00"},
+        {
+            **near_copy,
+            "valid_from": "2026-02-01T00:00:00+00:00",
+            "valid_to": None,
+        },
+        similarity=0.99,
+        semantic_threshold=0.92,
+    )
+
+
+def test_safe_near_duplicate_preserves_distinct_named_entities() -> None:
+    common = {
+        "namespace_key": "default",
+        "subject_entity_id": "user",
+        "predicate": "参加",
+        "canonical_attribute": "event.attendance",
+        "canonical_slot": None,
+        "qualifiers": {},
+        "status": "active",
+        "valid_from": "2026-01-01T00:00:00+00:00",
+        "valid_to": None,
+    }
+
+    assert not is_safe_near_duplicate(
+        {**common, "value": "User attended Emily's wedding"},
+        {**common, "value": "User attended Emma's wedding"},
+        similarity=0.99,
+        semantic_threshold=0.92,
+    )
 
 
 def test_apply_equivalent_pair_rechecks_qualifiers(tmp_path) -> None:

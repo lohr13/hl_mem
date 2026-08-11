@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
+from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from typing import Any, Protocol
 
 from hl_mem.config import DEDUP_SEMANTIC_THRESHOLD
@@ -18,12 +22,139 @@ from hl_mem.domain.entity import normalize_entity_id
 
 DEDUP_EMBEDDING_TEXT_VERSION = "v1: predicate+value"
 DEDUP_POLICY_VERSION = "v2"
+DETERMINISTIC_NEAR_COPY_REASON = "deterministic_near_copy_v1"
+NEAR_COPY_LEXICAL_THRESHOLD = 0.90
+
+_PROTECTED_LITERAL_PATTERN = re.compile(
+    r"(?<!\w)(?:v?\d+(?:\.\d+)+|\d+)(?!\w)|(?:[A-Za-z]:\\|/)[^\s\"']+",
+    re.IGNORECASE,
+)
+_QUOTED_VALUE_PATTERN = re.compile(r'"([^"\r\n]+)"|\'([^\'\r\n]+)\'')
+_WORD_PATTERN = re.compile(r"[\w]+(?:[-'][\w]+)*", re.UNICODE)
+_PROPER_NAME_PATTERN = re.compile(r"(?<![\w])(?:[A-Z][A-Za-z0-9_-]{2,})(?![\w])")
+_PROTECTED_WORDS = {
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "not",
+    "no",
+    "never",
+    "without",
+    "cannot",
+    "false",
+    "true",
+}
+_GENERIC_CAPITALIZED_WORDS = {"a", "an", "i", "the", "this", "that", "user"}
 
 
 def compute_dedup_pair_key(left_claim_id: str, right_claim_id: str) -> str:
     """Return the stable, order-independent key used by ``dedup_pairs``."""
     ordered = "\x1f".join(sorted((left_claim_id, right_claim_id)))
     return hashlib.sha256(ordered.encode("utf-8")).hexdigest()
+
+
+def _near_copy_text(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    words = _WORD_PATTERN.findall(normalized)
+    if words[:1] == ["the"]:
+        words = words[1:]
+    return " ".join(words)
+
+
+def _protected_atoms(value: str) -> tuple[str, ...]:
+    normalized = unicodedata.normalize("NFKC", value)
+    atoms = {match.casefold() for match in _PROTECTED_LITERAL_PATTERN.findall(normalized)}
+    for double_quoted, single_quoted in _QUOTED_VALUE_PATTERN.findall(normalized):
+        quoted = (double_quoted or single_quoted).strip().casefold()
+        if quoted:
+            atoms.add(f"quoted:{quoted}")
+    words = {word.casefold() for word in _WORD_PATTERN.findall(normalized)}
+    atoms.update(f"word:{word}" for word in words & _PROTECTED_WORDS)
+    atoms.update(
+        f"name:{name.casefold()}"
+        for name in _PROPER_NAME_PATTERN.findall(normalized)
+        if name.casefold() not in _GENERIC_CAPITALIZED_WORDS
+    )
+    return tuple(sorted(atoms))
+
+
+def _valid_intervals_overlap(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    def parse(value: Any) -> datetime | None:
+        if value in (None, ""):
+            return None
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+    try:
+        left_start, left_end = parse(left.get("valid_from")), parse(left.get("valid_to"))
+        right_start, right_end = parse(right.get("valid_from")), parse(right.get("valid_to"))
+    except (TypeError, ValueError):
+        return False
+    return (left_end is None or right_start is None or right_start < left_end) and (
+        right_end is None or left_start is None or left_start < right_end
+    )
+
+
+def is_safe_near_duplicate(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    *,
+    similarity: float,
+    semantic_threshold: float,
+    allow_subject_mismatch: bool = False,
+) -> bool:
+    """Return true only when cheap signals jointly prove a conservative near-copy."""
+    if similarity < semantic_threshold:
+        return False
+    if left.get("status", "active") == "disputed" or right.get("status", "active") == "disputed":
+        return False
+    if str(left.get("namespace_key", "default")) != str(right.get("namespace_key", "default")):
+        return False
+    if not allow_subject_mismatch and normalize_entity_id(left.get("subject_entity_id")) != normalize_entity_id(
+        right.get("subject_entity_id")
+    ):
+        return False
+    if normalize_predicate(str(left.get("predicate") or "")) != normalize_predicate(str(right.get("predicate") or "")):
+        return False
+    if left.get("canonical_slot") != right.get("canonical_slot"):
+        return False
+    if left.get("canonical_attribute") != right.get("canonical_attribute"):
+        return False
+    left_qualifiers = left.get("qualifiers") or {}
+    right_qualifiers = right.get("qualifiers") or {}
+    if not isinstance(left_qualifiers, dict) or not isinstance(right_qualifiers, dict):
+        return False
+    if left_qualifiers != right_qualifiers or not _valid_intervals_overlap(left, right):
+        return False
+    left_value = left.get("value")
+    right_value = right.get("value")
+    if not isinstance(left_value, str) or not isinstance(right_value, str):
+        return False
+    left_text = _near_copy_text(left_value)
+    right_text = _near_copy_text(right_value)
+    if left_text is None or right_text is None:
+        return False
+    if _protected_atoms(left_value) != _protected_atoms(right_value):
+        return False
+    return SequenceMatcher(None, left_text, right_text, autojunk=False).ratio() >= NEAR_COPY_LEXICAL_THRESHOLD
 
 
 class ClaimRepositoryProtocol(Protocol):
@@ -88,14 +219,22 @@ class Deduplicator:
         if blob is None:
             blob = self.embedder.embed_one(self._text(new_claim))
             new_claim["embedding_dense"] = blob
-        best_claim: dict[str, Any] | None = None
-        best_score = float("-inf")
+        scored_candidates: list[tuple[dict[str, Any], float]] = []
         for claim in gray_candidates:
             existing_blob = claim.get("embedding_dense")
             if existing_blob:
                 score = cosine_similarity(existing_blob, blob)
-                if score > best_score:
-                    best_claim, best_score = claim, score
+                scored_candidates.append((claim, score))
+        scored_candidates.sort(key=lambda item: (-item[1], str(item[0].get("id") or "")))
+        for claim, score in scored_candidates:
+            if is_safe_near_duplicate(
+                claim,
+                new_claim,
+                similarity=score,
+                semantic_threshold=self.threshold,
+            ):
+                return claim["id"], "near_duplicate"
+        best_claim, best_score = scored_candidates[0] if scored_candidates else (None, float("-inf"))
         if best_claim is not None and best_score >= self.threshold:
             return best_claim["id"], "semantic_candidate"
         return None, "new"
