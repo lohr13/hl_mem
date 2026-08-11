@@ -44,6 +44,7 @@ def qa_dashscope_chat(
     *,
     temperature: float = 0.1,
     enable_thinking: bool = False,
+    thinking_budget: int | None = None,
     json_object: bool = False,
     max_tokens: int = 512,
 ) -> tuple[str, int]:
@@ -65,6 +66,8 @@ def qa_dashscope_chat(
         "max_tokens": max_tokens,
         "enable_thinking": enable_thinking,
     }
+    if thinking_budget is not None:
+        payload["thinking_budget"] = thinking_budget
     if json_object:
         payload["response_format"] = {"type": "json_object"}
     with httpx.Client(timeout=60.0) as client:

@@ -126,6 +126,8 @@ THRESHOLD_ANALYSIS_OUTPUT = ROOT / "evaluation" / "results" / "lme_12_threshold_
 DEFAULT_CONFIG = ROOT / "hl_mem.toml"
 DEFAULT_ENV_FILE = ROOT / ".env"
 QA_MAX_ATTEMPTS = 3
+READER_ANSWER_TOKEN_BUDGET = 512
+READER_THINKING_TOKEN_BUDGET = 1024
 DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
 EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
@@ -1709,6 +1711,17 @@ def _qa_model(settings: Settings) -> str:
     return str(qa_model(settings.llm_model))
 
 
+def _reader_generation_options(model: str) -> dict[str, int]:
+    """Bound reader reasoning while preserving a short final-answer allowance."""
+    folded = model.casefold()
+    options = {"max_tokens": READER_ANSWER_TOKEN_BUDGET}
+    if folded.startswith(("qwen3.7-", "deepseek-v4-")):
+        options["thinking_budget"] = READER_THINKING_TOKEN_BUDGET
+    if folded.startswith("deepseek-v4-"):
+        options["max_tokens"] += READER_THINKING_TOKEN_BUDGET
+    return options
+
+
 def _component_llm_settings(settings: Settings) -> Settings:
     """Select Bailian's payload dialect without mutating reported configuration."""
     parsed = urlsplit(settings.llm_base_url)
@@ -1845,6 +1858,7 @@ def _run_qa(
     reader_user_prompt = _build_reader_user_prompt(
         connection, cast(Any, case), retrieved, context_mode=reader_context_mode
     )
+    reader_generation = _reader_generation_options(qa_model)
     reader_text, reader_tokens = _qa_call_with_retry(
         lambda: _qa_dashscope_chat(
             api_key,
@@ -1853,7 +1867,8 @@ def _run_qa(
             reader_system_prompt,
             reader_user_prompt,
             enable_thinking=True,
-            max_tokens=4096,
+            thinking_budget=reader_generation.get("thinking_budget"),
+            max_tokens=reader_generation["max_tokens"],
         )
     )
     predicted = reader_text.strip()

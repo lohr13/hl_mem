@@ -1445,7 +1445,10 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         with (
             patch.dict(
                 os.environ,
-                {"LLM_API_KEY": "environment-key", "HL_MEM_EVAL_QA_MODEL": "qa-override"},
+                {
+                    "LLM_API_KEY": "environment-key",
+                    "HL_MEM_EVAL_QA_MODEL": "deepseek-v4-flash-0731",
+                },
                 clear=True,
             ),
             patch.object(runner.httpx, "Client", side_effect=clients),
@@ -1467,7 +1470,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(
             result,
             {
-                "model": "qa-override",
+                "model": "deepseek-v4-flash-0731",
                 "predicted_answer": "Answer for case-qa",
                 "correct": True,
                 "reason": "The answers match.",
@@ -1480,10 +1483,14 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             self.assertEqual(str(request.url), "https://coding.dashscope.aliyuncs.com/v1/chat/completions")
             self.assertEqual(request.headers["Authorization"], "Bearer environment-key")
             payload = json.loads(request.content)
-            self.assertEqual(payload["model"], "qa-override")
+            self.assertEqual(payload["model"], "deepseek-v4-flash-0731")
         self.assertEqual(
             [json.loads(request.content)["max_tokens"] for request in requests],
-            [4096, 4096, 512],
+            [1536, 1536, 512],
+        )
+        self.assertEqual(
+            [json.loads(request.content).get("thinking_budget") for request in requests],
+            [1024, 1024, None],
         )
         self.assertEqual(
             [json.loads(request.content)["enable_thinking"] for request in requests],
@@ -1506,6 +1513,17 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         judge_payload = json.loads(requests[2].content)
         self.assertEqual(judge_payload["response_format"], {"type": "json_object"})
         self.assertIn("official-style LongMemEval", judge_payload["messages"][0]["content"])
+
+    def test_reader_generation_options_keep_qwen_answer_budget_narrow(self) -> None:
+        self.assertEqual(
+            runner._reader_generation_options("qwen3.7-plus"),
+            {"max_tokens": 512, "thinking_budget": 1024},
+        )
+        self.assertEqual(
+            runner._reader_generation_options("deepseek-v4-flash-0731"),
+            {"max_tokens": 1536, "thinking_budget": 1024},
+        )
+        self.assertEqual(runner._reader_generation_options("other-model"), {"max_tokens": 512})
 
     def test_resume_rejects_a_different_reader_context_mode(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
