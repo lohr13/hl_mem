@@ -795,14 +795,24 @@ class RecallService:
         evidence_repo = EvidenceRepository(self.connection)
         claim_repo = ClaimRepository(self.connection)
         claim_ids = [claim["id"] for claim in claims]
-        all_evidence = self._batch_evidence(evidence_repo, claim_ids)
+        evidence_claim_ids = [
+            str(claim_id) for claim in claims for claim_id in [claim["id"], *(claim.get("_equivalent_claim_ids") or [])]
+        ]
+        all_evidence = self._batch_evidence(evidence_repo, evidence_claim_ids)
         superseded_ids = [claim["superseded_by_id"] for claim in claims if claim.get("superseded_by_id")]
         replacement_map = self._batch_replacements(claim_repo, superseded_ids)
         relations_map = self._batch_relations(claim_ids)
         rivals_map = self._batch_rivals(claims, namespace)
         results: list[dict[str, Any]] = []
         for claim in claims:
-            evidence = all_evidence.get(claim["id"], [])
+            evidence: list[dict[str, str]] = []
+            evidence_keys: set[tuple[str, str]] = set()
+            for claim_id in [claim["id"], *(claim.get("_equivalent_claim_ids") or [])]:
+                for item in all_evidence.get(str(claim_id), []):
+                    key = (item["type"], item["id"])
+                    if key not in evidence_keys:
+                        evidence_keys.add(key)
+                        evidence.append(item)
             superseded_by_id = claim.get("superseded_by_id")
             replacement = replacement_map.get(str(superseded_by_id)) if superseded_by_id else None
             result: dict[str, Any] = {

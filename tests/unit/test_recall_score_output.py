@@ -87,6 +87,41 @@ class RecallScoreOutputTest(unittest.TestCase):
         )
         self.assertAlmostEqual(claims[0]["_score"], claims[0]["_pre_score"])
 
+    def test_assembly_combines_evidence_from_folded_equivalent_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = Database(Path(directory) / "equivalent-evidence.db").open()
+            connection.executemany(
+                "INSERT INTO evidence_links("
+                "id,derived_type,derived_id,evidence_type,evidence_id,relation,weight"
+                ") VALUES (?,?,?,?,?,?,?)",
+                [
+                    ("link-1", "claim", "representative", "event", "event-1", "supports", 1.0),
+                    ("link-2", "claim", "alias", "event", "event-2", "supports", 1.0),
+                    ("link-3", "claim", "alias", "event", "event-1", "supports", 1.0),
+                ],
+            )
+            connection.commit()
+
+            result = RecallService(connection, FakeEmbedder(2))._assemble_results(
+                [
+                    {
+                        "id": "representative",
+                        "value": "same fact",
+                        "status": "active",
+                        "confidence": 0.9,
+                        "valid_from": None,
+                        "superseded_by_id": None,
+                        "_equivalent_claim_ids": ["alias"],
+                    }
+                ]
+            )[0]
+            connection.close()
+
+        self.assertEqual(
+            {(item["type"], item["id"]) for item in result["evidence"]},
+            {("event", "event-1"), ("event", "event-2")},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

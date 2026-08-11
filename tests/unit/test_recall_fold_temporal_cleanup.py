@@ -11,6 +11,7 @@ from unittest.mock import patch
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.recall.staged_pipeline import (
     RecallConfig,
+    _confirmed_equivalent_pairs,
     fold_similar_claims,
     hybrid_claims,
 )
@@ -188,6 +189,80 @@ class RecallFoldTemporalCleanupTest(unittest.TestCase):
 
         self.assertEqual(decode.call_count, 100)
         self.assertEqual(len(folded), 51)
+
+    def test_fold_uses_confirmed_equivalent_pair_across_subjects(self) -> None:
+        base = {
+            "namespace_key": "default",
+            "predicate": "fact",
+            "canonical_attribute": "fact.other",
+            "canonical_slot": None,
+            "qualifiers": {},
+            "status": "active",
+            "valid_from": "2026-01-01T00:00:00+00:00",
+            "valid_to": None,
+        }
+        claims = [
+            {
+                **base,
+                "id": "high",
+                "subject_entity_id": "user",
+                "value": "User's tank is 20 gallons",
+                "_score": 0.9,
+            },
+            {
+                **base,
+                "id": "low",
+                "subject_entity_id": "user's tank",
+                "value": "The user's tank size is 20 gallons.",
+                "_score": 0.8,
+            },
+        ]
+
+        folded = fold_similar_claims(
+            claims,
+            0.95,
+            equivalent_pairs=[("high", "low", 0.97)],
+        )
+
+        self.assertEqual([claim["id"] for claim in folded], ["high"])
+        self.assertEqual(folded[0]["_equivalent_claim_ids"], ["low"])
+
+    def test_recall_loads_only_deterministically_confirmed_equivalent_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = Database(Path(directory) / "equivalent-pairs.db").open()
+            repo = ClaimRepository(connection)
+            common = {
+                "namespace_key": "default",
+                "predicate": "fact",
+                "recorded_from": "2026-01-01T00:00:00+00:00",
+                "status": "active",
+            }
+            for claim_id in ("left", "right", "llm-right"):
+                repo.insert_claim({**common, "id": claim_id, "value": claim_id})
+            connection.executemany(
+                "INSERT INTO dedup_pairs("
+                "id,pair_key,left_claim_id,right_claim_id,similarity,decision,judge_reason,created_at"
+                ") VALUES (?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        "safe",
+                        "safe",
+                        "left",
+                        "right",
+                        0.97,
+                        "equivalent",
+                        "deterministic_near_copy_v1",
+                        common["recorded_from"],
+                    ),
+                    ("llm", "llm", "left", "llm-right", 0.99, "equivalent", "llm_review", common["recorded_from"]),
+                ],
+            )
+            connection.commit()
+
+            pairs = _confirmed_equivalent_pairs(connection, ["left", "right", "llm-right"], 0.95)
+            connection.close()
+
+        self.assertEqual(pairs, [("left", "right", 0.97)])
 
     def test_codex_and_architecture_queries_fold_duplicate_propositions(self) -> None:
         vector = pack_vector([1.0, 0.0])

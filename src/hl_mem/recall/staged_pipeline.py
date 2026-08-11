@@ -14,6 +14,10 @@ from typing import Any
 
 from hl_mem.core.vector import normalized_cosine_similarity, normalized_vector
 from hl_mem.domain.claims.attributes import SLOT_REGISTRY, normalize_predicate
+from hl_mem.domain.claims.dedup import (
+    DETERMINISTIC_NEAR_COPY_REASON,
+    is_safe_near_duplicate,
+)
 from hl_mem.domain.claims.query_tags import (
     LOW_INFORMATION_TAGS,
     TAG_INFO_WEIGHT,
@@ -686,7 +690,17 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
         )
         claim["_pre_score"] = ctx.pre_scores[claim["id"]]
         claim["_features"] = dict(ctx.feature_by_id[claim["id"]])
-    folded = fold_similar_claims(ctx.ranked_result, ctx.dedup_threshold, ctx.dedup_candidate_limit)
+    equivalent_pairs = _confirmed_equivalent_pairs(
+        ctx.relation_connection,
+        [str(claim["id"]) for claim in ctx.ranked_result[: ctx.dedup_candidate_limit]],
+        ctx.dedup_threshold,
+    )
+    folded = fold_similar_claims(
+        ctx.ranked_result,
+        ctx.dedup_threshold,
+        ctx.dedup_candidate_limit,
+        equivalent_pairs=equivalent_pairs,
+    )
     final = _preference_first(folded, ctx.limit, ctx.selected_intent)
     tracer = ctx.tracer
     if tracer is not None:
@@ -803,10 +817,46 @@ def _fold_semantics_compatible(left: dict[str, Any], right: dict[str, Any]) -> b
     return _protected_value_tokens(left) == _protected_value_tokens(right) and _valid_intervals_overlap(left, right)
 
 
+def _confirmed_equivalent_pairs(
+    connection: sqlite3.Connection | None,
+    claim_ids: list[str],
+    threshold: float,
+) -> list[tuple[str, str, float]]:
+    """Load a bounded set of deterministic equivalent edges for current candidates."""
+    unique_ids = list(dict.fromkeys(claim_ids))
+    if connection is None or threshold <= 0.0 or len(unique_ids) < 2:
+        return []
+    placeholders = ",".join("?" for _ in unique_ids)
+    rows = connection.execute(
+        "SELECT left_claim_id,right_claim_id,similarity FROM dedup_pairs "
+        "WHERE decision='equivalent' AND judge_reason=? AND similarity>=? "
+        f"AND left_claim_id IN ({placeholders}) AND right_claim_id IN ({placeholders}) "
+        "ORDER BY similarity DESC,reviewed_at,id LIMIT ?",
+        (
+            DETERMINISTIC_NEAR_COPY_REASON,
+            threshold,
+            *unique_ids,
+            *unique_ids,
+            max(len(unique_ids), len(unique_ids) * 4),
+        ),
+    ).fetchall()
+    return [(str(row["left_claim_id"]), str(row["right_claim_id"]), float(row["similarity"])) for row in rows]
+
+
+def _append_folded_claim(representative: dict[str, Any], folded: dict[str, Any]) -> None:
+    aliases = representative.setdefault("_equivalent_claim_ids", [])
+    for claim_id in [folded.get("id"), *(folded.get("_equivalent_claim_ids") or [])]:
+        normalized = str(claim_id or "")
+        if normalized and normalized != str(representative.get("id")) and normalized not in aliases:
+            aliases.append(normalized)
+
+
 def fold_similar_claims(
     claims: list[dict[str, Any]],
     threshold: float,
     candidate_limit: int = 100,
+    *,
+    equivalent_pairs: Sequence[tuple[str, str, float]] | None = None,
 ) -> list[dict[str, Any]]:
     """在兼容语义桶内折叠高相似 Claim，并限制同步比较窗口。"""
     if threshold <= 0.0:
@@ -816,6 +866,34 @@ def fold_similar_claims(
     ranked = sorted(claims, key=lambda item: -float(item.get("_score", 0.0)))
     fold_candidates = ranked[:candidate_limit]
     untouched = ranked[candidate_limit:]
+    candidates_by_id = {str(claim["id"]): claim for claim in fold_candidates}
+    parents = {claim_id: claim_id for claim_id in candidates_by_id}
+
+    def find(claim_id: str) -> str:
+        while parents[claim_id] != claim_id:
+            parents[claim_id] = parents[parents[claim_id]]
+            claim_id = parents[claim_id]
+        return claim_id
+
+    def union(left_id: str, right_id: str) -> None:
+        left_root, right_root = find(left_id), find(right_id)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for left_id, right_id, similarity in equivalent_pairs or ():
+        left = candidates_by_id.get(left_id)
+        right = candidates_by_id.get(right_id)
+        if left is None or right is None:
+            continue
+        if is_safe_near_duplicate(
+            left,
+            right,
+            similarity=similarity,
+            semantic_threshold=threshold,
+            allow_subject_mismatch=True,
+        ):
+            union(left_id, right_id)
+
     decoded = {
         str(claim["id"]): normalized_vector(embedding)
         for claim in fold_candidates
@@ -823,18 +901,33 @@ def fold_similar_claims(
     }
     kept: list[dict[str, Any]] = []
     kept_candidates: dict[tuple[Any, ...], list[tuple[dict[str, Any], tuple[float, ...]]]] = {}
+    equivalent_representatives: dict[str, dict[str, Any]] = {}
     for claim in fold_candidates:
+        claim_id = str(claim["id"])
+        group_root = find(claim_id)
+        representative = equivalent_representatives.get(group_root)
+        if representative is not None:
+            _append_folded_claim(representative, claim)
+            continue
+        equivalent_representatives[group_root] = claim
         bucket = _fold_bucket(claim)
-        vector = decoded.get(str(claim["id"]))
-        if (
-            bucket is not None
-            and vector is not None
-            and any(
-                _fold_semantics_compatible(claim, retained_claim)
-                and normalized_cosine_similarity(vector, retained_vector) >= threshold
-                for retained_claim, retained_vector in kept_candidates.get(bucket, [])
+        vector = decoded.get(claim_id)
+        similar_representative = None
+        if bucket is not None and vector is not None:
+            similar_representative = next(
+                (
+                    retained_claim
+                    for retained_claim, retained_vector in kept_candidates.get(bucket, [])
+                    if (
+                        _fold_semantics_compatible(claim, retained_claim)
+                        and normalized_cosine_similarity(vector, retained_vector) >= threshold
+                    )
+                ),
+                None,
             )
-        ):
+        if similar_representative is not None:
+            _append_folded_claim(similar_representative, claim)
+            equivalent_representatives[group_root] = similar_representative
             continue
         kept.append(claim)
         if bucket is not None and vector is not None:
