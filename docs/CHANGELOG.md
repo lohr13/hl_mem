@@ -24,6 +24,7 @@
 - JSONL Event 归档纳入 `metadata_json` 的导入、导出和同 ID 冲突判定；Worker 在长任务期间续租全部 job，并在终态更新未持有 lease 时返回 `lease_lost`，不再报告伪成功。
 - compact/legacy extraction 的 `source_event_indices` 上限与可配置微批上限统一为 32；结构化输出的 20 claims 上限及生产去重/冲突阈值未改变。
 - `extract_event` 仅在 HTTP 429 耗尽普通 job 重试后写入通用 deferred task，由维护循环按 1/4/12 小时重放三次；成功即收敛，非 429 维持原 job 语义，多次 429 后放弃。pending Event 在重试终态前受 retention 保护。
+- 跨 subject `DedupJudge` 明确输出示例并校验全部协议字段；空 decision、未知枚举、非 JSON 或无效 confidence/reason 降级为低置信 `uncertain`，不再让整轮日任务因单个格式错误进入 dead。provider/transport 调用异常仍沿用普通 job 重试。
 
 ### 重复与矛盾双层治理
 

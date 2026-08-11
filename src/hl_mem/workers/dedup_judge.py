@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from hl_mem.llm.client import LLMClient
@@ -47,7 +48,8 @@ class DedupJudge:
                             "distinct 表示不同事实；无法可靠判断时返回 uncertain。配置键、task、数字、端口、"
                             "版本、路径、有效时间或肯定/否定极性存在差异时必须返回 distinct。"
                             "HTTP_PROXY 与 HTTPS_PROXY 等不同标识符不是同一事实。"
-                            "仅输出符合 schema 的 JSON。"
+                            "仅输出一个符合 schema 的 JSON object，且必须包含 decision、confidence、reason；"
+                            '例如 {"decision":"uncertain","confidence":0.0,"reason":"insufficient evidence"}。'
                         ),
                     ),
                     LLMMessage(
@@ -78,9 +80,22 @@ class DedupJudge:
                 ),
             )
         )
-        data = response.content if isinstance(response.content, dict) else json.loads(response.content)
-        decision = str(data.get("decision", ""))
-        if decision not in {"equivalent", "distinct", "uncertain"}:
-            raise ValueError(f"invalid dedup decision: {decision}")
-        confidence = min(1.0, max(0.0, float(data.get("confidence", 0.0))))
-        return decision, confidence, str(data.get("reason", ""))[:512]
+        try:
+            data = response.content if isinstance(response.content, dict) else json.loads(response.content)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return "uncertain", 0.0, "invalid_output:json"
+        if not isinstance(data, dict):
+            return "uncertain", 0.0, "invalid_output:object"
+        raw_decision = data.get("decision")
+        if not isinstance(raw_decision, str) or raw_decision not in {"equivalent", "distinct", "uncertain"}:
+            return "uncertain", 0.0, "invalid_output:decision"
+        raw_confidence = data.get("confidence")
+        if isinstance(raw_confidence, bool) or not isinstance(raw_confidence, (int, float)):
+            return "uncertain", 0.0, "invalid_output:confidence"
+        confidence = float(raw_confidence)
+        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            return "uncertain", 0.0, "invalid_output:confidence"
+        reason = data.get("reason")
+        if not isinstance(reason, str):
+            return "uncertain", 0.0, "invalid_output:reason"
+        return raw_decision, confidence, reason[:512]
