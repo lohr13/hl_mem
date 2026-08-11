@@ -166,6 +166,30 @@ def test_duplicate_event_id_with_different_payload_is_rejected(tmp_path: Path) -
     assert _row_counts(target) == (1, 0)
 
 
+def test_duplicate_event_id_with_different_metadata_is_rejected(tmp_path: Path) -> None:
+    original = tmp_path / "original-metadata.jsonl"
+    conflicting = tmp_path / "conflicting-metadata.jsonl"
+    target = tmp_path / "target.db"
+    _write_archive(
+        original,
+        [{**_event("event-1"), "metadata_json": json.dumps({"turn_id": "turn-1"}, sort_keys=True)}],
+    )
+    _write_archive(
+        conflicting,
+        [{**_event("event-1"), "metadata_json": json.dumps({"turn_id": "turn-2"}, sort_keys=True)}],
+    )
+    import_database(target, original, skip_extraction_jobs=True)
+
+    with pytest.raises(JSONLImportError, match="existing event payload"):
+        import_database(target, conflicting, skip_extraction_jobs=True)
+
+    connection = sqlite3.connect(target)
+    try:
+        assert json.loads(connection.execute("SELECT metadata_json FROM events").fetchone()[0]) == {"turn_id": "turn-1"}
+    finally:
+        connection.close()
+
+
 def test_worker_rebuilds_claim_from_imported_archive(tmp_path: Path) -> None:
     archive = tmp_path / "events.jsonl"
     target = tmp_path / "target.db"

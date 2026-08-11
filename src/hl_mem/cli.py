@@ -47,6 +47,7 @@ EVENT_ARCHIVE_COLUMNS = (
     "source_uri",
     "content_hash",
     "sensitivity",
+    "metadata_json",
 )
 
 
@@ -71,6 +72,12 @@ def _normalized_archive_event(event: dict[str, Any]) -> dict[str, Any]:
         stored.setdefault(
             "content_hash",
             hashlib.sha256(content_json.encode()).hexdigest(),
+        )
+    if "metadata" in stored:
+        stored["metadata_json"] = json.dumps(
+            stored.pop("metadata"),
+            ensure_ascii=False,
+            sort_keys=True,
         )
     defaults = {
         "tenant_id": "default",
