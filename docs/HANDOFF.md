@@ -8,7 +8,7 @@
 - **版本**：v0.25.0
 - **阶段**：v0.25.0 发版候选收口；打 tag 前以最新 GitHub Actions 全绿为门槛
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；39 migrations（SQL 001-039）+ Python data migrations；实时数据量以数据库只读审计为准
+- **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；40 migrations（SQL 001-040）+ Python data migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
@@ -18,12 +18,13 @@
 - 生产提取使用默认 `5 Event / 120 秒` 的同会话微批，speaker 来自 Event `actor_type`，`source_event_indices` 可覆盖配置允许的最多 32 个来源；`POST /v1/events/batch` 保持请求数组顺序和事务原子性。
 - FTS `auto` 查询以 raw/stem 两个 conjunctive 分支兼容 v0.24.0 存量索引，repository 与 FTS 重建显式消费活动 `fts_language`；升级不要求仅为该兼容修复强制重建 FTS。
 - Event JSONL 归档已覆盖 `metadata_json`；长任务 lease 由独立连接周期续租全部窗口 job，终态 ownership 丢失返回 `lease_lost`，禁止 0-row completion 伪装为成功。
+- `extract_event` 仅在 HTTP 429 耗尽普通 job 重试后登记通用 deferred task，由维护循环按 1/4/12 小时有界重放；成功收敛、非 429 不延续，多次 429 后放弃，pending Event 不被 retention 清除。
 - 重复治理使用同一确定性安全门覆盖摄入、维护和候选窗召回：protected atoms 保序保次数，跨 subject 仅允许文本可证明的 `user ↔ user's <entity>`；维护候选按 `reviewed_at` 轮转，召回公开 `equivalent_claim_ids` 并汇总组内 evidence，全程不删除或 supersede Claim。
 - 双语提取 prompt 已对齐复合事实、关系动作、一次性事件和枚举/总数规则；当前 `PROMPT_HASH=86c522e45f92`、提取器身份为 `llm-v2+86c522e45f92`。原始响应恰好 20 条时记录 `claim_limit_reached`，但不放宽 schema。
 - 固定 extractor-only A/B 中三个英文关系/枚举样本改前已正确、改后保持；中文“关系+枚举”组合样本改前后都返回空。该 prompt 变更是规则补齐，不是关系召回率已提升的统计证据。
 - LongMemEval 结果持久化 dense/reranker 原始分、通道、最终排名与 `search_trace`。冻结官方口径为 **40/50（80%）**：`deepseek-v4-flash-0731`、全 reader thinking、Top-10、自有 judge；temporal gate 诊断口径为 **40/48（83.3%）**，不得与官方分数混报。
 - 评测已知边界：内容审查隔离跳过 2 个 Event；剩余错误主要是 multi-session 聚合、temporal 计算和 single-session 限定词。benchmark reader 是评测工具，不是生产 recall API 的组成部分，Top-10 也不等同于生产的可配置召回/packing 窗口。
-- v0.24.1/v0.24.2 仅为仓库内过渡版本、没有 release tag；v0.25.0 从 v0.24.0 升级时会执行 migration 038 数据回写和 migration 039 nullable metadata 列。大库必须先备份、停写并为 038 的全表扫描与写锁安排维护窗口。
+- v0.24.1/v0.24.2 仅为仓库内过渡版本、没有 release tag；v0.25.0 从 v0.24.0 升级时会执行 migration 038 数据回写、migration 039 nullable metadata 列与 migration 040 deferred task 队列。大库必须先备份、停写并为 038 的全表扫描与写锁安排维护窗口。
 - Git tag 与 GitHub Release 最新均为 v0.24.0；双层去重和 prompt 更新继续收进尚未发布的 v0.25.0。只有 v0.25.0 发布后再做兼容修复时才使用 v0.25.1。
 
 ### 2026-08-10 v0.24.2 DeepSeek 与 holdout 诊断收口

@@ -18,7 +18,8 @@ def purge_retained_events(connection: sqlite3.Connection, tenant_id: str, record
     """删除指定租户在保留边界前且没有 Claim 证据依赖的事件。"""
     cursor = connection.execute(
         "DELETE FROM events WHERE tenant_id=? AND recorded_at<? AND NOT EXISTS ("
-        "SELECT 1 FROM evidence_links WHERE evidence_type='event' AND evidence_id=events.id)",
+        "SELECT 1 FROM evidence_links WHERE evidence_type='event' AND evidence_id=events.id) AND NOT EXISTS ("
+        "SELECT 1 FROM deferred_tasks WHERE resource_type='event' AND resource_id=events.id AND status='pending')",
         (tenant_id, recorded_before),
     )
     connection.commit()

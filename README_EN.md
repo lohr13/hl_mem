@@ -117,7 +117,8 @@ deployment only raises `recall.relevance_relative_drop` from the code default `0
 
 v0.25.0 is the first candidate planned for a tag after v0.24.0 and is not tagged yet; v0.24.1 and v0.24.2 were repository-only transition
 versions. Back up the database and stop the API, workers, and other writers before upgrading. Migration 038 scans and
-canonicalizes stored Claim subjects under `BEGIN IMMEDIATE`, and migration 039 adds nullable Event `metadata_json`.
+canonicalizes stored Claim subjects under `BEGIN IMMEDIATE`, migration 039 adds nullable Event `metadata_json`, and
+migration 040 adds the bounded deferred-task queue.
 Plan a maintenance window for a large database; migrations are forward-only. The default `auto` FTS query supports both
 legacy raw-only and current raw-plus-stem indexes, so morphology compatibility alone does not require a forced rebuild.
 
@@ -146,7 +147,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.25.0 with 39 immutable, forward-only migrations.
+The current baseline is v0.25.0 with 40 immutable, forward-only migrations.
 
 ## Documentation
 

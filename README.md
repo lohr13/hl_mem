@@ -143,7 +143,7 @@ hlmem backfill-index-text --mode natural
 
 v0.25.0 是 v0.24.0 之后首个计划打 tag 的候选版本，当前尚未打 tag；v0.24.1/v0.24.2 只是仓库内过渡版本。升级前请备份并停止
 API、Worker 和其他写入者。migration 038 会在 `BEGIN IMMEDIATE` 中扫描并规范化存量 Claim subject，
-migration 039 为 Event 增加 nullable `metadata_json`；大库应安排维护窗口，数据库不支持向后迁移。
+migration 039 为 Event 增加 nullable `metadata_json`，migration 040 增加有界 deferred task 队列；大库应安排维护窗口，数据库不支持向后迁移。
 默认 `auto` FTS 查询同时兼容旧 raw-only 与新 raw+stem 索引，因此无需仅为词形兼容强制重建。
 
 ## 能力概览
@@ -170,7 +170,7 @@ recall/context packing 是两套契约，该成绩不能直接视为生产端到
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.25.0，共 39 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.25.0，共 40 个不可变、仅向前执行的 SQL Migration。
 
 ## 文档
 

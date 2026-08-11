@@ -1,7 +1,9 @@
 import json
 import logging
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+import httpx
 
 import hl_mem.workers.worker as worker_module
 from hl_mem.ingest.chunking import ChunkingPolicy
@@ -11,8 +13,10 @@ from hl_mem.llm.types import LLMResponse
 from hl_mem.monitoring.worker import WorkerRuntimeState
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
+from hl_mem.storage.deferred_tasks import DeferredTaskRepository
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
+from hl_mem.workers.deferred import process_deferred_tasks
 from hl_mem.workers.worker import Worker
 
 
@@ -83,6 +87,20 @@ def test_run_once_extracts_and_completes(tmp_path) -> None:
 class BrokenExtractor:
     def extract(self, _content):
         raise RuntimeError("broken")
+
+
+class HTTPErrorExtractor:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+    def extract(self, _content):
+        request = httpx.Request("POST", "https://provider.invalid/extract")
+        response = httpx.Response(self.status_code, request=request)
+        raise httpx.HTTPStatusError(
+            f"provider returned {self.status_code}",
+            request=request,
+            response=response,
+        )
 
 
 class NoClaimsLLMClient:
@@ -218,6 +236,115 @@ def test_failure_retries_then_becomes_dead(tmp_path) -> None:
     )
     assert worker.run_once()["status"] == "pending"
     assert worker.run_once()["status"] == "dead"
+
+
+def test_dead_429_extraction_is_deferred_but_other_http_errors_are_not(tmp_path) -> None:
+    path = tmp_path / "deferred-429.db"
+    connection = Database(path).open()
+    queue(connection, job_id="rate-limited", event_id="event-429", max_attempts=1)
+    rate_limited = Worker(
+        Settings(database_path=str(path), embedding_dim=8),
+        extractor=HTTPErrorExtractor(429),
+        connection=connection,
+    )
+
+    result = rate_limited.run_once()
+
+    task = connection.execute(
+        "SELECT task_type,resource_type,resource_id,status,attempts,max_attempts,run_after "
+        "FROM deferred_tasks WHERE idempotency_key='retry_extract_event:event-429'"
+    ).fetchone()
+    assert result["status"] == "dead"
+    assert dict(task) == {
+        "task_type": "retry_extract_event",
+        "resource_type": "event",
+        "resource_id": "event-429",
+        "status": "pending",
+        "attempts": 0,
+        "max_attempts": 3,
+        "run_after": task["run_after"],
+    }
+    assert datetime.fromisoformat(task["run_after"]) > datetime.now(timezone.utc)
+
+    queue(connection, job_id="server-error", event_id="event-500", max_attempts=1)
+    server_error = Worker(
+        Settings(database_path=str(path), embedding_dim=8),
+        extractor=HTTPErrorExtractor(500),
+        connection=connection,
+    )
+    assert server_error.run_once()["status"] == "dead"
+    assert connection.execute("SELECT 1 FROM deferred_tasks WHERE resource_id='event-500'").fetchone() is None
+
+
+def test_maintenance_requeues_due_deferred_extraction_and_success_closes_it(tmp_path) -> None:
+    path = tmp_path / "deferred-maintenance.db"
+    connection = Database(path).open()
+    queue(connection, job_id="original", event_id="deferred-event", max_attempts=1)
+    connection.execute("UPDATE jobs SET status='dead' WHERE id='original'")
+    connection.commit()
+    repository = DeferredTaskRepository(connection)
+    now = datetime.now(timezone.utc)
+    repository.defer(
+        task_type="retry_extract_event",
+        resource_type="event",
+        resource_id="deferred-event",
+        payload={"event_id": "deferred-event"},
+        idempotency_key="retry_extract_event:deferred-event",
+        run_after=(now - timedelta(seconds=1)).isoformat(),
+        max_attempts=3,
+        error="HTTP 429",
+        updated_at=now.isoformat(),
+    )
+
+    result = process_deferred_tasks(connection, now=now.isoformat())
+
+    task = repository.get_by_idempotency_key("retry_extract_event:deferred-event")
+    retry_job = connection.execute(
+        "SELECT status,payload_json FROM jobs WHERE idempotency_key=?",
+        (f"deferred:{task['id']}:1",),
+    ).fetchone()
+    assert result == {"scheduled": 1, "abandoned": 0, "postponed": 0}
+    assert task["status"] == "pending" and task["attempts"] == 1
+    assert retry_job["status"] == "pending"
+    assert json.loads(retry_job["payload_json"])["event_id"] == "deferred-event"
+
+    worker = Worker(
+        Settings(database_path=str(path), embedding_dim=8),
+        connection=connection,
+    )
+    assert worker.run_once()["status"] == "succeeded"
+    assert repository.get_by_idempotency_key("retry_extract_event:deferred-event")["status"] == "completed"
+
+
+def test_deferred_extraction_stops_after_three_replays(tmp_path) -> None:
+    path = tmp_path / "deferred-bounded.db"
+    connection = Database(path).open()
+    queue(connection, job_id="original", event_id="bounded-event", max_attempts=1)
+    connection.execute("UPDATE jobs SET status='dead' WHERE id='original'")
+    connection.commit()
+    repository = DeferredTaskRepository(connection)
+    now = datetime.now(timezone.utc).isoformat()
+    repository.defer(
+        task_type="retry_extract_event",
+        resource_type="event",
+        resource_id="bounded-event",
+        payload={"event_id": "bounded-event"},
+        idempotency_key="retry_extract_event:bounded-event",
+        run_after=now,
+        max_attempts=3,
+        error="HTTP 429",
+        updated_at=now,
+    )
+    connection.execute(
+        "UPDATE deferred_tasks SET attempts=max_attempts WHERE idempotency_key=?",
+        ("retry_extract_event:bounded-event",),
+    )
+    connection.commit()
+
+    result = process_deferred_tasks(connection, now=now)
+
+    assert result == {"scheduled": 0, "abandoned": 1, "postponed": 0}
+    assert repository.get_by_idempotency_key("retry_extract_event:bounded-event")["status"] == "abandoned"
 
 
 def test_lease_prevents_second_worker_from_taking_running_job(tmp_path) -> None:

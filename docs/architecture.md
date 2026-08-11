@@ -111,7 +111,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 39 immutable SQL migrations (001-039)
+│   └── migrations/           # 40 immutable SQL migrations (001-040)
 ├── workers/
 │   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
 │   ├── ttl.py                # Importance-aware expiry
@@ -346,6 +346,10 @@ backup and maintenance window.
 Migration 039 is the v0.25 schema change: it adds nullable `events.metadata_json` for non-content source locators such as
 turn IDs. Event text and FTS semantics remain unchanged; JSONL archives include metadata in round-trip and conflict
 equivalence checks.
+
+Migration 040 adds the generic bounded `deferred_tasks` queue. The maintenance loop currently uses it only after an
+`extract_event` job exhausts its ordinary retries on HTTP 429: it retries after 1, 4, and 12 hours, then abandons the
+task. Pending Event work is protected from retention; other HTTP failures keep the ordinary job behavior.
 
 Backup and restore are whole-database operations:
 

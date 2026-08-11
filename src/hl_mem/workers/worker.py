@@ -42,6 +42,11 @@ from hl_mem.workers.deduplicate import (
     enqueue_daily_deduplication,
     review_pending_near_duplicates,
 )
+from hl_mem.workers.deferred import (
+    complete_deferred_extractions,
+    handle_failed_extractions,
+    process_deferred_tasks,
+)
 from hl_mem.workers.discover_relations import discover_relations
 from hl_mem.workers.induce_policies import (
     enqueue_daily_policy_induction,
@@ -231,6 +236,11 @@ class Worker:
             finally:
                 heartbeat.stop()
             heartbeat.raise_if_failed()
+            if job["job_type"] == "extract_event":
+                try:
+                    complete_deferred_extractions(self.connection, list(job["payload"]["event_ids"]), _now())
+                except Exception:
+                    LOGGER.exception("deferred_extraction_completion_failed job=%s", job["id"])
             completed = self.jobs.complete_jobs(leased_job_ids, _now(), lease_token)
             if completed != len(leased_job_ids):
                 raise RuntimeError("job lease ownership lost before completion")
@@ -238,7 +248,23 @@ class Worker:
         except Exception as error:
             heartbeat.stop()
             failed = self.jobs.fail_jobs(leased_job_ids, str(error), _now(), lease_token)
-            current = self.connection.execute("SELECT status,attempts FROM jobs WHERE id=?", (job["id"],)).fetchone()
+            placeholders = ",".join("?" for _ in leased_job_ids)
+            rows = self.connection.execute(
+                f"SELECT id,status,attempts FROM jobs WHERE id IN ({placeholders})",
+                leased_job_ids,
+            ).fetchall()
+            current_by_id = {str(row["id"]): row for row in rows}
+            current = current_by_id.get(str(job["id"]))
+            if failed and job["job_type"] == "extract_event":
+                dead_event_ids = [
+                    event_id
+                    for job_id, event_id in zip(leased_job_ids, job["payload"]["event_ids"], strict=True)
+                    if current_by_id.get(job_id) is not None and current_by_id[job_id]["status"] == "dead"
+                ]
+                try:
+                    handle_failed_extractions(self.connection, dead_event_ids, error, now=_now())
+                except Exception:
+                    LOGGER.exception("deferred_extraction_registration_failed job=%s", job["id"])
             return {
                 "status": current["status"] if failed and current else "lease_lost",
                 "job_id": job["id"],
@@ -275,6 +301,10 @@ class Worker:
         maintenance_now = _now()
         cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)).isoformat()
         items: list[tuple[str, Callable[[], Any]]] = [
+            (
+                "process_deferred_tasks",
+                lambda: process_deferred_tasks(self.connection, now=maintenance_now),
+            ),
             (
                 "cleanup_stale_temporal_claims",
                 lambda: cleanup_stale_temporal_claims(

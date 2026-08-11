@@ -23,6 +23,7 @@
 - `/v1/events/batch` 以微秒级内部 `recorded_at` 保留请求数组顺序，避免四条交替 user/assistant Event 被角色排序打乱；整个批次与 extraction job 仍在同一事务中提交。
 - JSONL Event 归档纳入 `metadata_json` 的导入、导出和同 ID 冲突判定；Worker 在长任务期间续租全部 job，并在终态更新未持有 lease 时返回 `lease_lost`，不再报告伪成功。
 - compact/legacy extraction 的 `source_event_indices` 上限与可配置微批上限统一为 32；结构化输出的 20 claims 上限及生产去重/冲突阈值未改变。
+- `extract_event` 仅在 HTTP 429 耗尽普通 job 重试后写入通用 deferred task，由维护循环按 1/4/12 小时重放三次；成功即收敛，非 429 维持原 job 语义，多次 429 后放弃。pending Event 在重试终态前受 retention 保护。
 
 ### 重复与矛盾双层治理
 
@@ -44,8 +45,8 @@
 ### 升级与发布说明
 
 - v0.24.1/v0.24.2 是仓库内过渡版本，从未建立 Git tag；v0.25.0 是 v0.24.0 之后的首个对外候选版本，当前仍未打 tag。`1e8e1fd` 与 `b143daf` 均纳入该候选版本，不另起 v0.25.1。
-- 升级会顺序执行 migration 038 的 persona subject Python 数据回写与 migration 039 的 nullable Event metadata 列。大库应先备份、停止其他写入者并预留 migration 038 全表扫描和写锁时间；数据库 migration 仅向前，不支持降级。
-- 本版本共 39 个不可变 SQL migration（001-039）；REST 单 Event API、依赖集合及生产阈值 `0.82/0.92/0.95` 保持不变。
+- 升级会顺序执行 migration 038 的 persona subject Python 数据回写、migration 039 的 nullable Event metadata 列与 migration 040 的 deferred task 队列。大库应先备份、停止其他写入者并预留 migration 038 全表扫描和写锁时间；数据库 migration 仅向前，不支持降级。
+- 本版本共 40 个不可变 SQL migration（001-040）；REST 单 Event API、依赖集合及生产阈值 `0.82/0.92/0.95` 保持不变。
 
 ## v0.24.2（2026-08-09）
 
