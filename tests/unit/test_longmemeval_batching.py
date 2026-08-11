@@ -1486,11 +1486,11 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             self.assertEqual(payload["model"], "deepseek-v4-flash-0731")
         self.assertEqual(
             [json.loads(request.content)["max_tokens"] for request in requests],
-            [1536, 1536, 512],
+            [2560, 2560, 512],
         )
         self.assertEqual(
             [json.loads(request.content).get("thinking_budget") for request in requests],
-            [1024, 1024, None],
+            [2048, 2048, None],
         )
         self.assertEqual(
             [json.loads(request.content)["enable_thinking"] for request in requests],
@@ -1517,11 +1517,11 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
     def test_reader_generation_options_keep_qwen_answer_budget_narrow(self) -> None:
         self.assertEqual(
             runner._reader_generation_options("qwen3.7-plus"),
-            {"max_tokens": 512, "thinking_budget": 1024},
+            {"max_tokens": 512, "thinking_budget": 2048},
         )
         self.assertEqual(
             runner._reader_generation_options("deepseek-v4-flash-0731"),
-            {"max_tokens": 1536, "thinking_budget": 1024},
+            {"max_tokens": 2560, "thinking_budget": 2048},
         )
         self.assertEqual(runner._reader_generation_options("other-model"), {"max_tokens": 512})
 
