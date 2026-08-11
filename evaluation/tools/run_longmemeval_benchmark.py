@@ -144,6 +144,9 @@ _RECOMMENDATION_QUESTION_RE = re.compile(
     r"\b(?:help\s+(?:me|us)\s+)?(?:choose|pick)\b|\bshould\s+(?:i|we)\b|"
     r"推荐|建议|主意|资源|帮(?:我|我们)?(?:选择|挑选))"
 )
+_COUNT_OR_SUM_QUESTION_RE = re.compile(
+    r"(?ix)(?:\b(?:how\s+many|total|sum|altogether|combined)\b|多少|几个|总共|合计|求和)"
+)
 CLAIM_RELEVANCE_THRESHOLD = 0.5
 SIMILARITY_THRESHOLDS = (0.2, 0.3, 0.4, 0.5, 0.65)
 RELEVANCE_SCORER_CODE = "V0"
@@ -1777,6 +1780,10 @@ def _is_preference_recommendation(case: LongMemEvalCase) -> bool:
     return "preference" in case.question_type.casefold() and bool(_RECOMMENDATION_QUESTION_RE.search(case.question))
 
 
+def _is_count_or_sum_question(case: LongMemEvalCase) -> bool:
+    return bool(_COUNT_OR_SUM_QUESTION_RE.search(case.question))
+
+
 def _reader_system_prompt(case: LongMemEvalCase) -> str:
     prompt = (
         "You answer questions from retrieved long-term-memory claims and their original evidence events. "
@@ -1799,6 +1806,16 @@ def _reader_system_prompt(case: LongMemEvalCase) -> str:
             "the specific proper noun is absent from memory. The final answer must explicitly use the known preferences "
             "or experiences that justify the recommendation; if no relevant personal constraint is present, say the "
             "information is unavailable instead of giving an ungrounded generic recommendation."
+        )
+    if _is_count_or_sum_question(case):
+        prompt += (
+            " For count or sum questions, enumerate every record you can see, cautiously deduplicate identical items "
+            "so each item is counted once, and only then compute the total."
+        )
+    if "knowledge-update" in case.question_type.casefold():
+        prompt += (
+            " For knowledge-update questions, prefer the latest statement that is valid at the question time; older "
+            "conflicting statements are history only and must never override the updated value."
         )
     if "temporal" in case.question_type.casefold():
         prompt += (

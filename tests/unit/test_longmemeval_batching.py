@@ -315,6 +315,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertIn("use occurred and valid times plus Current Date", prompt)
         self.assertNotIn("recorded", prompt.casefold())
         self.assertNotIn("synthesize a recommendation", prompt)
+        self.assertNotIn("For count or sum questions", prompt)
 
     def test_reader_prompt_allows_grounded_preference_recommendation_synthesis(self) -> None:
         record = _record("case-preference-reader")
@@ -380,6 +381,28 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertIn("never apply an offset to a superseded baseline", prompt)
         self.assertIn("historical question", prompt)
         self.assertIn("never import a later current value", prompt)
+
+    def test_count_reader_enumerates_deduplicates_then_totals(self) -> None:
+        record = _record("case-count-reader")
+        record["question"] = "How many different fitness activities did I mention?"
+        case = runner.normalize_case(record)
+
+        prompt = runner._reader_system_prompt(case)
+
+        self.assertIn("enumerate every record", prompt)
+        self.assertIn("each item is counted once", prompt)
+        self.assertIn("only then compute the total", prompt)
+
+    def test_knowledge_update_reader_prefers_latest_valid_statement(self) -> None:
+        record = _record("case-update-reader")
+        record["question_type"] = "knowledge-update"
+        case = runner.normalize_case(record)
+
+        prompt = runner._reader_system_prompt(case)
+
+        self.assertIn("latest statement that is valid at the question time", prompt)
+        self.assertIn("history only", prompt)
+        self.assertIn("must never override the updated value", prompt)
 
     def test_ingest_persists_each_turn_with_real_speaker_and_session_span(self) -> None:
         record = _record("case-speakers")
