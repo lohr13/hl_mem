@@ -27,7 +27,8 @@
 - value 都是非空字符串，有效时间区间重叠。
 - cosine 不低于调用方已有阈值：入库/维护使用 `dedup.threshold`，召回使用 `recall.dedup_threshold`。
 - NFKC + casefold + 空白/标点归一后的字符近似度不低于固定保守值 `0.90`。
-- 数字、版本、路径、月份、星期、否定词、引号内容和明显专名等 protected atoms 按原文顺序及出现次数完全一致。
+- 数字、版本、路径、月份、星期/相对时段、否定词、引号内容和明显专名等 protected atoms 按原文顺序及
+  出现次数完全一致；`entities` 还需在 value 中形成相同的有序 mention 签名，避免主客体交换。
 
 该规则是充分条件，不是完整语义判定。未命中只表示“无法无 LLM 安全确认”，不得自动判 distinct。
 
