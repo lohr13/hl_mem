@@ -89,3 +89,16 @@ def test_generated_schema_forbids_extra_fields_recursively() -> None:
         .kind
         == "preference"
     )
+
+
+def test_source_event_indices_match_configurable_microbatch_ceiling() -> None:
+    payload = _valid_response()
+    payload["claims"][0]["source_event_indices"] = list(range(32))
+
+    assert len(ExtractionResponseSchema.model_validate(payload).claims[0].source_event_indices) == 32
+    compact_claim = extraction_response_json_schema()["$defs"]["CompactExtractedClaimSchema"]
+    assert compact_claim["properties"]["source_event_indices"]["maxItems"] == 32
+
+    payload["claims"][0]["source_event_indices"] = list(range(33))
+    with pytest.raises(ValidationError):
+        ExtractionResponseSchema.model_validate(payload)

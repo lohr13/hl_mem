@@ -101,7 +101,7 @@ class ExtractedClaimSchema(BaseModel):
     source_event_indices: list[Annotated[int, Field(ge=0)]] = Field(
         default_factory=lambda: [0],
         min_length=1,
-        max_length=4,
+        max_length=32,
     )
 
 
@@ -130,7 +130,7 @@ class CompactExtractedClaimSchema(BaseModel):
     source_event_indices: list[Annotated[int, Field(ge=0)]] = Field(
         default_factory=lambda: [0],
         min_length=1,
-        max_length=4,
+        max_length=32,
     )
 
 
