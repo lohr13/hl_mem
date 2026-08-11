@@ -368,8 +368,8 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         factual_case = runner.normalize_case(_record("case-factual-limit"))
 
         self.assertEqual(runner.RETRIEVAL_KS, (1, 5, 10))
-        self.assertEqual(runner._reader_recall_limit(preference_case), 17)
-        self.assertEqual(runner._reader_recall_limit(factual_case), 15)
+        self.assertEqual(runner._reader_recall_limit(preference_case), 12)
+        self.assertEqual(runner._reader_recall_limit(factual_case), 10)
 
     def test_temporal_reader_selects_effective_baseline_before_offset(self) -> None:
         record = _record("case-temporal-reader")
