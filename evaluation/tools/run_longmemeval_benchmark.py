@@ -112,6 +112,8 @@ from hl_mem.observability.audit import NullAuditLogger  # noqa: E402
 from hl_mem.recall.relation_expansion import RelationExpansionConfig  # noqa: E402, F401
 from hl_mem.settings import Settings  # noqa: E402, F401
 from hl_mem.storage.database import Database  # noqa: E402, F401
+from hl_mem.workers.consolidate import auto_resolve_conflicts  # noqa: E402
+from hl_mem.workers.deduplicate import review_pending_near_duplicates  # noqa: E402
 from hl_mem.workers.worker import Worker  # noqa: E402
 
 # isort: on
@@ -132,6 +134,7 @@ DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
 EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
 READER_CONTEXT_PROTOCOL_VERSION = "session-turn-window-v2"
+BENCHMARK_MAINTENANCE_PROTOCOL_VERSION = "deterministic-dedup-conflicts-v1"
 CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
 READER_EVIDENCE_LIMIT = 10
@@ -1653,6 +1656,28 @@ def _ingest_case(
     return stats
 
 
+def _run_case_maintenance(connection: Any, settings: Settings) -> dict[str, Any]:
+    """Run the lightweight deterministic subset of production maintenance."""
+    dedup = (
+        review_pending_near_duplicates(
+            connection,
+            threshold=settings.dedup_threshold,
+            limit=settings.dedup_scan_limit,
+        )
+        if settings.dedup_enabled
+        else {"scanned": 0, "equivalent": 0, "deferred": 0, "missing": 0}
+    )
+    maintenance_now = datetime.now(timezone.utc).isoformat()
+    conflicts = auto_resolve_conflicts(connection, maintenance_now)
+    return {
+        "protocol": BENCHMARK_MAINTENANCE_PROTOCOL_VERSION,
+        "dedup_enabled": settings.dedup_enabled,
+        "dedup": dedup,
+        "conflicts": conflicts,
+        "completed_at": maintenance_now,
+    }
+
+
 def _retrieved_payload(
     results: Sequence[Mapping[str, Any]],
     case: LongMemEvalCase,
@@ -2045,6 +2070,7 @@ def _run_case(
         "evaluation_eligibility": _evaluation_eligibility(case),
         "database": str(database_path.relative_to(ROOT)),
         "ingest": None,
+        "maintenance": None,
         "retrieval": None,
         "retrieved": [],
         "qa": None,
@@ -2092,6 +2118,7 @@ def _run_case(
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
+        result["maintenance"] = _run_case_maintenance(connection, settings)
         result["retrieval"], result["retrieved"] = _recall_case(
             connection,
             case,
@@ -2550,6 +2577,7 @@ def _report(
             "max_runtime_hours": getattr(args, "max_runtime_hours", None),
             "fail_stop_count": getattr(args, "fail_stop_count", DEFAULT_FAIL_STOP_COUNT),
             "skip_ingest": args.skip_ingest,
+            "maintenance_protocol": BENCHMARK_MAINTENANCE_PROTOCOL_VERSION,
             "qa_enabled": not args.no_qa,
             "reader_context_mode": getattr(args, "reader_context_mode", DEFAULT_READER_CONTEXT_MODE),
             "clean": args.clean,
@@ -2715,6 +2743,8 @@ def _validate_resume_report(
         raise ValueError("resume output is missing run metadata")
     if run.get("package_version") != f"v{__version__}":
         raise ValueError("resume output package_version does not match current version")
+    if run.get("maintenance_protocol") != BENCHMARK_MAINTENANCE_PROTOCOL_VERSION:
+        raise ValueError("resume output maintenance_protocol does not match current version")
     if run.get("qa_enabled") is not (not args.no_qa):
         raise ValueError("resume output qa_enabled does not match current run")
     previous_context_mode = str(run.get("reader_context_mode") or "head")

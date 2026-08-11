@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -66,6 +67,7 @@ def _shard_report(
             "package_version": f"v{runner.__version__}",
             "limit": run_limit,
             "offset": 0,
+            "maintenance_protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION,
             "qa_enabled": qa_enabled,
             "reader_context_mode": reader_context_mode,
             "models": {
@@ -95,6 +97,80 @@ def _shard_report(
 
 
 class LongMemEvalBatchRunnerTests(unittest.TestCase):
+    def test_case_maintenance_runs_only_deterministic_dedup_and_conflicts(self) -> None:
+        settings = dataclasses.replace(
+            Settings.for_test(),
+            dedup_enabled=True,
+            dedup_threshold=0.93,
+            dedup_scan_limit=17,
+        )
+        connection = object()
+        dedup_result = {"scanned": 2, "equivalent": 1, "deferred": 1, "missing": 0}
+        conflict_result = {"resolved": 1, "manual_required": 0, "deferred": 0}
+        with (
+            patch.object(runner, "review_pending_near_duplicates", return_value=dedup_result) as dedup,
+            patch.object(runner, "auto_resolve_conflicts", return_value=conflict_result) as conflicts,
+        ):
+            result = runner._run_case_maintenance(connection, settings)
+
+        dedup.assert_called_once_with(connection, threshold=0.93, limit=17)
+        conflicts.assert_called_once()
+        self.assertEqual(result["dedup"], dedup_result)
+        self.assertEqual(result["conflicts"], conflict_result)
+        self.assertEqual(result["protocol"], runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION)
+
+    def test_run_case_performs_maintenance_after_ingest_before_recall(self) -> None:
+        case = runner.normalize_case(_record("case-maintenance-order"))
+        database_path = runner.DATABASE_ROOT / "case-maintenance-order-test.db"
+        manifest_path = runner.DATABASE_ROOT / "case-maintenance-order-test.manifest.json"
+        order: list[str] = []
+
+        class FakeDatabase:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def open(self) -> object:
+                return object()
+
+            def close(self) -> None:
+                pass
+
+        def ingest(*_args: object, **_kwargs: object) -> dict[str, object]:
+            order.append("ingest")
+            return {"events": 1}
+
+        def maintain(*_args: object, **_kwargs: object) -> dict[str, object]:
+            order.append("maintenance")
+            return {"protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION}
+
+        def recall(*_args: object, **_kwargs: object) -> tuple[dict[str, object], list[object]]:
+            order.append("recall")
+            return {}, []
+
+        with (
+            patch.object(runner, "Database", FakeDatabase),
+            patch.object(runner, "_case_paths", return_value=(database_path, manifest_path)),
+            patch.object(runner, "_remove_case_artifacts"),
+            patch.object(runner, "_write_json_atomic"),
+            patch.object(runner, "_ingest_case", side_effect=ingest),
+            patch.object(runner, "_run_case_maintenance", side_effect=maintain),
+            patch.object(runner, "_recall_case", side_effect=recall),
+        ):
+            result = runner._run_case(
+                case,
+                Settings.for_test(),
+                object(),
+                None,
+                skip_ingest=False,
+                run_qa=False,
+                clean=False,
+                case_number=1,
+                total_hint="1",
+            )
+
+        self.assertEqual(order, ["ingest", "maintenance", "recall"])
+        self.assertEqual(result["maintenance"], {"protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION})
+
     def test_retrieved_payload_persists_raw_ranking_observability(self) -> None:
         case = runner.LongMemEvalCase(
             case_id="trace-case",
