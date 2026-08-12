@@ -22,6 +22,7 @@ from hl_mem.domain.claims.query_tags import (
     extract_query_slot_hints,
     extract_query_tags,
 )
+from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.domain.temporal import claim_is_visible
 from hl_mem.observability.audit import current_audit
@@ -171,6 +172,7 @@ def _preference_first(claims: list[dict[str, Any]], limit: int, selected_intent:
     if selected_intent is not RecallIntent.PREFERENCE:
         return claims[:limit]
     preferences = [claim for claim in claims if _is_preference_claim(claim)]
+    preferences.sort(key=lambda claim: normalize_entity_id(claim.get("subject_entity_id")) != "user")
     reserved = min(3, limit, len(preferences))
     reserved_preferences = preferences[:reserved]
     reserved_objects = {id(claim) for claim in reserved_preferences}

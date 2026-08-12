@@ -8,8 +8,8 @@ from hl_mem.recall.staged_pipeline import _preference_first
 
 class PreferenceFinalizationTest(unittest.TestCase):
     @staticmethod
-    def _claim(claim_id: str, predicate: str) -> dict[str, str]:
-        return {"id": claim_id, "predicate": predicate}
+    def _claim(claim_id: str, predicate: str, subject: str = "other") -> dict[str, str]:
+        return {"id": claim_id, "predicate": predicate, "subject_entity_id": subject}
 
     def test_preference_intent_reserves_only_three_slots_then_uses_global_order(self) -> None:
         fact = self._claim("relevant-fact", "事实")
@@ -45,6 +45,23 @@ class PreferenceFinalizationTest(unittest.TestCase):
         final = _preference_first(claims, 2, RecallIntent.CURRENT_STATE)
 
         self.assertEqual([claim["id"] for claim in final], ["fact", "preference"])
+
+    def test_preference_reserved_slots_prioritize_normalized_user_then_fallback(self) -> None:
+        claims = [
+            self._claim("alice-1", "偏好", "Alice"),
+            self._claim("user-1", "偏好", "当前用户"),
+            self._claim("fact", "事实", "user"),
+            self._claim("bob-1", "偏好", "Bob"),
+            self._claim("user-2", "偏好", "user"),
+            self._claim("alice-2", "偏好", "Alice"),
+        ]
+
+        final = _preference_first(claims, 6, RecallIntent.PREFERENCE)
+
+        self.assertEqual(
+            [claim["id"] for claim in final],
+            ["user-1", "user-2", "alice-1", "fact", "bob-1", "alice-2"],
+        )
 
 
 if __name__ == "__main__":
