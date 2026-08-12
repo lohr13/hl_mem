@@ -24,6 +24,7 @@ class RecommendationIntentTests(unittest.TestCase):
             "Which movie should I watch?",
             "What should I eat tonight?",
             "What do I like for breakfast?",
+            "你能给我推荐一家 Miami 酒店吗？",
             "给我推荐一家餐厅",
             "建议我选哪个编辑器",
             "哪家酒店适合我",

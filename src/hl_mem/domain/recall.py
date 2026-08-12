@@ -43,7 +43,8 @@ _EN_PERSONAL_CHOICE_RE = re.compile(
 )
 _EN_HISTORICAL_BEFORE_RE = re.compile(r"\b(?:did|had|used|was|were)\b[^?!.]{0,80}\bbefore\b")
 _ZH_RECOMMEND_RE = re.compile(
-    rf"(?:^|[，。！？?\s])(?:请|能|能否|可以|可否)?(?:给我)?{_words_pattern(RECOMMENDATION_VERBS_ZH)}"
+    rf"(?:^|[，。！？?\s])(?:请)?(?:你)?(?:能|能否|能不能|可以|可否)?(?:给我)?"
+    rf"{_words_pattern(RECOMMENDATION_VERBS_ZH)}"
     r"(?!系统|算法|功能|模块|机制|如何|怎么|为什么|为何|是否)"
 )
 _ZH_SUGGEST_CHOICE_RE = re.compile(rf"建议(?:给)?我(?:应该|应|该)?{_words_pattern(RECOMMENDATION_CHOICE_ACTIONS_ZH)}")
