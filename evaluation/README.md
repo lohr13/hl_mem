@@ -15,6 +15,13 @@ bash scripts/hlmem-python.sh evaluation/tools/run_longmemeval_benchmark.py \
   --config evaluation/tools/configs/longmemeval_deepseek_v4_flash.toml \
   --output evaluation/results/longmemeval_fullcontext_shard0.json
 
+# LongMemEval-S raw-session dense RAG 对照（不提取 claim）
+bash scripts/hlmem-python.sh evaluation/tools/run_longmemeval_benchmark.py \
+  --mode native-rag \
+  --dataset C:/Users/Administrator/hl_mem_eval_data/evaluation/datasets/holdout50_mix_shard0.json \
+  --config evaluation/tools/configs/longmemeval_deepseek_v4_flash.toml \
+  --output evaluation/results/longmemeval_nativerag_shard0.json
+
 # MemDaily
 bash scripts/hlmem-python.sh evaluation/tools/run_memdaily_benchmark.py \
   --source D:/datasets/MemDaily/memdaily.json \
@@ -56,6 +63,41 @@ shard 使用独立的 `longmemeval_fullcontext_*.json` 输出。
 context chars、112,962 reader input tokens）无截断完成；`0a995998` 的 44 sessions（521,079 context chars）
 在进入 reader 前被端点以 `data_inspection_failed` 拒绝。后者不是上下文长度或 300 秒 timeout 失败，控制模式
 也不会为追求分数而删除原文、拆题或加入 case 特判；全量报告必须将它保留为 provider failure。
+
+## LongMemEval Native RAG 对照
+
+`--mode native-rag` 实现独立的 `raw-session dense RAG + reader` 对照。检索单元是带
+`Session Date` 和原始 user/assistant `role`/`content` 的完整 session；不提取 claim、不摘要、不截断，
+也不初始化 case DB、FTS、query expansion、reranker、去重、生命周期或生产 recall。检索固定为：
+
+- `qwen3.7-text-embedding`、native API、2048 维；不传 `text_type`，不加 query instruct；
+- query 只使用问题正文；
+- 对 case 内所有 session 做精确 cosine 排序，不设阈值，固定取 Top-10；
+- 先按相似度选 Top-10，再按 `occurred_at` 和数据集来源顺序送入同一 reader；
+- reader 开 thinking（budget 2048、正文 512、timeout 300 秒），judge 关 thinking。
+
+默认输出是 `evaluation/results/longmemeval_nativerag_control.json`；分片结果必须使用
+`longmemeval_nativerag_*` 前缀。报告根节点为 `control: native-rag`，协议为
+`raw-session-dense-rag-v1`，并固定数据集 SHA-256、Top-K、embedding、reader/judge 与预算身份；
+`--resume` 会拒绝身份不一致的历史结果。
+
+每题的 `retrieved` 保存 session 的 raw dense score、retrieval rank、reader rank、时间、消息数、字符数和
+gold-session 标记；`retrieval` 保存 session R@1/R@5/R@10、MRR、gold coverage 与实际 reader context 字符数。
+该模式没有提取阶段，因此 claim R@K 与 extraction coverage 不适用，只有 session 级检索指标参与聚合。
+`embedding.usage` 区分逻辑冷启动 token/API 次数与本次真实网络请求、缓存命中；`latency` 使用本次 wall time，
+成本按 2026-08-12 百炼快照估算 embedding（0.5 元/百万输入 token）和
+`deepseek-v4-flash*` reader/judge（输入 1 元、输出 2 元/百万 token）。切换未固定价格的 reader 模型时，
+仍保留 token，但总成本显式标为不可计价。
+
+缓存位于 `evaluation/cache/longmemeval_native_rag/`，按 embedding 配置、role 和完整文本内容寻址；缓存命中
+不会把逻辑冷启动 token 成本静默改成零。工程冒烟可先跑一条普通题，再用目标 shard 的
+`--offset ... --limit 1` 跑 `0a995998`。冒烟结果只证明链路可运行，不得当作正式基线；对外报告必须跑完整
+50 条，并同时披露 QA accuracy、session retrieval、reader token、首次索引成本、在线查询成本与延迟。
+
+2026-08-12 的真实工程冒烟中，`1d4e3b97` 的 gold session 位于 rank 1，reader 输入 31,477 token，回答正确；
+`0a995998` 的三个 gold sessions 位于 rank 1–3，reader 输入 29,843 token，未触发 full-context 曾遇到的整段
+内容审查拒绝，但 reader 回答 `1`（gold=`3`），judge 判错。两题逻辑冷启动成本估算分别为 ¥0.08924 和
+¥0.091535。该结果只验证链路和诚实失败记录，不代表完整 50 题成绩。
 
 ## LongMemEval 429 / quota 恢复
 
