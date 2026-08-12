@@ -2,6 +2,10 @@
 
 ## 未发布
 
+## v0.25.1（2026-08-12）
+
+[GitHub Release](https://github.com/lohr13/hl_mem/releases/tag/v0.25.1) · [PyPI](https://pypi.org/project/hl-mem/0.25.1/)
+
 ### 偏好召回与 LongMemEval 口径对齐
 
 - LongMemEval reader evidence 不再对 preference 题执行“生产 Top-12 → 按数值 score 二次重排 → 只保留 1 条偏好”的评测专用裁剪；所有题型直接请求并保留 `RecallService` 返回的生产 Top-10 顺序，避免评测层覆盖生产 reranker 与 preference-first 结果。
@@ -13,6 +17,11 @@
 
 - 新增独立的 `--mode full-context`：按时间顺序把每个 case 的全部原始 session 无截断交给现有 reader，绕过提取、case DB、维护、检索与 reranker，作为 `hl_mem+reader` 的上限对照；默认输出使用 `longmemeval_fullcontext_*` 身份。
 - 控制报告固定 `control: full-context`、数据集 SHA-256、渲染协议、模型和预算，检索指标显式标为不适用；同时记录 reader/judge 的 input/output/reasoning token、延迟和按费率快照估算的成本。长上下文 reader timeout 独立放宽为 300 秒，thinking budget 仍为 2048，judge 继续关闭 thinking。
+
+### LongMemEval native RAG 对照
+
+- 新增独立的 `--mode native-rag`：将原始 session 渲染为带时间戳的消息块，使用现有 embedder 做 dense Top-10 检索，再交给与主评测相同的 reader/judge；该路径不提取 Claim，用于衡量结构化记忆相对普通向量 RAG 的价值。
+- 对照报告固定 `control: native-rag`、`raw-session-dense-rag-v1`、数据集 SHA-256、Top-K 与模型身份，并分开记录索引/查询 embedding 成本、reader/judge token、延迟和估算费用。
 
 ## v0.25.0（2026-08-12）
 
@@ -62,7 +71,7 @@
 
 ### 升级与发布说明
 
-- v0.24.1/v0.24.2 是仓库内过渡版本，从未建立 Git tag；v0.25.0 是 v0.24.0 之后的首个对外候选版本，当前仍未打 tag。`1e8e1fd` 与 `b143daf` 均纳入该候选版本，不另起 v0.25.1。
+- v0.24.1/v0.24.2 是仓库内过渡版本，从未建立 Git tag；`1e8e1fd` 与 `b143daf` 均已纳入 v0.25.0，该版本是 v0.24.0 之后的首个正式对外发布。
 - 升级会顺序执行 migration 038 的 persona subject Python 数据回写、migration 039 的 nullable Event metadata 列与 migration 040 的 deferred task 队列。大库应先备份、停止其他写入者并预留 migration 038 全表扫描和写锁时间；数据库 migration 仅向前，不支持降级。
 - 本版本共 40 个不可变 SQL migration（001-040）；REST 单 Event API、依赖集合及生产阈值 `0.82/0.92/0.95` 保持不变。
 

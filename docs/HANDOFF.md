@@ -1,17 +1,23 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-12 · v0.25.0
+> 最后更新：2026-08-12 · v0.25.1
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.25.0
-- **阶段**：v0.25.0 发版候选收口；打 tag 前以最新 GitHub Actions 全绿为门槛
+- **版本**：v0.25.1
+- **阶段**：v0.25.1 补丁发版收口；打 tag 前以最新 GitHub Actions 全绿为门槛
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；40 migrations（SQL 001-040）+ Python data migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-12 v0.25.1 偏好召回补丁
+
+- 生产召回用零 LLM 成本的中英文高精度规则识别个性化推荐意图；显式 `intent` 和历史语义仍优先。
+- preference 的既有 3 个保留位内优先选择归一化为 `user` 的偏好，不硬过滤其他主体，不影响其他 intent。
+- LongMemEval 适配器不再对 preference 证据二次重排，保留生产 Top-10 顺序；评测工具同时增加 full-context 与 raw-session native-RAG 对照模式。
 
 ### 2026-08-12 v0.25.0 发版收口
 
@@ -25,7 +31,7 @@
 - LongMemEval 结果持久化 dense/reranker 原始分、通道、最终排名与 `search_trace`。冻结官方口径为 **40/50（80%）**：`deepseek-v4-flash-0731`、全 reader thinking、Top-10、自有 judge；temporal gate 诊断口径为 **40/48（83.3%）**，不得与官方分数混报。
 - 评测已知边界：内容审查隔离跳过 2 个 Event；剩余错误主要是 multi-session 聚合、temporal 计算和 single-session 限定词。benchmark reader 是评测工具，不是生产 recall API 的组成部分，Top-10 也不等同于生产的可配置召回/packing 窗口。
 - v0.24.1/v0.24.2 仅为仓库内过渡版本、没有 release tag；v0.25.0 从 v0.24.0 升级时会执行 migration 038 数据回写、migration 039 nullable metadata 列与 migration 040 deferred task 队列。大库必须先备份、停写并为 038 的全表扫描与写锁安排维护窗口。
-- Git tag 与 GitHub Release 最新均为 v0.24.0；双层去重和 prompt 更新继续收进尚未发布的 v0.25.0。只有 v0.25.0 发布后再做兼容修复时才使用 v0.25.1。
+- v0.25.0 已于 2026-08-12 通过 GitHub Release 与 PyPI 发布；后续个性化推荐召回修正纳入 v0.25.1。
 
 ### 2026-08-10 v0.24.2 DeepSeek 与 holdout 诊断收口
 
