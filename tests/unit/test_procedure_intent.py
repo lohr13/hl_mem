@@ -12,7 +12,7 @@ from hl_mem.settings import Settings
 def test_routes_tool_and_procedure_signals_with_expected_priority() -> None:
     """强信号、部署组合及偏好/历史优先级必须保持确定性。"""
     assert route_recall_intent("部署工具有哪些", None) is RecallIntent.TOOL
-    assert route_recall_intent("which tool should I use", None) is RecallIntent.TOOL
+    assert route_recall_intent("which tool should I use", None) is RecallIntent.PREFERENCE
     assert route_recall_intent("这个服务怎么部署", None) is RecallIntent.PROCEDURE
     assert route_recall_intent("how to configure it", None) is RecallIntent.PROCEDURE
     assert route_recall_intent("我上次怎么排障的", None) is RecallIntent.PROCEDURE

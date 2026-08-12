@@ -7,6 +7,22 @@ INTENT_KEYWORDS_RELATIONAL = ("关系", "关联", "依赖", "属于")
 INTENT_KEYWORDS_ANALOGICAL = ("类似", "经验", "上次")
 INTENT_KEYWORDS_PREFERENCE = ("偏好", "喜欢", "喜好", "习惯")
 INTENT_KEYWORDS_AS_OF = ("当时", "以前", "历史", "曾经", "截至")
+INTENT_WORDS_PREFERENCE_EN = (
+    "favorite",
+    "favorites",
+    "favourite",
+    "favourites",
+    "prefer",
+    "preference",
+    "preferences",
+    "preferred",
+    "prefers",
+)
+PREFERENCE_LIKE_WORDS_EN = ("like", "liked", "likes", "love", "loved", "loves")
+RECOMMENDATION_CHOICE_ACTIONS_EN = ("buy", "choose", "eat", "stay", "use", "visit", "watch")
+RECOMMENDATION_CHOICE_ACTIONS_ZH = ("买", "住", "使用", "吃", "看", "选", "用", "去")
+RECOMMENDATION_VERBS_EN = ("recommend", "suggest")
+RECOMMENDATION_VERBS_ZH = ("推荐",)
 TOOL_KEYWORDS = (
     "用什么工具",
     "哪个工具",
