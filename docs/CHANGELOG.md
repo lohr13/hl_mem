@@ -2,6 +2,8 @@
 
 ## v0.25.0（2026-08-12）
 
+[GitHub Release](https://github.com/lohr13/hl_mem/releases/tag/v0.25.0) · [PyPI](https://pypi.org/project/hl-mem/0.25.0/)
+
 ### 提取架构最终版
 
 - Hermes `sync_turn` 通过新增的原子批量端点一次写入 user/assistant Event；原有单 Event API 保持兼容。
