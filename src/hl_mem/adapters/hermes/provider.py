@@ -23,12 +23,16 @@ from hl_mem.application.context_packet import (
     UnknownSchemaMajorError,
     retrieval_bundle_to_dict,
 )
+from hl_mem.http_utils import sanitize_http_response_body
 from hl_mem.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 MAX_TRACE_ACTION_LENGTH = 10_000
 MAX_TRACE_OBSERVATION_SUMMARY_LENGTH = 500
+MAX_EPISODE_GOAL_LENGTH = 5_000
+MAX_EPISODE_ERROR_BODY_LENGTH = 1_000
+EPISODE_GOAL_FALLBACK = "Complete tool-assisted task"
 MAX_DELIVERY_RECEIPTS = 128
 MAX_INJECTION_ATTEMPTS = 3
 _ERROR_PATTERNS = (
@@ -91,6 +95,44 @@ def _trusted_namespace(namespace: str) -> str:
     if len(namespace) > 100:
         raise ValueError("namespace must be at most 100 characters")
     return namespace
+
+
+def _episode_goal(content: str) -> str:
+    """把本轮 user content 收敛到 EpisodeInput 契约。"""
+    return (content.strip() or EPISODE_GOAL_FALLBACK)[:MAX_EPISODE_GOAL_LENGTH]
+
+
+def _messages_after_last_user(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """只保留本轮最后一条 user 消息之后的轨迹。"""
+    last_user_index = next(
+        (index for index in range(len(messages) - 1, -1, -1) if messages[index].get("role") == "user"),
+        None,
+    )
+    return messages if last_user_index is None else messages[last_user_index + 1 :]
+
+
+def _redact_validation_inputs(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _redact_validation_inputs(item) for key, item in value.items() if key != "input"}
+    if isinstance(value, list):
+        return [_redact_validation_inputs(item) for item in value]
+    return value
+
+
+def _validation_response_body(response: httpx.Response) -> str:
+    """保留 422 诊断结构，但移除可能包含完整对话的 input。"""
+    try:
+        payload = response.json()
+    except (TypeError, ValueError, httpx.ResponseNotRead):
+        try:
+            return sanitize_http_response_body(response.text, limit=MAX_EPISODE_ERROR_BODY_LENGTH)
+        except httpx.ResponseNotRead:
+            return "<unavailable>"
+    payload = _redact_validation_inputs(payload)
+    return sanitize_http_response_body(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        limit=MAX_EPISODE_ERROR_BODY_LENGTH,
+    )
 
 
 class HLMemProvider:
@@ -288,6 +330,7 @@ class HLMemProvider:
         if kwargs.get("messages"):
             self._sync_episode_sync(
                 kwargs["messages"],
+                content,
                 active_session,
                 namespace,
             )
@@ -300,15 +343,17 @@ class HLMemProvider:
     def _sync_episode_sync(
         self,
         messages: list[dict[str, Any]],
+        goal_content: str,
         session_id: str,
         namespace: str,
     ) -> None:
         async def sync() -> None:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                enriched = [{**message, "session_id": message.get("session_id") or session_id} for message in messages]
                 await self._sync_episode(
                     client,
-                    enriched,
+                    messages,
+                    goal_content=goal_content,
+                    session_id=session_id or None,
                     namespace=namespace,
                 )
 
@@ -755,33 +800,41 @@ class HLMemProvider:
         client: httpx.AsyncClient,
         messages: list[dict[str, Any]],
         *,
+        goal_content: str,
+        session_id: str | None,
         namespace: str = "default",
     ) -> None:
         namespace = _trusted_namespace(namespace)
-        tool_calls = self._mapper.tool_calls(messages)
+        turn_messages = _messages_after_last_user(messages)
+        tool_calls = self._mapper.tool_calls(turn_messages)
         if len(tool_calls) < 2:
             return
         observations = {
             str(message.get("tool_call_id", "")): str(message.get("content", ""))
-            for message in messages
+            for message in turn_messages
             if message.get("role") == "tool"
         }
-        goal_message = next((message for message in messages if message.get("role") == "user"), {})
-        goal = str(goal_message.get("content") or "Complete tool-assisted task")
-        session_id = next(
-            (message.get("session_id") for message in messages if message.get("session_id")),
-            None,
-        )
-        response = await self._client.async_post(
-            client,
-            "/v1/episodes",
-            {
-                "goal": goal,
-                "namespace": namespace,
-                "session_id": session_id,
-                "task_type": self._mapper.task_type([call["action"] for call in tool_calls]),
-            },
-        )
+        goal = _episode_goal(goal_content)
+        task_type = self._mapper.task_type([call["action"] for call in tool_calls])
+        payload = {
+            "goal": goal,
+            "namespace": namespace,
+            "session_id": session_id,
+            "task_type": task_type,
+        }
+        try:
+            response = await self._client.async_post(client, "/v1/episodes", payload)
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 422:
+                logger.warning(
+                    "Hermes episode rejected status=422 goal_length=%d session_id_length=%d "
+                    "task_type_length=%d response_body=%s",
+                    len(goal),
+                    len(session_id or ""),
+                    len(task_type),
+                    _validation_response_body(error.response),
+                )
+            raise
         episode_id = response.json()["id"]
         has_error = False
         for call in tool_calls:
@@ -798,10 +851,7 @@ class HLMemProvider:
                     "value": 0.0 if error_signature else 1.0,
                 },
             )
-        goal_index = messages.index(goal_message) if goal_message else -1
-        final_answer = any(
-            message.get("role") == "assistant" and message.get("content") for message in messages[goal_index + 1 :]
-        )
+        final_answer = any(message.get("role") == "assistant" and message.get("content") for message in turn_messages)
         status = "failed" if has_error and not final_answer else "success"
         reward = 0.2 if status == "failed" else (0.5 if has_error else 0.8)
         await self._client.async_patch(

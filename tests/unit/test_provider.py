@@ -8,6 +8,7 @@ from hl_mem.adapters.hermes.provider import (
     HLMemProvider,
     _memory_idempotency_key,
     _summarize_observation,
+    _validation_response_body,
 )
 from hl_mem.application.context_packet import retrieval_bundle_to_dict
 from hl_mem.settings import Settings
@@ -888,6 +889,93 @@ def test_sync_turn_extracts_episode_and_tool_traces(monkeypatch) -> None:
     assert episode_requests[-1][0].endswith("/v1/episodes/episode-1")
     assert episode_requests[-1][1]["status"] == "success"
     assert episode_requests[-1][1]["reward"] == 0.8
+
+
+def test_sync_turn_uses_current_content_and_only_traces_after_last_user(monkeypatch) -> None:
+    AsyncClient.calls = 0
+    AsyncClient.requests = []
+    AsyncClient.error = None
+    monkeypatch.setattr(httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: Response())
+    provider = HLMemProvider(timeout=2.0)
+    messages = [
+        {"role": "user", "content": "S" * 7_000},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "old-1", "function": {"name": "old_read"}},
+                {"id": "old-2", "function": {"name": "old_patch"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "old-1", "content": "old result"},
+        {"role": "tool", "tool_call_id": "old-2", "content": "old result"},
+        {"role": "user", "content": "消息列表里的当前任务"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "new-1", "function": {"name": "read_file"}},
+                {"id": "new-2", "function": {"name": "patch"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "new-1", "content": "new file"},
+        {"role": "tool", "tool_call_id": "new-2", "content": "new patch"},
+        {"role": "assistant", "content": "完成"},
+    ]
+
+    provider.sync_turn("本轮 content 才是 goal", "完成", session_id="session-1", messages=messages)
+
+    episode_requests = [(url, payload) for url, payload in AsyncClient.requests if "/v1/episodes" in url]
+    assert episode_requests[0][1]["goal"] == "本轮 content 才是 goal"
+    traces = [payload for url, payload in episode_requests if url.endswith("/traces")]
+    assert [trace["action"] for trace in traces] == ["read_file", "patch"]
+    assert [trace["observation"] for trace in traces] == ["[success] new file", "[success] new patch"]
+
+
+def test_sync_turn_truncates_long_episode_goal_and_falls_back_for_blank_content(monkeypatch) -> None:
+    AsyncClient.calls = 0
+    AsyncClient.requests = []
+    AsyncClient.error = None
+    monkeypatch.setattr(httpx, "AsyncClient", AsyncClient)
+    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: Response())
+    provider = HLMemProvider(timeout=2.0)
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "call-1", "function": {"name": "read_file"}},
+                {"id": "call-2", "function": {"name": "patch"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call-1", "content": "file"},
+        {"role": "tool", "tool_call_id": "call-2", "content": "patched"},
+    ]
+
+    provider.sync_turn("g" * 6_000, "done", messages=messages)
+    provider.sync_turn("   ", "done", messages=messages)
+
+    goals = [payload["goal"] for url, payload in AsyncClient.requests if url.endswith("/v1/episodes")]
+    assert goals == ["g" * 5_000, "Complete tool-assisted task"]
+
+
+def test_episode_422_diagnostic_removes_rejected_goal_content() -> None:
+    response = httpx.Response(
+        422,
+        json={
+            "detail": [
+                {
+                    "type": "string_too_long",
+                    "loc": ["body", "goal"],
+                    "msg": "String should have at most 5000 characters",
+                    "input": "private compaction summary",
+                }
+            ]
+        },
+    )
+
+    diagnostic = _validation_response_body(response)
+
+    assert "string_too_long" in diagnostic
+    assert "private compaction summary" not in diagnostic
 
 
 def test_sync_turn_summarizes_long_observation(monkeypatch) -> None:
