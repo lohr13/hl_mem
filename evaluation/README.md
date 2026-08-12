@@ -8,6 +8,13 @@ bash scripts/hlmem-python.sh evaluation/tools/run_longmemeval_benchmark.py \
   --dataset evaluation/longmemeval/longmemeval_s_cleaned.json \
   --output evaluation/results/longmemeval_s_benchmark.json
 
+# LongMemEval-S 全上下文上限对照（不提取、不检索）
+bash scripts/hlmem-python.sh evaluation/tools/run_longmemeval_benchmark.py \
+  --mode full-context \
+  --dataset C:/Users/Administrator/hl_mem_eval_data/evaluation/datasets/holdout50_mix_shard0.json \
+  --config evaluation/tools/configs/longmemeval_deepseek_v4_flash.toml \
+  --output evaluation/results/longmemeval_fullcontext_shard0.json
+
 # MemDaily
 bash scripts/hlmem-python.sh evaluation/tools/run_memdaily_benchmark.py \
   --source D:/datasets/MemDaily/memdaily.json \
@@ -23,6 +30,32 @@ bash scripts/hlmem-python.sh evaluation/tools/run_perltqa_benchmark.py \
 Windows `cmd.exe` 使用相同参数，将命令前缀换成 `scripts\hlmem-python.cmd` 即可。先运行对应 runner 的 `--help` 可查看完整参数。
 
 必须使用 launcher，是因为 Hermes gateway 等宿主可能把自身虚拟环境的 `site-packages` 注入 `PYTHONPATH`。直接启动 hl_mem 的 Python 会优先看到宿主包，甚至把 Python 3.11 的二进制扩展加载进 Python 3.13。launcher 会清除 `PYTHONPATH` 和 `PYTHONHOME`，并固定使用本仓库 `.venv/Scripts/python.exe`，避免跨环境污染。
+
+## LongMemEval 全上下文对照
+
+`--mode full-context` 是独立的 retrieval-free control。runner 按 `occurred_at` 升序渲染该 case 的全部原始
+session；时间相同则保持数据集来源顺序。每个 session 都带标准化时间戳，消息只保留原始 `role`/`content`，
+不截断、不建立 case DB，也不初始化 extractor、embedder、reranker 或生产 recall。该模式仍使用相同的题型
+reader 规则和官方兼容 judge：`deepseek-v4-flash-0731` reader 开 thinking，thinking budget 为 2048、正文预算为
+512，单次 reader timeout 放宽为 300 秒；judge 关闭 thinking。
+
+默认输出为 `evaluation/results/longmemeval_fullcontext_control.json`，分片输出必须继续使用
+`longmemeval_fullcontext_*` 前缀，避免和 `hl_mem+reader` 主结果混淆。报告根节点标记
+`control: full-context`，同时固定数据集 SHA-256、控制协议、模型与预算身份；`--resume` 会校验这些字段。
+每题的 `retrieval` 仅记录 `selector=all-sessions`、session/message 数、gold session coverage、字符数和无截断
+标记，并设置 `applicable=false`，所以 R@K/MRR 与 extraction coverage 不参与聚合。`qa.usage` 保存 reader/judge
+各自的 input/output/reasoning/answer token，另记录 reader/judge 延迟和成本。成本仅对
+`deepseek-v4-flash*` 按 2026-08-12 固定费率快照（输入 1 元/百万 token、输出 2 元/百万 token）估算；模型
+override 没有固定费率时保留 token，但成本显式为不可计价，不能补猜。
+
+工程冒烟只跑普通题和指定长题，不等同于全量分数。例如普通题可用 `--limit 1`；定位
+`0a995998` 后用其所在 shard 的 `--offset`/`--limit 1` 单独运行。全量对照应逐 shard 串行运行，并为每个
+shard 使用独立的 `longmemeval_fullcontext_*.json` 输出。
+
+⚠️ 百炼内容审查仍作用于完整 payload。2026-08-12 工程冒烟中，`1d4e3b97` 的 45 sessions（509,176
+context chars、112,962 reader input tokens）无截断完成；`0a995998` 的 44 sessions（521,079 context chars）
+在进入 reader 前被端点以 `data_inspection_failed` 拒绝。后者不是上下文长度或 300 秒 timeout 失败，控制模式
+也不会为追求分数而删除原文、拆题或加入 case 特判；全量报告必须将它保留为 provider failure。
 
 ## LongMemEval 429 / quota 恢复
 

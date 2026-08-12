@@ -1,5 +1,12 @@
 # HL-Mem 变更记录
 
+## 未发布
+
+### LongMemEval 全上下文对照
+
+- 新增独立的 `--mode full-context`：按时间顺序把每个 case 的全部原始 session 无截断交给现有 reader，绕过提取、case DB、维护、检索与 reranker，作为 `hl_mem+reader` 的上限对照；默认输出使用 `longmemeval_fullcontext_*` 身份。
+- 控制报告固定 `control: full-context`、数据集 SHA-256、渲染协议、模型和预算，检索指标显式标为不适用；同时记录 reader/judge 的 input/output/reasoning token、延迟和按费率快照估算的成本。长上下文 reader timeout 独立放宽为 300 秒，thinking budget 仍为 2048，judge 继续关闭 thinking。
+
 ## v0.25.0（2026-08-12）
 
 [GitHub Release](https://github.com/lohr13/hl_mem/releases/tag/v0.25.0) · [PyPI](https://pypi.org/project/hl-mem/0.25.0/)
