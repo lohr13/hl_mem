@@ -41,6 +41,11 @@ from evaluation.tools.longmemeval.extraction_fragments import fragment_turn_cont
 from evaluation.tools.longmemeval.full_context import (  # noqa: E402, F401
     render_full_context_user_prompt,
 )
+from evaluation.tools.longmemeval.native_rag import (  # noqa: E402, F401
+    render_native_rag_user_prompt,
+    render_raw_session_documents,
+    select_raw_sessions,
+)
 from evaluation.tools.longmemeval.qa_client import (  # noqa: E402, F401
     QAUsage,
     qa_call_with_retry,
@@ -126,7 +131,9 @@ from hl_mem.workers.worker import Worker  # noqa: E402
 DEFAULT_DATASET = ROOT / "evaluation" / "longmemeval" / "longmemeval_s_cleaned.json"
 DEFAULT_OUTPUT = ROOT / "evaluation" / "results" / "longmemeval_s_benchmark.json"
 DEFAULT_FULL_CONTEXT_OUTPUT = ROOT / "evaluation" / "results" / "longmemeval_fullcontext_control.json"
+DEFAULT_NATIVE_RAG_OUTPUT = ROOT / "evaluation" / "results" / "longmemeval_nativerag_control.json"
 DATABASE_ROOT = ROOT / "var" / "benchmark_lme"
+NATIVE_RAG_CACHE_ROOT = ROOT / "evaluation" / "cache" / "longmemeval_native_rag"
 COMPARE_ROOT = DATABASE_ROOT / "config_compare"
 COMPARE_CACHE = ROOT / "evaluation" / "cache" / "longmemeval_config_compare"
 LME_12_BACKUP_ROOT = ROOT / "evaluation" / "cache" / "lme_12_backup"
@@ -138,6 +145,9 @@ READER_ANSWER_TOKEN_BUDGET = 512
 READER_THINKING_TOKEN_BUDGET = 2048
 FULL_CONTEXT_READER_TIMEOUT_SECONDS = 300.0
 FULL_CONTEXT_PROTOCOL_VERSION = "full-context-raw-sessions-v1"
+NATIVE_RAG_PROTOCOL_VERSION = "raw-session-dense-rag-v1"
+NATIVE_RAG_TOP_K = 10
+NATIVE_RAG_EMBEDDING_TIMEOUT_SECONDS = 90.0
 DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
 EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
@@ -150,6 +160,7 @@ _PRODUCTION_PREFERENCE_RESERVED = 3
 _EVALUATION_PREFERENCE_RESERVED = 1
 _DEEPSEEK_V4_FLASH_INPUT_CNY_PER_MILLION = 1.0
 _DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MILLION = 2.0
+_QWEN37_EMBEDDING_INPUT_CNY_PER_MILLION = 0.5
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -328,9 +339,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--mode",
-        choices=("hl-mem", "full-context"),
+        choices=("hl-mem", "full-context", "native-rag"),
         default="hl-mem",
-        help="run the hl_mem pipeline or the retrieval-free full-history control",
+        help="run hl_mem, retrieval-free full history, or raw-session dense RAG",
     )
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -366,7 +377,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
     if args.output is None:
-        args.output = DEFAULT_FULL_CONTEXT_OUTPUT if args.mode == "full-context" else DEFAULT_OUTPUT
+        if args.mode == "full-context":
+            args.output = DEFAULT_FULL_CONTEXT_OUTPUT
+        elif args.mode == "native-rag":
+            args.output = DEFAULT_NATIVE_RAG_OUTPUT
+        else:
+            args.output = DEFAULT_OUTPUT
     return args
 
 
@@ -1034,7 +1050,11 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             else False
         )
         for result in successful
-        if not isinstance(result.get("retrieval"), Mapping) or result["retrieval"].get("applicable") is not False
+        if not isinstance(result.get("retrieval"), Mapping)
+        or (
+            result["retrieval"].get("applicable") is not False
+            and result["retrieval"].get("extraction_applicable") is not False
+        )
     ]
     summary: dict[str, Any] = {
         "cases": len(results),
@@ -2260,6 +2280,239 @@ def _run_full_context_case(case: LongMemEvalCase, settings: Settings) -> dict[st
     return result
 
 
+def _native_rag_reader_system_prompt(case: LongMemEvalCase) -> str:
+    """Reuse the benchmark reader rules while naming the dense RAG input."""
+    return _reader_system_prompt(case).replace(
+        "retrieved long-term-memory claims and their original evidence events",
+        "timestamped raw chat sessions selected by dense retrieval",
+        1,
+    )
+
+
+def _native_rag_embedding_config(settings: Settings) -> EmbeddingConfig:
+    return EmbeddingConfig(
+        code="NATIVE_RAG_V1",
+        model=settings.embedding_model,
+        api_kind="native",
+        dim=settings.embedding_dim,
+        batch_size=10,
+    )
+
+
+def _native_rag_cost(model: str, embedding: Cost, reader: QAUsage, judge: QAUsage) -> dict[str, Any]:
+    llm_cost = _full_context_cost(model, reader, judge)
+    embedding_cost = embedding.tokens * _QWEN37_EMBEDDING_INPUT_CNY_PER_MILLION / 1_000_000
+    llm_total = llm_cost.get("total_cny")
+    return {
+        "currency": "CNY",
+        "priced": llm_cost.get("priced") is True,
+        "embedding_input_cny_per_million": _QWEN37_EMBEDDING_INPUT_CNY_PER_MILLION,
+        "reader_input_cny_per_million": llm_cost.get("input_cny_per_million"),
+        "reader_output_cny_per_million": llm_cost.get("output_cny_per_million"),
+        "rate_basis": "Bailian model pricing snapshot",
+        "rate_snapshot_date": "2026-08-12",
+        "embedding_cny": round(embedding_cost, 6),
+        "reader_cny": llm_cost.get("reader_cny"),
+        "judge_cny": llm_cost.get("judge_cny"),
+        "total_cny": round(embedding_cost + float(llm_total), 6) if llm_total is not None else None,
+        "reason": llm_cost.get("reason"),
+    }
+
+
+def _run_native_rag_case(
+    case: LongMemEvalCase,
+    settings: Settings,
+    embedding_client: DashScopeEmbeddingClient,
+    embedding_config: EmbeddingConfig,
+) -> dict[str, Any]:
+    """Answer one case from exact-cosine Top-10 complete raw sessions."""
+    result: dict[str, Any] = {
+        "case_id": case.case_id,
+        "question_type": case.question_type,
+        "question": case.question,
+        "answer": case.answer,
+        "session_count": len(case.sessions),
+        "gold_session_ids": list(case.gold_session_ids),
+        "evaluation_eligibility": _evaluation_eligibility(case),
+        "control": "native-rag",
+        "database": None,
+        "ingest": None,
+        "maintenance": None,
+        "embedding": None,
+        "retrieval": None,
+        "retrieved": [],
+        "qa": None,
+        "cost": None,
+        "error": None,
+        "error_type": None,
+        "error_diagnostics": None,
+    }
+    started = time.perf_counter()
+    try:
+        llm_api_key = os.environ.get("LLM_API_KEY") or settings.llm_api_key
+        if not llm_api_key:
+            raise RuntimeError("native-rag reader requires LLM_API_KEY in .env or environment")
+        documents = render_raw_session_documents(case)
+        cache_dir = NATIVE_RAG_CACHE_ROOT / _safe_case_name(case.case_id)
+
+        document_started = time.perf_counter()
+        document_output = embed_remote(
+            embedding_client,
+            embedding_config,
+            "document",
+            [document.text for document in documents],
+            cache_dir=cache_dir,
+            use_cache=True,
+        )
+        document_elapsed = time.perf_counter() - document_started
+        query_started = time.perf_counter()
+        query_output = embed_remote(
+            embedding_client,
+            embedding_config,
+            "query",
+            [case.question],
+            cache_dir=cache_dir,
+            use_cache=True,
+        )
+        query_elapsed = time.perf_counter() - query_started
+        embedding_cost = Cost()
+        embedding_cost.add(document_output.cost)
+        embedding_cost.add(query_output.cost)
+        hits = select_raw_sessions(
+            documents,
+            document_output.dense,
+            query_output.dense[0],
+            top_k=NATIVE_RAG_TOP_K,
+        )
+        rendered = render_native_rag_user_prompt(case, hits)
+        reader_ranks = {session_id: rank for rank, session_id in enumerate(rendered.reader_session_ids, start=1)}
+        gold_ids = set(case.gold_session_ids)
+        retrieved = [
+            {
+                "id": hit.document.session_id,
+                "session_id": hit.document.session_id,
+                "occurred_at": hit.document.occurred_at,
+                "source_index": hit.document.source_index,
+                "message_count": hit.document.message_count,
+                "text_chars": len(hit.document.text),
+                "dense_score": hit.score,
+                "final_score": hit.score,
+                "retrieval_rank": hit.retrieval_rank,
+                "reader_rank": reader_ranks[hit.document.session_id],
+                "gold_session": hit.document.session_id in gold_ids,
+                "evidence": [hit.document.session_id],
+            }
+            for hit in hits
+        ]
+        session_metrics = _session_retrieval_metrics(retrieved, case.gold_session_ids)
+        selected_ids = set(rendered.retrieval_session_ids)
+        result["embedding"] = {
+            "model": embedding_config.model,
+            "dimension": embedding_config.dim,
+            "api_mode": embedding_config.api_kind,
+            "text_type": None,
+            "query_instruct": None,
+            "documents": len(documents),
+            "queries": 1,
+            "usage": embedding_cost.as_dict(),
+            "latency_seconds": {
+                "document_wall": round(document_elapsed, 3),
+                "query_wall": round(query_elapsed, 3),
+                "total_wall": round(document_elapsed + query_elapsed, 3),
+                "provider_cold_start_recorded": round(embedding_cost.latency_seconds, 3),
+            },
+        }
+        result["retrieved"] = retrieved
+        result["retrieval"] = {
+            "applicable": True,
+            "extraction_applicable": False,
+            "eligible": False,
+            "selector": f"exact-cosine-top-{NATIVE_RAG_TOP_K}",
+            "query": case.question,
+            "top_k": NATIVE_RAG_TOP_K,
+            "sessions_considered": len(documents),
+            "sessions_selected": len(hits),
+            "messages_selected": rendered.message_count,
+            "selected_session_ids": list(rendered.retrieval_session_ids),
+            "reader_session_ids": list(rendered.reader_session_ids),
+            "gold_session_ids_present": sorted(gold_ids & selected_ids),
+            "gold_session_coverage": len(gold_ids & selected_ids) / len(gold_ids) if gold_ids else None,
+            "context_chars": rendered.context_chars,
+            "reader_prompt_chars": rendered.prompt_chars,
+            "truncated": False,
+            "session_eligible": session_metrics["eligible"],
+            **{f"session_recall_at_{k}": session_metrics[f"recall_at_{k}"] for k in RETRIEVAL_KS},
+            **{f"session_hit_at_{k}": session_metrics[f"hit_at_{k}"] for k in RETRIEVAL_KS},
+            "session_mrr": session_metrics["mrr"],
+            "session_first_relevant_rank": session_metrics["first_relevant_rank"],
+        }
+
+        model = _qa_model(settings)
+        generation = _reader_generation_options(model)
+        reader_started = time.perf_counter()
+        reader_text, reader_usage = _qa_call_with_retry(
+            lambda: _qa_dashscope_chat_detailed(
+                str(llm_api_key),
+                settings.llm_base_url,
+                model,
+                _native_rag_reader_system_prompt(case),
+                rendered.prompt,
+                enable_thinking=True,
+                thinking_budget=generation.get("thinking_budget"),
+                max_tokens=generation["max_tokens"],
+                timeout_seconds=FULL_CONTEXT_READER_TIMEOUT_SECONDS,
+            )
+        )
+        reader_elapsed = time.perf_counter() - reader_started
+        predicted = reader_text.strip()
+        judge_usages: list[QAUsage] = []
+        judge_started = time.perf_counter()
+        judgment, judge_tokens = _judge_longmemeval_answer(
+            api_key=str(llm_api_key),
+            base_url=settings.llm_base_url,
+            model=model,
+            case_id=case.case_id,
+            question_type=case.question_type,
+            question=case.question,
+            answer=case.answer,
+            predicted_answer=predicted,
+            usage_details=judge_usages,
+        )
+        judge_elapsed = time.perf_counter() - judge_started
+        if len(judge_usages) != 1:
+            raise RuntimeError("native-rag judge did not return detailed token usage")
+        judge_usage = judge_usages[0]
+        if judge_usage.total_tokens != judge_tokens:
+            raise RuntimeError("native-rag judge token totals are inconsistent")
+        result["qa"] = {
+            "model": model,
+            "predicted_answer": predicted,
+            "correct": judgment["correct"],
+            "reason": str(judgment.get("reason") or ""),
+            "usage": _usage_fields(reader_usage, judge_usage),
+            "latency_seconds": {
+                "reader": round(reader_elapsed, 3),
+                "judge": round(judge_elapsed, 3),
+                "total": round(reader_elapsed + judge_elapsed, 3),
+            },
+        }
+        result["cost"] = _native_rag_cost(model, embedding_cost, reader_usage, judge_usage)
+    except Exception as error:
+        diagnostic_secrets = _http_diagnostic_secrets(settings)
+        result["error"] = sanitize_diagnostic_text(
+            f"{type(error).__name__}: {error}",
+            secrets=diagnostic_secrets,
+        )
+        result["error_type"] = _case_error_type(error)
+        result["error_diagnostics"] = _evaluation_http_error_diagnostics(
+            error,
+            secrets=diagnostic_secrets,
+        )
+    finally:
+        result["elapsed_seconds"] = round(time.perf_counter() - started, 3)
+    return result
+
+
 def _run_case(
     case: LongMemEvalCase,
     settings: Settings,
@@ -3006,6 +3259,39 @@ def _validate_full_context_args(args: argparse.Namespace) -> None:
         raise ValueError(f"full-context mode does not support: {', '.join(incompatible)}")
 
 
+def _validate_native_rag_settings(settings: Settings) -> None:
+    if not (os.environ.get("LLM_API_KEY") or settings.llm_api_key):
+        raise ValueError("LLM_API_KEY is required for the native-rag reader")
+    if not (os.environ.get("EMBEDDING_API_KEY") or settings.embedding_api_key):
+        raise ValueError("EMBEDDING_API_KEY is required for native-rag retrieval")
+    if settings.embedder_mode != "real":
+        raise ValueError("embedding.mode must be real for native-rag retrieval")
+    if settings.embedding_model != "qwen3.7-text-embedding":
+        raise ValueError("native-rag requires embedding.model = 'qwen3.7-text-embedding'")
+    if settings.embedding_dim != 2048:
+        raise ValueError("native-rag requires embedding.dim = 2048")
+    if settings.embedding_api_mode != "native":
+        raise ValueError("native-rag requires embedding.api_mode = 'native'")
+    if settings.embedding_text_type not in {None, ""}:
+        raise ValueError("native-rag requires embedding.text_type to be unset")
+
+
+def _validate_native_rag_args(args: argparse.Namespace) -> None:
+    incompatible: list[str] = []
+    if args.config_compare:
+        incompatible.append("--config-compare")
+    if args.skip_ingest:
+        incompatible.append("--skip-ingest")
+    if args.no_qa:
+        incompatible.append("--no-qa")
+    if args.clean:
+        incompatible.append("--clean")
+    if args.reader_context_mode != DEFAULT_READER_CONTEXT_MODE:
+        incompatible.append("--reader-context-mode")
+    if incompatible:
+        raise ValueError(f"native-rag mode does not support: {', '.join(incompatible)}")
+
+
 def _full_context_usage_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     fields = (
         "reader_tokens",
@@ -3275,6 +3561,311 @@ def _run_full_context_control(
     return 1 if overall["failed_cases"] else 0
 
 
+def _native_rag_embedding_usage_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    usages = [
+        result["embedding"]["usage"]
+        for result in results
+        if isinstance(result.get("embedding"), Mapping) and isinstance(result["embedding"].get("usage"), Mapping)
+    ]
+    fields = (
+        "api_calls",
+        "tokens",
+        "network_api_calls_this_run",
+        "cache_hit_batches",
+        "db_cached_vectors",
+    )
+    return {
+        "reported_cases": len(usages),
+        **{field: sum(int(usage.get(field, 0) or 0) for usage in usages) for field in fields},
+    }
+
+
+def _native_rag_cost_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    costs = [result["cost"] for result in results if isinstance(result.get("cost"), Mapping)]
+    priced = [cost for cost in costs if cost.get("priced") is True and cost.get("total_cny") is not None]
+    embedding_values = [float(cost["embedding_cny"]) for cost in costs if cost.get("embedding_cny") is not None]
+    return {
+        "currency": "CNY",
+        "reported_cases": len(costs),
+        "priced_cases": len(priced),
+        "unpriced_cases": len(costs) - len(priced),
+        "embedding_cny": round(sum(embedding_values), 6) if embedding_values else None,
+        "total_cny": round(sum(float(cost["total_cny"]) for cost in priced), 6) if priced else None,
+    }
+
+
+def _native_rag_latency_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    embedding_totals = [
+        float(result["embedding"]["latency_seconds"].get("total_wall", 0.0) or 0.0)
+        for result in results
+        if isinstance(result.get("embedding"), Mapping)
+        and isinstance(result["embedding"].get("latency_seconds"), Mapping)
+    ]
+    qa_totals = [
+        float(result["qa"]["latency_seconds"].get("total", 0.0) or 0.0)
+        for result in results
+        if isinstance(result.get("qa"), Mapping) and isinstance(result["qa"].get("latency_seconds"), Mapping)
+    ]
+    return {
+        "embedding_reported_cases": len(embedding_totals),
+        "embedding_total_seconds": round(sum(embedding_totals), 3),
+        "embedding_mean_seconds": round(mean(embedding_totals), 3) if embedding_totals else None,
+        "qa_reported_cases": len(qa_totals),
+        "qa_total_seconds": round(sum(qa_totals), 3),
+        "qa_mean_seconds": round(mean(qa_totals), 3) if qa_totals else None,
+    }
+
+
+def _native_rag_report(
+    args: argparse.Namespace,
+    settings: Settings,
+    results: Sequence[Mapping[str, Any]],
+    started_at: str,
+    status: str,
+    abort_reason: str | None = None,
+) -> dict[str, Any]:
+    model = _qa_model(settings)
+    qa_usage = _full_context_usage_summary(results)
+    embedding_usage = _native_rag_embedding_usage_summary(results)
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "benchmark": "LongMemEval-S",
+        "control": "native-rag",
+        "status": status,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "dataset": {
+            "path": str(args.dataset.resolve()),
+            "bytes": args.dataset.stat().st_size if args.dataset.is_file() else None,
+            "complete_json_array": _dataset_complete(args.dataset),
+            "sha256": args.dataset_sha256,
+        },
+        "run": {
+            "mode": "native-rag",
+            "control_protocol": NATIVE_RAG_PROTOCOL_VERSION,
+            "started_at": started_at,
+            "package_version": f"v{__version__}",
+            "limit": args.limit,
+            "offset": args.offset,
+            "resume": args.resume,
+            "max_runtime_hours": args.max_runtime_hours,
+            "fail_stop_count": args.fail_stop_count,
+            "selector": "exact-cosine",
+            "retrieval_unit": "complete raw session",
+            "top_k": NATIVE_RAG_TOP_K,
+            "query": "question text only",
+            "reader_order": "occurred_at ascending; source index breaks timestamp ties",
+            "session_format": "timestamped compact JSON role/content messages",
+            "truncation": "none",
+            "embedding_cache": "content-addressed NPZ batches; usage preserves logical cold-start tokens",
+            "embedding_timeout_seconds": int(NATIVE_RAG_EMBEDDING_TIMEOUT_SECONDS),
+            "reader_timeout_seconds": int(FULL_CONTEXT_READER_TIMEOUT_SECONDS),
+            "models": {
+                "embedder": settings.embedding_model,
+                "embedding_dim": settings.embedding_dim,
+                "embedding_api_mode": settings.embedding_api_mode,
+                "embedding_text_type": None,
+                "embedding_query_instruct": None,
+                "reader": model,
+                "judge": model,
+                "reader_thinking": True,
+                "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
+                "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
+                "judge_thinking": False,
+                "judge_max_tokens": READER_ANSWER_TOKEN_BUDGET,
+                "judge_prompt_version": LONGMEMEVAL_JUDGE_PROMPT_VERSION,
+            },
+        },
+        "metrics": aggregate_results(results),
+        "usage": {
+            "embedding": embedding_usage,
+            "qa": qa_usage,
+            "logical_total_tokens": embedding_usage["tokens"] + qa_usage["total_tokens"],
+        },
+        "latency": _native_rag_latency_summary(results),
+        "cost": _native_rag_cost_summary(results),
+        "cases": list(results),
+    }
+    if abort_reason is not None:
+        report["run"]["abort_reason"] = abort_reason
+    return report
+
+
+def _validate_native_rag_resume_report(
+    report: Mapping[str, Any],
+    args: argparse.Namespace,
+    settings: Settings,
+) -> None:
+    if report.get("control") != "native-rag":
+        raise ValueError("resume output is not a native-rag control report")
+    dataset = report.get("dataset")
+    previous_sha256 = dataset.get("sha256") if isinstance(dataset, Mapping) else None
+    if previous_sha256 != args.dataset_sha256:
+        raise ValueError("resume output dataset sha256 does not match --dataset")
+    run = report.get("run")
+    if not isinstance(run, Mapping):
+        raise ValueError("resume output is missing run metadata")
+    models = run.get("models")
+    if not isinstance(models, Mapping):
+        raise ValueError("resume output is missing run.models metadata")
+    expected = {
+        "mode": "native-rag",
+        "control_protocol": NATIVE_RAG_PROTOCOL_VERSION,
+        "package_version": f"v{__version__}",
+        "limit": args.limit,
+        "offset": args.offset,
+        "top_k": NATIVE_RAG_TOP_K,
+        "embedding_timeout_seconds": int(NATIVE_RAG_EMBEDDING_TIMEOUT_SECONDS),
+        "reader_timeout_seconds": int(FULL_CONTEXT_READER_TIMEOUT_SECONDS),
+    }
+    for field, value in expected.items():
+        if run.get(field) != value:
+            raise ValueError(f"resume output {field} does not match current native-rag run")
+    expected_models = {
+        "embedder": settings.embedding_model,
+        "embedding_dim": settings.embedding_dim,
+        "embedding_api_mode": settings.embedding_api_mode,
+        "embedding_text_type": None,
+        "embedding_query_instruct": None,
+        "reader": _qa_model(settings),
+        "judge": _qa_model(settings),
+        "reader_thinking": True,
+        "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
+        "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
+        "judge_thinking": False,
+        "judge_max_tokens": READER_ANSWER_TOKEN_BUDGET,
+        "judge_prompt_version": LONGMEMEVAL_JUDGE_PROMPT_VERSION,
+    }
+    if dict(models) != expected_models:
+        raise ValueError("resume output model configuration does not match current native-rag settings")
+
+
+def _run_native_rag_control(
+    args: argparse.Namespace,
+    settings: Settings,
+    invocation_started: float,
+    generated_started_at: str,
+) -> int:
+    resume_report: dict[str, Any] | None = None
+    results: list[dict[str, Any]] = []
+    if args.resume:
+        resume_report, results = _load_resume_report(args.output)
+        if resume_report is not None:
+            _validate_native_rag_resume_report(resume_report, args, settings)
+            results = [result for result in results if _result_error_type(result) not in {"http_429", "quota"}]
+    started_at = generated_started_at
+    if resume_report is not None:
+        previous_run = resume_report.get("run")
+        if isinstance(previous_run, Mapping) and isinstance(previous_run.get("started_at"), str):
+            started_at = previous_run["started_at"]
+
+    embedding_api_key = os.environ.get("EMBEDDING_API_KEY") or settings.embedding_api_key
+    if not embedding_api_key:
+        raise ValueError("EMBEDDING_API_KEY is required for native-rag retrieval")
+    embedding_client = DashScopeEmbeddingClient(
+        str(embedding_api_key),
+        base_url=settings.embedding_base_url,
+        timeout_seconds=NATIVE_RAG_EMBEDDING_TIMEOUT_SECONDS,
+        max_attempts=settings.embedding_max_attempts,
+    )
+    embedding_config = _native_rag_embedding_config(settings)
+    completed = {str(result["case_id"]): result for result in results}
+    total_hint = str(args.limit) if args.limit is not None else "all"
+    runtime_seconds = args.max_runtime_hours * 3600.0 if args.max_runtime_hours is not None else None
+    print(
+        f"LongMemEval-S control=native-rag embedder={embedding_config.model} "
+        f"reader={_qa_model(settings)} top_k={NATIVE_RAG_TOP_K} "
+        f"offset={args.offset} limit={total_hint} resume={args.resume}",
+        flush=True,
+    )
+    selected_case_ids: list[str] = []
+    consecutive_failure_type: str | None = None
+    consecutive_failure_count = 0
+    abort_reason: str | None = None
+    try:
+        for case_number, record in enumerate(iter_case_records(args.dataset, args.limit, args.offset), start=1):
+            case = normalize_case(record)
+            selected_case_ids.append(case.case_id)
+            case_result = completed.get(case.case_id)
+            case_was_run = False
+            if case_result is not None:
+                print(f"[{case_number}/{total_hint}] {case.case_id}: resume skip", flush=True)
+            else:
+                if runtime_seconds is not None and time.monotonic() - invocation_started >= runtime_seconds:
+                    abort_reason = f"max runtime of {args.max_runtime_hours:g} hours reached"
+                    break
+                case_result = _run_native_rag_case(case, settings, embedding_client, embedding_config)
+                results.append(case_result)
+                completed[case.case_id] = case_result
+                _write_json_atomic(
+                    args.output,
+                    _native_rag_report(args, settings, results, started_at, "running"),
+                )
+                case_was_run = True
+                failure_type = _result_error_type(case_result)
+                if failure_type is None:
+                    consecutive_failure_type = None
+                    consecutive_failure_count = 0
+                elif failure_type == consecutive_failure_type:
+                    consecutive_failure_count += 1
+                else:
+                    consecutive_failure_type = failure_type
+                    consecutive_failure_count = 1
+            retrieval = case_result.get("retrieval") or {}
+            qa = case_result.get("qa") or {}
+            usage = qa.get("usage") or {}
+            print(
+                f"[{case_number}/{total_hint}] {case.case_id}: "
+                f"sessions={retrieval.get('sessions_selected')} "
+                f"session_R@10={retrieval.get('session_recall_at_10')} "
+                f"reader_input={usage.get('reader_input_tokens')} correct={qa.get('correct')} "
+                f"error={case_result.get('error')}",
+                flush=True,
+            )
+            if case_was_run and consecutive_failure_count >= args.fail_stop_count:
+                abort_reason = (
+                    f"circuit breaker opened after {consecutive_failure_count} consecutive "
+                    f"{consecutive_failure_type} failures"
+                )
+                break
+            if runtime_seconds is not None and time.monotonic() - invocation_started >= runtime_seconds:
+                abort_reason = f"max runtime of {args.max_runtime_hours:g} hours reached"
+                break
+        if abort_reason is None:
+            unexpected = set(completed) - set(selected_case_ids)
+            if unexpected:
+                raise ValueError(f"resume output contains case_ids outside the selected shard: {sorted(unexpected)}")
+    except Exception:
+        _write_json_atomic(
+            args.output,
+            _native_rag_report(args, settings, results, started_at, "aborted", "unhandled exception"),
+        )
+        raise
+    finally:
+        embedding_client.close()
+
+    if not selected_case_ids:
+        raise ValueError("LongMemEval dataset contains no selected cases")
+    if abort_reason is not None:
+        report = _native_rag_report(args, settings, results, started_at, "aborted", abort_reason)
+        _write_json_atomic(args.output, report)
+        print(f"aborted reason={abort_reason} cases={len(results)} output={args.output}", flush=True)
+        return 2
+
+    selected_order = {case_id: index for index, case_id in enumerate(selected_case_ids)}
+    results.sort(key=lambda result: selected_order[str(result["case_id"])])
+    report = _native_rag_report(args, settings, results, started_at, "completed")
+    _write_json_atomic(args.output, report)
+    overall = report["metrics"]["overall"]
+    print(
+        f"completed control=native-rag cases={overall['cases']} failures={overall['failed_cases']} "
+        f"QA={overall['qa_accuracy']} session_R@10={overall['session_recall_at_10']} "
+        f"logical_tokens={report['usage']['logical_total_tokens']} "
+        f"cost_cny={report['cost']['total_cny']} output={args.output}",
+        flush=True,
+    )
+    return 1 if overall["failed_cases"] else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     if args.limit is not None and args.limit < 1:
@@ -3287,6 +3878,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError("--fail-stop-count must be a positive integer")
     if args.mode == "full-context":
         _validate_full_context_args(args)
+    elif args.mode == "native-rag":
+        _validate_native_rag_args(args)
     if args.config_compare and (
         args.offset
         or args.resume
@@ -3308,6 +3901,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.mode == "full-context":
         _validate_full_context_settings(settings)
         return _run_full_context_control(args, settings, invocation_started, generated_started_at)
+    if args.mode == "native-rag":
+        _validate_native_rag_settings(settings)
+        return _run_native_rag_control(args, settings, invocation_started, generated_started_at)
     settings = dataclasses.replace(settings, vector_backend="sqlite_scan")
     _validate_production_settings(settings)
     initialize_process(settings)
