@@ -599,10 +599,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
 
         self.assertNotIn("synthesize a recommendation", prompt)
 
-    def test_evaluation_preference_first_reserves_only_one_claim(self) -> None:
-        record = _record("case-preference-reserve")
-        record["question_type"] = "single-session-preference"
-        case = runner.normalize_case(record)
+    def test_evaluation_preserves_production_order_without_preference_reselection(self) -> None:
         production_order = [
             {"id": "preference-1", "canonical_slot": "preference.other", "score": 0.30},
             {"id": "preference-2", "canonical_slot": "preference.other", "score": 0.20},
@@ -613,19 +610,21 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             ),
         ]
 
-        selected = runner._preference_first(production_order, 10, case)
+        selected = runner._production_order_top_k(production_order, 10)
 
-        self.assertEqual(selected[0]["id"], "preference-1")
-        self.assertEqual([item["id"] for item in selected[1:]], [f"global-{index}" for index in range(9)])
+        self.assertEqual(
+            [item["id"] for item in selected],
+            ["preference-1", "preference-2", "preference-3", *[f"global-{index}" for index in range(7)]],
+        )
 
-    def test_evaluation_preference_overfetch_is_narrowly_routed(self) -> None:
+    def test_evaluation_uses_official_top_ten_for_every_question_type(self) -> None:
         preference_record = _record("case-preference-limit")
         preference_record["question_type"] = "single-session-preference"
         preference_case = runner.normalize_case(preference_record)
         factual_case = runner.normalize_case(_record("case-factual-limit"))
 
         self.assertEqual(runner.RETRIEVAL_KS, (1, 5, 10))
-        self.assertEqual(runner._reader_recall_limit(preference_case), 12)
+        self.assertEqual(runner._reader_recall_limit(preference_case), 10)
         self.assertEqual(runner._reader_recall_limit(factual_case), 10)
 
     def test_temporal_reader_selects_effective_baseline_before_offset(self) -> None:

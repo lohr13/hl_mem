@@ -156,8 +156,6 @@ BENCHMARK_MAINTENANCE_PROTOCOL_VERSION = "deterministic-dedup-conflicts-v1"
 CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
 READER_EVIDENCE_LIMIT = 10
-_PRODUCTION_PREFERENCE_RESERVED = 3
-_EVALUATION_PREFERENCE_RESERVED = 1
 _DEEPSEEK_V4_FLASH_INPUT_CNY_PER_MILLION = 1.0
 _DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MILLION = 2.0
 _QWEN37_EMBEDDING_INPUT_CNY_PER_MILLION = 0.5
@@ -713,46 +711,16 @@ def _longmemeval_recall_intent(case: LongMemEvalCase) -> RecallIntent:
     return RecallIntent.CURRENT_STATE
 
 
-def _reader_recall_limit(case: LongMemEvalCase) -> int:
-    if "preference" not in case.question_type.casefold():
-        return READER_EVIDENCE_LIMIT
-    return READER_EVIDENCE_LIMIT + _PRODUCTION_PREFERENCE_RESERVED - _EVALUATION_PREFERENCE_RESERVED
+def _reader_recall_limit(_case: LongMemEvalCase) -> int:
+    return READER_EVIDENCE_LIMIT
 
 
-def _result_score(result: Mapping[str, Any]) -> float:
-    try:
-        score = float(result.get("score") or 0.0)
-    except (TypeError, ValueError):
-        return float("-inf")
-    return score if score == score else float("-inf")
-
-
-def _is_preference_result(result: Mapping[str, Any]) -> bool:
-    return any(
-        str(result.get(field) or "").casefold().startswith("preference.")
-        for field in ("canonical_slot", "canonical_attribute")
-    )
-
-
-def _preference_first(
+def _production_order_top_k(
     results: Sequence[dict[str, Any]],
     limit: int,
-    case: LongMemEvalCase,
 ) -> list[dict[str, Any]]:
-    if "preference" not in case.question_type.casefold():
-        return list(results[:limit])
-    globally_ranked = [
-        item
-        for _, item in sorted(
-            enumerate(results),
-            key=lambda pair: (-_result_score(pair[1]), pair[0]),
-        )
-    ]
-    preferred = next((item for item in globally_ranked if _is_preference_result(item)), None)
-    if preferred is None:
-        return globally_ranked[:limit]
-    remainder = [item for item in globally_ranked if item is not preferred]
-    return [preferred, *remainder][:limit]
+    """Keep the production RecallService order when building reader evidence."""
+    return list(results[:limit])
 
 
 def _result_evidence_ids(result: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1822,7 +1790,7 @@ def _recall_case(
     for result in results:
         claim_id = str(result.get("id"))
         result["value"] = claim_values.get(claim_id)
-    results = _preference_first(results, READER_EVIDENCE_LIMIT, case)
+    results = _production_order_top_k(results, READER_EVIDENCE_LIMIT)
     if relevance_by_claim_id is None and case.answer.strip():
         scorer = relevance_embedder or embedder
         relevance_by_claim_id = _claim_relevance_scores(claim_values, case.answer, scorer)
