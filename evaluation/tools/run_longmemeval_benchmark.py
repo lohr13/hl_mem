@@ -38,9 +38,14 @@ from evaluation.tools.longmemeval.judge import (  # noqa: E402, F401
     longmemeval_judge_prompts as _longmemeval_judge_prompts,
 )
 from evaluation.tools.longmemeval.extraction_fragments import fragment_turn_content  # noqa: E402, F401
+from evaluation.tools.longmemeval.full_context import (  # noqa: E402, F401
+    render_full_context_user_prompt,
+)
 from evaluation.tools.longmemeval.qa_client import (  # noqa: E402, F401
+    QAUsage,
     qa_call_with_retry,
     qa_dashscope_chat as _qa_dashscope_chat,
+    qa_dashscope_chat_detailed as _qa_dashscope_chat_detailed,
     qa_model,
     response_object as _response_object,
 )
@@ -120,6 +125,7 @@ from hl_mem.workers.worker import Worker  # noqa: E402
 
 DEFAULT_DATASET = ROOT / "evaluation" / "longmemeval" / "longmemeval_s_cleaned.json"
 DEFAULT_OUTPUT = ROOT / "evaluation" / "results" / "longmemeval_s_benchmark.json"
+DEFAULT_FULL_CONTEXT_OUTPUT = ROOT / "evaluation" / "results" / "longmemeval_fullcontext_control.json"
 DATABASE_ROOT = ROOT / "var" / "benchmark_lme"
 COMPARE_ROOT = DATABASE_ROOT / "config_compare"
 COMPARE_CACHE = ROOT / "evaluation" / "cache" / "longmemeval_config_compare"
@@ -130,6 +136,8 @@ DEFAULT_ENV_FILE = ROOT / ".env"
 QA_MAX_ATTEMPTS = 3
 READER_ANSWER_TOKEN_BUDGET = 512
 READER_THINKING_TOKEN_BUDGET = 2048
+FULL_CONTEXT_READER_TIMEOUT_SECONDS = 300.0
+FULL_CONTEXT_PROTOCOL_VERSION = "full-context-raw-sessions-v1"
 DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
 EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
@@ -140,6 +148,8 @@ RETRIEVAL_KS = (1, 5, 10)
 READER_EVIDENCE_LIMIT = 10
 _PRODUCTION_PREFERENCE_RESERVED = 3
 _EVALUATION_PREFERENCE_RESERVED = 1
+_DEEPSEEK_V4_FLASH_INPUT_CNY_PER_MILLION = 1.0
+_DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MILLION = 2.0
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -316,6 +326,12 @@ class ConfigCompareEmbedder:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--mode",
+        choices=("hl-mem", "full-context"),
+        default="hl-mem",
+        help="run the hl_mem pipeline or the retrieval-free full-history control",
+    )
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
@@ -341,14 +357,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_READER_CONTEXT_MODE,
         help="reader evidence packing: query-aware turn windows (default) or legacy event head truncation",
     )
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--clean", action="store_true")
     parser.add_argument(
         "--config-compare",
         action="store_true",
         help="extract once, then compare V0/Q0/Q1/Q2/Q3/Q4 on a stratified sample",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.output is None:
+        args.output = DEFAULT_FULL_CONTEXT_OUTPUT if args.mode == "full-context" else DEFAULT_OUTPUT
+    return args
 
 
 def iter_case_records(
@@ -971,7 +990,11 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         if isinstance(result.get("evaluation_eligibility"), Mapping)
         and result["evaluation_eligibility"].get("temporal_gate_eligible") is False
     ]
-    retrieval_all = [result["retrieval"] for result in successful if isinstance(result.get("retrieval"), Mapping)]
+    retrieval_all = [
+        result["retrieval"]
+        for result in successful
+        if isinstance(result.get("retrieval"), Mapping) and result["retrieval"].get("applicable") is not False
+    ]
     retrieval = [
         result["retrieval"]
         for result in successful
@@ -983,7 +1006,9 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         if isinstance(result.get("retrieval"), Mapping) and result["retrieval"].get("session_eligible")
     ]
     gate_retrieval_all = [
-        result["retrieval"] for result in gate_successful if isinstance(result.get("retrieval"), Mapping)
+        result["retrieval"]
+        for result in gate_successful
+        if isinstance(result.get("retrieval"), Mapping) and result["retrieval"].get("applicable") is not False
     ]
     gate_retrieval = [item for item in gate_retrieval_all if item.get("eligible")]
     gate_session_retrieval = [item for item in gate_retrieval_all if item.get("session_eligible")]
@@ -1009,6 +1034,7 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             else False
         )
         for result in successful
+        if not isinstance(result.get("retrieval"), Mapping) or result["retrieval"].get("applicable") is not False
     ]
     summary: dict[str, Any] = {
         "cases": len(results),
@@ -1896,6 +1922,7 @@ def _judge_longmemeval_answer(
     question: str,
     answer: str,
     predicted_answer: str,
+    usage_details: list[QAUsage] | None = None,
 ) -> tuple[dict[str, Any], int]:
     def judge_chat(
         chat_api_key: str,
@@ -1906,6 +1933,19 @@ def _judge_longmemeval_answer(
         *,
         temperature: float = 0.1,
     ) -> tuple[str, int]:
+        if usage_details is not None:
+            text, usage = _qa_dashscope_chat_detailed(
+                chat_api_key,
+                chat_base_url,
+                chat_model,
+                system_prompt,
+                user_prompt,
+                temperature=temperature,
+                enable_thinking=False,
+                json_object=True,
+            )
+            usage_details.append(usage)
+            return text, usage.total_tokens
         return cast(
             tuple[str, int],
             _qa_dashscope_chat(
@@ -2044,6 +2084,180 @@ def _run_qa(
             "total_tokens": reader_tokens + judge_tokens,
         },
     }
+
+
+def _full_context_reader_system_prompt(case: LongMemEvalCase) -> str:
+    """Reuse the benchmark reader rules while naming the control's real input."""
+    return _reader_system_prompt(case).replace(
+        "retrieved long-term-memory claims and their original evidence events",
+        "the complete timestamped chat history",
+        1,
+    )
+
+
+def _usage_fields(reader: QAUsage, judge: QAUsage) -> dict[str, int]:
+    return {
+        "reader_tokens": reader.total_tokens,
+        "judge_tokens": judge.total_tokens,
+        "total_tokens": reader.total_tokens + judge.total_tokens,
+        "reader_input_tokens": reader.input_tokens,
+        "reader_output_tokens": reader.output_tokens,
+        "reader_reasoning_tokens": reader.reasoning_tokens,
+        "reader_answer_tokens": reader.answer_tokens,
+        "judge_input_tokens": judge.input_tokens,
+        "judge_output_tokens": judge.output_tokens,
+        "judge_reasoning_tokens": judge.reasoning_tokens,
+        "judge_answer_tokens": judge.answer_tokens,
+        "total_input_tokens": reader.input_tokens + judge.input_tokens,
+        "total_output_tokens": reader.output_tokens + judge.output_tokens,
+        "total_reasoning_tokens": reader.reasoning_tokens + judge.reasoning_tokens,
+        "total_answer_tokens": reader.answer_tokens + judge.answer_tokens,
+    }
+
+
+def _priced_request_cost(usage: QAUsage, input_rate: float, output_rate: float) -> float:
+    return (usage.input_tokens * input_rate + usage.output_tokens * output_rate) / 1_000_000
+
+
+def _full_context_cost(model: str, reader: QAUsage, judge: QAUsage) -> dict[str, Any]:
+    """Estimate control cost only when this runner has an explicit model rate."""
+    if not model.casefold().startswith("deepseek-v4-flash"):
+        return {
+            "currency": "CNY",
+            "priced": False,
+            "input_cny_per_million": None,
+            "output_cny_per_million": None,
+            "reader_cny": None,
+            "judge_cny": None,
+            "total_cny": None,
+            "reason": "no pinned evaluation rate for this model override",
+        }
+    input_rate = _DEEPSEEK_V4_FLASH_INPUT_CNY_PER_MILLION
+    output_rate = _DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MILLION
+    reader_cost = _priced_request_cost(reader, input_rate, output_rate)
+    judge_cost = _priced_request_cost(judge, input_rate, output_rate)
+    return {
+        "currency": "CNY",
+        "priced": True,
+        "input_cny_per_million": input_rate,
+        "output_cny_per_million": output_rate,
+        "rate_basis": "Bailian deepseek-v4-flash model pricing snapshot",
+        "rate_snapshot_date": "2026-08-12",
+        "reader_cny": round(reader_cost, 6),
+        "judge_cny": round(judge_cost, 6),
+        "total_cny": round(reader_cost + judge_cost, 6),
+    }
+
+
+def _run_full_context_case(case: LongMemEvalCase, settings: Settings) -> dict[str, Any]:
+    """Answer one case from every raw session without creating or querying a memory DB."""
+    result: dict[str, Any] = {
+        "case_id": case.case_id,
+        "question_type": case.question_type,
+        "question": case.question,
+        "answer": case.answer,
+        "session_count": len(case.sessions),
+        "gold_session_ids": list(case.gold_session_ids),
+        "evaluation_eligibility": _evaluation_eligibility(case),
+        "control": "full-context",
+        "database": None,
+        "ingest": None,
+        "maintenance": None,
+        "retrieval": None,
+        "retrieved": [],
+        "qa": None,
+        "cost": None,
+        "error": None,
+        "error_type": None,
+        "error_diagnostics": None,
+    }
+    started = time.perf_counter()
+    try:
+        api_key = os.environ.get("LLM_API_KEY") or settings.llm_api_key
+        if not api_key:
+            raise RuntimeError("full-context reader requires LLM_API_KEY in .env or environment")
+        model = _qa_model(settings)
+        rendered = render_full_context_user_prompt(case)
+        selected_ids = set(rendered.selected_session_ids)
+        gold_ids = set(case.gold_session_ids)
+        result["retrieval"] = {
+            "applicable": False,
+            "selector": "all-sessions",
+            "query": case.question,
+            "sessions_considered": len(case.sessions),
+            "sessions_selected": rendered.session_count,
+            "messages_selected": rendered.message_count,
+            "all_sessions_selected": rendered.session_count == len(case.sessions),
+            "selected_session_ids": list(rendered.selected_session_ids),
+            "gold_session_ids_present": sorted(gold_ids & selected_ids),
+            "gold_session_coverage": len(gold_ids & selected_ids) / len(gold_ids) if gold_ids else None,
+            "context_chars": rendered.context_chars,
+            "reader_prompt_chars": rendered.prompt_chars,
+            "truncated": False,
+        }
+        generation = _reader_generation_options(model)
+        reader_started = time.perf_counter()
+        reader_text, reader_usage = _qa_call_with_retry(
+            lambda: _qa_dashscope_chat_detailed(
+                str(api_key),
+                settings.llm_base_url,
+                model,
+                _full_context_reader_system_prompt(case),
+                rendered.prompt,
+                enable_thinking=True,
+                thinking_budget=generation.get("thinking_budget"),
+                max_tokens=generation["max_tokens"],
+                timeout_seconds=FULL_CONTEXT_READER_TIMEOUT_SECONDS,
+            )
+        )
+        reader_elapsed = time.perf_counter() - reader_started
+        predicted = reader_text.strip()
+        judge_usages: list[QAUsage] = []
+        judge_started = time.perf_counter()
+        judgment, judge_tokens = _judge_longmemeval_answer(
+            api_key=str(api_key),
+            base_url=settings.llm_base_url,
+            model=model,
+            case_id=case.case_id,
+            question_type=case.question_type,
+            question=case.question,
+            answer=case.answer,
+            predicted_answer=predicted,
+            usage_details=judge_usages,
+        )
+        judge_elapsed = time.perf_counter() - judge_started
+        if len(judge_usages) != 1:
+            raise RuntimeError("full-context judge did not return detailed token usage")
+        judge_usage = judge_usages[0]
+        if judge_usage.total_tokens != judge_tokens:
+            raise RuntimeError("full-context judge token totals are inconsistent")
+        result["qa"] = {
+            "model": model,
+            "predicted_answer": predicted,
+            "correct": judgment["correct"],
+            "reason": str(judgment.get("reason") or ""),
+            "usage": _usage_fields(reader_usage, judge_usage),
+            "latency_seconds": {
+                "reader": round(reader_elapsed, 3),
+                "judge": round(judge_elapsed, 3),
+                "total": round(reader_elapsed + judge_elapsed, 3),
+            },
+        }
+        result["cost"] = _full_context_cost(model, reader_usage, judge_usage)
+    except Exception as error:
+        diagnostic_secrets = _http_diagnostic_secrets(settings)
+        result["error"] = sanitize_diagnostic_text(
+            f"{type(error).__name__}: {error}",
+            secrets=diagnostic_secrets,
+        )
+        result["error_type"] = _case_error_type(error)
+        result["error_diagnostics"] = _evaluation_http_error_diagnostics(
+            error,
+            secrets=diagnostic_secrets,
+        )
+    finally:
+        result["elapsed_seconds"] = round(time.perf_counter() - started, 3)
+    return result
 
 
 def _run_case(
@@ -2771,6 +2985,296 @@ def _validate_production_settings(settings: Settings) -> None:
         raise ValueError("LLM_API_KEY is required")
 
 
+def _validate_full_context_settings(settings: Settings) -> None:
+    if not (os.environ.get("LLM_API_KEY") or settings.llm_api_key):
+        raise ValueError("LLM_API_KEY is required for the full-context reader")
+
+
+def _validate_full_context_args(args: argparse.Namespace) -> None:
+    incompatible: list[str] = []
+    if args.config_compare:
+        incompatible.append("--config-compare")
+    if args.skip_ingest:
+        incompatible.append("--skip-ingest")
+    if args.no_qa:
+        incompatible.append("--no-qa")
+    if args.clean:
+        incompatible.append("--clean")
+    if args.reader_context_mode != DEFAULT_READER_CONTEXT_MODE:
+        incompatible.append("--reader-context-mode")
+    if incompatible:
+        raise ValueError(f"full-context mode does not support: {', '.join(incompatible)}")
+
+
+def _full_context_usage_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    fields = (
+        "reader_tokens",
+        "judge_tokens",
+        "total_tokens",
+        "reader_input_tokens",
+        "reader_output_tokens",
+        "reader_reasoning_tokens",
+        "reader_answer_tokens",
+        "judge_input_tokens",
+        "judge_output_tokens",
+        "judge_reasoning_tokens",
+        "judge_answer_tokens",
+        "total_input_tokens",
+        "total_output_tokens",
+        "total_reasoning_tokens",
+        "total_answer_tokens",
+    )
+    usages = [
+        result["qa"]["usage"]
+        for result in results
+        if isinstance(result.get("qa"), Mapping) and isinstance(result["qa"].get("usage"), Mapping)
+    ]
+    return {
+        "reported_cases": len(usages),
+        **{field: sum(int(usage.get(field, 0) or 0) for usage in usages) for field in fields},
+    }
+
+
+def _full_context_cost_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    costs = [result["cost"] for result in results if isinstance(result.get("cost"), Mapping)]
+    priced = [cost for cost in costs if cost.get("priced") is True and cost.get("total_cny") is not None]
+    return {
+        "currency": "CNY",
+        "reported_cases": len(costs),
+        "priced_cases": len(priced),
+        "unpriced_cases": len(costs) - len(priced),
+        "total_cny": round(sum(float(cost["total_cny"]) for cost in priced), 6) if priced else None,
+    }
+
+
+def _full_context_latency_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    latencies = [
+        result["qa"]["latency_seconds"]
+        for result in results
+        if isinstance(result.get("qa"), Mapping) and isinstance(result["qa"].get("latency_seconds"), Mapping)
+    ]
+    totals = [float(item.get("total", 0.0) or 0.0) for item in latencies]
+    return {
+        "reported_cases": len(latencies),
+        "total_seconds": round(sum(totals), 3),
+        "mean_seconds": round(mean(totals), 3) if totals else None,
+        "median_seconds": round(median(totals), 3) if totals else None,
+    }
+
+
+def _full_context_report(
+    args: argparse.Namespace,
+    settings: Settings,
+    results: Sequence[Mapping[str, Any]],
+    started_at: str,
+    status: str,
+    abort_reason: str | None = None,
+) -> dict[str, Any]:
+    model = _qa_model(settings)
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "benchmark": "LongMemEval-S",
+        "control": "full-context",
+        "status": status,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "dataset": {
+            "path": str(args.dataset.resolve()),
+            "bytes": args.dataset.stat().st_size if args.dataset.is_file() else None,
+            "complete_json_array": _dataset_complete(args.dataset),
+            "sha256": args.dataset_sha256,
+        },
+        "run": {
+            "mode": "full-context",
+            "control_protocol": FULL_CONTEXT_PROTOCOL_VERSION,
+            "started_at": started_at,
+            "package_version": f"v{__version__}",
+            "limit": args.limit,
+            "offset": args.offset,
+            "resume": args.resume,
+            "max_runtime_hours": args.max_runtime_hours,
+            "fail_stop_count": args.fail_stop_count,
+            "selector": "all-sessions",
+            "session_order": "occurred_at ascending; source index breaks timestamp ties",
+            "session_format": "timestamped compact JSON role/content messages",
+            "truncation": "none",
+            "reader_timeout_seconds": int(FULL_CONTEXT_READER_TIMEOUT_SECONDS),
+            "models": {
+                "reader": model,
+                "judge": model,
+                "reader_thinking": True,
+                "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
+                "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
+                "judge_thinking": False,
+                "judge_max_tokens": READER_ANSWER_TOKEN_BUDGET,
+                "judge_prompt_version": LONGMEMEVAL_JUDGE_PROMPT_VERSION,
+            },
+        },
+        "metrics": aggregate_results(results),
+        "usage": _full_context_usage_summary(results),
+        "latency": _full_context_latency_summary(results),
+        "cost": _full_context_cost_summary(results),
+        "cases": list(results),
+    }
+    if abort_reason is not None:
+        report["run"]["abort_reason"] = abort_reason
+    return report
+
+
+def _validate_full_context_resume_report(
+    report: Mapping[str, Any],
+    args: argparse.Namespace,
+    settings: Settings,
+) -> None:
+    if report.get("control") != "full-context":
+        raise ValueError("resume output is not a full-context control report")
+    dataset = report.get("dataset")
+    previous_sha256 = dataset.get("sha256") if isinstance(dataset, Mapping) else None
+    if previous_sha256 != args.dataset_sha256:
+        raise ValueError("resume output dataset sha256 does not match --dataset")
+    run = report.get("run")
+    if not isinstance(run, Mapping):
+        raise ValueError("resume output is missing run metadata")
+    models = run.get("models")
+    if not isinstance(models, Mapping):
+        raise ValueError("resume output is missing run.models metadata")
+    expected = {
+        "mode": "full-context",
+        "control_protocol": FULL_CONTEXT_PROTOCOL_VERSION,
+        "package_version": f"v{__version__}",
+        "limit": args.limit,
+        "offset": args.offset,
+        "reader_timeout_seconds": int(FULL_CONTEXT_READER_TIMEOUT_SECONDS),
+    }
+    for field, value in expected.items():
+        if run.get(field) != value:
+            raise ValueError(f"resume output {field} does not match current full-context run")
+    expected_models = {
+        "reader": _qa_model(settings),
+        "judge": _qa_model(settings),
+        "reader_thinking": True,
+        "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
+        "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
+        "judge_thinking": False,
+        "judge_max_tokens": READER_ANSWER_TOKEN_BUDGET,
+        "judge_prompt_version": LONGMEMEVAL_JUDGE_PROMPT_VERSION,
+    }
+    if dict(models) != expected_models:
+        raise ValueError("resume output model configuration does not match current full-context settings")
+
+
+def _run_full_context_control(
+    args: argparse.Namespace,
+    settings: Settings,
+    invocation_started: float,
+    generated_started_at: str,
+) -> int:
+    resume_report: dict[str, Any] | None = None
+    results: list[dict[str, Any]] = []
+    if args.resume:
+        resume_report, results = _load_resume_report(args.output)
+        if resume_report is not None:
+            _validate_full_context_resume_report(resume_report, args, settings)
+            results = [result for result in results if _result_error_type(result) not in {"http_429", "quota"}]
+    started_at = generated_started_at
+    if resume_report is not None:
+        previous_run = resume_report.get("run")
+        if isinstance(previous_run, Mapping) and isinstance(previous_run.get("started_at"), str):
+            started_at = previous_run["started_at"]
+
+    completed = {str(result["case_id"]): result for result in results}
+    total_hint = str(args.limit) if args.limit is not None else "all"
+    runtime_seconds = args.max_runtime_hours * 3600.0 if args.max_runtime_hours is not None else None
+    print(
+        f"LongMemEval-S control=full-context reader={_qa_model(settings)} "
+        f"offset={args.offset} limit={total_hint} resume={args.resume} "
+        f"timeout={int(FULL_CONTEXT_READER_TIMEOUT_SECONDS)}s",
+        flush=True,
+    )
+    selected_case_ids: list[str] = []
+    consecutive_failure_type: str | None = None
+    consecutive_failure_count = 0
+    abort_reason: str | None = None
+    try:
+        for case_number, record in enumerate(iter_case_records(args.dataset, args.limit, args.offset), start=1):
+            case = normalize_case(record)
+            selected_case_ids.append(case.case_id)
+            case_result = completed.get(case.case_id)
+            case_was_run = False
+            if case_result is not None:
+                print(f"[{case_number}/{total_hint}] {case.case_id}: resume skip", flush=True)
+            else:
+                if runtime_seconds is not None and time.monotonic() - invocation_started >= runtime_seconds:
+                    abort_reason = f"max runtime of {args.max_runtime_hours:g} hours reached"
+                    break
+                case_result = _run_full_context_case(case, settings)
+                results.append(case_result)
+                completed[case.case_id] = case_result
+                _write_json_atomic(
+                    args.output,
+                    _full_context_report(args, settings, results, started_at, "running"),
+                )
+                case_was_run = True
+                failure_type = _result_error_type(case_result)
+                if failure_type is None:
+                    consecutive_failure_type = None
+                    consecutive_failure_count = 0
+                elif failure_type == consecutive_failure_type:
+                    consecutive_failure_count += 1
+                else:
+                    consecutive_failure_type = failure_type
+                    consecutive_failure_count = 1
+            retrieval = case_result.get("retrieval") or {}
+            qa = case_result.get("qa") or {}
+            usage = qa.get("usage") or {}
+            print(
+                f"[{case_number}/{total_hint}] {case.case_id}: "
+                f"sessions={retrieval.get('sessions_selected')} "
+                f"reader_input={usage.get('reader_input_tokens')} correct={qa.get('correct')} "
+                f"error={case_result.get('error')}",
+                flush=True,
+            )
+            if case_was_run and consecutive_failure_count >= args.fail_stop_count:
+                abort_reason = (
+                    f"circuit breaker opened after {consecutive_failure_count} consecutive "
+                    f"{consecutive_failure_type} failures"
+                )
+                break
+            if runtime_seconds is not None and time.monotonic() - invocation_started >= runtime_seconds:
+                abort_reason = f"max runtime of {args.max_runtime_hours:g} hours reached"
+                break
+        if abort_reason is None:
+            unexpected = set(completed) - set(selected_case_ids)
+            if unexpected:
+                raise ValueError(f"resume output contains case_ids outside the selected shard: {sorted(unexpected)}")
+    except Exception:
+        _write_json_atomic(
+            args.output,
+            _full_context_report(args, settings, results, started_at, "aborted", "unhandled exception"),
+        )
+        raise
+
+    if not selected_case_ids:
+        raise ValueError("LongMemEval dataset contains no selected cases")
+    if abort_reason is not None:
+        report = _full_context_report(args, settings, results, started_at, "aborted", abort_reason)
+        _write_json_atomic(args.output, report)
+        print(f"aborted reason={abort_reason} cases={len(results)} output={args.output}", flush=True)
+        return 2
+
+    selected_order = {case_id: index for index, case_id in enumerate(selected_case_ids)}
+    results.sort(key=lambda result: selected_order[str(result["case_id"])])
+    report = _full_context_report(args, settings, results, started_at, "completed")
+    _write_json_atomic(args.output, report)
+    overall = report["metrics"]["overall"]
+    print(
+        f"completed control=full-context cases={overall['cases']} failures={overall['failed_cases']} "
+        f"QA={overall['qa_accuracy']} input_tokens={report['usage']['reader_input_tokens']} "
+        f"cost_cny={report['cost']['total_cny']} output={args.output}",
+        flush=True,
+    )
+    return 1 if overall["failed_cases"] else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     if args.limit is not None and args.limit < 1:
@@ -2781,6 +3285,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError("--max-runtime-hours must be positive")
     if args.fail_stop_count < 1:
         raise ValueError("--fail-stop-count must be a positive integer")
+    if args.mode == "full-context":
+        _validate_full_context_args(args)
     if args.config_compare and (
         args.offset
         or args.resume
@@ -2798,12 +3304,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     invocation_started = time.monotonic()
     args.dataset_sha256 = _file_sha256(args.dataset)
     settings = load_settings(args.config, args.env_file)
+    generated_started_at = datetime.now(timezone.utc).isoformat()
+    if args.mode == "full-context":
+        _validate_full_context_settings(settings)
+        return _run_full_context_control(args, settings, invocation_started, generated_started_at)
     settings = dataclasses.replace(settings, vector_backend="sqlite_scan")
     _validate_production_settings(settings)
     initialize_process(settings)
     embedder = make_embedder(settings)
     reranker = make_reranker(settings)
-    generated_started_at = datetime.now(timezone.utc).isoformat()
     if args.config_compare:
         return _run_config_compare(args, settings, embedder, reranker, generated_started_at)
 
