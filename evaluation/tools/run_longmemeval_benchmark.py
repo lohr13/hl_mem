@@ -2299,10 +2299,20 @@ def _native_rag_embedding_config(settings: Settings) -> EmbeddingConfig:
     )
 
 
-def _native_rag_cost(model: str, embedding: Cost, reader: QAUsage, judge: QAUsage) -> dict[str, Any]:
+def _native_rag_cost(
+    model: str,
+    document_embedding: Cost,
+    query_embedding: Cost,
+    reader: QAUsage,
+    judge: QAUsage,
+) -> dict[str, Any]:
     llm_cost = _full_context_cost(model, reader, judge)
-    embedding_cost = embedding.tokens * _QWEN37_EMBEDDING_INPUT_CNY_PER_MILLION / 1_000_000
+    index_embedding_cost = document_embedding.tokens * _QWEN37_EMBEDDING_INPUT_CNY_PER_MILLION / 1_000_000
+    query_embedding_cost = query_embedding.tokens * _QWEN37_EMBEDDING_INPUT_CNY_PER_MILLION / 1_000_000
+    embedding_cost = index_embedding_cost + query_embedding_cost
     llm_total = llm_cost.get("total_cny")
+    online_cost = query_embedding_cost + float(llm_total) if llm_total is not None else None
+    total_cost = index_embedding_cost + online_cost if online_cost is not None else None
     return {
         "currency": "CNY",
         "priced": llm_cost.get("priced") is True,
@@ -2311,10 +2321,14 @@ def _native_rag_cost(model: str, embedding: Cost, reader: QAUsage, judge: QAUsag
         "reader_output_cny_per_million": llm_cost.get("output_cny_per_million"),
         "rate_basis": "Bailian model pricing snapshot",
         "rate_snapshot_date": "2026-08-12",
+        "index_embedding_cny": round(index_embedding_cost, 6),
+        "query_embedding_cny": round(query_embedding_cost, 6),
         "embedding_cny": round(embedding_cost, 6),
         "reader_cny": llm_cost.get("reader_cny"),
         "judge_cny": llm_cost.get("judge_cny"),
-        "total_cny": round(embedding_cost + float(llm_total), 6) if llm_total is not None else None,
+        "online_query_cny": round(online_cost, 6) if online_cost is not None else None,
+        "cold_start_total_cny": round(total_cost, 6) if total_cost is not None else None,
+        "total_cny": round(total_cost, 6) if total_cost is not None else None,
         "reason": llm_cost.get("reason"),
     }
 
@@ -2414,7 +2428,11 @@ def _run_native_rag_case(
             "query_instruct": None,
             "documents": len(documents),
             "queries": 1,
-            "usage": embedding_cost.as_dict(),
+            "usage": {
+                **embedding_cost.as_dict(),
+                "document": document_output.cost.as_dict(),
+                "query": query_output.cost.as_dict(),
+            },
             "latency_seconds": {
                 "document_wall": round(document_elapsed, 3),
                 "query_wall": round(query_elapsed, 3),
@@ -2496,7 +2514,13 @@ def _run_native_rag_case(
                 "total": round(reader_elapsed + judge_elapsed, 3),
             },
         }
-        result["cost"] = _native_rag_cost(model, embedding_cost, reader_usage, judge_usage)
+        result["cost"] = _native_rag_cost(
+            model,
+            document_output.cost,
+            query_output.cost,
+            reader_usage,
+            judge_usage,
+        )
     except Exception as error:
         diagnostic_secrets = _http_diagnostic_secrets(settings)
         result["error"] = sanitize_diagnostic_text(
@@ -3574,22 +3598,34 @@ def _native_rag_embedding_usage_summary(results: Sequence[Mapping[str, Any]]) ->
         "cache_hit_batches",
         "db_cached_vectors",
     )
+    document_usages = [usage["document"] for usage in usages if isinstance(usage.get("document"), Mapping)]
+    query_usages = [usage["query"] for usage in usages if isinstance(usage.get("query"), Mapping)]
     return {
         "reported_cases": len(usages),
         **{field: sum(int(usage.get(field, 0) or 0) for usage in usages) for field in fields},
+        **{f"document_{field}": sum(int(usage.get(field, 0) or 0) for usage in document_usages) for field in fields},
+        **{f"query_{field}": sum(int(usage.get(field, 0) or 0) for usage in query_usages) for field in fields},
     }
 
 
 def _native_rag_cost_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     costs = [result["cost"] for result in results if isinstance(result.get("cost"), Mapping)]
     priced = [cost for cost in costs if cost.get("priced") is True and cost.get("total_cny") is not None]
-    embedding_values = [float(cost["embedding_cny"]) for cost in costs if cost.get("embedding_cny") is not None]
+
+    def total(field: str) -> float | None:
+        values = [float(cost[field]) for cost in costs if cost.get(field) is not None]
+        return round(sum(values), 6) if values else None
+
     return {
         "currency": "CNY",
         "reported_cases": len(costs),
         "priced_cases": len(priced),
         "unpriced_cases": len(costs) - len(priced),
-        "embedding_cny": round(sum(embedding_values), 6) if embedding_values else None,
+        "index_embedding_cny": total("index_embedding_cny"),
+        "query_embedding_cny": total("query_embedding_cny"),
+        "embedding_cny": total("embedding_cny"),
+        "online_query_cny": total("online_query_cny"),
+        "cold_start_total_cny": total("cold_start_total_cny"),
         "total_cny": round(sum(float(cost["total_cny"]) for cost in priced), 6) if priced else None,
     }
 
