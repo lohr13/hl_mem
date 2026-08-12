@@ -2,6 +2,13 @@
 
 ## 未发布
 
+### 偏好召回与 LongMemEval 口径对齐
+
+- LongMemEval reader evidence 不再对 preference 题执行“生产 Top-12 → 按数值 score 二次重排 → 只保留 1 条偏好”的评测专用裁剪；所有题型直接请求并保留 `RecallService` 返回的生产 Top-10 顺序，避免评测层覆盖生产 reranker 与 preference-first 结果。
+- 生产自动意图路由新增零调用成本的中英文个性化推荐规则，覆盖 `recommend`、`suggest`、第一人称 `like`、推荐/建议选择、适合我和“想去哪”等高精度表达；历史语义继续优先，显式 `intent` 继续覆盖自动判断，歧义性的 `likely`、`What is it like`、单纯出行计划和过程咨询不触发 preference。
+- preference intent 的既有最多 3 个保留位改为优先选择 `subject_entity_id` 确定性归一为 `user` 的偏好，其他主体仅在不足时按原顺序补位；不新增过滤、权重、通道或配置，不改变其他 intent。
+- 使用现有 case DB 对 8 条 preference 与 4 条非重叠风险 case 做定向 QA 重放：preference 从冻结 v0.25.0 基线的 7/8 提升为 8/8，`0edc2aef` 恢复通用酒店偏好并判对；`0a995998`、`gpt4_59149c77` 仍错，`a82c026e`、`eac54add` 仍对。该 12 条定向结果不能替代完整 holdout50 基线。
+
 ### LongMemEval 全上下文对照
 
 - 新增独立的 `--mode full-context`：按时间顺序把每个 case 的全部原始 session 无截断交给现有 reader，绕过提取、case DB、维护、检索与 reranker，作为 `hl_mem+reader` 的上限对照；默认输出使用 `longmemeval_fullcontext_*` 身份。
