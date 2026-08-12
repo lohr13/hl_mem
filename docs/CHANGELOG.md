@@ -23,7 +23,7 @@
 - `/v1/events/batch` 以微秒级内部 `recorded_at` 保留请求数组顺序，避免四条交替 user/assistant Event 被角色排序打乱；整个批次与 extraction job 仍在同一事务中提交。
 - JSONL Event 归档纳入 `metadata_json` 的导入、导出和同 ID 冲突判定；Worker 在长任务期间续租全部 job，并在终态更新未持有 lease 时返回 `lease_lost`，不再报告伪成功。
 - compact/legacy extraction 的 `source_event_indices` 上限与可配置微批上限统一为 32；结构化输出的 20 claims 上限及生产去重/冲突阈值未改变。
-- `extract_event` 仅在 HTTP 429 耗尽普通 job 重试后写入通用 deferred task，由维护循环按 1/4/12 小时重放三次；成功即收敛，非 429 维持原 job 语义，多次 429 后放弃。pending Event 在重试终态前受 retention 保护。
+- `extract_event` 仅在 HTTP 429 耗尽普通 job 重试后写入通用 deferred task，由维护循环按 1/4/12 小时重放三次；成功即收敛，非 429 维持原 job 语义，多次 429 后放弃。维护会用持久化的精确 HTTP 429 错误前缀回收升级前已 dead 且仍无 evidence 的 Event，不把 token budget/500 等历史失败混入。pending Event 在重试终态前受 retention 保护。
 - 跨 subject `DedupJudge` 明确输出示例并校验全部协议字段；空 decision、未知枚举、非 JSON 或无效 confidence/reason 降级为低置信 `uncertain`，不再让整轮日任务因单个格式错误进入 dead。provider/transport 调用异常仍沿用普通 job 重试。
 - Hermes Episode goal 改用本轮 `sync_turn(content)`，空白时确定性回退并在 provider 侧截断到 5000 字符；Trace 只映射最后一条 user 消息之后的工具轨迹，避免 compaction summary 和累计历史触发 422 或污染 Episode。422 日志记录字段长度与移除 `input` 后的有界响应诊断。
 

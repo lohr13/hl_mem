@@ -66,7 +66,12 @@ def process_deferred_tasks(
     current_text = now or datetime.now(timezone.utc).isoformat()
     current = datetime.fromisoformat(current_text.replace("Z", "+00:00"))
     repository = DeferredTaskRepository(connection)
-    counts = {"scheduled": 0, "abandoned": 0, "postponed": 0}
+    counts = {
+        "registered": _register_legacy_rate_limited_extractions(connection, current, limit),
+        "scheduled": 0,
+        "abandoned": 0,
+        "postponed": 0,
+    }
     for task in repository.list_exhausted(limit=limit):
         if _has_active_extract_job(connection, task):
             continue
@@ -86,6 +91,47 @@ def process_deferred_tasks(
         outcome = handler(connection, task, current)
         counts[outcome] += 1
     return counts
+
+
+def _register_legacy_rate_limited_extractions(
+    connection: sqlite3.Connection,
+    now: datetime,
+    limit: int,
+) -> int:
+    """把升级前已 dead 的明确 HTTP 429 提取任务纳入同一有界队列。"""
+    rows = connection.execute(
+        "SELECT json_extract(j.payload_json,'$.event_id') AS event_id,MAX(j.updated_at) AS failed_at "
+        "FROM jobs j JOIN events e ON e.id=json_extract(j.payload_json,'$.event_id') "
+        "WHERE j.job_type='extract_event' AND j.status='dead' "
+        "AND j.last_error LIKE 'Client error ''429 Too Many Requests''%' "
+        "AND NOT EXISTS (SELECT 1 FROM evidence_links l "
+        "WHERE l.evidence_type='event' AND l.evidence_id=e.id) "
+        "AND NOT EXISTS (SELECT 1 FROM deferred_tasks d "
+        "WHERE d.idempotency_key='retry_extract_event:' || e.id) "
+        "GROUP BY e.id ORDER BY failed_at,e.id LIMIT ?",
+        (limit,),
+    ).fetchall()
+    repository = DeferredTaskRepository(connection)
+    registered = 0
+    for row in rows:
+        failed_at = datetime.fromisoformat(str(row["failed_at"]).replace("Z", "+00:00"))
+        if failed_at.tzinfo is None:
+            failed_at = failed_at.replace(tzinfo=timezone.utc)
+        run_after = max(now, failed_at + EXTRACTION_RETRY_DELAYS[0]).isoformat()
+        event_id = str(row["event_id"])
+        if repository.defer(
+            task_type="retry_extract_event",
+            resource_type="event",
+            resource_id=event_id,
+            payload={"event_id": event_id},
+            idempotency_key=f"retry_extract_event:{event_id}",
+            run_after=run_after,
+            max_attempts=DEFERRED_EXTRACTION_MAX_ATTEMPTS,
+            error="legacy dead extraction: HTTP 429 Too Many Requests",
+            updated_at=now.isoformat(),
+        ):
+            registered += 1
+    return registered
 
 
 def _schedule_extract_retry(connection: sqlite3.Connection, task: dict[str, Any], now: datetime) -> str:

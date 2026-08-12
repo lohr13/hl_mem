@@ -303,7 +303,7 @@ def test_maintenance_requeues_due_deferred_extraction_and_success_closes_it(tmp_
         "SELECT status,payload_json FROM jobs WHERE idempotency_key=?",
         (f"deferred:{task['id']}:1",),
     ).fetchone()
-    assert result == {"scheduled": 1, "abandoned": 0, "postponed": 0}
+    assert result == {"registered": 0, "scheduled": 1, "abandoned": 0, "postponed": 0}
     assert task["status"] == "pending" and task["attempts"] == 1
     assert retry_job["status"] == "pending"
     assert json.loads(retry_job["payload_json"])["event_id"] == "deferred-event"
@@ -343,8 +343,40 @@ def test_deferred_extraction_stops_after_three_replays(tmp_path) -> None:
 
     result = process_deferred_tasks(connection, now=now)
 
-    assert result == {"scheduled": 0, "abandoned": 1, "postponed": 0}
+    assert result == {"registered": 0, "scheduled": 0, "abandoned": 1, "postponed": 0}
     assert repository.get_by_idempotency_key("retry_extract_event:bounded-event")["status"] == "abandoned"
+
+
+def test_maintenance_recovers_only_legacy_dead_429_extractions(tmp_path) -> None:
+    path = tmp_path / "legacy-deferred-429.db"
+    connection = Database(path).open()
+    queue(connection, job_id="legacy-429", event_id="legacy-event-429", max_attempts=1)
+    queue(connection, job_id="legacy-budget", event_id="legacy-event-budget", max_attempts=1)
+    legacy_failed_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    connection.execute(
+        "UPDATE jobs SET status='dead',attempts=1,last_error=?,updated_at=? WHERE id='legacy-429'",
+        (
+            "Client error '429 Too Many Requests' for url 'https://provider.invalid/chat/completions'",
+            legacy_failed_at,
+        ),
+    )
+    connection.execute(
+        "UPDATE jobs SET status='dead',attempts=1,last_error='daily token budget exhausted' " "WHERE id='legacy-budget'"
+    )
+    connection.commit()
+    now = datetime.now(timezone.utc).isoformat()
+
+    result = process_deferred_tasks(connection, now=now)
+
+    assert result == {"registered": 1, "scheduled": 1, "abandoned": 0, "postponed": 0}
+    assert (
+        connection.execute(
+            "SELECT status,attempts FROM deferred_tasks WHERE idempotency_key=?",
+            ("retry_extract_event:legacy-event-429",),
+        ).fetchone()["attempts"]
+        == 1
+    )
+    assert connection.execute("SELECT 1 FROM deferred_tasks WHERE resource_id='legacy-event-budget'").fetchone() is None
 
 
 def test_lease_prevents_second_worker_from_taking_running_job(tmp_path) -> None:
