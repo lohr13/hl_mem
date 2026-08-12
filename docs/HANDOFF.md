@@ -6,7 +6,7 @@
 
 - **分支**：`main`
 - **版本**：v0.25.1
-- **阶段**：v0.25.1 补丁发版收口；打 tag 前以最新 GitHub Actions 全绿为门槛
+- **阶段**：v0.25.1 已通过 GitHub Release 与 PyPI 发布
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；40 migrations（SQL 001-040）+ Python data migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
@@ -15,6 +15,7 @@
 
 ### 2026-08-12 v0.25.1 偏好召回补丁
 
+- [GitHub Release](https://github.com/lohr13/hl_mem/releases/tag/v0.25.1) 与 [PyPI 0.25.1](https://pypi.org/project/hl-mem/0.25.1/) 已发布；tag 与包版本一致，OIDC Trusted Publishing 成功。
 - 生产召回用零 LLM 成本的中英文高精度规则识别个性化推荐意图；显式 `intent` 和历史语义仍优先。
 - preference 的既有 3 个保留位内优先选择归一化为 `user` 的偏好，不硬过滤其他主体，不影响其他 intent。
 - LongMemEval 适配器不再对 preference 证据二次重排，保留生产 Top-10 顺序；评测工具同时增加 full-context 与 raw-session native-RAG 对照模式。
