@@ -162,6 +162,20 @@ thinking、Top-10 evidence、自有 judge；temporal gate 排除 2 道问题时�
 40/48（83.3%），不替代官方分数。内容审查隔离跳过了 2 个输入 Event。benchmark reader 与生产
 recall/context packing 是两套契约，该成绩不能直接视为生产端到端准确率。
 
+### 评测结果
+
+| 评测 | 口径 | 结果 |
+|---|---|---:|
+| LongMemEval · HL-Mem v0.25.2 | holdout50，Top-10 结构化 evidence | **43/50（86.0%）** |
+| LongMemEval · Full-Context 上限 | 全部 session 直接送入 reader | **46/50（92.0%）** |
+| LongMemEval · Native RAG 基线 | raw-session dense RAG，Top-10 | **45/50（90.0%）** |
+| MemDaily | 180 cases | **97.2% accuracy** |
+| PerLTQA | 378 questions，10 characters | **R@5 84.9%，MRR 69.6%** |
+
+LongMemEval 三角对照统一使用 `deepseek-v4-flash-0731` reader，reader 开启 thinking、judge 关闭
+thinking。HL-Mem 以可治理的结构化 Claim 与证据链达到接近全上下文上限的结果；本地评测产物的
+命名与目录说明见[结果索引](evaluation/results/longmemeval/README.md)。
+
 能力成熟度、默认开关和证据见 [能力矩阵](docs/capability-matrix.md)，架构与数据流见 [架构文档](docs/architecture.md)。
 
 ## 项目状态

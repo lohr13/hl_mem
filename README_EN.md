@@ -139,6 +139,20 @@ answer at the question time is 40/48 (83.3%); it does not replace the official s
 input Events. The benchmark reader and production recall/context packing are separate contracts, so this score is not a
 production end-to-end accuracy claim.
 
+### Evaluation Results
+
+| Benchmark | Setup | Result |
+|---|---|---:|
+| LongMemEval · HL-Mem v0.25.2 | holdout50, Top-10 structured evidence | **43/50 (86.0%)** |
+| LongMemEval · Full-Context upper bound | all sessions passed directly to the reader | **46/50 (92.0%)** |
+| LongMemEval · Native RAG baseline | raw-session dense RAG, Top-10 | **45/50 (90.0%)** |
+| MemDaily | 180 cases | **97.2% accuracy** |
+| PerLTQA | 378 questions, 10 characters | **R@5 84.9%, MRR 69.6%** |
+
+The LongMemEval comparison uses the `deepseek-v4-flash-0731` reader throughout, with reader thinking enabled and judge
+thinking disabled. HL-Mem approaches the full-context upper bound while retaining governable structured Claims and evidence
+lineage. See the [results index](evaluation/results/longmemeval/README.md) for local artifact naming and layout.
+
 See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, and evidence, and the [architecture guide](docs/architecture.md) for data flows.
 
 ## Project Status
