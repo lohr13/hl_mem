@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.25.1](https://img.shields.io/badge/version-0.25.1-blue.svg)](docs/CHANGELOG.md)
+|[![Version: 0.25.2](https://img.shields.io/badge/version-0.25.2-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -141,7 +141,7 @@ hlmem backfill-index-text --mode natural
 
 ### 从 v0.24.0 升级
 
-v0.25.1 是 v0.25.0 的向后兼容补丁版；v0.24.1/v0.24.2 只是仓库内过渡版本。从 v0.24.0 或更早版本升级前，请备份并停止
+v0.25.2 是 v0.25.0 的向后兼容补丁版；v0.24.1/v0.24.2 只是仓库内过渡版本。从 v0.24.0 或更早版本升级前，请备份并停止
 API、Worker 和其他写入者。migration 038 会在 `BEGIN IMMEDIATE` 中扫描并规范化存量 Claim subject，
 migration 039 为 Event 增加 nullable `metadata_json`，migration 040 增加有界 deferred task 队列；大库应安排维护窗口，数据库不支持向后迁移。
 默认 `auto` FTS 查询同时兼容旧 raw-only 与新 raw+stem 索引，因此无需仅为词形兼容强制重建。
@@ -170,7 +170,7 @@ recall/context packing 是两套契约，该成绩不能直接视为生产端到
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.25.1，共 40 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.25.2，共 40 个不可变、仅向前执行的 SQL Migration。
 
 ## 文档
 

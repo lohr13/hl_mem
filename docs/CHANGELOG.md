@@ -2,6 +2,19 @@
 
 ## 未发布
 
+## v0.25.2（2026-08-13）
+
+### Preference 召回简化
+
+- 移除 preference intent 的硬保留 slot 机制（`_preference_first`），该函数现在只执行纯截断；偏好排序完全由上游 `_filter_and_score` 中的 `preference_recency_boost` 分数因子处理。
+- 移除 reranker 在 PREFERENCE intent 下对遗漏 preference claim 的追加逻辑；reranker 返回的顺序不再被 preference intent 改写。
+- 统一 `RecallConfig.preference_recency_boost` 与 `RecallContext.preference_boost` 的默认值从 1.0 降为 0.12，与 `Settings` 中的 `recall.preference_recency_boost` 一致；preference score boost 现在是轻量辅助因子而非主导排序。
+- 新增两个测试保护 reranker-preference 交互不变式：(a) reranker 顺序不被 preference intent 改写，(b) reranker 省略的 preference claim 不被重新追加。
+
+### Benchmark runner 跨 provider 支持
+
+- LongMemEval benchmark runner 新增 `HL_MEM_EVAL_QA_BASE_URL` 和 `HL_MEM_EVAL_QA_API_KEY` 环境变量，允许 QA 阶段使用与提取器不同的 provider 和 endpoint。
+
 ## v0.25.1（2026-08-12）
 
 [GitHub Release](https://github.com/lohr13/hl_mem/releases/tag/v0.25.1) · [PyPI](https://pypi.org/project/hl-mem/0.25.1/)

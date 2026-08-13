@@ -22,7 +22,6 @@ from hl_mem.domain.claims.query_tags import (
     extract_query_slot_hints,
     extract_query_tags,
 )
-from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.domain.temporal import claim_is_visible
 from hl_mem.observability.audit import current_audit
@@ -63,7 +62,7 @@ class RecallConfig:
     tag_channel_enabled: bool = False
     tag_channel_weight: float = 0.15
     tag_candidate_limit: int = 20
-    preference_recency_boost: float = 1.0
+    preference_recency_boost: float = 0.12
     dedup_threshold: float = 0.0
     dedup_candidate_limit: int = 100
     feedback_min_samples: int = field(default_factory=lambda: Settings().feedback_min_samples)
@@ -89,7 +88,7 @@ class RecallContext:
     ranking_now: str = ""
     selected_intent: RecallIntent = RecallIntent.CURRENT_STATE
     reference: str = ""
-    preference_boost: float = 1.0
+    preference_boost: float = 0.12
     query_tags: list[str] = field(default_factory=list)
     query_slot_hints: list[str] = field(default_factory=list)
     tag_boost_enabled: bool = True
@@ -169,15 +168,8 @@ def _visibility_filter_reason(
 
 
 def _preference_first(claims: list[dict[str, Any]], limit: int, selected_intent: RecallIntent) -> list[dict[str, Any]]:
-    if selected_intent is not RecallIntent.PREFERENCE:
-        return claims[:limit]
-    preferences = [claim for claim in claims if _is_preference_claim(claim)]
-    preferences.sort(key=lambda claim: normalize_entity_id(claim.get("subject_entity_id")) != "user")
-    reserved = min(3, limit, len(preferences))
-    reserved_preferences = preferences[:reserved]
-    reserved_objects = {id(claim) for claim in reserved_preferences}
-    globally_ranked_remainder = [claim for claim in claims if id(claim) not in reserved_objects]
-    return (reserved_preferences + globally_ranked_remainder)[:limit]
+    """Truncate to limit; preference intent is handled by score boost in _filter_and_score."""
+    return claims[:limit]
 
 
 def _rrf_scores(channels: list[list[dict[str, Any]]], rank_constant: int) -> dict[str, float]:
@@ -669,11 +661,6 @@ def _rerank(ctx: RecallContext) -> RecallContext:
             str(claim["id"]),
         ),
     )
-    if ctx.selected_intent is RecallIntent.PREFERENCE:
-        reranked_ids = {claim["id"] for claim in reranked_claims}
-        reranked_claims.extend(
-            claim for claim in ranked_claims if _is_preference_claim(claim) and claim["id"] not in reranked_ids
-        )
     ctx.ranked_result = reranked_claims
     ctx.outcome = "applied"
     return ctx

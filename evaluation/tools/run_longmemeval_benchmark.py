@@ -2028,9 +2028,12 @@ def _run_qa(
     reader_context_mode: str = DEFAULT_READER_CONTEXT_MODE,
 ) -> dict[str, Any]:
     qa_model = _qa_model(settings)
-    api_key = os.environ.get("LLM_API_KEY") or settings.llm_api_key
-    if not api_key:
+    qa_api_key = (
+        os.environ.get("HL_MEM_EVAL_QA_API_KEY", "").strip() or os.environ.get("LLM_API_KEY") or settings.llm_api_key
+    )
+    if not qa_api_key:
         raise RuntimeError("QA answering requires LLM_API_KEY in .env or environment")
+    qa_base_url = os.environ.get("HL_MEM_EVAL_QA_BASE_URL", "").strip() or settings.llm_base_url
 
     reader_system_prompt = _reader_system_prompt(case)
     reader_user_prompt = _build_reader_user_prompt(
@@ -2039,8 +2042,8 @@ def _run_qa(
     reader_generation = _reader_generation_options(qa_model)
     reader_text, reader_tokens = _qa_call_with_retry(
         lambda: _qa_dashscope_chat(
-            api_key,
-            settings.llm_base_url,
+            qa_api_key,
+            qa_base_url,
             qa_model,
             reader_system_prompt,
             reader_user_prompt,
@@ -2052,8 +2055,8 @@ def _run_qa(
     predicted = reader_text.strip()
 
     judgment, judge_tokens = _judge_longmemeval_answer(
-        api_key=str(api_key),
-        base_url=settings.llm_base_url,
+        api_key=str(qa_api_key),
+        base_url=qa_base_url,
         model=qa_model,
         case_id=case.case_id,
         question_type=case.question_type,
