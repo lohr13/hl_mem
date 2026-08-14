@@ -11,7 +11,31 @@
 
 ## 中文
 
-HL-Mem 是面向 AI Agent 的本地优先、证据驱动长期记忆系统。它不只是向量数据库：系统把不可变事件提取为带证据链的结构化 Claim，以有效时间和记录时间描述事实变化，并通过独立的 Experience 通道保存 Episode、Trace 和可复用 Policy。默认使用 SQLite WAL、FTS5 和向量 BLOB 精确扫描，也可选择 sqlite-vec 后端，无需部署外部数据库服务。
+HL-Mem 是面向 AI Agent 的本地优先、证据驱动长期记忆系统，而不只是一个向量数据库。它把不可变 Event 转化为带证据链的结构化 Claim，以双时间模型记录事实变化，并通过独立的 Experience 通道沉淀 Episode、Trace 与可复用 Policy；默认只需 SQLite，也可按需启用在线模型与 sqlite-vec。
+
+**每条记忆都可追溯到不可变的原始事件。**
+
+## 数据如何流动
+
+```mermaid
+flowchart LR
+    A["Event 摄入<br/>不可变原始事件"] --> B["LLM 提取<br/>7 字段 compact"]
+    B --> C["AdmissionPolicy<br/>准入与后处理"]
+    C --> D["Claim<br/>证据链 · 双时间"]
+    D --> E["混合召回<br/>FTS5 + Dense"]
+    E --> F["RRF → Reranker"]
+    F --> G["Context Packet / REST / MCP"]
+```
+
+## 30 秒极速上手
+
+需要 Python 3.11+。前两行在当前终端执行；服务启动后，在另一个终端执行第三行：
+
+```bash
+python -m pip install hl-mem
+hlmem init --offline && hlmem server
+hlmem remember "Alice 喜欢深色模式" && hlmem recall "Alice 喜欢什么"
+```
 
 ## 五分钟上手
 
@@ -148,14 +172,12 @@ migration 039 为 Event 增加 nullable `metadata_json`，migration 040 增加�
 
 ## 能力概览
 
-- **记忆正确性**：幂等事件摄入、事务原子写入、精确去重，以及覆盖摄入复用、维护等价边和召回折叠的保守近重复治理；确定性冲突规则、LLM 灰区归并和受守卫的冲突终态收敛。
-- **提取治理**：7 字段 compact 提取、统一 AdmissionPolicy、完整 Claim schema 后处理、双语复合事实/关系/枚举原子性规则、20 条输出边界审计、确定性的 scope/predicate 投影、subject 守卫和有界结构化输出修复。
-- **时间与证据**：有效时间与记录时间双时间模型、证据链、实体归一化、显式遗忘和 stale 传播。
-- **混合召回**：中文 FTS5、两阶段精确向量扫描或可选 sqlite-vec、RRF 融合、多因子排序、可选 Reranker、关系/查询扩展和按 Token 预算打包上下文。
-- **生命周期**：importance 联动 TTL、置信度衰减、归档、重分类、反馈效用、审计日志和在线备份。
-- **经验通道**：Episode、Trace、Reward、Policy/Procedure 和派生 Observation。
-- **接口**：FastAPI REST 与 Hermes Provider 为稳定主路径；七工具 MCP stdio 接口处于 Beta。
-- **评测**：提取评测 v2、PerLTQA 64 + MemDaily 48 的隔离检索、40-case 中文 E2E，以及 LongMemEval/MemDaily/PerLTQA 完整 runner。
+| 核心记忆 | 服务与治理 |
+|---|---|
+| **记忆正确性**<br>幂等摄入、原子写入与精确去重<br>保守近重复治理与受守卫的冲突收敛 | **经验通道**<br>Episode、Trace 与 Reward<br>Policy/Procedure 与派生 Observation |
+| **时间与证据**<br>有效时间 + 记录时间双时间模型<br>证据链、实体归一化、显式遗忘与 stale 传播 | **接口**<br>稳定的 FastAPI REST 与 Hermes Provider<br>Beta 阶段的七工具 MCP stdio 接口 |
+| **混合召回**<br>中文 FTS5 + Dense，经 RRF 融合与可选 Reranker<br>关系/查询扩展与 Token 预算上下文 | **评测**<br>提取评测 v2、112-case 隔离检索与 40-case 中文 E2E<br>LongMemEval、MemDaily、PerLTQA 完整 runner |
+| **生命周期**<br>importance 联动 TTL、衰减、归档与重分类<br>反馈效用、审计日志与在线备份 | **治理工具**<br>7 字段 compact 提取 + 统一 AdmissionPolicy<br>有界修复、近重复审查与 active Claim 审计/修复 |
 
 ### 评测结果（公开冻结口径）
 

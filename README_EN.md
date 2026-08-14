@@ -11,7 +11,31 @@
 
 ## English
 
-HL-Mem is a local-first, evidence-driven long-term memory system for AI agents. It is more than a vector store: immutable events become structured, evidence-backed Claims; valid time and recorded time describe how facts change; and a separate Experience channel stores Episodes, Traces, and reusable Policies. The default stack is SQLite WAL, FTS5, and exact scanning over vector BLOBs, with an optional sqlite-vec backend and no external database service.
+HL-Mem is a local-first, evidence-driven long-term memory system for AI agents—not just another vector store. It turns immutable Events into structured Claims with evidence lineage, tracks change through a bitemporal model, and distills Episodes, Traces, and reusable Policies through a separate Experience channel; SQLite is all you need by default, with online models and sqlite-vec available when needed.
+
+**Every memory is traceable to an immutable source event.**
+
+## How data flows
+
+```mermaid
+flowchart LR
+    A["Event ingestion<br/>Immutable source"] --> B["LLM extraction<br/>7-field compact"]
+    B --> C["AdmissionPolicy<br/>Admission + post-processing"]
+    C --> D["Claim<br/>Evidence · bitemporal"]
+    D --> E["Hybrid recall<br/>FTS5 + Dense"]
+    E --> F["RRF → Reranker"]
+    F --> G["Context Packet / REST / MCP"]
+```
+
+## 30-second quickstart
+
+Python 3.11+ is required. Run the first two lines in the current terminal; once the server starts, run the third in another terminal:
+
+```bash
+python -m pip install hl-mem
+hlmem init --offline && hlmem server
+hlmem remember "Alice prefers dark mode" && hlmem recall "What does Alice prefer?"
+```
 
 ## Five-minute quickstart
 
@@ -61,6 +85,22 @@ uv run hlmem server
 
 Use `uv sync --dev` for development and `hlmem doctor` for read-only diagnostics. SQLite must include FTS5, which is normally present in official Python distributions.
 
+#### Contaminated host environments
+
+Hosts such as the Hermes gateway may inject `PYTHONPATH` or `PYTHONHOME` values that point to their own virtual environment. Calling this repository's `.venv` Python directly can then import packages from the host and load incompatible binary extensions built for a different Python version. When running the source checkout from such a host, always use the launcher:
+
+```bash
+bash scripts/hlmem-python.sh -m hl_mem.cli doctor
+```
+
+For Windows `cmd.exe`, use:
+
+```bat
+scripts\hlmem-python.cmd -m hl_mem.cli doctor
+```
+
+The launcher clears both contaminating variables, switches to the repository root, and pins `.venv/Scripts/python.exe`. `start_hl_mem.sh` and `start_production.bat` delegate to the same entry point.
+
 ### Enable online models
 
 From a source checkout, copy `config.example.toml` to a local `hl_mem.toml`, and copy `.env.example` as needed. Put each enabled component's independent key in `.env`: `LLM_API_KEY`, `EMBEDDING_API_KEY`, `RERANKER_API_KEY`, or `IMAGE_API_KEY`. Then enable the matching `extraction.mode`, `embedding.mode`, `reranker.mode`, or `image_describer.mode`. See the [configuration reference](docs/configuration.md) for the full schema.
@@ -100,18 +140,29 @@ variables. Common keys are listed below.
 | `embedding.text_type` | unset | Optional `document` or `query` in native mode; omitted by default |
 | `reranker.mode` | `off` | `off`, `fake`, `on`, or `real` |
 | `image_describer.mode` | `off` | `off` or `on` |
+| `llm.provider` | `dashscope` | `dashscope`, `zhipu`, or `openai_compatible` |
+| `llm.structured_mode` | `json_object` | `auto`, `json_object`, or `json_schema` |
+| `index.text_mode` | `natural` | `legacy`, `value_only`, `natural`, or `answerable`; natural uses only the subject and original-language value |
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan` (default) or `sqlite_vec`, which requires `hl-mem[sqlite-vec]` |
 | `recall.dedup_threshold` | `0.95` | Near-copy folding threshold inside the bounded candidate window; `0` disables folding |
 | `recall.dedup_candidate_limit` | `100` | Maximum recall candidates considered for near-copy folding |
 | `recall.query_expansion_mode` | `auto` | `off`, `auto`, or `always` |
 | `dedup.scan_limit` | `200` | Maximum pending `dedup_pairs` reviewed per maintenance pass |
 | `relation.discovery_mode` | `off` | `off`, `audit`, or `auto` |
+| `recall.tag_channel_enabled` | `false` | Whether to enable the independent Tag retrieval channel |
 
 Real components and external-call paths must be supplied with their own key; there is no automatic fake fallback.
 `HL_MEM_*` environment variables no longer participate in application `Settings` configuration. `Settings` and
 `config.example.toml` both use `5` / `0.15` for `recall.default_limit` / `recall.relevance_reranker_floor`; the example
 deployment only raises `recall.relevance_relative_drop` from the code default `0.15` to `0.30` and keeps
 `recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model with 5/6-second per-call/total timeouts.
+
+When migrating an existing database from a legacy index, preview it read-only before explicitly running the backfill. The backfill updates `index_text`, FTS, and dense embeddings together; deployments using a real embedder must provide the corresponding key:
+
+```bash
+hlmem backfill-index-text --mode natural --dry-run
+hlmem backfill-index-text --mode natural
+```
 
 ### Upgrading from v0.24.0
 
@@ -124,14 +175,12 @@ legacy raw-only and current raw-plus-stem indexes, so morphology compatibility a
 
 ## Capabilities
 
-- **Memory correctness:** idempotent event ingestion, atomic writes, exact deduplication, conservative near-copy control across ingestion reuse, maintenance equivalence edges, and recall folding, plus deterministic conflict rules, LLM-assisted gray-zone consolidation, and guarded terminal conflict convergence.
-- **Extraction governance:** bounded same-session microbatches, seven-field compact extraction with source-event mapping, a shared AdmissionPolicy, bilingual atomicity rules for compound facts, relationships, and enumerations, an audit warning at the 20-claim output boundary, full Claim-schema post-processing, deterministic scope/predicate projection, subject guards, and bounded structured-output repair.
-- **Time and evidence:** valid and recorded time, evidence lineage, entity normalization, explicit forgetting, and stale propagation.
-- **Hybrid recall:** Chinese-aware FTS5, two-stage exact vector scanning or optional sqlite-vec, RRF fusion, multi-factor ranking, optional reranking, relation/query expansion, and token-budgeted context packing.
-- **Lifecycle:** importance-aware TTL, confidence decay, archival, reclassification, feedback usefulness, audit logs, and online backups.
-- **Experience:** Episodes, Traces, rewards, Policies/Procedures, and derived Observations.
-- **Interfaces:** FastAPI REST and the Hermes Provider are stable paths; the seven-tool MCP stdio interface is beta.
-- **Evaluation:** extraction v2, isolated retrieval over PerLTQA 64 + MemDaily 48, a 40-case Chinese E2E suite, and full LongMemEval/MemDaily/PerLTQA runners.
+| Core memory | Service and governance |
+|---|---|
+| **Memory correctness**<br>Idempotent ingestion, atomic writes, and exact deduplication<br>Conservative near-copy control and guarded conflict convergence | **Experience channel**<br>Episodes, Traces, and rewards<br>Policies/Procedures and derived Observations |
+| **Time and evidence**<br>Valid time + recorded time in a bitemporal model<br>Evidence lineage, entity normalization, explicit forgetting, and stale propagation | **Interfaces**<br>Stable FastAPI REST and Hermes Provider<br>Beta seven-tool MCP stdio interface |
+| **Hybrid recall**<br>Chinese-aware FTS5 + Dense, fused by RRF with optional reranking<br>Relation/query expansion and token-budgeted context | **Evaluation**<br>Extraction v2, 112-case isolated retrieval, and 40-case Chinese E2E<br>Full LongMemEval, MemDaily, and PerLTQA runners |
+| **Lifecycle**<br>Importance-aware TTL, decay, archival, and reclassification<br>Feedback usefulness, audit logs, and online backups | **Governance tools**<br>7-field compact extraction + shared AdmissionPolicy<br>Bounded repair, near-copy review, and active-Claim audit/repair |
 
 ### Evaluation Results (published frozen protocols)
 
