@@ -5,8 +5,8 @@
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
-[capability matrix](capability-matrix.md); future work is kept in [proposals](proposals/), while completed plans are
-retained in the [historical archive](archive/).
+[capability matrix](capability-matrix.md). Earlier proposals and completed designs are retained in the
+[historical archive](archive/) and do not define the current roadmap.
 
 ## 1. System Boundary
 

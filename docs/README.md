@@ -12,26 +12,26 @@ Maintained documentation for HL-Mem. Historical task specifications, reviews, an
 - [Architecture Overview](architecture.md)
 
 Recommended reading order: start with the root Quickstart, then read Architecture and the Capability Matrix. Use the API
-reference while integrating; consult Design, Proposals, and Research when evaluating internals or future work.
+reference while integrating; consult the historical archive only when reconstructing earlier decisions.
 
 ## Reference
 
 - [API Endpoints](api.md)
 - [MCP stdio setup](mcp.md)
-- [v0.20.2 Release Notes](releases/v0.20.2-recall-quality-supervision.md)
-- [v0.20.1 Release Notes](releases/v0.20.1-watchdog-observability.md)
+- [v0.20.2 Release Notes](archive/releases/v0.20.2-recall-quality-supervision.md)
+- [v0.20.1 Release Notes](archive/releases/v0.20.1-watchdog-observability.md)
 - [Changelog](CHANGELOG.md)
 - [Capability Matrix](capability-matrix.md)
-- [Audit Log Design](audit-log-design.md)
-- [Memory Management Design](memory-management-design.md)
+- [Historical Audit Log Design](archive/design/audit-log-design.md)
+- [Historical Memory Management Design](archive/design/memory-management-design.md)
 
 ## Design
 
 - [Architecture Decision Records](adr/)
 - [Feature Design](design/)
-- [Feature Proposals](proposals/)
-- [Research Notes](research/)
-- [Competitor Comparison](research/competitor-comparison.md)
+- [Historical Feature Proposals](archive/proposals/)
+- [Historical Research Notes](archive/research/)
+- [Historical Competitor Comparison](archive/research/competitor-comparison.md)
 
 ## Project
 
