@@ -9,7 +9,7 @@
 - **阶段**：v0.26.0 已发布；部署由维护者单独执行
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：40 migrations（SQL 001–040），只允许向前迁移
+- **Schema**：41 migrations（SQL 001–041），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
 ## v0.26 已交付

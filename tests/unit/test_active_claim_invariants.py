@@ -10,6 +10,7 @@ from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
+from tests.unit._conflict_fixture import seed_pre_041_history
 
 NOW = "2026-08-14T08:00:00+00:00"
 
@@ -74,13 +75,14 @@ def _seed_group_member(
 
 
 def _seed_second_active(connection, first_id: str, value: str = "8081") -> str:
-    return _seed_group_member(
-        connection,
-        first_id,
-        claim_id="seeded-dirty-active",
-        value=value,
-        status="active",
-    )
+    with seed_pre_041_history(connection):
+        return _seed_group_member(
+            connection,
+            first_id,
+            claim_id="seeded-dirty-active",
+            value=value,
+            status="active",
+        )
 
 
 def _seed_resolved_conflict_case(connection, left_id: str, right_id: str) -> None:

@@ -15,6 +15,7 @@ from hl_mem.workers.repair_active_claims import (
     audit_active_claims,
     repair_active_claims,
 )
+from tests.unit._conflict_fixture import seed_pre_041_history
 
 NOW = "2026-08-14T08:00:00+00:00"
 
@@ -59,24 +60,25 @@ def _dirty_database(tmp_path):
     connection = Database(tmp_path / "dirty-claims.db").open()
     _claim(connection, "exact-a", value="same fact", fact_hash="same-hash")
     _claim(connection, "exact-b", value="same fact", fact_hash="same-hash")
-    for index, value in enumerate(("8080", "8081", "9090"), start=1):
-        _claim(
-            connection,
-            f"port-{index}",
-            value=value,
-            fact_hash=f"port-hash-{index}",
-            slot="config.port",
-            conflict_key="port-conflict",
-        )
-    for index, value in enumerate(("Orion-7B", "Orion-14B"), start=1):
-        _claim(
-            connection,
-            f"model-{index}",
-            value=value,
-            fact_hash=f"model-hash-{index}",
-            slot="choice.model",
-            conflict_key="model-conflict",
-        )
+    with seed_pre_041_history(connection):
+        for index, value in enumerate(("8080", "8081", "9090"), start=1):
+            _claim(
+                connection,
+                f"port-{index}",
+                value=value,
+                fact_hash=f"port-hash-{index}",
+                slot="config.port",
+                conflict_key="port-conflict",
+            )
+        for index, value in enumerate(("Orion-7B", "Orion-14B"), start=1):
+            _claim(
+                connection,
+                f"model-{index}",
+                value=value,
+                fact_hash=f"model-hash-{index}",
+                slot="choice.model",
+                conflict_key="model-conflict",
+            )
     connection.execute(
         "INSERT INTO conflict_cases(id,pair_key,left_claim_id,right_claim_id,status,decision,rationale,"
         "confidence,created_at,resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
