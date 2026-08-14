@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 更新中文评测发布基线至 v0.26.0；仅调整文档口径，无产品行为变化。
 - 清理已被当前三层评测替代的旧 extraction/embedding/recall 实验入口和内部 gold；真实数据继续保存在仓库外。
 - 历史设计统一移入 `docs/archive/`，删除已完成的任务 plan/spec，并精简当前 README、评测、架构和交接文档。
 - 文档一致性检查新增 tracked Markdown 相对链接校验，防止移动或删除文档后留下死链。

@@ -8,8 +8,8 @@
 | LongMemEval HL-Mem | `longmemeval_<run>_shard<N>.json` | v0.25.2：43/50（86.0%） |
 | LongMemEval full-context | `longmemeval_fullcontext_shard<N>.json` | 46/50（92.0%） |
 | LongMemEval native RAG | `longmemeval_nativerag_shard<N>.json` | 45/50（90.0%） |
-| MemDaily | `memdaily_<run>.json` + `.md` | 180 case：97.2% accuracy |
-| PerLTQA | `perltqa_<run>.json` + `.md` | 378 question：R@5 84.9%，MRR 69.6% |
+| MemDaily | `memdaily_v0260_full.json` | v0.26.0（2026-08-15）：179/180 条计入 QA，accuracy 97.2%，F1 0.9854，R@5 97.5% |
+| PerLTQA | `perltqa_v0260_full.json` | v0.26.0（2026-08-15）：378 question，R@5 96.8%，MRR 82.8% |
 | Embedding / extraction / misc | `<experiment>_<run>.json` | 只作为实验产物，不自动构成发布基线 |
 
 运行日志放 `_logs/`，smoke、canary、局部重放和辅助产物放 `_archive/`。正式结果必须能通过 manifest 或报告
