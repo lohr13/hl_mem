@@ -6,6 +6,8 @@
 
 `fixtures/extraction_v2_synthetic.json` 是可公开提交的全合成 hard-case 契约，冻结 atomic fact、来源 Event、角色—动作—对象、精确专名集合、speaker、canonical subject、禁止传播和 modality 标注，并包含平衡 dedup pair。预测 claim 必须由 runner 显式补充 `source_event_indices`；专名覆盖仅接受 Unicode NFC 等价。dedup 判分单独报告 false reuse，困难负例包含共享实体下的值、方向、关系和 modality 差异。加载器与确定性指标位于 `hl_mem.evaluation.extraction_v2`：
 
+`fixtures/chinese_e2e_rubric_v2.json` 另行冻结 E2E scorer 的公开合成正负例，覆盖枚举答案不得缺项、简短语义答案只在必要概念完整时通过，以及推荐关系不得提升为已执行或已拥有。
+
 ```powershell
 bash scripts/hlmem-python.sh -m pytest tests/eval/test_extraction_v2.py -q
 ```
@@ -121,6 +123,19 @@ QA accuracy/F1、缓存状态和本次 token 用量。PerLTQA QA accuracy 优先
 才会回退到人工审查的确定性 rubric（rubric 间 OR、必要概念间 AND、概念表达间 OR）。报告
 保存逐题 `verdict_basis`、`scorer_version` 和 rubric，overall QA accuracy 门禁为 0.90；字符 F1
 仍单独报告。首次零错误完整基线为：
+
+#### E2E 分数口径
+
+- v0.25.3 发布记录中的 `90%` 是对当时 live anchor scorer `77.5%` 结果做
+  `deterministic-rubric-v1` 离线重评分后的历史数字，不是一次 fresh live run 的可重复下界。
+- v0.26 的 `deterministic-rubric-v2` 保留 official anchor 全量命中规则，只为人工审核过的开放描述题
+  增加概念组 AND、同义表达 OR 的 `accepted_rubrics`。对第九轮与第十轮既有 40-case 输出离线重放，
+  overall 分别为 `87.5%` 与 `92.5%`，PerLTQA 分别为 `82.14%` 与 `89.29%`，MemDaily 均为
+  `100%`；两轮中原已正确项均未翻错，合成负例也未误放。
+- 代码回归判定采用同一提取缓存、同一评分配置的版本 A/B 等价比较。不同提取缓存或 fresh QA
+  采样之间的单轮绝对分数只用于质量观测，不能与上述 `90%` 历史离线数字直接判定代码回归。
+- 第九轮和第十轮报告仍包含后来确认角色错误的“共同组织者”旧问题，因此以上数字作为历史离线
+  基线原样保留；v0.26 固定样本已将其替换为同一来源中 gold 与角色一致的问题。
 
 PerLTQA 查询统一固定在 `2026-08-14T00:00:00+00:00` 评测，避免缓存中的 TTL
 随执行日期变化；该时间只影响查询可见性，不改变提取缓存身份。

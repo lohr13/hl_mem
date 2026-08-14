@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "scorer_version": "deterministic-rubric-v2",
+  "data_classification": "synthetic_public",
+  "cases": [
+    {
+      "case_id": "enumeration-incomplete",
+      "category": "enumeration_completeness",
+      "predicted_answer": "原油和黄金",
+      "official_anchors": ["原油", "黄金", "铜"],
+      "accepted_rubrics": [],
+      "expected_correct": false
+    },
+    {
+      "case_id": "concise-semantic-complete",
+      "category": "concise_semantic_answer",
+      "predicted_answer": "给人以触动。",
+      "official_anchors": ["新生婴儿", "真实状态", "触动"],
+      "accepted_rubrics": [
+        {
+          "required_concepts": [["触动", "感触", "打动"]]
+        }
+      ],
+      "expected_correct": true
+    },
+    {
+      "case_id": "concise-semantic-partial",
+      "category": "concise_semantic_answer",
+      "predicted_answer": "只和电影有关。",
+      "official_anchors": ["电影相关问题"],
+      "accepted_rubrics": [
+        {
+          "required_concepts": [
+            ["电影制作", "电影拍摄", "电影技巧"],
+            ["艺术表达", "艺术表现"]
+          ]
+        }
+      ],
+      "expected_correct": false
+    },
+    {
+      "case_id": "recommendation-faithful",
+      "category": "recommendation_not_execution",
+      "predicted_answer": "程岚建议周野投资星港债券。",
+      "official_anchors": ["程岚", "建议", "周野", "星港债券"],
+      "accepted_rubrics": [],
+      "expected_correct": true
+    },
+    {
+      "case_id": "recommendation-promoted-to-execution",
+      "category": "recommendation_not_execution",
+      "predicted_answer": "周野已经投资并持有星港债券。",
+      "official_anchors": ["程岚", "建议", "周野", "星港债券"],
+      "accepted_rubrics": [],
+      "expected_correct": false
+    }
+  ]
+}

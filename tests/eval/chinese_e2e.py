@@ -27,7 +27,7 @@ from hl_mem.storage.database import Database
 AnswerRubric = tuple[tuple[str, ...], ...]
 AcceptedRubrics = tuple[AnswerRubric, ...]
 
-SCORER_VERSION = "deterministic-rubric-v1"
+SCORER_VERSION = "deterministic-rubric-v2"
 OVERALL_QA_ACCURACY_MINIMUM = 0.90
 
 # ── Monkey-patch QA to enable thinking for multi-hop reasoning ──────────────

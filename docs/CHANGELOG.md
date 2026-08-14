@@ -7,14 +7,15 @@
 - 冻结原子事实 gold 契约，显式标注来源 Event、角色—动作—对象锚点、专名集合、speaker、canonical subject、禁止传播项和 modality 负例；新增关系方向、逐 claim entity 字段覆盖、链条自包含与多次采样 majority 指标。
 - 新增 24 条公开合成 hard case（entities/prompt 各 12 条）及 40 组平衡 dedup pair；困难负例覆盖共享实体下的值、方向、关系和 modality 差异，并单独报告不安全的 false reuse。
 - 预测必须显式携带来源 Event 索引；关系方向 gold 必须按序覆盖全部角色、动作和对象，专名字段仅允许 Unicode NFC 等价，避免宽松归一化掩盖实体改写。
-- 既有 `deterministic-rubric-v1` 与 answer-anchor 两套 E2E 口径保持不变。
+- E2E scorer 升级为 `deterministic-rubric-v2`：official answer-anchor 仍要求全量命中，仅对人工审核的开放描述题增加概念组 AND、同义表达 OR 的 `accepted_rubrics`；新增枚举完整性、简短语义答案与“推荐≠执行”合成负例。
+- 修正一个把受邀参与者误标为共同组织者的 PerLTQA gold，替换为同一来源中角色一致的问题；历史 `90%` 明确记录为 v0.25.3 离线重评分数字，代码回归改以同一提取缓存的版本 A/B 等价比较。
 - entities hybrid A/B 完成 32 case × 2 arm × 3 次真实提取及 40 组生产 Deduplicator 消费者验证；虽 entity F1 从 0.51 提升到 0.93，但 precision、recall、exact-set、token、无 control 退化与 false-merge 纠正共 6 项未达冻结门禁，v0.26 二分结论为不引入 entities hybrid。
 - 专有名词保真 prompt A/B 完成 24 case × 2 arm × 3 次真实提取；hard slice 未提升、完整通过率与 token 成本等 5 项未达冻结门禁，v0.26 二分结论为不修改 prompt。多人引用与昵称并存样例的 canonical subject 正确率在 A/B 均偏低（66.7%/69.2%），记录为评测 v2 的已知 gold—模型规范化盲区，不解释为本次 prompt 的收益或退化。
 
 ### Abstention 语义统一
 
 - `no_evidence` 统一表示没有候选的 hard abstention，benchmark reader 直接返回信息不足且不调用 QA 模型；`low_confidence` 统一表示仍有候选的 soft abstention 元数据，在 observe 语义下继续调用 QA 并随答案保留 soft 标签。REST/Context Packet 使用同一冻结枚举。
-- 两个召回评测入口都把 hard 与 soft 的并集计为总体 no-answer 预测，并分别报告 hard/soft precision、recall 与 F1；固定快照 recall 报告 schema 升为 v3，避免旧口径 baseline 被静默比较。既有 `deterministic-rubric-v1` 与 answer-anchor 评分不变。
+- 两个召回评测入口都把 hard 与 soft 的并集计为总体 no-answer 预测，并分别报告 hard/soft precision、recall 与 F1；固定快照 recall 报告 schema 升为 v3，避免旧口径 baseline 被静默比较。
 
 ### Active claim 不变量收敛
 

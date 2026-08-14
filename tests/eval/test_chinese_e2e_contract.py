@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -28,6 +29,7 @@ from tests.eval.chinese_e2e import (
 )
 
 SAMPLE_MANIFEST_PATH = Path(__file__).parent / "fixtures" / "chinese_e2e_sample.json"
+RUBRIC_V2_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "chinese_e2e_rubric_v2.json"
 
 
 def test_manifest_keeps_the_paid_sample_fixed_and_stratified() -> None:
@@ -42,6 +44,8 @@ def test_manifest_keeps_the_paid_sample_fixed_and_stratified() -> None:
         "memdaily": 12,
     }
     assert len(set(manifest.expected_case_ids["perltqa"])) == 28
+    assert "perltqa:0709ec234e33:dialogues:77cdfec7b17e" in manifest.expected_case_ids["perltqa"]
+    assert "perltqa:0709ec234e33:dialogues:5b862015f4c8" not in manifest.expected_case_ids["perltqa"]
     assert manifest.slice_counts == {
         "memdaily_aggregative": 2,
         "memdaily_comparative": 2,
@@ -88,6 +92,15 @@ def test_committed_sample_resolves_to_exact_questions_when_private_data_is_insta
         "post_processing",
         "noisy",
     }
+    corrected = next(
+        question
+        for bundle in sampled.perltqa_bundles
+        for question in bundle.questions
+        if question.case_id == "perltqa:0709ec234e33:dialogues:77cdfec7b17e"
+    )
+    assert corrected.question == "陈刚对什么的拍摄有见解？"
+    assert corrected.answer == "陈刚对电影的拍摄有很多见解。"
+    assert corrected.answer_anchors == ("电影",)
 
 
 def test_aggregate_scores_questions_but_counts_shared_extraction_units_once() -> None:
@@ -435,7 +448,7 @@ def test_cases_without_reviewed_rubrics_keep_legacy_anchor_scoring() -> None:
     }
 
 
-def test_manifest_rubrics_accept_the_five_reviewed_false_negatives() -> None:
+def test_manifest_rubrics_accept_the_reviewed_semantic_answers() -> None:
     manifest = load_sample_manifest(SAMPLE_MANIFEST_PATH)
     reviewed_cases = {
         "7b6b2c31b857d5dd39443ebb8c71f3585eedae14881382e51c0bd9de839fce23": (
@@ -447,7 +460,7 @@ def test_manifest_rubrics_accept_the_five_reviewed_false_negatives() -> None:
             ("熟人",),
         ),
         "7336d023b16ece6a96cdf8742a314e9aea99b582bdcc7334868172ddd93b8a41": (
-            "因迷恋电影情节。",
+            "因为对电影故事情节着迷。",
             ("故事情节", "着迷", "学了这个专业"),
         ),
         "836f6182a0a955c32b52e70749b63e25c2c81d418821e6537435be6d9670a601": (
@@ -457,6 +470,22 @@ def test_manifest_rubrics_accept_the_five_reviewed_false_negatives() -> None:
         "375593a841228979606b44031bbe8300f52d8d1ef504b4ad5f1d0d1f0a29ecd5": (
             "癌症细胞存在染色体重排或结构异常，可能影响基因的表达和调控。",
             ("染色体三维结构", "癌症发展", "关系", "研究人员", "异常", "影响"),
+        ),
+        "0d532ef7647f7a2002432d3c394bfdd8648b200d884244d0487bc3ab0a5344d0": (
+            "给人以触动。",
+            ("新生婴儿", "真实状态", "触动"),
+        ),
+        "362879793b73394167576d78afadfcc54cd37eaa8fe1f33fec3b606a738aba84": (
+            "张强是小飞（熊飞）的同学，中国建筑师。",
+            ("小飞", "31岁", "中国", "中等身材", "短发", "建筑师", "篮球", "摄影"),
+        ),
+        "24f99bbbc8ecba95fcab2d1ea95dd3843f13202d41adeadae416d36d11bddca1": (
+            "探索染色体三维结构与癌症发展之间的关系。",
+            ("高分辨率染色体构象捕获技术", "肿瘤细胞样本", "荧光原位杂交技术", "染色体", "位置", "结构"),
+        ),
+        "4a3607094e6c3b592b9f8e07dae91cef7b4088928d116d56947c7e128ee31103": (
+            "电影制作技巧和艺术表达能力。",
+            ("电影相关问题",),
         ),
     }
 
@@ -472,6 +501,30 @@ def test_manifest_rubrics_accept_the_five_reviewed_false_negatives() -> None:
             "verdict_basis": "reviewed_rubric",
             "scorer_version": chinese_e2e.SCORER_VERSION,
         }
+
+
+def test_rubric_v2_fixture_rejects_incomplete_and_modality_promoted_answers() -> None:
+    fixture = json.loads(RUBRIC_V2_FIXTURE_PATH.read_text(encoding="utf-8"))
+
+    assert fixture["schema_version"] == 2
+    assert fixture["scorer_version"] == chinese_e2e.SCORER_VERSION
+    assert fixture["data_classification"] == "synthetic_public"
+    assert {case["category"] for case in fixture["cases"]} == {
+        "enumeration_completeness",
+        "concise_semantic_answer",
+        "recommendation_not_execution",
+    }
+    for case in fixture["cases"]:
+        accepted_rubrics = tuple(
+            tuple(tuple(str(alias) for alias in concept) for concept in rubric["required_concepts"])
+            for rubric in case["accepted_rubrics"]
+        )
+        result = chinese_e2e.score_answer(
+            case["predicted_answer"],
+            tuple(case["official_anchors"]),
+            accepted_rubrics,
+        )
+        assert bool(result["answer_correct"]) is case["expected_correct"], case["case_id"]
 
 
 def test_bundle_failure_recovery_does_not_duplicate_completed_questions() -> None:
