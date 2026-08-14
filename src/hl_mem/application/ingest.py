@@ -66,6 +66,16 @@ class _ClaimDraft:
 
 
 @dataclass(frozen=True)
+class _ConflictGroupResolution:
+    """全组确定性分类结果；仅 entails/state_change 可自动收敛。"""
+
+    outcome: str
+    representative: dict[str, Any]
+    member_outcomes: tuple[tuple[str, str], ...]
+    active_count: int
+
+
+@dataclass(frozen=True)
 class StoreClaimResult:
     """记录 claim 写入结果及写入或拒绝原因。"""
 
@@ -390,12 +400,13 @@ class IngestService:
             for args, kwargs in audit_events:
                 audit.emit(*args, **kwargs)
 
-        superseded_old_id: str | None = None
+        superseded_member_ids: list[str] = []
         semantic_candidate_id: str | None = None
         semantic_candidate_similarity: float | None = None
         resolution: str | None = None
         current: dict[str, Any] | None = None
-        dirty_active_group: list[dict[str, Any]] = []
+        review_group: list[dict[str, Any]] = []
+        review_rationale: str | None = None
         result_id = claim["id"]
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -417,19 +428,25 @@ class IngestService:
                 )
             )
             if exact:
-                _link_source_events(evidence, exact["id"], evidence_events, commit=False)
                 result_id = exact["id"]
-                exact_group = [
-                    item
-                    for item in claims.find_by_conflict_key(exact.get("conflict_key"))
-                    if item.get("status") == "active"
-                ]
-                if len(exact_group) > 1:
-                    _quarantine_active_group(
+                exact_group = claims.find_by_conflict_key(exact.get("conflict_key"))
+                group_resolution = (
+                    _resolve_conflict_group(exact_group, {**claim, "qualifiers": qualifiers}, preferred_id=exact["id"])
+                    if exact_group
+                    else None
+                )
+                if group_resolution is not None and group_resolution.outcome != "entails":
+                    _link_source_events(evidence, exact["id"], evidence_events, commit=False)
+                    _quarantine_conflict_group(
                         claims,
                         exact_group,
                         now,
-                        rationale="ingest_dirty_active_group",
+                        decision="uncertain",
+                        rationale=(
+                            "ingest_dirty_active_group"
+                            if group_resolution.active_count > 1
+                            else "ingest_group_resolution"
+                        ),
                     )
                     audit_events.append(
                         (
@@ -439,7 +456,8 @@ class IngestService:
                                 "claim_id": exact["id"],
                                 "detail": {
                                     "conflict_key": exact.get("conflict_key"),
-                                    "dirty_active_claim_ids": [item["id"] for item in exact_group],
+                                    "member_outcomes": dict(group_resolution.member_outcomes),
+                                    "group_claim_ids": [item["id"] for item in exact_group],
                                 },
                             },
                         )
@@ -447,51 +465,58 @@ class IngestService:
                     connection.commit()
                     emit_audit_events()
                     return StoreClaimResult(result_id, "stored", "exact_duplicate_dirty_group")
+                if group_resolution is not None:
+                    result_id = _converge_entailed_group(claims, group_resolution, now)
+                else:
+                    result_id = exact["id"]
+                _link_source_events(evidence, result_id, evidence_events, commit=False)
                 connection.commit()
                 emit_audit_events()
                 return StoreClaimResult(result_id, "stored", "exact_duplicate")
 
             if existing:
                 started = time.perf_counter_ns()
-                active_existing = [item for item in existing if item.get("status") == "active"]
-                if len(active_existing) > 1:
-                    dirty_active_group = active_existing
-                    resolution = "uncertain"
-                    claim["status"] = "disputed"
-                else:
-                    current = existing[0]
-                    resolution = ConflictResolver().resolve(current, {**claim, "qualifiers": qualifiers})
+                group_resolution = _resolve_conflict_group(existing, {**claim, "qualifiers": qualifiers})
+                current = group_resolution.representative
+                resolution = group_resolution.outcome
                 audit_events.append(
                     (
                         ("conflict", "resolved", resolution),
                         {
                             "event_id": event["id"],
                             "claim_id": claim["id"],
-                            "related_claim_id": (current["id"] if current is not None else dirty_active_group[0]["id"]),
+                            "related_claim_id": current["id"],
                             "duration_us": (time.perf_counter_ns() - started) // 1000,
                             "detail": {
                                 "conflict_key": claim["conflict_key"],
                                 "candidate_count": len(existing),
-                                "old": _summary(current) if current is not None else None,
-                                "dirty_active_claim_ids": [item["id"] for item in dirty_active_group],
+                                "old": _summary(current),
+                                "member_outcomes": dict(group_resolution.member_outcomes),
+                                "active_count": group_resolution.active_count,
                                 "new": _summary(claim),
                             },
                         },
                     )
                 )
-                if current is not None and resolution == "entails":
-                    _link_source_events(evidence, current["id"], evidence_events, commit=False)
-                    result_id = current["id"]
+                if resolution == "entails":
+                    result_id = _converge_entailed_group(claims, group_resolution, now)
+                    _link_source_events(evidence, result_id, evidence_events, commit=False)
                     connection.commit()
                     emit_audit_events()
                     return StoreClaimResult(result_id, "stored", "entailed")
-                if current is not None and resolution == "state_change":
-                    claim["supersedes_id"] = current["id"]
-                    superseded_old_id = current["id"]
-                elif current is not None and resolution == "contradicts":
-                    claim["status"] = "disputed"
-                elif current is not None and resolution == "uncertain":
+                if resolution == "state_change":
+                    # 先以 candidate 写入，旧组全部终结后再激活，兼容触发器级唯一 active 保护。
                     claim["status"] = "candidate"
+                    claim["supersedes_id"] = current["id"]
+                    superseded_member_ids = [item["id"] for item in existing]
+                else:
+                    claim["status"] = "disputed"
+                    review_group = existing
+                    review_rationale = (
+                        "ingest_dirty_active_group"
+                        if group_resolution.active_count > 1
+                        else "deterministic_ingest_resolution"
+                    )
             else:
                 audit_events.append(
                     (
@@ -559,39 +584,30 @@ class IngestService:
                     now,
                 )
 
-            if dirty_active_group:
-                _quarantine_active_group(
+            if review_group:
+                review_decision = resolution if resolution in {"contradicts", "uncertain"} else "uncertain"
+                _quarantine_conflict_group(
                     claims,
-                    [*dirty_active_group, claim],
+                    [*review_group, claim],
                     now,
-                    rationale="ingest_dirty_active_group",
+                    decision=review_decision,
+                    rationale=review_rationale or "ingest_group_resolution",
                 )
-            if current is not None and resolution == "contradicts":
-                claims.update_status(current["id"], "disputed", commit=False)
-            if current is not None and resolution in {"contradicts", "uncertain"}:
-                claims.insert_conflict_case(
-                    {
-                        "id": new_id(),
-                        "pair_key": compute_claim_pair_key(current["id"], claim["id"]),
-                        "left_claim_id": current["id"],
-                        "right_claim_id": claim["id"],
-                        "status": "manual_required",
-                        "decision": resolution,
-                        "confidence": None,
-                        "rationale": "deterministic_ingest_resolution",
-                        "created_at": now,
-                    },
-                    commit=False,
-                )
-            if superseded_old_id:
-                claims.supersede_with_inline(
-                    superseded_old_id,
+            for superseded_member_id in superseded_member_ids:
+                superseded = claims.supersede_with_inline(
+                    superseded_member_id,
                     claim["id"],
                     extracted.value,
                     claim["valid_from"],
                     now,
                     commit=False,
                 )
+                if not superseded.applied:
+                    raise ConflictError(f"conflict group member changed during ingest: {superseded_member_id}")
+            if superseded_member_ids:
+                assert_transition("candidate", "active")
+                if not claims.update_status(claim["id"], "active", commit=False):
+                    raise ConflictError(f"new state-change claim disappeared during ingest: {claim['id']}")
             _link_source_events(evidence, claim["id"], evidence_events, commit=False)
             connection.commit()
         except Exception:
@@ -783,17 +799,76 @@ def _find_resolution(
     return None, existing
 
 
-def _quarantine_active_group(
+def _resolve_conflict_group(
+    members: Sequence[dict[str, Any]],
+    new_claim: dict[str, Any],
+    *,
+    preferred_id: str | None = None,
+) -> _ConflictGroupResolution:
+    """对全部非终态成员求确定性结论，禁止用排序首项代表整组。"""
+    if not members:
+        raise ValueError("conflict group must contain at least one member")
+    resolver = ConflictResolver()
+    member_outcomes = tuple((member["id"], resolver.resolve(member, new_claim)) for member in members)
+    active_members = [member for member in members if member.get("status") == "active"]
+    unique_outcomes = {outcome for _, outcome in member_outcomes}
+    outcome = next(iter(unique_outcomes)) if len(unique_outcomes) == 1 else "uncertain"
+    if len(active_members) > 1:
+        outcome = "uncertain"
+
+    representative = active_members[0] if active_members else members[0]
+    if not active_members and preferred_id is not None:
+        representative = next((member for member in members if member["id"] == preferred_id), representative)
+    return _ConflictGroupResolution(
+        outcome=outcome,
+        representative=representative,
+        member_outcomes=member_outcomes,
+        active_count=len(active_members),
+    )
+
+
+def _converge_entailed_group(
+    claims: ClaimRepository,
+    resolution: _ConflictGroupResolution,
+    now: str,
+) -> str:
+    """把全 entails 组归并为一个 active 代表，并终结其他非终态成员。"""
+    if resolution.outcome != "entails":
+        raise ValueError("only an entailed conflict group can be converged")
+    winner = resolution.representative
+    members = claims.find_by_conflict_key(winner.get("conflict_key"))
+    for member in members:
+        if member["id"] == winner["id"]:
+            continue
+        superseded = claims.supersede_with_inline(
+            member["id"],
+            winner["id"],
+            winner.get("value"),
+            now,
+            now,
+            commit=False,
+        )
+        if not superseded.applied:
+            raise ConflictError(f"entailed conflict group member changed during ingest: {member['id']}")
+    if winner.get("status") != "active":
+        assert_transition(str(winner.get("status")), "active")
+        if not claims.update_status(winner["id"], "active", commit=False):
+            raise ConflictError(f"entailed conflict group winner disappeared during ingest: {winner['id']}")
+    return str(winner["id"])
+
+
+def _quarantine_conflict_group(
     claims: ClaimRepository,
     members: Sequence[dict[str, Any]],
     now: str,
     *,
+    decision: str,
     rationale: str,
 ) -> None:
-    """将不唯一的活跃冲突组整体隔离，并确保所有声明对进入人工复核。"""
+    """将冲突组全部非终态成员隔离，并确保所有声明对进入人工复核。"""
     for member in members:
-        if member.get("status") == "active":
-            assert_transition("active", "disputed")
+        if member.get("status") in {"active", "candidate"}:
+            assert_transition(str(member["status"]), "disputed")
             claims.update_status(member["id"], "disputed", commit=False)
     for left, right in combinations(members, 2):
         claims.ensure_manual_conflict_case(
@@ -803,7 +878,7 @@ def _quarantine_active_group(
                 "left_claim_id": left["id"],
                 "right_claim_id": right["id"],
                 "status": "manual_required",
-                "decision": "uncertain",
+                "decision": decision,
                 "confidence": None,
                 "rationale": rationale,
                 "created_at": now,
