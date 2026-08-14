@@ -131,15 +131,9 @@ legacy raw-only and current raw-plus-stem indexes, so morphology compatibility a
 - **Lifecycle:** importance-aware TTL, confidence decay, archival, reclassification, feedback usefulness, audit logs, and online backups.
 - **Experience:** Episodes, Traces, rewards, Policies/Procedures, and derived Observations.
 - **Interfaces:** FastAPI REST and the Hermes Provider are stable paths; the seven-tool MCP stdio interface is beta.
-- **Evaluation:** offline extraction/recall/lifecycle metrics, LongMemEval-S extract-once/config comparison, a 50-case Chinese memory set, recall diagnostics, and controlled index-text A/B tests.
+- **Evaluation:** extraction v2, isolated retrieval over PerLTQA 64 + MemDaily 48, a 40-case Chinese E2E suite, and full LongMemEval/MemDaily/PerLTQA runners.
 
-The frozen official LongMemEval holdout50 baseline is **40/50 (80%)**, using `deepseek-v4-flash-0731`, thinking for every
-reader call, Top-10 evidence, and the project judge. A temporal-gate diagnostic that excludes two questions with no valid
-answer at the question time is 40/48 (83.3%); it does not replace the official score. Content-review isolation skipped two
-input Events. The benchmark reader and production recall/context packing are separate contracts, so this score is not a
-production end-to-end accuracy claim.
-
-### Evaluation Results
+### Evaluation Results (published frozen protocols)
 
 | Benchmark | Setup | Result |
 |---|---|---:|
@@ -150,8 +144,9 @@ production end-to-end accuracy claim.
 | PerLTQA | 378 questions, 10 characters | **R@5 84.9%, MRR 69.6%** |
 
 The LongMemEval comparison uses the `deepseek-v4-flash-0731` reader throughout, with reader thinking enabled and judge
-thinking disabled. HL-Mem approaches the full-context upper bound while retaining governable structured Claims and evidence
-lineage. See the [results index](evaluation/results/README.md) for local artifact naming and layout.
+thinking disabled; the benchmark reader and production recall/context packing are separate contracts. See the
+[evaluation guide](tests/eval/README.md) for current isolated-retrieval and E2E regression semantics, and the
+[results index](evaluation/results/README.md) for local artifact naming.
 
 See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, and evidence, and the [architecture guide](docs/architecture.md) for data flows.
 
@@ -178,19 +173,8 @@ The current baseline is v0.26.0 with 40 immutable, forward-only migrations.
 
 ## Contributing
 
-Search existing issues before reporting a bug or proposing a feature. Include reproduction steps, expected and actual behavior, environment details, and relevant logs. Keep each pull request focused on one change, explain its motivation and validation, and update tests and documentation when behavior or public contracts change.
-
-```bash
-git clone git@github.com:REDACTED_USER/hl_mem.git
-cd hl_mem
-uv sync --dev
-uv run pytest tests/unit/ -q --tb=short
-uv run black --check src tests
-uv run isort --check-only src tests
-uv run ruff check src tests
-```
-
-Use English commit messages in the form `type(scope): description`, where `type` is `feat`, `fix`, `refactor`, `test`, `docs`, or `chore`.
+Issues and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the seven CI
+preflight checks, data-handling rules, and commit conventions.
 
 ## License
 

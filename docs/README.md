@@ -1,49 +1,42 @@
 # HL-Mem Documentation
 
-Maintained documentation for HL-Mem. Historical task specifications, reviews, and refactor records live under
-[`archive/`](archive/) and are not part of the current documentation path.
+这里仅导航 HL-Mem 的当前维护文档。已经实施、被替代或只用于复盘的设计位于
+[`archive/`](archive/)，不定义当前 API、默认值、部署步骤或路线图。
 
-## Getting Started
+## 入门
 
-- [Quickstart](../README.md#quickstart)
+- [中文快速开始](../README.md#中文)
 - [Configuration reference](configuration.md)
 - [TOML configuration template](../config.example.toml)
 - [Secret template](../.env.example)
-- [Architecture Overview](architecture.md)
+- [Architecture](architecture.md)
 
-Recommended reading order: start with the root Quickstart, then read Architecture and the Capability Matrix. Use the API
-reference while integrating; consult the historical archive only when reconstructing earlier decisions.
+建议先阅读根 README，再按需查看架构、能力矩阵和接口文档。
 
-## Reference
+## 当前参考
 
-- [API Endpoints](api.md)
-- [MCP stdio setup](mcp.md)
-- [v0.20.2 Release Notes](archive/releases/v0.20.2-recall-quality-supervision.md)
-- [v0.20.1 Release Notes](archive/releases/v0.20.1-watchdog-observability.md)
+- [REST API](api.md)
+- [MCP stdio](mcp.md)
+- [Configuration](configuration.md)
+- [Compatibility policy](compatibility.md)
+- [Capability matrix](capability-matrix.md)
 - [Changelog](CHANGELOG.md)
-- [Capability Matrix](capability-matrix.md)
-- [Historical Audit Log Design](archive/design/audit-log-design.md)
-- [Historical Memory Management Design](archive/design/memory-management-design.md)
+- [Handoff](HANDOFF.md)
 
-## Design
+`api-schema.json` 和 `mcp-tools.json` 是由代码生成并受 CI 校验的契约快照，不应手工改写。
+
+## 设计与历史
 
 - [Architecture Decision Records](adr/)
-- [Feature Design](design/)
-- [Historical Feature Proposals](archive/proposals/)
-- [Historical Research Notes](archive/research/)
-- [Historical Competitor Comparison](archive/research/competitor-comparison.md)
+- [Current feature design](design/)
+- [Historical archive](archive/)
 
-## Project
+归档索引会说明文档的历史状态和当前规范来源。归档中的模型、路径、配置和评测数字可能已经过期。
 
-- [Handoff Status](HANDOFF.md)
-- [Historical Archive](archive/) (including completed plans and one-off reports)
+## 维护规则
 
-日期化的审计与 benchmark 结果可暂留在文档根目录作为当前运行证据；已完成的执行计划、研究草稿和 Codex
-任务说明应移入 `archive/tasks/` 或 `archive/research/`，不作为当前行为的规范来源。
-
-## Maintenance Rules
-
-- Update `CHANGELOG.md` for release-level changes and `HANDOFF.md` for current operational status.
-- Add a new ADR instead of rewriting an accepted historical decision.
-- Keep endpoint and data-model changes synchronized with `api.md` and `architecture.md`.
-- Treat the capability matrix as the source of truth for maturity and default-mode claims.
+- 发布级变化追加到 `CHANGELOG.md`；`HANDOFF.md` 只保存当前状态、下一步和已知限制。
+- Accepted ADR 不改写决策；新方向使用新 ADR。
+- API、数据模型和默认行为变化必须同步活文档及生成快照。
+- 能力成熟度和默认模式以 capability matrix 为准。
+- 真实语料、数据库、模型响应和运行报告不进入仓库。

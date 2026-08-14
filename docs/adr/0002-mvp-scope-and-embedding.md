@@ -4,6 +4,9 @@
 - 日期：2026-07-20
 - 决策者：项目发起人、Hermes Agent 与 Codex
 
+> 这是首版范围和技术选型的历史决策。后续版本已实现其中列为非目标的 Experience、MCP 等能力；当前行为以
+> [架构文档](../architecture.md)和[能力矩阵](../capability-matrix.md)为准。
+
 ## 背景
 
 ADR-0001 定义了统一事件溯源双通道记忆服务的完整目标设计，但全量实现同时包含事实、Observation、Mental Model、Experience、MCP、多租户和生产化能力，首版工程量过大。项目需要在不破坏长期演进路径的前提下，明确可在 5 周内交付和验证的边界，并确定面向中文检索的默认 Embedding 方案。
@@ -46,4 +49,4 @@ ADR-0001 定义了统一事件溯源双通道记忆服务的完整目标设计�
 
 ## 参考
 
-完整共识、逐条表态、排期和验收标准见[归档共识](../archive/reviews/consensus.md)。
+后续实现和范围变化见[变更日志](../CHANGELOG.md)；其他历史设计见[归档索引](../archive/README.md)。

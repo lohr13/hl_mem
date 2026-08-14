@@ -205,10 +205,10 @@ subject. Each decision emits an audit reason code. Claim FTS and dense embedding
 changing `index.text_mode` therefore supports controlled representation A/B without changing the rest of recall.
 
 The localized Chinese and English prompts share atomicity rules for compound facts, explicit actions/relationships,
-named-entity fidelity, one-off events, and enumerations. The current identity is `PROMPT_HASH=e2d8f433b71c` and
-`LLM_EXTRACTOR_VERSION=llm-v2+e2d8f433b71c`. A raw structured response containing exactly the 20 allowed Claims emits a
-`claim_limit_reached` audit warning because the model may have silently omitted additional facts; the schema limit itself
-remains unchanged.
+named-entity fidelity, one-off events, and enumerations. Prompt and extractor identities are recorded by the code and
+evaluation manifests instead of being duplicated in this document. A raw structured response containing exactly the 20
+allowed Claims emits a `claim_limit_reached` audit warning because the model may have silently omitted additional facts;
+the schema limit itself remains unchanged.
 
 The bounded window has only two controls: count and maximum wait. An idle timer is intentionally absent because
 `sync_turn` already writes the user/assistant pair atomically; adding another debounce state would increase starvation and
@@ -334,29 +334,12 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-Migration 035 is the v0.19 schema change: it renames `retrieval_feedback.used_by_model` to `injected`, preserving existing
-values while making the field describe the actual host/model delivery boundary.
-
-Migration 036 is the v0.20 schema change: it adds tokenized FTS v2 tables and orphan-cleanup triggers for claims, events,
-and claim tags.
-
-Migration 037 is the v0.24 schema change: it adds backend control state and dirty-row triggers without requiring the
-sqlite-vec extension. When `recall.vector_backend = "sqlite_vec"`, the separate `sqlite_vec.py` Python data migration
-creates or rebuilds the dimension-specific derived vector table. Startup drains dirty projections before serving, while
-dirty-query detection can fall back to the exact scan path; the default remains `sqlite_scan`.
-
-Migration 038 registers the namespace-local persona subject canonicalization. Its SQL file is intentionally a no-op;
-startup runs the corresponding Python data migration so JSON-derived hashes, FTS text, embeddings, and sqlite-vec dirty
-state are rewritten consistently. The migration scans stored Claims under a write transaction, so large databases need a
-backup and maintenance window.
-
-Migration 039 is the v0.25 schema change: it adds nullable `events.metadata_json` for non-content source locators such as
-turn IDs. Event text and FTS semantics remain unchanged; JSONL archives include metadata in round-trip and conflict
-equivalence checks.
-
-Migration 040 adds the generic bounded `deferred_tasks` queue. The maintenance loop currently uses it only after an
-`extract_event` job exhausts its ordinary retries on HTTP 429: it retries after 1, 4, and 12 hours, then abandons the
-task. Pending Event work is protected from retention; other HTTP failures keep the ordinary job behavior.
+The 40 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
+persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
+window. Migration 039 adds nullable Event locator metadata, and migration 040 adds the bounded deferred-task queue used
+after extraction HTTP 429 retries are exhausted. The optional `sqlite_vec.py` data migration owns the dimension-specific
+derived vector table; the default remains exact `sqlite_scan`.
 
 Backup and restore are whole-database operations:
 

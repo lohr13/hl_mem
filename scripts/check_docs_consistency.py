@@ -4,10 +4,15 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parent.parent
+MARKDOWN_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)\n]+)\)")
+URI_SCHEME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def get_version() -> str:
@@ -36,6 +41,43 @@ def get_migration_count() -> int:
 def read(path: str) -> str:
     """以 UTF-8 读取项目文档。"""
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def tracked_markdown_files(root: Path) -> list[Path]:
+    """返回 Git 当前跟踪的 Markdown 文件。"""
+
+    result = subprocess.run(
+        ["git", "ls-files", "--", "*.md"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return [root / line for line in result.stdout.splitlines() if line]
+
+
+def find_broken_relative_links(root: Path, markdown_files: Iterable[Path]) -> list[str]:
+    """查找 Markdown 中指向不存在文件或目录的相对链接。"""
+
+    root = root.resolve()
+    errors: list[str] = []
+    for source in markdown_files:
+        source = source.resolve()
+        source_label = source.relative_to(root).as_posix()
+        text = source.read_text(encoding="utf-8")
+        for match in MARKDOWN_LINK_PATTERN.finditer(text):
+            raw_target = match.group(1).strip()
+            if raw_target.startswith("<") and ">" in raw_target:
+                target = raw_target[1 : raw_target.index(">")]
+            else:
+                target = raw_target.split(maxsplit=1)[0]
+            if not target or target.startswith(("#", "/")) or URI_SCHEME_PATTERN.match(target):
+                continue
+            path_text = unquote(target.split("#", 1)[0].split("?", 1)[0])
+            if path_text and not (source.parent / path_text).exists():
+                errors.append(f"{source_label} -> {target}")
+    return errors
 
 
 def check_value(text: str, pattern: str, expected: str | int, label: str) -> list[str]:
@@ -131,6 +173,11 @@ def main() -> int:
         )
         errors += check_value(handoff, r"\b(\d+)\s+migrations\b", migration_count, "HANDOFF migrations")
 
+        errors += [
+            f"  Markdown relative link: {broken}"
+            for broken in find_broken_relative_links(ROOT, tracked_markdown_files(ROOT))
+        ]
+
         headers = re.findall(r"^##\s+v?(\d+\.\d+\.\d+)\b", changelog, re.MULTILINE)
         duplicates = sorted({header for header in headers if headers.count(header) > 1})
         if duplicates:
@@ -139,7 +186,7 @@ def main() -> int:
         latest_version, _ = latest_changelog_entry(changelog)
         if latest_version != version:
             errors.append(f"  CHANGELOG latest version: found '{latest_version}', expected '{version}'")
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"Document consistency check failed:\n  {exc}")
         return 1
 

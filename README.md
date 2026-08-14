@@ -155,14 +155,9 @@ migration 039 为 Event 增加 nullable `metadata_json`，migration 040 增加�
 - **生命周期**：importance 联动 TTL、置信度衰减、归档、重分类、反馈效用、审计日志和在线备份。
 - **经验通道**：Episode、Trace、Reward、Policy/Procedure 和派生 Observation。
 - **接口**：FastAPI REST 与 Hermes Provider 为稳定主路径；七工具 MCP stdio 接口处于 Beta。
-- **评测**：离线提取/召回/生命周期指标、LongMemEval-S extract-once/config-compare、50 case 中文记忆测试集、召回诊断和索引文本受控 A/B。
+- **评测**：提取评测 v2、PerLTQA 64 + MemDaily 48 的隔离检索、40-case 中文 E2E，以及 LongMemEval/MemDaily/PerLTQA 完整 runner。
 
-LongMemEval holdout50 的冻结官方口径为 **40/50（80%）**：`deepseek-v4-flash-0731`、全部 reader 开启
-thinking、Top-10 evidence、自有 judge；temporal gate 排除 2 道问题时点无有效答案的诊断口径为
-40/48（83.3%），不替代官方分数。内容审查隔离跳过了 2 个输入 Event。benchmark reader 与生产
-recall/context packing 是两套契约，该成绩不能直接视为生产端到端准确率。
-
-### 评测结果
+### 评测结果（公开冻结口径）
 
 | 评测 | 口径 | 结果 |
 |---|---|---:|
@@ -173,8 +168,8 @@ recall/context packing 是两套契约，该成绩不能直接视为生产端到
 | PerLTQA | 378 questions，10 characters | **R@5 84.9%，MRR 69.6%** |
 
 LongMemEval 三角对照统一使用 `deepseek-v4-flash-0731` reader，reader 开启 thinking、judge 关闭
-thinking。HL-Mem 以可治理的结构化 Claim 与证据链达到接近全上下文上限的结果；本地评测产物的
-命名与目录说明见[结果索引](evaluation/results/README.md)。
+thinking；benchmark reader 与生产 recall/context packing 是不同契约。中文隔离检索和 E2E 的当前运行与
+回归口径见[评测说明](tests/eval/README.md)，本地产物命名见[结果索引](evaluation/results/README.md)。
 
 能力成熟度、默认开关和证据见 [能力矩阵](docs/capability-matrix.md)，架构与数据流见 [架构文档](docs/architecture.md)。
 
@@ -201,23 +196,8 @@ thinking。HL-Mem 以可治理的结构化 Claim 与证据链达到接近全上�
 
 ## Contributing / 贡献指南
 
-欢迎通过 Issue 报告缺陷或提出功能建议。提交前请搜索是否已有同类 Issue，并附上复现步骤、预期行为、实际行为、环境信息和必要日志。Pull Request 应聚焦单一改动，说明动机与验证结果，并在行为或公共契约变化时同步更新测试和文档。
-
-开发环境与检查命令：
-
-```bash
-git clone git@github.com:REDACTED_USER/hl_mem.git
-cd hl_mem
-uv sync --dev
-uv run pytest tests/unit/ -q --tb=short
-uv run black --check src tests
-uv run isort --check-only src tests
-uv run ruff check src tests
-```
-
-提交信息使用英文，格式为 `type(scope): description`，其中 `type` 可选 `feat`、`fix`、`refactor`、`test`、`docs` 或 `chore`。
-
-**English:** Please search existing issues before opening one and include reproduction steps, expected/actual behavior, environment details, and relevant logs. Keep each PR focused, explain the motivation and validation, update tests/docs when contracts change, set up with `uv sync --dev`, and run the checks above.
+欢迎通过 Issue 和 Pull Request 参与。开发环境、七项 CI 预检、数据边界及提交约定见
+[CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## License / 许可证
 

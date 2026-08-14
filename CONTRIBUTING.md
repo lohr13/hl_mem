@@ -1,62 +1,67 @@
 # Contributing to HL-Mem
 
-感谢你帮助改进 HL-Mem。提交应聚焦单一问题，并保持本地优先、证据可追溯和向后兼容的设计原则。
+感谢你帮助改进 HL-Mem。提交应聚焦单一问题，并保持本地优先、证据可追溯和向后兼容。
 
-## Development setup
+## 开发环境
 
 需要 Python 3.11+、Git 和 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
-git clone git@github.com:lohr13/hl_mem.git
+git clone https://github.com/lohr13/hl_mem.git
 cd hl_mem
-uv sync --extra dev
+uv sync --dev
 cp .env.example .env
 ```
 
-默认测试使用 fake providers，不需要外部 API key。仅在运行真实 Provider 检查时配置 `.env`，不要提交凭据、数据库或生成的报告。
+默认测试使用 fake provider，不需要外部 API key。真实评测必须显式使用 `real_api` marker；凭据、数据库、缓存、
+模型响应和包含个人信息的 gold 不得提交。
 
-## Tests and checks
-
-提交前运行与改动范围匹配的检查；行为变更应包含回归测试。
+源码 checkout 中推荐通过 launcher 运行 Python，避免宿主进程注入不兼容的 `PYTHONPATH`/`PYTHONHOME`：
 
 ```bash
-# Full suite
-.venv/Scripts/python.exe -m pytest tests/ -q --tb=short
-
-# Unit tests
-.venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short
-
-# Formatting and import order
-uv run black --check --line-length 120 src tests
-uv run isort --check-only --profile black src tests
-
-# Architecture import boundaries
-uv run python scripts/check_imports.py
+bash scripts/hlmem-python.sh -m pytest tests/unit/ -q --tb=short
 ```
 
-## Code style
+Windows `cmd.exe` 使用 `scripts\hlmem-python.cmd`。
 
-- 使用 Python 3.11+ 和完整的 PEP 484 类型标注。
-- Black 行宽为 120；isort 使用 `profile=black`。
-- 模块、类和公开函数使用中文 docstring；复杂逻辑使用简洁中文注释。
-- `domain/` 与 `core/` 保持纯净，不反向依赖 `storage/`、`api/` 或 `workers/`。
-- 运行时模型、端口、路径、超时和密钥必须来自设置、配置文件或环境变量。
-- 外部 API 必须设置超时和 retry，并提供可操作的错误信息。
-- 已发布 migration 不可修改；schema 变化应新增顺序 migration。
+## 提交前检查
 
-## Pull requests
+先运行与改动范围匹配的 targeted 测试。以下七项与 CI 契约一致：
+
+```bash
+bash scripts/hlmem-python.sh -m black --check .
+bash scripts/hlmem-python.sh -m isort --check-only src tests scripts evaluation
+bash scripts/hlmem-python.sh -m ruff check .
+bash scripts/hlmem-python.sh -m mypy src/hl_mem/ --ignore-missing-imports
+bash scripts/hlmem-python.sh scripts/check_docs_consistency.py
+bash scripts/hlmem-python.sh scripts/check_openapi_snapshot.py
+bash scripts/hlmem-python.sh scripts/check_mcp_snapshot.py
+```
+
+行为变化必须有回归测试。涉及 OpenAPI 或 MCP 契约的有意变化，先审查 diff，再分别使用对应脚本的
+`--update` 更新 snapshot。
+
+## 代码与数据规则
+
+- Python 使用完整类型标注；Black 行宽 120，isort 使用 Black profile。
+- `domain/` 和 `core/` 不反向依赖 `storage/`、`api/` 或 `workers/`。
+- 外部 API 必须设置 timeout/retry，并保留可操作、已脱敏的失败信息。
+- 已发布 migration 不可修改；schema 变化新增顺序 migration。
+- 非敏感配置来自 TOML，密钥只来自 `.env` 或同名进程环境变量。
+- synthetic fixture 可以 tracked；真实或个人语料放在 `~/hl_mem_eval_data/`，本地产物放在 `var/eval/`。
+
+## Pull Request
 
 1. 从最新 `main` 创建短生命周期分支。
-2. 一个 PR 只解决一个问题；避免无关重构和格式噪声。
-3. 更新相关文档、CHANGELOG 和能力矩阵，并添加或更新测试。
-4. 在 PR 描述中说明动机、实现方式、风险、验证命令和结果。
-5. 确认没有提交密钥、运行数据库、缓存或 `var/` 数据。
-6. 响应评审意见；涉及行为变化时补充可复现证据。
+2. 一个 PR 只处理一个问题，避免无关重构和格式噪声。
+3. 说明动机、实现、风险、验证命令和结果。
+4. 行为或公共契约变化需同步测试、活文档和 CHANGELOG。
+5. 确认没有提交密钥、运行数据库、缓存或私有评测数据。
 
-提交信息使用英文 Conventional Commits，例如：
+提交信息使用 Conventional Commit 类型；subject 可使用中文或英文，例如：
 
 ```text
 feat(recall): add bounded query expansion
-fix(storage): preserve temporal visibility
-docs: clarify provider configuration
+fix(storage): 修复冲突组未收敛
+docs: 精简评测文档
 ```
