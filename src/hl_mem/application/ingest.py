@@ -9,6 +9,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
+from itertools import combinations
 from typing import Any, Sequence
 
 from hl_mem.core.vector import cosine_similarity
@@ -45,6 +46,7 @@ from hl_mem.domain.entity import (
 )
 from hl_mem.errors import ConflictError, ValidationError
 from hl_mem.ingest.extractors import ExtractedClaim
+from hl_mem.lifecycle import assert_transition
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol
 from hl_mem.settings import Settings
@@ -393,6 +395,7 @@ class IngestService:
         semantic_candidate_similarity: float | None = None
         resolution: str | None = None
         current: dict[str, Any] | None = None
+        dirty_active_group: list[dict[str, Any]] = []
         result_id = claim["id"]
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -416,43 +419,78 @@ class IngestService:
             if exact:
                 _link_source_events(evidence, exact["id"], evidence_events, commit=False)
                 result_id = exact["id"]
+                exact_group = [
+                    item
+                    for item in claims.find_by_conflict_key(exact.get("conflict_key"))
+                    if item.get("status") == "active"
+                ]
+                if len(exact_group) > 1:
+                    _quarantine_active_group(
+                        claims,
+                        exact_group,
+                        now,
+                        rationale="ingest_dirty_active_group",
+                    )
+                    audit_events.append(
+                        (
+                            ("conflict", "quarantined", "dirty_active_group"),
+                            {
+                                "event_id": event["id"],
+                                "claim_id": exact["id"],
+                                "detail": {
+                                    "conflict_key": exact.get("conflict_key"),
+                                    "dirty_active_claim_ids": [item["id"] for item in exact_group],
+                                },
+                            },
+                        )
+                    )
+                    connection.commit()
+                    emit_audit_events()
+                    return StoreClaimResult(result_id, "stored", "exact_duplicate_dirty_group")
                 connection.commit()
                 emit_audit_events()
                 return StoreClaimResult(result_id, "stored", "exact_duplicate")
 
             if existing:
                 started = time.perf_counter_ns()
-                current = existing[0]
-                resolution = ConflictResolver().resolve(current, {**claim, "qualifiers": qualifiers})
+                active_existing = [item for item in existing if item.get("status") == "active"]
+                if len(active_existing) > 1:
+                    dirty_active_group = active_existing
+                    resolution = "uncertain"
+                    claim["status"] = "disputed"
+                else:
+                    current = existing[0]
+                    resolution = ConflictResolver().resolve(current, {**claim, "qualifiers": qualifiers})
                 audit_events.append(
                     (
                         ("conflict", "resolved", resolution),
                         {
                             "event_id": event["id"],
                             "claim_id": claim["id"],
-                            "related_claim_id": current["id"],
+                            "related_claim_id": (current["id"] if current is not None else dirty_active_group[0]["id"]),
                             "duration_us": (time.perf_counter_ns() - started) // 1000,
                             "detail": {
                                 "conflict_key": claim["conflict_key"],
                                 "candidate_count": len(existing),
-                                "old": _summary(current),
+                                "old": _summary(current) if current is not None else None,
+                                "dirty_active_claim_ids": [item["id"] for item in dirty_active_group],
                                 "new": _summary(claim),
                             },
                         },
                     )
                 )
-                if resolution == "entails":
+                if current is not None and resolution == "entails":
                     _link_source_events(evidence, current["id"], evidence_events, commit=False)
                     result_id = current["id"]
                     connection.commit()
                     emit_audit_events()
                     return StoreClaimResult(result_id, "stored", "entailed")
-                if resolution == "state_change":
+                if current is not None and resolution == "state_change":
                     claim["supersedes_id"] = current["id"]
                     superseded_old_id = current["id"]
-                elif resolution == "contradicts":
+                elif current is not None and resolution == "contradicts":
                     claim["status"] = "disputed"
-                elif resolution == "uncertain":
+                elif current is not None and resolution == "uncertain":
                     claim["status"] = "candidate"
             else:
                 audit_events.append(
@@ -521,6 +559,13 @@ class IngestService:
                     now,
                 )
 
+            if dirty_active_group:
+                _quarantine_active_group(
+                    claims,
+                    [*dirty_active_group, claim],
+                    now,
+                    rationale="ingest_dirty_active_group",
+                )
             if current is not None and resolution == "contradicts":
                 claims.update_status(current["id"], "disputed", commit=False)
             if current is not None and resolution in {"contradicts", "uncertain"}:
@@ -736,6 +781,35 @@ def _find_resolution(
     exclusive = is_mutually_exclusive_attribute(claim.get("canonical_slot"))
     existing = claims.find_by_conflict_key(conflict_key) if conflict_key and exclusive else []
     return None, existing
+
+
+def _quarantine_active_group(
+    claims: ClaimRepository,
+    members: Sequence[dict[str, Any]],
+    now: str,
+    *,
+    rationale: str,
+) -> None:
+    """将不唯一的活跃冲突组整体隔离，并确保所有声明对进入人工复核。"""
+    for member in members:
+        if member.get("status") == "active":
+            assert_transition("active", "disputed")
+            claims.update_status(member["id"], "disputed", commit=False)
+    for left, right in combinations(members, 2):
+        claims.ensure_manual_conflict_case(
+            {
+                "id": new_id(),
+                "pair_key": compute_claim_pair_key(left["id"], right["id"]),
+                "left_claim_id": left["id"],
+                "right_claim_id": right["id"],
+                "status": "manual_required",
+                "decision": "uncertain",
+                "confidence": None,
+                "rationale": rationale,
+                "created_at": now,
+            },
+            commit=False,
+        )
 
 
 def _persist_resolution(claims: ClaimRepository, claim: dict[str, Any]) -> bool:

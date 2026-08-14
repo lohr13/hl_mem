@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
@@ -47,3 +48,42 @@ def test_reclassify_batches_updates_and_is_idempotent(tmp_path, monkeypatch):
     assert reclassify_claims(connection, fake_client, 5)["updated"] == 6
     assert calls == [5, 1]
     assert reclassify_claims(connection, fake_client, 5)["eligible"] == 0
+
+
+def test_reclassify_guard_skips_active_claim_that_would_collide_with_exclusive_group(tmp_path, monkeypatch) -> None:
+    connection = Database(tmp_path / "reclass-guard.db").open()
+    target_key = compute_conflict_key("default", "user", "配置", "config.port", {"service": "api"})
+    assert target_key is not None
+    repository = ClaimRepository(connection)
+    common = {
+        "namespace_key": "default",
+        "recorded_from": NOW,
+        "status": "active",
+        "subject_entity_id": "user",
+        "predicate": "配置",
+        "qualifiers": {"service": "api"},
+        "canonical_attribute": "config.port",
+        "canonical_slot": "config.port",
+        "confidence": 1.0,
+        "importance": 0.5,
+        "scope": "permanent",
+        "embedding_dense": pack_vector([1.0]),
+    }
+    assert repository.insert_claim({**common, "id": "a-moving", "value": "8080", "conflict_key": "stale-key"})
+    assert repository.insert_claim({**common, "id": "b-occupied", "value": "8081", "conflict_key": target_key})
+
+    class FakeClient:
+        model = "test"
+
+    monkeypatch.setattr(
+        "hl_mem.workers.reclassify.classify_batch",
+        lambda _client, claims: [{"id": claim["id"], "scope": "temporal", "importance": 0.8} for claim in claims],
+    )
+
+    result = reclassify_claims(connection, FakeClient(), 5)
+
+    assert result == {"scanned": 2, "eligible": 2, "updated": 1, "guarded": 1}
+    moving = repository.get_claim("a-moving")
+    assert moving["conflict_key"] == "stale-key"
+    assert moving["scope"] == "permanent"
+    assert moving["importance"] == 0.5

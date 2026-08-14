@@ -1,0 +1,216 @@
+{
+  "schema_version": 2,
+  "data_classification": "synthetic_public",
+  "cases": [
+    {
+      "case_id": "a01-zh-multi-person",
+      "experiment": "entities_hybrid_a",
+      "category": "zh_multi_person",
+      "events": [{"speaker": "user", "text": "林舟和苏禾是大学同学，两人共同加入了北斗工坊。"}],
+      "gold_units": [{"unit_id": "a01-u1", "source_event_indices": [0], "role_action_object": {"roles": ["林舟", "苏禾"], "actions": ["大学同学", "加入"], "objects": ["北斗工坊"], "ordered_anchors": ["林舟", "苏禾", "大学同学", "加入", "北斗工坊"]}, "proper_entities": ["林舟", "苏禾", "北斗工坊"], "speaker": "user", "canonical_subject": "林舟", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a02-zh-same-surname",
+      "experiment": "entities_hybrid_a",
+      "category": "zh_multi_person",
+      "events": [{"speaker": "user", "text": "周岚是周启的导师，周启负责苍穹项目的测试。"}],
+      "gold_units": [{"unit_id": "a02-u1", "source_event_indices": [0], "role_action_object": {"roles": ["周岚", "周启"], "actions": ["导师", "负责"], "objects": ["苍穹项目", "测试"], "ordered_anchors": ["周岚", "周启", "导师", "负责", "苍穹项目", "测试"]}, "proper_entities": ["周岚", "周启", "苍穹项目"], "speaker": "user", "canonical_subject": "周岚", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a03-zh-nickname-chain",
+      "experiment": "entities_hybrid_a",
+      "category": "zh_multi_person",
+      "events": [{"speaker": "user", "text": "顾言（大家叫他小顾）与叶青共同维护流光服务。"}],
+      "gold_units": [{"unit_id": "a03-u1", "source_event_indices": [0], "role_action_object": {"roles": ["顾言", "小顾", "叶青"], "actions": ["维护"], "objects": ["流光服务"], "ordered_anchors": ["顾言", "小顾", "叶青", "维护", "流光服务"]}, "proper_entities": ["顾言", "小顾", "叶青", "流光服务"], "speaker": "user", "canonical_subject": "顾言", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a04-reported-recommendation",
+      "experiment": "entities_hybrid_a",
+      "category": "reported_speech",
+      "events": [{"speaker": "程岚", "text": "我建议周野投资星港债券。"}, {"speaker": "周野", "text": "我还没有投资。"}],
+      "gold_units": [{"unit_id": "a04-u1", "source_event_indices": [0], "role_action_object": {"roles": ["程岚", "周野"], "actions": ["建议", "投资"], "objects": ["星港债券"], "ordered_anchors": ["程岚", "建议", "周野", "投资", "星港债券"]}, "proper_entities": ["程岚", "周野", "星港债券"], "speaker": "程岚", "canonical_subject": "程岚", "forbidden_propagation": ["周野还没有投资"], "modality": {"asserted": "recommended", "positive_anchors": ["建议"], "forbidden_assertions": ["已经投资", "已投资", "持有"]}, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a05-reported-plan",
+      "experiment": "entities_hybrid_a",
+      "category": "reported_speech",
+      "events": [{"speaker": "沈遥", "text": "秦墨告诉我，他计划下月迁移到云杉数据库。"}, {"speaker": "秦墨", "text": "迁移尚未开始。"}],
+      "gold_units": [{"unit_id": "a05-u1", "source_event_indices": [0], "role_action_object": {"roles": ["秦墨"], "actions": ["计划", "迁移"], "objects": ["云杉数据库"], "ordered_anchors": ["秦墨", "计划", "迁移", "云杉数据库"]}, "proper_entities": ["秦墨", "云杉数据库"], "speaker": "沈遥", "canonical_subject": "秦墨", "forbidden_propagation": ["迁移尚未开始"], "modality": {"asserted": "planned", "positive_anchors": ["计划"], "forbidden_assertions": ["已经迁移", "完成迁移", "已完成"]}, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a06-place-org-boundary",
+      "experiment": "entities_hybrid_a",
+      "category": "place_org_boundary",
+      "events": [{"speaker": "user", "text": "乔安在南京的玄武实验室为澄海公司调试路由器。"}],
+      "gold_units": [{"unit_id": "a06-u1", "source_event_indices": [0], "role_action_object": {"roles": ["乔安"], "actions": ["调试"], "objects": ["南京", "玄武实验室", "澄海公司", "路由器"], "ordered_anchors": ["乔安", "南京", "玄武实验室", "澄海公司", "调试", "路由器"]}, "proper_entities": ["乔安", "南京", "玄武实验室", "澄海公司"], "speaker": "user", "canonical_subject": "乔安", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a07-place-org-boundary",
+      "experiment": "entities_hybrid_a",
+      "category": "place_org_boundary",
+      "events": [{"speaker": "user", "text": "黎星从杭州前往上海，代表望岳基金拜访浦江研究院。"}],
+      "gold_units": [{"unit_id": "a07-u1", "source_event_indices": [0], "role_action_object": {"roles": ["黎星"], "actions": ["前往", "代表", "拜访"], "objects": ["杭州", "上海", "望岳基金", "浦江研究院"], "ordered_anchors": ["黎星", "杭州", "前往", "上海", "代表", "望岳基金", "拜访", "浦江研究院"]}, "proper_entities": ["黎星", "杭州", "上海", "望岳基金", "浦江研究院"], "speaker": "user", "canonical_subject": "黎星", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a08-product-project-model",
+      "experiment": "entities_hybrid_a",
+      "category": "product_project_model",
+      "events": [{"speaker": "user", "text": "鹿鸣项目计划把 Atlas IDE 3.2 升级到 Atlas IDE 4.0。"}],
+      "gold_units": [{"unit_id": "a08-u1", "source_event_indices": [0], "role_action_object": {"roles": ["鹿鸣项目"], "actions": ["计划", "升级"], "objects": ["Atlas IDE 3.2", "Atlas IDE 4.0"], "ordered_anchors": ["鹿鸣项目", "计划", "Atlas IDE 3.2", "升级", "Atlas IDE 4.0"]}, "proper_entities": ["鹿鸣项目", "Atlas IDE 3.2", "Atlas IDE 4.0"], "speaker": "user", "canonical_subject": "鹿鸣项目", "forbidden_propagation": [], "modality": {"asserted": "planned", "positive_anchors": ["计划"], "forbidden_assertions": ["已经升级", "升级完成", "已完成"]}, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a09-product-project-model",
+      "experiment": "entities_hybrid_a",
+      "category": "product_project_model",
+      "events": [{"speaker": "user", "text": "天衡平台用 Orion-7B 模型处理 Vega API 的请求。"}],
+      "gold_units": [{"unit_id": "a09-u1", "source_event_indices": [0], "role_action_object": {"roles": ["天衡平台"], "actions": ["使用", "处理"], "objects": ["Orion-7B", "Vega API"], "ordered_anchors": ["天衡平台", "使用", "Orion-7B", "处理", "Vega API"]}, "proper_entities": ["天衡平台", "Orion-7B", "Vega API"], "speaker": "user", "canonical_subject": "天衡平台", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a10-bilingual-entities",
+      "experiment": "entities_hybrid_a",
+      "category": "bilingual",
+      "events": [{"speaker": "user", "text": "Maya 和 林溪在 Aurora Lab 共同维护晨星项目。"}],
+      "gold_units": [{"unit_id": "a10-u1", "source_event_indices": [0], "role_action_object": {"roles": ["Maya", "林溪"], "actions": ["维护"], "objects": ["Aurora Lab", "晨星项目"], "ordered_anchors": ["Maya", "林溪", "Aurora Lab", "维护", "晨星项目"]}, "proper_entities": ["Maya", "林溪", "Aurora Lab", "晨星项目"], "speaker": "user", "canonical_subject": "Maya", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a11-bilingual-consideration",
+      "experiment": "entities_hybrid_a",
+      "category": "bilingual",
+      "events": [{"speaker": "user", "text": "Noah 正在考虑购买 星桥 X2 workstation，但尚未下单。"}],
+      "gold_units": [{"unit_id": "a11-u1", "source_event_indices": [0], "role_action_object": {"roles": ["Noah"], "actions": ["考虑", "购买"], "objects": ["星桥 X2 workstation"], "ordered_anchors": ["Noah", "考虑", "购买", "星桥 X2 workstation"]}, "proper_entities": ["Noah", "星桥 X2 workstation"], "speaker": "user", "canonical_subject": "Noah", "forbidden_propagation": [], "modality": {"asserted": "considered", "positive_anchors": ["考虑"], "forbidden_assertions": ["已经购买", "已下单", "拥有", "owns"]}, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "a12-no-proper-entity",
+      "experiment": "entities_hybrid_a",
+      "category": "no_proper_entity_negative",
+      "events": [{"speaker": "user", "text": "我通常在下午整理当天的笔记。"}],
+      "gold_units": [{"unit_id": "a12-u1", "source_event_indices": [0], "role_action_object": {"roles": [], "actions": ["整理"], "objects": ["笔记"], "ordered_anchors": ["整理", "笔记"]}, "proper_entities": [], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": false}]
+    },
+    {
+      "case_id": "b01-zh-name-binding",
+      "experiment": "proper_noun_prompt_b",
+      "category": "zh_first_person_name_binding",
+      "events": [{"speaker": "user", "text": "我叫陈默。我在星河实验室负责检索平台。"}],
+      "gold_units": [{"unit_id": "b01-u1", "source_event_indices": [0], "role_action_object": {"roles": [], "actions": ["叫"], "objects": ["陈默"], "ordered_anchors": ["叫", "陈默"]}, "proper_entities": ["陈默"], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": false}, {"unit_id": "b01-u2", "source_event_indices": [0], "role_action_object": {"roles": ["陈默"], "actions": ["负责"], "objects": ["星河实验室", "检索平台"], "ordered_anchors": ["陈默", "星河实验室", "负责", "检索平台"]}, "proper_entities": ["陈默", "星河实验室", "检索平台"], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b02-zh-name-binding",
+      "experiment": "proper_noun_prompt_b",
+      "category": "zh_first_person_name_binding",
+      "events": [{"speaker": "user", "text": "我的名字是许澄，现在在青岚基金负责风控系统。"}],
+      "gold_units": [{"unit_id": "b02-u1", "source_event_indices": [0], "role_action_object": {"roles": ["许澄"], "actions": ["负责"], "objects": ["青岚基金", "风控系统"], "ordered_anchors": ["许澄", "青岚基金", "负责", "风控系统"]}, "proper_entities": ["许澄", "青岚基金", "风控系统"], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b03-zh-name-binding",
+      "experiment": "proper_noun_prompt_b",
+      "category": "zh_first_person_name_binding",
+      "events": [{"speaker": "user", "text": "大家叫我唐屿。我偏好用 Nova Editor 写 Rust。"}],
+      "gold_units": [{"unit_id": "b03-u1", "source_event_indices": [0], "role_action_object": {"roles": ["唐屿"], "actions": ["偏好", "写"], "objects": ["Nova Editor", "Rust"], "ordered_anchors": ["唐屿", "偏好", "Nova Editor", "写", "Rust"]}, "proper_entities": ["唐屿", "Nova Editor", "Rust"], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b04-zh-name-binding",
+      "experiment": "proper_noun_prompt_b",
+      "category": "zh_first_person_name_binding",
+      "events": [{"speaker": "user", "text": "我叫陆遥，上周代表栖霞科技去了苏州出差。"}],
+      "gold_units": [{"unit_id": "b04-u1", "source_event_indices": [0], "role_action_object": {"roles": ["陆遥"], "actions": ["代表", "出差"], "objects": ["栖霞科技", "苏州"], "ordered_anchors": ["陆遥", "代表", "栖霞科技", "苏州", "出差"]}, "proper_entities": ["陆遥", "栖霞科技", "苏州"], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": {"asserted": "executed", "positive_anchors": ["去了", "出差"], "forbidden_assertions": ["计划去", "考虑去"]}, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b05-en-name-binding",
+      "experiment": "proper_noun_prompt_b",
+      "category": "en_first_person_name_binding",
+      "events": [{"speaker": "user", "text": "My name is Elena Park. I maintain the Comet Index at Northwind Lab."}],
+      "gold_units": [{"unit_id": "b05-u1", "source_event_indices": [0], "role_action_object": {"roles": ["Elena Park"], "actions": ["maintain"], "objects": ["Comet Index", "Northwind Lab"], "ordered_anchors": ["Elena Park", "maintain", "Comet Index", "Northwind Lab"]}, "proper_entities": ["Elena Park", "Comet Index", "Northwind Lab"], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b06-en-name-binding",
+      "experiment": "proper_noun_prompt_b",
+      "category": "en_first_person_name_binding",
+      "events": [{"speaker": "user", "text": "I'm Omar Reed, and I prefer PyCharm for the Zephyr SDK."}],
+      "gold_units": [{"unit_id": "b06-u1", "source_event_indices": [0], "role_action_object": {"roles": ["Omar Reed"], "actions": ["prefer"], "objects": ["PyCharm", "Zephyr SDK"], "ordered_anchors": ["Omar Reed", "prefer", "PyCharm", "Zephyr SDK"]}, "proper_entities": ["Omar Reed", "PyCharm", "Zephyr SDK"], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b07-speaker-quote-isolation",
+      "experiment": "proper_noun_prompt_b",
+      "category": "speaker_quote_same_name",
+      "events": [{"speaker": "林夏", "text": "我叫林夏，我建议顾北试用 Cedar DB。"}, {"speaker": "顾北", "text": "林夏是我的大学同学。"}],
+      "gold_units": [{"unit_id": "b07-u1", "source_event_indices": [0], "role_action_object": {"roles": ["林夏", "顾北"], "actions": ["建议", "试用"], "objects": ["Cedar DB"], "ordered_anchors": ["林夏", "建议", "顾北", "试用", "Cedar DB"]}, "proper_entities": ["林夏", "顾北", "Cedar DB"], "speaker": "林夏", "canonical_subject": "user", "forbidden_propagation": ["大学同学"], "modality": {"asserted": "recommended", "positive_anchors": ["建议"], "forbidden_assertions": ["已经试用", "正在使用", "拥有"]}, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b08-speaker-quote-isolation",
+      "experiment": "proper_noun_prompt_b",
+      "category": "speaker_quote_same_name",
+      "events": [{"speaker": "罗宁", "text": "安宁说：我计划加入白鹭团队。"}, {"speaker": "安宁", "text": "罗宁仍在黑曜团队。"}],
+      "gold_units": [{"unit_id": "b08-u1", "source_event_indices": [0], "role_action_object": {"roles": ["安宁"], "actions": ["计划", "加入"], "objects": ["白鹭团队"], "ordered_anchors": ["安宁", "计划", "加入", "白鹭团队"]}, "proper_entities": ["安宁", "白鹭团队"], "speaker": "罗宁", "canonical_subject": "安宁", "forbidden_propagation": ["黑曜团队"], "modality": {"asserted": "planned", "positive_anchors": ["计划"], "forbidden_assertions": ["已经加入", "已加入", "完成加入"]}, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b09-speaker-quote-isolation",
+      "experiment": "proper_noun_prompt_b",
+      "category": "speaker_quote_same_name",
+      "events": [{"speaker": "Alex Chen", "text": "Alex Li told me that Priya is his college classmate."}, {"speaker": "Alex Li", "text": "Alex Chen works at Ember Labs."}],
+      "gold_units": [{"unit_id": "b09-u1", "source_event_indices": [0], "role_action_object": {"roles": ["Alex Li", "Priya"], "actions": ["college classmate"], "objects": ["college classmate"], "ordered_anchors": ["Alex Li", "Priya", "college classmate"]}, "proper_entities": ["Alex Li", "Priya"], "speaker": "Alex Chen", "canonical_subject": "Alex Li", "forbidden_propagation": ["Ember Labs"], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b10-nickname-formal-name",
+      "experiment": "proper_noun_prompt_b",
+      "category": "nickname_formal_name",
+      "events": [{"speaker": "user", "text": "我的正式名字是闻舟，朋友叫我阿舟；阿舟维护玄鸟 CLI。"}],
+      "gold_units": [{"unit_id": "b10-u1", "source_event_indices": [0], "role_action_object": {"roles": ["闻舟", "阿舟"], "actions": ["维护"], "objects": ["玄鸟 CLI"], "ordered_anchors": ["闻舟", "阿舟", "维护", "玄鸟 CLI"]}, "proper_entities": ["闻舟", "阿舟", "玄鸟 CLI"], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b11-nickname-formal-name",
+      "experiment": "proper_noun_prompt_b",
+      "category": "nickname_formal_name",
+      "events": [{"speaker": "user", "text": "Her formal name is Priya Nair, but the team calls her P; P leads Project Kestrel."}],
+      "gold_units": [{"unit_id": "b11-u1", "source_event_indices": [0], "role_action_object": {"roles": ["Priya Nair", "P"], "actions": ["leads"], "objects": ["Project Kestrel"], "ordered_anchors": ["Priya Nair", "P", "leads", "Project Kestrel"]}, "proper_entities": ["Priya Nair", "P", "Project Kestrel"], "speaker": "user", "canonical_subject": "Priya Nair", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": true}]
+    },
+    {
+      "case_id": "b12-no-explicit-name",
+      "experiment": "proper_noun_prompt_b",
+      "category": "no_explicit_name_negative",
+      "events": [{"speaker": "user", "text": "我偏好在提交前先运行单元测试。"}],
+      "gold_units": [{"unit_id": "b12-u1", "source_event_indices": [0], "role_action_object": {"roles": [], "actions": ["运行"], "objects": ["单元测试"], "ordered_anchors": ["运行", "单元测试"]}, "proper_entities": [], "speaker": "user", "canonical_subject": "user", "forbidden_propagation": [], "modality": null, "requires_self_contained_chain": false}]
+    }
+  ],
+  "dedup_pairs": [
+    {"pair_id": "reuse-01", "left": {"subject": "林舟", "value": "林舟和苏禾是大学同学", "proper_entities": ["林舟", "苏禾"]}, "right": {"subject": "林舟", "value": "苏禾是林舟的大学同学", "proper_entities": ["林舟", "苏禾"]}, "expected": "reuse"},
+    {"pair_id": "reuse-02", "left": {"subject": "周岚", "value": "周岚是周启的导师", "proper_entities": ["周岚", "周启"]}, "right": {"subject": "周岚", "value": "周启的导师是周岚", "proper_entities": ["周岚", "周启"]}, "expected": "reuse"},
+    {"pair_id": "reuse-03", "left": {"subject": "顾言", "value": "顾言维护流光服务", "proper_entities": ["顾言", "流光服务"]}, "right": {"subject": "顾言", "value": "流光服务由顾言维护", "proper_entities": ["顾言", "流光服务"]}, "expected": "reuse"},
+    {"pair_id": "reuse-04", "left": {"subject": "程岚", "value": "程岚建议周野投资星港债券", "proper_entities": ["程岚", "周野", "星港债券"]}, "right": {"subject": "程岚", "value": "周野收到了程岚关于星港债券的投资建议", "proper_entities": ["程岚", "周野", "星港债券"]}, "expected": "reuse"},
+    {"pair_id": "reuse-05", "left": {"subject": "秦墨", "value": "秦墨计划迁移到云杉数据库", "proper_entities": ["秦墨", "云杉数据库"]}, "right": {"subject": "秦墨", "value": "迁移云杉数据库是秦墨的计划", "proper_entities": ["秦墨", "云杉数据库"]}, "expected": "reuse"},
+    {"pair_id": "reuse-06", "left": {"subject": "乔安", "value": "乔安在玄武实验室工作", "proper_entities": ["乔安", "玄武实验室"]}, "right": {"subject": "乔安", "value": "玄武实验室的乔安", "proper_entities": ["乔安", "玄武实验室"]}, "expected": "reuse"},
+    {"pair_id": "reuse-07", "left": {"subject": "黎星", "value": "黎星代表望岳基金", "proper_entities": ["黎星", "望岳基金"]}, "right": {"subject": "黎星", "value": "望岳基金的代表是黎星", "proper_entities": ["黎星", "望岳基金"]}, "expected": "reuse"},
+    {"pair_id": "reuse-08", "left": {"subject": "鹿鸣项目", "value": "鹿鸣项目使用 Atlas IDE 3.2", "proper_entities": ["鹿鸣项目", "Atlas IDE 3.2"]}, "right": {"subject": "鹿鸣项目", "value": "Atlas IDE 3.2 用于鹿鸣项目", "proper_entities": ["鹿鸣项目", "Atlas IDE 3.2"]}, "expected": "reuse"},
+    {"pair_id": "reuse-09", "left": {"subject": "天衡平台", "value": "天衡平台使用 Orion-7B", "proper_entities": ["天衡平台", "Orion-7B"]}, "right": {"subject": "天衡平台", "value": "Orion-7B 是天衡平台的模型", "proper_entities": ["天衡平台", "Orion-7B"]}, "expected": "reuse"},
+    {"pair_id": "reuse-10", "left": {"subject": "Maya", "value": "Maya 在 Aurora Lab 工作", "proper_entities": ["Maya", "Aurora Lab"]}, "right": {"subject": "Maya", "value": "Aurora Lab 的 Maya", "proper_entities": ["Maya", "Aurora Lab"]}, "expected": "reuse"},
+    {"pair_id": "reuse-11", "left": {"subject": "Noah", "value": "Noah 考虑购买星桥 X2", "proper_entities": ["Noah", "星桥 X2"]}, "right": {"subject": "Noah", "value": "星桥 X2 在 Noah 的考虑清单中", "proper_entities": ["Noah", "星桥 X2"]}, "expected": "reuse"},
+    {"pair_id": "reuse-12", "left": {"subject": "user", "value": "用户名叫陈默", "proper_entities": ["陈默"]}, "right": {"subject": "user", "value": "我的名字是陈默", "proper_entities": ["陈默"]}, "expected": "reuse"},
+    {"pair_id": "reuse-13", "left": {"subject": "许澄", "value": "许澄在青岚基金工作", "proper_entities": ["许澄", "青岚基金"]}, "right": {"subject": "许澄", "value": "青岚基金雇用了许澄", "proper_entities": ["许澄", "青岚基金"]}, "expected": "reuse"},
+    {"pair_id": "reuse-14", "left": {"subject": "唐屿", "value": "唐屿使用 Nova Editor", "proper_entities": ["唐屿", "Nova Editor"]}, "right": {"subject": "唐屿", "value": "Nova Editor 是唐屿偏好的编辑器", "proper_entities": ["唐屿", "Nova Editor"]}, "expected": "reuse"},
+    {"pair_id": "reuse-15", "left": {"subject": "陆遥", "value": "陆遥去了苏州", "proper_entities": ["陆遥", "苏州"]}, "right": {"subject": "陆遥", "value": "陆遥曾前往苏州", "proper_entities": ["陆遥", "苏州"]}, "expected": "reuse"},
+    {"pair_id": "reuse-16", "left": {"subject": "Elena Park", "value": "Elena Park maintains Comet Index", "proper_entities": ["Elena Park", "Comet Index"]}, "right": {"subject": "Elena Park", "value": "Comet Index is maintained by Elena Park", "proper_entities": ["Elena Park", "Comet Index"]}, "expected": "reuse"},
+    {"pair_id": "reuse-17", "left": {"subject": "Omar Reed", "value": "Omar Reed prefers PyCharm", "proper_entities": ["Omar Reed", "PyCharm"]}, "right": {"subject": "Omar Reed", "value": "PyCharm is Omar Reed's preference", "proper_entities": ["Omar Reed", "PyCharm"]}, "expected": "reuse"},
+    {"pair_id": "reuse-18", "left": {"subject": "林夏", "value": "林夏建议顾北试用 Cedar DB", "proper_entities": ["林夏", "顾北", "Cedar DB"]}, "right": {"subject": "林夏", "value": "顾北收到林夏试用 Cedar DB 的建议", "proper_entities": ["林夏", "顾北", "Cedar DB"]}, "expected": "reuse"},
+    {"pair_id": "reuse-19", "left": {"subject": "安宁", "value": "安宁计划加入白鹭团队", "proper_entities": ["安宁", "白鹭团队"]}, "right": {"subject": "安宁", "value": "加入白鹭团队是安宁的计划", "proper_entities": ["安宁", "白鹭团队"]}, "expected": "reuse"},
+    {"pair_id": "reuse-20", "left": {"subject": "Priya Nair", "value": "Priya Nair leads Project Kestrel", "proper_entities": ["Priya Nair", "Project Kestrel"]}, "right": {"subject": "Priya Nair", "value": "Project Kestrel is led by Priya Nair", "proper_entities": ["Priya Nair", "Project Kestrel"]}, "expected": "reuse"},
+    {"pair_id": "distinct-01", "left": {"subject": "林舟", "value": "林舟和苏禾是同学", "proper_entities": ["林舟", "苏禾"]}, "right": {"subject": "林舟", "value": "林舟和苏宁是同学", "proper_entities": ["林舟", "苏宁"]}, "expected": "distinct"},
+    {"pair_id": "distinct-02", "left": {"subject": "周岚", "value": "周岚指导周启", "proper_entities": ["周岚", "周启"]}, "right": {"subject": "周启", "value": "周启指导周岚", "proper_entities": ["周岚", "周启"]}, "expected": "distinct"},
+    {"pair_id": "distinct-03", "left": {"subject": "顾言", "value": "顾言维护流光服务", "proper_entities": ["顾言", "流光服务"]}, "right": {"subject": "顾言", "value": "顾言维护流云服务", "proper_entities": ["顾言", "流云服务"]}, "expected": "distinct"},
+    {"pair_id": "distinct-04", "left": {"subject": "程岚", "value": "程岚建议周野投资星港债券", "proper_entities": ["程岚", "周野", "星港债券"]}, "right": {"subject": "程岚", "value": "程岚建议周野投资星海债券", "proper_entities": ["程岚", "周野", "星海债券"]}, "expected": "distinct"},
+    {"pair_id": "distinct-05", "left": {"subject": "秦墨", "value": "秦墨计划使用云杉数据库", "proper_entities": ["秦墨", "云杉数据库"]}, "right": {"subject": "秦墨", "value": "秦墨已经使用云杉数据库", "proper_entities": ["秦墨", "云杉数据库"]}, "expected": "distinct"},
+    {"pair_id": "distinct-06", "left": {"subject": "乔安", "value": "乔安在玄武实验室工作", "proper_entities": ["乔安", "玄武实验室"]}, "right": {"subject": "乔安", "value": "乔安在朱雀实验室工作", "proper_entities": ["乔安", "朱雀实验室"]}, "expected": "distinct"},
+    {"pair_id": "distinct-07", "left": {"subject": "黎星", "value": "黎星代表望岳基金", "proper_entities": ["黎星", "望岳基金"]}, "right": {"subject": "黎星", "value": "黎星代表观海基金", "proper_entities": ["黎星", "观海基金"]}, "expected": "distinct"},
+    {"pair_id": "distinct-08", "left": {"subject": "鹿鸣项目", "value": "鹿鸣项目使用 Atlas IDE", "proper_entities": ["鹿鸣项目", "Atlas IDE"]}, "right": {"subject": "鹿鸣项目", "value": "鹿鸣项目使用 Atoll IDE", "proper_entities": ["鹿鸣项目", "Atoll IDE"]}, "expected": "distinct"},
+    {"pair_id": "distinct-09", "left": {"subject": "天衡平台", "value": "天衡平台使用 Orion-7B", "proper_entities": ["天衡平台", "Orion-7B"]}, "right": {"subject": "天衡平台", "value": "天衡平台使用 Origin-7B", "proper_entities": ["天衡平台", "Origin-7B"]}, "expected": "distinct"},
+    {"pair_id": "distinct-10", "left": {"subject": "Maya", "value": "Maya works at Aurora Lab", "proper_entities": ["Maya", "Aurora Lab"]}, "right": {"subject": "Maya", "value": "Maya works at Borealis Lab", "proper_entities": ["Maya", "Borealis Lab"]}, "expected": "distinct"},
+    {"pair_id": "distinct-11", "left": {"subject": "Noah", "value": "Noah considers Starbridge X2", "proper_entities": ["Noah", "Starbridge X2"]}, "right": {"subject": "Noah", "value": "Noah owns Starbridge X2", "proper_entities": ["Noah", "Starbridge X2"]}, "expected": "distinct"},
+    {"pair_id": "distinct-12", "left": {"subject": "user", "value": "用户名叫陈默", "proper_entities": ["陈默"]}, "right": {"subject": "user", "value": "用户名叫陈墨", "proper_entities": ["陈墨"]}, "expected": "distinct"},
+    {"pair_id": "distinct-13", "left": {"subject": "许澄", "value": "许澄在青岚基金工作", "proper_entities": ["许澄", "青岚基金"]}, "right": {"subject": "许澄", "value": "许澄在蓝岚基金工作", "proper_entities": ["许澄", "蓝岚基金"]}, "expected": "distinct"},
+    {"pair_id": "distinct-14", "left": {"subject": "唐屿", "value": "唐屿使用 Nova Editor", "proper_entities": ["唐屿", "Nova Editor"]}, "right": {"subject": "唐屿", "value": "唐屿使用 Nola Editor", "proper_entities": ["唐屿", "Nola Editor"]}, "expected": "distinct"},
+    {"pair_id": "distinct-15", "left": {"subject": "陆遥", "value": "陆遥去了苏州", "proper_entities": ["陆遥", "苏州"]}, "right": {"subject": "陆遥", "value": "陆遥去了宿州", "proper_entities": ["陆遥", "宿州"]}, "expected": "distinct"},
+    {"pair_id": "distinct-16", "left": {"subject": "Elena Park", "value": "Elena Park maintains Comet Index", "proper_entities": ["Elena Park", "Comet Index"]}, "right": {"subject": "Elena Park", "value": "Elena Park maintains Meteor Index", "proper_entities": ["Elena Park", "Meteor Index"]}, "expected": "distinct"},
+    {"pair_id": "distinct-17", "left": {"subject": "Omar Reed", "value": "Omar Reed prefers PyCharm", "proper_entities": ["Omar Reed", "PyCharm"]}, "right": {"subject": "Omar Reed", "value": "Omar Reed rejects PyCharm", "proper_entities": ["Omar Reed", "PyCharm"]}, "expected": "distinct"},
+    {"pair_id": "distinct-18", "left": {"subject": "林夏", "value": "林夏建议顾北试用 Cedar DB", "proper_entities": ["林夏", "顾北", "Cedar DB"]}, "right": {"subject": "顾北", "value": "顾北建议林夏试用 Cedar DB", "proper_entities": ["林夏", "顾北", "Cedar DB"]}, "expected": "distinct"},
+    {"pair_id": "distinct-19", "left": {"subject": "安宁", "value": "安宁计划加入白鹭团队", "proper_entities": ["安宁", "白鹭团队"]}, "right": {"subject": "安宁", "value": "安宁已经加入白鹭团队", "proper_entities": ["安宁", "白鹭团队"]}, "expected": "distinct"},
+    {"pair_id": "distinct-20", "left": {"subject": "Priya Nair", "value": "Priya Nair leads Project Kestrel", "proper_entities": ["Priya Nair", "Project Kestrel"]}, "right": {"subject": "Priya Nair", "value": "Priya Nair supports Project Kestrel", "proper_entities": ["Priya Nair", "Project Kestrel"]}, "expected": "distinct"}
+  ]
+}

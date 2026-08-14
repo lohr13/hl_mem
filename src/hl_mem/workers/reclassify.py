@@ -13,7 +13,7 @@ from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.attributes import validate_slot_instance
 from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.domain.claims.retention import TTLPolicy, compute_expiration
-from hl_mem.errors import ConfigurationError
+from hl_mem.errors import ActiveClaimInvariantError, ConfigurationError
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import (
     LLMMessage,
@@ -21,6 +21,7 @@ from hl_mem.llm.types import (
     StructuredOutputMode,
     StructuredOutputSpec,
 )
+from hl_mem.observability.audit import current_audit
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
@@ -156,6 +157,7 @@ def reclassify_claims(
         and float(row.get("importance", 0.5)) == 0.5
     ]
     updated = 0
+    guarded = 0
     for batch in _chunks(pending, batch_size):
         allowed_ids = {claim["id"] for claim in batch}
         for item in classify_batch(llm_client, batch):
@@ -178,8 +180,8 @@ def reclassify_claims(
                 claim.get("qualifiers"),
             )
             expires_at = _classification_expiration(claim, scope, importance, effective_policy)
-            updated += int(
-                repository.update_classification(
+            try:
+                changed = repository.update_classification(
                     claim_id,
                     scope,
                     importance,
@@ -187,9 +189,19 @@ def reclassify_claims(
                     expires_at,
                     conflict_key,
                 )
-            )
+            except ActiveClaimInvariantError:
+                guarded += 1
+                current_audit().emit(
+                    "maintenance",
+                    "reclassify_conflict_guard",
+                    "blocked",
+                    claim_id=claim_id,
+                    detail={"canonical_slot": canonical_slot, "conflict_key": conflict_key},
+                )
+            else:
+                updated += int(changed)
         connection.commit()
-    return {"scanned": len(rows), "eligible": len(pending), "updated": updated}
+    return {"scanned": len(rows), "eligible": len(pending), "updated": updated, "guarded": guarded}
 
 
 def main() -> None:

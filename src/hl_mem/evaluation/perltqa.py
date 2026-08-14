@@ -225,14 +225,14 @@ class PerLTQAAdapter:
                 if not isinstance(contents, Mapping):
                     continue
                 # Join all timestamp → turn lines into one text
-                lines: list[str] = []
+                dialogue_lines: list[str] = []
                 for ts in sorted(contents.keys()):
                     turns = contents[ts]
                     if isinstance(turns, Sequence) and not isinstance(turns, (str, bytes)):
-                        lines.extend(str(t) for t in turns)
+                        dialogue_lines.extend(str(t) for t in turns)
                     elif isinstance(turns, str):
-                        lines.append(turns)
-                text = "\n".join(lines).strip()
+                        dialogue_lines.append(turns)
+                text = "\n".join(dialogue_lines).strip()
                 if text:
                     claims.append(
                         PerLTQAClaimSpec(

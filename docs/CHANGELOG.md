@@ -2,6 +2,19 @@
 
 ## 未发布
 
+### 提取评测 v2
+
+- 冻结原子事实 gold 契约，显式标注来源 Event、角色—动作—对象锚点、专名集合、speaker、canonical subject、禁止传播项和 modality 负例；新增关系方向、逐 claim entity 字段覆盖、链条自包含与多次采样 majority 指标。
+- 新增 24 条公开合成 hard case（entities/prompt 各 12 条）及 40 组平衡 dedup pair；困难负例覆盖共享实体下的值、方向、关系和 modality 差异，并单独报告不安全的 false reuse。
+- 预测必须显式携带来源 Event 索引；关系方向 gold 必须按序覆盖全部角色、动作和对象，专名字段仅允许 Unicode NFC 等价，避免宽松归一化掩盖实体改写。
+- 既有 `deterministic-rubric-v1` 与 answer-anchor 两套 E2E 口径保持不变。
+
+### Active claim 不变量收敛
+
+- 摄入发现互斥 conflict key 下已有多个 active claim 时，不再只处理排序第一条；整组与新 claim 一并转入 disputed，并逐对建立 `manual_required` 审核记录。
+- reclassify 在改写 canonical slot/conflict key 前执行原子碰撞守卫，冲突 mutation 明确计为 guarded，不产生新的互斥双 active。
+- 新增只读 `audit` 与显式 `repair --dry-run/--apply` 维护工具：精确重复确定性复用并汇总 Event evidence，语义不确定的互斥组全部进入 disputed，冲突对创建或重开为手工审核；既有终态裁决保持原样并显式计数，完整 apply 在单一写事务中执行。
+
 ## v0.25.3（2026-08-14）
 
 ### 提取实体保真

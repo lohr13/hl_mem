@@ -17,6 +17,10 @@ class ConflictError(HlMemError):
     """状态冲突，例如非法状态转换。"""
 
 
+class ActiveClaimInvariantError(ConflictError):
+    """一次 mutation 会在互斥 conflict 组中产生多个 active claim。"""
+
+
 class ConfigurationError(HlMemError, RuntimeError):
     """应用配置错误。"""
 

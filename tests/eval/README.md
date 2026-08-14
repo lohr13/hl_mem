@@ -2,6 +2,16 @@
 
 本目录实现 M6 的可复现召回评测。数据集保存人可读的关键词绑定，不保存会随重建而变化的 claim/event ID；运行时在指定 SQLite 快照中解析 ID。一个关键词组可以绑定多个同义事实，多段历史则用 `claim_keyword_groups` 合并绑定；任一关键词组完全无匹配时立即报错。
 
+## 提取评测 v2 gold
+
+`fixtures/extraction_v2_synthetic.json` 是可公开提交的全合成 hard-case 契约，冻结 atomic fact、来源 Event、角色—动作—对象、精确专名集合、speaker、canonical subject、禁止传播和 modality 标注，并包含平衡 dedup pair。预测 claim 必须由 runner 显式补充 `source_event_indices`；专名覆盖仅接受 Unicode NFC 等价。dedup 判分单独报告 false reuse，困难负例包含共享实体下的值、方向、关系和 modality 差异。加载器与确定性指标位于 `hl_mem.evaluation.extraction_v2`：
+
+```powershell
+bash scripts/hlmem-python.sh -m pytest tests/eval/test_extraction_v2.py -q
+```
+
+真实或含个人信息的语料不得写入本目录或 `var/`，统一放在仓库外的 `~/hl_mem_eval_data/`，使用相同 schema 并将 `data_classification` 标为 `private_external`。
+
 ## 运行
 
 ```powershell

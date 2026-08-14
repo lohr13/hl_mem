@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 from hl_mem.core.vector import batch_cosine_similarity, cosine_similarity
+from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.claims.claim import build_index_text
 from hl_mem.domain.claims.conflicts import slot_qualifier_key
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
-from hl_mem.errors import ValidationError
+from hl_mem.errors import ActiveClaimInvariantError, ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
 from hl_mem.protocols import ClaimRow, EmbedderProtocol
 from hl_mem.recall.lexicalizer import prepare_fts_document, prepare_fts_query
@@ -243,10 +244,35 @@ class ClaimRepository:
         conflict_key: str | None,
     ) -> bool:
         """原子更新声明分类、slot 生命周期及其冲突键，由调用方提交事务。"""
-        cursor = self.connection.execute(
-            "UPDATE claims SET scope=?,importance=?,canonical_slot=?,expires_at=?,conflict_key=? WHERE id=?",
-            (scope, importance, canonical_slot, expires_at, conflict_key, claim_id),
-        )
+        if conflict_key is not None and is_mutually_exclusive_attribute(canonical_slot):
+            cursor = self.connection.execute(
+                "UPDATE claims SET scope=?,importance=?,canonical_slot=?,expires_at=?,conflict_key=? "
+                "WHERE id=? AND (status<>'active' OR NOT EXISTS ("
+                "SELECT 1 FROM claims AS other WHERE other.namespace_key=claims.namespace_key "
+                "AND other.conflict_key=? AND other.status='active' AND other.id<>claims.id"
+                "))",
+                (
+                    scope,
+                    importance,
+                    canonical_slot,
+                    expires_at,
+                    conflict_key,
+                    claim_id,
+                    conflict_key,
+                ),
+            )
+            if cursor.rowcount == 0:
+                exists = self.connection.execute("SELECT 1 FROM claims WHERE id=?", (claim_id,)).fetchone()
+                if exists is None:
+                    return False
+                raise ActiveClaimInvariantError(
+                    f"classification of {claim_id} would collide with active conflict group {conflict_key}"
+                )
+        else:
+            cursor = self.connection.execute(
+                "UPDATE claims SET scope=?,importance=?,canonical_slot=?,expires_at=?,conflict_key=? WHERE id=?",
+                (scope, importance, canonical_slot, expires_at, conflict_key, claim_id),
+            )
         return cursor.rowcount == 1
 
     def find_active_for_dedup(
@@ -522,6 +548,36 @@ class ClaimRepository:
     def insert_conflict_case(self, conflict_case: dict[str, Any], commit: bool = True) -> bool:
         """写入幂等冲突审核记录。"""
         return insert_row(self.connection, "conflict_cases", conflict_case, commit)
+
+    def ensure_manual_conflict_case(
+        self,
+        conflict_case: dict[str, Any],
+        commit: bool = True,
+    ) -> str:
+        """创建或重开人工复核；既有终态裁决保持不可变。"""
+        if insert_row(self.connection, "conflict_cases", conflict_case, commit=False):
+            outcome = "created"
+        else:
+            existing = self.connection.execute(
+                "SELECT id,status FROM conflict_cases WHERE pair_key=?",
+                (conflict_case["pair_key"],),
+            ).fetchone()
+            if existing is None:
+                raise RuntimeError(f"conflict case insert failed for pair {conflict_case['pair_key']}")
+            if existing["status"] == "manual_required":
+                outcome = "unchanged"
+            elif existing["status"] in {"resolved", "rejected"}:
+                outcome = "preserved_terminal"
+            else:
+                self.connection.execute(
+                    "UPDATE conflict_cases SET status='manual_required',decision='uncertain',"
+                    "rationale=?,confidence=NULL,resolved_at=NULL WHERE id=?",
+                    (conflict_case["rationale"], existing["id"]),
+                )
+                outcome = "reopened"
+        if commit:
+            self.connection.commit()
+        return outcome
 
     def find_disputed_rivals(self, conflict_keys: list[str], namespace: str) -> dict[str, list[dict[str, Any]]]:
         """批量返回同命名空间内按冲突键分组的 disputed 声明。"""
