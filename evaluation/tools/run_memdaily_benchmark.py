@@ -718,7 +718,7 @@ def _run_qa(
     """
     qa_model = os.environ.get("HL_MEM_EVAL_QA_MODEL", QA_FALLBACK_MODEL)
     refusal_kind = abstention_kind(answerability)
-    if refusal_kind != "none":
+    if refusal_kind == "hard":
         predicted = "信息不足"
         scores = score_qa_accuracy(
             predicted,

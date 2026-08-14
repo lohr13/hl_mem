@@ -68,9 +68,10 @@ PerLTQA no-answer 复用真实 QA，但刻意不把其 `Reference Memory` 放进
 即使 top candidate 已被 relevance 判为 relevant 且 gold 位于 Top 5。
 
 No-answer 口径统一把 `no_evidence`（无候选的 hard abstention）与 `low_confidence`
-（有候选但不得断言的 soft abstention）都计为拒答，同时分别报告两类的 precision、
+（有候选但置信信号不足的 soft abstention）都计为拒答，同时分别报告两类的 precision、
 recall 与 F1。固定快照 recall runner 的报告 schema 为 v3；旧 schema v2 baseline
-不能与该口径直接比较。reader 收到任一拒答信号时直接返回“信息不足”，不继续调用 QA 模型。
+不能与该口径直接比较。reader 仅在 `no_evidence` 时直接返回“信息不足”；`low_confidence`
+在 observe 语义下继续调用 QA 模型并随答案保留 soft 标签。
 
 | suite | cases | Hit@1 | Hit@5 | MRR | gold recall@5 | 完整证据 | answerability | no-answer | intent |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

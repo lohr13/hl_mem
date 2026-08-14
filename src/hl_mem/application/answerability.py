@@ -1,4 +1,4 @@
-"""召回答案可断言性与拒答类型的统一语义。"""
+"""召回答案置信信号与评测拒答类型的统一语义。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def is_answerability(value: object) -> TypeGuard[Answerability]:
 
 
 def abstention_kind(answerability: str) -> AbstentionKind:
-    """把产品信号映射为 reader 与评测共用的 hard/soft 拒答。"""
+    """把产品信号映射为 API 元数据与评测共用的 hard/soft 分类。"""
     if answerability == "no_evidence":
         return "hard"
     if answerability == "low_confidence":
@@ -27,5 +27,5 @@ def abstention_kind(answerability: str) -> AbstentionKind:
 
 
 def is_abstention(answerability: str) -> bool:
-    """hard 与 soft 都禁止 reader 作确定性断言。"""
+    """判断信号是否计入评测的 hard/soft 拒答并集；不决定 reader 控制流。"""
     return abstention_kind(answerability) != "none"

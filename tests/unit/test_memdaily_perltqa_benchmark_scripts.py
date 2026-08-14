@@ -46,25 +46,48 @@ def _memdaily_trajectory() -> memdaily_runner.MemDailyTrajectory:
 
 
 class MemDailyAggregationTests(unittest.TestCase):
-    def test_reader_short_circuits_hard_and_soft_abstention(self) -> None:
-        """reader 不得在 API 已拒答后继续让模型基于候选作断言。"""
+    def test_reader_short_circuits_hard_abstention(self) -> None:
+        """没有候选时 reader 不调用模型。"""
         trajectory = _memdaily_trajectory()
-        for answerability, expected_kind in (("no_evidence", "hard"), ("low_confidence", "soft")):
-            with self.subTest(answerability=answerability):
-                with patch.object(memdaily_runner, "_qa_dashscope_chat") as qa_call:
-                    result = memdaily_runner._run_qa(
-                        object(),
-                        trajectory,
-                        [{"rank": 1, "text": "可能相关但不足以断言"}],
-                        Settings.for_test(),
-                        answerability=answerability,
-                    )
+        with patch.object(memdaily_runner, "_qa_dashscope_chat") as qa_call:
+            result = memdaily_runner._run_qa(
+                object(),
+                trajectory,
+                [],
+                Settings.for_test(),
+                answerability="no_evidence",
+            )
 
-                qa_call.assert_not_called()
-                self.assertEqual(result["predicted_answer"], "信息不足")
-                self.assertEqual(result["answerability"], answerability)
-                self.assertEqual(result["abstention_kind"], expected_kind)
-                self.assertEqual(result["usage"]["total_tokens"], 0)
+        qa_call.assert_not_called()
+        self.assertEqual(result["predicted_answer"], "信息不足")
+        self.assertEqual(result["answerability"], "no_evidence")
+        self.assertEqual(result["abstention_kind"], "hard")
+        self.assertEqual(result["usage"]["total_tokens"], 0)
+
+    def test_reader_answers_low_confidence_with_soft_metadata(self) -> None:
+        """有候选时 soft 标签只用于观测，不阻断 reader 作答。"""
+        trajectory = _memdaily_trajectory()
+        with (
+            patch.dict(memdaily_runner.os.environ, {"LLM_API_KEY": "test-key"}),
+            patch.object(
+                memdaily_runner,
+                "_qa_dashscope_chat",
+                return_value=("An event", 37),
+            ) as qa_call,
+        ):
+            result = memdaily_runner._run_qa(
+                object(),
+                trajectory,
+                [{"rank": 1, "text": "An event happened"}],
+                Settings.for_test(),
+                answerability="low_confidence",
+            )
+
+        qa_call.assert_called_once()
+        self.assertEqual(result["predicted_answer"], "An event")
+        self.assertEqual(result["answerability"], "low_confidence")
+        self.assertEqual(result["abstention_kind"], "soft")
+        self.assertEqual(result["usage"]["total_tokens"], 37)
 
     def test_ingest_config_fingerprint_covers_every_production_ingest_input(self) -> None:
         settings = Settings.for_test()

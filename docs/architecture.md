@@ -161,8 +161,9 @@ delivered item so later feedback can be attributed to that exposure.
 
 Answerability is shared across the application API, Context Packet, benchmark readers, and evaluation runners:
 `no_evidence` is hard abstention with no retrieval candidate, while `low_confidence` is soft abstention with candidates
-that must not be turned into an assertion. Aggregate no-answer metrics include both and retain separate hard/soft
-diagnostics.
+whose confidence signal remains below the supported threshold. Readers short-circuit only `no_evidence`; observe-mode
+readers answer `low_confidence` and preserve its soft metadata. Aggregate no-answer metrics include both and retain
+separate hard/soft diagnostics.
 
 ## 5. Write Pipeline
 

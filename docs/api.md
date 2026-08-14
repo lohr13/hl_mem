@@ -124,8 +124,9 @@ its evidence list includes deduplicated evidence from folded members.
 
 `answerability` has one cross-consumer meaning. `supported` permits an answer grounded in the returned candidates;
 `no_evidence` is a hard abstention because retrieval found no candidate; `low_confidence` is a soft abstention because
-candidates exist but are not strong enough for the reader to make an assertion. Readers must abstain for both latter
-values, while diagnostics and evaluation keep their hard/soft classes separate.
+candidates exist but their confidence signal remains below the supported threshold. Readers must abstain for
+`no_evidence`; in observe mode they continue answering for `low_confidence` and propagate the soft label. Diagnostics
+and evaluation keep the hard/soft classes separate and include both in aggregate no-answer metrics.
 
 `response_format` accepts `legacy`, `context_packet`, or `both` and defaults to `legacy`. `context_packet` returns only
 the optional `context_packet` envelope; `both` returns it alongside the legacy fields. Context Packet v1 has exactly

@@ -13,7 +13,7 @@
 
 ### Abstention 语义统一
 
-- `no_evidence` 统一表示没有候选的 hard abstention；`low_confidence` 统一表示仍有候选但 reader 不得据此断言的 soft abstention。REST/Context Packet 使用同一冻结枚举，benchmark reader 对两类信号均直接返回信息不足且不再调用 QA 模型。
+- `no_evidence` 统一表示没有候选的 hard abstention，benchmark reader 直接返回信息不足且不调用 QA 模型；`low_confidence` 统一表示仍有候选的 soft abstention 元数据，在 observe 语义下继续调用 QA 并随答案保留 soft 标签。REST/Context Packet 使用同一冻结枚举。
 - 两个召回评测入口都把 hard 与 soft 的并集计为总体 no-answer 预测，并分别报告 hard/soft precision、recall 与 F1；固定快照 recall 报告 schema 升为 v3，避免旧口径 baseline 被静默比较。既有 `deterministic-rubric-v1` 与 answer-anchor 评分不变。
 
 ### Active claim 不变量收敛
