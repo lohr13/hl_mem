@@ -21,7 +21,7 @@ def c(subject: str, predicate: str, value: str, scope: str) -> dict[str, str]:
 
 
 # Empty events are intentional negatives. These annotations do not inherit the older
-# evaluation/datasets/gold_dataset.jsonl because that file admits transient health/test/tool snapshots.
+# Historical extraction gold admitted transient health/test/tool snapshots, so this dataset is generated independently.
 GOLD_CLAIMS: dict[str, list[dict[str, str]]] = {
     "cbbc932288a64ff297b333898432f679": [
         c("hl_mem", "状态", "hl_mem 当前记忆数据库存在严重语义重复", "temporal"),

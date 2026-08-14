@@ -151,7 +151,7 @@ production end-to-end accuracy claim.
 
 The LongMemEval comparison uses the `deepseek-v4-flash-0731` reader throughout, with reader thinking enabled and judge
 thinking disabled. HL-Mem approaches the full-context upper bound while retaining governable structured Claims and evidence
-lineage. See the [results index](evaluation/results/longmemeval/README.md) for local artifact naming and layout.
+lineage. See the [results index](evaluation/results/README.md) for local artifact naming and layout.
 
 See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, and evidence, and the [architecture guide](docs/architecture.md) for data flows.
 

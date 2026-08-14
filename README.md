@@ -174,7 +174,7 @@ recall/context packing 是两套契约，该成绩不能直接视为生产端到
 
 LongMemEval 三角对照统一使用 `deepseek-v4-flash-0731` reader，reader 开启 thinking、judge 关闭
 thinking。HL-Mem 以可治理的结构化 Claim 与证据链达到接近全上下文上限的结果；本地评测产物的
-命名与目录说明见[结果索引](evaluation/results/longmemeval/README.md)。
+命名与目录说明见[结果索引](evaluation/results/README.md)。
 
 能力成熟度、默认开关和证据见 [能力矩阵](docs/capability-matrix.md)，架构与数据流见 [架构文档](docs/architecture.md)。
 
