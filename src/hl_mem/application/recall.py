@@ -12,8 +12,8 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from hl_mem.application.answerability import Answerability
 from hl_mem.application.context_packet import (
-    Answerability,
     ContextPacketAssembler,
     MemoryType,
     RetrievalBundle,
@@ -535,15 +535,16 @@ class RecallService:
         )
         for policy in policies:
             policy["evidence"] = policy_evidence.get(str(policy["id"]), [])
+        packet_candidates = self._context_candidates(results, observations, policies)
         answerability = self._answerability(
             claims,
             tracer,
             relevance_enforced=enforce_enabled,
+            has_auxiliary_candidates=bool(packet_candidates),
         )
-        packet_candidates = self._context_candidates(results, observations, policies)
         retrieval_bundle = self._bundle_from_context_items(
             query_id,
-            cast(Answerability, answerability),
+            answerability,
             packet_candidates,
         )
         if response_format != "legacy" or context_mode == "packed":
@@ -600,11 +601,13 @@ class RecallService:
         tracer: SearchTracer,
         *,
         relevance_enforced: bool = False,
-    ) -> str:
+        has_auxiliary_candidates: bool = False,
+    ) -> Answerability:
         """按最终候选及 relevance gate 结果给出 answerability。"""
         if not claims:
-            tracer.trace.answerability = "no_evidence"
-            return "no_evidence"
+            answerability: Answerability = "low_confidence" if has_auxiliary_candidates else "no_evidence"
+            tracer.trace.answerability = answerability
+            return answerability
         top = claims[0]
         trace = tracer.trace.candidates.get(str(top["id"]))
         if relevance_enforced and (trace is None or trace.relevance_decision != "relevant"):
@@ -906,7 +909,7 @@ class RecallService:
         materialized_selection = packet_selected if response_format != "legacy" else selected
         bundle = RetrievalBundle(
             query_id=query_id,
-            answerability=cast(Answerability, answerability),
+            answerability=answerability,
             items=tuple(
                 RetrievalBundleItem(
                     cast(MemoryType, item.memory_type),

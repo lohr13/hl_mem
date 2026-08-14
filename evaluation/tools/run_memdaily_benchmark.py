@@ -31,6 +31,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hl_mem import __version__  # noqa: E402
+from hl_mem.application.answerability import Answerability, abstention_kind  # noqa: E402
 from hl_mem.application.ingest import IngestService  # noqa: E402
 from hl_mem.application.recall import RecallService  # noqa: E402
 from hl_mem.components import (  # noqa: E402
@@ -634,6 +635,7 @@ def _recall_trajectory(
         "recall_at_10": recall_10,
         "gold_event_count": len(traj.gold_event_ids),
         "elapsed_seconds": round(time.perf_counter() - started, 3),
+        "answerability": response.get("answerability"),
     }
     return metrics, retrieved_payload
 
@@ -705,6 +707,8 @@ def _run_qa(
     traj: MemDailyTrajectory,
     retrieved: Sequence[Mapping[str, Any]],
     settings: Settings,
+    *,
+    answerability: Answerability = "supported",
 ) -> dict[str, Any]:
     """Ask the LLM to answer the question using retrieved claims.
 
@@ -713,6 +717,28 @@ def _run_qa(
     subdomain key works fine for plain text completions.
     """
     qa_model = os.environ.get("HL_MEM_EVAL_QA_MODEL", QA_FALLBACK_MODEL)
+    refusal_kind = abstention_kind(answerability)
+    if refusal_kind != "none":
+        predicted = "信息不足"
+        scores = score_qa_accuracy(
+            predicted,
+            traj.answer,
+            choices=traj.choices if traj.choices else None,
+            ground_truth_choice=traj.ground_truth_choice,
+        )
+        return {
+            "model": qa_model,
+            "predicted_answer": predicted,
+            "predicted_choice": "",
+            "gold_answer": traj.answer,
+            "ground_truth_choice": traj.ground_truth_choice,
+            "exact_match": scores["exact_match"],
+            "f1": scores["f1"],
+            "choice_correct": scores["choice_correct"],
+            "answerability": answerability,
+            "abstention_kind": refusal_kind,
+            "usage": {"total_tokens": 0},
+        }
 
     # Resolve API key: prefer env override, then settings
     api_key = os.environ.get("LLM_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or settings.llm_api_key
@@ -789,6 +815,8 @@ def _run_qa(
         "exact_match": scores["exact_match"],
         "f1": scores["f1"],
         "choice_correct": scores["choice_correct"],
+        "answerability": answerability,
+        "abstention_kind": refusal_kind,
         "usage": {
             "total_tokens": total_tokens,
         },
@@ -889,7 +917,13 @@ def _run_case(
         result["retrieval"], result["retrieved"] = _recall_trajectory(connection, traj, settings, embedder, reranker)
 
         if run_qa:
-            result["qa"] = _run_qa(connection, traj, result["retrieved"], settings)
+            result["qa"] = _run_qa(
+                connection,
+                traj,
+                result["retrieved"],
+                settings,
+                answerability=result["retrieval"]["answerability"],
+            )
 
     except Exception as error:
         result["error"] = f"{type(error).__name__}: {error}"

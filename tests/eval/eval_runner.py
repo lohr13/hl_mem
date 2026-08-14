@@ -21,6 +21,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.application.answerability import abstention_kind
 from hl_mem.components import make_embedder
 from hl_mem.config_loader import load_settings
 from hl_mem.core.vector import batch_cosine_similarity
@@ -164,6 +165,7 @@ def _score(
             }
         )
     answerability = str(response.get("answerability") or "supported")
+    answerability_abstention = abstention_kind(answerability)
     answerable = row["slice"] != "no_answer" and bool(relevant)
     ranks = [index + 1 for index, claim_id in enumerate(returned_ids) if claim_id in relevant]
     top_1_hits = relevant.intersection(returned_ids[:1])
@@ -191,7 +193,10 @@ def _score(
         "mrr": (1.0 / min(ranks) if ranks else 0.0) if answerable else None,
         "ndcg_at_5": (_dcg(hits5) / _dcg(ideal) if ideal else 0.0) if answerable else None,
         "precision_at_3": len(top_3_hits) / 3.0 if answerable else None,
-        "predicted_no_answer": answerability == "no_evidence",
+        "predicted_no_answer": answerability_abstention != "none",
+        "abstention_kind": answerability_abstention,
+        "hard_abstention": answerability_abstention == "hard",
+        "soft_abstention": answerability_abstention == "soft",
         "low_confidence": answerability == "low_confidence",
         "answerability": answerability,
         "min_relevance": row["min_relevance"],
@@ -213,8 +218,9 @@ def _average(items: list[dict[str, Any]], key: str) -> float:
 def _metrics(items: list[dict[str, Any]]) -> dict[str, float]:
     """聚合总体或单 slice 指标。"""
     actual_no_answer = [item for item in items if not item["answerable"]]
-    predicted_no_answer = [item for item in items if item["predicted_no_answer"]]
-    true_no_answer = [item for item in actual_no_answer if item["predicted_no_answer"]]
+    no_answer = _abstention_metrics(items, actual_no_answer, "predicted_no_answer")
+    hard = _abstention_metrics(items, actual_no_answer, "hard_abstention")
+    soft = _abstention_metrics(items, actual_no_answer, "soft_abstention")
     return {
         "hit_at_1": _average(items, "hit_at_1"),
         "hit_at_5": _average(items, "hit_at_5"),
@@ -223,10 +229,30 @@ def _metrics(items: list[dict[str, Any]]) -> dict[str, float]:
         "mrr": _average(items, "mrr"),
         "ndcg_at_5": _average(items, "ndcg_at_5"),
         "precision_at_3": _average(items, "precision_at_3"),
-        "no_answer_precision": len(true_no_answer) / len(predicted_no_answer) if predicted_no_answer else 0.0,
-        "no_answer_recall": len(true_no_answer) / len(actual_no_answer) if actual_no_answer else 0.0,
+        "no_answer_precision": no_answer["precision"],
+        "no_answer_recall": no_answer["recall"],
+        "no_answer_f1": no_answer["f1"],
+        "hard_abstention_precision": hard["precision"],
+        "hard_abstention_recall": hard["recall"],
+        "hard_abstention_f1": hard["f1"],
+        "soft_abstention_precision": soft["precision"],
+        "soft_abstention_recall": soft["recall"],
+        "soft_abstention_f1": soft["f1"],
         "low_confidence_rate": sum(item["low_confidence"] for item in items) / len(items) if items else 0.0,
     }
+
+
+def _abstention_metrics(
+    items: list[dict[str, Any]],
+    actual_no_answer: list[dict[str, Any]],
+    prediction_key: str,
+) -> dict[str, float]:
+    predicted = [item for item in items if item.get(prediction_key)]
+    true_positive = [item for item in actual_no_answer if item.get(prediction_key)]
+    precision = len(true_positive) / len(predicted) if predicted else 0.0
+    recall = len(true_positive) / len(actual_no_answer) if actual_no_answer else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {"precision": precision, "recall": recall, "f1": f1}
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -378,7 +404,7 @@ def run(
     if fixture_metadata:
         artifacts["fixture"] = fixture_metadata
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "artifacts": artifacts,
         "config": {
@@ -418,7 +444,11 @@ def _print_summary(report: dict[str, Any], baseline: dict[str, Any] | None) -> N
     )
     print(
         f"No-answer precision={metrics['no_answer_precision']:.4f} "
-        f"recall={metrics['no_answer_recall']:.4f} | "
+        f"recall={metrics['no_answer_recall']:.4f} F1={metrics['no_answer_f1']:.4f} | "
+        f"hard P/R/F1={metrics['hard_abstention_precision']:.4f}/"
+        f"{metrics['hard_abstention_recall']:.4f}/{metrics['hard_abstention_f1']:.4f} | "
+        f"soft P/R/F1={metrics['soft_abstention_precision']:.4f}/"
+        f"{metrics['soft_abstention_recall']:.4f}/{metrics['soft_abstention_f1']:.4f} | "
         f"low-confidence rate={metrics['low_confidence_rate']:.4f} | "
         f"latency p50={report['latency_ms']['p50']:.1f}ms p95={report['latency_ms']['p95']:.1f}ms"
     )

@@ -231,7 +231,12 @@ def test_chinese_recall_evaluation(
         f"\n  Gold recall@5={report.mean_gold_recall:.3f}"
         f" complete-evidence={report.complete_evidence_accuracy:.3f}"
         f"\n  Positive answerability={report.positive_answerability_accuracy:.3f}"
-        f"\n  No-answer accuracy={no_answer_display}"
+        f"\n  No-answer accuracy={no_answer_display} P/R/F1="
+        f"{report.no_answer_precision:.3f}/{report.no_answer_recall:.3f}/{report.no_answer_f1:.3f}"
+        f"\n  Hard abstention P/R/F1={report.hard_abstention_precision:.3f}/"
+        f"{report.hard_abstention_recall:.3f}/{report.hard_abstention_f1:.3f}"
+        f"\n  Soft abstention P/R/F1={report.soft_abstention_precision:.3f}/"
+        f"{report.soft_abstention_recall:.3f}/{report.soft_abstention_f1:.3f}"
         f"\n  Intent accuracy={report.intent_accuracy:.3f}"
     )
 

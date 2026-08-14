@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from hl_mem.application.answerability import Answerability
 from hl_mem.domain.recall import RecallIntent
 
 
@@ -166,7 +167,7 @@ class ContextPacketOutput(BaseModel):
     schema_major: Literal[1]
     schema_minor: Literal[0]
     query_id: str
-    answerability: Literal["supported", "low_confidence", "no_evidence"]
+    answerability: Answerability
     feedback_state: Literal["available", "degraded"]
     items: list[ContextPacketItemOutput]
     used_tokens_estimate: int = Field(ge=0)
@@ -181,10 +182,20 @@ class RecallOutput(BaseModel):
     policies: list[dict[str, Any]]
     total: int
     query_id: str | None = None
-    answerability: str | None = None
+    answerability: Answerability | None = None
     context: dict[str, Any] | None = None
     search_trace: dict[str, Any] | None = None
     context_packet: ContextPacketOutput | None = None
+
+    @model_validator(mode="after")
+    def validate_answerability_candidates(self) -> "RecallOutput":
+        """冻结 hard/soft 与公开候选集合的对应关系。"""
+        has_candidates = bool(self.results or self.observations or self.policies)
+        if self.answerability == "no_evidence" and has_candidates:
+            raise ValueError("no_evidence requires an empty candidate set")
+        if self.answerability == "low_confidence" and not has_candidates:
+            raise ValueError("low_confidence requires at least one candidate")
+        return self
 
 
 class ContextPacketRecallOutput(BaseModel):

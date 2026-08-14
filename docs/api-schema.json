@@ -1566,6 +1566,11 @@
           "answerability": {
             "anyOf": [
               {
+                "enum": [
+                  "supported",
+                  "low_confidence",
+                  "no_evidence"
+                ],
                 "type": "string"
               },
               {

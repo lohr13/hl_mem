@@ -33,6 +33,8 @@ def check(
         return ["ci_fixture baseline 不能用于正式发布决策"]
     if status not in ({"ready", "ci_fixture"} if allow_ci_fixture else {"ready"}):
         return ["baseline 尚未用对应的冻结 snapshot 初始化"]
+    if report.get("schema_version") != baseline.get("schema_version"):
+        failures.append("report schema_version 与 baseline 不一致")
     if report.get("artifacts", {}).get("dataset_sha256") != baseline.get("dataset_sha256"):
         failures.append("数据集哈希与 baseline 不一致")
     if status == "ci_fixture":

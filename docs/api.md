@@ -122,6 +122,11 @@ temporal fields, canonical slot/tags, relations, conflicts, `equivalent_claim_id
 `equivalent_claim_ids` list means recall kept this highest-ranked representative after conservative near-copy folding;
 its evidence list includes deduplicated evidence from folded members.
 
+`answerability` has one cross-consumer meaning. `supported` permits an answer grounded in the returned candidates;
+`no_evidence` is a hard abstention because retrieval found no candidate; `low_confidence` is a soft abstention because
+candidates exist but are not strong enough for the reader to make an assertion. Readers must abstain for both latter
+values, while diagnostics and evaluation keep their hard/soft classes separate.
+
 `response_format` accepts `legacy`, `context_packet`, or `both` and defaults to `legacy`. `context_packet` returns only
 the optional `context_packet` envelope; `both` returns it alongside the legacy fields. Context Packet v1 has exactly
 eight top-level fields: `schema_major`, `schema_minor`, `query_id`, `answerability`, `feedback_state`, `items`,

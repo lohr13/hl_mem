@@ -9,6 +9,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Protocol
 
+from hl_mem.application.answerability import abstention_kind, is_answerability
 from hl_mem.application.ingest import claim_text, compute_fact_hash
 from hl_mem.domain.claims.attributes import (
     normalize_topic_tags,
@@ -25,7 +26,6 @@ EVAL_TIME = "2026-08-13T00:00:00+00:00"
 _EXPECTED_TYPES = frozenset({"claim", "empty"})
 _INTENTS = frozenset(intent.value for intent in RecallIntent)
 _INTENT_SOURCES = frozenset({"explicit", "keyword", "fallback", "llm"})
-_ABSTENTIONS = frozenset({"no_evidence", "low_confidence"})
 
 
 class DatasetError(ValueError):
@@ -74,6 +74,7 @@ class CaseResult:
     expected_count: int
     rank: int | None
     answerability: str
+    abstention_kind: str
     top_score: float | None
     runner_up_score: float | None
     top_reranker_score: float | None
@@ -115,8 +116,52 @@ class EvaluationReport:
 
     @property
     def no_answer_accuracy(self) -> float:
-        no_answer = [item for item in self.items if item.correct_no_answer is not None]
-        return mean(bool(item.correct_no_answer) for item in no_answer) if no_answer else 0.0
+        return self.no_answer_recall
+
+    @property
+    def no_answer_precision(self) -> float:
+        return self._abstention_metrics({"hard", "soft"})[0]
+
+    @property
+    def no_answer_recall(self) -> float:
+        return self._abstention_metrics({"hard", "soft"})[1]
+
+    @property
+    def no_answer_f1(self) -> float:
+        return self._abstention_metrics({"hard", "soft"})[2]
+
+    @property
+    def hard_abstention_precision(self) -> float:
+        return self._abstention_metrics({"hard"})[0]
+
+    @property
+    def hard_abstention_recall(self) -> float:
+        return self._abstention_metrics({"hard"})[1]
+
+    @property
+    def hard_abstention_f1(self) -> float:
+        return self._abstention_metrics({"hard"})[2]
+
+    @property
+    def soft_abstention_precision(self) -> float:
+        return self._abstention_metrics({"soft"})[0]
+
+    @property
+    def soft_abstention_recall(self) -> float:
+        return self._abstention_metrics({"soft"})[1]
+
+    @property
+    def soft_abstention_f1(self) -> float:
+        return self._abstention_metrics({"soft"})[2]
+
+    def _abstention_metrics(self, kinds: set[str]) -> tuple[float, float, float]:
+        actual_no_answer = [item for item in self.items if item.correct_no_answer is not None]
+        predicted = [item for item in self.items if item.abstention_kind in kinds]
+        true_positive = [item for item in actual_no_answer if item.abstention_kind in kinds]
+        precision = len(true_positive) / len(predicted) if predicted else 0.0
+        recall = len(true_positive) / len(actual_no_answer) if actual_no_answer else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        return precision, recall, f1
 
     @property
     def positive_answerability_accuracy(self) -> float:
@@ -391,6 +436,7 @@ def evaluate_cases(
         rank = next((index for index, memory_id in enumerate(returned_ids, start=1) if memory_id in expected), None)
         raw_answerability = response.get("answerability")
         answerability = raw_answerability if isinstance(raw_answerability, str) and raw_answerability else "unknown"
+        answerability_abstention = abstention_kind(answerability) if is_answerability(answerability) else "none"
         trace = response.get("search_trace") or {}
         actual_intent = str(trace.get("intent") or "") if isinstance(trace, dict) else ""
         intent_source = str(trace.get("intent_source") or "") if isinstance(trace, dict) else ""
@@ -418,6 +464,7 @@ def evaluate_cases(
                 expected_count=len(expected),
                 rank=rank,
                 answerability=answerability,
+                abstention_kind=answerability_abstention,
                 top_score=result_scores[0] if result_scores else None,
                 runner_up_score=result_scores[1] if len(result_scores) > 1 else None,
                 top_reranker_score=float(raw_reranker_score) if isinstance(raw_reranker_score, (int, float)) else None,
@@ -433,7 +480,7 @@ def evaluate_cases(
                 intent_source=intent_source,
                 intent_correct=(actual_intent == case.expected_intent and intent_source == case.expected_intent_source),
                 correct_positive_answer=(answerability == "supported" if case.expected_type == "claim" else None),
-                correct_no_answer=(answerability in _ABSTENTIONS if case.expected_type == "empty" else None),
+                correct_no_answer=(answerability_abstention != "none" if case.expected_type == "empty" else None),
             )
         )
     return EvaluationReport(tuple(items))

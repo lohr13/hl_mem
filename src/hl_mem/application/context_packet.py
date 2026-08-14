@@ -10,11 +10,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
+from hl_mem.application.answerability import Answerability
 from hl_mem.experience.service import ExperienceService
 
 LOGGER = logging.getLogger(__name__)
 
-Answerability = Literal["supported", "low_confidence", "no_evidence"]
 FeedbackState = Literal["available", "degraded"]
 MemoryType = Literal["claim", "observation", "policy", "episode", "trace"]
 
@@ -67,6 +67,8 @@ class RetrievalBundle:
             raise ValueError("query_id must be non-empty")
         if self.answerability not in _ANSWERABILITY_VALUES:
             raise ValueError(f"unsupported answerability: {self.answerability}")
+        if self.answerability == "no_evidence" and self.items:
+            raise ValueError("no_evidence retrieval bundle must not contain items")
         if self.used_tokens_estimate is not None and self.used_tokens_estimate < 0:
             raise ValueError("used_tokens_estimate must be non-negative")
 

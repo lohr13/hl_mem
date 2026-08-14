@@ -217,6 +217,12 @@ def test_no_answer_scores_low_confidence_as_abstention(tmp_path: Path) -> None:
     report = evaluate_cases(AbstainingService(), cases, limit=5)
 
     assert report.no_answer_accuracy == 1.0
+    assert report.no_answer_precision == 1.0
+    assert report.no_answer_recall == 1.0
+    assert report.hard_abstention_recall == 0.0
+    assert report.soft_abstention_precision == 1.0
+    assert report.soft_abstention_recall == 1.0
+    assert report.items[0].abstention_kind == "soft"
     assert report.items[0].correct_no_answer is True
 
 

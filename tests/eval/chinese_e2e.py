@@ -1136,6 +1136,7 @@ def _run_perltqa_bundle(
                     question_trajectory,
                     raw["retrieved"],
                     settings,
+                    answerability=raw["retrieval"]["answerability"],
                 )
                 raw["qa"].update(
                     score_answer(

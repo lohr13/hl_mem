@@ -46,6 +46,26 @@ def _memdaily_trajectory() -> memdaily_runner.MemDailyTrajectory:
 
 
 class MemDailyAggregationTests(unittest.TestCase):
+    def test_reader_short_circuits_hard_and_soft_abstention(self) -> None:
+        """reader 不得在 API 已拒答后继续让模型基于候选作断言。"""
+        trajectory = _memdaily_trajectory()
+        for answerability, expected_kind in (("no_evidence", "hard"), ("low_confidence", "soft")):
+            with self.subTest(answerability=answerability):
+                with patch.object(memdaily_runner, "_qa_dashscope_chat") as qa_call:
+                    result = memdaily_runner._run_qa(
+                        object(),
+                        trajectory,
+                        [{"rank": 1, "text": "可能相关但不足以断言"}],
+                        Settings.for_test(),
+                        answerability=answerability,
+                    )
+
+                qa_call.assert_not_called()
+                self.assertEqual(result["predicted_answer"], "信息不足")
+                self.assertEqual(result["answerability"], answerability)
+                self.assertEqual(result["abstention_kind"], expected_kind)
+                self.assertEqual(result["usage"]["total_tokens"], 0)
+
     def test_ingest_config_fingerprint_covers_every_production_ingest_input(self) -> None:
         settings = Settings.for_test()
         baseline = memdaily_runner.ingest_config_fingerprint(settings)

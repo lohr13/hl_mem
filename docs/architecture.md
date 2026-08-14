@@ -60,6 +60,7 @@ src/hl_mem/
 │   ├── server.py             # FastAPI assembly, middleware, exception mapping, 17 REST routes
 │   └── schemas.py            # Pydantic request and response contracts
 ├── application/
+│   ├── answerability.py      # Shared supported/hard/soft abstention semantics
 │   ├── context_packet.py     # Context Packet v1 assembly and exposure materialization
 │   ├── ingest.py             # IngestService and atomic Claim write path
 │   ├── recall.py             # RecallService orchestration and context packing
@@ -157,6 +158,11 @@ preference behavior; tags improve discovery without becoming hard schema.
 Context Packet v1 is a delivery projection rather than another stored memory type. It freezes the final ordered,
 token-budgeted items for one recall, carries evidence and answerability, and assigns a fresh `feedback_id` to each
 delivered item so later feedback can be attributed to that exposure.
+
+Answerability is shared across the application API, Context Packet, benchmark readers, and evaluation runners:
+`no_evidence` is hard abstention with no retrieval candidate, while `low_confidence` is soft abstention with candidates
+that must not be turned into an assertion. Aggregate no-answer metrics include both and retain separate hard/soft
+diagnostics.
 
 ## 5. Write Pipeline
 

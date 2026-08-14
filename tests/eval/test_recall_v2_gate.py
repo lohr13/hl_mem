@@ -25,14 +25,52 @@ def test_score_consumes_answerability_and_reports_min_relevance() -> None:
 
     score = eval_runner._score(
         row,
-        {"results": [{"id": "noise"}], "answerability": "no_evidence"},
+        {"results": [], "answerability": "no_evidence"},
         latency_ms=1.0,
         top_k=5,
     )
 
     assert score["predicted_no_answer"] is True
+    assert score["abstention_kind"] == "hard"
     assert score["low_confidence"] is False
     assert score["min_relevance_diagnostic"] == "not yet used for scoring"
+
+
+def test_metrics_count_both_abstentions_and_report_hard_soft_separately() -> None:
+    """把 soft 漏出总体拒答或并入 hard 指标时必须失败。"""
+    items = [
+        {
+            "answerable": False,
+            "predicted_no_answer": True,
+            "hard_abstention": True,
+            "soft_abstention": False,
+            "low_confidence": False,
+        },
+        {
+            "answerable": False,
+            "predicted_no_answer": True,
+            "hard_abstention": False,
+            "soft_abstention": True,
+            "low_confidence": True,
+        },
+        {
+            "answerable": True,
+            "predicted_no_answer": True,
+            "hard_abstention": False,
+            "soft_abstention": True,
+            "low_confidence": True,
+        },
+    ]
+
+    metrics = eval_runner._metrics(items)
+
+    assert metrics["no_answer_precision"] == pytest.approx(2 / 3)
+    assert metrics["no_answer_recall"] == 1.0
+    assert metrics["no_answer_f1"] == pytest.approx(0.8)
+    assert metrics["hard_abstention_precision"] == 1.0
+    assert metrics["hard_abstention_recall"] == 0.5
+    assert metrics["soft_abstention_precision"] == 0.5
+    assert metrics["soft_abstention_recall"] == 0.5
 
 
 def test_score_preserves_pair_id_and_result_raw_scores() -> None:
@@ -258,3 +296,30 @@ def test_gate_checks_integrity_and_safety_metrics() -> None:
     assert any("slice" in failure for failure in failures)
     assert any("forbidden" in failure for failure in failures)
     assert any("http_success_rate" in failure for failure in failures)
+
+
+def test_gate_rejects_a_baseline_from_the_old_abstention_schema() -> None:
+    """hard-only v2 baseline 不得与 hard+soft v3 指标静默比较。"""
+    report = {
+        "schema_version": 3,
+        "artifacts": {"dataset_sha256": "dataset", "snapshot_sha256": "snapshot"},
+        "case_count": 1,
+        "slice_counts": {"no_answer": 1},
+        "metrics": {},
+        "slices": {},
+        "http_success_rate": 1.0,
+    }
+    baseline = {
+        "schema_version": 2,
+        "status": "ready",
+        "dataset_sha256": "dataset",
+        "snapshot_sha256": "snapshot",
+        "case_count": 1,
+        "slice_counts": {"no_answer": 1},
+        "metrics": {},
+        "slices": {},
+    }
+
+    failures = check(report, baseline, tolerance=0.01, slice_tolerance=0.05)
+
+    assert failures[0] == "report schema_version 与 baseline 不一致"

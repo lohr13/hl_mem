@@ -149,7 +149,7 @@ def test_packet_schema_forbids_extra_top_level_and_item_fields(tmp_path) -> None
     ).assemble(
         RetrievalBundle(
             query_id="query-1",
-            answerability="no_evidence",
+            answerability="supported",
             items=(RetrievalBundleItem("claim", "claim-1", "index text"),),
             used_tokens_estimate=5,
             truncated=False,
@@ -165,6 +165,16 @@ def test_packet_schema_forbids_extra_top_level_and_item_fields(tmp_path) -> None
     empty_feedback = {**packet, "items": [{**packet["items"][0], "feedback_id": ""}]}
     with pytest.raises(ValidationError):
         ContextPacketOutput.model_validate(empty_feedback)
+
+
+def test_retrieval_bundle_rejects_hard_abstention_with_items() -> None:
+    """hard abstention 若携带候选，reader 与 API 将收到互相矛盾的信号。"""
+    with pytest.raises(ValueError, match="no_evidence"):
+        RetrievalBundle(
+            query_id="query-1",
+            answerability="no_evidence",
+            items=(RetrievalBundleItem("claim", "claim-1", "noise"),),
+        )
 
 
 def test_context_only_output_does_not_weaken_legacy_required_fields() -> None:
