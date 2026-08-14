@@ -1,17 +1,24 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-14 · v0.25.3
+> 最后更新：2026-08-14 · v0.26.0
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.25.3
-- **阶段**：v0.25.3 准备发布
+- **版本**：v0.26.0
+- **阶段**：v0.26.0 已发布
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；40 migrations（SQL 001-040）+ Python data migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-14 v0.26.0 评测、拒答与 active claim 收敛
+
+- 提取评测 v2 冻结原子事实、来源 Event、角色—动作—对象、专名、speaker、canonical subject、禁止传播、modality、多次采样与 dedup 消费者契约；E2E scorer 升级为审核式 `deterministic-rubric-v2`。
+- 摄入按整个 conflict 组收敛，reclassify mutation 增加碰撞守卫；维护 CLI 支持 active claim `audit` 与显式 `repair --dry-run/--apply`，不确定组进入 disputed。
+- `no_evidence` 作为 hard abstention 阻断 reader，`low_confidence` 作为 soft 元数据继续 QA；评测分别报告 hard/soft 指标，A/B 证实默认应保持 observe。
+- entities hybrid、专有名词 prompt 与 enforce 默认开启均因冻结门禁失败而未纳入；具体差额记录在 CHANGELOG。
 
 ### 2026-08-14 v0.25.3 实体保真修复
 
@@ -179,13 +186,9 @@
 
 ## 下一步
 
-- 观察 relation proposal 准确率与 usefulness 聚合数据，再评估 `auto` / `on` 模式
-- 接入实际图片输入源后评估开启视觉描述器
-- 根据实际使用反馈调优提取 prompt 和召回质量
-- 用真实 provider 与明确 abstention 语义评估 no-answer precision/recall；CI 合成 fixture 的 0/0 仅作已知限制
-- 仅在受控 A/B 显示显著收益后再考虑将 `answerable` 改为默认投影
-- Mental Model 推理增强（基础已实现）
-- 多租户（架构设计保留）
+- 对“高盛债券/大宗商品”关系链做 evidence-group context A/B，同时保留“推荐≠执行”的 modality 负例。
+- 为关系链评测补充 answer-entity/role coverage，避免 event-level R@5 在答案叶子未进入 Top-5 时产生假阳性。
+- 接入实际图片输入源后评估视觉描述器；Mental Model 推理增强与多租户继续按独立版本范围决策。
 
 ## 关键文档索引
 

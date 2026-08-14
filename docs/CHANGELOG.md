@@ -1,6 +1,8 @@
 # HL-Mem 变更记录
 
-## 未发布
+## v0.26.0（2026-08-14）
+
+[GitHub Release](https://github.com/lohr13/hl_mem/releases/tag/v0.26.0) · [PyPI](https://pypi.org/project/hl-mem/0.26.0/)
 
 ### 提取评测 v2
 
@@ -9,8 +11,6 @@
 - 预测必须显式携带来源 Event 索引；关系方向 gold 必须按序覆盖全部角色、动作和对象，专名字段仅允许 Unicode NFC 等价，避免宽松归一化掩盖实体改写。
 - E2E scorer 升级为 `deterministic-rubric-v2`：official answer-anchor 仍要求全量命中，仅对人工审核的开放描述题增加概念组 AND、同义表达 OR 的 `accepted_rubrics`；新增枚举完整性、简短语义答案与“推荐≠执行”合成负例。
 - 修正一个把受邀参与者误标为共同组织者的 PerLTQA gold，替换为同一来源中角色一致的问题；历史 `90%` 明确记录为 v0.25.3 离线重评分数字，代码回归改以同一提取缓存的版本 A/B 等价比较。
-- entities hybrid A/B 完成 32 case × 2 arm × 3 次真实提取及 40 组生产 Deduplicator 消费者验证；虽 entity F1 从 0.51 提升到 0.93，但 precision、recall、exact-set、token、无 control 退化与 false-merge 纠正共 6 项未达冻结门禁，v0.26 二分结论为不引入 entities hybrid。
-- 专有名词保真 prompt A/B 完成 24 case × 2 arm × 3 次真实提取；hard slice 未提升、完整通过率与 token 成本等 5 项未达冻结门禁，v0.26 二分结论为不修改 prompt。多人引用与昵称并存样例的 canonical subject 正确率在 A/B 均偏低（66.7%/69.2%），记录为评测 v2 的已知 gold—模型规范化盲区，不解释为本次 prompt 的收益或退化。
 
 ### Abstention 语义统一
 
@@ -22,6 +22,21 @@
 - 摄入发现互斥 conflict key 下已有多个 active claim 时，不再只处理排序第一条；整组与新 claim 一并转入 disputed，并逐对建立 `manual_required` 审核记录。
 - reclassify 在改写 canonical slot/conflict key 前执行原子碰撞守卫，冲突 mutation 明确计为 guarded，不产生新的互斥双 active。
 - 新增只读 `audit` 与显式 `repair --dry-run/--apply` 维护工具：精确重复确定性复用并汇总 Event evidence，语义不确定的互斥组全部进入 disputed，冲突对创建或重开为手工审核；既有终态裁决保持原样并显式计数，完整 apply 在单一写事务中执行。
+
+### 未纳入的实验改动
+
+- 不引入 entities hybrid：32 case × 2 arm × 3 次真实提取中，B 臂 entity F1 虽从 0.51 提升到 0.93，但 precision `95.70% < 98%`、recall `90.87% < 95%`、exact-set `82.89% < 90%`，token 增加 `5.38% > 3%`，出现 1 条 control 回退，且只纠正 `1/20` 个 false merge，冻结门禁 9 项失败 6 项。
+- 不修改专有名词保真 prompt：24 case × 2 arm × 3 次真实提取中，value exact-surface recall 为 `95.18% < 98%`，hard slice 改善 `0pp < 8pp`，canonical subject 正确率 `69.23% < 100%`，完整通过 `53/72 < 69/72`，token 增加 `3.00% > 2%`；多人引用与昵称并存的 gold—模型规范化偏差保留为评测盲区。
+- 不把 abstention `enforce` 设为默认：112 case A/B 中 no-answer F1、precision、recall 分别下降 `3.28/2.12/7.14pp`，answerable gold recall@5 下降 `3.57pp > 1pp`，关键 MemDaily slice 最大下降 `14.29pp`；默认保持 observe，soft 标签只记录不拦截 reader。
+
+### 已知限制
+
+- “高盛债券”和“大宗商品”两条投资关系题仍需要 reader 跨叶子 claim 聚合角色与标的；当前 event-level R@5 会在答案实体未进入 Top-5 时产生假阳性。该问题不以宽松作答 prompt 修补，留给下一版本做 evidence-group context 与 modality 负例约束的受控实验。
+- 多人引用与昵称并存样例的 canonical subject 正确率仍受 gold 与模型规范化习惯差异影响；不据此改写生产 subject 规范。
+
+### 发布
+
+- 项目版本提升至 `0.26.0`；SQL migration 数保持 40，REST/MCP 公共业务字段无新增破坏性变更。
 
 ## v0.25.3（2026-08-14）
 

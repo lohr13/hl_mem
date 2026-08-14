@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.25.3](https://img.shields.io/badge/version-0.25.3-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.26.0](https://img.shields.io/badge/version-0.26.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -115,7 +115,7 @@ deployment only raises `recall.relevance_relative_drop` from the code default `0
 
 ### Upgrading from v0.24.0
 
-v0.25.3 is a backward-compatible patch over v0.25.0; v0.24.1 and v0.24.2 were repository-only transition versions.
+v0.26.0 is a backward-compatible minor release over v0.25.x; v0.24.1 and v0.24.2 were repository-only transition versions.
 When upgrading from v0.24.0 or earlier, back up the database and stop the API, workers, and other writers. Migration 038 scans and
 canonicalizes stored Claim subjects under `BEGIN IMMEDIATE`, migration 039 adds nullable Event `metadata_json`, and
 migration 040 adds the bounded deferred-task queue.
@@ -161,7 +161,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.25.3 with 40 immutable, forward-only migrations.
+The current baseline is v0.26.0 with 40 immutable, forward-only migrations.
 
 ## Documentation
 
