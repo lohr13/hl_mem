@@ -22,8 +22,14 @@ BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS claims_active_exclusive_guard_update
-BEFORE UPDATE ON claims
-WHEN NEW.status = 'active'
+BEFORE UPDATE OF status, namespace_key, conflict_key, canonical_slot ON claims
+WHEN (
+    OLD.status IS NOT NEW.status
+    OR OLD.namespace_key IS NOT NEW.namespace_key
+    OR OLD.conflict_key IS NOT NEW.conflict_key
+    OR OLD.canonical_slot IS NOT NEW.canonical_slot
+  )
+  AND NEW.status = 'active'
   AND NEW.conflict_key IS NOT NULL
   AND NEW.canonical_slot IN (
     'choice.model',

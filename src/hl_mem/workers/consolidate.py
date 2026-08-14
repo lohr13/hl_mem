@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, Protocol
 
+from hl_mem.application.conflict_invariants import assert_conflict_postconditions
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.conflicts import compute_claim_pair_key
 from hl_mem.domain.consolidation_scope import ConsolidationScope
@@ -362,6 +363,12 @@ def _resolve_conflict_case(connection: Any, case_id: str, decision: str, now: st
         raise RuntimeError(f"conflict case changed during resolution: {case_id}")
 
 
+def _commit_conflict_maintenance(connection: Any) -> None:
+    """后台冲突维护提交前执行共享 postcondition。"""
+    assert_conflict_postconditions(connection)
+    connection.commit()
+
+
 def _activate_uncontested_survivor(
     connection: Any,
     repository: ClaimRepository,
@@ -423,7 +430,7 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
 
             if left["id"] == right["id"]:
                 _resolve_conflict_case(connection, case["id"], "obsolete", now)
-                connection.commit()
+                _commit_conflict_maintenance(connection)
                 resolved += 1
                 continue
 
@@ -431,7 +438,7 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
             right_terminal = right["status"] in _TERMINAL_CLAIM_STATUSES
             if left_terminal and right_terminal:
                 _resolve_conflict_case(connection, case["id"], "obsolete", now)
-                connection.commit()
+                _commit_conflict_maintenance(connection)
                 resolved += 1
                 continue
             if left_terminal != right_terminal:
@@ -443,7 +450,7 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
                     continue
                 _activate_uncontested_survivor(connection, repository, case["id"], survivor)
                 _resolve_conflict_case(connection, case["id"], f"keep_{survivor_side}", now)
-                connection.commit()
+                _commit_conflict_maintenance(connection)
                 resolved += 1
                 continue
 
@@ -463,7 +470,7 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
                 )
                 if cursor.rowcount != 1:
                     raise RuntimeError(f"conflict case changed during resolution: {case['id']}")
-                connection.commit()
+                _commit_conflict_maintenance(connection)
                 manual_required += 1
                 deferred += 1
                 continue
@@ -487,7 +494,7 @@ def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
             if loser_cursor.rowcount != 1:
                 raise RuntimeError(f"conflict loser changed during resolution: {loser['id']}")
             _resolve_conflict_case(connection, case["id"], f"keep_{winner_side}", now)
-            connection.commit()
+            _commit_conflict_maintenance(connection)
             resolved += 1
         except Exception as error:
             if connection.in_transaction:

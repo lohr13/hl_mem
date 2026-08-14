@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import struct
+
+import pytest
 
 from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.storage.database import Database
@@ -14,6 +17,7 @@ from hl_mem.storage.migrations.backfill_subject_canonicalization import (
     backfill_subject_canonicalization,
 )
 from hl_mem.storage.migrations.fact_hash_v2 import compute_fact_hash_v2
+from tests.unit._conflict_fixture import GUARD_TRIGGER_NAMES, seed_pre_041_history
 
 
 def _insert_claim(
@@ -63,12 +67,13 @@ def _insert_claim(
 def test_backfill_canonicalizes_only_persona_subjects_and_recomputes_keys(tmp_path) -> None:
     connection = Database(tmp_path / "subject-backfill.db").open()
     connection.execute("DELETE FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,))
-    _insert_claim(connection, "persona-a", "tenant-a", "我", "我：深色模式")
-    _insert_claim(connection, "persona-b", "tenant-b", "ＵＳＥＲ", "ＵＳＥＲ 偏好 深色模式")
-    _insert_claim(connection, "named", "tenant-a", "Alice", "Alice：深色模式")
-    connection.commit()
+    with seed_pre_041_history(connection):
+        _insert_claim(connection, "persona-a", "tenant-a", "我", "我：深色模式")
+        _insert_claim(connection, "persona-b", "tenant-b", "ＵＳＥＲ", "ＵＳＥＲ 偏好 深色模式")
+        _insert_claim(connection, "named", "tenant-a", "Alice", "Alice：深色模式")
+        connection.commit()
 
-    assert backfill_subject_canonicalization(connection) == 2
+        assert backfill_subject_canonicalization(connection) == 2
 
     rows = {
         row["id"]: dict(row)
@@ -129,38 +134,39 @@ def test_backfill_invalidates_embeddings_updates_entities_and_reports_active_col
         "preference.ui_theme",
         {},
     )
-    _insert_claim(
-        connection,
-        "persona-affected",
-        "tenant-a",
-        "我",
-        "我：深色模式",
-        entities=["我", "Alice", "ＵＳＥＲ"],
-        embedding=embedding,
-    )
-    _insert_claim(
-        connection,
-        "canonical-duplicate",
-        "tenant-a",
-        "user",
-        "user：深色模式",
-        fact_hash=exact_hash,
-        conflict_key=dark_conflict_key,
-    )
-    _insert_claim(
-        connection,
-        "canonical-conflict",
-        "tenant-a",
-        "user",
-        "user：浅色模式",
-        value="浅色模式",
-        fact_hash=compute_fact_hash_v2("user", "偏好", "浅色模式"),
-        conflict_key=dark_conflict_key,
-    )
-    connection.commit()
+    with seed_pre_041_history(connection):
+        _insert_claim(
+            connection,
+            "persona-affected",
+            "tenant-a",
+            "我",
+            "我：深色模式",
+            entities=["我", "Alice", "ＵＳＥＲ"],
+            embedding=embedding,
+        )
+        _insert_claim(
+            connection,
+            "canonical-duplicate",
+            "tenant-a",
+            "user",
+            "user：深色模式",
+            fact_hash=exact_hash,
+            conflict_key=dark_conflict_key,
+        )
+        _insert_claim(
+            connection,
+            "canonical-conflict",
+            "tenant-a",
+            "user",
+            "user：浅色模式",
+            value="浅色模式",
+            fact_hash=compute_fact_hash_v2("user", "偏好", "浅色模式"),
+            conflict_key=dark_conflict_key,
+        )
+        connection.commit()
 
-    with caplog.at_level(logging.WARNING):
-        assert backfill_subject_canonicalization(connection) == 3
+        with caplog.at_level(logging.WARNING):
+            assert backfill_subject_canonicalization(connection) == 3
 
     row = connection.execute(
         "SELECT subject_entity_id,entities_json,embedding_dense,embedding_sparse,"
@@ -189,3 +195,126 @@ def test_backfill_invalidates_embeddings_updates_entities_and_reports_active_col
     assert "duplicate_rows=1" in report
     assert "conflict_groups=1" in report
     assert "conflict_rows=3" in report
+
+
+def test_database_installs_041_after_pending_subject_backfill(tmp_path) -> None:
+    path = tmp_path / "subject-upgrade.db"
+    database = Database(path)
+    connection = database.open()
+    connection.execute("DELETE FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,))
+    connection.execute("DELETE FROM schema_migrations WHERE version='041_active_claim_guard'")
+    for trigger_name in GUARD_TRIGGER_NAMES:
+        connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+    dark_conflict_key = compute_conflict_key(
+        "tenant-a",
+        "user",
+        "偏好",
+        "preference.ui_theme",
+        {},
+    )
+    _insert_claim(connection, "persona", "tenant-a", "我", "我：深色模式")
+    _insert_claim(
+        connection,
+        "canonical",
+        "tenant-a",
+        "user",
+        "user：浅色模式",
+        value="浅色模式",
+        fact_hash=compute_fact_hash_v2("user", "偏好", "浅色模式"),
+        conflict_key=dark_conflict_key,
+    )
+    connection.commit()
+    database.close()
+
+    upgraded = Database(path).open()
+
+    assert upgraded.execute("SELECT 1 FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,)).fetchone()
+    assert upgraded.execute("SELECT 1 FROM schema_migrations WHERE version='041_active_claim_guard'").fetchone()
+    assert (
+        upgraded.execute(
+            "SELECT count(*) FROM claims WHERE namespace_key='tenant-a' " "AND conflict_key=? AND status='active'",
+            (dark_conflict_key,),
+        ).fetchone()[0]
+        == 2
+    )
+    assert {
+        row["name"]
+        for row in upgraded.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' " "AND name LIKE 'claims_active_exclusive_guard_%'"
+        )
+    } == set(GUARD_TRIGGER_NAMES)
+
+
+def test_database_recovers_when_041_precedes_pending_subject_backfill(tmp_path) -> None:
+    path = tmp_path / "subject-partial-upgrade.db"
+    database = Database(path)
+    connection = database.open()
+    connection.execute("DELETE FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,))
+    dark_conflict_key = compute_conflict_key(
+        "tenant-a",
+        "user",
+        "偏好",
+        "preference.ui_theme",
+        {},
+    )
+    with seed_pre_041_history(connection):
+        _insert_claim(connection, "persona", "tenant-a", "我", "我：深色模式")
+        _insert_claim(
+            connection,
+            "canonical",
+            "tenant-a",
+            "user",
+            "user：浅色模式",
+            value="浅色模式",
+            fact_hash=compute_fact_hash_v2("user", "偏好", "浅色模式"),
+            conflict_key=dark_conflict_key,
+        )
+    assert connection.execute("SELECT 1 FROM schema_migrations WHERE version='041_active_claim_guard'").fetchone()
+    database.close()
+
+    upgraded = Database(path).open()
+
+    assert upgraded.execute("SELECT 1 FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,)).fetchone()
+    assert (
+        upgraded.execute(
+            "SELECT count(*) FROM claims WHERE namespace_key='tenant-a' " "AND conflict_key=? AND status='active'",
+            (dark_conflict_key,),
+        ).fetchone()[0]
+        == 2
+    )
+    assert {
+        row["name"]
+        for row in upgraded.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' " "AND name LIKE 'claims_active_exclusive_guard_%'"
+        )
+    } == set(GUARD_TRIGGER_NAMES)
+
+
+def test_database_restores_041_when_pending_backfill_fails(tmp_path) -> None:
+    path = tmp_path / "subject-partial-failure.db"
+    database = Database(path)
+    connection = database.open()
+    connection.execute("DELETE FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,))
+    with seed_pre_041_history(connection):
+        _insert_claim(connection, "persona", "tenant-a", "我", "我：深色模式")
+        connection.execute("UPDATE claims SET value_json='not-json' WHERE id='persona'")
+    database.close()
+
+    with pytest.raises(ValueError, match="invalid value_json"):
+        Database(path).open()
+
+    inspected = sqlite3.connect(path)
+    try:
+        installed = {
+            row[0]
+            for row in inspected.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' " "AND name LIKE 'claims_active_exclusive_guard_%'"
+            )
+        }
+        assert installed == set(GUARD_TRIGGER_NAMES)
+        assert (
+            inspected.execute("SELECT 1 FROM schema_migrations WHERE version=?", (DATA_MIGRATION_VERSION,)).fetchone()
+            is None
+        )
+    finally:
+        inspected.close()

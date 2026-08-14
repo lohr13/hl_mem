@@ -182,7 +182,9 @@ def test_repair_apply_reuses_exact_claim_and_quarantines_uncertain_groups(tmp_pa
         "manual_conflict_cases_reopened": 0,
         "terminal_conflict_cases_preserved": 1,
     }
-    assert result["after"]["healthy"] is True
+    assert result["after"]["active_invariants_healthy"] is True
+    assert result["after"]["healthy"] is False
+    assert result["after"]["terminal_coexist_conflicts"]["case_count"] == 1
     exact = connection.execute(
         "SELECT id,status,superseded_by_id FROM claims WHERE id IN ('exact-a','exact-b') ORDER BY id"
     ).fetchall()
@@ -227,7 +229,9 @@ def test_repair_is_idempotent_after_invariants_converge(tmp_path) -> None:
         "manual_conflict_cases_to_reopen": 0,
         "terminal_conflict_cases_to_preserve": 0,
     }
-    assert second["after"]["healthy"] is True
+    assert second["after"]["active_invariants_healthy"] is True
+    assert second["after"]["healthy"] is False
+    assert second["after"]["terminal_coexist_conflicts"]["case_count"] == 1
 
 
 def test_cli_requires_explicit_repair_mode() -> None:

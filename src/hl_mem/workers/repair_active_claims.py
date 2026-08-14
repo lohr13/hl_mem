@@ -16,6 +16,10 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any, Sequence
 
+from hl_mem.application.conflict_invariants import (
+    assert_conflict_postconditions,
+    find_dangling_conflict_references,
+)
 from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.attributes import MUTUALLY_EXCLUSIVE_SLOTS
 from hl_mem.domain.claims.conflicts import compute_claim_pair_key
@@ -72,6 +76,39 @@ def _claims_for_conflict(connection: Any, namespace: str, conflict_key: str) -> 
     ]
 
 
+def _terminal_coexist_conflicts(connection: Any) -> list[dict[str, str]]:
+    slots = tuple(sorted(MUTUALLY_EXCLUSIVE_SLOTS))
+    placeholders = ",".join("?" for _ in slots)
+    rows = connection.execute(
+        "SELECT cases.id,cases.left_claim_id,cases.right_claim_id,"
+        "left_claim.namespace_key,left_claim.conflict_key,left_claim.canonical_slot,"
+        "left_claim.status AS left_status,right_claim.status AS right_status "
+        "FROM conflict_cases AS cases "
+        "JOIN claims AS left_claim ON left_claim.id=cases.left_claim_id "
+        "JOIN claims AS right_claim ON right_claim.id=cases.right_claim_id "
+        "WHERE cases.status IN ('resolved','rejected') AND cases.decision='coexist' "
+        "AND left_claim.namespace_key=right_claim.namespace_key "
+        "AND left_claim.conflict_key IS NOT NULL "
+        "AND left_claim.conflict_key=right_claim.conflict_key "
+        f"AND left_claim.canonical_slot IN ({placeholders}) "
+        f"AND right_claim.canonical_slot IN ({placeholders}) ORDER BY cases.id",
+        (*slots, *slots),
+    ).fetchall()
+    return [
+        {
+            "id": str(row["id"]),
+            "left_claim_id": str(row["left_claim_id"]),
+            "right_claim_id": str(row["right_claim_id"]),
+            "namespace_key": str(row["namespace_key"]),
+            "conflict_key": str(row["conflict_key"]),
+            "canonical_slot": str(row["canonical_slot"]),
+            "left_status": str(row["left_status"]),
+            "right_status": str(row["right_status"]),
+        }
+        for row in rows
+    ]
+
+
 def audit_active_claims(connection: Any) -> dict[str, Any]:
     """Run the productized read-only invariant audit queries."""
     exact_groups = []
@@ -109,8 +146,12 @@ def audit_active_claims(connection: Any) -> dict[str, Any]:
         counts["groups"] += 1
         counts["claims"] += len(claims)
 
+    active_invariants_healthy = not exact_groups and not conflict_groups
+    terminal_coexist = _terminal_coexist_conflicts(connection)
+    dangling = find_dangling_conflict_references(connection)
     return {
-        "healthy": not exact_groups and not conflict_groups,
+        "healthy": active_invariants_healthy and not terminal_coexist and not dangling,
+        "active_invariants_healthy": active_invariants_healthy,
         "exact_duplicates": {
             "group_count": len(exact_groups),
             "claim_count": sum(group["active_count"] for group in exact_groups),
@@ -121,6 +162,14 @@ def audit_active_claims(connection: Any) -> dict[str, Any]:
             "claim_count": sum(group["active_count"] for group in conflict_groups),
             "by_slot": dict(sorted(by_slot.items())),
             "groups": conflict_groups,
+        },
+        "terminal_coexist_conflicts": {
+            "case_count": len(terminal_coexist),
+            "cases": terminal_coexist,
+        },
+        "dangling_conflict_references": {
+            "case_count": len(dangling),
+            "cases": dangling,
         },
     }
 
@@ -336,7 +385,8 @@ def repair_active_claims(
                 if case_status is None or case_status["status"] != expected_status:
                     raise RuntimeError(f"conflict pair did not reach its planned state: {pair['pair_key']}")
         after = audit_active_claims(connection)
-        if not after["healthy"]:
+        assert_conflict_postconditions(connection)
+        if not after["active_invariants_healthy"]:
             raise RuntimeError("active-claim repair did not converge all audited invariants")
         connection.commit()
     except Exception:

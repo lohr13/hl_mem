@@ -26,6 +26,18 @@ from hl_mem.storage.tokenized_fts import ensure_tokenized_fts_v2
 
 LOGGER = logging.getLogger(__name__)
 
+_ACTIVE_CLAIM_GUARD_MIGRATION = "041_active_claim_guard"
+_ACTIVE_CLAIM_GUARD_TRIGGERS = (
+    "claims_active_exclusive_guard_insert",
+    "claims_active_exclusive_guard_update",
+)
+_PRE_GUARD_DATA_MIGRATIONS = (
+    "006_data_conflict_key_v2",
+    "011_data_fact_hash_v2",
+    "016_data_conflict_key_v3",
+    "038_data_subject_canonicalization_v2",
+)
+
 
 def default_database_path(settings: Settings | None = None) -> Path:
     """返回 Settings 中声明的数据库路径。"""
@@ -153,46 +165,46 @@ class Database:
         )
         connection.commit()
         migration_dir = Path(__file__).with_name("migrations")
-        for migration in sorted(migration_dir.glob("*.sql")):
-            version = migration.stem
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-                already_applied = connection.execute(
-                    "SELECT 1 FROM schema_migrations WHERE version=?", (version,)
-                ).fetchone()
-                repair_legacy_vector_control = (
-                    version == "037_vector_index_control" and not self._vector_control_complete(connection)
-                )
-                if already_applied and not repair_legacy_vector_control:
-                    connection.commit()
-                    continue
-                statement = ""
-                for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
-                    statement += line
-                    if sqlite3.complete_statement(statement):
-                        connection.execute(statement)
-                        statement = ""
-                if statement.strip():
-                    raise sqlite3.OperationalError(f"incomplete SQL in migration {version}")
-                if not already_applied:
-                    connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
-                connection.commit()
-            except Exception:
-                if connection.in_transaction:
-                    connection.rollback()
-                raise
-        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='006_canonical_attribute'").fetchone():
-            backfill_conflict_keys_v2(connection)
-        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='011_fact_hash_v2'").fetchone():
-            backfill_fact_hash_v2(connection)
-        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='016_claim_slots_and_tags'").fetchone():
-            backfill_conflict_keys_v3(connection)
-        if connection.execute("SELECT 1 FROM schema_migrations WHERE version='036_tokenized_fts_v2'").fetchone():
-            ensure_tokenized_fts_v2(connection)
-        if connection.execute(
-            "SELECT 1 FROM schema_migrations WHERE version='038_subject_canonicalization'"
-        ).fetchone():
-            backfill_subject_canonicalization(connection)
+        migrations = sorted(migration_dir.glob("*.sql"))
+        deferred_guard = next(
+            (migration for migration in migrations if migration.stem == _ACTIVE_CLAIM_GUARD_MIGRATION),
+            None,
+        )
+        for migration in migrations:
+            if migration == deferred_guard:
+                continue
+            self._apply_sql_migration(connection, migration)
+        guard_suspended = bool(
+            deferred_guard is not None
+            and connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version=?",
+                (_ACTIVE_CLAIM_GUARD_MIGRATION,),
+            ).fetchone()
+            and self._pre_guard_data_migration_pending(connection)
+        )
+        if guard_suspended:
+            self._drop_active_claim_guards(connection)
+        try:
+            if connection.execute("SELECT 1 FROM schema_migrations WHERE version='006_canonical_attribute'").fetchone():
+                backfill_conflict_keys_v2(connection)
+            if connection.execute("SELECT 1 FROM schema_migrations WHERE version='011_fact_hash_v2'").fetchone():
+                backfill_fact_hash_v2(connection)
+            if connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version='016_claim_slots_and_tags'"
+            ).fetchone():
+                backfill_conflict_keys_v3(connection)
+            if connection.execute("SELECT 1 FROM schema_migrations WHERE version='036_tokenized_fts_v2'").fetchone():
+                ensure_tokenized_fts_v2(connection)
+            if connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version='038_subject_canonicalization'"
+            ).fetchone():
+                backfill_subject_canonicalization(connection)
+        except Exception:
+            if guard_suspended and deferred_guard is not None:
+                self._apply_sql_migration(connection, deferred_guard)
+            raise
+        if deferred_guard is not None:
+            self._apply_sql_migration(connection, deferred_guard)
         if VectorBackend(self.settings.vector_backend) is VectorBackend.SQLITE_VEC:
             extension_version = load_sqlite_vec_extension(connection)
             migrate_sqlite_vec(
@@ -203,6 +215,96 @@ class Database:
             )
         else:
             disable_sqlite_vec(connection)
+
+    def _apply_sql_migration(self, connection: sqlite3.Connection, migration: Path) -> None:
+        version = migration.stem
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            already_applied = connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version=?", (version,)
+            ).fetchone()
+            repair_legacy_vector_control = version == "037_vector_index_control" and not self._vector_control_complete(
+                connection
+            )
+            repair_active_claim_guard = (
+                version == _ACTIVE_CLAIM_GUARD_MIGRATION
+                and not self._active_claim_guard_complete(connection, migration)
+            )
+            if already_applied and not repair_legacy_vector_control and not repair_active_claim_guard:
+                connection.commit()
+                return
+            if repair_active_claim_guard:
+                for trigger_name in _ACTIVE_CLAIM_GUARD_TRIGGERS:
+                    connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            for statement in self._read_sql_statements(migration):
+                connection.execute(statement)
+            if not already_applied:
+                connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+            connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+
+    @staticmethod
+    def _read_sql_statements(migration: Path) -> list[str]:
+        statements: list[str] = []
+        statement = ""
+        for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
+            statement += line
+            if sqlite3.complete_statement(statement):
+                statements.append(statement)
+                statement = ""
+        if statement.strip():
+            raise sqlite3.OperationalError(f"incomplete SQL in migration {migration.stem}")
+        return statements
+
+    @staticmethod
+    def _pre_guard_data_migration_pending(connection: sqlite3.Connection) -> bool:
+        placeholders = ",".join("?" for _ in _PRE_GUARD_DATA_MIGRATIONS)
+        applied = {
+            str(row[0])
+            for row in connection.execute(
+                f"SELECT version FROM schema_migrations WHERE version IN ({placeholders})",
+                _PRE_GUARD_DATA_MIGRATIONS,
+            ).fetchall()
+        }
+        return len(applied) != len(_PRE_GUARD_DATA_MIGRATIONS)
+
+    @staticmethod
+    def _drop_active_claim_guards(connection: sqlite3.Connection) -> None:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for trigger_name in _ACTIVE_CLAIM_GUARD_TRIGGERS:
+                connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+
+    @staticmethod
+    def _active_claim_guard_complete(connection: sqlite3.Connection, migration: Path) -> bool:
+        expected: dict[str, str] = {}
+        for statement in Database._read_sql_statements(migration):
+            normalized = Database._normalize_trigger_sql(statement)
+            for trigger_name in _ACTIVE_CLAIM_GUARD_TRIGGERS:
+                if f"trigger {trigger_name}" in normalized:
+                    expected[trigger_name] = normalized
+        placeholders = ",".join("?" for _ in _ACTIVE_CLAIM_GUARD_TRIGGERS)
+        installed = {
+            str(row[0]): Database._normalize_trigger_sql(str(row[1]))
+            for row in connection.execute(
+                f"SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN ({placeholders})",
+                _ACTIVE_CLAIM_GUARD_TRIGGERS,
+            ).fetchall()
+        }
+        return installed == expected
+
+    @staticmethod
+    def _normalize_trigger_sql(sql: str) -> str:
+        normalized = " ".join(sql.split()).rstrip(";").casefold()
+        return normalized.replace("create trigger if not exists ", "create trigger ", 1)
 
     @staticmethod
     def _vector_control_complete(connection: sqlite3.Connection) -> bool:

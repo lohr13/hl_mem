@@ -114,6 +114,20 @@ def test_keep_left_converges_group_and_closes_every_overlapping_open_case(tmp_pa
     assert active_count == 1
 
 
+@pytest.mark.parametrize("retry_decision", ["keep_left", "keep_right"])
+def test_group_winner_case_retry_returns_established_winner(tmp_path, retry_decision) -> None:
+    connection, _ = _exclusive_group(tmp_path)
+    service = ResolutionService(connection)
+    service.resolve("case-left-right", "keep_left", resolved_at=NOW)
+
+    result = service.resolve("case-right-third", retry_decision, resolved_at="later")
+
+    assert result["status"] == "resolved"
+    assert result["winner_id"] == "left"
+    assert result["resolved_at"] == NOW
+    assert result["closed_case_ids"] == ["case-right-third"]
+
+
 def test_group_resolution_rolls_back_when_overlapping_case_close_fails(tmp_path) -> None:
     connection, repository = _exclusive_group(tmp_path)
     connection.execute(

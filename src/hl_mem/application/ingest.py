@@ -921,18 +921,26 @@ def _insert_pending_dedup_pair(
 
 
 def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = False) -> None:
-    repo.add_link(
-        {
-            "id": new_id(),
-            "derived_type": "claim",
-            "derived_id": claim_id,
-            "evidence_type": "event",
-            "evidence_id": event_id,
-            "relation": "derived_from",
-            "weight": 1.0,
-        },
-        commit=commit,
-    )
+    exists = repo.connection.execute(
+        "SELECT 1 FROM evidence_links WHERE derived_type='claim' AND derived_id=? "
+        "AND evidence_type='event' AND evidence_id=? AND relation='derived_from' LIMIT 1",
+        (claim_id, event_id),
+    ).fetchone()
+    if exists is None:
+        repo.add_link(
+            {
+                "id": new_id(),
+                "derived_type": "claim",
+                "derived_id": claim_id,
+                "evidence_type": "event",
+                "evidence_id": event_id,
+                "relation": "derived_from",
+                "weight": 1.0,
+            },
+            commit=commit,
+        )
+    elif commit:
+        repo.connection.commit()
 
 
 def _link_source_events(

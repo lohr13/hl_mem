@@ -8,6 +8,7 @@ from hl_mem.application.conflicts import ResolutionService
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.repair_active_claims import repair_active_claims
+from tests.unit._conflict_fixture import seed_pre_041_history
 
 NOW = "2026-08-15T08:00:00+00:00"
 
@@ -98,6 +99,20 @@ def test_migration_041_blocks_direct_sql_activation_update(tmp_path) -> None:
     assert repository.get_claim("second")["status"] == "candidate"
 
 
+def test_migration_041_allows_non_group_update_on_historical_dirty_group(tmp_path) -> None:
+    connection = Database(tmp_path / "guard-history.db").open()
+    repository = ClaimRepository(connection)
+    with seed_pre_041_history(connection):
+        _claim(repository, "first", value="8080", status="active")
+        _claim(repository, "second", value="8081", status="active")
+
+    baseline = connection.total_changes
+    connection.execute("UPDATE claims SET access_count=access_count+1 WHERE id='first'")
+
+    assert connection.total_changes - baseline == 1
+    assert repository.get_claim("first")["access_count"] == 1
+
+
 def test_migration_041_allows_resolution_and_repair_legal_paths(tmp_path) -> None:
     connection = Database(tmp_path / "guard-legal.db").open()
     repository = ClaimRepository(connection)
@@ -159,3 +174,46 @@ def test_migration_041_registers_both_guard_triggers(tmp_path) -> None:
 
     assert names == {"claims_active_exclusive_guard_insert", "claims_active_exclusive_guard_update"}
     assert connection.execute("SELECT 1 FROM schema_migrations WHERE version='041_active_claim_guard'").fetchone()
+
+
+def test_migration_041_repairs_missing_registered_trigger(tmp_path) -> None:
+    path = tmp_path / "guard-repair.db"
+    database = Database(path)
+    connection = database.open()
+    connection.execute("DROP TRIGGER claims_active_exclusive_guard_update")
+    connection.commit()
+    database.close()
+
+    repaired = Database(path).open()
+    names = {
+        row["name"]
+        for row in repaired.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'claims_active_exclusive_guard_%'"
+        )
+    }
+
+    assert names == {"claims_active_exclusive_guard_insert", "claims_active_exclusive_guard_update"}
+
+
+def test_migration_041_repairs_registered_trigger_with_stale_definition(tmp_path) -> None:
+    path = tmp_path / "guard-definition-repair.db"
+    database = Database(path)
+    connection = database.open()
+    connection.execute("DROP TRIGGER claims_active_exclusive_guard_update")
+    connection.execute(
+        "CREATE TRIGGER claims_active_exclusive_guard_update BEFORE UPDATE ON claims "
+        "WHEN NEW.status='active' BEGIN SELECT RAISE(ABORT,'stale guard'); END"
+    )
+    connection.commit()
+    database.close()
+
+    repaired = Database(path).open()
+    trigger_sql = repaired.execute(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='claims_active_exclusive_guard_update'"
+    ).fetchone()[0]
+    repaired.execute("INSERT INTO claims(id,status,recorded_from) VALUES('claim','active','2026-08-15T00:00:00+00:00')")
+    baseline = repaired.total_changes
+    repaired.execute("UPDATE claims SET access_count=access_count+1 WHERE id='claim'")
+
+    assert "BEFORE UPDATE OF status, namespace_key, conflict_key, canonical_slot ON claims" in trigger_sql
+    assert repaired.total_changes - baseline == 1
