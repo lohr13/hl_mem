@@ -121,6 +121,15 @@ SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有�
   ✅ 「我上周参加 Emily 的婚礼。」→ subject=用户，value=用户上周参加 Emily 的婚礼，kind=fact，notability=low
   ✅ 「我需要把旧靴子退回 Zara。」→ subject=用户，value=用户需要把旧靴子退回 Zara，kind=plan，notability=low
   参加、归还、拥有、任职、拜访等明确动作/关系即使是一次性事件也不得省略。
+- 实体保真（最高优先级）：具体名字是不可丢失信息。原文给出人名、地名、组织名、产品名或项目名时，涉及该实体的每条 claim 必须在 subject 或 value 中逐字保留该专名。
+  禁止省略、匿名化或用代词、职位、关系角色、类别替换专名；例如禁止把刘梅泛化成“陌生人”。泛化或摘要只能作为附加 claim，不能替代包含具体名字的 claim。
+  原文中的名字或别名也不得被上下文中的另一名称覆盖；若同一实体同时出现昵称和正式名，保留事实所在原文的称呼，必要时写成“小飞（熊飞）”。
+- 跨行或结构化记录中的字段属于同一事实时必须联合理解，不能只提取 Description/描述而丢掉 Name/具体人物/Supporting Characters 字段。
+  ✅ 「具体人物：刘晓\n描述：徐佳的高中同学，年龄28岁，是一名音乐家。\n与徐佳的关系：同学」→ 分别提取：
+    1. subject=刘晓，value=刘晓是徐佳的高中同学
+    2. subject=刘晓，value=刘晓年龄28岁
+    3. subject=刘晓，value=刘晓是一名音乐家
+  ✅ 「张强是小飞的同学，年龄31岁。」→ subject=张强，value=张强是小飞的同学；另提 subject=张强，value=张强年龄31岁。不得省略“小飞”或整条同学关系。
 - 枚举与总数（关键）：枚举中的每个可独立回答项及其数量、单位必须分别保留，不得用模糊汇总替代。
   ✅ 「鱼缸里有五条霓虹灯鱼、三条孔雀鱼。」→ 分别提取五条霓虹灯鱼和三条孔雀鱼。
   原文明说总数时提取该总数；只说组成项时不得计算原文未明确陈述的总数。
@@ -130,6 +139,7 @@ SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有�
 - subject 用标准名称（hl_mem、Hermes、用户、Codex 等），不用代词。
 - 保留用户原始语言：中文原文输出中文，英文原文输出英文。
 - 不判断与已有记忆是否冲突，只判断当前原文是否支持。
+- 输出前检查：每个命名人物的关系与属性 claim 是否都保留了具体名字；如果名字只出现在 evidence_quote、却没有出现在相关 claim 的 subject 或 value 中，必须修正后再输出。
 
 kind 分类：
 - preference：用户偏好/习惯/工作方式。
@@ -213,6 +223,18 @@ Atomicity and source-language rules:
   preserve the subject, action, object, and proper names.
   Examples: "I attended Emily's wedding last weekend" and "I need to return the old boots to Zara."
   Do not omit one-off events involving attendance, returns, ownership, employment, or visits.
+- Entity fidelity has the highest priority. A specific name is lossless source data. When the source names a person,
+  place, organization, product, or project, every claim involving it must preserve that exact name in subject or value.
+  Never omit, anonymize, or replace Maya with a generic role such as stranger. A generalization or summary may only be
+  an additional claim; it must never replace the claim containing the specific name.
+  Never overwrite a source name or alias with a different contextual name. If both a nickname and formal name matter,
+  keep the wording used by the fact and, when needed, write both forms, such as May (Maya).
+- Join fields that belong to the same multiline or structured record. Do not read only Description while dropping a
+  Name, Named person, or Supporting Characters field.
+  Example: "Named person: Maya\nDescription: Priya's college classmate, age 28, and a musician" becomes:
+  1. subject=Maya, value=Maya is Priya's college classmate
+  2. subject=Maya, value=Maya is 28 years old
+  3. subject=Maya, value=Maya is a musician
 - Each independently answerable item in an enumeration must be preserved separately with its exact quantity and unit;
   never replace the items with a vague summary. Extract an explicitly stated total when present.
   Do not calculate a total that the source does not explicitly state when it gives only the component items.
@@ -226,6 +248,8 @@ Atomicity and source-language rules:
 - subject and value must use the same primary language as <extract_from>. For English input, write natural English.
   Preserve proper names, numbers, units, dates, paths, identifiers, and quoted wording exactly.
 - Judge only whether the current source supports the claim. Do not compare it with stored memories.
+- Before returning, check every relationship and attribute for each named person. If a name occurs only in
+  evidence_quote but not in the related claim's subject or value, revise the claim before returning it.
 
 Kinds:
 - preference: the user's preferences, habits, or working style.

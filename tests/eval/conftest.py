@@ -17,6 +17,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("hl-mem-eval")
     group.addoption("--eval-db", action="store", default=None, help="只读评测源 SQLite 快照")
     group.addoption("--eval-report", action="store", default=None, help="评测 JSON 报告输出路径")
+    group.addoption(
+        "--chinese-eval-suite",
+        choices=("breadth", "depth", "legacy-smoke", "legacy-full"),
+        default="breadth",
+        help="隔离中文真实 API 评测集：PerLTQA breadth、MemDaily depth 或 legacy 虚构回归集",
+    )
 
 
 @pytest.fixture

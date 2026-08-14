@@ -1,149 +1,306 @@
-"""中文全文检索离线评测。"""
+"""基于私有小语料和真实检索组件的隔离中文召回评测。"""
 
 from __future__ import annotations
 
-import json
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
 
 import pytest
 
+from hl_mem.application.recall import RecallService
 from hl_mem.components import make_embedder, make_reranker
 from hl_mem.config_loader import load_settings
-from hl_mem.domain.recall import RecallIntent
-from hl_mem.protocols import embed_queries
-from hl_mem.recall.recall_pipeline import hybrid_claims
-from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
+from tests.eval.chinese_recall import (
+    QueryEmbeddingCache,
+    build_corpus,
+    evaluate_cases,
+    load_cases,
+    load_corpus,
+)
+from tests.eval.real_chinese_data import (
+    MEMDAILY_CASES_NAME,
+    MEMDAILY_CORPUS_NAME,
+    PERLTQA_CASES_NAME,
+    PERLTQA_CORPUS_NAME,
+)
 
-pytestmark = pytest.mark.eval
+pytestmark = [pytest.mark.eval, pytest.mark.real_api]
 
-DATABASE_PATH = Path("var/hl_mem.db")
-DATASET_PATH = Path.home() / "hl_mem_eval_data" / "datasets" / "chinese_fts_eval.jsonl"
-RESULT_LIMIT = 10
-
-
-def _load_cases() -> list[dict[str, Any]]:
-    """读取中文 FTS JSONL 评测集。"""
-    return [json.loads(line) for line in DATASET_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-
-def _claim_text(claim: dict[str, Any]) -> str:
-    """读取用于 gold_text 原文片段匹配的持久化索引文本。"""
-    text = claim.get("index_text") or claim.get("text")
-    return text if isinstance(text, str) else ""
-
-
-def _first_relevant_rank(case: dict[str, Any], results: list[dict[str, Any]]) -> int | None:
-    """返回第一个包含 gold_text 原文片段的结果排名。"""
-    gold_text = case.get("gold_text")
-    if not isinstance(gold_text, str):
-        return None
-    needle = gold_text.casefold()
-    for rank, result in enumerate(results, start=1):
-        if needle in _claim_text(result).casefold():
-            return rank
-    return None
+PRIVATE_DATASET_DIR = Path.home() / "hl_mem_eval_data" / "datasets"
+RESULT_LIMIT = 5
 
 
-def _result_details(results: list[dict[str, Any]]) -> list[str]:
-    """生成紧凑的逐条命中详情。"""
-    return [
-        f"{result.get('id', '?')}:{result.get('subject_entity_id', '?')}:{_claim_text(result)[:80]}"
-        for result in results
-    ]
+@dataclass(frozen=True)
+class SuiteSpec:
+    corpus_path: Path
+    cases_path: Path
+    corpus_count: int
+    case_count: int
+    positive_case_count: int
+    no_answer_case_count: int
+    preference_case_count: int
+    minimum_hit_at_1: float
+    minimum_hit_at_5: float
+    minimum_mrr: float
+    minimum_answerability: float
+    minimum_gold_recall: float
+    minimum_complete_evidence: float
+    minimum_no_answer: float
+    minimum_slice_hit_at_1: float
+    minimum_slice_hit_at_5: float
+    minimum_preference_hit_at_1: float
+    minimum_preference_hit_at_5: float
 
 
-def test_chinese_fts_retrieval_evaluation() -> None:
-    """按 gold_text 记录中文 FTS-only 与混合召回排名指标。"""
-    if not DATASET_PATH.is_file():
-        pytest.skip(f"evaluation dataset does not exist: {DATASET_PATH}")
-    if not DATABASE_PATH.is_file():
-        pytest.skip(f"evaluation database does not exist: {DATABASE_PATH}")
+SUITES = {
+    "breadth": SuiteSpec(
+        PRIVATE_DATASET_DIR / PERLTQA_CORPUS_NAME,
+        PRIVATE_DATASET_DIR / PERLTQA_CASES_NAME,
+        895,
+        64,
+        56,
+        8,
+        12,
+        0.82,
+        0.95,
+        0.89,
+        0.68,
+        0.95,
+        0.95,
+        0.25,
+        0.65,
+        0.85,
+        0.75,
+        0.90,
+    ),
+    "depth": SuiteSpec(
+        PRIVATE_DATASET_DIR / MEMDAILY_CORPUS_NAME,
+        PRIVATE_DATASET_DIR / MEMDAILY_CASES_NAME,
+        308,
+        48,
+        42,
+        6,
+        8,
+        0.93,
+        0.95,
+        0.95,
+        0.55,
+        0.85,
+        0.75,
+        0.33,
+        0.70,
+        0.85,
+        0.80,
+        0.90,
+    ),
+    "legacy-smoke": SuiteSpec(
+        PRIVATE_DATASET_DIR / "chinese_recall_corpus.jsonl",
+        PRIVATE_DATASET_DIR / "chinese_fts_eval.jsonl",
+        12,
+        12,
+        9,
+        3,
+        3,
+        0.90,
+        0.80,
+        0.90,
+        1.0,
+        0.80,
+        0.80,
+        1.0,
+        0.0,
+        0.0,
+        0.90,
+        0.80,
+    ),
+    "legacy-full": SuiteSpec(
+        PRIVATE_DATASET_DIR / "chinese_recall_corpus.jsonl",
+        PRIVATE_DATASET_DIR / "recall_v2.jsonl",
+        12,
+        24,
+        15,
+        9,
+        8,
+        0.90,
+        0.80,
+        0.90,
+        1.0,
+        0.80,
+        0.80,
+        1.0,
+        0.0,
+        0.80,
+        0.90,
+        0.80,
+    ),
+}
 
-    cases = _load_cases()
-    case_ids = [case.get("case_id") for case in cases]
-    positive_cases = [case for case in cases if case.get("expected_type") == "claim"]
-    empty_cases = [case for case in cases if case.get("expected_type") == "empty"]
-    assert len(cases) == 30, f"expected 30 evaluation cases, got {len(cases)}"
-    assert len(set(case_ids)) == len(case_ids), "evaluation case_id values must be unique"
-    assert len(positive_cases) == 17, f"expected 17 positive cases, got {len(positive_cases)}"
-    assert len(empty_cases) == 13, f"expected 13 no-answer cases, got {len(empty_cases)}"
-    assert all(isinstance(case.get("gold_text"), str) and case["gold_text"].strip() for case in positive_cases)
-    assert all(case.get("gold_text") is None for case in empty_cases)
 
-    settings = load_settings()
-    assert settings.embedder_mode == "real", "30-case evaluation requires HL_MEM_EMBEDDER=real"
-    assert settings.embedding_model == "qwen3.7-text-embedding"
-    assert settings.embedding_api_mode == "native"
-    assert settings.reranker_mode in {"on", "real"}, "30-case evaluation requires a real reranker"
-    assert settings.reranker_model == "gte-rerank-v2"
-    embedder = make_embedder(settings)
-    reranker = make_reranker(settings)
+def _suite_spec(pytestconfig: pytest.Config) -> tuple[str, SuiteSpec]:
+    suite = pytestconfig.getoption("--chinese-eval-suite")
+    return suite, SUITES[suite]
+
+
+def test_chinese_recall_evaluation(
+    pytestconfig: pytest.Config,
+    tmp_path: Path,
+) -> None:
+    """在临时 corpus 上校验中文召回、no-answer 与自动意图路由。"""
+    suite, spec = _suite_spec(pytestconfig)
+    if not spec.corpus_path.is_file():
+        pytest.skip(f"private evaluation corpus does not exist: {spec.corpus_path}")
+    if not spec.cases_path.is_file():
+        pytest.skip(f"private evaluation dataset does not exist: {spec.cases_path}")
+
+    corpus = load_corpus(spec.corpus_path)
+    memory_ids = {claim.memory_id for claim in corpus}
+    cases = load_cases(spec.cases_path, memory_ids)
+    assert len(corpus) == spec.corpus_count, f"expected {spec.corpus_count} corpus claims, got {len(corpus)}"
+    assert len(cases) == spec.case_count, f"expected {spec.case_count} {suite} cases, got {len(cases)}"
+    assert sum(case.expected_type == "claim" for case in cases) == spec.positive_case_count
+    assert sum(case.expected_type == "empty" for case in cases) == spec.no_answer_case_count
+    assert (
+        sum(case.expected_type == "claim" and case.expected_intent == "preference" for case in cases)
+        >= spec.preference_case_count
+    )
+    if suite == "legacy-smoke":
+        assert sum(case.expected_type == "claim" for case in cases) == 9
+        assert sum(case.expected_type == "empty" for case in cases) == 3
+    elif suite in {"breadth", "depth"}:
+        assert all(case.intent_override is None for case in cases)
+
+    configured = load_settings()
+    assert configured.embedder_mode == "real", "Chinese evaluation requires embedding.mode='real'"
+    assert configured.embedding_api_key, "Chinese evaluation requires EMBEDDING_API_KEY"
+    assert configured.reranker_mode in {"on", "real"}, "Chinese evaluation requires a real reranker"
+    assert configured.reranker_api_key, "Chinese evaluation requires RERANKER_API_KEY"
+    runtime_settings = replace(
+        configured,
+        database_path=str(tmp_path / "chinese-recall-eval.db"),
+        vector_backend="sqlite_scan",
+        query_expansion_mode="off",
+        relation_discovery_mode="off",
+        procedure_recall_mode="off",
+        relevance_gate_mode="enforce",
+        relevance_intents=("current_state",),
+        recall_side_effect_backoff_seconds=0.0,
+    )
+    runtime_settings.validate()
+
+    real_embedder = make_embedder(runtime_settings)
+    embedder = QueryEmbeddingCache(real_embedder, [case.query for case in cases])
+    reranker = make_reranker(runtime_settings)
     assert reranker is not None
-    query_blobs = embed_queries(embedder, [case["query"] for case in cases])
-    database = Database(DATABASE_PATH)
+    database = Database(settings=runtime_settings)
     connection = database.open()
-    repo = ClaimRepository(connection, settings=settings)
-    fts_ranks: list[int | None] = []
-    hybrid_ranks: list[int | None] = []
-    positive_count = 0
-    empty_correct = 0
-    empty_count = 0
-
     try:
-        for case, query_blob in zip(cases, query_blobs, strict=True):
-            fts_results = repo.search_claims_fts(
-                case["query"],
-                RESULT_LIMIT,
-                intent=RecallIntent.CURRENT_STATE,
-            )
-            hybrid_results = hybrid_claims(
-                repo,
-                case["query"],
-                query_blob,
-                RESULT_LIMIT,
-                None,
+        build_corpus(connection, corpus, embedder, runtime_settings)
+        report = evaluate_cases(
+            RecallService(
+                connection,
+                embedder,
                 reranker,
-                intent=RecallIntent.CURRENT_STATE,
-            )
-
-            if case["expected_type"] == "empty":
-                empty_count += 1
-                empty_correct += int(not fts_results and not hybrid_results)
-            else:
-                positive_count += 1
-                fts_ranks.append(_first_relevant_rank(case, fts_results))
-                hybrid_ranks.append(_first_relevant_rank(case, hybrid_results))
-
-            print(
-                f"\n[{case['case_id']}] query={case['query']!r} expected={case['expected_type']}"
-                f"\n  FTS-only ({len(fts_results)}): {_result_details(fts_results)}"
-                f"\n  Hybrid   ({len(hybrid_results)}): {_result_details(hybrid_results)}"
-            )
+                settings=runtime_settings,
+            ),
+            cases,
+            limit=RESULT_LIMIT,
+        )
     finally:
         database.close()
 
-    def metrics(ranks: list[int | None]) -> tuple[float, float, float]:
-        if not ranks:
-            return 0.0, 0.0, 0.0
-        return (
-            sum(rank == 1 for rank in ranks) / len(ranks),
-            sum(rank is not None and rank <= 5 for rank in ranks) / len(ranks),
-            sum(1 / rank for rank in ranks if rank is not None) / len(ranks),
+    for case, item in zip(cases, report.items, strict=True):
+        print(
+            f"\n[{case.case_id}] query={case.query!r} expected={case.expected_type}"
+            f"\n  returned={list(item.returned_ids)} rank={item.rank} answerability={item.answerability}"
+            f"\n  matched_gold={list(item.matched_expected_ids)}/{item.expected_count}"
+            f"\n  top_score={item.top_score} runner_up={item.runner_up_score}"
+            f" reranker={item.top_reranker_score} dense={item.top_dense_score}"
+            f" channels={list(item.top_channels)} relevance="
+            f"{item.top_relevance_decision}/{item.top_relevance_reason}"
+            f"\n  intent={item.actual_intent}/{item.intent_source} expected="
+            f"{case.expected_intent}/{case.expected_intent_source}"
         )
-
-    fts_hit1, fts_hit5, fts_mrr = metrics(fts_ranks)
-    hybrid_hit1, hybrid_hit5, hybrid_mrr = metrics(hybrid_ranks)
-    empty_precision = empty_correct / empty_count if empty_count else 0.0
-    print(
-        "\nChinese FTS evaluation summary:"
-        f"\n  FTS-only: Hit@1={fts_hit1:.3f}, Hit@5={fts_hit5:.3f}, MRR={fts_mrr:.3f}"
-        f"\n  Hybrid:   Hit@1={hybrid_hit1:.3f}, Hit@5={hybrid_hit5:.3f}, MRR={hybrid_mrr:.3f}"
-        f"\n  Empty precision: {empty_correct}/{empty_count} = {empty_precision:.3f}"
+    no_answer_display = (
+        f"{report.no_answer_accuracy:.3f}" if any(case.expected_type == "empty" for case in cases) else "n/a"
     )
-    assert hybrid_hit5 >= 0.75, f"Hybrid Hit@5 regressed: {hybrid_hit5:.3f} < 0.750"
+    print(
+        "\nChinese isolated recall summary:"
+        f"\n  suite={suite} cases={report.case_count}"
+        f"\n  Hybrid Hit@1={report.hit_at_1:.3f}, Hit@5={report.hit_at_5:.3f}, MRR={report.mrr:.3f}"
+        f"\n  Gold recall@5={report.mean_gold_recall:.3f}"
+        f" complete-evidence={report.complete_evidence_accuracy:.3f}"
+        f"\n  Positive answerability={report.positive_answerability_accuracy:.3f}"
+        f"\n  No-answer accuracy={no_answer_display}"
+        f"\n  Intent accuracy={report.intent_accuracy:.3f}"
+    )
+
+    positive_items = [item for item in report.items if item.correct_no_answer is None]
+    preference_items = [
+        item
+        for case, item in zip(cases, report.items, strict=True)
+        if case.expected_type == "claim" and case.expected_intent == "preference"
+    ]
+    preference_hit_at_1 = (
+        sum(item.rank == 1 for item in preference_items) / len(preference_items) if preference_items else 1.0
+    )
+    preference_hit_at_5 = (
+        sum(item.rank is not None and item.rank <= RESULT_LIMIT for item in preference_items) / len(preference_items)
+        if preference_items
+        else 1.0
+    )
+    slice_hit_at_5 = {
+        slice_name: sum(
+            item.rank is not None and item.rank <= RESULT_LIMIT for item in positive_items if item.slice == slice_name
+        )
+        / sum(item.slice == slice_name for item in positive_items)
+        for slice_name in sorted({item.slice for item in positive_items})
+    }
+    slice_hit_at_1 = {
+        slice_name: sum(item.rank == 1 for item in positive_items if item.slice == slice_name)
+        / sum(item.slice == slice_name for item in positive_items)
+        for slice_name in sorted({item.slice for item in positive_items})
+    }
+    print(f"  Preference Hit@1={preference_hit_at_1:.3f}, Hit@5={preference_hit_at_5:.3f}")
+    print(f"  Slice Hit@1={slice_hit_at_1}")
+    print(f"  Slice Hit@5={slice_hit_at_5}")
+
+    assert (
+        report.hit_at_1 >= spec.minimum_hit_at_1
+    ), f"Hybrid Hit@1 regressed: {report.hit_at_1:.3f} < {spec.minimum_hit_at_1:.3f}"
+    assert (
+        report.hit_at_5 >= spec.minimum_hit_at_5
+    ), f"Hybrid Hit@5 regressed: {report.hit_at_5:.3f} < {spec.minimum_hit_at_5:.3f}"
+    assert report.mrr >= spec.minimum_mrr, f"MRR regressed: {report.mrr:.3f} < {spec.minimum_mrr:.3f}"
+    assert report.positive_answerability_accuracy >= spec.minimum_answerability, (
+        "positive answerability regressed: "
+        f"{report.positive_answerability_accuracy:.3f} < {spec.minimum_answerability:.3f}"
+    )
+    assert (
+        report.mean_gold_recall >= spec.minimum_gold_recall
+    ), f"gold recall regressed: {report.mean_gold_recall:.3f} < {spec.minimum_gold_recall:.3f}"
+    assert report.complete_evidence_accuracy >= spec.minimum_complete_evidence, (
+        "complete-evidence accuracy regressed: "
+        f"{report.complete_evidence_accuracy:.3f} < {spec.minimum_complete_evidence:.3f}"
+    )
+    if any(case.expected_type == "empty" for case in cases):
+        assert (
+            report.no_answer_accuracy >= spec.minimum_no_answer
+        ), f"no-answer accuracy regressed: {report.no_answer_accuracy:.3f} < {spec.minimum_no_answer:.3f}"
+    assert (
+        preference_hit_at_5 >= spec.minimum_preference_hit_at_5
+    ), f"preference Hit@5 regressed: {preference_hit_at_5:.3f} < {spec.minimum_preference_hit_at_5:.3f}"
+    assert (
+        preference_hit_at_1 >= spec.minimum_preference_hit_at_1
+    ), f"preference Hit@1 regressed: {preference_hit_at_1:.3f} < {spec.minimum_preference_hit_at_1:.3f}"
+    assert all(
+        value >= spec.minimum_slice_hit_at_1 for value in slice_hit_at_1.values()
+    ), f"slice Hit@1 regressed below {spec.minimum_slice_hit_at_1:.3f}: {slice_hit_at_1}"
+    assert all(
+        value >= spec.minimum_slice_hit_at_5 for value in slice_hit_at_5.values()
+    ), f"slice Hit@5 regressed below {spec.minimum_slice_hit_at_5:.3f}: {slice_hit_at_5}"
+    assert report.intent_accuracy == 1.0, "recall intent or intent_source did not match the case contract"
 
 
 if __name__ == "__main__":
-    test_chinese_fts_retrieval_evaluation()
+    raise SystemExit(pytest.main([__file__, "-m", "real_api", "-s"]))

@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 from evaluation.tools import run_memdaily_benchmark as memdaily_runner
 from evaluation.tools import run_perltqa_benchmark as perltqa_runner
-from hl_mem.evaluation.perltqa import PerLTQACharacter, PerLTQAClaimSpec, PerLTQAQuestion
+from hl_mem.evaluation.perltqa import (
+    PerLTQAAdapter,
+    PerLTQACharacter,
+    PerLTQAClaimSpec,
+    PerLTQAQuestion,
+)
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
@@ -285,6 +290,26 @@ class MemDailyAggregationTests(unittest.TestCase):
 
 
 class PerLTQABenchmarkTests(unittest.TestCase):
+    def test_social_relationship_claim_preserves_named_character_and_relation(self) -> None:
+        claims = PerLTQAAdapter()._extract_claims(
+            "徐佳",
+            {
+                "social_relationship": {
+                    "9_3": {
+                        "Supporting Characters": "刘晓",
+                        "Description": "徐佳的高中同学，年龄28岁，是一名音乐家。",
+                        "Relationship": "同学",
+                    }
+                }
+            },
+        )
+
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(
+            claims[0].text,
+            "刘晓是徐佳的高中同学，年龄28岁，是一名音乐家。\n刘晓与徐佳的关系是同学。",
+        )
+
     def test_direct_insert_embeds_the_configured_production_index_text(self) -> None:
         class RecordingEmbedder:
             model = "recording"

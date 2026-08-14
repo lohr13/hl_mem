@@ -84,7 +84,7 @@ CATEGORIES = ("profile", "social_relationship", "events", "dialogues")
 class PerLTQAAdapter:
     """Load PerLTQA memory + QA data and produce PerLTQACharacter objects."""
 
-    VERSION = "1"
+    VERSION = "2"
 
     def load(
         self,
@@ -169,19 +169,33 @@ class PerLTQAAdapter:
                         )
                     )
 
-        # 2. Social relationship: description → claim
+        # 2. Social relationship: keep the named character and relation with the description
         social = char_mem.get("social_relationship") or {}
         if isinstance(social, Mapping):
             for sr_key, sr_data in social.items():
                 if not isinstance(sr_data, Mapping):
                     continue
+                supporting_character = str(sr_data.get("Supporting Characters") or "").strip()
                 desc = str(sr_data.get("Description") or "").strip()
+                relationship = str(sr_data.get("Relationship") or "").strip()
+                lines: list[str] = []
                 if desc:
+                    if supporting_character and supporting_character not in desc:
+                        description = f"{supporting_character}是{desc}"
+                    else:
+                        description = desc
+                    lines.append(description if description.endswith(("。", "！", "？")) else f"{description}。")
+                elif supporting_character:
+                    lines.append(f"具体人物：{supporting_character}")
+                if supporting_character and relationship:
+                    lines.append(f"{supporting_character}与{char_name}的关系是{relationship}。")
+                text = "\n".join(lines)
+                if text:
                     claims.append(
                         PerLTQAClaimSpec(
                             source_key=str(sr_key),
                             category="social_relationship",
-                            text=desc,
+                            text=text,
                         )
                     )
 

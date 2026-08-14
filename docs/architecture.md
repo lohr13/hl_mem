@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.25.2
+- Document baseline: v0.25.3
 - Updated: 2026-08-12
 - Deployment baseline: local-first, SQLite-first
 
@@ -198,8 +198,8 @@ subject. Each decision emits an audit reason code. Claim FTS and dense embedding
 changing `index.text_mode` therefore supports controlled representation A/B without changing the rest of recall.
 
 The localized Chinese and English prompts share atomicity rules for compound facts, explicit actions/relationships,
-one-off events, and enumerations. The current identity is `PROMPT_HASH=86c522e45f92` and
-`LLM_EXTRACTOR_VERSION=llm-v2+86c522e45f92`. A raw structured response containing exactly the 20 allowed Claims emits a
+named-entity fidelity, one-off events, and enumerations. The current identity is `PROMPT_HASH=e2d8f433b71c` and
+`LLM_EXTRACTOR_VERSION=llm-v2+e2d8f433b71c`. A raw structured response containing exactly the 20 allowed Claims emits a
 `claim_limit_reached` audit warning because the model may have silently omitted additional facts; the schema limit itself
 remains unchanged.
 

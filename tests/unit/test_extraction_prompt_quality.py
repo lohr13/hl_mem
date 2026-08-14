@@ -82,6 +82,28 @@ class ExtractionPromptQualityTest(unittest.TestCase):
         ):
             self.assertIn(expected, ENGLISH_SYSTEM_PROMPT)
 
+    def test_prompts_forbid_replacing_named_entities_with_generic_roles(self) -> None:
+        """双语提示必须把具体名字作为不可被摘要覆盖的原始事实。"""
+        for expected in (
+            "具体名字是不可丢失信息",
+            "刘梅泛化成“陌生人”",
+            "小飞（熊飞）",
+            "张强是小飞的同学",
+            "具体人物：刘晓",
+            "subject=刘晓",
+        ):
+            self.assertIn(expected, SYSTEM_PROMPT)
+
+        for expected in (
+            "A specific name is lossless source data",
+            "Maya with a generic role such as stranger",
+            "May (Maya)",
+            "Maya is Priya's college classmate",
+            "Named person: Maya",
+            "subject=Maya",
+        ):
+            self.assertIn(expected, ENGLISH_SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()

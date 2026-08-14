@@ -1,0 +1,265 @@
+{
+  "schema_version": 2,
+  "sample_id": "zh-e2e-v2",
+  "sources": {
+    "perltqa_memory": {
+      "path": "D:/workspace/PerLTQA/Dataset/zh/perltmem.json",
+      "sha256": "f83d99fcb4d8954614aefb2768b32597fa80fdabf08c7217900a64e377d4f1e9"
+    },
+    "perltqa_qa": {
+      "path": "D:/workspace/PerLTQA/Dataset/zh/perltqa.json",
+      "sha256": "e59536c160200ebe41385064c150406a44f7a08c23cd91f96953cbdf77a7a149"
+    },
+    "memdaily": {
+      "path": "D:/workspace/MemSim/data_generation/final_dataset/memdaily.json",
+      "sha256": "1b3a7928eeaab2e1c56b6b6200586078aa1af17eafcb4b80379cf9752b383a8f"
+    }
+  },
+  "perltqa": {
+    "expected_personas": 4,
+    "expected_questions": 28,
+    "evaluation_as_of": "2026-08-14T00:00:00+00:00",
+    "accepted_rubrics": {
+      "7b6b2c31b857d5dd39443ebb8c71f3585eedae14881382e51c0bd9de839fce23": [
+        {
+          "required_concepts": [
+            [
+              "同学",
+              "高中同学"
+            ]
+          ]
+        }
+      ],
+      "5a9b1bb8a2bb8eda162a6ed195d4b3c3bf2bfc29401231e60b9cb53947c25aa4": [
+        {
+          "required_concepts": [
+            [
+              "同学"
+            ]
+          ]
+        }
+      ],
+      "7336d023b16ece6a96cdf8742a314e9aea99b582bdcc7334868172ddd93b8a41": [
+        {
+          "required_concepts": [
+            [
+              "迷恋电影情节",
+              "对电影情节着迷",
+              "对故事情节着迷",
+              "故事情节很着迷"
+            ]
+          ]
+        }
+      ],
+      "836f6182a0a955c32b52e70749b63e25c2c81d418821e6537435be6d9670a601": [
+        {
+          "required_concepts": [
+            [
+              "自由有界限",
+              "自由存在界限",
+              "自由不是无限"
+            ],
+            [
+              "与他人共处",
+              "与他人一起生活",
+              "和他人一起生活"
+            ],
+            [
+              "独立想法",
+              "独立的想法",
+              "独立思考"
+            ],
+            [
+              "发现真正欲望",
+              "发现自己的真正欲望",
+              "找到真正欲望",
+              "明确真正欲望"
+            ]
+          ]
+        }
+      ],
+      "375593a841228979606b44031bbe8300f52d8d1ef504b4ad5f1d0d1f0a29ecd5": [
+        {
+          "required_concepts": [
+            [
+              "癌症"
+            ],
+            [
+              "染色体重排",
+              "染色体结构异常",
+              "结构异常"
+            ],
+            [
+              "影响基因",
+              "基因表达",
+              "基因调控"
+            ]
+          ]
+        }
+      ]
+    },
+    "personas": [
+      {
+        "name": "徐佳",
+        "categories": {
+          "profile": {
+            "target_source": "Nickname",
+            "distractor_source": "Gender",
+            "question_sha256": [
+              "121b3776babc068155d5fb12609bd035fc68d9f9fcc4be12de8597d91cbbfbb2"
+            ]
+          },
+          "social_relationship": {
+            "target_source": "9_3",
+            "distractor_source": "9_6",
+            "question_sha256": [
+              "240facd9c6290415ca01384642b8f6261a30261d652f57f5208cf475e5cdf4a6",
+              "7b6b2c31b857d5dd39443ebb8c71f3585eedae14881382e51c0bd9de839fce23"
+            ]
+          },
+          "events": {
+            "target_source": "9_5_2",
+            "distractor_source": "9_4_0",
+            "question_sha256": [
+              "4a3607094e6c3b592b9f8e07dae91cef7b4088928d116d56947c7e128ee31103",
+              "76906e779dac77f1c3e11ffb2b1acf55f907654a011a3516c088b185d951d032"
+            ]
+          },
+          "dialogues": {
+            "target_source": "9_7_0#17",
+            "distractor_source": "9_2_0#4",
+            "question_sha256": [
+              "5b862015f4c83fdd96e150623b576eb646ff329426d610c0bfca7725b87747ba",
+              "7336d023b16ece6a96cdf8742a314e9aea99b582bdcc7334868172ddd93b8a41"
+            ]
+          }
+        }
+      },
+      {
+        "name": "张小红",
+        "categories": {
+          "profile": {
+            "target_source": "Physical Characteristics",
+            "distractor_source": "Awards and Role Models",
+            "question_sha256": [
+              "5eac85f982dcb60224595a107126dd875e075bacc55577deb5a74a0dfc5eed13"
+            ]
+          },
+          "social_relationship": {
+            "target_source": "4_8",
+            "distractor_source": "4_4",
+            "question_sha256": [
+              "ee0f8dfaec1654c52bad27666e61ad18f19e147c95c30ae078e7329eb3a14408",
+              "fb560d262dc75846fee41d688027937bf4c4e982e26be9ccdb1a58dc71b29650"
+            ]
+          },
+          "events": {
+            "target_source": "4_6_0",
+            "distractor_source": "4_7_1",
+            "question_sha256": [
+              "4d6dcb33c587623daf12da16acf357206d8a18f5a3bde5e9dcb0f700451f662c",
+              "7471a4be405b22c25f7a07d81d65cba76697a2dc44e728de09bb4debeadcf985"
+            ]
+          },
+          "dialogues": {
+            "target_source": "4_3_1#6",
+            "distractor_source": "4_7_0#17",
+            "question_sha256": [
+              "1edd39074cf119094fc1f17d76e46cf7df452027f449f2075826babb087bb92e",
+              "836f6182a0a955c32b52e70749b63e25c2c81d418821e6537435be6d9670a601"
+            ]
+          }
+        }
+      },
+      {
+        "name": "熊飞",
+        "categories": {
+          "profile": {
+            "target_source": "Age",
+            "distractor_source": "Nationality",
+            "question_sha256": [
+              "91b059d0d213206829d1be395a8801aebdc03fa20f4a866d19279592b8ce78fe"
+            ]
+          },
+          "social_relationship": {
+            "target_source": "31_3",
+            "distractor_source": "31_1",
+            "question_sha256": [
+              "362879793b73394167576d78afadfcc54cd37eaa8fe1f33fec3b606a738aba84",
+              "5a9b1bb8a2bb8eda162a6ed195d4b3c3bf2bfc29401231e60b9cb53947c25aa4"
+            ]
+          },
+          "events": {
+            "target_source": "31_5_1",
+            "distractor_source": "31_8_0",
+            "question_sha256": [
+              "03de9c2f47ea9dc2df1792ffef64b189a93b28ef30e4a6ac846e59b30fb522d7",
+              "0dc75b6580866bc4d73399f65c18bfbc122142e01ef3e3116b8cffd1a7828d2b"
+            ]
+          },
+          "dialogues": {
+            "target_source": "31_4_0#10",
+            "distractor_source": "31_4_1#11",
+            "question_sha256": [
+              "0d532ef7647f7a2002432d3c394bfdd8648b200d884244d0487bc3ab0a5344d0",
+              "33f8eac605852c29c24851efeffff5d63c92273f103757b56c556caf81bdf3fc"
+            ]
+          }
+        }
+      },
+      {
+        "name": "许慧",
+        "categories": {
+          "profile": {
+            "target_source": "Hobbies",
+            "distractor_source": "Achievements",
+            "question_sha256": [
+              "fd16e584ecddf5e768d9065967bd97dc8b808475d4b70361b1128f73e70d1753"
+            ]
+          },
+          "social_relationship": {
+            "target_source": "13_4",
+            "distractor_source": "13_2",
+            "question_sha256": [
+              "c645b95d388e0d3cc44764f7d7d8aa01b481551418a395cc72722f2d1cf50e58",
+              "dc0a4055bb49f41d614f99b0fe8260eb471ee34b510ddcee666e05f85f4c6c0e"
+            ]
+          },
+          "events": {
+            "target_source": "13_3_0",
+            "distractor_source": "13_0_0",
+            "question_sha256": [
+              "2825172d69521dddcfa818b951cd0ebfb750899e4770c40d80ebf6bc022ffa52",
+              "5e2fae77f0b59ea87d50e2a53df45bbc9604264ac77d77f5226fae339280dd98"
+            ]
+          },
+          "dialogues": {
+            "target_source": "13_1_1#4",
+            "distractor_source": "13_3_2#10",
+            "question_sha256": [
+              "24f99bbbc8ecba95fcab2d1ea95dd3843f13202d41adeadae416d36d11bddca1",
+              "375593a841228979606b44031bbe8300f52d8d1ef504b4ad5f1d0d1f0a29ecd5"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "memdaily": {
+    "expected_questions": 12,
+    "case_ids": [
+      "memdaily:simple:events:40",
+      "memdaily:simple:events:60",
+      "memdaily:conditional:events:73",
+      "memdaily:conditional:events:60",
+      "memdaily:comparative:events:60",
+      "memdaily:comparative:events:27",
+      "memdaily:aggregative:events:13",
+      "memdaily:aggregative:events:8",
+      "memdaily:post_processing:events:15",
+      "memdaily:post_processing:events:93",
+      "memdaily:noisy:events:29",
+      "memdaily:noisy:events:10"
+    ]
+  }
+}

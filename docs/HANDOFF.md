@@ -1,17 +1,23 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-13 · v0.25.2
+> 最后更新：2026-08-14 · v0.25.3
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.25.2
-- **阶段**：v0.25.2 准备发布
+- **版本**：v0.25.3
+- **阶段**：v0.25.3 准备发布
 - **服务**：FastAPI on port 8200；非敏感配置来自必需的 `hl_mem.toml`，四个独立密钥来自 `.env` 或进程环境
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB（`var/hl_mem.db`）；默认 `sqlite_scan`，可选 `sqlite_vec`；40 migrations（SQL 001-040）+ Python data migrations；实时数据量以数据库只读审计为准
 - **FTS**：预分词 FTS v2（claims/events/tags）；旧 trigram/raw 表仅保留在回滚窗口
 
 ## 已完成
+
+### 2026-08-14 v0.25.3 实体保真修复
+
+- 双语提取 prompt 将具体实体名提升为最高优先级的无损信息，禁止用关系角色或泛化类别替换专名；跨行结构化记录必须联合读取姓名、描述与关系字段。
+- PerLTQA adapter v2 不再只保留社会关系的 `Description`，而是同时传递 `Supporting Characters`、描述和相对主角的关系，避免在 LLM 提取前丢失人名。
+- 当前 `PROMPT_HASH=e2d8f433b71c`、提取器身份为 `llm-v2+e2d8f433b71c`。
 
 ### 2026-08-12 v0.25.1 偏好召回补丁
 
