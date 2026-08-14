@@ -21,6 +21,10 @@ class ActiveClaimInvariantError(ConflictError):
     """一次 mutation 会在互斥 conflict 组中产生多个 active claim。"""
 
 
+class ConflictResolutionError(ConflictError, ValueError):
+    """人工冲突裁决不满足组级业务约束。"""
+
+
 class ConfigurationError(HlMemError, RuntimeError):
     """应用配置错误。"""
 

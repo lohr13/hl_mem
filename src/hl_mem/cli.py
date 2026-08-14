@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from hl_mem import __version__
+from hl_mem.application.conflicts import ResolutionService
 from hl_mem.components import make_embedder
 from hl_mem.config_loader import load_settings
 from hl_mem.daily_cli import add_daily_commands, handle_daily_command
@@ -305,56 +306,10 @@ def resolve_conflict(
     *,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """按人工决策收敛指定冲突案例。"""
+    """通过组级应用服务收敛指定冲突案例。"""
     database = Database(database_path, settings=settings)
-    connection = database.open()
     try:
-        connection.execute("BEGIN IMMEDIATE")
-        row = connection.execute(
-            "SELECT * FROM conflict_cases WHERE id=? AND status IN ('pending','manual_required')",
-            (case_id,),
-        ).fetchone()
-        if not row:
-            raise ValueError(f"open conflict case not found: {case_id}")
-        case = dict(row)
-        resolved_at = datetime.now(timezone.utc).isoformat()
-        if decision in {"keep_left", "keep_right"}:
-            winner_side = decision.removeprefix("keep_")
-            loser_side = "right" if winner_side == "left" else "left"
-            winner_id = case[f"{winner_side}_claim_id"]
-            loser_id = case[f"{loser_side}_claim_id"]
-            connection.execute(
-                "UPDATE claims SET status='active' WHERE id=? AND status IN ('candidate','disputed')",
-                (winner_id,),
-            )
-            connection.execute(
-                "UPDATE claims SET status='superseded',superseded_by_id=?,recorded_to=?,valid_to=? "
-                "WHERE id=? AND status IN ('active','candidate','disputed')",
-                (winner_id, resolved_at, resolved_at, loser_id),
-            )
-            status = "resolved"
-        elif decision == "coexist":
-            connection.execute(
-                "UPDATE claims SET status='active' WHERE id IN (?,?) AND status IN ('candidate','disputed')",
-                (case["left_claim_id"], case["right_claim_id"]),
-            )
-            status = "resolved"
-        else:
-            status = "rejected"
-        connection.execute(
-            "UPDATE conflict_cases SET status=?,decision=?,resolved_at=? WHERE id=?",
-            (status, decision, resolved_at, case_id),
-        )
-        connection.commit()
-        return {
-            "id": case_id,
-            "status": status,
-            "decision": decision,
-            "resolved_at": resolved_at,
-        }
-    except Exception:
-        connection.rollback()
-        raise
+        return ResolutionService(database.open()).resolve(case_id, decision)
     finally:
         database.close()
 
