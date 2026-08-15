@@ -1,40 +1,30 @@
-"""记忆撤回应用服务。原子化撤回 Claim，清除向量，传播 stale 标记。"""
+"""用户显式删除入口，委托统一的物理删除闭包。"""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from hl_mem.errors import NotFoundError
-from hl_mem.lifecycle import assert_transition
-from hl_mem.recall.recall_pipeline import stale_observations
-from hl_mem.storage.claims import ClaimRepository
+from hl_mem.application.deletion import DeletionService
 
 
 class ForgetService:
-    """记忆撤回应用服务。"""
+    """保持既有 forget 适配面，同时下沉业务逻辑到 DeletionService。"""
 
-    def __init__(self, connection: Any) -> None:
+    def __init__(self, connection: Any, *, ledger_path: str | Path | None = None) -> None:
         self.connection = connection
+        self.ledger_path = ledger_path
 
     def forget(self, memory_id: str) -> dict[str, Any]:
-        """撤回 claim、清除向量并原子传播 observation 失效标记。"""
-        repository = ClaimRepository(self.connection)
-        claim = repository.get_claim(memory_id)
-        if not claim:
-            raise NotFoundError(f"memory not found: {memory_id}")
-        assert_transition(claim["status"], "retracted")
-        self.connection.execute("BEGIN IMMEDIATE")
-        try:
-            cursor = self.connection.execute(
-                "UPDATE claims SET status='retracted',embedding_dense=NULL,embedding_sparse=NULL WHERE id=?",
-                (memory_id,),
-            )
-            if cursor.rowcount != 1:
-                raise NotFoundError(f"memory not found: {memory_id}")
-            repository.delete_vector(memory_id)
-            stale_observations(self.connection, memory_id, commit=False)
-            self.connection.commit()
-        except Exception:
-            self.connection.rollback()
-            raise
-        return {"id": memory_id, "forgotten": True}
+        """写入墓碑后物理删除 claim 及其专属闭包。"""
+        result = DeletionService(
+            self.connection,
+            ledger_path=self.ledger_path,
+        ).delete_claim(memory_id)
+        return {
+            "id": result.claim_id,
+            "forgotten": True,
+            "already_deleted": result.already_deleted,
+            "tombstone_hash": result.identity_hash,
+            "deleted_event_ids": list(result.deleted_event_ids),
+        }

@@ -68,12 +68,55 @@ class TombstoneLedger:
 
     @property
     def ledger_id(self) -> str:
-        with self._connect() as connection:
+        connection = self._connect()
+        try:
             return self._validate(connection)
+        finally:
+            connection.close()
 
     def validate(self) -> None:
-        with self._connect() as connection:
+        connection = self._connect()
+        try:
             self._validate(connection)
+        finally:
+            connection.close()
+
+    def count(self) -> int:
+        """Return the number of durable deletion identities."""
+        connection = self._connect()
+        try:
+            self._validate(connection)
+            return int(connection.execute("SELECT count(*) FROM tombstones").fetchone()[0])
+        finally:
+            connection.close()
+
+    def find_by_claim_id(self, claim_id: str) -> TombstoneEntry | None:
+        """Find a prior deletion without exposing or storing claim content."""
+        normalized_claim_id = str(claim_id).strip()
+        if not normalized_claim_id:
+            return None
+        connection = self._connect()
+        try:
+            self._validate(connection)
+            row = connection.execute(
+                "SELECT t.identity_hash,t.claim_ids_json,t.event_ids_json,"
+                "t.closure_scope_json,t.created_at FROM tombstones AS t "
+                "WHERE EXISTS ("
+                "SELECT 1 FROM json_each(t.claim_ids_json) WHERE value=?"
+                ") ORDER BY t.created_at DESC LIMIT 1",
+                (normalized_claim_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        return TombstoneEntry(
+            identity_hash=str(row[0]),
+            claim_ids=tuple(json.loads(row[1])),
+            event_ids=tuple(json.loads(row[2])),
+            closure_scope=tuple(json.loads(row[3])),
+            created_at=str(row[4]),
+        )
 
     def record_deletion(
         self,

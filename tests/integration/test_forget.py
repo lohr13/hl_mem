@@ -14,7 +14,10 @@ def test_explicit_memory_can_be_forgotten(tmp_path, monkeypatch) -> None:
         assert client.post("/v1/recall", json={"query": "蓝鲸"}).json()["total"] == 1
         assert client.delete(f"/v1/memories/{memory_id}").json()["forgotten"]
         assert client.post("/v1/recall", json={"query": "蓝鲸"}).json()["total"] == 0
-        row = (
-            app.state.db.open().execute("SELECT status,embedding_dense FROM claims WHERE id=?", (memory_id,)).fetchone()
-        )
-        assert tuple(row) == ("retracted", None)
+        connection = app.state.db.open()
+        assert connection.execute("SELECT 1 FROM claims WHERE id=?", (memory_id,)).fetchone() is None
+        state = connection.execute(
+            "SELECT last_identity_hash,last_applied_at FROM deletion_ledger_state WHERE singleton=1"
+        ).fetchone()
+        assert state["last_identity_hash"]
+        assert state["last_applied_at"]

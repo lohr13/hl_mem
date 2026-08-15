@@ -347,7 +347,7 @@ class McpMemoryServer:
 
     @staticmethod
     def _forget(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-        """通过生命周期守卫撤回 claim 并清除其向量。"""
+        """通过统一删除闭包写入墓碑并物理删除 claim。"""
         memory_id = str(arguments.get("id", ""))
         try:
             return ForgetService(connection).forget(memory_id)
