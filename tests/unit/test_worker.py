@@ -8,6 +8,7 @@ import httpx
 import hl_mem.workers.worker as worker_module
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.embedder import FakeEmbedder
+from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import PROMPT_HASH, LLMExtractor
 from hl_mem.llm.types import LLMResponse
 from hl_mem.monitoring.worker import WorkerRuntimeState
@@ -78,6 +79,21 @@ def test_run_once_extracts_and_completes(tmp_path) -> None:
     settings = Settings(database_path=str(path), embedding_dim=8)
     result = Worker(settings).run_once()
     assert result["status"] == "succeeded" and result["claims"] == 1
+    job = connection.execute(
+        "SELECT status,stage,processed,total,progress_detail_json FROM jobs WHERE id='job'"
+    ).fetchone()
+    assert (job["status"], job["stage"], job["processed"], job["total"]) == (
+        "succeeded",
+        "claims_written",
+        1,
+        1,
+    )
+    assert json.loads(job["progress_detail_json"]) == {
+        "written_claim_count": {
+            "total": 1,
+            "windows": [{"event_ids": ["event"], "written": 1}],
+        }
+    }
     # Run again to process any relation-discovery job queued after extraction
     Worker(settings).run_once()
     assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] >= 1
@@ -87,6 +103,52 @@ def test_run_once_extracts_and_completes(tmp_path) -> None:
 class BrokenExtractor:
     def extract(self, _content):
         raise RuntimeError("broken")
+
+
+class PartiallyInvalidExtractor:
+    def extract(self, _content):
+        return [
+            ExtractedClaim(predicate="uses", value="SQLite", subject="hl_mem"),
+            ExtractedClaim(predicate="uses", value="PostgreSQL", subject="hl_mem"),
+        ]
+
+
+def test_failed_extraction_job_keeps_partial_written_claim_count(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "partial-write.db"
+    connection = Database(path).open()
+    queue(connection, max_attempts=1)
+    settings = Settings(database_path=str(path), embedding_dim=8)
+    original_store = worker_module.IngestService.store_extracted
+    call_count = 0
+
+    def fail_second_store(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("second claim write failed")
+        return original_store(*args, **kwargs)
+
+    monkeypatch.setattr(worker_module.IngestService, "store_extracted", fail_second_store)
+
+    result = Worker(settings, extractor=PartiallyInvalidExtractor(), embedder=FakeEmbedder(8)).run_once()
+
+    assert result["status"] == "dead"
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
+    job = connection.execute(
+        "SELECT status,stage,processed,total,progress_detail_json FROM jobs WHERE id='job'"
+    ).fetchone()
+    assert (job["status"], job["stage"], job["processed"], job["total"]) == (
+        "dead",
+        "writing_claims",
+        1,
+        2,
+    )
+    assert json.loads(job["progress_detail_json"]) == {
+        "written_claim_count": {
+            "total": 1,
+            "windows": [{"event_ids": ["event"], "written": 1}],
+        }
+    }
 
 
 class HTTPErrorExtractor:

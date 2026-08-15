@@ -460,11 +460,21 @@ class Worker:
             except Exception:
                 LOGGER.exception("worker_maintenance_audit_failed item=%s", item)
 
-    def _extract(self, payload: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
+    def _extract(
+        self,
+        payload: dict[str, Any],
+        job_id: str | None = None,
+        progress_callback: Callable[[str, int, int, dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         event_ids = list(payload.get("event_ids") or [payload["event_id"]])
-        return self._extract_window(event_ids, job_id)
+        return self._extract_window(event_ids, job_id, progress_callback)
 
-    def _extract_window(self, event_ids: list[str], job_id: str | None) -> dict[str, Any]:
+    def _extract_window(
+        self,
+        event_ids: list[str],
+        job_id: str | None,
+        progress_callback: Callable[[str, int, int, dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         events = EventRepository(self.connection)
         batch = [events.get_event(event_id) for event_id in event_ids]
         missing = [event_id for event_id, event in zip(event_ids, batch, strict=True) if event is None]
@@ -472,6 +482,22 @@ class Worker:
             raise ValueError(f"event not found: {missing[0]}")
         source_batch = [event for event in batch if event is not None]
         first = source_batch[0]
+
+        def report_writes(stage: str, processed: int, total: int, written: int) -> None:
+            if progress_callback is None:
+                return
+            progress_callback(
+                stage,
+                processed,
+                total,
+                {
+                    "written_claim_count": {
+                        "windows": [{"event_ids": event_ids, "written": written}],
+                        "total": written,
+                    }
+                },
+            )
+
         with audit_scope(
             self.audit,
             trace_id=first["id"],
@@ -488,6 +514,7 @@ class Worker:
                 elif pre_filter_reason:
                     pre_filter_reasons.append(pre_filter_reason)
             if not prepared:
+                report_writes("claims_written", 0, 0, 0)
                 if len(source_batch) == 1 and pre_filter_reasons:
                     return {"claims": 0, "pre_filter": pre_filter_reasons[0]}
                 return {
@@ -642,7 +669,7 @@ class Worker:
                 extraction_sources[0]["extractor_version"] = "explicit-v1"
             stored = 0
             rejections: list[dict[str, Any]] = []
-            for claim in extracted:
+            for processed, claim in enumerate(extracted, start=1):
                 indices = claim.source_event_indices or (0,)
                 if any(index < 0 or index >= len(extraction_sources) for index in indices):
                     raise ValueError("extracted claim contains an invalid source_event_index")
@@ -665,6 +692,8 @@ class Worker:
                     rejections.append({"reason": result.reason, "predicate": claim.predicate})
                 else:
                     stored += 1
+                report_writes("writing_claims", processed, len(extracted), stored)
+            report_writes("claims_written", len(extracted), len(extracted), stored)
             return {
                 "events": len(source_batch),
                 "eligible_events": len(prepared),
@@ -812,7 +841,33 @@ class Worker:
 def _handle_extract(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     """处理事件提取任务。"""
     payload = job.get("payload") or json.loads(job["payload_json"] or "{}")
-    return worker._extract(payload, job["id"])
+    return worker._extract(payload, job["id"], _extraction_progress_callback(worker, job))
+
+
+def _extraction_progress_callback(
+    worker: Worker,
+    job: dict[str, Any],
+) -> Callable[[str, int, int, dict[str, Any]], None]:
+    """Persist extraction write counts for every job in a leased window."""
+
+    def update(stage: str, processed: int, total: int, detail: dict[str, Any]) -> None:
+        job_ids = list(job.get("leased_job_ids") or [job["id"]])
+        updated = sum(
+            worker.jobs.update_progress(
+                job_id,
+                job["lease_token"],
+                stage=stage,
+                processed=processed,
+                total=total,
+                detail=detail,
+                heartbeat_at=_now(),
+            )
+            for job_id in job_ids
+        )
+        if updated != len(job_ids):
+            raise RuntimeError("job lease ownership lost while reporting extraction writes")
+
+    return update
 
 
 def _handle_expire(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
