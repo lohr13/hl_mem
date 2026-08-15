@@ -701,6 +701,17 @@ class LLMExtractor:
         self._memorize_decisions: list[tuple[bool, str]] = []
         self._last_schema_errors: list[dict[str, Any]] = []
         self._secret_rejections: dict[str, int] = {}
+        self._relation_metadata_counts: dict[str, int] = {}
+
+    @property
+    def last_relation_metadata(self) -> dict[str, int]:
+        """返回最近一次 extract 的 RAO 来源边界判定计数。"""
+        return dict(self._relation_metadata_counts)
+
+    @property
+    def last_llm_call_count(self) -> int:
+        """返回最近一次 extract 含 schema retry/verifier 的实际 LLM 调用数。"""
+        return self._llm_call_count
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
         """同步分块提取事实，并在输出截断或 claim 数超限时递归二分恢复。"""
@@ -713,6 +724,7 @@ class LLMExtractor:
         self._memorize_decisions = []
         self._last_schema_errors = []
         self._secret_rejections = {}
+        self._relation_metadata_counts = {}
         event_context = context or {}
         chunks = split_extraction_content(content, self.chunking_policy)
         chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
@@ -979,6 +991,8 @@ class LLMExtractor:
             action=raw.get("action"),
             object_=raw.get("object"),
         )
+        if relation_reason != "not_provided":
+            self._relation_metadata_counts[relation_reason] = self._relation_metadata_counts.get(relation_reason, 0) + 1
         if relation_reason not in {"accepted", "not_provided"}:
             current_audit().emit(
                 "extract",
@@ -1286,7 +1300,7 @@ class LLMExtractor:
             if schema_errors:
                 retry_instruction = self._schema_retry_instruction(previous_output, schema_errors, language)
             if language == "en":
-                system_prompt = ENGLISH_SYSTEM_PROMPT
+                system_prompt = self._system_prompt_for_language(language)
                 user_prompt = (
                     f"Event occurred at: {occurred_at}\n"
                     f"Event context: {context}\n"
@@ -1300,7 +1314,7 @@ class LLMExtractor:
                     f"{retry_instruction}"
                 )
             else:
-                system_prompt = SYSTEM_PROMPT
+                system_prompt = self._system_prompt_for_language(language)
                 user_prompt = (
                     f"事件发生时间 occurred_at：{occurred_at}\n"
                     f"事件上下文：{context}\n"
@@ -1320,7 +1334,7 @@ class LLMExtractor:
                 ],
                 structured_output=StructuredOutputSpec(
                     name="extraction_response",
-                    schema=extraction_response_json_schema(),
+                    schema=self._response_json_schema(),
                     preferred_mode=self.structured_mode,
                 ),
             )
@@ -1684,3 +1698,11 @@ class LLMExtractor:
             memory_layer=("episodic" if item.get("memory_layer") == "episodic" else "durable"),
             source_event_indices=tuple(item.get("source_event_indices") or ()),
         )
+
+    def _system_prompt_for_language(self, language: Literal["zh", "en"]) -> str:
+        """返回当前产品 compact 契约的语言 prompt；评测子类可冻结旧契约。"""
+        return ENGLISH_SYSTEM_PROMPT if language == "en" else SYSTEM_PROMPT
+
+    def _response_json_schema(self) -> dict[str, Any]:
+        """返回当前产品 compact 响应 schema；评测子类可冻结旧契约。"""
+        return extraction_response_json_schema()

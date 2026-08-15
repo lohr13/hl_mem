@@ -6,6 +6,11 @@ import httpx
 import pytest
 
 from hl_mem.domain.claims.attributes import PREDICATE_ATTRIBUTE_MAP
+from hl_mem.evaluation.extraction_ab import (
+    LEGACY_CONTRACT_ID,
+    LegacyCompactLLMExtractor,
+    extraction_contract_snapshot,
+)
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.llm_extractor import (
     ENGLISH_SYSTEM_PROMPT,
@@ -254,7 +259,8 @@ def test_grounded_compact_relation_is_projected_without_changing_governance_fiel
         ensure_ascii=False,
     )
 
-    claim = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract("hl_mem 使用 PostgreSQL 数据库")[0]
+    extractor = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2))
+    claim = extractor.extract("hl_mem 使用 PostgreSQL 数据库")[0]
 
     assert claim.predicate == "使用"
     assert claim.canonical_attribute == "choice.database"
@@ -265,6 +271,41 @@ def test_grounded_compact_relation_is_projected_without_changing_governance_fiel
         "action": "使用",
         "object": "PostgreSQL",
     }
+    assert extractor.last_relation_metadata == {"accepted": 1}
+
+
+def test_legacy_extraction_contract_uses_frozen_prompt_and_seven_field_schema() -> None:
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": "用户",
+                    "value": "用户参加 Emily 的婚礼",
+                    "kind": "fact",
+                    "confidence": 1.0,
+                    "notability": "low",
+                    "evidence_quote": "用户参加 Emily 的婚礼",
+                }
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+    client = _FakeLLMClient(raw)
+
+    extractor = LegacyCompactLLMExtractor(client, ChunkingPolicy(10_000, 0, 2))
+    claim = extractor.extract("用户参加 Emily 的婚礼")[0]
+
+    assert extractor.extractor_version.startswith(f"{LEGACY_CONTRACT_ID}+")
+    assert client.last_request is not None
+    assert "上述 7 个字段" in client.last_request.messages[0].content
+    properties = client.last_request.structured_output.schema["$defs"]["CompactExtractedClaimSchema"]["properties"]
+    assert "action" not in properties
+    assert "object" not in properties
+    assert not {"role", "action", "object"}.intersection(claim.qualifiers)
+    snapshots = {arm: extraction_contract_snapshot(arm) for arm in ("old", "new")}
+    assert snapshots["old"]["contract_id"] == LEGACY_CONTRACT_ID
+    assert snapshots["old"]["contract_sha256"] != snapshots["new"]["contract_sha256"]
 
 
 def test_compact_relation_traceability_uses_exact_nfc_matching() -> None:
@@ -330,13 +371,15 @@ def test_unbounded_compact_relation_is_dropped_and_reason_is_audited(
         ensure_ascii=False,
     )
     audit = _RecordingAudit()
+    extractor = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2))
 
     with audit_scope(audit):
-        claim = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract(quote)[0]
+        claim = extractor.extract(quote)[0]
 
     assert not {"role", "action", "object"}.intersection(claim.qualifiers)
     discarded = [event for event in audit.events if event[1] == "relation_metadata_checked"]
     assert discarded == [("extract", "relation_metadata_checked", "discarded", {"reason": reason})]
+    assert extractor.last_relation_metadata == {reason: 1}
 
 
 def test_absent_compact_relation_is_not_treated_as_a_failed_projection() -> None:
