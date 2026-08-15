@@ -85,7 +85,7 @@ from .verifier import EntailmentVerifier
 LOGGER = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有价值的原子事实。
+LEGACY_SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有价值的原子事实。
 
 只输出严格 JSON，不要输出解释、Markdown 或额外字段：
 {
@@ -185,7 +185,7 @@ assistant durable output：
 - claims 中每项必须且只能包含上述 7 个字段。
 - kind、notability 和 confidence 必须满足上述枚举与范围。"""
 
-ENGLISH_SYSTEM_PROMPT = """You extract atomic memory claims from conversations for later use.
+LEGACY_ENGLISH_SYSTEM_PROMPT = """You extract atomic memory claims from conversations for later use.
 
 Return strict JSON only. Do not include explanations, Markdown, or extra fields:
 {
@@ -295,6 +295,59 @@ Limits:
 - Maximum 20 claims per chunk.
 - Every claim must contain exactly the seven fields shown above.
 - kind, notability, and confidence must use the specified values and ranges."""
+
+
+def _with_source_bounded_relation_fields(prompt: str, *, language: Literal["zh", "en"]) -> str:
+    """在冻结的七字段 prompt 上确定性叠加 RAO v1 契约。"""
+    if language == "zh":
+        replacements = (
+            (
+                '      "value": "原子事实描述",\n',
+                '      "value": "原子事实描述",\n'
+                '      "action": "原文逐字出现的语义动作；无关系语义时为 null",\n'
+                '      "object": "原文逐字出现的关系对象；无关系语义时为 null",\n',
+            ),
+            (
+                "kind 分类：",
+                "action/object 关系字段：\n"
+                "- 只有原文明确表达主体→动作→对象关系时才填写；role 不输出，由 subject 派生。\n"
+                "- action 使用原文中的具体语义动词，不得用 fact/choice/config 等治理类别替代。\n"
+                "- action 与 object 必须同时填写或同时为 null；禁止只填半条关系。\n"
+                "- action 与 object 必须逐字出现在 evidence_quote 和自包含 value 中；不得推断、改写同义词或投影隐藏值。\n\n"
+                "kind 分类：",
+            ),
+            ("上述 7 个字段", "上述 9 个字段"),
+        )
+    else:
+        replacements = (
+            (
+                '      "value": "self-contained atomic claim",\n',
+                '      "value": "self-contained atomic claim",\n'
+                '      "action": "exact semantic action from the source, or null",\n'
+                '      "object": "exact relation object from the source, or null",\n',
+            ),
+            (
+                "Kinds:",
+                "Relation fields action/object:\n"
+                "- Fill them only for an explicit subject-to-action-to-object relation; role is derived from subject.\n"
+                "- action must be the concrete source verb, never a governance kind such as fact, choice, or config.\n"
+                "- action and object must both be strings or both be null; never emit a partial relation.\n"
+                "- Both strings must occur exactly in evidence_quote and the self-contained public value. Do not infer, "
+                "paraphrase, or project hidden values.\n\n"
+                "Kinds:",
+            ),
+            ("the seven fields shown above", "the nine fields shown above"),
+        )
+    upgraded = prompt
+    for old, new in replacements:
+        if upgraded.count(old) != 1:
+            raise RuntimeError(f"relation prompt anchor must occur exactly once: {old!r}")
+        upgraded = upgraded.replace(old, new)
+    return upgraded
+
+
+SYSTEM_PROMPT = _with_source_bounded_relation_fields(LEGACY_SYSTEM_PROMPT, language="zh")
+ENGLISH_SYSTEM_PROMPT = _with_source_bounded_relation_fields(LEGACY_ENGLISH_SYSTEM_PROMPT, language="en")
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
 _HAN_CHARACTER_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -451,6 +504,7 @@ def _postprocess_rules_fingerprint(
         "language_router_version": language_router_version,
         "admission": admission_rules_fingerprint(),
         "claim_count_overflow_policy": CLAIM_COUNT_OVERFLOW_POLICY_VERSION,
+        "relation_metadata_projection": "source-bounded-rao-v1",
         "unsettled_confidence_ceiling": _UNSETTLED_CONFIDENCE_CEILING,
         "repair_enum_mappings": ENUM_MAPPINGS,
         "repair_topic_tag_mappings": TOPIC_TAG_ZH_TO_EN,
@@ -870,7 +924,7 @@ class LLMExtractor:
         source_text: str,
         occurred_at: str | None = None,
     ) -> dict[str, Any] | None:
-        """把 LLM 的 6 字段候选准入并映射为现有完整 claim schema。"""
+        """把 LLM 的 compact 候选准入并映射为现有完整 claim schema。"""
         try:
             candidate = MemoryCandidate(
                 subject=str(raw["subject"]).strip(),
@@ -918,6 +972,21 @@ class LLMExtractor:
             canonical_attribute = inferred_attribute
         qualifiers = self._infer_compact_qualifiers(canonical_attribute, subject, candidate.value)
         canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
+        relation_qualifiers, relation_reason = self._project_relation_metadata(
+            subject=subject,
+            value=candidate.value,
+            evidence_quote=candidate.evidence_quote,
+            action=raw.get("action"),
+            object_=raw.get("object"),
+        )
+        if relation_reason not in {"accepted", "not_provided"}:
+            current_audit().emit(
+                "extract",
+                "relation_metadata_checked",
+                "discarded",
+                detail={"reason": relation_reason},
+            )
+        qualifiers.update(relation_qualifiers)
         occurred_start, occurred_end = self._infer_compact_occurrence(
             candidate.evidence_quote,
             occurred_at,
@@ -948,6 +1017,40 @@ class LLMExtractor:
             "memory_layer": decision.memory_layer,
             "source_event_indices": raw["source_event_indices"],
         }
+
+    @staticmethod
+    def _project_relation_metadata(
+        *,
+        subject: str,
+        value: str,
+        evidence_quote: str,
+        action: Any,
+        object_: Any,
+    ) -> tuple[dict[str, str], str]:
+        """只投影可同时由公开 value 与证据逐字证明的完整 RAO。"""
+        normalized_action = unicodedata.normalize("NFC", str(action or "")).strip()
+        normalized_object = unicodedata.normalize("NFC", str(object_ or "")).strip()
+        if not normalized_action and not normalized_object:
+            return {}, "not_provided"
+        if not normalized_action or not normalized_object:
+            return {}, "partial_relation_metadata"
+
+        normalized_value = unicodedata.normalize("NFC", value)
+        normalized_evidence = unicodedata.normalize("NFC", evidence_quote)
+        checks = (
+            (normalized_action, normalized_evidence, "action_not_in_evidence_quote"),
+            (normalized_action, normalized_value, "action_not_in_value"),
+            (normalized_object, normalized_evidence, "object_not_in_evidence_quote"),
+            (normalized_object, normalized_value, "object_not_in_value"),
+        )
+        for needle, haystack, reason in checks:
+            if needle not in haystack:
+                return {}, reason
+        return {
+            "role": unicodedata.normalize("NFC", subject).strip(),
+            "action": normalized_action,
+            "object": normalized_object,
+        }, "accepted"
 
     @staticmethod
     def _legacy_admission_candidate(raw: dict[str, Any]) -> MemoryCandidate | None:
@@ -1241,6 +1344,12 @@ class LLMExtractor:
                 )
                 self._repair_count += self._count_repairs(raw, repaired)
                 if self._uses_compact_schema(repaired):
+                    claims = repaired.get("claims")
+                    if isinstance(claims, list):
+                        for claim in claims:
+                            if isinstance(claim, dict):
+                                claim.setdefault("action", None)
+                                claim.setdefault("object", None)
                     return CompactExtractionResponseSchema.model_validate(repaired)
                 compatible = self._parse_legacy_defaults(repaired)
                 return ExtractionResponseSchema.model_validate(compatible)

@@ -76,6 +76,8 @@ def test_generated_schema_forbids_extra_fields_recursively() -> None:
                     {
                         "subject": "用户",
                         "value": "用户偏好简洁回答",
+                        "action": None,
+                        "object": None,
                         "kind": "preference",
                         "confidence": 1.0,
                         "notability": "high",
@@ -89,6 +91,32 @@ def test_generated_schema_forbids_extra_fields_recursively() -> None:
         .kind
         == "preference"
     )
+
+
+def test_compact_relation_fields_are_required_and_nullable() -> None:
+    schema = extraction_response_json_schema()
+    compact_claim = schema["$defs"]["CompactExtractedClaimSchema"]
+
+    assert {"action", "object"}.issubset(compact_claim["properties"])
+    assert {"action", "object"}.issubset(compact_claim["required"])
+    payload = {
+        "claims": [
+            {
+                "subject": "用户",
+                "value": "用户参加 Emily 的婚礼",
+                "action": None,
+                "object": None,
+                "kind": "fact",
+                "confidence": 1.0,
+                "notability": "low",
+                "evidence_quote": "参加 Emily 的婚礼",
+            }
+        ],
+        "should_memorize": True,
+    }
+    claim = CompactExtractionResponseSchema.model_validate(payload).claims[0]
+    assert claim.action is None
+    assert claim.object is None
 
 
 def test_source_event_indices_match_configurable_microbatch_ceiling() -> None:

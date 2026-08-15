@@ -228,10 +228,141 @@ def test_timeout_is_configurable() -> None:
 
 
 def test_prompt_requires_compact_candidate_fields_only() -> None:
-    for field in ("subject", "value", "kind", "confidence", "notability", "evidence_quote"):
+    for field in ("subject", "value", "action", "object", "kind", "confidence", "notability", "evidence_quote"):
         assert f'"{field}"' in SYSTEM_PROMPT
     assert "canonical_attribute" not in SYSTEM_PROMPT
     assert "topic_tags" not in SYSTEM_PROMPT
+
+
+def test_grounded_compact_relation_is_projected_without_changing_governance_fields() -> None:
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": "hl_mem",
+                    "value": "hl_mem 使用 PostgreSQL 数据库",
+                    "action": "使用",
+                    "object": "PostgreSQL",
+                    "kind": "choice",
+                    "confidence": 0.95,
+                    "notability": "high",
+                    "evidence_quote": "hl_mem 使用 PostgreSQL 数据库",
+                }
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+
+    claim = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract("hl_mem 使用 PostgreSQL 数据库")[0]
+
+    assert claim.predicate == "使用"
+    assert claim.canonical_attribute == "choice.database"
+    assert claim.canonical_slot == "choice.database"
+    assert claim.qualifiers == {
+        "project": "hl_mem",
+        "role": "hl_mem",
+        "action": "使用",
+        "object": "PostgreSQL",
+    }
+
+
+def test_compact_relation_traceability_uses_exact_nfc_matching() -> None:
+    decomposed = "Cafe\u0301"
+    composed = "Caf\u00e9"
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": "用户",
+                    "value": f"用户 拜访 {composed}",
+                    "action": "拜访",
+                    "object": decomposed,
+                    "kind": "fact",
+                    "confidence": 1.0,
+                    "notability": "low",
+                    "evidence_quote": f"用户 拜访 {composed}",
+                }
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+
+    claim = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract(f"用户 拜访 {composed}")[0]
+
+    assert claim.qualifiers["object"] == composed
+
+
+@pytest.mark.parametrize(
+    ("action", "object", "value", "quote", "reason"),
+    [
+        ("参加", None, "用户参加 Emily 的婚礼", "用户参加 Emily 的婚礼", "partial_relation_metadata"),
+        ("参加", "Emily", "用户参加婚礼", "用户参加 Emily 的婚礼", "object_not_in_value"),
+        ("参加", "Emily", "用户参加 Emily 的婚礼", "用户出席 Emily 的婚礼", "action_not_in_evidence_quote"),
+        ("参加", "Emily", "用户参加 Emily 的婚礼", "用户参加婚礼", "object_not_in_evidence_quote"),
+        ("拥有", "相机", "用户有一台相机", "用户拥有一台相机", "action_not_in_value"),
+    ],
+)
+def test_unbounded_compact_relation_is_dropped_and_reason_is_audited(
+    action: str | None,
+    object: str | None,
+    value: str,
+    quote: str,
+    reason: str,
+) -> None:
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": "用户",
+                    "value": value,
+                    "action": action,
+                    "object": object,
+                    "kind": "fact",
+                    "confidence": 1.0,
+                    "notability": "low",
+                    "evidence_quote": quote,
+                }
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claim = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract(quote)[0]
+
+    assert not {"role", "action", "object"}.intersection(claim.qualifiers)
+    discarded = [event for event in audit.events if event[1] == "relation_metadata_checked"]
+    assert discarded == [("extract", "relation_metadata_checked", "discarded", {"reason": reason})]
+
+
+def test_absent_compact_relation_is_not_treated_as_a_failed_projection() -> None:
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": "用户",
+                    "value": "用户偏好简洁回答",
+                    "kind": "preference",
+                    "confidence": 1.0,
+                    "notability": "high",
+                    "evidence_quote": "用户偏好简洁回答",
+                }
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claim = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract("用户偏好简洁回答")[0]
+
+    assert not {"role", "action", "object"}.intersection(claim.qualifiers)
+    assert not [event for event in audit.events if event[1] == "relation_metadata_checked"]
 
 
 def test_prompt_extracts_bounded_assistant_durable_outputs() -> None:
