@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -109,3 +110,28 @@ def test_accuracy_comparison_separates_historical_and_frozen_rescore() -> None:
         "accuracy_delta": 0.25,
         "historical_accuracy_delta": -0.25,
     }
+
+
+def test_completed_row_index_rejects_duplicate_paid_results() -> None:
+    rows = [
+        {"status": "complete", "case_id": "case-1", "arm_id": "C0", "reader_id": "qwen"},
+        {"status": "complete", "case_id": "case-1", "arm_id": "C0", "reader_id": "qwen"},
+    ]
+
+    with pytest.raises(RuntimeError, match="duplicate complete rows"):
+        _runner().completed_row_index(rows)
+
+
+def test_reader_snapshot_rejects_qwen_config_drift() -> None:
+    settings = SimpleNamespace(
+        llm_provider="dashscope",
+        llm_base_url="https://coding.example/v1",
+        llm_model="qwen-frozen",
+        llm_timeout=45.0,
+    )
+    readers = _runner().reader_descriptors(settings)
+
+    _runner().verify_reader_snapshot({"readers": readers}, settings)
+    settings.llm_model = "qwen-drifted"
+    with pytest.raises(RuntimeError, match="reader configuration drift"):
+        _runner().verify_reader_snapshot({"readers": readers}, settings)

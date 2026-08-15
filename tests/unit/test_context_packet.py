@@ -18,6 +18,7 @@ from hl_mem.application.context_packet import (
     RetrievalBundleItem,
     pack_retrieval_bundle,
     pack_retrieval_items,
+    project_claim_relation,
     retrieval_bundle_from_dict,
     retrieval_bundle_to_dict,
 )
@@ -322,6 +323,36 @@ def test_materialized_packet_carries_complete_relation_fields() -> None:
     assert packet["items"][0].get("object") == "海风看板"
 
 
+def test_claim_relation_projection_requires_semantic_action_or_explicit_rao() -> None:
+    assert (
+        project_claim_relation(
+            {
+                "subject_entity_id": "团队",
+                "predicate": "事实",
+                "value": "团队后来采用海风看板",
+                "qualifiers": {},
+            }
+        )
+        is None
+    )
+    assert project_claim_relation(
+        {
+            "subject_entity_id": "团队",
+            "predicate": "事实",
+            "value": "团队后来采用海风看板",
+            "qualifiers": {"role": "团队", "action": "采用", "object": "海风看板"},
+        }
+    ) == ("团队", "采用", "海风看板")
+    assert project_claim_relation(
+        {
+            "subject_entity_id": "团队",
+            "predicate": "采用",
+            "value": "海风看板",
+            "qualifiers": {},
+        }
+    ) == ("团队", "采用", "海风看板")
+
+
 def test_mcp_recall_schema_freezes_packet_response_format_options() -> None:
     recall_tool = next(tool for tool in get_tool_schemas() if tool["name"] == "memory_recall")
     recall_schema = recall_tool["inputSchema"]
@@ -345,3 +376,4 @@ def test_mcp_recall_schema_freezes_packet_response_format_options() -> None:
     assert len(item_schema["properties"]) == 8
     assert set(item_schema["required"]) == {"type", "id", "text", "evidence", "feedback_id"}
     assert {"role", "action", "object"} <= set(item_schema["properties"])
+    assert item_schema["allOf"]

@@ -90,6 +90,41 @@
             "items": {
               "items": {
                 "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "role"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "action"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "object"
+                          ]
+                        }
+                      ]
+                    },
+                    "then": {
+                      "properties": {
+                        "type": {
+                          "const": "claim"
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "action",
+                        "object"
+                      ]
+                    }
+                  }
+                ],
                 "properties": {
                   "action": {
                     "minLength": 1,

@@ -19,8 +19,8 @@ from hl_mem.application.context_packet import (
     RetrievalBundle,
     RetrievalBundleItem,
     estimate_tokens,
-    normalize_relation_components,
     pack_retrieval_bundle,
+    project_claim_relation,
     render_memory_text,
     retrieval_bundle_to_dict,
 )
@@ -94,28 +94,9 @@ def _context_text(memory_type: str, data: Mapping[str, Any]) -> str:
 
 
 def _claim_relation(claim: Mapping[str, Any]) -> tuple[str, str, str] | None:
-    """优先投影显式 qualifier RAO，否则使用持久化 subject/predicate/value。"""
+    """Compatibility wrapper around the shared semantic relation projection."""
 
-    raw_qualifiers = claim.get("qualifiers")
-    qualifiers = raw_qualifiers if isinstance(raw_qualifiers, Mapping) else {}
-    explicit = normalize_relation_components(
-        qualifiers.get("role"),
-        qualifiers.get("action"),
-        qualifiers.get("object"),
-    )
-    if explicit is not None:
-        return explicit
-    value = claim.get("value")
-    serialized_value = (
-        value
-        if isinstance(value, str)
-        else json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) if value is not None else ""
-    )
-    return normalize_relation_components(
-        claim.get("subject_entity_id"),
-        claim.get("predicate"),
-        serialized_value,
-    )
+    return project_claim_relation(claim)
 
 
 def recall_side_effect_health() -> dict[str, dict[str, int | str | None]]:
@@ -215,11 +196,23 @@ def budget_pack_by_type(
     used_by_type = {kind: 0 for kind in ratios}
     remaining = {kind: list(items) for kind, items in grouped.items()}
 
+    def candidate_text(item: MemoryCandidate) -> str:
+        return (
+            render_memory_text(
+                item.text,
+                role=item.role,
+                action=item.action,
+                object_=item.object,
+            )
+            if item.memory_type == "claim"
+            else item.text
+        )
+
     def take(kind: str, allowance: int) -> int:
         used = 0
         retained: list[MemoryCandidate] = []
         for item in remaining[kind]:
-            cost = max(1, (len(item.text) + 1) // 2)
+            cost = estimate_tokens(candidate_text(item))
             if used + cost <= allowance:
                 packed.append(item)
                 used += cost
@@ -939,6 +932,9 @@ class RecallService:
                 claim_scores.get(str(item["id"]), 0.0),
                 tuple(item.get("evidence") or ()),
                 {"claim_score": claim_scores.get(str(item["id"]), 0.0)},
+                role=str(item["role"]) if item.get("role") else None,
+                action=str(item["action"]) if item.get("action") else None,
+                object=str(item["object"]) if item.get("object") else None,
             )
             for item in claim_results
         ]
@@ -957,8 +953,9 @@ class RecallService:
         packed, quotas, reflow = budget_pack_by_type(candidates, selected_intent, budget)
         packet_selected = packed[:limit]
         selected = packet_selected if context_mode == "packed" else candidates[:limit]
-        results = [
-            {
+        results = []
+        for item in selected:
+            result: dict[str, Any] = {
                 "type": item.memory_type,
                 "memory_type": item.memory_type,
                 "id": item.memory_id,
@@ -967,8 +964,9 @@ class RecallService:
                 "evidence": list(item.evidence),
                 "features": item.features,
             }
-            for item in selected
-        ]
+            if item.memory_type == "claim" and item.role is not None:
+                result.update(role=item.role, action=item.action, object=item.object)
+            results.append(result)
         answerability = self._answerability([], tracer) if not candidates else "supported"
         materialized_selection = packet_selected if response_format != "legacy" else selected
         bundle = RetrievalBundle(
@@ -981,10 +979,25 @@ class RecallService:
                     item.text,
                     tuple(reference for reference in item.evidence if isinstance(reference, Mapping)),
                     item.score,
+                    item.role if item.memory_type == "claim" else None,
+                    item.action if item.memory_type == "claim" else None,
+                    item.object if item.memory_type == "claim" else None,
                 )
                 for item in materialized_selection
             ),
-            used_tokens_estimate=sum(estimate_tokens(item.text) for item in materialized_selection),
+            used_tokens_estimate=sum(
+                estimate_tokens(
+                    render_memory_text(
+                        item.text,
+                        role=item.role,
+                        action=item.action,
+                        object_=item.object,
+                    )
+                    if item.memory_type == "claim"
+                    else item.text
+                )
+                for item in materialized_selection
+            ),
             truncated=len(materialized_selection) < len(candidates),
         )
         if response_format == "retrieval_bundle":
@@ -1028,7 +1041,19 @@ class RecallService:
             "answerability": answerability,
         }
         if context_mode == "packed":
-            used = sum(estimate_tokens(item.text) for item in selected)
+            used = sum(
+                estimate_tokens(
+                    render_memory_text(
+                        item.text,
+                        role=item.role,
+                        action=item.action,
+                        object_=item.object,
+                    )
+                    if item.memory_type == "claim"
+                    else item.text
+                )
+                for item in selected
+            )
             response["context"] = {
                 "context_items": [
                     {"type": item.memory_type, "data": result} for item, result in zip(selected, results)

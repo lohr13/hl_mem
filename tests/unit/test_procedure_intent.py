@@ -41,3 +41,21 @@ def test_type_quota_packing_reflows_without_exceeding_budget() -> None:
     assert quotas == {"policy": 2, "episode": 2, "trace": 1, "claim": 2}
     assert reflow >= 1
     assert {item.memory_type for item in packed} == {"policy", "episode", "claim"}
+
+
+def test_tool_procedure_budget_counts_reader_visible_claim_relation() -> None:
+    relational = MemoryCandidate(
+        "claim",
+        "c1",
+        "短文",
+        1.0,
+        (),
+        {},
+        role="团队",
+        action="采用",
+        object="海风看板",
+    )
+
+    packed, _, _ = budget_pack_by_type([relational], RecallIntent.PROCEDURE, 6)
+
+    assert packed == []

@@ -49,6 +49,15 @@ def _context_packet_schema() -> dict[str, Any]:
             "object": {"type": "string", "minLength": 1, "pattern": r".*\S.*"},
         },
         "required": ["type", "id", "text", "evidence", "feedback_id"],
+        "allOf": [
+            {
+                "if": {"anyOf": [{"required": ["role"]}, {"required": ["action"]}, {"required": ["object"]}]},
+                "then": {
+                    "properties": {"type": {"const": "claim"}},
+                    "required": ["role", "action", "object"],
+                },
+            }
+        ],
     }
     return {
         "type": "object",

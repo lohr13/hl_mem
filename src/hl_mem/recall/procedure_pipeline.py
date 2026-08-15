@@ -25,6 +25,9 @@ class MemoryCandidate:
     score: float
     evidence: tuple[dict[str, object], ...]
     features: dict[str, float]
+    role: str | None = None
+    action: str | None = None
+    object: str | None = None
 
 
 def _tokens(text: str) -> set[str]:

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from hl_mem.application.context_packet import normalize_relation_components, render_memory_text
+from hl_mem.application.context_packet import project_claim_relation, render_memory_text
 from hl_mem.application.recall import RecallService
 from hl_mem.evaluation.c_series import (
     PACKET_CLAIM_LIMIT,
@@ -111,8 +111,6 @@ def _claim_payload(
     claim = repo.get_claim(claim_id)
     if claim is None:
         return None
-    raw_qualifiers = claim.get("qualifiers")
-    qualifiers: Mapping[str, Any] = raw_qualifiers if isinstance(raw_qualifiers, Mapping) else {}
     relation_paths = trace_candidate.get("relation_paths") if isinstance(trace_candidate, Mapping) else []
     expanded_ranks = sorted(
         {
@@ -144,17 +142,7 @@ def _claim_payload(
         for event_id in evidence_event_ids
         if (event := event_repo.get_event(event_id)) is not None
     ]
-    value = claim.get("value")
-    object_fallback = (
-        value
-        if isinstance(value, str)
-        else json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    )
-    relation = normalize_relation_components(
-        qualifiers.get("role") or claim.get("subject_entity_id"),
-        qualifiers.get("action") or claim.get("predicate"),
-        qualifiers.get("object") or object_fallback,
-    )
+    relation = project_claim_relation(claim)
     role, action, object_ = relation or ("", "", "")
     rendered_text = render_memory_text(text, role=role, action=action, object_=object_)
     return {

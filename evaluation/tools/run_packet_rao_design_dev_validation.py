@@ -232,6 +232,35 @@ def _implementation_snapshot() -> dict[str, str]:
     }
 
 
+def reader_descriptors(settings: Any) -> dict[str, dict[str, Any]]:
+    """Return the non-sensitive reader settings that affect QA requests."""
+
+    common = {
+        "temperature": 0.1,
+        "max_output_tokens": 512,
+        "timeout_seconds": float(settings.llm_timeout),
+    }
+    return {
+        "qwen": {
+            "provider": settings.llm_provider,
+            "base_url": settings.llm_base_url,
+            "model": settings.llm_model,
+            **common,
+        },
+        "glm": {
+            "provider": "zhipu",
+            "base_url": GLM_BASE_URL,
+            "model": GLM_MODEL,
+            **common,
+        },
+    }
+
+
+def verify_reader_snapshot(manifest: Mapping[str, Any], settings: Any) -> None:
+    if manifest.get("readers") != reader_descriptors(settings):
+        raise RuntimeError("packet RAO reader configuration drift")
+
+
 def command_preregister() -> int:
     settings = load_settings(ROOT / "hl_mem.toml", ROOT / ".env")
     if "coding" not in settings.llm_base_url or not settings.llm_api_key:
@@ -263,22 +292,7 @@ def command_preregister() -> int:
         "case_count": len(cases),
         "task_count": len(tasks),
         "arms": list(ARMS),
-        "readers": {
-            "qwen": {
-                "provider": settings.llm_provider,
-                "base_url": settings.llm_base_url,
-                "model": settings.llm_model,
-                "temperature": 0.1,
-                "max_output_tokens": 512,
-            },
-            "glm": {
-                "provider": "zhipu",
-                "base_url": GLM_BASE_URL,
-                "model": GLM_MODEL,
-                "temperature": 0.1,
-                "max_output_tokens": 512,
-            },
-        },
+        "readers": reader_descriptors(settings),
         "task_order_sha256": _canonical_hash(tasks),
         "inputs_sha256": sha256_file(INPUTS),
         "packets_sha256": sha256_file(PACKETS),
@@ -364,6 +378,20 @@ def _completed_keys(rows: Sequence[Mapping[str, Any]]) -> set[tuple[str, str, st
         for row in rows
         if row.get("status") == "complete"
     }
+
+
+def completed_row_index(rows: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str, str], Mapping[str, Any]]:
+    """Index paid results and reject ambiguous duplicate successes."""
+
+    indexed: dict[tuple[str, str, str], Mapping[str, Any]] = {}
+    for row in rows:
+        if row.get("status") != "complete":
+            continue
+        key = (str(row["case_id"]), str(row["arm_id"]), str(row["reader_id"]))
+        if key in indexed:
+            raise RuntimeError(f"packet RAO raw has duplicate complete rows: {'/'.join(key)}")
+        indexed[key] = row
+    return indexed
 
 
 @contextmanager
@@ -471,6 +499,7 @@ async def _command_live_locked(concurrency: int) -> int:
     _reader_settings(settings, "glm")
     manifest = _json(PREREG)
     _verify_snapshot(manifest)
+    verify_reader_snapshot(manifest, settings)
     preregistration_sha256 = sha256_file(PREREG)
     inputs = _json(INPUTS)
     cases = {str(case["case_id"]): case for case in inputs["cases"]}
@@ -479,7 +508,7 @@ async def _command_live_locked(concurrency: int) -> int:
     existing = _read_jsonl(RAW)
     if any(row.get("preregistration_sha256") != preregistration_sha256 for row in existing):
         raise RuntimeError("existing packet RAO raw rows belong to another preregistration")
-    completed = _completed_keys(existing)
+    completed = set(completed_row_index(existing))
     pending = [task for task in tasks if (task["case_id"], task["arm_id"], task["reader_id"]) not in completed]
     import httpx
 
@@ -520,7 +549,7 @@ async def _command_live_locked(concurrency: int) -> int:
                     os.fsync(handle.fileno())
                 if any(isinstance(result, BaseException) and not is_retryable_error(result) for result in results):
                     raise RuntimeError("fatal packet RAO reader error recorded")
-    complete = len(_completed_keys(_read_jsonl(RAW)))
+    complete = len(completed_row_index(_read_jsonl(RAW)))
     print(json.dumps({"completed": complete, "remaining": len(tasks) - complete}))
     return 0 if complete == len(tasks) else 75
 
@@ -528,6 +557,8 @@ async def _command_live_locked(concurrency: int) -> int:
 def command_dry_run() -> int:
     manifest = _json(PREREG)
     _verify_snapshot(manifest)
+    settings = load_settings(ROOT / "hl_mem.toml", ROOT / ".env")
+    verify_reader_snapshot(manifest, settings)
     inputs = _json(INPUTS)
     snapshots = _json(PACKETS)["packets"]
     if len(inputs["cases"]) != 52 or len(snapshots) != 104:
@@ -560,7 +591,7 @@ def _representation_metrics(
     for arm in ARMS:
         coverages: list[float] = []
         rao_matches: list[float] = []
-        structured_cases = 0
+        nonempty_triple_cases = 0
         for case in inputs:
             case_id = str(case["case_id"])
             snapshot = packets[f"{case_id}|{arm}"]
@@ -573,12 +604,12 @@ def _representation_metrics(
             if gold.role_action_object:
                 rao_matches.append(float(scorer._rao_packet_match(packet, gold)))
             if any(item.get("role") and item.get("action") and item.get("object") for item in packet):
-                structured_cases += 1
+                nonempty_triple_cases += 1
         result[arm] = {
             "entity_coverage_at_5": fmean(coverages) if coverages else 0.0,
             "packet_rao_match_rate": fmean(rao_matches) if rao_matches else 0.0,
             "packet_rao_cases": len(rao_matches),
-            "structured_relation_cases": structured_cases,
+            "nonempty_triple_cases": nonempty_triple_cases,
             "case_count": len(inputs),
         }
     return result
@@ -659,7 +690,7 @@ def command_score() -> int:
     preregistration_sha256 = sha256_file(PREREG)
     raw_rows = _read_jsonl(RAW)
     complete_rows = [row for row in raw_rows if row.get("status") == "complete"]
-    latest = {(str(row["case_id"]), str(row["arm_id"]), str(row["reader_id"])): row for row in complete_rows}
+    latest = completed_row_index(raw_rows)
     if len(latest) != 208:
         raise RuntimeError(f"packet RAO raw matrix incomplete: {len(latest)}/208")
     if any(row.get("preregistration_sha256") != preregistration_sha256 for row in latest.values()):
@@ -708,7 +739,7 @@ def command_score() -> int:
         "raw_sha256": sha256_file(RAW),
         "raw_complete_rows": len(complete_rows),
         "duplicate_complete_rows": len(complete_rows) - len(latest),
-        "latency_comparison_valid": len(complete_rows) == len(latest),
+        "latency_comparison_valid": True,
         "matrix": matrix,
         "representation": representation,
         "scored_cases": scored,
@@ -716,11 +747,6 @@ def command_score() -> int:
             "historical glm/C0 old-render result does not exist",
             "old qwen cells use three-repeat aggregates while this directional validation uses one new pass",
             "historical glm/C4 headline is retained separately from its frozen-scorer rescore",
-            *(
-                ["duplicate live processes make latency comparisons invalid; scoring uses the last row per task key"]
-                if len(complete_rows) != len(latest)
-                else []
-            ),
         ],
     }
     write_json_atomic(REPORT, output)
@@ -746,7 +772,7 @@ def command_score() -> int:
             "",
             "## Representation",
             "",
-            "| arm | legacy entity@5 | new entity@5 | legacy packet RAO | new packet RAO | structured cases |",
+            "| arm | legacy entity@5 | new entity@5 | legacy packet RAO | new packet RAO | nonempty triples |",
             "|---|---:|---:|---:|---:|---:|",
         ]
     )
@@ -756,7 +782,7 @@ def command_score() -> int:
         lines.append(
             f"| {arm} | {old['entity_coverage_at_5']:.4f} | {new['entity_coverage_at_5']:.4f} | "
             f"{old['packet_rao_match_rate']:.4f} | {new['packet_rao_match_rate']:.4f} | "
-            f"{new['structured_relation_cases']}/{new['case_count']} |"
+            f"{new['nonempty_triple_cases']}/{new['case_count']} |"
         )
     REPORT_MD.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(json.dumps({"report": str(REPORT), "rows": len(scored)}))

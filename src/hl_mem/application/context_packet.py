@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import uuid
@@ -20,8 +21,29 @@ MemoryType = Literal["claim", "observation", "policy", "episode", "trace"]
 
 _ANSWERABILITY_VALUES = frozenset({"supported", "low_confidence", "no_evidence"})
 _MEMORY_TYPE_VALUES = frozenset({"claim", "observation", "policy", "episode", "trace"})
+_GENERIC_RELATION_ACTIONS = frozenset(
+    {
+        "attribute",
+        "config",
+        "fact",
+        "facts",
+        "identity",
+        "preference",
+        "state",
+        "unknown",
+        "value",
+        "事实",
+        "偏好",
+        "值",
+        "属性",
+        "状态",
+        "身份",
+        "配置",
+    }
+)
 RETRIEVAL_BUNDLE_SCHEMA_MAJOR = 1
 RETRIEVAL_BUNDLE_SCHEMA_MINOR = 1
+CONTEXT_PACKET_CLAIM_LIMIT = 10
 
 
 class UnknownSchemaMajorError(ValueError):
@@ -39,6 +61,34 @@ def normalize_relation_components(
     if not all(values):
         return None
     return cast(tuple[str, str, str], values)
+
+
+def project_claim_relation(claim: Mapping[str, Any]) -> tuple[str, str, str] | None:
+    """Project only an explicit RAO or a stored predicate with relation semantics."""
+
+    raw_qualifiers = claim.get("qualifiers")
+    qualifiers = raw_qualifiers if isinstance(raw_qualifiers, Mapping) else {}
+    explicit = normalize_relation_components(
+        qualifiers.get("role"),
+        qualifiers.get("action"),
+        qualifiers.get("object"),
+    )
+    if explicit is not None:
+        return explicit
+    action = " ".join(str(claim.get("predicate") or "").split())
+    if not action or action.casefold() in _GENERIC_RELATION_ACTIONS:
+        return None
+    value = claim.get("value")
+    serialized_value = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) if value is not None else ""
+    )
+    return normalize_relation_components(
+        claim.get("subject_entity_id"),
+        action,
+        serialized_value,
+    )
 
 
 def render_memory_text(
@@ -218,7 +268,10 @@ def pack_retrieval_items(
         return (), 0, bool(candidates)
     packed: list[RetrievalBundleItem] = []
     used = 0
+    claim_count = 0
     for item in candidates:
+        if item.type == "claim" and claim_count >= CONTEXT_PACKET_CLAIM_LIMIT:
+            continue
         cost = estimate_tokens(
             render_memory_text(
                 item.text,
@@ -231,6 +284,8 @@ def pack_retrieval_items(
             continue
         packed.append(item)
         used += cost
+        if item.type == "claim":
+            claim_count += 1
         if used >= token_budget:
             break
     return tuple(packed), used, len(packed) < len(candidates)
@@ -247,7 +302,7 @@ def pack_retrieval_bundle(
         answerability=bundle.answerability,
         items=packed,
         used_tokens_estimate=used,
-        truncated=truncated,
+        truncated=bool(bundle.truncated) or truncated,
     )
 
 
@@ -287,23 +342,25 @@ class ContextPacketAssembler:
         """物化 exposure；失败时保留文本与新 ID，并将 feedback_state 降级。"""
         if token_budget is not None:
             bundle = pack_retrieval_bundle(bundle, token_budget)
-        elif bundle.used_tokens_estimate is None or bundle.truncated is None:
+        else:
+            unbounded_cost = sum(
+                estimate_tokens(
+                    render_memory_text(
+                        item.text,
+                        role=item.role,
+                        action=item.action,
+                        object_=item.object,
+                    )
+                )
+                for item in bundle.items
+            )
+            packed, used, truncated = pack_retrieval_items(bundle.items, unbounded_cost)
             bundle = RetrievalBundle(
                 query_id=bundle.query_id,
                 answerability=bundle.answerability,
-                items=bundle.items,
-                used_tokens_estimate=sum(
-                    estimate_tokens(
-                        render_memory_text(
-                            item.text,
-                            role=item.role,
-                            action=item.action,
-                            object_=item.object,
-                        )
-                    )
-                    for item in bundle.items
-                ),
-                truncated=False,
+                items=packed,
+                used_tokens_estimate=used,
+                truncated=bool(bundle.truncated) or truncated,
             )
         self.last_error = None
         feedback_ids = [self._new_feedback_id() for _ in bundle.items]
