@@ -22,6 +22,7 @@ def _seed_claim(connection) -> None:
             "predicate": "likes",
             "value_json": '"SECRET_RAW_VALUE"',
             "index_text": "likes tea",
+            "qualifiers": {"role": "user", "action": "likes", "object": "tea"},
             "recorded_from": "2026-07-31T00:00:00+00:00",
         },
         commit=False,
@@ -84,7 +85,10 @@ def test_prefetch_is_receipt_free_and_each_delivery_is_fresh_and_injected(tmp_pa
         first_text = provider.prefetch("likes tea", **request)
         second_text = provider.prefetched("likes tea", **request)
 
-        assert first_text == second_text == "likes tea"
+        expected_text = "likes tea\nrelation: user → likes → tea"
+        assert first_text == second_text == expected_text
+        assert "SECRET_RAW_VALUE" not in first_text
+        assert "SECRET_RAW_VALUE" not in second_text
         assert provider.health()["delivery"]["pending_injections"] == 2
         assert {row[0] for row in connection.execute("SELECT injected FROM retrieval_feedback").fetchall()} == {0}
         assert provider.flush_delivery_receipts() == 2

@@ -143,7 +143,12 @@ def enrich_packet_relations(
         item = dict(raw)
         if not (item.get("role") and item.get("action") and item.get("object")):
             claim = claims_by_id.get(str(item.get("claim_id") or ""))
-            relation = _claim_relation(claim) if claim is not None else None
+            if claim is not None:
+                public_claim = dict(claim)
+                public_claim.setdefault("index_text", item.get("text"))
+                relation = _claim_relation(public_claim)
+            else:
+                relation = None
             if relation is not None:
                 item.update(zip(("role", "action", "object"), relation, strict=True))
         enriched.append(item)

@@ -96,6 +96,12 @@ def test_actual_frozen_40_cache_mapping_and_real_recall_smoke() -> None:
     assert spec and spec.loader
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
+    source_manifest = json.loads(runner.SAMPLE.read_text(encoding="utf-8"))
+    missing_sources = [
+        source["path"] for source in source_manifest["sources"].values() if not Path(source["path"]).is_file()
+    ]
+    if missing_sources:
+        pytest.skip(f"private Chinese E2E sources are not installed: {missing_sources}")
     cases = runner._e2e_inputs()
     assert len(cases) == 40
     assert all(Path(case["db_path"]).is_file() for case in cases)

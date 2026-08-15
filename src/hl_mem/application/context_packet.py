@@ -64,7 +64,7 @@ def normalize_relation_components(
 
 
 def project_claim_relation(claim: Mapping[str, Any]) -> tuple[str, str, str] | None:
-    """Project only an explicit RAO or a stored predicate with relation semantics."""
+    """Project explicit RAO, or a semantic predicate whose object is already public."""
 
     raw_qualifiers = claim.get("qualifiers")
     qualifiers = raw_qualifiers if isinstance(raw_qualifiers, Mapping) else {}
@@ -84,6 +84,9 @@ def project_claim_relation(claim: Mapping[str, Any]) -> tuple[str, str, str] | N
         if isinstance(value, str)
         else json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) if value is not None else ""
     )
+    public_text = claim.get("index_text")
+    if not isinstance(public_text, str) or serialized_value not in public_text:
+        return None
     return normalize_relation_components(
         claim.get("subject_entity_id"),
         action,

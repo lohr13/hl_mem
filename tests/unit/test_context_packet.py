@@ -343,11 +343,27 @@ def test_claim_relation_projection_requires_semantic_action_or_explicit_rao() ->
             "qualifiers": {"role": "团队", "action": "采用", "object": "海风看板"},
         }
     ) == ("团队", "采用", "海风看板")
+
+
+def test_claim_relation_projection_does_not_expose_value_absent_from_public_text() -> None:
+    assert (
+        project_claim_relation(
+            {
+                "subject_entity_id": "user",
+                "predicate": "likes",
+                "value": "SECRET_RAW_VALUE",
+                "index_text": "likes tea",
+                "qualifiers": {},
+            }
+        )
+        is None
+    )
     assert project_claim_relation(
         {
             "subject_entity_id": "团队",
             "predicate": "采用",
             "value": "海风看板",
+            "index_text": "团队后来采用海风看板",
             "qualifiers": {},
         }
     ) == ("团队", "采用", "海风看板")
