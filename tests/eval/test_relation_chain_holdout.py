@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+from collections import Counter
+from pathlib import Path
+
+import pytest
+
+import tests.eval.relation_chain_holdout as holdout
+
+MANIFEST_PATH = Path(__file__).parent / "fixtures" / "relation_chain_holdout_manifest.json"
+EXPECTED_DISTRIBUTION = {
+    "recommendation_execution": 4,
+    "reporting_ownership": 4,
+    "enumeration_completeness": 4,
+    "cross_event_two_hop": 4,
+    "conflict_latest_value": 4,
+    "no_answer_trap": 4,
+}
+
+
+def test_manifest_seals_questions_and_freezes_distribution_and_hash() -> None:
+    manifest = holdout.load_holdout_manifest(MANIFEST_PATH)
+
+    assert manifest.schema_version == 1
+    assert manifest.dataset_id == "zh-relation-chain-holdout-v1"
+    assert manifest.case_count == 24
+    assert manifest.category_counts == EXPECTED_DISTRIBUTION
+    assert manifest.gold_schema_version == 3
+    assert manifest.scorer_version == "answer-entity-packet-v1"
+    assert manifest.access_policy == "sealed_final_preregistered_validation_only"
+    assert len(manifest.sha256) == 64
+    assert not manifest.source_path.is_absolute()
+
+    raw_manifest = MANIFEST_PATH.read_text(encoding="utf-8")
+    assert '"cases"' not in raw_manifest
+    assert '"question"' not in raw_manifest
+    assert '"answer_entities"' not in raw_manifest
+
+
+def test_loader_refuses_accidental_holdout_access() -> None:
+    with pytest.raises(holdout.SealedHoldoutAccessError, match="allow_sealed=True"):
+        holdout.load_sealed_holdout(MANIFEST_PATH)
+
+
+def test_installed_sealed_holdout_has_24_valid_cases_and_same_gold_contract() -> None:
+    manifest = holdout.load_holdout_manifest(MANIFEST_PATH)
+    if not holdout.resolve_holdout_path(manifest).is_file():
+        pytest.skip("sealed relation-chain holdout is not installed")
+
+    dataset = holdout.load_sealed_holdout(MANIFEST_PATH, allow_sealed=True)
+
+    assert dataset.dataset_id == manifest.dataset_id
+    assert len(dataset.cases) == 24
+    assert Counter(case.category for case in dataset.cases) == Counter(EXPECTED_DISTRIBUTION)
+    assert len({case.case_id for case in dataset.cases}) == 24
+    assert all(case.case_id.startswith("rc-holdout-v1-") for case in dataset.cases)
+    assert all(case.events and case.question and case.answer for case in dataset.cases)
+
+    no_answer_cases = [case for case in dataset.cases if case.gold.answerability == "no_answer"]
+    answerable_cases = [case for case in dataset.cases if case.gold.answerability == "answerable"]
+    assert len(no_answer_cases) == 4
+    assert len(answerable_cases) == 20
+    assert all(case.gold.answer_entities is None for case in no_answer_cases)
+    assert all(case.gold.forbidden_entities or case.gold.forbidden_assertions for case in no_answer_cases)
+    assert all(case.gold.answer_entities for case in answerable_cases)
+
+
+def test_hash_mismatch_is_rejected_before_cases_are_exposed(tmp_path: Path) -> None:
+    payload = tmp_path / "holdout.json"
+    payload.write_text("{}", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        """{
+  "schema_version": 1,
+  "dataset_id": "zh-relation-chain-holdout-v1",
+  "source_path": "holdout.json",
+  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "case_count": 24,
+  "category_counts": {
+    "recommendation_execution": 4,
+    "reporting_ownership": 4,
+    "enumeration_completeness": 4,
+    "cross_event_two_hop": 4,
+    "conflict_latest_value": 4,
+    "no_answer_trap": 4
+  },
+  "gold_schema_version": 3,
+  "scorer_version": "answer-entity-packet-v1",
+  "access_policy": "sealed_final_preregistered_validation_only"
+}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(holdout.HoldoutHashMismatch, match="SHA-256"):
+        holdout.load_sealed_holdout(manifest_path, allow_sealed=True)

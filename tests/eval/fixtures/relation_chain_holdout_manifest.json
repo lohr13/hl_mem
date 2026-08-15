@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "dataset_id": "zh-relation-chain-holdout-v1",
+  "source_path": "~/hl_mem_eval_data/datasets/relation_chain_holdout_v1.json",
+  "sha256": "1e4be5bbc93cfefd31d1d78a0c7b96cddccbe5ac8a3f71f90e77f8471b24f0a1",
+  "case_count": 24,
+  "category_counts": {
+    "recommendation_execution": 4,
+    "reporting_ownership": 4,
+    "enumeration_completeness": 4,
+    "cross_event_two_hop": 4,
+    "conflict_latest_value": 4,
+    "no_answer_trap": 4
+  },
+  "gold_schema_version": 3,
+  "scorer_version": "answer-entity-packet-v1",
+  "access_policy": "sealed_final_preregistered_validation_only"
+}
