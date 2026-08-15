@@ -83,16 +83,21 @@ def backfill_subject_canonicalization(connection: sqlite3.Connection) -> int:
         (DATA_MIGRATION_VERSION,),
     ).fetchone():
         return 0
-    legacy_backfill_applied = (
-        connection.execute(
-            "SELECT 1 FROM schema_migrations WHERE version=?",
-            (LEGACY_DATA_MIGRATION_VERSION,),
-        ).fetchone()
-        is not None
-    )
-
     try:
         connection.execute("BEGIN IMMEDIATE")
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version=?",
+            (DATA_MIGRATION_VERSION,),
+        ).fetchone():
+            connection.commit()
+            return 0
+        legacy_backfill_applied = (
+            connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version=?",
+                (LEGACY_DATA_MIGRATION_VERSION,),
+            ).fetchone()
+            is not None
+        )
         rows = connection.execute(
             "SELECT rowid,id,namespace_key,subject_entity_id,predicate,value_json,qualifiers_json,"
             "canonical_slot,index_text,entities_json FROM claims ORDER BY id"

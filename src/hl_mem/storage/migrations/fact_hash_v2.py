@@ -35,6 +35,12 @@ def backfill_fact_hash_v2(connection: sqlite3.Connection) -> int:
 
     try:
         connection.execute("BEGIN IMMEDIATE")
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version=?",
+            (DATA_MIGRATION_VERSION,),
+        ).fetchone():
+            connection.commit()
+            return 0
         rows = connection.execute("SELECT id,subject_entity_id,predicate,value_json FROM claims ORDER BY id").fetchall()
         updates: list[tuple[str, str]] = []
         for row in rows:

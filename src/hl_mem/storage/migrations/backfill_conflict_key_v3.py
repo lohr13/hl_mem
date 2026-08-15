@@ -32,6 +32,12 @@ def backfill_conflict_keys_v3(connection: sqlite3.Connection) -> int:
 
     try:
         connection.execute("BEGIN IMMEDIATE")
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version=?",
+            (DATA_MIGRATION_VERSION,),
+        ).fetchone():
+            connection.commit()
+            return 0
         rows = connection.execute(
             "SELECT id,namespace_key,subject_entity_id,predicate,canonical_slot,"
             "qualifiers_json,conflict_key,legacy_conflict_key,conflict_key_version "
