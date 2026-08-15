@@ -34,7 +34,7 @@ from tests.eval.relation_chain_holdout import (  # noqa: E402
 ARMS = ("C0", "C4")
 READERS = ("qwen", "glm")
 REPEATS = 3
-IMPLEMENTATION_VERSION = "c-series-sealed-matrix-v1"
+IMPLEMENTATION_VERSION = "c-series-sealed-matrix-v2"
 
 
 def _canonical_hash(value: Any) -> str:
@@ -62,6 +62,7 @@ def assert_implementation_snapshot(prereg: Mapping[str, Any]) -> None:
         "base_scorer": ROOT / "evaluation" / "tools" / "score_c_series_relation_experiment.py",
         "runtime": ROOT / "src" / "hl_mem" / "evaluation" / "c_series_runtime.py",
         "protocol": ROOT / "src" / "hl_mem" / "evaluation" / "c_series.py",
+        "sealed_holdout_loader": ROOT / "tests" / "eval" / "relation_chain_holdout.py",
     }
     expected = {
         "version": IMPLEMENTATION_VERSION,
@@ -69,6 +70,12 @@ def assert_implementation_snapshot(prereg: Mapping[str, Any]) -> None:
     }
     if prereg.get("implementation_snapshot") != expected:
         raise RuntimeError("sealed scorer implementation snapshot drift")
+
+
+def assert_holdout_suite(path: Path, expected_suite: str) -> None:
+    actual_suite = load_holdout_manifest(path).suite_version
+    if actual_suite != expected_suite:
+        raise RuntimeError(f"sealed holdout suite mismatch: expected {expected_suite}, got {actual_suite}")
 
 
 def assert_exact_matrix(raw_rows: Sequence[Mapping[str, Any]], inputs: Mapping[str, Any]) -> None:
@@ -385,6 +392,7 @@ def _markdown(report: Mapping[str, Any]) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--suite", choices=("v1", "v2"), required=True)
     parser.add_argument("--raw", type=Path, required=True)
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--packets", type=Path, required=True)
@@ -397,8 +405,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    assert_holdout_suite(args.holdout_manifest, args.suite)
+    sealed_runner.configure_suite(args.suite)
     prereg = json.loads(args.prereg.read_text(encoding="utf-8"))
-    sealed_runner._validate_preregistration(prereg)
+    sealed_runner._validate_preregistration(prereg, expected_suite=args.suite)
     assert_implementation_snapshot(prereg)
     if _git("rev-parse", "HEAD") != prereg.get("git_commit"):
         raise RuntimeError("git commit differs from sealed preregistration during scoring")

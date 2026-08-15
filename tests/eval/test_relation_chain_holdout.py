@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import Counter
 from pathlib import Path
 
@@ -94,3 +96,71 @@ def test_hash_mismatch_is_rejected_before_cases_are_exposed(tmp_path: Path) -> N
 
     with pytest.raises(holdout.HoldoutHashMismatch, match="SHA-256"):
         holdout.load_sealed_holdout(manifest_path, allow_sealed=True)
+
+
+def test_v2_manifest_and_explicit_relation_coverage_are_loadable(tmp_path: Path) -> None:
+    cases = []
+    categories = tuple(EXPECTED_DISTRIBUTION)
+    for index in range(24):
+        category = categories[index // 4]
+        case_id = f"rc-holdout-v2-{index + 1:03d}"
+        no_answer = category == "no_answer_trap"
+        gold = {
+            "answerability": "no_answer" if no_answer else "answerable",
+            "role_action_object": [],
+            "forbidden_entities": ["禁答实体"] if no_answer else [],
+            "forbidden_assertions": [],
+        }
+        if not no_answer:
+            gold["answer_entities"] = [f"实体{index + 1}"]
+        cases.append(
+            {
+                "case_id": case_id,
+                "category": category,
+                "namespace": f"eval:sealed:v2:{index + 1:03d}",
+                "events": [
+                    {
+                        "event_id": f"v2-{index + 1:03d}-e1",
+                        "occurred_at": "2026-01-01T00:00:00+08:00",
+                        "text": f"全新测试事件{index + 1}",
+                    }
+                ],
+                "question_at": "2026-01-02T00:00:00+08:00",
+                "question": f"全新测试问题{index + 1}？",
+                "answer": "无法确定" if no_answer else f"实体{index + 1}",
+                "gold": gold,
+                "provenance": "synthetic_loader_contract_test",
+                "relation_coverage": "none" if no_answer else "required",
+            }
+        )
+    payload = {
+        "schema_version": 1,
+        "dataset_id": "zh-relation-chain-holdout-v2",
+        "cases": cases,
+    }
+    payload_path = tmp_path / "holdout-v2.json"
+    payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    manifest_path = tmp_path / "manifest-v2.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "dataset_id": "zh-relation-chain-holdout-v2",
+                "source_path": payload_path.name,
+                "sha256": hashlib.sha256(payload_path.read_bytes()).hexdigest(),
+                "case_count": 24,
+                "category_counts": EXPECTED_DISTRIBUTION,
+                "gold_schema_version": 3,
+                "scorer_version": "answer-entity-packet-v1",
+                "access_policy": "sealed_final_preregistered_validation_only",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    dataset = holdout.load_sealed_holdout(manifest_path, allow_sealed=True)
+
+    assert dataset.dataset_id == "zh-relation-chain-holdout-v2"
+    assert all(case.case_id.startswith("rc-holdout-v2-") for case in dataset.cases)
+    assert Counter(case.relation_coverage for case in dataset.cases) == {"required": 20, "none": 4}

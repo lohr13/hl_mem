@@ -14,6 +14,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -58,15 +59,72 @@ from tests.eval.relation_chain_holdout import (  # noqa: E402
     resolve_holdout_path,
 )
 
-HOLDOUT_MANIFEST = ROOT / "tests" / "eval" / "fixtures" / "relation_chain_holdout_manifest.json"
 OUTPUT_ROOT = ROOT / "var" / "eval"
-CACHE_ROOT = OUTPUT_ROOT / "c_series_sealed_cache"
-PREREG = OUTPUT_ROOT / "c_series_sealed_preregistration.json"
-INPUTS = OUTPUT_ROOT / "c_series_sealed_inputs_nogold.json"
-PACKETS = OUTPUT_ROOT / "c_series_sealed_packets.json"
-RAW = OUTPUT_ROOT / "c_series_sealed_raw.jsonl"
-REPORT = OUTPUT_ROOT / "c_series_sealed_report.json"
-REPORT_MD = OUTPUT_ROOT / "c_series_sealed_report.md"
+
+
+@dataclasses.dataclass(frozen=True)
+class SealedSuitePaths:
+    version: str
+    case_prefix: str
+    holdout_manifest: Path
+    cache_root: Path
+    prereg: Path
+    inputs: Path
+    packets: Path
+    raw: Path
+    report: Path
+    report_md: Path
+
+
+def suite_paths(version: str) -> SealedSuitePaths:
+    if version == "v1":
+        suffix = ""
+        manifest_name = "relation_chain_holdout_manifest.json"
+        case_prefix = "rc-holdout-v1-"
+    elif version == "v2":
+        suffix = "_v2"
+        manifest_name = "relation_chain_holdout_v2_manifest.json"
+        case_prefix = "rc-holdout-v2-"
+    else:
+        raise ValueError(f"unknown sealed suite: {version}")
+    return SealedSuitePaths(
+        version=version,
+        case_prefix=case_prefix,
+        holdout_manifest=ROOT / "tests" / "eval" / "fixtures" / manifest_name,
+        cache_root=OUTPUT_ROOT / f"c_series_sealed_cache{suffix}",
+        prereg=OUTPUT_ROOT / f"c_series_sealed_preregistration{suffix}.json",
+        inputs=OUTPUT_ROOT / f"c_series_sealed_inputs_nogold{suffix}.json",
+        packets=OUTPUT_ROOT / f"c_series_sealed_packets{suffix}.json",
+        raw=OUTPUT_ROOT / f"c_series_sealed_raw{suffix}.jsonl",
+        report=OUTPUT_ROOT / f"c_series_sealed_report{suffix}.json",
+        report_md=OUTPUT_ROOT / f"c_series_sealed_report{suffix}.md",
+    )
+
+
+CURRENT_SUITE = suite_paths("v1")
+HOLDOUT_MANIFEST = CURRENT_SUITE.holdout_manifest
+CACHE_ROOT = CURRENT_SUITE.cache_root
+PREREG = CURRENT_SUITE.prereg
+INPUTS = CURRENT_SUITE.inputs
+PACKETS = CURRENT_SUITE.packets
+RAW = CURRENT_SUITE.raw
+REPORT = CURRENT_SUITE.report
+REPORT_MD = CURRENT_SUITE.report_md
+
+
+def configure_suite(version: str) -> SealedSuitePaths:
+    global CACHE_ROOT, CURRENT_SUITE, HOLDOUT_MANIFEST, INPUTS, PACKETS, PREREG, RAW, REPORT, REPORT_MD
+    CURRENT_SUITE = suite_paths(version)
+    HOLDOUT_MANIFEST = CURRENT_SUITE.holdout_manifest
+    CACHE_ROOT = CURRENT_SUITE.cache_root
+    PREREG = CURRENT_SUITE.prereg
+    INPUTS = CURRENT_SUITE.inputs
+    PACKETS = CURRENT_SUITE.packets
+    RAW = CURRENT_SUITE.raw
+    REPORT = CURRENT_SUITE.report
+    REPORT_MD = CURRENT_SUITE.report_md
+    return CURRENT_SUITE
+
 
 ARMS = ("C0", "C4")
 READERS = ("qwen", "glm")
@@ -74,7 +132,7 @@ REPEATS = 3
 GLM_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4"
 GLM_MODEL = "glm-5.3"
 GLM_KEY_ENV = "C_SERIES_ZHIPU_API_KEY"
-IMPLEMENTATION_VERSION = "c-series-sealed-matrix-v1"
+IMPLEMENTATION_VERSION = "c-series-sealed-matrix-v2"
 
 SEALED_REQUIRED_PREREGISTRATION_FIELDS = frozenset(
     {
@@ -126,7 +184,7 @@ def _git(*args: str) -> str:
 
 
 def _safe_name(value: str) -> str:
-    if not value.startswith("rc-holdout-v1-") or not value.removeprefix("rc-holdout-v1-").isdigit():
+    if not value.startswith(CURRENT_SUITE.case_prefix) or not value.removeprefix(CURRENT_SUITE.case_prefix).isdigit():
         raise ValueError("sealed case ID is outside the frozen namespace")
     return value
 
@@ -218,9 +276,85 @@ def gold_free_case(raw: Mapping[str, Any]) -> dict[str, Any]:
         "question_at": str(raw["question_at"]),
         "known_as_of": None,
         "question": str(raw["question"]),
+        "relation_coverage": str(
+            raw.get("relation_coverage") or ("none" if str(raw.get("category")) == "no_answer_trap" else "required")
+        ),
     }
     assert_gold_free(result)
     return result
+
+
+def _relation_count(database: Path) -> int:
+    if not database.is_file():
+        raise RuntimeError(f"sealed relation cache is missing: {database}")
+    connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        row = connection.execute("SELECT COUNT(*) FROM memory_relations").fetchone()
+    finally:
+        connection.close()
+    return int(row[0]) if row else 0
+
+
+def validate_relation_coverage(cases: Sequence[Mapping[str, Any]], databases: Mapping[str, Path]) -> dict[str, Any]:
+    """Require each cache to match its frozen relation-coverage declaration."""
+    by_case: dict[str, dict[str, Any]] = {}
+    failures: list[str] = []
+    for case in cases:
+        case_id = str(case["case_id"])
+        declared = str(case.get("relation_coverage") or "")
+        if declared not in {"required", "none"}:
+            raise RuntimeError(f"relation coverage gate has invalid declaration: {case_id}={declared!r}")
+        database = databases.get(case_id)
+        if database is None:
+            raise RuntimeError(f"relation coverage gate has no cache path: {case_id}")
+        count = _relation_count(database)
+        by_case[case_id] = {"declared": declared, "relations": count}
+        if (declared == "required" and count == 0) or (declared == "none" and count != 0):
+            failures.append(f"{case_id}:{declared}={count}")
+    if failures:
+        raise RuntimeError(f"relation coverage gate failed: {', '.join(failures)}")
+    ordered = dict(sorted(by_case.items()))
+    return {
+        "required_cases": sum(item["declared"] == "required" for item in ordered.values()),
+        "required_with_edges": sum(
+            item["declared"] == "required" and int(item["relations"]) > 0 for item in ordered.values()
+        ),
+        "none_cases": sum(item["declared"] == "none" for item in ordered.values()),
+        "none_with_edges": sum(item["declared"] == "none" and int(item["relations"]) > 0 for item in ordered.values()),
+        "total_relations": sum(int(item["relations"]) for item in ordered.values()),
+        "by_case": ordered,
+    }
+
+
+def assert_c0_c4_packet_smoke(
+    packet_snapshot: Mapping[str, Any], required_case_ids: Sequence[str], preregistration_id: str
+) -> dict[str, Any]:
+    """Prove C4 changes three deterministically sampled required-case packets."""
+    unique_ids = sorted(set(str(case_id) for case_id in required_case_ids))
+    if len(unique_ids) < 3:
+        raise RuntimeError("packet smoke requires at least 3 relation-required cases")
+    sampled = sorted(
+        unique_ids,
+        key=lambda case_id: hashlib.sha256(f"{preregistration_id}{case_id}".encode()).hexdigest(),
+    )[:3]
+    packets = {
+        (str(item["case_id"]), int(item["repeat_index"]), str(item["arm_id"])): item
+        for item in packet_snapshot.get("packets") or []
+    }
+    equal_pairs: list[str] = []
+    digests: dict[str, dict[str, str]] = {}
+    for case_id in sampled:
+        try:
+            c0 = packets[(case_id, 0, "C0")]["packet"]
+            c4 = packets[(case_id, 0, "C4")]["packet"]
+        except KeyError as error:
+            raise RuntimeError(f"packet smoke is missing a frozen pair: {case_id}") from error
+        if c0 == c4:
+            equal_pairs.append(case_id)
+        digests[case_id] = {"C0": _canonical_hash(c0), "C4": _canonical_hash(c4)}
+    if equal_pairs:
+        raise RuntimeError(f"C0/C4 packet smoke failed for equal packets: {', '.join(equal_pairs)}")
+    return {"passed": True, "case_ids": sampled, "equal_pairs": [], "packet_sha256": digests}
 
 
 def _safe_holdout_cases() -> tuple[list[dict[str, Any]], Path, str]:
@@ -409,10 +543,12 @@ def command_prepare_cache() -> int:
     initialize_process(settings)
     embedder = make_embedder(settings)
     config = _cache_config(settings)
+    databases: dict[str, Path] = {}
     reused = 0
     built = 0
     for index, case in enumerate(cases, start=1):
         database, manifest_path = _cache_paths(str(case["case_id"]))
+        databases[str(case["case_id"])] = database
         fingerprint = _canonical_hash(
             {
                 "case": case,
@@ -437,13 +573,17 @@ def command_prepare_cache() -> int:
             "fingerprint": fingerprint,
             "db_sha256": sha256_file(database),
             "contains_gold": False,
+            "relation_coverage": case["relation_coverage"],
             "config": config,
             "stats": stats,
         }
         write_json_atomic(manifest_path, manifest)
         built += 1
         print(json.dumps({"case": case["case_id"], "cache": "built", "index": index, **stats}), flush=True)
-    print(json.dumps({"cases": len(cases), "built": built, "reused": reused}))
+    result: dict[str, Any] = {"cases": len(cases), "built": built, "reused": reused}
+    if CURRENT_SUITE.version == "v2":
+        result["relation_coverage"] = validate_relation_coverage(cases, databases)
+    print(json.dumps(result))
     return 0
 
 
@@ -453,6 +593,7 @@ def _runtime_case(case: Mapping[str, Any], database: Path, payload_sha: str) -> 
         "dataset": "relation_sealed",
         "category": case["category"],
         "question": case["question"],
+        "relation_coverage": case["relation_coverage"],
         "question_at": case["question_at"],
         "known_as_of": case.get("known_as_of"),
         "namespace": case["namespace"],
@@ -552,6 +693,7 @@ def _implementation_snapshot() -> dict[str, str]:
         "base_scorer": ROOT / "evaluation" / "tools" / "score_c_series_relation_experiment.py",
         "runtime": ROOT / "src" / "hl_mem" / "evaluation" / "c_series_runtime.py",
         "protocol": ROOT / "src" / "hl_mem" / "evaluation" / "c_series.py",
+        "sealed_holdout_loader": ROOT / "tests" / "eval" / "relation_chain_holdout.py",
     }
     return {
         "version": IMPLEMENTATION_VERSION,
@@ -559,7 +701,21 @@ def _implementation_snapshot() -> dict[str, str]:
     }
 
 
-def _validate_preregistration(manifest: Mapping[str, Any]) -> None:
+def _assert_suite_binding(manifest: Mapping[str, Any], expected_suite: str) -> str:
+    declared = manifest.get("suite_version")
+    if declared is None:
+        if expected_suite == "v1":
+            return "v1"
+        raise ValueError("sealed v2 preregistration requires suite_version")
+    if declared not in {"v1", "v2"}:
+        raise ValueError(f"sealed suite_version is invalid: {declared!r}")
+    if declared != expected_suite:
+        raise ValueError(f"sealed suite mismatch: expected {expected_suite}, got {declared}")
+    return str(declared)
+
+
+def _validate_preregistration(manifest: Mapping[str, Any], *, expected_suite: str | None = None) -> None:
+    suite_version = _assert_suite_binding(manifest, expected_suite or CURRENT_SUITE.version)
     base.validate_preregistration(manifest)
     missing = SEALED_REQUIRED_PREREGISTRATION_FIELDS - manifest.keys()
     if missing:
@@ -615,6 +771,17 @@ def _validate_preregistration(manifest: Mapping[str, Any]) -> None:
         raise ValueError("sealed reader model snapshot drifted")
     if not (manifest.get("authorization_override") or {}).get("authorized"):
         raise ValueError("sealed authorization override is missing")
+    if suite_version == "v2":
+        coverage = manifest.get("relation_coverage") or {}
+        if (
+            int(coverage.get("required_cases") or 0) < 3
+            or coverage.get("required_cases") != coverage.get("required_with_edges")
+            or int(coverage.get("none_with_edges") or 0) != 0
+        ):
+            raise ValueError("sealed v2 relation coverage gate is not satisfied")
+        smoke = manifest.get("packet_smoke") or {}
+        if smoke.get("passed") is not True or len(smoke.get("case_ids") or []) != 3 or smoke.get("equal_pairs"):
+            raise ValueError("sealed v2 packet smoke gate is not satisfied")
     design_dev = manifest.get("design_dev_snapshot") or {}
     if design_dev.get("case_count") != 52 or len(design_dev.get("case_ids") or []) != 52:
         raise ValueError("sealed design/dev case catalog is incomplete")
@@ -655,6 +822,7 @@ def command_preregister() -> int:
     )
     cache_files: dict[str, str] = {}
     cache_paths: list[Path] = []
+    databases: dict[str, Path] = {}
     runtime_cases: list[dict[str, Any]] = []
     cache_manifests: list[Path] = []
     for case in safe_cases:
@@ -665,14 +833,16 @@ def command_preregister() -> int:
         if manifest.get("contains_gold") is not False or manifest.get("db_sha256") != sha256_file(database):
             raise RuntimeError(f"sealed cache manifest invalid: {case['case_id']}")
         cache_files[str(database.resolve())] = sha256_file(database)
+        databases[str(case["case_id"])] = database
         cache_files[str(manifest_path.resolve())] = sha256_file(manifest_path)
         cache_paths.extend((database.resolve(), manifest_path.resolve()))
         cache_manifests.append(manifest_path)
         runtime_cases.append(_runtime_case(case, database, payload_sha))
+    relation_coverage = validate_relation_coverage(safe_cases, databases) if CURRENT_SUITE.version == "v2" else None
     inputs = {"schema_version": 1, "protocol_version": PROTOCOL_VERSION, "cases": runtime_cases}
     assert_gold_free(inputs)
     write_json_atomic(INPUTS, inputs)
-    preregistration_id = f"c-series-sealed-c4-reader-matrix-v1-{commit[:12]}"
+    preregistration_id = f"c-series-sealed-c4-reader-matrix-{CURRENT_SUITE.version}-{commit[:12]}"
     corpus_paths = {
         **base._source_corpora(),
         "sealed_holdout": payload_path,
@@ -709,9 +879,16 @@ def command_preregister() -> int:
         preregistration_id,
         _corpus_seed_sha256(manifest),
     )
+    packet_smoke = None
+    if CURRENT_SUITE.version == "v2":
+        required_case_ids = [
+            str(case["case_id"]) for case in safe_cases if str(case["relation_coverage"]) == "required"
+        ]
+        packet_smoke = assert_c0_c4_packet_smoke(packet_snapshot, required_case_ids, preregistration_id)
     manifest.update(
         {
             "schema_version": 1,
+            "suite_version": CURRENT_SUITE.version,
             "sealed_payload_identity": str(payload_path),
             "sealed_payload_sha256": payload_sha,
             "category_distribution": dict(sorted(Counter(case["category"] for case in runtime_cases).items())),
@@ -729,6 +906,11 @@ def command_preregister() -> int:
             "packets_sha256": sha256_file(PACKETS),
             "packet_fingerprint": packet_snapshot["fingerprint"],
             "packet_count": len(packet_snapshot["packets"]),
+            **(
+                {"relation_coverage": relation_coverage, "packet_smoke": packet_smoke}
+                if CURRENT_SUITE.version == "v2"
+                else {}
+            ),
             "runtime_config_sha256": base._runtime_fingerprint(settings),
             "implementation_snapshot": _implementation_snapshot(),
             "hl_mem_toml_sha256": sha256_file(ROOT / "hl_mem.toml"),
@@ -745,6 +927,7 @@ def command_preregister() -> int:
                 "reason": "user-approved sealed validation after external frozen-packet glm-5.3 reader comparison",
                 "design_dev_gate_was_not_passed": True,
                 "reader_matrix_extension": True,
+                **({"relation_coverage_gate": True} if CURRENT_SUITE.version == "v2" else {}),
             },
         }
     )
@@ -859,7 +1042,7 @@ def verify_resume_bindings(
 
 
 def _verify_live_snapshot(manifest: Mapping[str, Any], settings: Any) -> None:
-    _validate_preregistration(manifest)
+    _validate_preregistration(manifest, expected_suite=CURRENT_SUITE.version)
     verify_public_snapshot_files(manifest)
     if _git("rev-parse", "HEAD") != manifest["git_commit"]:
         raise RuntimeError("git commit differs from sealed preregistration")
@@ -880,7 +1063,22 @@ def _verify_live_snapshot(manifest: Mapping[str, Any], settings: Any) -> None:
         if not candidate.is_file() or sha256_file(candidate) != expected:
             raise RuntimeError(f"sealed cache drift: {candidate}")
     assert_gold_free(_json(INPUTS))
-    assert_gold_free(_json(PACKETS))
+    packet_snapshot = _json(PACKETS)
+    assert_gold_free(packet_snapshot)
+    if CURRENT_SUITE.version == "v2":
+        inputs = _json(INPUTS)
+        required_case_ids = [
+            str(case["case_id"])
+            for case in inputs.get("cases") or []
+            if str(case.get("relation_coverage")) == "required"
+        ]
+        smoke = assert_c0_c4_packet_smoke(
+            packet_snapshot,
+            required_case_ids,
+            str(manifest["preregistration_id"]),
+        )
+        if smoke != manifest.get("packet_smoke"):
+            raise RuntimeError("sealed v2 packet smoke snapshot drift")
 
 
 def _reader_settings(settings: Any, reader_id: str) -> Any:
@@ -1075,6 +1273,8 @@ def command_score() -> int:
         [
             sys.executable,
             str(scorer),
+            "--suite",
+            CURRENT_SUITE.version,
             "--raw",
             str(RAW),
             "--inputs",
@@ -1097,6 +1297,7 @@ def command_score() -> int:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--suite", choices=("v1", "v2"), default="v1")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("prepare-cache")
     sub.add_parser("preregister")
@@ -1109,6 +1310,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    configure_suite(args.suite)
     if args.command == "prepare-cache":
         return command_prepare_cache()
     if args.command == "preregister":

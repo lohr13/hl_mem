@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
 
+from evaluation.tools import run_c_series_sealed_experiment as sealed_runner
+from evaluation.tools import score_c_series_sealed_experiment as sealed_scorer
 from evaluation.tools.score_c_series_sealed_experiment import (
     aggregate_matrix,
     assert_exact_matrix,
@@ -162,3 +167,21 @@ def test_raw_rows_must_bind_preregistration_and_reader_snapshot() -> None:
 def test_scorer_rejects_implementation_hash_drift() -> None:
     with pytest.raises(RuntimeError, match="implementation snapshot drift"):
         assert_implementation_snapshot({"implementation_snapshot": {"version": "changed"}})
+
+
+def test_runner_and_scorer_share_exact_implementation_snapshot() -> None:
+    assert_implementation_snapshot({"implementation_snapshot": sealed_runner._implementation_snapshot()})
+
+
+def test_scorer_rejects_holdout_manifest_from_another_suite() -> None:
+    manifest = Path(__file__).parent / "fixtures" / "relation_chain_holdout_manifest.json"
+
+    with pytest.raises(RuntimeError, match="holdout suite mismatch"):
+        sealed_scorer.assert_holdout_suite(manifest, "v2")
+
+
+def test_scorer_requires_explicit_suite_argument(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["score-c-series-sealed", "--raw", "unused"])
+
+    with pytest.raises(SystemExit):
+        sealed_scorer.parse_args()

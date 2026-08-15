@@ -40,7 +40,9 @@ class HoldoutHashMismatch(SealedHoldoutError):
 @dataclass(frozen=True)
 class HoldoutManifest:
     schema_version: int
+    suite_version: str
     dataset_id: str
+    case_prefix: str
     source_path: Path
     sha256: str
     case_count: int
@@ -69,6 +71,7 @@ class HoldoutCase:
     answer: str
     gold: AnswerEntityGold
     provenance: str
+    relation_coverage: str
 
 
 @dataclass(frozen=True)
@@ -120,9 +123,20 @@ def load_holdout_manifest(path: Path) -> HoldoutManifest:
     digest = str(raw["sha256"]).lower()
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise SealedHoldoutError("manifest sha256 must be a lowercase SHA-256 digest")
+    dataset_id = str(raw["dataset_id"])
+    suite_contracts = {
+        "zh-relation-chain-holdout-v1": ("v1", "rc-holdout-v1-"),
+        "zh-relation-chain-holdout-v2": ("v2", "rc-holdout-v2-"),
+    }
+    try:
+        suite_version, case_prefix = suite_contracts[dataset_id]
+    except KeyError as error:
+        raise SealedHoldoutError("sealed holdout dataset_id is not supported") from error
     manifest = HoldoutManifest(
         schema_version=int(raw["schema_version"]),
-        dataset_id=str(raw["dataset_id"]),
+        suite_version=suite_version,
+        dataset_id=dataset_id,
+        case_prefix=case_prefix,
         source_path=Path(str(raw["source_path"])),
         sha256=digest,
         case_count=int(raw["case_count"]),
@@ -134,14 +148,13 @@ def load_holdout_manifest(path: Path) -> HoldoutManifest:
     )
     if (
         manifest.schema_version != 1
-        or manifest.dataset_id != "zh-relation-chain-holdout-v1"
         or manifest.case_count != 24
         or manifest.category_counts != EXPECTED_CATEGORIES
         or manifest.gold_schema_version != 3
         or manifest.scorer_version != "answer-entity-packet-v1"
         or manifest.access_policy != ACCESS_POLICY
     ):
-        raise SealedHoldoutError("sealed holdout manifest does not match the frozen v1 contract")
+        raise SealedHoldoutError(f"sealed holdout manifest does not match the frozen {suite_version} contract")
     return manifest
 
 
@@ -167,7 +180,7 @@ def _parse_event(raw_event: object, label: str) -> HoldoutEvent:
     )
 
 
-def _parse_case(raw_case: object, index: int) -> HoldoutCase:
+def _parse_case(raw_case: object, index: int, manifest: HoldoutManifest) -> HoldoutCase:
     label = f"cases[{index}]"
     case = _mapping(raw_case, label)
     expected_keys = {
@@ -181,10 +194,12 @@ def _parse_case(raw_case: object, index: int) -> HoldoutCase:
         "gold",
         "provenance",
     }
+    if manifest.suite_version == "v2":
+        expected_keys.add("relation_coverage")
     if set(case) != expected_keys:
         raise SealedHoldoutError(f"{label} must contain exactly {sorted(expected_keys)!r}")
     case_id = str(case["case_id"]).strip()
-    expected_id = f"rc-holdout-v1-{index + 1:03d}"
+    expected_id = f"{manifest.case_prefix}{index + 1:03d}"
     if case_id != expected_id:
         raise SealedHoldoutError(f"{label}.case_id must be {expected_id!r}")
     category = str(case["category"]).strip()
@@ -210,6 +225,11 @@ def _parse_case(raw_case: object, index: int) -> HoldoutCase:
         )[case_id]
     except SampleManifestError as error:
         raise SealedHoldoutError(f"{label}.gold: {error}") from error
+    relation_coverage = str(
+        case.get("relation_coverage") or ("none" if gold.answerability == "no_answer" else "required")
+    )
+    if relation_coverage not in {"required", "none"}:
+        raise SealedHoldoutError(f"{label}.relation_coverage must be required or none")
     return HoldoutCase(
         case_id=case_id,
         category=category,
@@ -220,6 +240,7 @@ def _parse_case(raw_case: object, index: int) -> HoldoutCase:
         answer=answer,
         gold=gold,
         provenance=provenance,
+        relation_coverage=relation_coverage,
     )
 
 
@@ -239,7 +260,7 @@ def load_sealed_holdout(path: Path, *, allow_sealed: bool = False) -> HoldoutDat
         raise SealedHoldoutError("holdout payload must contain schema_version, dataset_id, and cases")
     if int(raw["schema_version"]) != 1 or str(raw["dataset_id"]) != manifest.dataset_id:
         raise SealedHoldoutError("holdout payload identity does not match the manifest")
-    cases = tuple(_parse_case(item, index) for index, item in enumerate(_list(raw["cases"], "cases")))
+    cases = tuple(_parse_case(item, index, manifest) for index, item in enumerate(_list(raw["cases"], "cases")))
     if len(cases) != manifest.case_count:
         raise SealedHoldoutError("holdout case count does not match the manifest")
     counts = Counter(case.category for case in cases)
