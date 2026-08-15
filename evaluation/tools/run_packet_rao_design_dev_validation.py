@@ -18,7 +18,8 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import fmean
@@ -54,6 +55,7 @@ DESIGN = ROOT / "tests" / "eval" / "fixtures" / "c_series_relation_design_dev.js
 PACKETS = ROOT / "var" / "eval" / "packet_rao_design_dev_packets.json"
 PREREG = ROOT / "var" / "eval" / "packet_rao_design_dev_preregistration.json"
 RAW = ROOT / "var" / "eval" / "packet_rao_design_dev_raw.jsonl"
+LIVE_LOCK = ROOT / "var" / "eval" / "packet_rao_design_dev_live.lock"
 REPORT = ROOT / "var" / "eval" / "packet_rao_design_dev_report.json"
 REPORT_MD = ROOT / "var" / "eval" / "packet_rao_design_dev_report.md"
 
@@ -364,6 +366,42 @@ def _completed_keys(rows: Sequence[Mapping[str, Any]]) -> set[tuple[str, str, st
     }
 
 
+@contextmanager
+def live_run_lock(path: Path = LIVE_LOCK) -> Iterator[None]:
+    """Hold a non-blocking process lock for the paid live command."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise RuntimeError(f"packet RAO live runner is already running: {path}") from error
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 async def _run_one(
     client: Any,
     semaphore: asyncio.Semaphore,
@@ -422,6 +460,11 @@ async def _run_with_retry(*args: Any) -> dict[str, Any]:
 async def command_live(concurrency: int) -> int:
     if not 1 <= concurrency <= 4:
         raise ValueError("packet RAO validation concurrency must be between 1 and 4")
+    with live_run_lock():
+        return await _command_live_locked(concurrency)
+
+
+async def _command_live_locked(concurrency: int) -> int:
     settings = load_settings(ROOT / "hl_mem.toml", ROOT / ".env")
     if "coding" not in settings.llm_base_url or not settings.llm_api_key:
         raise RuntimeError("qwen coding-plan endpoint/key required")
@@ -550,6 +593,28 @@ def _paired(old: Mapping[str, bool], new: Mapping[str, bool]) -> dict[str, int]:
     }
 
 
+def accuracy_comparison(
+    *,
+    new_accuracy: float,
+    historical_old_accuracy: float | None,
+    old_case_correct: Mapping[str, bool],
+) -> dict[str, float | None]:
+    """Compare with a frozen-scorer rescore and retain the historical headline."""
+
+    old_accuracy = (
+        fmean(float(value) for value in old_case_correct.values()) if old_case_correct else historical_old_accuracy
+    )
+    return {
+        "historical_old_accuracy": historical_old_accuracy,
+        "old_accuracy": old_accuracy,
+        "new_accuracy": new_accuracy,
+        "accuracy_delta": new_accuracy - old_accuracy if old_accuracy is not None else None,
+        "historical_accuracy_delta": (
+            new_accuracy - historical_old_accuracy if historical_old_accuracy is not None else None
+        ),
+    }
+
+
 def _old_results(
     metadata: Mapping[str, Mapping[str, Any]],
     packets: Mapping[str, Mapping[str, Any]],
@@ -592,11 +657,9 @@ def command_score() -> int:
     manifest = _json(PREREG)
     _verify_snapshot(manifest)
     preregistration_sha256 = sha256_file(PREREG)
-    latest = {
-        (str(row["case_id"]), str(row["arm_id"]), str(row["reader_id"])): row
-        for row in _read_jsonl(RAW)
-        if row.get("status") == "complete"
-    }
+    raw_rows = _read_jsonl(RAW)
+    complete_rows = [row for row in raw_rows if row.get("status") == "complete"]
+    latest = {(str(row["case_id"]), str(row["arm_id"]), str(row["reader_id"])): row for row in complete_rows}
     if len(latest) != 208:
         raise RuntimeError(f"packet RAO raw matrix incomplete: {len(latest)}/208")
     if any(row.get("preregistration_sha256") != preregistration_sha256 for row in latest.values()):
@@ -616,11 +679,12 @@ def command_score() -> int:
         for arm in ARMS:
             rows = [row for row in scored if row["reader_id"] == reader and row["arm_id"] == arm]
             new_accuracy = fmean(float(row["score"]["answer_correct"]) for row in rows)
-            old_accuracy = old_matrix[reader][arm]["accuracy"]
             matrix[reader][arm] = {
-                "old_accuracy": old_accuracy,
-                "new_accuracy": new_accuracy,
-                "accuracy_delta": new_accuracy - old_accuracy if old_accuracy is not None else None,
+                **accuracy_comparison(
+                    new_accuracy=new_accuracy,
+                    historical_old_accuracy=old_matrix[reader][arm]["accuracy"],
+                    old_case_correct=old_correct[(reader, arm)],
+                ),
                 "entity_coverage_at_5": fmean(
                     float(row["score"]["entity_coverage_at_5"])
                     for row in rows
@@ -642,28 +706,38 @@ def command_score() -> int:
         "scorer_version": "answer-entity-packet-v1",
         "preregistration_sha256": preregistration_sha256,
         "raw_sha256": sha256_file(RAW),
+        "raw_complete_rows": len(complete_rows),
+        "duplicate_complete_rows": len(complete_rows) - len(latest),
+        "latency_comparison_valid": len(complete_rows) == len(latest),
         "matrix": matrix,
         "representation": representation,
         "scored_cases": scored,
         "limitations": [
             "historical glm/C0 old-render result does not exist",
             "old qwen cells use three-repeat aggregates while this directional validation uses one new pass",
+            "historical glm/C4 headline is retained separately from its frozen-scorer rescore",
+            *(
+                ["duplicate live processes make latency comparisons invalid; scoring uses the last row per task key"]
+                if len(complete_rows) != len(latest)
+                else []
+            ),
         ],
     }
     write_json_atomic(REPORT, output)
     lines = [
         "# Packet RAO design/dev validation",
         "",
-        "| reader | arm | old accuracy | new accuracy | delta | entity@5 | forbidden | tokens | reader p95 |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| reader | arm | old rescored | old historical | new accuracy | delta | entity@5 | forbidden | tokens | reader p95 |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for reader in READERS:
         for arm in ARMS:
             item = matrix[reader][arm]
             old = "N/A" if item["old_accuracy"] is None else f"{item['old_accuracy']:.4f}"
+            historical = "N/A" if item["historical_old_accuracy"] is None else f"{item['historical_old_accuracy']:.4f}"
             delta = "N/A" if item["accuracy_delta"] is None else f"{item['accuracy_delta']:+.4f}"
             lines.append(
-                f"| {reader} | {arm} | {old} | {item['new_accuracy']:.4f} | {delta} | "
+                f"| {reader} | {arm} | {old} | {historical} | {item['new_accuracy']:.4f} | {delta} | "
                 f"{item['entity_coverage_at_5']:.4f} | {item['forbidden_violations']} | "
                 f"{item['mean_total_tokens']:.1f} | {item['reader_latency_p95_seconds']:.3f} |"
             )

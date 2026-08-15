@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
+
 
 def _runner():
     return importlib.import_module("evaluation.tools.run_packet_rao_design_dev_validation")
@@ -82,3 +84,28 @@ def test_legacy_projection_removes_structured_relation_without_mutating_source()
 
     assert legacy == [{"claim_id": "claim-1", "text": "团队后来采用海风看板"}]
     assert source[0]["role"] == "团队"
+
+
+def test_live_run_lock_rejects_a_second_runner(tmp_path) -> None:
+    lock_path = tmp_path / "packet-rao-live.lock"
+
+    with _runner().live_run_lock(lock_path):
+        with pytest.raises(RuntimeError, match="already running"):
+            with _runner().live_run_lock(lock_path):
+                pass
+
+
+def test_accuracy_comparison_separates_historical_and_frozen_rescore() -> None:
+    comparison = _runner().accuracy_comparison(
+        new_accuracy=0.75,
+        historical_old_accuracy=1.0,
+        old_case_correct={"case-1": True, "case-2": False},
+    )
+
+    assert comparison == {
+        "historical_old_accuracy": 1.0,
+        "old_accuracy": 0.5,
+        "new_accuracy": 0.75,
+        "accuracy_delta": 0.25,
+        "historical_accuracy_delta": -0.25,
+    }
