@@ -146,9 +146,9 @@ class ExtractionRepairTest(unittest.TestCase):
 
     def test_prompt_contains_explicit_constraints_and_complete_example(self) -> None:
         self.assertIn("should_memorize 必须等于 claims 是否非空", SYSTEM_PROMPT)
-        self.assertIn("claims 中每项必须且只能包含上述 9 个字段", SYSTEM_PROMPT)
-        self.assertIn('"action"', SYSTEM_PROMPT)
-        self.assertIn('"object"', SYSTEM_PROMPT)
+        self.assertIn("claims 中每项必须且只能包含上述 7 个字段", SYSTEM_PROMPT)
+        self.assertNotIn('"action"', SYSTEM_PROMPT)
+        self.assertNotIn('"object"', SYSTEM_PROMPT)
         self.assertIn('"evidence_quote"', SYSTEM_PROMPT)
         self.assertNotIn("canonical_attribute", SYSTEM_PROMPT)
         self.assertNotIn("topic_tags", SYSTEM_PROMPT)

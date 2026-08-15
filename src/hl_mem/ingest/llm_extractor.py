@@ -441,6 +441,33 @@ _KIND_TOPIC_TAG = {
 }
 _NOTABILITY_IMPORTANCE = {"high": 0.9, "medium": 0.6, "low": 0.3}
 _ENV_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
+_MODEL_TASK_SOURCE_MARKERS = (
+    "reader",
+    "judge",
+    "extractor",
+    "embedding",
+    "reranker",
+    "summarization",
+    "compression",
+    "translation",
+    "code generation",
+    "image generation",
+    "vision",
+    "阅读",
+    "评审",
+    "裁判",
+    "提取",
+    "嵌入",
+    "重排",
+    "摘要",
+    "压缩",
+    "翻译",
+    "代码生成",
+    "图像生成",
+    "视觉",
+    "验证",
+    "测试",
+)
 _TECH_ENTITY_RE = re.compile(
     r"(?ix)(?<![A-Za-z0-9_])(?:"
     r"PostgreSQL|SQLite|MySQL|Redis|FastAPI|Uvicorn|PyTorch|Django|Flask|"
@@ -531,6 +558,7 @@ def _postprocess_rules_fingerprint(
             "tool_snapshot": _regex_fingerprint(_TOOL_SNAPSHOT_RE),
             "quoted_report": _regex_fingerprint(_QUOTED_REPORT_RE),
             "compact_env_key": _regex_fingerprint(_ENV_KEY_RE),
+            "compact_model_task_source_markers": _MODEL_TASK_SOURCE_MARKERS,
             "compact_tech_entity": _regex_fingerprint(_TECH_ENTITY_RE),
             "compact_backtick_entity": _regex_fingerprint(_BACKTICK_ENTITY_RE),
             "language_han": _regex_fingerprint(_HAN_CHARACTER_RE),
@@ -898,20 +926,46 @@ class LLMExtractor:
         self._llm_call_count += int(getattr(self.verifier, "last_call_count", 0))
 
     @staticmethod
-    def _infer_compact_qualifiers(attribute: str, subject: str, value: str) -> dict[str, str]:
-        """为 operational slot 确定性补齐最小实例 qualifier。"""
+    def _infer_compact_qualifiers(
+        attribute: str,
+        subject: str,
+        value: str,
+        evidence_quote: str,
+    ) -> dict[str, str]:
+        """Only infer required qualifiers that are explicit in value and evidence."""
         definition = SLOT_REGISTRY.get(attribute)
         if definition is None or not definition.required_qualifiers:
             return {}
+        normalized_value = unicodedata.normalize("NFC", value).casefold()
+        normalized_evidence = unicodedata.normalize("NFC", evidence_quote).casefold()
+
+        def source_bounded(candidate: str | None) -> str | None:
+            if not candidate:
+                return None
+            normalized = unicodedata.normalize("NFC", candidate).strip()
+            if not normalized:
+                return None
+            needle = normalized.casefold()
+            return normalized if needle in normalized_value and needle in normalized_evidence else None
+
         qualifiers: dict[str, str] = {}
         for key in definition.required_qualifiers:
             if key == "key":
                 match = _ENV_KEY_RE.search(value)
-                qualifiers[key] = match.group(0) if match is not None else subject
+                candidate = source_bounded(match.group(0) if match is not None else None)
             elif key == "plan":
-                qualifiers[key] = value[:200]
+                candidate = source_bounded(value[:200])
+            elif key == "task" and attribute == "choice.model":
+                matches = [
+                    marker
+                    for marker in _MODEL_TASK_SOURCE_MARKERS
+                    if marker.casefold() in normalized_value and marker.casefold() in normalized_evidence
+                ]
+                candidate = matches[0] if len(matches) == 1 else None
             else:
-                qualifiers[key] = subject
+                candidate = source_bounded(subject)
+            if candidate is not None:
+                qualifiers[key] = candidate
         return qualifiers
 
     @staticmethod
@@ -990,7 +1044,12 @@ class LLMExtractor:
         fallback_attribute = PREDICATE_ATTRIBUTE_MAP[predicate][1]
         if inferred_attribute not in {"custom.unknown", fallback_attribute}:
             canonical_attribute = inferred_attribute
-        qualifiers = self._infer_compact_qualifiers(canonical_attribute, subject, candidate.value)
+        qualifiers = self._infer_compact_qualifiers(
+            canonical_attribute,
+            subject,
+            candidate.value,
+            candidate.evidence_quote,
+        )
         canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
         relation_qualifiers: dict[str, Any] = {}
         relation_reason = "not_provided"

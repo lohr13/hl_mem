@@ -77,6 +77,72 @@ def test_should_memorize_false_returns_no_claims() -> None:
     assert LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("闲聊") == []
 
 
+def _compact_choice_claim(*, subject: str, value: str, evidence_quote: str) -> str:
+    return json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": subject,
+                    "value": value,
+                    "kind": "choice",
+                    "confidence": 0.95,
+                    "notability": "high",
+                    "evidence_quote": evidence_quote,
+                }
+            ],
+            "should_memorize": True,
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_compact_model_slot_does_not_forge_task_from_generic_subject() -> None:
+    value = "用户决定使用 coding plan 的 qwen3.7-plus 模型"
+    extractor = LLMExtractor(
+        _FakeLLMClient(_compact_choice_claim(subject="用户", value=value, evidence_quote=value)),
+        ChunkingPolicy(10_000, 0, 2),
+    )
+
+    claim = extractor.extract(value)[0]
+
+    assert claim.canonical_attribute == "choice.model"
+    assert claim.canonical_slot is None
+    assert claim.qualifiers == {}
+
+
+def test_compact_model_slot_keeps_explicit_source_bounded_task() -> None:
+    value = "用户决定使用 qwen3.7-plus 作为 judge 模型"
+    extractor = LLMExtractor(
+        _FakeLLMClient(_compact_choice_claim(subject="用户", value=value, evidence_quote=value)),
+        ChunkingPolicy(10_000, 0, 2),
+    )
+
+    claim = extractor.extract(value)[0]
+
+    assert claim.canonical_slot == "choice.model"
+    assert claim.qualifiers == {"task": "judge"}
+
+
+def test_compact_required_subject_qualifier_must_be_explicit_in_evidence_quote() -> None:
+    source = "青岚项目采用 PostgreSQL 数据库"
+    extractor = LLMExtractor(
+        _FakeLLMClient(
+            _compact_choice_claim(
+                subject="青岚项目",
+                value=source,
+                evidence_quote="采用 PostgreSQL 数据库",
+            )
+        ),
+        ChunkingPolicy(10_000, 0, 2),
+    )
+
+    claim = extractor.extract(source)[0]
+
+    assert claim.canonical_attribute == "choice.database"
+    assert claim.canonical_slot is None
+    assert claim.qualifiers == {}
+
+
 def test_extract_emits_json_debug_metrics(caplog) -> None:
     """提取摘要日志应包含定位覆盖缺口和成本所需的结构化指标。"""
     raw = (
