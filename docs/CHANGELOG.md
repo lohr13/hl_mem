@@ -1,11 +1,53 @@
 # HL-Mem 变更记录
 
-## Unreleased
+## v0.27.0（2026-08-15）
 
-- 更新中文评测发布基线至 v0.26.0；仅调整文档口径，无产品行为变化。
-- 清理已被当前三层评测替代的旧 extraction/embedding/recall 实验入口和内部 gold；真实数据继续保存在仓库外。
-- 历史设计统一移入 `docs/archive/`，删除已完成的任务 plan/spec，并精简当前 README、评测、架构和交接文档。
-- 文档一致性检查新增 tracked Markdown 相对链接校验，防止移动或删除文档后留下死链。
+[GitHub Release](https://github.com/lohr13/hl_mem/releases/tag/v0.27.0) · [PyPI](https://pypi.org/project/hl-mem/0.27.0/)
+
+### Breaking / Behavior changes
+
+- `recall.resurrection_mode` 的静态默认值从 `off` 切换为 `auto`。主召回为空或 answerability 低时，系统会执行有界的 archived-only FTS；候选必须重新通过有效时间、来源完整性、冲突竞争和高词项覆盖门禁，且只允许 `archived → active`。A/B 中得到 2 次正确复活、0 次误伤，端到端 p95 为 12.7ms。
+- `decay.model` 的静态默认值从 `legacy_linear` 切换为 `activation_halflife`。日常衰减改为按 scope 半衰期更新独立 activation，confidence 不再因时间流逝而改变，只表达证据、冲突、修正与验证强度。离线三臂回放中 activation 臂对 identity 为 0 误杀并满足 confidence 语义分离；`confidence_halflife` 对必须保留样本的误归档率为 66.7%，因此淘汰。
+- 旧 `hl_mem.toml` 未声明以上两键时会采用 v0.27 新默认。要保持 v0.26 行为，必须显式配置：
+
+```toml
+[recall]
+resurrection_mode = "off"
+
+[decay]
+model = "legacy_linear"
+```
+
+### 冲突治理
+
+- ingest 废除 `existing[0]` 单代表语义：新 claim 落库前与同一非终态 conflict group 的全部相关成员求一致结论；只有全组一致 entail 或形成明确 state-change 链才自动收敛，混合或不确定结论会把整组转入 disputed 并建立 `manual_required` case。
+- 新增应用层组级 `ResolutionService`。互斥 conflict group 的 `coexist` 会硬拒绝并提示先修正 slot/qualifier 使 claim 脱离同一 conflict key；`keep_left/right` 在单事务内原子选出组级赢家、收敛其他非终态成员并一致关闭重叠 open cases，commit 前断言组内 active 不超过 1。
+- SQL migration 041 增加触发器级激活保护，覆盖未来所有 INSERT/UPDATE 路径，阻止互斥 slot 的同组第二个 active；触发器只防护新写入，不自动改写存量裁决。migration 042 增加 activation、activation_base 与低水位跟踪字段，保留只向前迁移约束。
+- repair、resolve、ingest、audit 的典型排列与幂等重跑纳入生命周期闭环回归；maintenance/resolve 在提交前检查组内 active≤1 和无 dangling 冲突引用，audit 额外报告历史 terminal coexist 与当前互斥组不一致，违例整笔回滚。
+
+### 召回与表示
+
+- Context Packet 对有关系语义的 compact claim 结构化渲染 `relation: role → action → object`，空 RAO 不输出额外行；10 claims / 2,000 tokens 总预算不变。52/52 design/dev case 已验证 RAO 从 Claim 经打包到 reader 输入完整传输，REST 与 MCP 继续复用同一 packet 表示。
+- 增加受控归档复活冷路径：只查询 archived，永不复活 retracted、superseded 或 expired；复活前重检 valid time、来源完整性和组内 active 竞争者，高阈值命中后重新 embedding、原子切换状态并写 resurrection audit，复活不会提高 confidence。经 A/B 裁决，默认设为 `auto`。
+- 增加 activation 半衰期生命周期模型，命中只刷新 `last_accessed_at`；temporal/permanent/identity 默认半衰期为 45/90/365 天，低 activation 持续越界后才归档。三臂实现仍保留 `legacy_linear` 和实验用 `confidence_halflife`，默认切换为 `activation_halflife`，让 confidence 归位为纯证据强度。
+
+### 评测与实验
+
+- 中文 40-case E2E manifest 升级为 gold schema v3，增加 NFC 精确的 `answer_entities`、role/action/object 链、`forbidden_entities` 与 `forbidden_assertions`；冻结 `answer-entity-packet-v1` scorer，以 Top-5 seed 扩展后的最终 packet 做 macro-case entity coverage，no-answer case 不计实体覆盖，既有 anchors 判分保持并行不变。
+- 建立六类均衡的关系链 design/dev 与仓库外 sealed holdout，并冻结 C0-C5 + f4 协议、关系覆盖门禁和同包 smoke。C 系列三轮实验沉淀 5 项生产修复，但 C4 未通过 sealed 产品门禁，保持休眠待重新预注册验证；reader 对照揭示强 reader 对 hard relation 有收益，但不足以支持默认切换，生产 reader 维持现状。
+- 六因子权重网格在 112-case 隔离检索与 40-case E2E 上未找到 ≥2pp 的稳定 headroom，当前权重未证明值得在线 bandit，v0.28 bandit 硬门判定不通过。
+- 通用 bootstrap CI 扩展为按 persona/trajectory 聚类的 paired cluster bootstrap；固定 seed、2,000 次重采样和 95% CI，A/B 对配对差值重采样，并输出版本化报告 schema。
+
+### 其他生产修复
+
+- 关系发现拒绝模型虚构或未配置的 endpoint；API 失败、空结果和无效结构的降级输出契约冻结，禁止把失败伪装成有效关系边。
+- 关系缓存构建后必须通过有边 case 覆盖门禁，并在跑批前验证 C0/C4 packet 非全等；sealed v1 因关系未物化而产生的静默 no-op 不再可进入实验。
+- 消除并发启动时 SQL migration 登记的竞态，保证多进程同时升级不会因重复登记破坏启动。
+- C 系列和表示验证 runner 增加防重复跑批护栏；sealed、scorer、manifest 或运行身份不匹配时明确拒绝复用产物。
+
+### 发布
+
+- 项目版本提升至 `0.27.0`；SQL schema 为 42 个不可变、只向前执行的 migration（001-042）。除上述明确列出的默认行为变化外，REST/MCP 业务 schema 保持兼容；OpenAPI 服务版本同步为 0.27.0。
 
 ## v0.26.0（2026-08-14）
 

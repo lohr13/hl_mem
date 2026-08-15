@@ -1,6 +1,6 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.26.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.27.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
@@ -106,7 +106,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `decay.halflife_archive_grace_days` | 整数 | `7` | >= 1 | `decay_halflife_archive_grace_days` |
 | `decay.halflife_archive_threshold` | 数值 | `0.05` | 0.0 - 1.0（不含端点） | `decay_halflife_archive_threshold` |
 | `decay.identity_half_life_days` | 整数 | `365` | >= 1 | `decay_identity_half_life_days` |
-| `decay.model` | 字符串 | `"legacy_linear"` | `legacy_linear`、`activation_halflife`、`confidence_halflife` | `decay_model` |
+| `decay.model` | 字符串 | `"activation_halflife"` | `legacy_linear`、`activation_halflife`、`confidence_halflife` | `decay_model` |
 | `decay.permanent_half_life_days` | 整数 | `90` | >= 1 | `decay_permanent_half_life_days` |
 | `decay.temporal_half_life_days` | 整数 | `45` | >= 1 | `decay_temporal_half_life_days` |
 
@@ -254,7 +254,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `recall.relevance_reranker_floor` | 数值 | `0.15` | 0.0 - 1.0 | `relevance_reranker_floor` |
 | `recall.resurrection_candidate_limit` | 整数 | `3` | >= 1 | `resurrection_candidate_limit` |
 | `recall.resurrection_min_term_coverage` | 数值 | `0.8` | 0.0 - 1.0（不含 0） | `resurrection_min_term_coverage` |
-| `recall.resurrection_mode` | 字符串 | `"off"` | `off`、`auto` | `resurrection_mode` |
+| `recall.resurrection_mode` | 字符串 | `"auto"` | `off`、`auto` | `resurrection_mode` |
 | `recall.side_effect_backoff_seconds` | 数值 | `0.05` | >= 0 | `recall_side_effect_backoff_seconds` |
 | `recall.side_effect_max_attempts` | 整数 | `3` | >= 1 | `recall_side_effect_max_attempts` |
 | `recall.tag_boost_enabled` | 布尔值 | `true` | `true`、`false` | `tag_boost_enabled` |
@@ -353,7 +353,7 @@ Worker 在任务执行期间按 lease 时长的三分之一周期续租全部同
 - `retention.decay_temporal_days <= retention.archive_temporal_days`；`retention.decay_permanent_days <= retention.archive_permanent_days`。
 - `dedup.auto_merge_min_confidence` 不得低于 `dedup.threshold`。
 - `recall.resurrection_mode = "auto"` 只在主召回低 answerability 或空结果时执行有界 archived-only FTS；候选仍须通过当前有效时间、全部来源引用完整性、冲突竞争者和高词项覆盖门禁；重嵌入服务失败时保留原召回结果。
-- `decay.model = "legacy_linear"` 保持既有 confidence 线性衰减；`"activation_halflife"` 使用 `activation = base * 2^(-inactive_days / half_life)` 且不改 confidence；`"confidence_halflife"` 仅作为指数 confidence 对照臂。默认始终为 legacy。
+- `decay.model = "activation_halflife"` 是默认值，使用 `activation = base * 2^(-inactive_days / half_life)` 且不改 confidence；`"legacy_linear"` 保留旧版 confidence 线性衰减，`"confidence_halflife"` 仅保留为实验对照臂。
 - activation 半衰期按 temporal/permanent/identity 分档为 45/90/365 天；新建与迁移存量的 `activation_base/activation` 均从 1.0 开始，命中只刷新 `last_accessed_at`；activation 低于阈值并持续超过宽限期后才归档；`activation_halflife` 排序臂用 activation 承接原 confidence 的 `0.075` 冻结权重。
 - `image_describer.mode = "on"` 时，base URL 必须使用 HTTPS，模型名不能为空；若同时允许 `file:` URI，`file_allow_roots` 不能为空。
 - `hermes.enabled = true` 时，`hermes.url` 不能为空。

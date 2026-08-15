@@ -362,9 +362,9 @@ def generate() -> str:
             "- `dedup.auto_merge_min_confidence` 不得低于 `dedup.threshold`。",
             '- `recall.resurrection_mode = "auto"` 只在主召回低 answerability 或空结果时执行有界 archived-only FTS；'
             "候选仍须通过当前有效时间、全部来源引用完整性、冲突竞争者和高词项覆盖门禁；重嵌入服务失败时保留原召回结果。",
-            '- `decay.model = "legacy_linear"` 保持既有 confidence 线性衰减；'
-            '`"activation_halflife"` 使用 `activation = base * 2^(-inactive_days / half_life)` 且不改 confidence；'
-            '`"confidence_halflife"` 仅作为指数 confidence 对照臂。默认始终为 legacy。',
+            '- `decay.model = "activation_halflife"` 是默认值，使用 '
+            "`activation = base * 2^(-inactive_days / half_life)` 且不改 confidence；"
+            '`"legacy_linear"` 保留旧版 confidence 线性衰减，`"confidence_halflife"` 仅保留为实验对照臂。',
             "- activation 半衰期按 temporal/permanent/identity 分档为 45/90/365 天；"
             "新建与迁移存量的 `activation_base/activation` 均从 1.0 开始，命中只刷新 `last_accessed_at`；"
             "activation 低于阈值并持续超过宽限期后才归档；"

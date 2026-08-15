@@ -28,6 +28,8 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.query_expansion_timeout_seconds == 5.0
     assert settings.query_expansion_total_timeout_seconds == 6.0
     assert settings.relation_discovery_mode == "off"
+    assert settings.resurrection_mode == "auto"
+    assert settings.decay_model == "activation_halflife"
     assert settings.dedup_threshold == 0.92
     assert settings.daily_token_limit == 500_000
 

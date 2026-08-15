@@ -168,7 +168,7 @@ class Settings:
         metadata={"toml": "recall.dedup_candidate_limit"},
     )
     resurrection_mode: ResurrectionMode = field(
-        default="off",
+        default="auto",
         metadata={"toml": "recall.resurrection_mode"},
     )
     resurrection_candidate_limit: int = field(
@@ -486,7 +486,7 @@ class Settings:
         default=0.05,
         metadata={"toml": "retention.decay_min_confidence"},
     )
-    decay_model: DecayModel = field(default="legacy_linear", metadata={"toml": "decay.model"})
+    decay_model: DecayModel = field(default="activation_halflife", metadata={"toml": "decay.model"})
     decay_temporal_half_life_days: int = field(
         default=45,
         metadata={"toml": "decay.temporal_half_life_days"},

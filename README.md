@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.26.0](https://img.shields.io/badge/version-0.26.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.27.0](https://img.shields.io/badge/version-0.27.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -146,7 +146,9 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan`（默认）或需安装 `hl-mem[sqlite-vec]` 的 `sqlite_vec` |
 | `recall.dedup_threshold` | `0.95` | 候选窗内近重复折叠阈值；设为 `0` 关闭折叠 |
 | `recall.dedup_candidate_limit` | `100` | 每次召回参与近重复折叠判定的候选上限 |
+| `recall.resurrection_mode` | `auto` | 主召回证据不足时启用有界 archived-only 冷路径；设为 `off` 可关闭 |
 | `recall.query_expansion_mode` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
+| `decay.model` | `activation_halflife` | 按 scope 半衰期衰减 activation，不因日常衰减改写 confidence |
 | `dedup.scan_limit` | `200` | 每轮维护最多审查的 pending `dedup_pairs` 数量 |
 | `relation.discovery_mode` | `off` | 关系发现：`off`、`audit` 或 `auto` |
 | `recall.tag_channel_enabled` | `false` | 是否启用独立 Tag 检索通道 |
@@ -163,12 +165,21 @@ hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
 ```
 
-### 从 v0.24.0 升级
+### 从 v0.26.0 升级
 
-v0.26.0 是 v0.25.x 的向后兼容 minor 版本；v0.24.1/v0.24.2 只是仓库内过渡版本。从 v0.24.0 或更早版本升级前，请备份并停止
-API、Worker 和其他写入者。migration 038 会在 `BEGIN IMMEDIATE` 中扫描并规范化存量 Claim subject，
-migration 039 为 Event 增加 nullable `metadata_json`，migration 040 增加有界 deferred task 队列；大库应安排维护窗口，数据库不支持向后迁移。
-默认 `auto` FTS 查询同时兼容旧 raw-only 与新 raw+stem 索引，因此无需仅为词形兼容强制重建。
+v0.27.0 默认启用受控归档复活，并把日常衰减切换为 activation 半衰期模型。旧配置不声明这两个键时会采用新默认；
+如需保持 v0.26 行为，请显式配置：
+
+```toml
+[recall]
+resurrection_mode = "off"
+
+[decay]
+model = "legacy_linear"
+```
+
+升级前请备份并停止 API、Worker 和其他写入者；migration 041/042 只向前执行，分别增加互斥组激活保护和
+activation 生命周期字段。已有冲突脏数据不会被 migration 自动裁决，仍须通过显式 audit/repair 流程处理。
 
 ## 能力概览
 
@@ -204,7 +215,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.26.0，共 42 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.27.0，共 42 个不可变、仅向前执行的 SQL Migration。
 
 ## 文档
 

@@ -136,9 +136,9 @@ def test_legacy_arm_preserves_existing_linear_behavior(tmp_path) -> None:
     assert activation == 1.0
 
 
-def test_decay_model_defaults_legacy_and_validates_all_three_arms() -> None:
+def test_decay_model_defaults_activation_and_validates_all_three_arms() -> None:
     settings = Settings()
-    assert settings.decay_model == "legacy_linear"
+    assert settings.decay_model == "activation_halflife"
     for model in ("legacy_linear", "activation_halflife", "confidence_halflife"):
         replace(Settings.for_test(), decay_model=model).validate()
     with pytest.raises(Exception, match="decay.model"):

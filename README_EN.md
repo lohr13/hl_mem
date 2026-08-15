@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.26.0](https://img.shields.io/badge/version-0.26.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.27.0](https://img.shields.io/badge/version-0.27.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -146,7 +146,9 @@ variables. Common keys are listed below.
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan` (default) or `sqlite_vec`, which requires `hl-mem[sqlite-vec]` |
 | `recall.dedup_threshold` | `0.95` | Near-copy folding threshold inside the bounded candidate window; `0` disables folding |
 | `recall.dedup_candidate_limit` | `100` | Maximum recall candidates considered for near-copy folding |
+| `recall.resurrection_mode` | `auto` | Bounded archived-only cold path when primary recall is insufficient; `off` disables it |
 | `recall.query_expansion_mode` | `auto` | `off`, `auto`, or `always` |
+| `decay.model` | `activation_halflife` | Decays activation by scope-specific half-life without changing confidence during routine decay |
 | `dedup.scan_limit` | `200` | Maximum pending `dedup_pairs` reviewed per maintenance pass |
 | `relation.discovery_mode` | `off` | `off`, `audit`, or `auto` |
 | `recall.tag_channel_enabled` | `false` | Whether to enable the independent Tag retrieval channel |
@@ -164,14 +166,22 @@ hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
 ```
 
-### Upgrading from v0.24.0
+### Upgrading from v0.26.0
 
-v0.26.0 is a backward-compatible minor release over v0.25.x; v0.24.1 and v0.24.2 were repository-only transition versions.
-When upgrading from v0.24.0 or earlier, back up the database and stop the API, workers, and other writers. Migration 038 scans and
-canonicalizes stored Claim subjects under `BEGIN IMMEDIATE`, migration 039 adds nullable Event `metadata_json`, and
-migration 040 adds the bounded deferred-task queue.
-Plan a maintenance window for a large database; migrations are forward-only. The default `auto` FTS query supports both
-legacy raw-only and current raw-plus-stem indexes, so morphology compatibility alone does not require a forced rebuild.
+v0.27.0 enables controlled archived-memory resurrection by default and switches routine decay to the activation half-life
+model. Existing configuration files that omit both keys adopt the new defaults. To retain v0.26 behavior, configure:
+
+```toml
+[recall]
+resurrection_mode = "off"
+
+[decay]
+model = "legacy_linear"
+```
+
+Back up the database and stop the API, workers, and other writers before upgrading. Forward-only migrations 041/042 add
+exclusive-group activation protection and activation lifecycle fields. Historical conflict anomalies are not adjudicated
+by migration and still require the explicit audit/repair workflow.
 
 ## Capabilities
 
@@ -208,7 +218,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.26.0 with 42 immutable, forward-only migrations.
+The current baseline is v0.27.0 with 42 immutable, forward-only migrations.
 
 ## Documentation
 

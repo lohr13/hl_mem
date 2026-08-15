@@ -34,6 +34,40 @@ def test_empty_toml_uses_static_defaults(tmp_path: Path) -> None:
     )
 
 
+def test_old_config_without_lifecycle_keys_adopts_v027_defaults(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "old.toml",
+        """
+[recall]
+query_expansion_mode = "off"
+""",
+    )
+
+    settings = load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert settings.resurrection_mode == "auto"
+    assert settings.decay_model == "activation_halflife"
+
+
+def test_old_lifecycle_behavior_remains_available_by_explicit_config(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "legacy.toml",
+        """
+[recall]
+query_expansion_mode = "off"
+resurrection_mode = "off"
+
+[decay]
+model = "legacy_linear"
+""",
+    )
+
+    settings = load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert settings.resurrection_mode == "off"
+    assert settings.decay_model == "legacy_linear"
+
+
 def test_loads_native_types_tuple_and_string_enum(tmp_path: Path) -> None:
     config_path = _write(
         tmp_path / "all-types.toml",

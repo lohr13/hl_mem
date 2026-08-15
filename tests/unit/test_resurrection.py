@@ -267,8 +267,8 @@ def test_041_trigger_allows_safe_resurrection_and_blocks_competing_active(tmp_pa
         connection.execute("UPDATE claims SET status='active' WHERE id='claim-2'")
 
 
-def test_resurrection_mode_defaults_off_and_validates() -> None:
-    assert Settings().resurrection_mode == "off"
+def test_resurrection_mode_defaults_auto_and_validates() -> None:
+    assert Settings().resurrection_mode == "auto"
     with pytest.raises(Exception, match="recall.resurrection_mode"):
         replace(Settings.for_test(), resurrection_mode="invalid").validate()
 

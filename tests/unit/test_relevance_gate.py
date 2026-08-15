@@ -355,7 +355,11 @@ def test_recall_service_side_effects_use_final_enforced_results(
     service = RecallService(
         sqlite3.connect(":memory:"),
         FakeEmbedder(4),
-        settings=replace(Settings(), relevance_gate_mode="enforce"),
+        settings=replace(
+            Settings(),
+            relevance_gate_mode="enforce",
+            resurrection_mode="off",
+        ),
     )
     accessed: list[str] = []
     exposed: list[str] = []

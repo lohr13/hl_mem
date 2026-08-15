@@ -58,8 +58,8 @@ vector_scan_limit = 200
 dense_enabled = true
 dedup_threshold = 0.95
 dedup_candidate_limit = 100
-# 冷路径归档复活默认关闭；A/B 裁决前不要改为 auto。
-resurrection_mode = "off"
+# A/B 中 2 次正确复活、0 误伤且 p95 仅 12.7ms；默认启用受控 archived-only 冷路径。
+resurrection_mode = "auto"
 resurrection_candidate_limit = 3
 resurrection_min_term_coverage = 0.8
 packed_context_token_budget = 2000
@@ -90,8 +90,8 @@ temporal_ttl_days_normal = 7
 temporal_ttl_days_high = 14
 
 [decay]
-# 三臂 A/B 的默认对照臂；legacy_linear 保持既有 confidence 线性衰减行为。
-model = "legacy_linear"
+# 三臂 A/B 胜出臂；日常衰减只更新 activation，confidence 保持证据强度语义。
+model = "activation_halflife"
 temporal_half_life_days = 45
 permanent_half_life_days = 90
 identity_half_life_days = 365
