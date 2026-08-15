@@ -1,0 +1,186 @@
+{
+  "schema_version": 3,
+  "fixture_id": "c-series-relation-design-dev-v1",
+  "scorer_version": "answer-entity-packet-v1",
+  "visibility": "design-dev-visible",
+  "cases": [
+    {
+      "case_id": "cdev:recommendation_execution:01",
+      "category": "recommendation_execution",
+      "namespace": "cdev-re-01",
+      "question": "林顾问推荐的哪款工具后来真的被团队采用了？",
+      "answer": "团队采用了海风看板。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["林顾问推荐海风看板和青石笔记。", "团队后来采用海风看板，没有采用青石笔记。"],
+      "claims": [
+        {"claim_id": "re01-seed", "text": "林顾问推荐海风看板和青石笔记", "entities": ["林顾问", "海风看板", "青石笔记"], "role": "林顾问", "action": "推荐", "object": "海风看板和青石笔记", "rank": 1, "evidence_event_ids": ["re01-e1"]},
+        {"claim_id": "re01-answer", "text": "团队实际采用海风看板", "entities": ["团队", "海风看板"], "role": "团队", "action": "采用", "object": "海风看板", "rank": 12, "evidence_event_ids": ["re01-e2"]}
+      ],
+      "relations": [{"from_id": "re01-seed", "to_id": "re01-answer", "relation": "follows", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["海风看板"], "role_action_object": [{"role": "团队", "action": "采用", "object": "海风看板"}], "forbidden_entities": [], "forbidden_assertions": ["团队采用了青石笔记"]}
+    },
+    {
+      "case_id": "cdev:recommendation_execution:02",
+      "category": "recommendation_execution",
+      "namespace": "cdev-re-02",
+      "question": "周老师推荐的课程中，小沈最终报名了哪一门？",
+      "answer": "小沈最终报名了数据叙事课。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["周老师推荐数据叙事课和视觉设计课。", "小沈最终只报名数据叙事课。"],
+      "claims": [
+        {"claim_id": "re02-seed", "text": "周老师推荐两门课", "entities": ["周老师", "数据叙事课", "视觉设计课"], "role": "周老师", "action": "推荐", "object": "数据叙事课和视觉设计课", "rank": 1, "evidence_event_ids": ["re02-e1"]},
+        {"claim_id": "re02-answer", "text": "小沈报名数据叙事课", "entities": ["小沈", "数据叙事课"], "role": "小沈", "action": "报名", "object": "数据叙事课", "rank": 13, "evidence_event_ids": ["re02-e2"]}
+      ],
+      "relations": [{"from_id": "re02-seed", "to_id": "re02-answer", "relation": "follows", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["数据叙事课"], "role_action_object": [{"role": "小沈", "action": "报名", "object": "数据叙事课"}], "forbidden_entities": [], "forbidden_assertions": ["小沈报名了视觉设计课"]}
+    },
+    {
+      "case_id": "cdev:reporting_ownership:01",
+      "category": "reporting_ownership",
+      "namespace": "cdev-ro-01",
+      "question": "报道星桥计划的记者本人拥有哪家公司？",
+      "answer": "记者许安拥有晨岚传媒。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["许安报道星桥计划。", "许安拥有晨岚传媒。"],
+      "claims": [
+        {"claim_id": "ro01-seed", "text": "许安报道星桥计划", "entities": ["许安", "星桥计划"], "role": "许安", "action": "报道", "object": "星桥计划", "rank": 1, "evidence_event_ids": ["ro01-e1"]},
+        {"claim_id": "ro01-answer", "text": "许安拥有晨岚传媒", "entities": ["许安", "晨岚传媒"], "role": "许安", "action": "拥有", "object": "晨岚传媒", "rank": 15, "evidence_event_ids": ["ro01-e2"]}
+      ],
+      "relations": [{"from_id": "ro01-seed", "to_id": "ro01-answer", "relation": "about", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["许安", "晨岚传媒"], "role_action_object": [{"role": "许安", "action": "拥有", "object": "晨岚传媒"}], "forbidden_entities": [], "forbidden_assertions": ["许安拥有星桥计划"]}
+    },
+    {
+      "case_id": "cdev:reporting_ownership:02",
+      "category": "reporting_ownership",
+      "namespace": "cdev-ro-02",
+      "question": "报道月港基金会的机构拥有哪座展馆？",
+      "answer": "北辰通讯社拥有白塔展馆。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["北辰通讯社报道月港基金会。", "北辰通讯社拥有白塔展馆。"],
+      "claims": [
+        {"claim_id": "ro02-seed", "text": "北辰通讯社报道月港基金会", "entities": ["北辰通讯社", "月港基金会"], "role": "北辰通讯社", "action": "报道", "object": "月港基金会", "rank": 1, "evidence_event_ids": ["ro02-e1"]},
+        {"claim_id": "ro02-answer", "text": "北辰通讯社拥有白塔展馆", "entities": ["北辰通讯社", "白塔展馆"], "role": "北辰通讯社", "action": "拥有", "object": "白塔展馆", "rank": 14, "evidence_event_ids": ["ro02-e2"]}
+      ],
+      "relations": [{"from_id": "ro02-seed", "to_id": "ro02-answer", "relation": "about", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["北辰通讯社", "白塔展馆"], "role_action_object": [{"role": "北辰通讯社", "action": "拥有", "object": "白塔展馆"}], "forbidden_entities": [], "forbidden_assertions": ["北辰通讯社拥有月港基金会"]}
+    },
+    {
+      "case_id": "cdev:enumeration_completeness:01",
+      "category": "enumeration_completeness",
+      "namespace": "cdev-ec-01",
+      "question": "完整列出参加梧桐发布会的所有人。",
+      "answer": "参加者是顾宁、苏禾和陈屿。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["顾宁和苏禾参加梧桐发布会。", "陈屿也参加梧桐发布会。"],
+      "claims": [
+        {"claim_id": "ec01-seed", "text": "顾宁和苏禾参加梧桐发布会", "entities": ["顾宁", "苏禾", "梧桐发布会"], "role": "顾宁和苏禾", "action": "参加", "object": "梧桐发布会", "rank": 1, "evidence_event_ids": ["ec01-e1"]},
+        {"claim_id": "ec01-answer", "text": "陈屿参加梧桐发布会", "entities": ["陈屿", "梧桐发布会"], "role": "陈屿", "action": "参加", "object": "梧桐发布会", "rank": 11, "evidence_event_ids": ["ec01-e2"]}
+      ],
+      "relations": [{"from_id": "ec01-seed", "to_id": "ec01-answer", "relation": "about", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["顾宁", "苏禾", "陈屿"], "role_action_object": [{"role": "顾宁、苏禾和陈屿", "action": "参加", "object": "梧桐发布会"}], "forbidden_entities": [], "forbidden_assertions": []}
+    },
+    {
+      "case_id": "cdev:enumeration_completeness:02",
+      "category": "enumeration_completeness",
+      "namespace": "cdev-ec-02",
+      "question": "全部列出青岚项目采用的存储组件。",
+      "answer": "青岚项目采用河图数据库、松涛缓存和银杏对象存储。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["青岚项目采用河图数据库和松涛缓存。", "青岚项目还采用银杏对象存储。"],
+      "claims": [
+        {"claim_id": "ec02-seed", "text": "青岚项目采用河图数据库和松涛缓存", "entities": ["青岚项目", "河图数据库", "松涛缓存"], "role": "青岚项目", "action": "采用", "object": "河图数据库和松涛缓存", "rank": 1, "evidence_event_ids": ["ec02-e1"]},
+        {"claim_id": "ec02-answer", "text": "青岚项目采用银杏对象存储", "entities": ["青岚项目", "银杏对象存储"], "role": "青岚项目", "action": "采用", "object": "银杏对象存储", "rank": 12, "evidence_event_ids": ["ec02-e2"]}
+      ],
+      "relations": [{"from_id": "ec02-seed", "to_id": "ec02-answer", "relation": "about", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["河图数据库", "松涛缓存", "银杏对象存储"], "role_action_object": [{"role": "青岚项目", "action": "采用", "object": "河图数据库、松涛缓存和银杏对象存储"}], "forbidden_entities": [], "forbidden_assertions": []}
+    },
+    {
+      "case_id": "cdev:cross_event_two_hop:01",
+      "category": "cross_event_two_hop",
+      "namespace": "cdev-th-01",
+      "question": "白鹭项目负责人的常驻城市是哪里？",
+      "answer": "白鹭项目负责人赵岚常驻宁波。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["白鹭项目负责人是赵岚。", "赵岚常驻宁波。"],
+      "claims": [
+        {"claim_id": "th01-seed", "text": "白鹭项目负责人是赵岚", "entities": ["白鹭项目", "赵岚"], "role": "白鹭项目", "action": "负责", "object": "赵岚", "rank": 1, "evidence_event_ids": ["th01-e1"]},
+        {"claim_id": "th01-bridge", "text": "赵岚的个人资料", "entities": ["赵岚"], "role": "赵岚", "action": "关联", "object": "个人资料", "rank": 14, "evidence_event_ids": ["th01-e1"]},
+        {"claim_id": "th01-answer", "text": "赵岚常驻宁波", "entities": ["赵岚", "宁波"], "role": "赵岚", "action": "常驻", "object": "宁波", "rank": 15, "evidence_event_ids": ["th01-e2"]}
+      ],
+      "relations": [{"from_id": "th01-seed", "to_id": "th01-bridge", "relation": "about", "confidence": 1.0}, {"from_id": "th01-bridge", "to_id": "th01-answer", "relation": "supports", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["赵岚", "宁波"], "role_action_object": [{"role": "赵岚", "action": "常驻", "object": "宁波"}], "forbidden_entities": [], "forbidden_assertions": []}
+    },
+    {
+      "case_id": "cdev:cross_event_two_hop:02",
+      "category": "cross_event_two_hop",
+      "namespace": "cdev-th-02",
+      "question": "云杉奖获奖者的导师是谁？",
+      "answer": "云杉奖获奖者韩清的导师是陆鸣。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["韩清获得云杉奖。", "韩清的导师是陆鸣。"],
+      "claims": [
+        {"claim_id": "th02-seed", "text": "韩清获得云杉奖", "entities": ["韩清", "云杉奖"], "role": "韩清", "action": "获得", "object": "云杉奖", "rank": 1, "evidence_event_ids": ["th02-e1"]},
+        {"claim_id": "th02-bridge", "text": "韩清的学术关系", "entities": ["韩清"], "role": "韩清", "action": "关联", "object": "学术关系", "rank": 13, "evidence_event_ids": ["th02-e1"]},
+        {"claim_id": "th02-answer", "text": "韩清的导师是陆鸣", "entities": ["韩清", "陆鸣"], "role": "韩清", "action": "导师是", "object": "陆鸣", "rank": 14, "evidence_event_ids": ["th02-e2"]}
+      ],
+      "relations": [{"from_id": "th02-seed", "to_id": "th02-bridge", "relation": "about", "confidence": 1.0}, {"from_id": "th02-bridge", "to_id": "th02-answer", "relation": "supports", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["韩清", "陆鸣"], "role_action_object": [{"role": "韩清", "action": "导师是", "object": "陆鸣"}], "forbidden_entities": [], "forbidden_assertions": []}
+    },
+    {
+      "case_id": "cdev:conflict_current_value:01",
+      "category": "conflict_current_value",
+      "namespace": "cdev-cv-01",
+      "question": "当前青枫服务使用的数据库版本是什么？",
+      "answer": "当前使用河图数据库 4.2。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["青枫服务原来使用河图数据库 3.8。", "青枫服务已迁移到河图数据库 4.2。"],
+      "claims": [
+        {"claim_id": "cv01-seed", "text": "青枫服务有数据库迁移记录", "entities": ["青枫服务"], "role": "青枫服务", "action": "迁移", "object": "数据库", "rank": 1, "status": "active", "evidence_event_ids": ["cv01-e2"]},
+        {"claim_id": "cv01-old", "text": "青枫服务使用河图数据库 3.8", "entities": ["青枫服务", "河图数据库 3.8"], "role": "青枫服务", "action": "使用", "object": "河图数据库 3.8", "rank": 11, "status": "superseded", "evidence_event_ids": ["cv01-e1"]},
+        {"claim_id": "cv01-new", "text": "青枫服务使用河图数据库 4.2", "entities": ["青枫服务", "河图数据库 4.2"], "role": "青枫服务", "action": "使用", "object": "河图数据库 4.2", "rank": 12, "status": "active", "evidence_event_ids": ["cv01-e2"]}
+      ],
+      "relations": [{"from_id": "cv01-seed", "to_id": "cv01-new", "relation": "follows", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["河图数据库 4.2"], "role_action_object": [{"role": "青枫服务", "action": "使用", "object": "河图数据库 4.2"}], "forbidden_entities": ["河图数据库 3.8"], "forbidden_assertions": ["当前使用河图数据库 3.8"]}
+    },
+    {
+      "case_id": "cdev:conflict_current_value:02",
+      "category": "conflict_current_value",
+      "namespace": "cdev-cv-02",
+      "question": "现在海棠工作室的办公地址是哪里？",
+      "answer": "现在的办公地址是滨江路 18 号。",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["海棠工作室曾在湖西路 7 号办公。", "海棠工作室搬到滨江路 18 号。"],
+      "claims": [
+        {"claim_id": "cv02-seed", "text": "海棠工作室有办公地址变更记录", "entities": ["海棠工作室"], "role": "海棠工作室", "action": "变更", "object": "办公地址", "rank": 1, "status": "active", "evidence_event_ids": ["cv02-e2"]},
+        {"claim_id": "cv02-old", "text": "海棠工作室地址是湖西路 7 号", "entities": ["海棠工作室", "湖西路 7 号"], "role": "海棠工作室", "action": "办公", "object": "湖西路 7 号", "rank": 11, "status": "superseded", "evidence_event_ids": ["cv02-e1"]},
+        {"claim_id": "cv02-new", "text": "海棠工作室地址是滨江路 18 号", "entities": ["海棠工作室", "滨江路 18 号"], "role": "海棠工作室", "action": "办公", "object": "滨江路 18 号", "rank": 12, "status": "active", "evidence_event_ids": ["cv02-e2"]}
+      ],
+      "relations": [{"from_id": "cv02-seed", "to_id": "cv02-new", "relation": "follows", "confidence": 1.0}],
+      "gold": {"answerability": "answerable", "answer_entities": ["滨江路 18 号"], "role_action_object": [{"role": "海棠工作室", "action": "办公", "object": "滨江路 18 号"}], "forbidden_entities": ["湖西路 7 号"], "forbidden_assertions": ["现在的办公地址是湖西路 7 号"]}
+    },
+    {
+      "case_id": "cdev:no_answer_trap:01",
+      "category": "no_answer_trap",
+      "namespace": "cdev-na-01",
+      "question": "陈屿推荐的相机中，他最终购买了哪一台？",
+      "answer": "信息不足",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["陈屿推荐松影 X2 和海鸥 M1。", "没有记录任何购买行为。"],
+      "claims": [{"claim_id": "na01-seed", "text": "陈屿推荐松影 X2 和海鸥 M1", "entities": ["陈屿"], "role": "陈屿", "action": "推荐", "object": "松影 X2 和海鸥 M1", "rank": 1, "evidence_event_ids": ["na01-e1"]}],
+      "relations": [],
+      "gold": {"answerability": "no_answer", "answer_entities": null, "role_action_object": [], "forbidden_entities": ["松影 X2", "海鸥 M1"], "forbidden_assertions": ["陈屿购买了松影 X2", "陈屿购买了海鸥 M1"]}
+    },
+    {
+      "case_id": "cdev:no_answer_trap:02",
+      "category": "no_answer_trap",
+      "namespace": "cdev-na-02",
+      "question": "报道远帆计划的记者拥有哪套公寓？",
+      "answer": "信息不足",
+      "question_at": "2026-06-30T00:00:00+00:00",
+      "events": ["记者宋平报道远帆计划。", "没有记者房产信息。"],
+      "claims": [{"claim_id": "na02-seed", "text": "宋平报道远帆计划", "entities": ["宋平"], "role": "宋平", "action": "报道", "object": "远帆计划", "rank": 1, "evidence_event_ids": ["na02-e1"]}],
+      "relations": [],
+      "gold": {"answerability": "no_answer", "answer_entities": null, "role_action_object": [], "forbidden_entities": ["云谷公寓"], "forbidden_assertions": ["宋平拥有远帆计划"]}
+    }
+  ]
+}

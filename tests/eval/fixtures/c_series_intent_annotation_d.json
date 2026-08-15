@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "artifact_id": "c-series-intent-blind-independent-agent-d-v1",
+  "annotation_kind": "independent-agent-blind",
+  "annotator": "D",
+  "model": "gpt-5.6-terra",
+  "human_annotation": false,
+  "blind_id_rule": "sha256('c-series-intent-blind-v1|'+original_id)[:20]",
+  "annotator_visible_fields": ["blind_id", "query"],
+  "criteria": "true when the query requires a relation chain, cross-event multihop reasoning, complete enumeration, separating recommendation from execution, separating reporting from ownership, or resolving a historical conflict to the current value; false for a direct single fact or simple summarization/conversion.",
+  "raw_source_sha256": "61e81f156a00739e546de31502e3de2ffc2a2025c3391246a1852c0c2d28e36f",
+  "blind_labels_sha256": "4a639f3173ecdf09d37ce8bd98ae81433649f3a0c8674c92a3740087e7e3cd7f",
+  "adjudicated_original_id_label_runs": [
+    {"id_prefix": "intent-pos-", "start": 0, "end_inclusive": 119, "label": true},
+    {"id_prefix": "intent-neg-", "start": 0, "end_inclusive": 119, "label": false}
+  ],
+  "true_count": 120,
+  "false_count": 120,
+  "peer_agreement": 1.0,
+  "adjudication_required": 0,
+  "notes_count": 0
+}

@@ -1,0 +1,2409 @@
+{
+  "schema_version": 1,
+  "fixture_id": "c-series-intent-routing-dev-v1",
+  "intent_version": "relation-multihop-intent-v1",
+  "authoring": "deterministic_design_dev",
+  "cases": [
+    {
+      "id": "intent-pos-000",
+      "query": "奖项A000获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-001",
+      "query": "项目P001负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-002",
+      "query": "完整列出会议E002所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-003",
+      "query": "当前服务C003使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-004",
+      "query": "经理R004推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-005",
+      "query": "报道计划O005的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-006",
+      "query": "奖项A006获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-007",
+      "query": "项目P007负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-008",
+      "query": "完整列出会议E008所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-009",
+      "query": "当前服务C009使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-010",
+      "query": "经理R010推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-011",
+      "query": "报道计划O011的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-012",
+      "query": "奖项A012获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-013",
+      "query": "项目P013负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-014",
+      "query": "完整列出会议E014所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-015",
+      "query": "当前服务C015使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-016",
+      "query": "经理R016推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-017",
+      "query": "报道计划O017的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-018",
+      "query": "奖项A018获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-019",
+      "query": "项目P019负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-020",
+      "query": "完整列出会议E020所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-021",
+      "query": "当前服务C021使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-022",
+      "query": "经理R022推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-023",
+      "query": "报道计划O023的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-024",
+      "query": "奖项A024获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-025",
+      "query": "项目P025负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-026",
+      "query": "完整列出会议E026所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-027",
+      "query": "当前服务C027使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-028",
+      "query": "经理R028推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-029",
+      "query": "报道计划O029的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-030",
+      "query": "奖项A030获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-031",
+      "query": "项目P031负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-032",
+      "query": "完整列出会议E032所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-033",
+      "query": "当前服务C033使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-034",
+      "query": "经理R034推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-035",
+      "query": "报道计划O035的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-036",
+      "query": "奖项A036获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-037",
+      "query": "项目P037负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-038",
+      "query": "完整列出会议E038所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-039",
+      "query": "当前服务C039使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-040",
+      "query": "经理R040推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-041",
+      "query": "报道计划O041的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-042",
+      "query": "奖项A042获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-043",
+      "query": "项目P043负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-044",
+      "query": "完整列出会议E044所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-045",
+      "query": "当前服务C045使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-046",
+      "query": "经理R046推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-047",
+      "query": "报道计划O047的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-048",
+      "query": "奖项A048获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-049",
+      "query": "项目P049负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-050",
+      "query": "完整列出会议E050所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-051",
+      "query": "当前服务C051使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-052",
+      "query": "经理R052推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-053",
+      "query": "报道计划O053的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-054",
+      "query": "奖项A054获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-055",
+      "query": "项目P055负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-056",
+      "query": "完整列出会议E056所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-057",
+      "query": "当前服务C057使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-058",
+      "query": "经理R058推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-059",
+      "query": "报道计划O059的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-060",
+      "query": "奖项A060获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-061",
+      "query": "项目P061负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-062",
+      "query": "完整列出会议E062所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-063",
+      "query": "当前服务C063使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-064",
+      "query": "经理R064推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-065",
+      "query": "报道计划O065的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-066",
+      "query": "奖项A066获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-067",
+      "query": "项目P067负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-068",
+      "query": "完整列出会议E068所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-069",
+      "query": "当前服务C069使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-070",
+      "query": "经理R070推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-071",
+      "query": "报道计划O071的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-072",
+      "query": "奖项A072获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-073",
+      "query": "项目P073负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-074",
+      "query": "完整列出会议E074所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-075",
+      "query": "当前服务C075使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-076",
+      "query": "经理R076推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-077",
+      "query": "报道计划O077的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-078",
+      "query": "奖项A078获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-079",
+      "query": "项目P079负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-080",
+      "query": "完整列出会议E080所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-081",
+      "query": "当前服务C081使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-082",
+      "query": "经理R082推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-083",
+      "query": "报道计划O083的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-084",
+      "query": "奖项A084获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-085",
+      "query": "项目P085负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-086",
+      "query": "完整列出会议E086所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-087",
+      "query": "当前服务C087使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-088",
+      "query": "经理R088推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-089",
+      "query": "报道计划O089的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-090",
+      "query": "奖项A090获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-091",
+      "query": "项目P091负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-092",
+      "query": "完整列出会议E092所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-093",
+      "query": "当前服务C093使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-094",
+      "query": "经理R094推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-095",
+      "query": "报道计划O095的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-096",
+      "query": "奖项A096获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-097",
+      "query": "项目P097负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-098",
+      "query": "完整列出会议E098所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-099",
+      "query": "当前服务C099使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-100",
+      "query": "经理R100推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-101",
+      "query": "报道计划O101的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-102",
+      "query": "奖项A102获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-103",
+      "query": "项目P103负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-104",
+      "query": "完整列出会议E104所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-105",
+      "query": "当前服务C105使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-106",
+      "query": "经理R106推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-107",
+      "query": "报道计划O107的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-108",
+      "query": "奖项A108获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-109",
+      "query": "项目P109负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-110",
+      "query": "完整列出会议E110所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-111",
+      "query": "当前服务C111使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-112",
+      "query": "经理R112推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-113",
+      "query": "报道计划O113的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-114",
+      "query": "奖项A114获奖者的导师是谁？",
+      "category": "relation",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-115",
+      "query": "项目P115负责人的常驻城市是哪里？",
+      "category": "two_hop",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-116",
+      "query": "完整列出会议E116所有参加者。",
+      "category": "enumeration",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-117",
+      "query": "当前服务C117使用的数据库版本是什么？",
+      "category": "conflict_current",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-118",
+      "query": "经理R118推荐的方案后来执行了吗？",
+      "category": "recommendation_execution",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-pos-119",
+      "query": "报道计划O119的机构拥有哪座展馆？",
+      "category": "reporting_ownership",
+      "needs_relation_or_multihop": true,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-000",
+      "query": "记录N000提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-001",
+      "query": "请概括文档N001的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-002",
+      "query": "提醒条目N002设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-003",
+      "query": "照片N003采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-004",
+      "query": "日志N004记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-005",
+      "query": "把编号N005转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-006",
+      "query": "记录N006提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-007",
+      "query": "请概括文档N007的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-008",
+      "query": "提醒条目N008设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-009",
+      "query": "照片N009采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-010",
+      "query": "日志N010记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-011",
+      "query": "把编号N011转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-012",
+      "query": "记录N012提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-013",
+      "query": "请概括文档N013的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-014",
+      "query": "提醒条目N014设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-015",
+      "query": "照片N015采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-016",
+      "query": "日志N016记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-017",
+      "query": "把编号N017转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-018",
+      "query": "记录N018提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-019",
+      "query": "请概括文档N019的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-020",
+      "query": "提醒条目N020设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-021",
+      "query": "照片N021采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-022",
+      "query": "日志N022记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-023",
+      "query": "把编号N023转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-024",
+      "query": "记录N024提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-025",
+      "query": "请概括文档N025的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-026",
+      "query": "提醒条目N026设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-027",
+      "query": "照片N027采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-028",
+      "query": "日志N028记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-029",
+      "query": "把编号N029转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-030",
+      "query": "记录N030提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-031",
+      "query": "请概括文档N031的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-032",
+      "query": "提醒条目N032设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-033",
+      "query": "照片N033采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-034",
+      "query": "日志N034记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-035",
+      "query": "把编号N035转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-036",
+      "query": "记录N036提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-037",
+      "query": "请概括文档N037的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-038",
+      "query": "提醒条目N038设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-039",
+      "query": "照片N039采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-040",
+      "query": "日志N040记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-041",
+      "query": "把编号N041转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-042",
+      "query": "记录N042提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-043",
+      "query": "请概括文档N043的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-044",
+      "query": "提醒条目N044设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-045",
+      "query": "照片N045采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-046",
+      "query": "日志N046记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-047",
+      "query": "把编号N047转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-048",
+      "query": "记录N048提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-049",
+      "query": "请概括文档N049的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-050",
+      "query": "提醒条目N050设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-051",
+      "query": "照片N051采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-052",
+      "query": "日志N052记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-053",
+      "query": "把编号N053转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-054",
+      "query": "记录N054提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-055",
+      "query": "请概括文档N055的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-056",
+      "query": "提醒条目N056设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-057",
+      "query": "照片N057采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-058",
+      "query": "日志N058记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-059",
+      "query": "把编号N059转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-060",
+      "query": "记录N060提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-061",
+      "query": "请概括文档N061的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-062",
+      "query": "提醒条目N062设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-063",
+      "query": "照片N063采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-064",
+      "query": "日志N064记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-065",
+      "query": "把编号N065转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-066",
+      "query": "记录N066提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-067",
+      "query": "请概括文档N067的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-068",
+      "query": "提醒条目N068设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-069",
+      "query": "照片N069采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-070",
+      "query": "日志N070记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-071",
+      "query": "把编号N071转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-072",
+      "query": "记录N072提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-073",
+      "query": "请概括文档N073的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-074",
+      "query": "提醒条目N074设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-075",
+      "query": "照片N075采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-076",
+      "query": "日志N076记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-077",
+      "query": "把编号N077转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-078",
+      "query": "记录N078提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-079",
+      "query": "请概括文档N079的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-080",
+      "query": "提醒条目N080设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-081",
+      "query": "照片N081采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-082",
+      "query": "日志N082记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-083",
+      "query": "把编号N083转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-084",
+      "query": "记录N084提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-085",
+      "query": "请概括文档N085的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-086",
+      "query": "提醒条目N086设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-087",
+      "query": "照片N087采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-088",
+      "query": "日志N088记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-089",
+      "query": "把编号N089转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-090",
+      "query": "记录N090提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-091",
+      "query": "请概括文档N091的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-092",
+      "query": "提醒条目N092设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-093",
+      "query": "照片N093采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-094",
+      "query": "日志N094记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-095",
+      "query": "把编号N095转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-096",
+      "query": "记录N096提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-097",
+      "query": "请概括文档N097的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-098",
+      "query": "提醒条目N098设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-099",
+      "query": "照片N099采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-100",
+      "query": "日志N100记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-101",
+      "query": "把编号N101转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-102",
+      "query": "记录N102提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-103",
+      "query": "请概括文档N103的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-104",
+      "query": "提醒条目N104设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-105",
+      "query": "照片N105采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-106",
+      "query": "日志N106记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-107",
+      "query": "把编号N107转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-108",
+      "query": "记录N108提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-109",
+      "query": "请概括文档N109的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-110",
+      "query": "提醒条目N110设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-111",
+      "query": "照片N111采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-112",
+      "query": "日志N112记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-113",
+      "query": "把编号N113转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-114",
+      "query": "记录N114提到今天喝了咖啡吗？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-115",
+      "query": "请概括文档N115的第一段。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-116",
+      "query": "提醒条目N116设在几点？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-117",
+      "query": "照片N117采用了什么颜色？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-118",
+      "query": "日志N118记录了几度气温？",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    },
+    {
+      "id": "intent-neg-119",
+      "query": "把编号N119转换为十六进制。",
+      "category": "negative",
+      "needs_relation_or_multihop": false,
+      "provenance": {
+        "authoring": "deterministic_design_dev",
+        "label_source": "protocol_rule_review"
+      }
+    }
+  ]
+}
+
