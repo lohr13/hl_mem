@@ -153,3 +153,75 @@ def bootstrap_ci(
     lower = samples[max(0, math.floor(tail * len(samples)))]
     upper = samples[min(len(samples) - 1, math.ceil((1.0 - tail) * len(samples)) - 1)]
     return (lower, upper)
+
+
+def _validate_cluster_sample(
+    values: Sequence[float],
+    clusters: Sequence[str],
+    *,
+    confidence: float,
+    resamples: int,
+) -> None:
+    if not values:
+        raise ValueError("values must not be empty")
+    if len(values) != len(clusters):
+        raise ValueError("values and clusters must have equal length")
+    if any(not cluster for cluster in clusters):
+        raise ValueError("cluster labels must not be empty")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be between 0 and 1")
+    if resamples <= 0:
+        raise ValueError("resamples must be positive")
+
+
+def _percentile_interval(samples: Sequence[float], confidence: float) -> tuple[float, float]:
+    ordered = sorted(samples)
+    tail = (1.0 - confidence) / 2.0
+    lower = ordered[max(0, math.floor(tail * len(ordered)))]
+    upper = ordered[min(len(ordered) - 1, math.ceil((1.0 - tail) * len(ordered)) - 1)]
+    return (lower, upper)
+
+
+def cluster_bootstrap_ci(
+    values: Sequence[float],
+    clusters: Sequence[str],
+    confidence: float = 0.95,
+    seed: int = 42,
+    resamples: int = 2000,
+) -> tuple[float, float]:
+    """Bootstrap a case-weighted mean while resampling whole clusters."""
+
+    _validate_cluster_sample(values, clusters, confidence=confidence, resamples=resamples)
+    grouped: dict[str, list[float]] = {}
+    for value, cluster in zip(values, clusters, strict=True):
+        grouped.setdefault(cluster, []).append(float(value))
+    labels = tuple(grouped)
+    generator = random.Random(seed)
+    samples: list[float] = []
+    for _ in range(resamples):
+        selected = [generator.choice(labels) for _ in labels]
+        observations = [value for label in selected for value in grouped[label]]
+        samples.append(sum(observations) / len(observations))
+    return _percentile_interval(samples, confidence)
+
+
+def paired_cluster_bootstrap_ci(
+    control: Sequence[float],
+    treatment: Sequence[float],
+    clusters: Sequence[str],
+    confidence: float = 0.95,
+    seed: int = 42,
+    resamples: int = 2000,
+) -> tuple[float, float]:
+    """Bootstrap paired treatment-minus-control differences by cluster."""
+
+    if len(control) != len(treatment):
+        raise ValueError("control and treatment must have equal length")
+    differences = [float(right) - float(left) for left, right in zip(control, treatment, strict=True)]
+    return cluster_bootstrap_ci(
+        differences,
+        clusters,
+        confidence=confidence,
+        seed=seed,
+        resamples=resamples,
+    )
