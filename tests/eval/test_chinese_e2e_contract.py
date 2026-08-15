@@ -36,7 +36,7 @@ def test_manifest_keeps_the_paid_sample_fixed_and_stratified() -> None:
     """Removing a slice or silently changing the paid sample must break offline validation."""
     manifest = load_sample_manifest(SAMPLE_MANIFEST_PATH)
 
-    assert manifest.schema_version == 2
+    assert manifest.schema_version == 3
     assert manifest.perltqa_question_count == 28
     assert manifest.memdaily_question_count == 12
     assert {dataset: len(case_ids) for dataset, case_ids in manifest.expected_case_ids.items()} == {

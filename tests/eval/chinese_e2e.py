@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, fields, replace
@@ -28,6 +29,7 @@ AnswerRubric = tuple[tuple[str, ...], ...]
 AcceptedRubrics = tuple[AnswerRubric, ...]
 
 SCORER_VERSION = "deterministic-rubric-v2"
+ANSWER_ENTITY_SCORER_VERSION = "answer-entity-packet-v1"
 OVERALL_QA_ACCURACY_MINIMUM = 0.90
 
 # ── Monkey-patch QA to enable thinking for multi-hop reasoning ──────────────
@@ -111,6 +113,22 @@ class GateFailure:
 
 
 @dataclass(frozen=True)
+class RoleActionObject:
+    role: str
+    action: str
+    object: str
+
+
+@dataclass(frozen=True)
+class AnswerEntityGold:
+    answerability: str
+    answer_entities: tuple[str, ...] | None
+    role_action_object: tuple[RoleActionObject, ...]
+    forbidden_entities: tuple[str, ...]
+    forbidden_assertions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class E2EQuestion:
     case_id: str
     category: str
@@ -118,6 +136,7 @@ class E2EQuestion:
     answer: str
     answer_anchors: tuple[str, ...]
     accepted_rubrics: AcceptedRubrics
+    answer_entity_gold: AnswerEntityGold
     namespace: str
     gold_event_ids: tuple[str, ...]
 
@@ -145,6 +164,8 @@ class E2ESampleManifest:
     perltqa: dict[str, Any]
     memdaily: dict[str, Any]
     accepted_rubrics_by_question_hash: dict[str, AcceptedRubrics]
+    answer_entity_scorer_version: str | None
+    answer_entity_gold_by_case_id: dict[str, AnswerEntityGold]
 
     @property
     def perltqa_question_count(self) -> int:
@@ -255,11 +276,95 @@ def _parse_accepted_rubrics(
     return parsed
 
 
+def _nfc_string_list(value: object, label: str) -> tuple[str, ...]:
+    items = tuple(str(item).strip() for item in _required_list(value, label))
+    if any(not item for item in items):
+        raise SampleManifestError(f"{label} must contain non-empty strings")
+    if len(items) != len(set(items)):
+        raise SampleManifestError(f"{label} must not contain duplicates")
+    if any(item != unicodedata.normalize("NFC", item) for item in items):
+        raise SampleManifestError(f"{label} must contain NFC-normalized strings")
+    return items
+
+
+def _parse_answer_entity_gold(
+    value: object,
+    *,
+    schema_version: int,
+    expected_case_ids: set[str],
+) -> dict[str, AnswerEntityGold]:
+    if value is None:
+        if schema_version >= 3:
+            raise SampleManifestError("answer_entity_gold is required by manifest schema_version 3")
+        return {}
+    if schema_version < 3:
+        raise SampleManifestError("answer_entity_gold requires manifest schema_version 3")
+
+    raw_by_case = _required_mapping(value, "answer_entity_gold")
+    actual_case_ids = set(raw_by_case)
+    if actual_case_ids != expected_case_ids:
+        missing = sorted(expected_case_ids - actual_case_ids)
+        unexpected = sorted(actual_case_ids - expected_case_ids)
+        raise SampleManifestError(
+            f"answer_entity_gold case set mismatch: missing={missing!r}, unexpected={unexpected!r}"
+        )
+
+    parsed: dict[str, AnswerEntityGold] = {}
+    required_keys = {
+        "answerability",
+        "role_action_object",
+        "forbidden_entities",
+        "forbidden_assertions",
+    }
+    for case_id, raw_gold in raw_by_case.items():
+        label = f"answer_entity_gold.{case_id}"
+        gold = _required_mapping(raw_gold, label)
+        answerability = str(gold.get("answerability") or "").strip()
+        allowed_keys = required_keys | ({"answer_entities"} if answerability == "answerable" else set())
+        if set(gold) != allowed_keys:
+            raise SampleManifestError(f"{label} must contain exactly {sorted(allowed_keys)!r}")
+        if answerability not in {"answerable", "no_answer"}:
+            raise SampleManifestError(f"{label}.answerability must be answerable or no_answer")
+
+        answer_entities: tuple[str, ...] | None = None
+        if answerability == "answerable":
+            answer_entities = _nfc_string_list(gold["answer_entities"], f"{label}.answer_entities")
+            if not answer_entities:
+                raise SampleManifestError(f"{label}.answer_entities must not be empty")
+
+        chains: list[RoleActionObject] = []
+        for index, raw_chain in enumerate(_required_list(gold["role_action_object"], f"{label}.role_action_object")):
+            chain_label = f"{label}.role_action_object[{index}]"
+            chain = _required_mapping(raw_chain, chain_label)
+            if set(chain) != {"role", "action", "object"}:
+                raise SampleManifestError(f"{chain_label} must contain role, action, and object")
+            values = {key: str(chain[key]).strip() for key in ("role", "action", "object")}
+            if any(not item or item != unicodedata.normalize("NFC", item) for item in values.values()):
+                raise SampleManifestError(f"{chain_label} values must be non-empty NFC strings")
+            chains.append(RoleActionObject(**values))
+
+        forbidden_entities = _nfc_string_list(gold["forbidden_entities"], f"{label}.forbidden_entities")
+        forbidden_assertions = _nfc_string_list(
+            gold["forbidden_assertions"],
+            f"{label}.forbidden_assertions",
+        )
+        if answerability == "no_answer" and not (forbidden_entities or forbidden_assertions):
+            raise SampleManifestError(f"{label} no-answer gold requires a forbidden set")
+        parsed[case_id] = AnswerEntityGold(
+            answerability=answerability,
+            answer_entities=answer_entities,
+            role_action_object=tuple(chains),
+            forbidden_entities=forbidden_entities,
+            forbidden_assertions=forbidden_assertions,
+        )
+    return parsed
+
+
 def load_sample_manifest(path: Path) -> E2ESampleManifest:
     raw = _required_mapping(json.loads(path.read_text(encoding="utf-8")), "manifest")
     schema_version = raw.get("schema_version")
-    if schema_version not in {1, 2}:
-        raise SampleManifestError("Chinese E2E manifest schema_version must be 1 or 2")
+    if schema_version not in {1, 2, 3}:
+        raise SampleManifestError("Chinese E2E manifest schema_version must be 1, 2, or 3")
     sources_raw = _required_mapping(raw.get("sources"), "sources")
     sources: dict[str, dict[str, str]] = {}
     for name, value in sources_raw.items():
@@ -325,6 +430,8 @@ def load_sample_manifest(path: Path) -> E2ESampleManifest:
         perltqa={**perltqa, "personas": personas},
         memdaily={**memdaily, "case_ids": case_ids},
         accepted_rubrics_by_question_hash=accepted_rubrics,
+        answer_entity_scorer_version=None,
+        answer_entity_gold_by_case_id={},
     )
     if not manifest.sample_id:
         raise SampleManifestError("sample_id is required")
@@ -337,7 +444,19 @@ def load_sample_manifest(path: Path) -> E2ESampleManifest:
     expected_case_ids = [case_id for case_ids in manifest.expected_case_ids.values() for case_id in case_ids]
     if len(expected_case_ids) != len(set(expected_case_ids)):
         raise SampleManifestError("derived Chinese E2E case IDs must be unique")
-    return manifest
+    scorer_version = raw.get("answer_entity_scorer_version")
+    if schema_version >= 3 and scorer_version != ANSWER_ENTITY_SCORER_VERSION:
+        raise SampleManifestError(f"answer_entity_scorer_version must be {ANSWER_ENTITY_SCORER_VERSION!r}")
+    gold_by_case_id = _parse_answer_entity_gold(
+        raw.get("answer_entity_gold"),
+        schema_version=int(schema_version),
+        expected_case_ids=set(expected_case_ids),
+    )
+    return replace(
+        manifest,
+        answer_entity_scorer_version=str(scorer_version) if scorer_version is not None else None,
+        answer_entity_gold_by_case_id=gold_by_case_id,
+    )
 
 
 def verify_source_hashes(sources: Mapping[str, Mapping[str, str]]) -> None:
@@ -450,6 +569,9 @@ def _resolve_perltqa_bundles(manifest: E2ESampleManifest) -> tuple[PerLTQABundle
                         answer=question.answer,
                         answer_anchors=next(iter(anchor_options)),
                         accepted_rubrics=manifest.accepted_rubrics_by_question_hash.get(str(question_hash), ()),
+                        answer_entity_gold=manifest.answer_entity_gold_by_case_id[
+                            f"perltqa:{_sha256_text(name)[:12]}:{category}:{str(question_hash)[:12]}"
+                        ],
                         namespace=namespace,
                         gold_event_ids=(target_event_id,),
                     )
@@ -636,6 +758,79 @@ def score_answer(
     }
 
 
+def _rank_within(value: object, k: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= k
+
+
+def _top_seed_packet_entities(retrieved: Sequence[Mapping[str, Any]], k: int) -> set[str]:
+    entities: set[str] = set()
+    for item in retrieved:
+        expanded_ranks = item.get("expanded_from_seed_ranks")
+        from_top_seed = _rank_within(item.get("seed_rank"), k) or (
+            isinstance(expanded_ranks, Sequence)
+            and not isinstance(expanded_ranks, (str, bytes))
+            and any(_rank_within(rank, k) for rank in expanded_ranks)
+        )
+        if not from_top_seed:
+            continue
+        raw_entities = item.get("entities")
+        if not isinstance(raw_entities, Sequence) or isinstance(raw_entities, (str, bytes)):
+            continue
+        entities.update(
+            unicodedata.normalize("NFC", str(entity).strip()) for entity in raw_entities if str(entity).strip()
+        )
+    return entities
+
+
+def score_answer_entity_packet(
+    retrieved: Sequence[Mapping[str, Any]],
+    gold: AnswerEntityGold,
+    *,
+    answer_text: str,
+    k: int = 5,
+) -> dict[str, Any]:
+    """Score exact NFC entities in the final packet attributable to Top-k seeds."""
+    if k < 1:
+        raise ValueError("k must be positive")
+    packet_entities = _top_seed_packet_entities(retrieved, k)
+    normalized_answer = unicodedata.normalize("NFC", answer_text)
+    forbidden_entity_hits = [
+        entity for entity in gold.forbidden_entities if entity in packet_entities or entity in normalized_answer
+    ]
+    forbidden_assertion_hits = [assertion for assertion in gold.forbidden_assertions if assertion in normalized_answer]
+
+    covered_entities: list[str] = []
+    missing_entities: list[str] = []
+    coverage: float | None = None
+    if gold.answer_entities is not None:
+        covered_entities = [entity for entity in gold.answer_entities if entity in packet_entities]
+        missing_entities = [entity for entity in gold.answer_entities if entity not in packet_entities]
+        coverage = len(covered_entities) / len(gold.answer_entities)
+    return {
+        "entity_coverage_at_5": coverage,
+        "covered_entities": covered_entities,
+        "missing_entities": missing_entities,
+        "forbidden_entity_hits": forbidden_entity_hits,
+        "forbidden_assertion_hits": forbidden_assertion_hits,
+        "negative_violation": bool(forbidden_entity_hits or forbidden_assertion_hits),
+        "scorer_version": ANSWER_ENTITY_SCORER_VERSION,
+    }
+
+
+def aggregate_answer_entity_scores(scores: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Macro-average answerable cases so multi-entity questions cannot dominate."""
+    coverages = [
+        float(score["entity_coverage_at_5"]) for score in scores if score.get("entity_coverage_at_5") is not None
+    ]
+    violations = [bool(score.get("negative_violation")) for score in scores]
+    return {
+        "entity_coverage_at_5": _mean(coverages),
+        "entity_coverage_cases": len(coverages),
+        "no_answer_cases": len(scores) - len(coverages),
+        "negative_violation_rate": _mean([float(value) for value in violations]),
+    }
+
+
 def covered_gold_events(connection: Any, gold_event_ids: Sequence[str]) -> tuple[str, ...]:
     """Return gold events that produced at least one stored claim evidence link."""
     ordered = tuple(dict.fromkeys(str(item) for item in gold_event_ids))
@@ -676,7 +871,7 @@ def _aggregate_group(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     ]
     gold_units = {str(item) for case in cases for item in case.get("gold_extraction_units", [])}
     covered_units = {str(item) for case in cases for item in case.get("covered_extraction_units", [])} & gold_units
-    return {
+    result = {
         "cases": len(cases),
         "successful_cases": len(successful),
         "failed_cases": len(cases) - len(successful),
@@ -688,6 +883,12 @@ def _aggregate_group(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "gold_extraction_units": len(gold_units),
         "covered_extraction_units": len(covered_units),
     }
+    answer_entity_scores = [
+        case["answer_entity"] for case in successful if isinstance(case.get("answer_entity"), Mapping)
+    ]
+    if answer_entity_scores:
+        result.update(aggregate_answer_entity_scores(answer_entity_scores))
+    return result
 
 
 def aggregate_results(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -831,7 +1032,7 @@ def normalize_benchmark_case(
     provenance_scores = score_retrieved_evidence(retrieved, gold_event_ids, k=5)
     retrieval_raw = raw.get("retrieval") if isinstance(raw.get("retrieval"), Mapping) else {}
     recall_at_5 = retrieval_raw.get("recall_at_5", provenance_scores["recall_at_5"])
-    return {
+    result = {
         "dataset": dataset,
         "case_id": str(raw.get("case_id") or ""),
         "slice": slice_name,
@@ -852,6 +1053,28 @@ def normalize_benchmark_case(
         "error": raw.get("error"),
         "elapsed_seconds": raw.get("elapsed_seconds"),
     }
+    raw_gold = raw.get("answer_entity_gold")
+    if isinstance(raw_gold, AnswerEntityGold):
+        gold = raw_gold
+    elif isinstance(raw_gold, Mapping):
+        case_id = str(raw.get("case_id") or "runtime")
+        gold = _parse_answer_entity_gold(
+            {case_id: raw_gold},
+            schema_version=3,
+            expected_case_ids={case_id},
+        )[case_id]
+    else:
+        gold = None
+    if gold is not None:
+        qa = raw.get("qa") if isinstance(raw.get("qa"), Mapping) else {}
+        result["answer_entity_gold"] = asdict(gold)
+        result["answer_entity"] = score_answer_entity_packet(
+            retrieved,
+            gold,
+            answer_text=str(qa.get("predicted_answer") or ""),
+            k=5,
+        )
+    return result
 
 
 def _run_accounting(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -904,9 +1127,10 @@ def build_e2e_report(
     failures.extend(_evaluate_slice_gate(metrics["by_slice"], manifest.slice_counts))
     accounting = _run_accounting(cases)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "benchmark": "chinese_e2e",
         "scorer_version": SCORER_VERSION,
+        "answer_entity_scorer_version": manifest.answer_entity_scorer_version,
         "status": status,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sample": {
@@ -1007,6 +1231,7 @@ def _base_raw_question(question: E2EQuestion, ingest: Mapping[str, Any] | None) 
         "accepted_rubrics": [
             {"required_concepts": [list(concept) for concept in rubric]} for rubric in question.accepted_rubrics
         ],
+        "answer_entity_gold": asdict(question.answer_entity_gold),
         "gold_event_ids": list(question.gold_event_ids),
         "ingest": dict(ingest) if isinstance(ingest, Mapping) else None,
         "retrieval": None,
@@ -1178,6 +1403,7 @@ def _run_perltqa_bundle(
 
 def _run_memdaily_cases(
     trajectories: Sequence[MemDailyTrajectory],
+    answer_entity_gold_by_case_id: Mapping[str, AnswerEntityGold],
     settings: Settings,
     embedder: Any,
     reranker: Any,
@@ -1205,6 +1431,7 @@ def _run_memdaily_cases(
                 case_number=case_number,
                 total=total,
             )
+            raw["answer_entity_gold"] = asdict(answer_entity_gold_by_case_id[trajectory.case_id])
             database_path = memdaily_benchmark._case_db_path(trajectory.case_id)
             covered = _open_coverage(database_path, settings, trajectory.gold_event_ids)
             result = normalize_benchmark_case(
@@ -1285,6 +1512,7 @@ def run_chinese_e2e(
         cases.extend(
             _run_memdaily_cases(
                 sampled.memdaily_trajectories,
+                manifest.answer_entity_gold_by_case_id,
                 settings,
                 embedder,
                 reranker,

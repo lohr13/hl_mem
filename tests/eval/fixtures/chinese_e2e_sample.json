@@ -1,6 +1,306 @@
 {
-  "schema_version": 2,
-  "sample_id": "zh-e2e-v2",
+  "schema_version": 3,
+  "sample_id": "zh-e2e-v3",
+  "answer_entity_scorer_version": "answer-entity-packet-v1",
+  "answer_entity_gold": {
+    "perltqa:0709ec234e33:profile:121b3776babc": {
+      "answerability": "answerable",
+      "answer_entities": ["佳佳"],
+      "role_action_object": [{"role": "徐佳", "action": "昵称是", "object": "佳佳"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:0709ec234e33:social_relationship:240facd9c629": {
+      "answerability": "answerable",
+      "answer_entities": ["刘晓"],
+      "role_action_object": [{"role": "徐佳", "action": "高中同学是", "object": "刘晓"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:0709ec234e33:social_relationship:7b6b2c31b857": {
+      "answerability": "answerable",
+      "answer_entities": ["徐佳", "刘晓"],
+      "role_action_object": [{"role": "徐佳", "action": "与刘晓的关系是", "object": "同学"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:0709ec234e33:events:4a3607094e6c": {
+      "answerability": "answerable",
+      "answer_entities": ["电影"],
+      "role_action_object": [{"role": "张丽", "action": "询问", "object": "电影相关问题"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:0709ec234e33:events:76906e779dac": {
+      "answerability": "answerable",
+      "answer_entities": ["2012年"],
+      "role_action_object": [{"role": "陈刚", "action": "开始电影摄影", "object": "2012年"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:0709ec234e33:dialogues:77cdfec7b17e": {
+      "answerability": "answerable",
+      "answer_entities": ["电影"],
+      "role_action_object": [{"role": "陈刚", "action": "对拍摄有见解", "object": "电影"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:0709ec234e33:dialogues:7336d023b16e": {
+      "answerability": "answerable",
+      "answer_entities": ["电影故事情节"],
+      "role_action_object": [{"role": "陈刚", "action": "感兴趣", "object": "电影故事情节"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:23d905b73c57:profile:5eac85f982dc": {
+      "answerability": "answerable",
+      "answer_entities": ["黑色头发", "黑色眼睛", "健康肤色"],
+      "role_action_object": [{"role": "李明", "action": "外貌特征", "object": "黑色头发、黑色眼睛和健康肤色"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:23d905b73c57:social_relationship:ee0f8dfaec16": {
+      "answerability": "answerable",
+      "answer_entities": ["刘梅"],
+      "role_action_object": [{"role": "李明", "action": "初次遇见", "object": "刘梅"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:23d905b73c57:social_relationship:fb560d262dc7": {
+      "answerability": "answerable",
+      "answer_entities": ["张小红", "刘梅"],
+      "role_action_object": [{"role": "张小红", "action": "与刘梅的关系是", "object": "陌生人"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:23d905b73c57:events:4d6dcb33c587": {
+      "answerability": "answerable",
+      "answer_entities": ["华尔街金融集团", "高盛"],
+      "role_action_object": [
+        {"role": "李磊", "action": "推荐", "object": "华尔街金融集团债券"},
+        {"role": "李磊", "action": "推荐", "object": "高盛债券"}
+      ],
+      "forbidden_entities": [],
+      "forbidden_assertions": ["李明已经购买华尔街金融集团债券", "李明已经购买高盛债券"]
+    },
+    "perltqa:23d905b73c57:events:7471a4be405b": {
+      "answerability": "answerable",
+      "answer_entities": ["原油", "黄金", "铜"],
+      "role_action_object": [
+        {"role": "李磊", "action": "推荐投资", "object": "原油"},
+        {"role": "李磊", "action": "推荐投资", "object": "黄金"},
+        {"role": "李磊", "action": "推荐投资", "object": "铜"}
+      ],
+      "forbidden_entities": [],
+      "forbidden_assertions": ["李明已经买入原油", "李明已经买入黄金", "李明已经买入铜"]
+    },
+    "perltqa:23d905b73c57:dialogues:1edd39074cf1": {
+      "answerability": "answerable",
+      "answer_entities": ["个体自由", "个体成长", "超越传统道德观念"],
+      "role_action_object": [{"role": "尼采哲学", "action": "强调", "object": "个体自由、个体成长与超越传统道德观念"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:23d905b73c57:dialogues:836f6182a0a9": {
+      "answerability": "answerable",
+      "answer_entities": ["自由界限", "与他人共处", "独立想法", "真正欲望"],
+      "role_action_object": [{"role": "李明", "action": "实践自由", "object": "认识自由界限、与他人共处、保持独立想法并发现真正欲望"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ae36aa475cc:profile:91b059d0d213": {
+      "answerability": "answerable",
+      "answer_entities": ["30岁"],
+      "role_action_object": [{"role": "熊飞", "action": "年龄是", "object": "30岁"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ae36aa475cc:social_relationship:362879793b73": {
+      "answerability": "answerable",
+      "answer_entities": ["张强", "熊飞", "中国", "建筑师", "篮球", "摄影"],
+      "role_action_object": [{"role": "张强", "action": "是熊飞的同学且职业是", "object": "建筑师"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ae36aa475cc:social_relationship:5a9b1bb8a2bb": {
+      "answerability": "answerable",
+      "answer_entities": ["熊飞", "张强"],
+      "role_action_object": [{"role": "熊飞", "action": "与张强的关系是", "object": "同学"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ae36aa475cc:events:03de9c2f47ea": {
+      "answerability": "answerable",
+      "answer_entities": ["王敏", "中国"],
+      "role_action_object": [{"role": "王敏", "action": "国籍是", "object": "中国"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ae36aa475cc:events:0dc75b658086": {
+      "answerability": "answerable",
+      "answer_entities": ["Meet World", "兴趣爱好", "生物医学科学成就"],
+      "role_action_object": [{"role": "小飞", "action": "决定创建个人资料展示", "object": "兴趣爱好与生物医学科学成就"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": ["小飞已经在Meet World创建个人资料", "小飞已经展示兴趣爱好与生物医学科学成就"]
+    },
+    "perltqa:2ae36aa475cc:dialogues:0d532ef7647f": {
+      "answerability": "answerable",
+      "answer_entities": ["《胚胎》", "新生婴儿真实状态"],
+      "role_action_object": [{"role": "熊飞", "action": "被触动", "object": "《胚胎》呈现的新生婴儿真实状态"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ae36aa475cc:dialogues:33f8eac60585": {
+      "answerability": "answerable",
+      "answer_entities": ["刘芳", "《胚胎》", "人类存在本质"],
+      "role_action_object": [{"role": "刘芳", "action": "认为《胚胎》揭示", "object": "人类存在本质"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ceebb337754:profile:fd16e584ecdd": {
+      "answerability": "answerable",
+      "answer_entities": ["阅读", "写作", "摄影"],
+      "role_action_object": [{"role": "许慧", "action": "爱好", "object": "阅读、写作和摄影"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ceebb337754:social_relationship:c645b95d388e": {
+      "answerability": "answerable",
+      "answer_entities": ["许慧", "杨晓"],
+      "role_action_object": [{"role": "许慧", "action": "与杨晓的关系是", "object": "同事"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ceebb337754:social_relationship:dc0a4055bb49": {
+      "answerability": "answerable",
+      "answer_entities": ["杨晓"],
+      "role_action_object": [{"role": "许慧", "action": "合作", "object": "杨晓"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ceebb337754:events:2825172d6952": {
+      "answerability": "answerable",
+      "answer_entities": ["媒体传播", "社会观念"],
+      "role_action_object": [{"role": "许慧的研究发现", "action": "影响", "object": "媒体传播与社会观念"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ceebb337754:events:5e2fae77f0b5": {
+      "answerability": "answerable",
+      "answer_entities": ["媒体", "公众意识形态"],
+      "role_action_object": [{"role": "王明的方法", "action": "通过媒体影响", "object": "公众意识形态"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ceebb337754:dialogues:24f99bbbc8ec": {
+      "answerability": "answerable",
+      "answer_entities": ["高分辨率染色体构象捕获技术", "肿瘤细胞样本", "荧光原位杂交技术", "染色体位置与结构"],
+      "role_action_object": [
+        {"role": "研究团队", "action": "应用高分辨率染色体构象捕获技术", "object": "肿瘤细胞样本"},
+        {"role": "研究团队", "action": "结合荧光原位杂交技术验证", "object": "染色体位置与结构"}
+      ],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "perltqa:2ceebb337754:dialogues:375593a84122": {
+      "answerability": "answerable",
+      "answer_entities": ["染色体三维结构", "癌症发展", "染色体结构异常"],
+      "role_action_object": [{"role": "染色体三维结构异常", "action": "关联", "object": "癌症发展"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:simple:events:40": {
+      "answerability": "answerable",
+      "answer_entities": ["音乐律动健身趴", "现场音乐会", "节奏训练", "健身操"],
+      "role_action_object": [{"role": "音乐律动健身趴", "action": "包含", "object": "现场音乐会、节奏训练和健身操"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:simple:events:60": {
+      "answerability": "answerable",
+      "answer_entities": ["未来科技精英汇", "2024年04月12日09:00"],
+      "role_action_object": [{"role": "未来科技精英汇", "action": "举行时间", "object": "2024年04月12日09:00"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:conditional:events:73": {
+      "answerability": "answerable",
+      "answer_entities": ["烹饪乐聚团建盛宴", "广东深圳"],
+      "role_action_object": [{"role": "烹饪乐聚团建盛宴", "action": "举行地点", "object": "广东深圳"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:conditional:events:60": {
+      "answerability": "answerable",
+      "answer_entities": ["美食旋律盛宴", "美食", "现场音乐会"],
+      "role_action_object": [{"role": "美食旋律盛宴", "action": "包含", "object": "美食与现场音乐会"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:comparative:events:60": {
+      "answerability": "answerable",
+      "answer_entities": ["美食旋律盛宴"],
+      "role_action_object": [{"role": "美食旋律盛宴", "action": "参与人数多于", "object": "自然徒步音乐会"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:comparative:events:27": {
+      "answerability": "answerable",
+      "answer_entities": ["航空服务创新峰会"],
+      "role_action_object": [{"role": "航空服务创新峰会", "action": "参与人数最多", "object": "同组活动"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:aggregative:events:13": {
+      "answerability": "answerable",
+      "answer_entities": ["2个", "智能科技新品发布盛典", "研发总监年终盛典"],
+      "role_action_object": [
+        {"role": "智能科技新品发布盛典", "action": "参与人数大于", "object": "1000人"},
+        {"role": "研发总监年终盛典", "action": "参与人数大于", "object": "1000人"}
+      ],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:aggregative:events:8": {
+      "answerability": "answerable",
+      "answer_entities": ["3个", "设计总监项目启动会", "设计前沿论坛", "美食盛宴·高球趣"],
+      "role_action_object": [
+        {"role": "设计总监项目启动会", "action": "参与人数大于", "object": "500人"},
+        {"role": "设计前沿论坛", "action": "参与人数大于", "object": "500人"},
+        {"role": "美食盛宴·高球趣", "action": "参与人数大于", "object": "500人"}
+      ],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:post_processing:events:15": {
+      "answerability": "answerable",
+      "answer_entities": ["杭州西湖团队行", "浙江杭州"],
+      "role_action_object": [{"role": "杭州西湖团队行", "action": "举行地点", "object": "浙江杭州"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:post_processing:events:93": {
+      "answerability": "answerable",
+      "answer_entities": ["销售创新研讨会", "2024年04月15日09:00"],
+      "role_action_object": [{"role": "销售创新研讨会", "action": "举行时间", "object": "2024年04月15日09:00"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:noisy:events:29": {
+      "answerability": "answerable",
+      "answer_entities": ["全球美食影像盛宴", "北京"],
+      "role_action_object": [{"role": "全球美食影像盛宴", "action": "举行地点", "object": "北京"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    },
+    "memdaily:noisy:events:10": {
+      "answerability": "answerable",
+      "answer_entities": ["教育产业发展论坛"],
+      "role_action_object": [{"role": "目标活动", "action": "是", "object": "教育产业发展论坛"}],
+      "forbidden_entities": [],
+      "forbidden_assertions": []
+    }
+  },
   "sources": {
     "perltqa_memory": {
       "path": "D:/workspace/PerLTQA/Dataset/zh/perltmem.json",

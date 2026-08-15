@@ -597,6 +597,14 @@ def _recall_trajectory(
     )
     raw_results = response.get("results") or []
     results = [dict(item) for item in raw_results if isinstance(item, Mapping)]
+    search_trace = response.get("search_trace")
+    candidates = search_trace.get("candidates") if isinstance(search_trace, Mapping) else {}
+    trace_candidates = candidates if isinstance(candidates, Mapping) else {}
+    pre_rank_by_id = {
+        str(claim_id): candidate.get("pre_rank")
+        for claim_id, candidate in trace_candidates.items()
+        if isinstance(candidate, Mapping)
+    }
 
     claim_values = _claim_values(connection)
     claim_evidence = _claim_evidence_ids(connection)
@@ -605,6 +613,17 @@ def _recall_trajectory(
     for rank, result in enumerate(results, start=1):
         claim_id = str(result.get("id") or "")
         evidence_ids = claim_evidence.get(claim_id, [])
+        candidate = trace_candidates.get(claim_id)
+        relation_paths = candidate.get("relation_paths", []) if isinstance(candidate, Mapping) else []
+        expanded_from_seed_ranks = sorted(
+            {
+                seed_rank
+                for path in relation_paths
+                if isinstance(path, Mapping)
+                and isinstance((seed_rank := pre_rank_by_id.get(str(path.get("seed_id") or ""))), int)
+                and not isinstance(seed_rank, bool)
+            }
+        )
         retrieved_payload.append(
             {
                 "rank": rank,
@@ -613,6 +632,9 @@ def _recall_trajectory(
                 "value": claim_values.get(claim_id, ""),
                 "score": result.get("score"),
                 "evidence_event_ids": evidence_ids,
+                "entities": [str(item) for item in result.get("entities") or []],
+                "seed_rank": candidate.get("pre_rank") if isinstance(candidate, Mapping) else None,
+                "expanded_from_seed_ranks": expanded_from_seed_ranks,
             }
         )
 
