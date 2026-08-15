@@ -26,6 +26,7 @@ from hl_mem.domain.claims.conflicts import compute_claim_pair_key
 from hl_mem.lifecycle import assert_transition
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
+from hl_mem.workers.integrity import audit_dangling_references
 from hl_mem.workers.read_only import open_read_only_connection
 
 ACTIVE_EXACT_DUPLICATES_SQL = (
@@ -149,8 +150,14 @@ def audit_active_claims(connection: Any) -> dict[str, Any]:
     active_invariants_healthy = not exact_groups and not conflict_groups
     terminal_coexist = _terminal_coexist_conflicts(connection)
     dangling = find_dangling_conflict_references(connection)
+    dangling_references = audit_dangling_references(connection)
     return {
-        "healthy": active_invariants_healthy and not terminal_coexist and not dangling,
+        "healthy": (
+            active_invariants_healthy
+            and not terminal_coexist
+            and not dangling
+            and dangling_references["total_count"] == 0
+        ),
         "active_invariants_healthy": active_invariants_healthy,
         "exact_duplicates": {
             "group_count": len(exact_groups),
@@ -171,6 +178,7 @@ def audit_active_claims(connection: Any) -> dict[str, Any]:
             "case_count": len(dangling),
             "cases": dangling,
         },
+        "dangling_references": dangling_references,
     }
 
 

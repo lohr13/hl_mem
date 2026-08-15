@@ -10,6 +10,7 @@ from hl_mem.application.deletion import DeletionRejectedError, DeletionService
 from hl_mem.application.forget import ForgetService
 from hl_mem.storage.database import Database
 from hl_mem.storage.tombstones import TOMBSTONE_SCHEMA_VERSION, TombstoneLedger
+from hl_mem.workers.repair_active_claims import audit_active_claims
 
 NOW = "2026-08-15T00:00:00+00:00"
 P0_STATUSES = ("active", "archived", "superseded")
@@ -288,6 +289,7 @@ def test_delete_closure_removes_references_and_stales_derivation(deletion_store)
     assert connection.execute("SELECT supersedes_id FROM claims WHERE id='other'").fetchone()[0] is None
     assert connection.execute("SELECT superseded_by_id FROM claims WHERE id='inbound'").fetchone()[0] is None
     assert connection.execute("SELECT 1 FROM events WHERE id='event-target'").fetchone() is None
+    assert audit_active_claims(connection)["dangling_references"]["total_count"] == 0
 
 
 def test_archived_cleanup_reuses_closure_and_reports_rejections(deletion_store) -> None:
