@@ -202,6 +202,7 @@ by migration and still require the explicit audit/repair workflow.
 | MemDaily · v0.26.0 (2026-08-15) | 180 trajectories, extraction → recall → QA | **97.2% accuracy, F1 0.9855, R@5 97.5%** |
 | PerLTQA · v0.26.0 (2026-08-15) | 378 questions, 10 characters, retrieval-only | **R@5 96.8%, MRR 82.8%** |
 | Chinese E2E · v0.26.0 (2026-08-15) | 40 cases, live `deterministic-rubric-v2` | **38/40 (95.0%)**; R@5 **100%** |
+| v0.27.1 behavior-change validation (2026-08-15) | Reuses the v0.26.0 figures; no full benchmark rerun for this release | **resurrection: 2 correct revivals, 0 false revivals, p95 12.7ms; activation: zero identity false archives with confidence semantics separated** |
 
 All Chinese baselines use `qwen3.7-text-embedding` and `qwen3-rerank`. PerLTQA directly ingests the corpus and measures retrieval without extraction; MemDaily and Chinese E2E run the extraction → recall → QA pipeline, using `qwen3.7-plus` for extraction and QA. MemDaily is scored on all 180 trajectories.
 

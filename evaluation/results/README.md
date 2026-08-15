@@ -10,6 +10,7 @@
 | LongMemEval native RAG | `longmemeval_nativerag_shard<N>.json` | 45/50（90.0%） |
 | MemDaily | `memdaily_v0260_full.json` | v0.26.0（2026-08-15）：180 条全量计分，accuracy 97.2%，F1 0.9855，R@5 97.5% |
 | PerLTQA | `perltqa_v0260_full.json` | v0.26.0（2026-08-15）：378 question，R@5 96.8%，MRR 82.8% |
+| v0.27.1 行为变更验证 | 无新增全量 benchmark 产物（沿用 v0.26.0 数字口径） | resurrection：2 次正确复活、0 次误伤，p95 12.7ms；activation：identity 零误杀，confidence 语义分离 |
 | Embedding / extraction / misc | `<experiment>_<run>.json` | 只作为实验产物，不自动构成发布基线 |
 
 运行日志放 `_logs/`，smoke、canary、局部重放和辅助产物放 `_archive/`。正式结果必须能通过 manifest 或报告
