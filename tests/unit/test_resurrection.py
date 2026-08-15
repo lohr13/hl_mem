@@ -33,6 +33,11 @@ class _Embedder:
         return [self.embed_one(text) for text in texts]
 
 
+class _FailingEmbedder(_Embedder):
+    def embed_one(self, text: str) -> bytes:
+        raise RuntimeError("embedding provider timeout")
+
+
 class _Audit:
     def __init__(self) -> None:
         self.events: list[tuple[tuple[object, ...], dict[str, object]]] = []
@@ -135,6 +140,63 @@ def test_resurrection_is_idempotent_and_cold_searches_archived_only(tmp_path) ->
     assert service.try_resurrect("团队 海风看板", namespace="default", as_of=NOW) is not None
     assert service.try_resurrect("团队 海风看板", namespace="default", as_of=NOW) is None
     assert embedder.texts == ["团队：海风看板"]
+
+
+def test_resurrection_embedding_failure_falls_back_to_original_recall(tmp_path) -> None:
+    connection = _connection(tmp_path)
+    _insert_event(connection)
+    _insert_claim(connection)
+    _link_source(connection)
+
+    response = RecallService(
+        connection,
+        _FailingEmbedder(),
+        settings=_settings(recall_dense_enabled=False),
+    ).recall("团队 海风看板", as_of=NOW)
+
+    assert response["total"] == 0
+    assert connection.execute("SELECT status FROM claims WHERE id='claim-1'").fetchone()[0] == "archived"
+
+
+def test_resurrection_rejects_partially_dangling_evidence(tmp_path) -> None:
+    connection = _connection(tmp_path)
+    _insert_event(connection)
+    _insert_claim(connection)
+    _link_source(connection)
+    connection.execute(
+        "INSERT INTO evidence_links(id,derived_type,derived_id,evidence_type,evidence_id,relation) "
+        "VALUES ('dangling','claim','claim-1','event','missing-event','derived_from')"
+    )
+    connection.commit()
+
+    assert (
+        ResurrectionService(connection, _Embedder(), _settings()).try_resurrect(
+            "团队 海风看板",
+            namespace="default",
+            as_of=NOW,
+        )
+        is None
+    )
+
+
+def test_resurrection_rejects_retracted_claim_evidence(tmp_path) -> None:
+    connection = _connection(tmp_path)
+    _insert_claim(connection)
+    _insert_claim(connection, "source-claim", status="retracted", value="旧证据")
+    connection.execute(
+        "INSERT INTO evidence_links(id,derived_type,derived_id,evidence_type,evidence_id,relation) "
+        "VALUES ('claim-source','claim','claim-1','claim','source-claim','derived_from')"
+    )
+    connection.commit()
+
+    assert (
+        ResurrectionService(connection, _Embedder(), _settings()).try_resurrect(
+            "团队 海风看板",
+            namespace="default",
+            as_of=NOW,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(

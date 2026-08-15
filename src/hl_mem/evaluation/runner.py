@@ -231,6 +231,12 @@ class BenchmarkRunner:
                     min_confidence=self.settings.decay_min_confidence,
                     feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
                     feedback_bonus_cap_days=self.settings.feedback_bonus_cap_days,
+                    decay_model=self.settings.decay_model,
+                    temporal_half_life_days=self.settings.decay_temporal_half_life_days,
+                    permanent_half_life_days=self.settings.decay_permanent_half_life_days,
+                    identity_half_life_days=self.settings.decay_identity_half_life_days,
+                    halflife_archive_threshold=self.settings.decay_halflife_archive_threshold,
+                    halflife_archive_grace_days=self.settings.decay_halflife_archive_grace_days,
                 )
             claims, evidence = self._claims_and_evidence(connection)
             actual_visible: set[str] = set()
@@ -284,6 +290,12 @@ class BenchmarkRunner:
                 "llm_provider",
                 "tag_boost_enabled",
                 "tag_boost_weight",
+                "decay_model",
+                "decay_temporal_half_life_days",
+                "decay_permanent_half_life_days",
+                "decay_identity_half_life_days",
+                "decay_halflife_archive_threshold",
+                "decay_halflife_archive_grace_days",
             )
             if key in snapshot
         }

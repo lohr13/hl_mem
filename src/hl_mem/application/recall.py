@@ -493,6 +493,7 @@ class RecallService:
                 dedup_threshold=self.settings.recall_dedup_threshold,
                 dedup_candidate_limit=self.settings.recall_dedup_candidate_limit,
                 feedback_min_samples=self.settings.feedback_min_samples,
+                decay_model=self.settings.decay_model,
             ),
             relation_connection=self.connection,
             relation_config=self.relation_config,

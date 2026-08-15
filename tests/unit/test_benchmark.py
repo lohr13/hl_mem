@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 
+import hl_mem.evaluation.runner as runner_module
 from hl_mem.evaluation.longmemeval import LongMemEvalAdapter
 from hl_mem.evaluation.metrics import (
     bootstrap_ci,
@@ -15,9 +17,11 @@ from hl_mem.evaluation.metrics import (
     recall_at_k,
     temporal_correctness,
 )
-from hl_mem.evaluation.models import GoldTemporal
+from hl_mem.evaluation.models import BenchmarkCase, GoldTemporal, LifecycleCheckpoint
 from hl_mem.evaluation.reporting import generate_json_report, generate_markdown_summary
 from hl_mem.evaluation.runner import BenchmarkRunner
+from hl_mem.settings import Settings
+from hl_mem.storage.database import Database
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "longmemeval_small.json"
 
@@ -170,6 +174,58 @@ def test_runner_config_hash_is_stable_and_databases_are_isolated(tmp_path: Path,
     assert len(list((tmp_path / "first" / "databases").glob("*.sqlite3"))) == 2
     assert production.read_text(encoding="utf-8") == "must not be opened"
     assert all(case["event_count"] <= 2 for case in first["cases"])
+
+
+def test_lifecycle_runner_uses_and_records_selected_decay_arm(tmp_path: Path, monkeypatch: object) -> None:
+    settings = replace(
+        Settings.for_test(),
+        decay_model="activation_halflife",
+        decay_temporal_half_life_days=11,
+        decay_permanent_half_life_days=22,
+        decay_identity_half_life_days=33,
+        decay_halflife_archive_threshold=0.2,
+        decay_halflife_archive_grace_days=4,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_decay(_connection: object, _now: str, **kwargs: object) -> dict[str, int]:
+        captured.update(kwargs)
+        return {"decayed": 0, "archived": 0}
+
+    monkeypatch.setattr(runner_module, "decay_claims", fake_decay)  # type: ignore[attr-defined]
+    case = BenchmarkCase(
+        case_id="decay-arm",
+        events=(),
+        query="",
+        gold_evidence_event_ids=(),
+        gold_temporal=(),
+        lifecycle_checkpoints=(
+            LifecycleCheckpoint(
+                at="2026-08-15T00:00:00+00:00",
+                known_as_of=None,
+                expected_visible_event_ids=(),
+                expected_hidden_event_ids=(),
+                expected_status_by_event_id={},
+                worker_action="decay_access",
+            ),
+        ),
+        gold_answer=None,
+        as_of=None,
+        known_as_of=None,
+        category="lifecycle",
+    )
+    connection = Database(tmp_path / "decay-runner.db").open()
+
+    BenchmarkRunner(settings=settings)._lifecycle_metrics(connection, case)
+
+    assert captured["decay_model"] == "activation_halflife"
+    assert captured["temporal_half_life_days"] == 11
+    assert captured["permanent_half_life_days"] == 22
+    assert captured["identity_half_life_days"] == 33
+    assert captured["halflife_archive_threshold"] == 0.2
+    assert captured["halflife_archive_grace_days"] == 4
+    manifest = BenchmarkRunner(settings=settings)._config_payload("source", "all", "revision")
+    assert manifest["settings"]["decay_model"] == "activation_halflife"
 
 
 def test_reporting_markdown_is_rendered_from_json_values(tmp_path: Path) -> None:

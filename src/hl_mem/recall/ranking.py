@@ -16,6 +16,17 @@ DEFAULT_WEIGHTS = {
 }
 
 
+def decay_ranking_weights(decay_model: str) -> dict[str, float]:
+    """Map each decay arm onto the same frozen epistemic/activity weight."""
+
+    if decay_model not in {"legacy_linear", "activation_halflife", "confidence_halflife"}:
+        raise ValueError(f"unsupported decay model: {decay_model}")
+    weights = dict(DEFAULT_WEIGHTS)
+    if decay_model == "activation_halflife":
+        weights["activation"] = weights.pop("confidence")
+    return weights
+
+
 def _clamp(value: Any) -> float:
     try:
         return min(1.0, max(0.0, float(value)))
@@ -58,6 +69,7 @@ def memory_features(
         "recency": _clamp(recency),
         "access_frequency": _clamp(access_frequency),
         "confidence": _clamp(claim.get("confidence", 0.5)),
+        "activation": _clamp(claim.get("activation", 1.0)),
         "importance": _clamp(claim.get("importance", 0.5)),
         "utility": _clamp(claim.get("helpful_rate", 0.5)),
     }
@@ -68,19 +80,17 @@ def memory_score(features: Mapping[str, float], weights: Mapping[str, float] = D
     return sum(float(weight) * _clamp(features.get(name, 0.0)) for name, weight in weights.items())
 
 
-def blend_reranker_score(reranker_score: float, features: Mapping[str, float]) -> float:
+def blend_reranker_score(
+    reranker_score: float,
+    features: Mapping[str, float],
+    weights: Mapping[str, float] = DEFAULT_WEIGHTS,
+) -> float:
     """融合远程重排相关度与非语义先验，生成最终排序分数。"""
+    prior_weights = {name: weight for name, weight in weights.items() if name != "semantic"}
+    prior_total = sum(prior_weights.values())
     prior = (
-        sum(
-            DEFAULT_WEIGHTS[name] * _clamp(features.get(name, 0.0))
-            for name in (
-                "recency",
-                "access_frequency",
-                "confidence",
-                "importance",
-                "utility",
-            )
-        )
-        / 0.35
+        sum(weight * _clamp(features.get(name, 0.0)) for name, weight in prior_weights.items()) / prior_total
+        if prior_total > 0.0
+        else 0.0
     )
     return 0.80 * _clamp(reranker_score) + 0.20 * prior

@@ -8,7 +8,12 @@ from hl_mem.application.ingest import IngestService
 from hl_mem.ingest.embedder import FakeEmbedder, pack_vector
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import SYSTEM_PROMPT, LLMExtractor
-from hl_mem.recall.ranking import blend_reranker_score, memory_features, memory_score
+from hl_mem.recall.ranking import (
+    blend_reranker_score,
+    decay_ranking_weights,
+    memory_features,
+    memory_score,
+)
 from hl_mem.recall.recall_pipeline import hybrid_claims
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
@@ -193,6 +198,29 @@ def test_memory_score_exact_weights_and_semantic_dominates():
     }
     assert memory_score(high_semantic) == pytest.approx(0.65)
     assert memory_score(priors) == pytest.approx(0.35)
+
+
+def test_activation_arm_uses_activation_in_the_frozen_quality_weight() -> None:
+    fresh = memory_features(
+        {"confidence": 0.8, "activation": 0.9},
+        0.5,
+        0,
+        NOW,
+    )
+    stale = memory_features(
+        {"confidence": 0.8, "activation": 0.1},
+        0.5,
+        0,
+        NOW,
+    )
+
+    legacy_weights = decay_ranking_weights("legacy_linear")
+    activation_weights = decay_ranking_weights("activation_halflife")
+    assert memory_score(fresh, legacy_weights) == memory_score(stale, legacy_weights)
+    assert memory_score(fresh, activation_weights) > memory_score(stale, activation_weights)
+    assert sum(legacy_weights.values()) == pytest.approx(sum(activation_weights.values()))
+    with pytest.raises(ValueError, match="unsupported decay model"):
+        decay_ranking_weights("unknown")
 
 
 def test_historical_helpful_rate_breaks_otherwise_equal_ranking(tmp_path):

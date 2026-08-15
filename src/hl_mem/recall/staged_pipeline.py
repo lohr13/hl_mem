@@ -29,6 +29,7 @@ from hl_mem.protocols import RerankerProtocol, WeightedQuery
 from hl_mem.recall.ranking import (
     DEFAULT_WEIGHTS,
     blend_reranker_score,
+    decay_ranking_weights,
     memory_features,
     memory_score,
 )
@@ -66,6 +67,7 @@ class RecallConfig:
     dedup_threshold: float = 0.0
     dedup_candidate_limit: int = 100
     feedback_min_samples: int = field(default_factory=lambda: Settings().feedback_min_samples)
+    decay_model: str = "legacy_linear"
 
 
 @dataclass
@@ -99,6 +101,7 @@ class RecallContext:
     dedup_threshold: float = 0.0
     dedup_candidate_limit: int = 100
     feedback_min_samples: int = 3
+    ranking_weights: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
     fts: list[dict[str, Any]] = field(default_factory=list)
     dense: list[dict[str, Any]] = field(default_factory=list)
     tags: list[dict[str, Any]] = field(default_factory=list)
@@ -430,6 +433,7 @@ def _collect_candidates(
         dedup_threshold=config.dedup_threshold,
         dedup_candidate_limit=config.dedup_candidate_limit,
         feedback_min_samples=config.feedback_min_samples,
+        ranking_weights=decay_ranking_weights(config.decay_model),
         fts=fts,
         dense=dense,
         tags=tag_results,
@@ -487,7 +491,7 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
             feature_by_id[claim_id]["tag_boost"] = boost
             claim["_tag_boost"] = boost
     pre_scores = {
-        claim_id: memory_score(features)
+        claim_id: memory_score(features, ctx.ranking_weights)
         + tag_boosts.get(claim_id, 0.0)
         + (0.05 if any(_claim_matches_slot_hint(by_id[claim_id], hint) for hint in ctx.query_slot_hints) else 0.0)
         + (
@@ -565,7 +569,7 @@ def _expand_related(ctx: RecallContext) -> RecallContext:
     max_access = max((_access_count(claim) for claim in ctx.by_id.values()), default=0)
     for claim_id, claim in expanded_by_id.items():
         ctx.feature_by_id[claim_id] = memory_features(claim, claim["_semantic_score"], max_access, ctx.ranking_now)
-        ctx.pre_scores[claim_id] = memory_score(ctx.feature_by_id[claim_id])
+        ctx.pre_scores[claim_id] = memory_score(ctx.feature_by_id[claim_id], ctx.ranking_weights)
     if expanded_by_id:
         ctx.ranked_claims = _sort_pre_rank(ctx.by_id, ctx.feature_by_id, ctx.pre_scores)
     tracer = ctx.tracer
@@ -647,7 +651,14 @@ def _rerank(ctx: RecallContext) -> RecallContext:
     raw_scores = {claim["id"]: float(score) for claim, score in valid}
     if ctx.tracer is not None:
         ctx.tracer.record_rerank([(str(claim["id"]), float(score)) for claim, score in valid])
-    rerank_scores = {claim["id"]: blend_reranker_score(score, ctx.feature_by_id[claim["id"]]) for claim, score in valid}
+    rerank_scores = {
+        claim["id"]: blend_reranker_score(
+            score,
+            ctx.feature_by_id[claim["id"]],
+            ctx.ranking_weights,
+        )
+        for claim, score in valid
+    }
     ctx.rerank_scores = rerank_scores
     reranked_claims = sorted(
         (claim for claim, _ in valid),
@@ -727,7 +738,7 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
             "tag_channel_applied": bool(ctx.tag_channel_enabled and ctx.query_tags and ctx.tags),
             "rrf_ids": [item["id"] for item in ctx.ranked_claims],
             "returned_ids": [item["id"] for item in final],
-            "weights": DEFAULT_WEIGHTS,
+            "weights": ctx.ranking_weights,
             "scores": {
                 item["id"]: {
                     **ctx.feature_by_id[item["id"]],

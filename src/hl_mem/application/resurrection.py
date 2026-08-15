@@ -78,7 +78,21 @@ class ResurrectionService:
             embedding_text = str(candidate.get("index_text") or "").strip()
             if not embedding_text:
                 continue
-            embedding = self.embedder.embed_one(embedding_text)
+            try:
+                embedding = self.embedder.embed_one(embedding_text)
+            except RuntimeError as error:
+                LOGGER.warning(
+                    "resurrection embedding failed; preserving original recall result: %s",
+                    type(error).__name__,
+                )
+                current_audit().emit(
+                    "recall",
+                    "resurrection",
+                    "embedding_error_fallback",
+                    claim_id=str(candidate["id"]),
+                    detail={"error_class": type(error).__name__},
+                )
+                continue
             activated = self._activate(
                 str(candidate["id"]),
                 embedding,
@@ -145,17 +159,24 @@ class ResurrectionService:
         return self.repository.get_claim(claim_id)
 
     def _source_is_complete(self, claim_id: str) -> bool:
-        return (
-            self.connection.execute(
-                "SELECT 1 FROM evidence_links e "
-                "LEFT JOIN events source_event ON e.evidence_type='event' AND source_event.id=e.evidence_id "
-                "LEFT JOIN claims source_claim ON e.evidence_type='claim' AND source_claim.id=e.evidence_id "
-                "WHERE e.derived_type='claim' AND e.derived_id=? "
-                "AND ((e.evidence_type='event' AND source_event.id IS NOT NULL) "
-                "OR (e.evidence_type='claim' AND source_claim.id IS NOT NULL)) LIMIT 1",
-                (claim_id,),
-            ).fetchone()
-            is not None
+        rows = self.connection.execute(
+            "SELECT e.evidence_type,source_event.id AS event_id,"
+            "source_claim.id AS claim_id,source_claim.status AS claim_status FROM evidence_links e "
+            "LEFT JOIN events source_event ON e.evidence_type='event' AND source_event.id=e.evidence_id "
+            "LEFT JOIN claims source_claim ON e.evidence_type='claim' AND source_claim.id=e.evidence_id "
+            "WHERE e.derived_type='claim' AND e.derived_id=?",
+            (claim_id,),
+        ).fetchall()
+        if not rows:
+            return False
+        return all(
+            (row["evidence_type"] == "event" and row["event_id"] is not None)
+            or (
+                row["evidence_type"] == "claim"
+                and row["claim_id"] is not None
+                and row["claim_status"] not in {"candidate", "retracted"}
+            )
+            for row in rows
         )
 
     def _has_active_rival(self, claim: Mapping[str, Any]) -> bool:
