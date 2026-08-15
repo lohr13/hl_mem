@@ -24,6 +24,7 @@ CONSTRAINTS = {
     "index.backfill_batch_size": ">= 1",
     "index.backfill_max_attempts": ">= 1",
     "index.text_version": "非空字符串",
+    "embedding.text_type": "`document`、`query`；可省略",
     "relation.expansion_max_depth": ">= 1",
     "relation.discovery_pool_limit": ">= 1",
     "relation.discovery_max_proposals": ">= 1",
@@ -35,6 +36,8 @@ CONSTRAINTS = {
     "recall.candidate_floor": ">= 1",
     "recall.dedup_threshold": "0.0 - 1.0；0 关闭折叠",
     "recall.dedup_candidate_limit": ">= 1",
+    "recall.resurrection_candidate_limit": ">= 1",
+    "recall.resurrection_min_term_coverage": "0.0 - 1.0（不含 0）",
     "recall.relevance_reranker_floor": "0.0 - 1.0",
     "recall.relevance_dense_floor": "0.0 - 1.0",
     "recall.relevance_relative_drop": "0.0 - 1.0",
@@ -77,6 +80,8 @@ CONSTRAINTS = {
     "extraction.chunk_target_chars": ">= 1",
     "extraction.chunk_overlap_turns": ">= 0",
     "extraction.max_split_depth": ">= 0",
+    "extraction.batch_max_events": "1 - 32",
+    "extraction.batch_max_wait_seconds": ">= 0",
     "dedup.threshold": "0.0 - 1.0",
     "dedup.auto_merge_min_confidence": "dedup.threshold - 1.0",
     "dedup.scan_limit": ">= 1",
@@ -104,9 +109,45 @@ CONSTRAINTS = {
     "retention.feedback_bonus_every": "> 0",
     "retention.feedback_bonus_days": ">= 0",
     "retention.feedback_bonus_cap_days": ">= 0",
+    "decay.temporal_half_life_days": ">= 1",
+    "decay.permanent_half_life_days": ">= 1",
+    "decay.identity_half_life_days": ">= 1",
+    "decay.halflife_archive_threshold": "0.0 - 1.0（不含端点）",
+    "decay.halflife_archive_grace_days": ">= 1",
     "worker.policy_induction_lookback_days": ">= 1",
     "worker.policy_induction_min_episodes": ">= 1",
     "worker.job_lease_minutes": ">= 1",
+}
+
+TABLE_NOTES = {
+    "embedding": [
+        "",
+        "`embedding.text_type` 仅在 native API 模式下发送；默认不设置，compatible 模式不使用该参数。显式启用、修改或取消",
+        "该角色后，应以同一最终配置重建存量 Claim 向量，避免查询与文档向量混用不同表示约定。sparse/instruct 变体仅用于",
+        "显式 benchmark 配置，生产默认关闭。",
+    ],
+    "extraction": [
+        "",
+        "Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_max_events` 时立即提取，否则最多等待",
+        "`batch_max_wait_seconds`。显式记忆、无 session 事件和非 message 事件不等待。Hermes 的 `sync_turn` 会原子写入",
+        "user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并；Claim 仍分别链接实际来源 Event。",
+        "默认值偏向降低提取调用成本：增大批量上限或等待时间有利于合并更多相邻 Event、摊薄 LLM 调用成本，",
+        "但会增加低流量 session 的提取延迟；需要低延迟时可调小这两个值。",
+    ],
+    "index": [
+        "",
+        "`natural` 生成 `subject：value`，不把内部 predicate、slot 或 topic tags 混入 FTS/embedding 文本。已有数据库不会在启动时自动重算 embedding；先运行 `hlmem backfill-index-text --mode natural --dry-run` 查看影响，再显式运行不带 `--dry-run` 的同一命令完成可续跑回填。",
+    ],
+    "reranker": [
+        "",
+        "Reranker 的具体型号通过 `reranker.model` 配置；API 密钥由 `RERANKER_API_KEY` 提供。升级时以当前 `Settings` 或部署",
+        "TOML 为准，活文档不固定具体型号。",
+    ],
+    "worker": [
+        "",
+        "Worker 在任务执行期间按 lease 时长的三分之一周期续租全部同窗口 job；进度回调也会续租。若 token ownership",
+        "在终态写入前丢失，本次执行返回 `lease_lost`，不会把更新 0 行误报为成功。",
+    ],
 }
 
 
@@ -195,6 +236,7 @@ def generate() -> str:
         "",
         f"HL-Mem {__version__} 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。",
         "`Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。",
+        "模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。",
         "",
         "## 加载规则",
         "",
@@ -210,6 +252,52 @@ def generate() -> str:
         "uv run hl-mem doctor",
         "uv run python start_server.py",
         "```",
+        "",
+        "## 启动入口",
+        "",
+        "- Windows 使用 `start_production.bat`，Git Bash/POSIX 使用 `./start_hl_mem.sh`。两个脚本都从脚本自身位置定位仓库根目录，并调用 `start_server.py`，因此可以从任意当前目录启动。",
+        "- 脚本使用仓库内的虚拟环境；Shell 入口兼容 `.venv/bin/python` 和 `.venv/Scripts/python.exe`。",
+        "- 启动脚本不保存第二份运行配置，也不选择 provider/model，且不再设置旧版 `HL_MEM_*` 覆盖。除四个密钥外，所有有效配置都只来自仓库根目录的 `hl_mem.toml`；loader 会忽略继承到进程中的 `HL_MEM_*`。",
+        "- 直接执行 `uv run python start_server.py` 时，`hl_mem.toml` 和 `.env` 仍相对进程当前目录解析。",
+        "",
+        "## 部署边界",
+        "",
+        "HL-Mem 面向受信任环境中的本地单租户部署。API 的 `namespace` 只是用于召回、Episode、Policy 和维护任务的",
+        "相关性/profile 软标签，不是认证、授权、加密或侧信道安全边界；`tenant_id` 仅作为已弃用的兼容别名。备份与",
+        "恢复始终覆盖整个 SQLite 数据库，不提供按 namespace 导出、RBAC、按租户密钥、计费或 SaaS 多租户隔离。",
+        "",
+        "## 备份与恢复",
+        "",
+        "```bash",
+        "hl-mem backup var/backup.db --db var/hl_mem.db",
+        "hl-mem restore var/backup.db --manifest var/backup.db.manifest.json \\",
+        "  --db var/hl_mem.db --confirm-overwrite",
+        "```",
+        "",
+        "`backup` 输出包含 backup、manifest、size、SHA-256 和 integrity 状态的 JSON。`restore` 会先校验 manifest、",
+        "大小和哈希，再在目标同目录的临时数据库上执行恢复及 `PRAGMA integrity_check`，成功后才原子替换目标；任何",
+        "失败都保留原目标。目标已存在时必须提供 `--confirm-overwrite`，且 source、backup、manifest、target 不得解析",
+        "为同一路径。校验与恢复会拒绝 backup 或 target 旁残留的 `-wal`、`-shm`、`-journal` sidecar，防止未纳入",
+        "manifest 的页面影响校验或原子替换。执行 restore 前必须停止 API、Worker 及其他数据库使用者，成功后再重启服务。",
+        "",
+        "## JSONL Event 归档",
+        "",
+        "```bash",
+        "hl-mem export var/events.jsonl --db var/hl_mem.db",
+        "hl-mem import var/events.jsonl --db var/restored.db",
+        "```",
+        "",
+        "默认 import 会在同一批次事务中为每个新 Event 创建 `extract_event` job，幂等键为",
+        "`extract:<event_id>`，使 Worker 能从归档重建 Claims。重复导入会跳过已有 Event/job，不增加记录。JSON",
+        "报告包含 `processed`、`events_created`、`events_skipped`、`jobs_queued`、`failed_batch` 和",
+        "`claims_not_rebuilt`；非法记录会回滚当前批次并报告 batch/line。",
+        "",
+        "若 Event 已由旧版 importer 或 `--skip-extraction-jobs` 导入，但稳定 extraction job 缺失，随后执行普通 import",
+        "会验证 Event payload 并补建 job；同 ID 不同 payload 会明确失败，不会被当作重复记录静默跳过。",
+        "Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn locator 等 metadata 会在导入/导出后原样保留。",
+        "",
+        "`--skip-extraction-jobs` 只用于不希望重建 Claims 的取证恢复。该模式仅导入 Events、不会排队提取，并明确",
+        "输出 `claims_not_rebuilt=true`。",
         "",
         "## 密钥",
         "",
@@ -242,6 +330,8 @@ def generate() -> str:
         key_path = str(item.metadata["toml"])
         table = key_path.split(".", 1)[0]
         if table != current_table:
+            if current_table:
+                lines.extend(TABLE_NOTES.get(current_table, []))
             current_table = table
             lines.extend(
                 [
@@ -258,6 +348,8 @@ def generate() -> str:
             f"{render_allowed(item, annotation)} | `{item.name}` |"
         )
 
+    lines.extend(TABLE_NOTES.get(current_table, []))
+
     lines.extend(
         [
             "",
@@ -268,6 +360,13 @@ def generate() -> str:
             "- `retention.decay_temporal_days <= retention.archive_temporal_days`；"
             "`retention.decay_permanent_days <= retention.archive_permanent_days`。",
             "- `dedup.auto_merge_min_confidence` 不得低于 `dedup.threshold`。",
+            '- `recall.resurrection_mode = "auto"` 只在主召回低 answerability 或空结果时执行有界 archived-only FTS；'
+            "候选仍须通过当前有效时间、来源完整性、冲突竞争者和高词项覆盖门禁。",
+            '- `decay.model = "legacy_linear"` 保持既有 confidence 线性衰减；'
+            '`"activation_halflife"` 使用 `activation = base * 2^(-inactive_days / half_life)` 且不改 confidence；'
+            '`"confidence_halflife"` 仅作为指数 confidence 对照臂。默认始终为 legacy。',
+            "- activation 半衰期按 temporal/permanent/identity 分档为 45/90/365 天；"
+            "命中只刷新 `last_accessed_at`，activation 低于阈值并持续超过宽限期后才归档。",
             '- `image_describer.mode = "on"` 时，base URL 必须使用 HTTPS，模型名不能为空；'
             "若同时允许 `file:` URI，`file_allow_roots` 不能为空。",
             "- `hermes.enabled = true` 时，`hermes.url` 不能为空。",

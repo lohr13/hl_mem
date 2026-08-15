@@ -58,6 +58,10 @@ vector_scan_limit = 200
 dense_enabled = true
 dedup_threshold = 0.95
 dedup_candidate_limit = 100
+# 冷路径归档复活默认关闭；A/B 裁决前不要改为 auto。
+resurrection_mode = "off"
+resurrection_candidate_limit = 3
+resurrection_min_term_coverage = 0.8
 packed_context_token_budget = 2000
 query_expansion_mode = "auto"
 query_expansion_model = "glm-4.7"
@@ -84,6 +88,15 @@ cron = "03:00"
 temporal_ttl_days_low = 3
 temporal_ttl_days_normal = 7
 temporal_ttl_days_high = 14
+
+[decay]
+# 三臂 A/B 的默认对照臂；legacy_linear 保持既有 confidence 线性衰减行为。
+model = "legacy_linear"
+temporal_half_life_days = 45
+permanent_half_life_days = 90
+identity_half_life_days = 365
+halflife_archive_threshold = 0.05
+halflife_archive_grace_days = 7
 
 [worker]
 poll_interval = 2.0
