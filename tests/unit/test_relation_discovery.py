@@ -177,6 +177,25 @@ def test_auto_applies_high_confidence_safe_edge_and_rejects_summary(connection) 
     assert connection.execute("SELECT count(*) FROM memory_relations").fetchone()[0] == 1
 
 
+def test_missing_proposal_endpoint_is_rejected_without_foreign_key_failure(connection) -> None:
+    _insert_claim(connection, "source")
+    proposal = RelationProposal("source", "missing", "supports", 0.99, "invented endpoint", (), "fake")
+
+    result = discover_relations(
+        connection,
+        FakeRelationDiscoverer([proposal]),
+        "source",
+        mode="auto",
+        pool_limit=40,
+        max_proposals=10,
+        auto_apply_confidence=0.9,
+        conflict_confidence=0.8,
+    )
+
+    assert result["rejected"] == 1
+    assert connection.execute("SELECT count(*) FROM relation_proposals").fetchone()[0] == 0
+
+
 def test_contradiction_reuses_pair_case_and_marks_claims_disputed(connection) -> None:
     _insert_claim(connection, "source")
     _insert_claim(connection, "target")

@@ -355,6 +355,9 @@ def discover_relations(
                 counts["rejected"] += 1
                 continue
             reason = _validate_proposal(proposal, claims)
+            if reason == "missing_endpoint":
+                counts["rejected"] += 1
+                continue
             proposal_id = repository.insert_proposal(
                 {
                     "source_claim_id": proposal.from_claim_id,

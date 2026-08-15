@@ -2,7 +2,7 @@
   "schema_version": 1,
   "dataset_id": "zh-relation-chain-holdout-v2",
   "source_path": "~/hl_mem_eval_data/datasets/relation_chain_holdout_v2.json",
-  "sha256": "4cd635666a2e1de91079725da3ad641acea831fcf80bb4b2f5b8dc5c9c74d0b8",
+  "sha256": "07ca4f6d4a92ec3a65f8a7c5035447ef099f6d3e143df1bc98479835e7fb549f",
   "case_count": 24,
   "category_counts": {
     "recommendation_execution": 4,
