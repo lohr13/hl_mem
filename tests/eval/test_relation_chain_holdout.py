@@ -10,6 +10,7 @@ import pytest
 import tests.eval.relation_chain_holdout as holdout
 
 MANIFEST_PATH = Path(__file__).parent / "fixtures" / "relation_chain_holdout_manifest.json"
+V2_MANIFEST_PATH = Path(__file__).parent / "fixtures" / "relation_chain_holdout_v2_manifest.json"
 EXPECTED_DISTRIBUTION = {
     "recommendation_execution": 4,
     "reporting_ownership": 4,
@@ -164,3 +165,36 @@ def test_v2_manifest_and_explicit_relation_coverage_are_loadable(tmp_path: Path)
     assert dataset.dataset_id == "zh-relation-chain-holdout-v2"
     assert all(case.case_id.startswith("rc-holdout-v2-") for case in dataset.cases)
     assert Counter(case.relation_coverage for case in dataset.cases) == {"required": 20, "none": 4}
+
+
+def test_v2_manifest_freezes_new_external_payload() -> None:
+    manifest = holdout.load_holdout_manifest(V2_MANIFEST_PATH)
+
+    assert manifest.suite_version == "v2"
+    assert manifest.dataset_id == "zh-relation-chain-holdout-v2"
+    assert manifest.case_prefix == "rc-holdout-v2-"
+    assert manifest.case_count == 24
+    assert manifest.category_counts == EXPECTED_DISTRIBUTION
+    assert not manifest.source_path.is_absolute()
+
+
+def test_installed_v2_is_balanced_and_does_not_reuse_v1_text() -> None:
+    v1_manifest = holdout.load_holdout_manifest(MANIFEST_PATH)
+    v2_manifest = holdout.load_holdout_manifest(V2_MANIFEST_PATH)
+    if (
+        not holdout.resolve_holdout_path(v1_manifest).is_file()
+        or not holdout.resolve_holdout_path(v2_manifest).is_file()
+    ):
+        pytest.skip("both sealed holdout payloads are required for cross-version validation")
+
+    v1 = holdout.load_sealed_holdout(MANIFEST_PATH, allow_sealed=True)
+    v2 = holdout.load_sealed_holdout(V2_MANIFEST_PATH, allow_sealed=True)
+    v1_text = {case.question for case in v1.cases}
+    v1_text.update(event.text for case in v1.cases for event in case.events)
+    v2_text = {case.question for case in v2.cases}
+    v2_text.update(event.text for case in v2.cases for event in case.events)
+
+    assert len(v2.cases) == 24
+    assert Counter(case.category for case in v2.cases) == Counter(EXPECTED_DISTRIBUTION)
+    assert Counter(case.relation_coverage for case in v2.cases) == {"required": 20, "none": 4}
+    assert not (v1_text & v2_text)
