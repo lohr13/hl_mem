@@ -63,6 +63,7 @@ def assert_implementation_snapshot(prereg: Mapping[str, Any]) -> None:
         "runtime": ROOT / "src" / "hl_mem" / "evaluation" / "c_series_runtime.py",
         "protocol": ROOT / "src" / "hl_mem" / "evaluation" / "c_series.py",
         "sealed_holdout_loader": ROOT / "tests" / "eval" / "relation_chain_holdout.py",
+        "relation_discovery": ROOT / "src" / "hl_mem" / "workers" / "discover_relations.py",
     }
     expected = {
         "version": IMPLEMENTATION_VERSION,

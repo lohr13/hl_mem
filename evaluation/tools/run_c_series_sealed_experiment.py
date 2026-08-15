@@ -52,7 +52,11 @@ from hl_mem.evaluation.c_series_runtime import (  # noqa: E402
 )
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402
 from hl_mem.storage.database import Database  # noqa: E402
-from hl_mem.workers.discover_relations import discover_relations  # noqa: E402
+from hl_mem.workers.discover_relations import (  # noqa: E402
+    RELATION_DISCOVERY_OUTPUT_SCHEMA,
+    RELATION_DISCOVERY_SYSTEM_PROMPT,
+    discover_relations,
+)
 from tests.eval.relation_chain_holdout import (  # noqa: E402
     load_holdout_manifest,
     load_sealed_holdout,
@@ -163,6 +167,18 @@ def _canonical_hash(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _prompt_hashes() -> dict[str, str]:
+    return {
+        **base._prompt_hashes(),
+        "relation_discovery_prompt_schema": _canonical_hash(
+            {
+                "system": RELATION_DISCOVERY_SYSTEM_PROMPT,
+                "schema": RELATION_DISCOVERY_OUTPUT_SCHEMA,
+            }
+        ),
+    }
 
 
 def _corpus_seed_sha256(manifest: Mapping[str, Any]) -> str:
@@ -405,6 +421,7 @@ def _cache_config(settings: Any) -> dict[str, Any]:
             "max_proposals": settings.relation_discovery_max_proposals,
             "auto_apply_confidence": settings.relation_auto_apply_confidence,
             "conflict_confidence": settings.relation_conflict_confidence,
+            "prompt_schema_sha256": _prompt_hashes()["relation_discovery_prompt_schema"],
         },
     }
 
@@ -694,6 +711,7 @@ def _implementation_snapshot() -> dict[str, str]:
         "runtime": ROOT / "src" / "hl_mem" / "evaluation" / "c_series_runtime.py",
         "protocol": ROOT / "src" / "hl_mem" / "evaluation" / "c_series.py",
         "sealed_holdout_loader": ROOT / "tests" / "eval" / "relation_chain_holdout.py",
+        "relation_discovery": ROOT / "src" / "hl_mem" / "workers" / "discover_relations.py",
     }
     return {
         "version": IMPLEMENTATION_VERSION,
@@ -856,7 +874,7 @@ def command_preregister() -> int:
         corpus_paths=corpus_paths,
         cache_paths=cache_paths,
         model_snapshot=_model_snapshot(settings),
-        prompt_hashes=base._prompt_hashes(),
+        prompt_hashes=_prompt_hashes(),
         case_ids=[str(case["case_id"]) for case in runtime_cases],
     )
     manifest["arms"] = {arm: dataclasses.asdict(arm_spec(arm)) for arm in ARMS}
@@ -1050,7 +1068,7 @@ def _verify_live_snapshot(manifest: Mapping[str, Any], settings: Any) -> None:
         raise RuntimeError("sealed live requires clean source")
     if manifest["implementation_snapshot"] != _implementation_snapshot():
         raise RuntimeError("sealed implementation snapshot drift")
-    if manifest["prompt_hashes"] != base._prompt_hashes():
+    if manifest["prompt_hashes"] != _prompt_hashes():
         raise RuntimeError("sealed QA prompt drift")
     if manifest["runtime_config_sha256"] != base._runtime_fingerprint(settings):
         raise RuntimeError("sealed runtime configuration drift")

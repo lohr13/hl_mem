@@ -7,10 +7,11 @@ import sqlite3
 import pytest
 
 from hl_mem.domain.relations import walk_relation_graph
+from hl_mem.llm.types import LLMResponse
 from hl_mem.protocols import RelationProposal
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
-from hl_mem.workers.discover_relations import build_neighbor_pool, discover_relations
+from hl_mem.workers.discover_relations import LLMRelationDiscoverer, build_neighbor_pool, discover_relations
 
 
 class FakeRelationDiscoverer:
@@ -21,6 +22,52 @@ class FakeRelationDiscoverer:
 
     def propose(self, source_claim, candidates, *, max_proposals):
         return self.proposals[:max_proposals]
+
+
+class CapturingLLMClient:
+    model = "fake-relation-model"
+
+    def __init__(self) -> None:
+        self.request = None
+
+    def complete(self, request):
+        self.request = request
+        return LLMResponse(
+            content={
+                "relations": [
+                    {
+                        "from": "source",
+                        "to": "target",
+                        "relation": "supports",
+                        "confidence": 0.97,
+                        "rationale": "direct evidence",
+                        "supporting_ids": [],
+                    }
+                ]
+            },
+            finish_reason="stop",
+            usage_total_tokens=10,
+        )
+
+
+def test_llm_relation_prompt_freezes_fields_for_json_object_fallback() -> None:
+    client = CapturingLLMClient()
+    discoverer = LLMRelationDiscoverer(client)
+
+    proposals = discoverer.propose(
+        {"id": "source", "namespace_key": "default", "status": "active"},
+        [{"id": "target", "namespace_key": "default", "status": "active"}],
+        max_proposals=2,
+    )
+
+    assert proposals == [
+        RelationProposal("source", "target", "supports", 0.97, "direct evidence", (), "fake-relation-model")
+    ]
+    assert client.request is not None
+    system_prompt = client.request.messages[0].content
+    assert '"relations"' in system_prompt
+    assert all(f'"{field}"' in system_prompt for field in ("from", "to", "confidence", "rationale", "supporting_ids"))
+    assert '"proposals"' not in system_prompt
 
 
 def _insert_claim(

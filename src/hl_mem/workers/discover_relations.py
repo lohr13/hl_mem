@@ -26,7 +26,7 @@ from hl_mem.storage.relation_proposals import RelationProposalRepository
 ALLOWED_RELATIONS = frozenset(item.value for item in RelationType)
 AUTO_RELATIONS = frozenset({"about", "follows", "supports"})
 
-_OUTPUT_SCHEMA: dict[str, Any] = {
+RELATION_DISCOVERY_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "relations": {
@@ -56,6 +56,19 @@ _OUTPUT_SCHEMA: dict[str, Any] = {
     "required": ["relations"],
     "additionalProperties": False,
 }
+
+RELATION_DISCOVERY_SYSTEM_PROMPT = (
+    "你是 Claim 关系审计器。只能从给定 source 和 candidates 中提案，不得创造 ID。"
+    "关系仅限 about/follows/supports/contradicts/summarizes。"
+    "必须返回且只返回这个字段契约的 JSON 对象："
+    '{"relations":[{"from":"已有ID","to":"已有ID",'
+    '"relation":"about","confidence":0.95,"rationale":"判定依据",'
+    '"supporting_ids":[]}]}'
+    "。顶层字段只能是 relations；每个关系对象只能包含 from、to、relation、"
+    "confidence、rationale、supporting_ids。from/to 必须使用输入中的完整 ID，"
+    "confidence 必须是 0 到 1 的数字，supporting_ids 只能引用输入 ID。"
+    '没有充分关系时返回 {"relations":[]}。禁止使用 proposals 或 target_id 字段。'
+)
 
 
 def _compact_claim(claim: dict[str, Any]) -> dict[str, Any]:
@@ -124,10 +137,7 @@ class LLMRelationDiscoverer(RelationDiscoveryProtocol):
                 messages=[
                     LLMMessage(
                         role="system",
-                        content=(
-                            "你是 Claim 关系审计器。只能从给定候选中提案，不得创造 ID；"
-                            "关系仅限 about/follows/supports/contradicts/summarizes。返回 JSON 对象。"
-                        ),
+                        content=RELATION_DISCOVERY_SYSTEM_PROMPT,
                     ),
                     LLMMessage(
                         role="user",
@@ -136,7 +146,7 @@ class LLMRelationDiscoverer(RelationDiscoveryProtocol):
                 ],
                 structured_output=StructuredOutputSpec(
                     name="relation_proposals",
-                    schema=_OUTPUT_SCHEMA,
+                    schema=RELATION_DISCOVERY_OUTPUT_SCHEMA,
                     preferred_mode=StructuredOutputMode.JSON_SCHEMA,
                 ),
             )

@@ -244,6 +244,12 @@ def test_packet_fingerprint_is_bound_to_preregistration_and_corpus_seed(monkeypa
     assert first != second
 
 
+def test_sealed_prompt_snapshot_includes_relation_discovery_contract() -> None:
+    hashes = runner._prompt_hashes()
+
+    assert len(hashes["relation_discovery_prompt_schema"]) == 64
+
+
 def _relation_db(path, relations: int) -> None:
     connection = sqlite3.connect(path)
     try:
