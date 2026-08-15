@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -13,6 +14,114 @@ from hl_mem.storage.claims import ClaimRepository
 def _parse(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def activation_at(base: float, *, inactive_days: float, half_life_days: int) -> float:
+    """Return bounded exponential activation for a non-negative inactivity age."""
+
+    if half_life_days <= 0:
+        raise ValueError("half_life_days must be positive")
+    bounded_base = min(1.0, max(0.0, float(base)))
+    return bounded_base * 2 ** (-max(0.0, float(inactive_days)) / half_life_days)
+
+
+def _halflife_scope(claim: dict[str, object]) -> str:
+    raw_attribute = claim.get("canonical_attribute")
+    attribute = str(raw_attribute) if raw_attribute is not None else None
+    return "identity" if is_protected_attribute(attribute) else str(claim.get("scope"))
+
+
+def _decay_halflife(
+    connection: sqlite3.Connection,
+    reference: datetime,
+    *,
+    model: str,
+    temporal_half_life_days: int,
+    permanent_half_life_days: int,
+    identity_half_life_days: int,
+    archive_threshold: float,
+    archive_grace_days: int,
+) -> dict[str, int]:
+    """Apply one of the two feature-gated exponential decay arms."""
+
+    day_start = reference.replace(hour=0, minute=0, second=0, microsecond=0)
+    half_lives = {
+        "temporal": temporal_half_life_days,
+        "permanent": permanent_half_life_days,
+        "identity": identity_half_life_days,
+    }
+    repository = ClaimRepository(connection)
+    decayed = archived = 0
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        rows = connection.execute(
+            "SELECT id,scope,status,confidence,activation_base,activation,recorded_from,last_accessed_at,"
+            "last_decayed_at,decay_below_since,canonical_attribute FROM claims "
+            "WHERE status IN ('active','disputed')"
+        ).fetchall()
+        for row in rows:
+            claim = dict(row)
+            previous = _parse(claim["last_decayed_at"]) if claim.get("last_decayed_at") else None
+            if previous is not None and previous.replace(hour=0, minute=0, second=0, microsecond=0) >= day_start:
+                continue
+            anchor = _parse(str(claim.get("last_accessed_at") or claim["recorded_from"]))
+            half_life = half_lives.get(_halflife_scope(claim), permanent_half_life_days)
+            below_since = _parse(claim["decay_below_since"]) if claim.get("decay_below_since") else None
+            if model == "activation_halflife":
+                inactive_days = (reference - anchor).total_seconds() / 86400.0
+                value = activation_at(
+                    float(claim.get("activation_base") or 0.0),
+                    inactive_days=inactive_days,
+                    half_life_days=half_life,
+                )
+                if value <= archive_threshold and below_since is None:
+                    base = max(float(claim.get("activation_base") or 0.0), archive_threshold)
+                    crossing_days = half_life * math.log2(base / archive_threshold)
+                    below_since = anchor + timedelta(days=crossing_days)
+                field = "activation"
+            else:
+                elapsed_from = max(anchor, previous) if previous is not None else anchor
+                elapsed_days = max(0.0, (day_start - elapsed_from).total_seconds() / 86400.0)
+                value = activation_at(
+                    float(claim.get("confidence") or 0.0),
+                    inactive_days=elapsed_days,
+                    half_life_days=half_life,
+                )
+                if value <= archive_threshold and below_since is None:
+                    below_since = day_start
+                field = "confidence"
+            if value > archive_threshold:
+                below_since = None
+            should_archive = below_since is not None and reference >= below_since + timedelta(days=archive_grace_days)
+            if should_archive:
+                assert below_since is not None
+                assert_transition(str(claim["status"]), "archived")
+                cursor = connection.execute(
+                    f"UPDATE claims SET {field}=?,decay_below_since=?,last_decayed_at=?,"
+                    "status='archived',embedding_dense=NULL,embedding_sparse=NULL "
+                    "WHERE id=? AND status IN ('active','disputed')",
+                    (value, below_since.isoformat(), day_start.isoformat(), claim["id"]),
+                )
+                if cursor.rowcount == 1:
+                    repository.delete_vector(str(claim["id"]))
+                archived += cursor.rowcount
+                continue
+            cursor = connection.execute(
+                f"UPDATE claims SET {field}=?,decay_below_since=?,last_decayed_at=? "
+                "WHERE id=? AND status IN ('active','disputed')",
+                (
+                    value,
+                    below_since.isoformat() if below_since is not None else None,
+                    day_start.isoformat(),
+                    claim["id"],
+                ),
+            )
+            decayed += cursor.rowcount
+        connection.commit()
+        return {"decayed": decayed, "archived": archived}
+    except Exception:
+        connection.rollback()
+        raise
 
 
 def cleanup_stale_temporal_claims(
@@ -89,9 +198,28 @@ def decay_claims(
     min_confidence: float,
     feedback_lifecycle_mode: str,
     feedback_bonus_cap_days: int,
+    decay_model: str = "legacy_linear",
+    temporal_half_life_days: int = 45,
+    permanent_half_life_days: int = 90,
+    identity_half_life_days: int = 365,
+    halflife_archive_threshold: float = 0.05,
+    halflife_archive_grace_days: int = 7,
 ) -> dict[str, int]:
     """Linearly decay inactive claims and archive them at scope-specific boundaries."""
     reference = _parse(now) if now else datetime.now(timezone.utc)
+    if decay_model not in {"legacy_linear", "activation_halflife", "confidence_halflife"}:
+        raise ValueError(f"unsupported decay model: {decay_model}")
+    if decay_model != "legacy_linear":
+        return _decay_halflife(
+            connection,
+            reference,
+            model=decay_model,
+            temporal_half_life_days=temporal_half_life_days,
+            permanent_half_life_days=permanent_half_life_days,
+            identity_half_life_days=identity_half_life_days,
+            archive_threshold=halflife_archive_threshold,
+            archive_grace_days=halflife_archive_grace_days,
+        )
     day_start = reference.replace(hour=0, minute=0, second=0, microsecond=0)
     minimum = min(1.0, max(0.0, float(min_confidence)))
     policy = {

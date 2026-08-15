@@ -25,6 +25,7 @@ QueryExpansionMode = Literal["off", "auto", "always"]
 QueryContextMode = Literal["off", "coreference"]
 ProcedureRecallMode = Literal["off", "keyword", "auto"]
 FeedbackLifecycleMode = Literal["off", "observe", "on"]
+DecayModel = Literal["legacy_linear", "activation_halflife", "confidence_halflife"]
 RelevanceGateMode = Literal["off", "observe", "enforce"]
 ResurrectionMode = Literal["off", "auto"]
 ImageDescriberMode = Literal["off", "on"]
@@ -485,6 +486,27 @@ class Settings:
         default=0.05,
         metadata={"toml": "retention.decay_min_confidence"},
     )
+    decay_model: DecayModel = field(default="legacy_linear", metadata={"toml": "decay.model"})
+    decay_temporal_half_life_days: int = field(
+        default=45,
+        metadata={"toml": "decay.temporal_half_life_days"},
+    )
+    decay_permanent_half_life_days: int = field(
+        default=90,
+        metadata={"toml": "decay.permanent_half_life_days"},
+    )
+    decay_identity_half_life_days: int = field(
+        default=365,
+        metadata={"toml": "decay.identity_half_life_days"},
+    )
+    decay_halflife_archive_threshold: float = field(
+        default=0.05,
+        metadata={"toml": "decay.halflife_archive_threshold"},
+    )
+    decay_halflife_archive_grace_days: int = field(
+        default=7,
+        metadata={"toml": "decay.halflife_archive_grace_days"},
+    )
     # feedback_lifecycle: observe 只聚合 usefulness，不影响 TTL/decay；观察稳定后可切换为 on
     feedback_lifecycle_mode: FeedbackLifecycleMode = field(
         default="observe",
@@ -600,6 +622,22 @@ class Settings:
             raise ConfigurationError("access bonus days and cap must be non-negative")
         if not 0.0 <= self.decay_min_confidence <= 1.0:
             raise ConfigurationError("decay minimum confidence must be between 0 and 1")
+        if self.decay_model not in {"legacy_linear", "activation_halflife", "confidence_halflife"}:
+            raise ConfigurationError(
+                "decay.model must be 'legacy_linear', 'activation_halflife', or 'confidence_halflife'"
+            )
+        if (
+            min(
+                self.decay_temporal_half_life_days,
+                self.decay_permanent_half_life_days,
+                self.decay_identity_half_life_days,
+                self.decay_halflife_archive_grace_days,
+            )
+            < 1
+        ):
+            raise ConfigurationError("decay half-life and archive grace days must be positive")
+        if not 0.0 < self.decay_halflife_archive_threshold < 1.0:
+            raise ConfigurationError("decay.halflife_archive_threshold must be between 0 and 1")
         if self.decay_temporal_days > self.archive_temporal_days:
             raise ConfigurationError("temporal decay days must not exceed archive days")
         if self.decay_permanent_days > self.archive_permanent_days:
