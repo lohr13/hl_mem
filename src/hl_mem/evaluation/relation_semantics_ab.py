@@ -120,6 +120,31 @@ def _compact_claim(claim: Mapping[str, Any]) -> dict[str, Any]:
     return {key: claim.get(key) for key in _COMPACT_RELATION_FIELDS}
 
 
+def _bind_authoritative_source_context(
+    raw: Mapping[str, Any],
+    *,
+    source_id: str,
+    evidence: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    bound = dict(raw)
+    bound["claim_id"] = source_id
+    bound.pop("evidence_event_id", None)
+    bound.pop("evidence_quote", None)
+    bound.pop("_binding_reason", None)
+    action = unicodedata.normalize("NFC", str(bound.get("action") or "")).strip()
+    object_ = unicodedata.normalize("NFC", str(bound.get("object") or "")).strip()
+    if not action or not object_:
+        return bound
+    for item in evidence:
+        text = unicodedata.normalize("NFC", str(item.get("text") or ""))
+        if action in text and object_ in text:
+            bound["evidence_event_id"] = str(item["evidence_event_id"])
+            bound["evidence_quote"] = text
+            return bound
+    bound["_binding_reason"] = "evidence_not_found"
+    return bound
+
+
 class SourceFirstRelationDiscoverer:
     """Evaluation-only discoverer that returns source semantics beside proposals."""
 
@@ -173,9 +198,11 @@ class SourceFirstRelationDiscoverer:
         decoded = response.content if isinstance(response.content, dict) else json.loads(response.content)
         raw_semantics = decoded.get("source_semantics")
         if isinstance(raw_semantics, Mapping):
-            self.last_source_semantics = dict(raw_semantics)
-            # The caller, not a non-strict JSON-object response, owns source identity.
-            self.last_source_semantics["claim_id"] = source_id
+            self.last_source_semantics = _bind_authoritative_source_context(
+                raw_semantics,
+                source_id=source_id,
+                evidence=evidence,
+            )
         else:
             self.last_source_semantics = None
         self.last_response_usage = {
@@ -273,6 +300,8 @@ def validate_source_annotation(
     claim_id = unicodedata.normalize("NFC", str(raw.get("claim_id") or "")).strip()
     if claim_id != source_claim_id:
         return SourceAnnotationValidation(None, "source_id_mismatch")
+    if raw.get("_binding_reason") == "evidence_not_found":
+        return SourceAnnotationValidation(None, "evidence_not_found")
     action = unicodedata.normalize("NFC", str(raw.get("action") or "")).strip()
     object_ = unicodedata.normalize("NFC", str(raw.get("object") or "")).strip()
     event_id = unicodedata.normalize("NFC", str(raw.get("evidence_event_id") or "")).strip()

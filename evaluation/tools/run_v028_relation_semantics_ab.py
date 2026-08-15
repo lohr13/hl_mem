@@ -66,6 +66,9 @@ BASE_INPUTS = OUTPUT_ROOT / "v028_rao_ab_inputs_nogold.json"
 V1_ABORTED_ROOT = OUTPUT_ROOT / "v028_r1_ab_v1_aborted"
 V1_PREREG = V1_ABORTED_ROOT / "v028_r1_ab_preregistration.json"
 V1_CALLS = V1_ABORTED_ROOT / "v028_r1_ab_calls.jsonl"
+V2PILOT_ABORTED_ROOT = OUTPUT_ROOT / "v028_r1_ab_v2pilot_aborted"
+V2PILOT_PREREG = V2PILOT_ABORTED_ROOT / "v028_r1_ab_v2_preregistration.json"
+V2PILOT_ARTIFACT = V2PILOT_ABORTED_ROOT / "v028_r1_ab_v2_pilot.json"
 CACHE_ROOT = OUTPUT_ROOT / "v028_r1_ab_v2_cache"
 INPUTS = OUTPUT_ROOT / "v028_r1_ab_v2_inputs_nogold.json"
 PREREG = OUTPUT_ROOT / "v028_r1_ab_v2_preregistration.json"
@@ -366,7 +369,13 @@ def command_preregister() -> int:
     base_caches = _base_cache_index()
     if not V1_PREREG.is_file() or not V1_CALLS.is_file():
         raise RuntimeError("aborted v1 preregistration and calls are required before v2 preregistration")
+    if not V2PILOT_PREREG.is_file() or not V2PILOT_ARTIFACT.is_file():
+        raise RuntimeError("aborted v2 pilot preregistration and artifact are required before rerun")
     v1 = _json(V1_PREREG)
+    v2pilot_prereg = _json(V2PILOT_PREREG)
+    v2pilot = _json(V2PILOT_ARTIFACT)
+    if int(v2pilot.get("accepted", -1)) != 0 or int(v2pilot.get("persisted", -1)) != 0:
+        raise RuntimeError("archived v2 pilot must record the zero-acceptance tool failure")
     sources = v1["sources_by_trajectory"]
     if sum(len(values) for values in sources.values()) != EXPECTED_SOURCE_COUNT:
         raise RuntimeError("v1 frozen source count changed before v2 preregistration")
@@ -402,7 +411,12 @@ def command_preregister() -> int:
         "output_token_ratio": 1.35,
         "call_hard_limit": MAX_CALLS,
     }
-    if v1.get("contracts") != contracts or v1.get("gates") != gates:
+    if (
+        v1.get("contracts") != contracts
+        or v1.get("gates") != gates
+        or v2pilot_prereg.get("contracts") != contracts
+        or v2pilot_prereg.get("gates") != gates
+    ):
         raise RuntimeError("v2 prompt/schema/gates must remain byte-for-byte identical to aborted v1")
     frozen_pairs = {
         (str(row["trajectory_id"]), str(row["source_claim_id"]))
@@ -434,10 +448,26 @@ def command_preregister() -> int:
         "repeat_count": 1,
         "rerun": {
             "version": "v2",
-            "v1_status": "aborted",
-            "v1_preregistration_sha256": sha256_file(V1_PREREG),
-            "v1_abort_reason": "source_id_mismatch_tool_defect",
-            "allowed_change": "bind source_semantics.claim_id from the authoritative caller source ID",
+            "tool_fix_history": [
+                {
+                    "stage": "v1",
+                    "status": "aborted",
+                    "preregistration_sha256": sha256_file(V1_PREREG),
+                    "abort_reason": "source_id_mismatch_tool_defect",
+                    "allowed_change": "bind source_semantics.claim_id from the authoritative caller source ID",
+                },
+                {
+                    "stage": "v2pilot",
+                    "status": "aborted",
+                    "preregistration_sha256": sha256_file(V2PILOT_PREREG),
+                    "pilot_sha256": sha256_file(V2PILOT_ARTIFACT),
+                    "abort_reason": "missing_authoritative_evidence_references_after_id_fix",
+                    "allowed_change": (
+                        "bind evidence_event_id/evidence_quote from linked source evidence containing "
+                        "the model-produced action and object"
+                    ),
+                },
+            ],
             "prompt_schema_gates_identical": True,
         },
         "pilot_tasks": pilot_tasks,

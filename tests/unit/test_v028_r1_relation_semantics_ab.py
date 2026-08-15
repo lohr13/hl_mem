@@ -139,7 +139,7 @@ def test_source_first_contract_keeps_source_semantics_when_no_edge_exists() -> N
         "action": "喜欢",
         "object": "爵士乐",
         "evidence_event_id": "event-1",
-        "evidence_quote": "我喜欢爵士乐",
+        "evidence_quote": "用户说：我喜欢爵士乐。",
     }
     assert discoverer.last_response_usage == {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30}
     assert client.request is not None
@@ -157,8 +157,6 @@ def test_source_id_stays_authoritative_from_prompt_through_validator(connection)
             "source_semantics": {
                 "action": "喜欢",
                 "object": "爵士乐",
-                "evidence_event_id": "event-1",
-                "evidence_quote": "我喜欢爵士乐",
             },
             "relations": [],
         }
@@ -185,12 +183,54 @@ def test_source_id_stays_authoritative_from_prompt_through_validator(connection)
     assert payload["source"]["id"] == claim_id
     assert discoverer.last_source_semantics is not None
     assert discoverer.last_source_semantics["claim_id"] == claim_id
+    assert discoverer.last_source_semantics["evidence_event_id"] == "event-1"
+    assert discoverer.last_source_semantics["evidence_quote"] == "用户说：我喜欢爵士乐。"
 
     validation = validate_source_annotation(connection, claim_id, discoverer.last_source_semantics)
 
     assert validation.reason == "accepted"
     assert validation.annotation is not None
     assert validation.annotation.claim_id == claim_id
+
+
+def test_source_context_binding_discards_semantics_without_matching_evidence(connection) -> None:
+    _insert_claim_with_evidence(connection, event_text="用户说：我最近在听古典乐。")
+    client = CapturingClient(
+        {
+            "source_semantics": {
+                "action": "喜欢",
+                "object": "爵士乐",
+                "evidence_event_id": "invented-event",
+                "evidence_quote": "我喜欢爵士乐",
+            },
+            "relations": [],
+        }
+    )
+    discoverer = SourceFirstRelationDiscoverer(
+        client,
+        evidence_loader=lambda source_id: [{"evidence_event_id": "event-1", "text": "用户说：我最近在听古典乐。"}],
+    )
+
+    discoverer.propose(
+        {
+            "id": "source",
+            "namespace_key": "default",
+            "subject_entity_id": "用户",
+            "predicate": "fact",
+            "value": "用户喜欢爵士乐",
+            "status": "active",
+        },
+        [],
+        max_proposals=10,
+    )
+    assert discoverer.last_source_semantics is not None
+    assert "evidence_event_id" not in discoverer.last_source_semantics
+    assert "evidence_quote" not in discoverer.last_source_semantics
+
+    validation = validate_source_annotation(connection, "source", discoverer.last_source_semantics)
+
+    assert validation.annotation is None
+    assert validation.reason == "evidence_not_found"
 
 
 def test_source_annotation_is_source_bounded_and_persists_no_quote_text(connection) -> None:
