@@ -5,36 +5,25 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from copy import deepcopy
 from typing import Any, Literal
 
 from hl_mem.components import make_llm_client
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.llm_extractor import (
-    ENGLISH_SYSTEM_PROMPT,
     LEGACY_ENGLISH_SYSTEM_PROMPT,
     LEGACY_SYSTEM_PROMPT,
-    PROMPT_HASH,
-    SYSTEM_PROMPT,
+    SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT,
+    SOURCE_BOUNDED_RAO_SYSTEM_PROMPT,
     LLMExtractor,
+    compute_prompt_hash,
 )
-from hl_mem.ingest.schemas import extraction_response_json_schema
+from hl_mem.ingest.schemas import extraction_response_json_schema, legacy_extraction_response_json_schema
 from hl_mem.ingest.verifier import EntailmentVerifier
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.settings import Settings
 
 LEGACY_CONTRACT_ID = "compact-7field-v1"
 CURRENT_CONTRACT_ID = "compact-source-bounded-rao-v1"
-
-
-def legacy_extraction_response_json_schema() -> dict[str, Any]:
-    """从当前 schema 精确投影冻结的七字段 compact 契约。"""
-    schema = deepcopy(extraction_response_json_schema())
-    claim = schema["$defs"]["CompactExtractedClaimSchema"]
-    for field in ("action", "object"):
-        claim["properties"].pop(field)
-        claim["required"].remove(field)
-    return schema
 
 
 def _canonical_hash(value: Any) -> str:
@@ -52,10 +41,10 @@ def extraction_contract_snapshot(arm: Literal["old", "new"]) -> dict[str, Any]:
         product_prompt_hash = None
     elif arm == "new":
         contract_id = CURRENT_CONTRACT_ID
-        chinese_prompt = SYSTEM_PROMPT
-        english_prompt = ENGLISH_SYSTEM_PROMPT
+        chinese_prompt = SOURCE_BOUNDED_RAO_SYSTEM_PROMPT
+        english_prompt = SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT
         schema = extraction_response_json_schema()
-        product_prompt_hash = PROMPT_HASH
+        product_prompt_hash = SourceBoundedRAOLLMExtractor.prompt_hash
     else:
         raise ValueError(f"unsupported extraction arm: {arm}")
     payload = {
@@ -85,6 +74,27 @@ class LegacyCompactLLMExtractor(LLMExtractor):
         return legacy_extraction_response_json_schema()
 
 
+_SOURCE_BOUNDED_RAO_HASH = compute_prompt_hash(
+    SOURCE_BOUNDED_RAO_SYSTEM_PROMPT,
+    response_schema=extraction_response_json_schema(),
+    postprocess_rules={"relation_metadata_projection": "source-bounded-rao-v1"},
+)
+
+
+class SourceBoundedRAOLLMExtractor(LLMExtractor):
+    """Evaluation-only extractor retained after the E3 product gate failed."""
+
+    prompt_hash = _SOURCE_BOUNDED_RAO_HASH
+    extractor_version = f"{CURRENT_CONTRACT_ID}+{_SOURCE_BOUNDED_RAO_HASH}"
+    relation_metadata_projection_enabled = True
+
+    def _system_prompt_for_language(self, language: Literal["zh", "en"]) -> str:
+        return SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT if language == "en" else SOURCE_BOUNDED_RAO_SYSTEM_PROMPT
+
+    def _response_json_schema(self) -> dict[str, Any]:
+        return extraction_response_json_schema()
+
+
 def make_extraction_arm_extractor(
     settings: Settings,
     connection: sqlite3.Connection,
@@ -102,7 +112,7 @@ def make_extraction_arm_extractor(
     verifier = (
         EntailmentVerifier(client, structured_mode=structured_mode) if settings.verification_mode != "off" else None
     )
-    extractor_type = LegacyCompactLLMExtractor if arm == "old" else LLMExtractor
+    extractor_type = LegacyCompactLLMExtractor if arm == "old" else SourceBoundedRAOLLMExtractor
     return extractor_type(
         client,
         ChunkingPolicy(

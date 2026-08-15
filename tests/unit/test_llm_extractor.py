@@ -9,14 +9,16 @@ from hl_mem.domain.claims.attributes import PREDICATE_ATTRIBUTE_MAP
 from hl_mem.evaluation.extraction_ab import (
     LEGACY_CONTRACT_ID,
     LegacyCompactLLMExtractor,
+    SourceBoundedRAOLLMExtractor,
     extraction_contract_snapshot,
 )
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.llm_extractor import (
-    ENGLISH_SYSTEM_PROMPT,
     LANGUAGE_ROUTER_VERSION,
     LLM_EXTRACTOR_VERSION,
     PROMPT_HASH,
+    SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT,
+    SOURCE_BOUNDED_RAO_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     LLMExtractor,
     compute_prompt_hash,
@@ -234,9 +236,37 @@ def test_timeout_is_configurable() -> None:
 
 def test_prompt_requires_compact_candidate_fields_only() -> None:
     for field in ("subject", "value", "action", "object", "kind", "confidence", "notability", "evidence_quote"):
-        assert f'"{field}"' in SYSTEM_PROMPT
-    assert "canonical_attribute" not in SYSTEM_PROMPT
-    assert "topic_tags" not in SYSTEM_PROMPT
+        assert f'"{field}"' in SOURCE_BOUNDED_RAO_SYSTEM_PROMPT
+    assert "canonical_attribute" not in SOURCE_BOUNDED_RAO_SYSTEM_PROMPT
+    assert "topic_tags" not in SOURCE_BOUNDED_RAO_SYSTEM_PROMPT
+
+
+def test_product_extractor_uses_legacy_seven_field_contract_after_failed_gate() -> None:
+    raw = json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": "user",
+                    "value": "user visited Paris",
+                    "kind": "fact",
+                    "confidence": 1.0,
+                    "notability": "low",
+                    "evidence_quote": "user visited Paris",
+                }
+            ],
+            "should_memorize": True,
+        }
+    )
+    client = _FakeLLMClient(raw)
+
+    claim = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("user visited Paris")[0]
+
+    assert client.last_request is not None
+    assert "the seven fields shown above" in client.last_request.messages[0].content
+    properties = client.last_request.structured_output.schema["$defs"]["CompactExtractedClaimSchema"]["properties"]
+    assert "action" not in properties
+    assert "object" not in properties
+    assert not {"role", "action", "object"}.intersection(claim.qualifiers)
 
 
 def test_grounded_compact_relation_is_projected_without_changing_governance_fields() -> None:
@@ -259,7 +289,7 @@ def test_grounded_compact_relation_is_projected_without_changing_governance_fiel
         ensure_ascii=False,
     )
 
-    extractor = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2))
+    extractor = SourceBoundedRAOLLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2))
     claim = extractor.extract("hl_mem 使用 PostgreSQL 数据库")[0]
 
     assert claim.predicate == "使用"
@@ -330,7 +360,9 @@ def test_compact_relation_traceability_uses_exact_nfc_matching() -> None:
         ensure_ascii=False,
     )
 
-    claim = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract(f"用户 拜访 {composed}")[0]
+    claim = SourceBoundedRAOLLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract(
+        f"用户 拜访 {composed}"
+    )[0]
 
     assert claim.qualifiers["object"] == composed
 
@@ -371,7 +403,7 @@ def test_unbounded_compact_relation_is_dropped_and_reason_is_audited(
         ensure_ascii=False,
     )
     audit = _RecordingAudit()
-    extractor = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2))
+    extractor = SourceBoundedRAOLLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2))
 
     with audit_scope(audit):
         claim = extractor.extract(quote)[0]
@@ -418,7 +450,7 @@ def test_prompt_extracts_bounded_assistant_durable_outputs() -> None:
         "tool-to-algorithm mappings",
         "Do not memorize the whole assistant answer",
     ):
-        assert signal in ENGLISH_SYSTEM_PROMPT
+        assert signal in SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT
     for signal in (
         "可再次引用的 durable output",
         "表格行",
@@ -428,7 +460,7 @@ def test_prompt_extracts_bounded_assistant_durable_outputs() -> None:
         "工具到算法的映射",
         "禁止记忆整段 assistant 回答",
     ):
-        assert signal in SYSTEM_PROMPT
+        assert signal in SOURCE_BOUNDED_RAO_SYSTEM_PROMPT
 
 
 def test_prompt_hash_is_stable_and_has_expected_format() -> None:

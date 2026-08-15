@@ -78,7 +78,7 @@ from .repair import ENUM_MAPPINGS, TOPIC_TAG_ZH_TO_EN, repair_extraction_json
 from .schemas import (
     CompactExtractionResponseSchema,
     ExtractionResponseSchema,
-    extraction_response_json_schema,
+    legacy_extraction_response_json_schema,
 )
 from .verifier import EntailmentVerifier
 
@@ -346,8 +346,15 @@ def _with_source_bounded_relation_fields(prompt: str, *, language: Literal["zh",
     return upgraded
 
 
-SYSTEM_PROMPT = _with_source_bounded_relation_fields(LEGACY_SYSTEM_PROMPT, language="zh")
-ENGLISH_SYSTEM_PROMPT = _with_source_bounded_relation_fields(LEGACY_ENGLISH_SYSTEM_PROMPT, language="en")
+SOURCE_BOUNDED_RAO_SYSTEM_PROMPT = _with_source_bounded_relation_fields(LEGACY_SYSTEM_PROMPT, language="zh")
+SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT = _with_source_bounded_relation_fields(
+    LEGACY_ENGLISH_SYSTEM_PROMPT,
+    language="en",
+)
+# E3 did not pass the frozen release gate. Keep the product request contract on
+# the v0.27 seven-field baseline; the new contract remains evaluation-only.
+SYSTEM_PROMPT = LEGACY_SYSTEM_PROMPT
+ENGLISH_SYSTEM_PROMPT = LEGACY_ENGLISH_SYSTEM_PROMPT
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
 _HAN_CHARACTER_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -504,7 +511,7 @@ def _postprocess_rules_fingerprint(
         "language_router_version": language_router_version,
         "admission": admission_rules_fingerprint(),
         "claim_count_overflow_policy": CLAIM_COUNT_OVERFLOW_POLICY_VERSION,
-        "relation_metadata_projection": "source-bounded-rao-v1",
+        "relation_metadata_projection": "disabled-after-v028-e3-gate",
         "unsettled_confidence_ceiling": _UNSETTLED_CONFIDENCE_CEILING,
         "repair_enum_mappings": ENUM_MAPPINGS,
         "repair_topic_tag_mappings": TOPIC_TAG_ZH_TO_EN,
@@ -547,7 +554,7 @@ def compute_prompt_hash(
     """计算 prompt、响应 schema 与后处理规则的稳定提取配置指纹。"""
     payload = {
         "system_prompt": system_prompt,
-        "response_schema": extraction_response_json_schema() if response_schema is None else response_schema,
+        "response_schema": legacy_extraction_response_json_schema() if response_schema is None else response_schema,
         "postprocess_rules": (
             _postprocess_rules_fingerprint(language_router_version) if postprocess_rules is None else postprocess_rules
         ),
@@ -664,6 +671,7 @@ class LLMExtractor:
     prompt_hash = PROMPT_HASH
     extractor_version = LLM_EXTRACTOR_VERSION
     language_router_version = LANGUAGE_ROUTER_VERSION
+    relation_metadata_projection_enabled = False
 
     def __init__(
         self,
@@ -984,13 +992,16 @@ class LLMExtractor:
             canonical_attribute = inferred_attribute
         qualifiers = self._infer_compact_qualifiers(canonical_attribute, subject, candidate.value)
         canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
-        relation_qualifiers, relation_reason = self._project_relation_metadata(
-            subject=subject,
-            value=candidate.value,
-            evidence_quote=candidate.evidence_quote,
-            action=raw.get("action"),
-            object_=raw.get("object"),
-        )
+        relation_qualifiers: dict[str, Any] = {}
+        relation_reason = "not_provided"
+        if self.relation_metadata_projection_enabled:
+            relation_qualifiers, relation_reason = self._project_relation_metadata(
+                subject=subject,
+                value=candidate.value,
+                evidence_quote=candidate.evidence_quote,
+                action=raw.get("action"),
+                object_=raw.get("object"),
+            )
         if relation_reason != "not_provided":
             self._relation_metadata_counts[relation_reason] = self._relation_metadata_counts.get(relation_reason, 0) + 1
         if relation_reason not in {"accepted", "not_provided"}:
@@ -1705,4 +1716,4 @@ class LLMExtractor:
 
     def _response_json_schema(self) -> dict[str, Any]:
         """返回当前产品 compact 响应 schema；评测子类可冻结旧契约。"""
-        return extraction_response_json_schema()
+        return legacy_extraction_response_json_schema()

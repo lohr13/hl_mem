@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Annotated, Any, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -148,3 +149,13 @@ class CompactExtractionResponseSchema(BaseModel):
 def extraction_response_json_schema() -> dict[str, Any]:
     """生成紧凑、递归 additionalProperties=false 的远端 JSON Schema。"""
     return CompactExtractionResponseSchema.model_json_schema()
+
+
+def legacy_extraction_response_json_schema() -> dict[str, Any]:
+    """Project the frozen seven-field compact request contract from the parser schema."""
+    schema = deepcopy(extraction_response_json_schema())
+    claim = schema["$defs"]["CompactExtractedClaimSchema"]
+    for field in ("action", "object"):
+        claim["properties"].pop(field)
+        claim["required"].remove(field)
+    return schema
