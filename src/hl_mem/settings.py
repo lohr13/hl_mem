@@ -26,6 +26,7 @@ QueryContextMode = Literal["off", "coreference"]
 ProcedureRecallMode = Literal["off", "keyword", "auto"]
 FeedbackLifecycleMode = Literal["off", "observe", "on"]
 RelevanceGateMode = Literal["off", "observe", "enforce"]
+ResurrectionMode = Literal["off", "auto"]
 ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
 IndexTextMode = Literal["legacy", "value_only", "natural", "answerable"]
@@ -164,6 +165,18 @@ class Settings:
     recall_dedup_candidate_limit: int = field(
         default=100,
         metadata={"toml": "recall.dedup_candidate_limit"},
+    )
+    resurrection_mode: ResurrectionMode = field(
+        default="off",
+        metadata={"toml": "recall.resurrection_mode"},
+    )
+    resurrection_candidate_limit: int = field(
+        default=3,
+        metadata={"toml": "recall.resurrection_candidate_limit"},
+    )
+    resurrection_min_term_coverage: float = field(
+        default=0.8,
+        metadata={"toml": "recall.resurrection_min_term_coverage"},
     )
     relevance_gate_mode: RelevanceGateMode = field(
         default="off",
@@ -516,6 +529,12 @@ class Settings:
         """校验配置组合以及已启用组件的密钥。"""
         if self.fts_language not in {"auto", "zh", "en"}:
             raise ConfigurationError("recall.fts_language must be 'auto', 'zh', or 'en'")
+        if self.resurrection_mode not in {"off", "auto"}:
+            raise ConfigurationError("recall.resurrection_mode must be 'off' or 'auto'")
+        if self.resurrection_candidate_limit < 1:
+            raise ConfigurationError("recall.resurrection_candidate_limit must be positive")
+        if not 0.0 < self.resurrection_min_term_coverage <= 1.0:
+            raise ConfigurationError("recall.resurrection_min_term_coverage must be between 0 and 1")
         try:
             VectorBackend(self.vector_backend)
         except ValueError as error:

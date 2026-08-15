@@ -783,6 +783,38 @@ class ClaimRepository:
             ],
         )
 
+    def search_archived_claims_fts(
+        self,
+        query: str,
+        limit: int,
+        as_of: str | None = None,
+        known_as_of: str | None = None,
+        namespace: str = "default",
+    ) -> list[dict[str, Any]]:
+        """Bounded cold FTS over archived claims only, with current-time visibility."""
+
+        reference = as_of or datetime.now(timezone.utc).isoformat()
+        match_query = prepare_fts_query(query, language=self.fts_language)
+        if not match_query:
+            return []
+        try:
+            rows = self.connection.execute(
+                "SELECT c.* FROM claims_fts_v2 f JOIN claims c ON c.rowid=f.rowid "
+                "WHERE claims_fts_v2 MATCH ? AND c.status='archived' AND c.namespace_key=? "
+                "ORDER BY bm25(claims_fts_v2),c.id LIMIT ?",
+                (match_query, namespace, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as error:
+            if not is_fts_syntax_error(error):
+                raise
+            return []
+        visible: list[dict[str, Any]] = []
+        for claim in self._decode_rows(rows):
+            projected = {**claim, "status": "active"}
+            if claim_is_visible(projected, reference, known_as_of, RecallIntent.CURRENT_STATE):
+                visible.append(claim)
+        return visible
+
     def search_claims_tags(
         self,
         query_tags: list[str],

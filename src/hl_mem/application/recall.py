@@ -25,6 +25,7 @@ from hl_mem.application.context_packet import (
     retrieval_bundle_to_dict,
 )
 from hl_mem.application.ingest import new_id
+from hl_mem.application.resurrection import ResurrectionService
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
 from hl_mem.observability.audit import current_audit
@@ -537,6 +538,27 @@ class RecallService:
                     dense_floor=self.settings.relevance_dense_floor,
                     relative_drop_threshold=self.settings.relevance_relative_drop,
                 )
+        provisional_answerability = self._answerability(
+            claims,
+            tracer,
+            relevance_enforced=enforce_enabled,
+        )
+        if self.settings.resurrection_mode == "auto" and provisional_answerability != "supported":
+            resurrected = ResurrectionService(self.connection, self.embedder, self.settings).try_resurrect(
+                query,
+                namespace=namespace,
+                as_of=as_of or _now(),
+                known_as_of=known_as_of,
+                intent=selected_intent,
+            )
+            if resurrected is not None:
+                resurrected["_score"] = max(
+                    1.0,
+                    max((float(claim.get("_score", 0.0)) for claim in claims), default=0.0) + 0.01,
+                )
+                claims = [resurrected, *(claim for claim in claims if claim["id"] != resurrected["id"])][:limit]
+                tracer.record_channel("cold_fts", [resurrected])
+                tracer.record_final(claims)
         self._record_access(claims)
         assembly_started = time.perf_counter_ns()
         results = self._assemble_results(claims, namespace)
@@ -649,7 +671,7 @@ class RecallService:
         if relevance_enforced and (trace is None or trace.relevance_decision != "relevant"):
             tracer.trace.answerability = "low_confidence"
             return "low_confidence"
-        fts_hit = bool(trace and "fts" in trace.channels)
+        fts_hit = bool(trace and ({"fts", "cold_fts"} & trace.channels.keys()))
         dense_score = float(trace.channel_scores.get("dense", 0.0)) if trace else 0.0
         slot = str(top.get("canonical_slot") or "")
         high_confidence_slot = slot.startswith(("identity.", "config.", "preference."))
