@@ -118,7 +118,16 @@ def expand_related_claims(
             [item.current_id for item in frontier],
             include_memory_relations=True,
             include_reverse_evidence=True,
+            valid_as_of=reference,
         )
+        endpoint_ids = {
+            endpoint_id
+            for item in frontier
+            for edge in relations.get(item.current_id, [])
+            for endpoint_id in (item.current_id, str(edge.get("neighbor_id") or ""))
+            if endpoint_id
+        }
+        endpoint_claims = repo.batch_get_claims(sorted(endpoint_ids))
         next_best: dict[tuple[str, str], _Frontier] = {}
         for item in frontier:
             for edge in relations.get(item.current_id, []):
@@ -128,6 +137,17 @@ def expand_related_claims(
                     not neighbor_id
                     or relation not in config.allowed_relations
                     or (item.seed_id, neighbor_id) in visited
+                ):
+                    continue
+                current_claim = endpoint_claims.get(item.current_id)
+                neighbor_claim = endpoint_claims.get(neighbor_id)
+                if (
+                    current_claim is None
+                    or neighbor_claim is None
+                    or current_claim.get("namespace_key") != namespace
+                    or neighbor_claim.get("namespace_key") != namespace
+                    or not claim_is_visible(current_claim, reference, known_as_of, intent)
+                    or not claim_is_visible(neighbor_claim, reference, known_as_of, intent)
                 ):
                     continue
                 confidence = _clamp(edge.get("confidence", edge.get("weight", 1.0)))

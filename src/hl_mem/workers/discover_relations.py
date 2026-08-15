@@ -283,8 +283,9 @@ def _find_or_insert_relation(
         "supporting_claim_ids": proposal.supporting_claim_ids,
     }
     connection.execute(
-        "INSERT INTO memory_relations(id,from_id,to_id,relation,confidence,evidence_json,created_at) "
-        "VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO memory_relations("
+        "id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from"
+        ") VALUES (?,?,?,?,?,?,?,?)",
         (
             relation_id,
             proposal.from_claim_id,
@@ -292,6 +293,7 @@ def _find_or_insert_relation(
             proposal.relation,
             proposal.confidence,
             json.dumps(evidence, ensure_ascii=False),
+            now,
             now,
         ),
     )

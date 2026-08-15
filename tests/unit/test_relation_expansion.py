@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hl_mem.domain.recall import RecallIntent
 from hl_mem.domain.relations import get_relations_batch
 from hl_mem.recall.relation_expansion import (
@@ -12,6 +14,7 @@ from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 
 NOW = "2026-07-24T00:00:00+00:00"
+BEFORE = "2026-07-23T00:00:00+00:00"
 
 
 def _insert_claim(
@@ -198,3 +201,113 @@ def test_expand_related_claims_preserves_paths_between_selected_seeds(tmp_path) 
     assert claims
     assert any(item.seed_id != item.candidate_id for item in metadata)
     assert any(item.candidate_id in {"seed-left", "seed-right"} for item in metadata)
+
+
+@pytest.mark.parametrize(
+    ("claim_status", "claim_valid_to"),
+    (("active", None), ("superseded", NOW), ("expired", NOW)),
+)
+@pytest.mark.parametrize("edge_is_valid", (True, False))
+def test_relation_expansion_requires_edge_and_claim_temporal_visibility(
+    tmp_path,
+    claim_status: str,
+    claim_valid_to: str | None,
+    edge_is_valid: bool,
+) -> None:
+    database = Database(tmp_path / f"visibility-{edge_is_valid}-{claim_status}.db")
+    try:
+        with database.connect() as connection:
+            _insert_claim(connection, "seed")
+            _insert_claim(
+                connection,
+                "neighbor",
+                status=claim_status,
+                valid_to=claim_valid_to,
+            )
+            connection.execute(
+                "INSERT INTO memory_relations("
+                "id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from,valid_to"
+                ") VALUES ('edge','seed','neighbor','supports',1.0,'[]',?,?,?)",
+                (BEFORE, BEFORE, None if edge_is_valid else NOW),
+            )
+            connection.commit()
+
+            claims, _ = expand_related_claims(
+                connection,
+                ClaimRepository(connection),
+                [{"id": "seed", "_semantic_score": 1.0}],
+                NOW,
+                None,
+                RecallIntent.CURRENT_STATE,
+                "default",
+                RelationExpansionConfig(enabled=True),
+            )
+    finally:
+        database.close()
+
+    expected = ["neighbor"] if edge_is_valid and claim_status == "active" else []
+    assert [claim["id"] for claim in claims] == expected
+
+
+def test_relation_expansion_does_not_traverse_invisible_intermediate_claim(tmp_path) -> None:
+    database = Database(tmp_path / "invisible-middle.db")
+    try:
+        with database.connect() as connection:
+            _insert_claim(connection, "seed")
+            _insert_claim(connection, "middle", status="retracted")
+            _insert_claim(connection, "destination")
+            connection.executemany(
+                "INSERT INTO memory_relations("
+                "id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from"
+                ") VALUES (?,?,?,?,1.0,'[]',?,?)",
+                [
+                    ("first", "seed", "middle", "supports", BEFORE, BEFORE),
+                    ("second", "middle", "destination", "supports", BEFORE, BEFORE),
+                ],
+            )
+            connection.commit()
+
+            claims, _ = expand_related_claims(
+                connection,
+                ClaimRepository(connection),
+                [{"id": "seed", "_semantic_score": 1.0}],
+                NOW,
+                None,
+                RecallIntent.CURRENT_STATE,
+                "default",
+                RelationExpansionConfig(enabled=True, max_depth=2),
+            )
+    finally:
+        database.close()
+
+    assert claims == []
+
+
+def test_relation_expansion_rejects_invisible_seed_endpoint(tmp_path) -> None:
+    database = Database(tmp_path / "invisible-seed.db")
+    try:
+        with database.connect() as connection:
+            _insert_claim(connection, "seed", status="retracted")
+            _insert_claim(connection, "neighbor")
+            connection.execute(
+                "INSERT INTO memory_relations("
+                "id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from"
+                ") VALUES ('edge','seed','neighbor','supports',1.0,'[]',?,?)",
+                (BEFORE, BEFORE),
+            )
+            connection.commit()
+
+            claims, _ = expand_related_claims(
+                connection,
+                ClaimRepository(connection),
+                [{"id": "seed", "_semantic_score": 1.0}],
+                NOW,
+                None,
+                RecallIntent.CURRENT_STATE,
+                "default",
+                RelationExpansionConfig(enabled=True),
+            )
+    finally:
+        database.close()
+
+    assert claims == []

@@ -112,7 +112,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 43 immutable SQL migrations (001-043)
+│   └── migrations/           # 44 immutable SQL migrations (001-044)
 ├── workers/
 │   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
 │   ├── ttl.py                # Importance-aware expiry
@@ -334,13 +334,13 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 43 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 44 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used
 after extraction HTTP 429 retries are exhausted, migration 041 prevents a second active claim from entering a
 mutually exclusive conflict group on any INSERT or UPDATE path, migration 042 adds activation lifecycle state, and
-migration 043 binds the main database to its deletion-ledger identity. The optional `sqlite_vec.py` data migration owns the dimension-specific
+migration 043 binds the main database to its deletion-ledger identity, and migration 044 adds valid-time windows to relation edges and closes them on terminal Claim transitions. The optional `sqlite_vec.py` data migration owns the dimension-specific
 derived vector table; the default remains exact `sqlite_scan`.
 
 Backup and restore are whole-database operations:

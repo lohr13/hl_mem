@@ -179,8 +179,8 @@ resurrection_mode = "off"
 model = "legacy_linear"
 ```
 
-Back up the database and stop the API, workers, and other writers before upgrading. Forward-only migrations 041–043 add
-exclusive-group activation protection, activation lifecycle fields, and deletion-ledger binding metadata. Historical
+Back up the database and stop the API, workers, and other writers before upgrading. Forward-only migrations 041–044 add
+exclusive-group activation protection, activation lifecycle fields, deletion-ledger binding metadata, and relation-edge valid time. Historical
 conflict anomalies are not adjudicated by migration and still require the explicit audit/repair workflow.
 
 ## Capabilities
@@ -219,7 +219,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.27.1 with 43 immutable, forward-only migrations.
+The current baseline is v0.27.1 with 44 immutable, forward-only migrations.
 
 ## Documentation
 

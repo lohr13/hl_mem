@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
+from hl_mem.domain.temporal import valid_time_is_visible
+
 
 class RelationType(StrEnum):
     """支持的记忆关系类型。"""
@@ -30,9 +32,11 @@ def add_relation(
     """创建一条 claim 关系并返回其标识。"""
     relation_type = RelationType(relation)
     relation_id = uuid.uuid4().hex
+    created_at = datetime.now(timezone.utc).isoformat()
     connection.execute(
         "INSERT INTO memory_relations "
-        "(id,from_id,to_id,relation,confidence,evidence_json,created_at) VALUES (?,?,?,?,?,?,?)",
+        "(id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from) "
+        "VALUES (?,?,?,?,?,?,?,?)",
         (
             relation_id,
             from_id,
@@ -40,7 +44,8 @@ def add_relation(
             relation_type.value,
             min(1.0, max(0.0, float(confidence))),
             json.dumps([], ensure_ascii=False),
-            datetime.now(timezone.utc).isoformat(),
+            created_at,
+            created_at,
         ),
     )
     return relation_id
@@ -63,7 +68,7 @@ def get_relations(
         clauses.append("to_id=?")
         parameters.append(claim_id)
     rows = connection.execute(
-        "SELECT id,from_id,to_id,relation,confidence,evidence_json,created_at "
+        "SELECT id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from,valid_to "
         f"FROM memory_relations WHERE {' OR '.join(clauses)} ORDER BY created_at,id",
         parameters,
     ).fetchall()
@@ -76,6 +81,7 @@ def get_relations_batch(
     *,
     include_memory_relations: bool = False,
     include_reverse_evidence: bool = False,
+    valid_as_of: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """批量获取多个 claim 的 evidence relations，并按 claim 标识分组。"""
     unique_ids = list(dict.fromkeys(claim_ids))
@@ -133,13 +139,15 @@ def get_relations_batch(
                 )
         if include_memory_relations:
             memory_rows = connection.execute(
-                "SELECT from_id,to_id,relation,confidence FROM memory_relations "
+                "SELECT from_id,to_id,relation,confidence,valid_from,valid_to FROM memory_relations "
                 f"WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
                 (*chunk, *chunk),
             ).fetchall()
             chunk_ids = set(chunk)
             for row in memory_rows:
                 relation = dict(row)
+                if valid_as_of is not None and not valid_time_is_visible(relation, valid_as_of):
+                    continue
                 for seed_id, neighbor_id in (
                     (relation["from_id"], relation["to_id"]),
                     (relation["to_id"], relation["from_id"]),

@@ -33,6 +33,11 @@ def _contains(start: str | None, end: str | None, point: datetime) -> bool:
     return (start is None or parse_utc(start) <= point) and (end is None or point < parse_utc(end))
 
 
+def valid_time_is_visible(item: Mapping[str, Any], valid_as_of: str) -> bool:
+    """Return whether an object with ``valid_from/valid_to`` covers the instant."""
+    return _contains(item.get("valid_from"), item.get("valid_to"), parse_utc(valid_as_of))
+
+
 def claim_is_visible(
     claim: Mapping[str, Any],
     valid_as_of: str,

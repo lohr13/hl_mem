@@ -178,8 +178,8 @@ resurrection_mode = "off"
 model = "legacy_linear"
 ```
 
-升级前请备份并停止 API、Worker 和其他写入者；migration 041–043 只向前执行，依次增加互斥组激活保护、
-activation 生命周期字段和删除账本绑定元数据。已有冲突脏数据不会被 migration 自动裁决，仍须通过显式
+升级前请备份并停止 API、Worker 和其他写入者；migration 041–044 只向前执行，依次增加互斥组激活保护、
+activation 生命周期字段、删除账本绑定元数据和关系边有效时间。已有冲突脏数据不会被 migration 自动裁决，仍须通过显式
 audit/repair 流程处理。
 
 ## 能力概览
@@ -217,7 +217,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.27.1，共 43 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.27.1，共 44 个不可变、仅向前执行的 SQL Migration。
 
 ## 文档
 
