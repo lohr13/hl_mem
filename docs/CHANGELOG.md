@@ -1,5 +1,9 @@
 # HL-Mem 变更记录
 
+## v0.27.1（2026-08-15）
+
+- 修复 Context Packet RAO fallback 可能将未出现在公开文本中的 claim value 投影到 relation 行的信息边界问题，并在缺少本地私有评测语料时跳过相关 CI smoke，消除跨环境失败。
+
 ## v0.27.0（2026-08-15）
 
 [GitHub Release](https://github.com/lohr13/hl_mem/releases/tag/v0.27.0) · [PyPI](https://pypi.org/project/hl-mem/0.27.0/)
