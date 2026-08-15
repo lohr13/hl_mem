@@ -143,13 +143,19 @@ def _claim_payload(
         for event_id in evidence_event_ids
         if (event := event_repo.get_event(event_id)) is not None
     ]
+    value = claim.get("value")
+    object_fallback = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
     return {
         "claim_id": claim_id,
         "text": text,
         "entities": [str(item) for item in claim.get("entities") or []],
-        "role": str(qualifiers.get("role") or ""),
-        "action": str(qualifiers.get("action") or ""),
-        "object": str(qualifiers.get("object") or ""),
+        "role": str(qualifiers.get("role") or claim.get("subject_entity_id") or ""),
+        "action": str(qualifiers.get("action") or claim.get("predicate") or ""),
+        "object": str(qualifiers.get("object") or object_fallback or ""),
         "slot": str(claim.get("canonical_slot") or ""),
         "evidence_event_ids": evidence_event_ids,
         "evidence_provenance": provenance,

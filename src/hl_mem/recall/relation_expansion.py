@@ -95,8 +95,7 @@ def expand_related_claims(
     if not config.enabled or config.seed_limit <= 0 or config.candidate_limit <= 0 or config.max_depth <= 0:
         return [], []
     selected_seeds = seeds[: config.seed_limit]
-    seed_ids = [str(seed["id"]) for seed in selected_seeds]
-    seed_id_set = set(seed_ids)
+    selected_seed_ids = {str(seed["id"]) for seed in selected_seeds}
     frontier = [
         _Frontier(
             seed_id=str(seed["id"]),
@@ -127,7 +126,6 @@ def expand_related_claims(
                 relation = str(edge.get("relation") or "")
                 if (
                     not neighbor_id
-                    or neighbor_id in seed_id_set
                     or relation not in config.allowed_relations
                     or (item.seed_id, neighbor_id) in visited
                 ):
@@ -176,6 +174,7 @@ def expand_related_claims(
     rows = repo.batch_get_claims([item.candidate_id for item in ordered])
     accepted: list[ExpandedCandidate] = []
     claims: list[dict[str, Any]] = []
+    added_candidates = 0
     for candidate in ordered:
         claim = rows.get(candidate.candidate_id)
         if (
@@ -184,10 +183,12 @@ def expand_related_claims(
             or not claim_is_visible(claim, reference, known_as_of, intent)
         ):
             continue
+        if candidate.candidate_id not in selected_seed_ids and added_candidates >= config.candidate_limit:
+            continue
         expanded = dict(claim)
         expanded["_semantic_score"] = candidate.expansion_score
         claims.append(expanded)
         accepted.append(candidate)
-        if len(claims) >= config.candidate_limit:
-            break
+        if candidate.candidate_id not in selected_seed_ids:
+            added_candidates += 1
     return claims, accepted

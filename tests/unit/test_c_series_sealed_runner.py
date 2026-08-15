@@ -263,6 +263,21 @@ def _relation_db(path, relations: int) -> None:
         connection.close()
 
 
+def _relation_db_with_endpoint_statuses(path, left_status: str, right_status: str) -> None:
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("CREATE TABLE claims(id TEXT PRIMARY KEY,status TEXT NOT NULL)")
+        connection.execute("CREATE TABLE memory_relations(id TEXT PRIMARY KEY,from_id TEXT,to_id TEXT)")
+        connection.executemany(
+            "INSERT INTO claims(id,status) VALUES (?,?)",
+            [("left", left_status), ("right", right_status)],
+        )
+        connection.execute("INSERT INTO memory_relations(id,from_id,to_id) VALUES ('edge','left','right')")
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_relation_coverage_gate_rejects_required_case_without_edges(tmp_path) -> None:
     database = tmp_path / "required.db"
     _relation_db(database, 0)
@@ -285,6 +300,17 @@ def test_relation_coverage_gate_rejects_none_case_with_edges(tmp_path) -> None:
         )
 
 
+def test_relation_coverage_gate_rejects_edges_whose_endpoint_is_not_recallable(tmp_path) -> None:
+    database = tmp_path / "disputed.db"
+    _relation_db_with_endpoint_statuses(database, "active", "disputed")
+
+    with pytest.raises(RuntimeError, match="recallable=0"):
+        runner.validate_relation_coverage(
+            [{"case_id": "case-required", "relation_coverage": "required"}],
+            {"case-required": database},
+        )
+
+
 def test_relation_coverage_gate_reports_required_and_none_separately(tmp_path) -> None:
     required = tmp_path / "required.db"
     none = tmp_path / "none.db"
@@ -302,12 +328,14 @@ def test_relation_coverage_gate_reports_required_and_none_separately(tmp_path) -
     assert summary == {
         "required_cases": 1,
         "required_with_edges": 1,
+        "required_with_recallable_edges": 1,
         "none_cases": 1,
         "none_with_edges": 0,
         "total_relations": 2,
+        "total_recallable_relations": 2,
         "by_case": {
-            "case-none": {"declared": "none", "relations": 0},
-            "case-required": {"declared": "required", "relations": 2},
+            "case-none": {"declared": "none", "relations": 0, "recallable_relations": 0},
+            "case-required": {"declared": "required", "relations": 2, "recallable_relations": 2},
         },
     }
 

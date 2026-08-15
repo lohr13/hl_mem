@@ -164,3 +164,37 @@ def test_relation_expansion_has_independent_candidate_budget(tmp_path) -> None:
         database.close()
 
     assert [claim["id"] for claim in claims] == ["neighbor-0", "neighbor-1"]
+
+
+def test_expand_related_claims_preserves_paths_between_selected_seeds(tmp_path) -> None:
+    database = Database(tmp_path / "seed-path.db")
+    try:
+        with database.connect() as connection:
+            _insert_claim(connection, "seed-left")
+            _insert_claim(connection, "seed-right")
+            connection.execute(
+                "INSERT INTO memory_relations(id,from_id,to_id,relation,confidence,evidence_json,created_at) "
+                "VALUES ('seed-edge','seed-right','seed-left','supports',1.0,'[]',?)",
+                (NOW,),
+            )
+            connection.commit()
+
+            claims, metadata = expand_related_claims(
+                connection,
+                ClaimRepository(connection),
+                [
+                    {"id": "seed-left", "_semantic_score": 1.0},
+                    {"id": "seed-right", "_semantic_score": 0.9},
+                ],
+                NOW,
+                None,
+                RecallIntent.CURRENT_STATE,
+                "default",
+                RelationExpansionConfig(enabled=True, seed_limit=2),
+            )
+    finally:
+        database.close()
+
+    assert claims
+    assert any(item.seed_id != item.candidate_id for item in metadata)
+    assert any(item.candidate_id in {"seed-left", "seed-right"} for item in metadata)

@@ -568,30 +568,28 @@ def _expand_related(ctx: RecallContext) -> RecallContext:
         ctx.pre_scores[claim_id] = memory_score(ctx.feature_by_id[claim_id])
     if expanded_by_id:
         ctx.ranked_claims = _sort_pre_rank(ctx.by_id, ctx.feature_by_id, ctx.pre_scores)
-        tracer = ctx.tracer
-        if tracer is not None:
-            tracer.record_channel("relation", list(expanded_by_id.values()))
-            metadata_by_id = {item.claim_id: item for item in metadata_items}
-            for claim_id in expanded_by_id:
-                metadata = metadata_by_id[claim_id]
-                tracer.record_relation_path(
-                    claim_id,
-                    {
-                        "seed_id": metadata.seed_id,
-                        "path": [
-                            {
-                                "from_id": hop.from_id,
-                                "to_id": hop.to_id,
-                                "relation": hop.relation,
-                                "source": hop.source,
-                                "edge_confidence": hop.edge_confidence,
-                            }
-                            for hop in metadata.path
-                        ],
-                        "cumulative_weight": metadata.cumulative_weight,
-                        "expansion_score": metadata.expansion_score,
-                    },
-                )
+    tracer = ctx.tracer
+    if tracer is not None and expanded:
+        tracer.record_channel("relation", expanded)
+        for metadata in metadata_items:
+            tracer.record_relation_path(
+                metadata.claim_id,
+                {
+                    "seed_id": metadata.seed_id,
+                    "path": [
+                        {
+                            "from_id": hop.from_id,
+                            "to_id": hop.to_id,
+                            "relation": hop.relation,
+                            "source": hop.source,
+                            "edge_confidence": hop.edge_confidence,
+                        }
+                        for hop in metadata.path
+                    ],
+                    "cumulative_weight": metadata.cumulative_weight,
+                    "expansion_score": metadata.expansion_score,
+                },
+            )
     if ctx.tracer is not None:
         ctx.tracer.trace.phases.relation_us = (time.perf_counter_ns() - started) // 1000
     return ctx

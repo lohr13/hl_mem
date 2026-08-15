@@ -121,6 +121,39 @@ def test_real_recall_service_separates_c0_c1_c3_and_preserves_source_hash(tmp_pa
     assert db_path.read_bytes() == before
 
 
+def test_c4_uses_relation_path_between_existing_candidates_and_structured_fallback(tmp_path) -> None:
+    case = {
+        "case_id": "existing-relation-path",
+        "namespace": "wanted",
+        "question": "谁负责的项目推荐了什么？",
+        "question_at": "2026-06-30T00:00:00+00:00",
+        "known_as_of": None,
+        "allowed_modalities": ["text"],
+        "source_corpora": [{"id": "unit_fixture", "sha256": "e" * 64}],
+        "events": [
+            {"event_id": "e1", "text": "甲事实", "occurred_at": "2026-01-01T00:00:00+00:00"},
+            {"event_id": "e2", "text": "乙事实", "occurred_at": "2026-01-02T00:00:00+00:00"},
+            {"event_id": "e3", "text": "丙事实", "occurred_at": "2026-01-03T00:00:00+00:00"},
+        ],
+        "claims": [
+            {"claim_id": "left", "text": "甲事实", "entities": ["甲"], "rank": 1, "evidence_event_ids": ["e1"]},
+            {"claim_id": "middle", "text": "乙事实", "entities": ["乙"], "rank": 2, "evidence_event_ids": ["e2"]},
+            {"claim_id": "right", "text": "丙事实", "entities": ["丙"], "rank": 3, "evidence_event_ids": ["e3"]},
+        ],
+        "relations": [{"from_id": "left", "to_id": "right", "relation": "supports", "confidence": 1.0}],
+    }
+    db_path = tmp_path / "existing.db"
+    materialize_visible_case(db_path, case, _settings(), embedder=FakeEmbedder(8))
+
+    common = (case, _settings(), FakeEmbedder(8), FakeReranker())
+    c0 = recall_visible_case(*common, db_path=db_path, arm_id="C0")
+    c4 = recall_visible_case(*common, db_path=db_path, arm_id="C4")
+
+    assert [item["claim_id"] for item in c0.packet] != [item["claim_id"] for item in c4.packet]
+    assert c4.relation_paths
+    assert all(item["role"] and item["action"] and item["object"] for item in c4.packet)
+
+
 def test_visible_cache_reuses_frozen_sqlite_bytes(tmp_path) -> None:
     db_path = tmp_path / "cached.db"
     manifest_path = materialize_visible_case_cached(db_path, _case(), _settings())

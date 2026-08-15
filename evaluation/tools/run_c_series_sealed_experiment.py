@@ -300,15 +300,28 @@ def gold_free_case(raw: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _relation_count(database: Path) -> int:
+def _relation_counts(database: Path) -> tuple[int, int]:
     if not database.is_file():
         raise RuntimeError(f"sealed relation cache is missing: {database}")
     connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)
     try:
         row = connection.execute("SELECT COUNT(*) FROM memory_relations").fetchone()
+        total = int(row[0]) if row else 0
+        relation_columns = {str(item[1]) for item in connection.execute("PRAGMA table_info(memory_relations)")}
+        claim_columns = {str(item[1]) for item in connection.execute("PRAGMA table_info(claims)")}
+        if {"from_id", "to_id"} <= relation_columns and {"id", "status"} <= claim_columns:
+            recallable_row = connection.execute(
+                "SELECT COUNT(*) FROM memory_relations AS relation "
+                "JOIN claims AS source ON source.id=relation.from_id "
+                "JOIN claims AS target ON target.id=relation.to_id "
+                "WHERE source.status='active' AND target.status='active'"
+            ).fetchone()
+            recallable = int(recallable_row[0]) if recallable_row else 0
+        else:
+            recallable = total
     finally:
         connection.close()
-    return int(row[0]) if row else 0
+    return total, recallable
 
 
 def validate_relation_coverage(cases: Sequence[Mapping[str, Any]], databases: Mapping[str, Path]) -> dict[str, Any]:
@@ -323,9 +336,11 @@ def validate_relation_coverage(cases: Sequence[Mapping[str, Any]], databases: Ma
         database = databases.get(case_id)
         if database is None:
             raise RuntimeError(f"relation coverage gate has no cache path: {case_id}")
-        count = _relation_count(database)
-        by_case[case_id] = {"declared": declared, "relations": count}
-        if (declared == "required" and count == 0) or (declared == "none" and count != 0):
+        count, recallable = _relation_counts(database)
+        by_case[case_id] = {"declared": declared, "relations": count, "recallable_relations": recallable}
+        if declared == "required" and recallable == 0:
+            failures.append(f"{case_id}:{declared}={count},recallable=0")
+        elif declared == "none" and count != 0:
             failures.append(f"{case_id}:{declared}={count}")
     if failures:
         raise RuntimeError(f"relation coverage gate failed: {', '.join(failures)}")
@@ -335,9 +350,13 @@ def validate_relation_coverage(cases: Sequence[Mapping[str, Any]], databases: Ma
         "required_with_edges": sum(
             item["declared"] == "required" and int(item["relations"]) > 0 for item in ordered.values()
         ),
+        "required_with_recallable_edges": sum(
+            item["declared"] == "required" and int(item["recallable_relations"]) > 0 for item in ordered.values()
+        ),
         "none_cases": sum(item["declared"] == "none" for item in ordered.values()),
         "none_with_edges": sum(item["declared"] == "none" and int(item["relations"]) > 0 for item in ordered.values()),
         "total_relations": sum(int(item["relations"]) for item in ordered.values()),
+        "total_recallable_relations": sum(int(item["recallable_relations"]) for item in ordered.values()),
         "by_case": ordered,
     }
 
