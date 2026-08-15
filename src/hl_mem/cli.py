@@ -16,13 +16,14 @@ from typing import Any
 
 from hl_mem import __version__
 from hl_mem.application.conflicts import ResolutionService
+from hl_mem.application.restore import restore_database
 from hl_mem.components import make_embedder
 from hl_mem.config_loader import load_settings
 from hl_mem.daily_cli import add_daily_commands, handle_daily_command
 from hl_mem.doctor import main as doctor_main
 from hl_mem.evaluation.runner import BenchmarkRunner
 from hl_mem.settings import Settings
-from hl_mem.storage.backup import backup_database, restore_database, validate_backup
+from hl_mem.storage.backup import backup_database, validate_backup
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
@@ -338,7 +339,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     backup.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     restore = commands.add_parser(
         "restore",
-        description="Restore a verified backup. Stop the API, workers, and all writers first.",
+        description=(
+            "Restore a verified backup after replaying <target>.tombstones.db. "
+            "Stop the API, workers, and all writers first."
+        ),
     )
     restore.add_argument("path", type=Path)
     restore.add_argument("--manifest", type=Path, required=True)

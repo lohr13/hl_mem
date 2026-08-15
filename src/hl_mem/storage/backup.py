@@ -10,10 +10,19 @@ import tempfile
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-BACKUP_FORMAT_VERSION = 1
+from hl_mem.storage.tombstones import (
+    TOMBSTONE_SCHEMA_VERSION,
+    TombstoneLedger,
+    TombstoneLedgerError,
+    default_tombstone_ledger_path,
+)
+
+BACKUP_FORMAT_VERSION = 2
+LEGACY_BACKUP_FORMAT_VERSION = 1
 SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+RestoreReplay = Callable[[sqlite3.Connection, TombstoneLedger], tuple[int, int, int]]
 
 
 def _sha256(path: Path) -> str:
@@ -71,6 +80,110 @@ def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _read_ledger_binding(connection: sqlite3.Connection, *, role: str) -> tuple[str, int]:
+    table = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='deletion_ledger_state'"
+    ).fetchone()
+    if table is None:
+        raise ValueError(f"{role} cannot prove deletion history: migration 043 is missing")
+    rows = connection.execute("SELECT ledger_id,schema_version FROM deletion_ledger_state WHERE singleton=1").fetchall()
+    if len(rows) != 1:
+        raise ValueError(f"{role} has no unambiguous tombstone ledger identity")
+    ledger_id = str(rows[0][0]).strip()
+    schema_version = int(rows[0][1])
+    if not ledger_id or schema_version != TOMBSTONE_SCHEMA_VERSION:
+        raise ValueError(f"{role} tombstone ledger binding is invalid")
+    return ledger_id, schema_version
+
+
+def _ensure_backup_ledger(source: Path) -> tuple[str, int]:
+    """Bind an empty ledger before the first backup so future deletes remain provable."""
+    connection = sqlite3.connect(source, timeout=5.0)
+    ledger_path = default_tombstone_ledger_path(source)
+    try:
+        connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute("BEGIN IMMEDIATE")
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='deletion_ledger_state'"
+        ).fetchone()
+        if table is None:
+            raise ValueError("backup source cannot prove deletion history: migration 043 is missing")
+        state = connection.execute(
+            "SELECT ledger_id,schema_version FROM deletion_ledger_state WHERE singleton=1"
+        ).fetchone()
+        if state is None:
+            try:
+                ledger = TombstoneLedger(ledger_path)
+            except (OSError, TombstoneLedgerError) as error:
+                raise ValueError(f"backup tombstone ledger initialization failed: {error}") from error
+            connection.execute(
+                "INSERT INTO deletion_ledger_state(" "singleton,ledger_id,schema_version,bound_at" ") VALUES (1,?,?,?)",
+                (
+                    ledger.ledger_id,
+                    TOMBSTONE_SCHEMA_VERSION,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        else:
+            if not ledger_path.is_file():
+                raise ValueError(f"backup tombstone ledger is missing: {ledger_path}")
+            try:
+                ledger = TombstoneLedger(ledger_path, create=False)
+            except (OSError, TombstoneLedgerError) as error:
+                raise ValueError(f"backup tombstone ledger is invalid: {error}") from error
+            if str(state[0]) != ledger.ledger_id:
+                raise ValueError("backup tombstone ledger identity mismatch")
+            if int(state[1]) != TOMBSTONE_SCHEMA_VERSION:
+                raise ValueError("backup tombstone ledger schema version mismatch")
+        connection.commit()
+        return ledger.ledger_id, TOMBSTONE_SCHEMA_VERSION
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _manifest_ledger(metadata: dict[str, Any]) -> tuple[str, int]:
+    version = metadata.get("format_version")
+    if version == LEGACY_BACKUP_FORMAT_VERSION:
+        raise ValueError("legacy backup manifest has no tombstone ledger identity; restore is refused")
+    if version != BACKUP_FORMAT_VERSION:
+        raise ValueError("backup manifest version is invalid")
+    raw = metadata.get("tombstone_ledger")
+    if not isinstance(raw, dict):
+        raise ValueError("backup manifest tombstone ledger identity is missing")
+    ledger_id = raw.get("ledger_id")
+    schema_version = raw.get("schema_version")
+    if not isinstance(ledger_id, str) or not ledger_id.strip():
+        raise ValueError("backup manifest tombstone ledger identity is invalid")
+    if (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version != TOMBSTONE_SCHEMA_VERSION
+    ):
+        raise ValueError("backup manifest tombstone ledger schema version is invalid")
+    return ledger_id.strip(), schema_version
+
+
+def _restore_ledger(target: Path, expected_id: str, expected_version: int) -> TombstoneLedger:
+    ledger_path = default_tombstone_ledger_path(target)
+    if not ledger_path.is_file():
+        raise ValueError(f"restore tombstone ledger is missing: {ledger_path}")
+    _assert_no_sidecars(ledger_path, "restore tombstone ledger")
+    try:
+        ledger = TombstoneLedger(ledger_path, create=False)
+    except (OSError, TombstoneLedgerError) as error:
+        raise ValueError(f"restore tombstone ledger is invalid: {error}") from error
+    if ledger.ledger_id != expected_id:
+        raise ValueError("restore tombstone ledger identity mismatch")
+    if expected_version != TOMBSTONE_SCHEMA_VERSION:
+        raise ValueError("restore tombstone ledger schema version mismatch")
+    _assert_no_sidecars(ledger_path, "restore tombstone ledger")
+    return ledger
+
+
 def validate_backup(backup_path: str | Path, manifest_path: str | Path) -> dict[str, Any]:
     """Validate a backup manifest, byte size, SHA-256 digest, and SQLite integrity."""
     backup, manifest = _resolved(backup_path), _resolved(manifest_path)
@@ -86,8 +199,9 @@ def validate_backup(backup_path: str | Path, manifest_path: str | Path) -> dict[
         metadata = json.loads(manifest.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("backup manifest is not valid UTF-8 JSON") from error
-    if not isinstance(metadata, dict) or metadata.get("format_version") != BACKUP_FORMAT_VERSION:
-        raise ValueError("backup manifest version is invalid")
+    if not isinstance(metadata, dict):
+        raise ValueError("backup manifest must be a JSON object")
+    ledger_id, ledger_schema_version = _manifest_ledger(metadata)
 
     expected_size = metadata.get("size")
     if not isinstance(expected_size, int) or isinstance(expected_size, bool) or expected_size < 0:
@@ -106,8 +220,14 @@ def validate_backup(backup_path: str | Path, manifest_path: str | Path) -> dict[
     try:
         with closing(_readonly_connection(backup, immutable=True)) as connection:
             integrity = _integrity_check(connection)
+            database_ledger_id, database_ledger_version = _read_ledger_binding(
+                connection,
+                role="backup database",
+            )
     except sqlite3.DatabaseError as error:
         raise ValueError(f"SQLite integrity check failed: {error}") from error
+    if (database_ledger_id, database_ledger_version) != (ledger_id, ledger_schema_version):
+        raise ValueError("backup database and manifest tombstone ledger identity mismatch")
     _assert_no_sidecars(backup, "backup database")
     return {
         "backup": str(backup),
@@ -115,6 +235,8 @@ def validate_backup(backup_path: str | Path, manifest_path: str | Path) -> dict[
         "size": actual_size,
         "sha256": actual_sha256,
         "integrity": integrity,
+        "ledger_id": ledger_id,
+        "ledger_schema_version": ledger_schema_version,
     }
 
 
@@ -130,6 +252,11 @@ def backup_database(source_path: str | Path, backup_path: str | Path) -> Path:
     manifest = destination.with_suffix(destination.suffix + ".manifest.json")
     if manifest in {source, destination}:
         raise ValueError("source, backup, and manifest paths must be different")
+    source_ledger = default_tombstone_ledger_path(source)
+    if source_ledger in {destination, manifest}:
+        raise ValueError("backup destination must not overwrite the source tombstone ledger")
+
+    ledger_id, ledger_schema_version = _ensure_backup_ledger(source)
     _assert_no_sidecars(destination, "backup destination")
 
     temporary = _temporary_path(destination.parent, destination.name)
@@ -151,19 +278,24 @@ def backup_database(source_path: str | Path, backup_path: str | Path) -> Path:
         "size": destination.stat().st_size,
         "integrity": "ok",
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "tombstone_ledger": {
+            "ledger_id": ledger_id,
+            "schema_version": ledger_schema_version,
+        },
     }
     _write_json_atomic(manifest, metadata)
     return manifest
 
 
-def restore_database(
+def _restore_database_atomically(
     backup_path: str | Path,
     manifest_path: str | Path,
     target_path: str | Path,
     *,
+    replay: RestoreReplay,
     confirm_overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Validate and restore through a same-directory temporary file and atomic replace."""
+    """Restore through a temporary DB, requiring replay before atomic replace."""
     backup, manifest, target = (
         _resolved(backup_path),
         _resolved(manifest_path),
@@ -176,6 +308,11 @@ def restore_database(
     if target.exists() and not confirm_overwrite:
         raise FileExistsError("target database exists; pass --confirm-overwrite to replace it")
     _assert_no_sidecars(target, "restore target")
+    ledger = _restore_ledger(
+        target,
+        str(verified["ledger_id"]),
+        int(verified["ledger_schema_version"]),
+    )
 
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = _temporary_path(target.parent, target.name)
@@ -185,7 +322,9 @@ def restore_database(
                 closing(_readonly_connection(backup, immutable=True)) as source_connection,
                 closing(sqlite3.connect(temporary)) as target_connection,
             ):
+                target_connection.row_factory = sqlite3.Row
                 source_connection.backup(target_connection)
+                tombstones_replayed, claims_removed, events_removed = replay(target_connection, ledger)
                 integrity = _integrity_check(target_connection)
         except sqlite3.DatabaseError as error:
             raise ValueError(f"SQLite restore integrity check failed: {error}") from error
@@ -198,4 +337,7 @@ def restore_database(
         **verified,
         "target": str(target),
         "integrity": integrity,
+        "tombstones_replayed": tombstones_replayed,
+        "claims_removed": claims_removed,
+        "events_removed": events_removed,
     }

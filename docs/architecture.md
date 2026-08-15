@@ -351,11 +351,15 @@ hl-mem restore var/backup.db --manifest var/backup.db.manifest.json \
   --db var/hl_mem.db --confirm-overwrite
 ```
 
-Backup emits the database and a SHA-256 manifest. Restore validates the manifest, restores and checks a temporary database,
-then atomically replaces the target. An existing target requires explicit overwrite confirmation. These commands do not
-select, export, encrypt, or isolate an individual namespace. Stop the API, Worker, and every other database user before
-restore; restart them only after the command succeeds. Validation rejects adjacent SQLite `-wal`, `-shm`, and `-journal`
-sidecars for the backup or restore target so unhashed or stale pages cannot alter the verified image.
+Backup binds `<source>.tombstones.db` on first use and emits manifest v2 with that ledger's ID and schema version; the
+independent ledger is protected separately rather than embedded in the main-database backup. Before restore, the matching
+authoritative ledger must be placed at `<target>.tombstones.db`. Restore validates the backup/manifest/ledger identity,
+replays every tombstone into the temporary database, runs its integrity check, and only then atomically replaces the target.
+Missing or mismatched ledgers and legacy v1 manifests fail closed. An existing target requires explicit overwrite
+confirmation. These commands do not select, export, encrypt, or isolate an individual namespace. Stop the API, Worker, and
+every other database and ledger user before restore; restart them only after the command succeeds. Validation rejects
+adjacent SQLite `-wal`, `-shm`, and `-journal` sidecars for the backup, restore target, or ledger so unhashed or stale pages
+cannot alter the verified image.
 
 All runtime paths, provider models, timeouts, and feature modes come from one validated `Settings` snapshot loaded from
 `hl_mem.toml`. Only four provider credentials come from `.env` or same-named process environment variables. Image file

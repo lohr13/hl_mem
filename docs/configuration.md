@@ -40,11 +40,17 @@ hl-mem restore var/backup.db --manifest var/backup.db.manifest.json \
   --db var/hl_mem.db --confirm-overwrite
 ```
 
-`backup` 输出包含 backup、manifest、size、SHA-256 和 integrity 状态的 JSON。`restore` 会先校验 manifest、
-大小和哈希，再在目标同目录的临时数据库上执行恢复及 `PRAGMA integrity_check`，成功后才原子替换目标；任何
-失败都保留原目标。目标已存在时必须提供 `--confirm-overwrite`，且 source、backup、manifest、target 不得解析
-为同一路径。校验与恢复会拒绝 backup 或 target 旁残留的 `-wal`、`-shm`、`-journal` sidecar，防止未纳入
-manifest 的页面影响校验或原子替换。执行 restore 前必须停止 API、Worker 及其他数据库使用者，成功后再重启服务。
+`backup` 会在首次运行时创建并绑定 `<source>.tombstones.db`，输出的 manifest v2 记录 ledger ID 与 schema
+version；JSON 结果同时包含 `ledger_id` 和 `ledger_schema_version`。ledger 不嵌入主库 backup，必须与 backup
+分别受保护保存。恢复到目标库前，应把权威 ledger 放在 `<target>.tombstones.db`；缺失、ID/版本错配或无 ledger
+identity 的 v1 manifest 均 fail-closed，不能静默恢复。
+
+`restore` 会先校验 manifest、大小、哈希以及 backup/manifest/ledger 三方身份，再在目标同目录的临时数据库
+重放全部 tombstone 并执行 `PRAGMA integrity_check`，成功后才原子替换目标；任何失败都保留原目标。结果额外
+报告 `tombstones_replayed`、`claims_removed` 和 `events_removed`。目标已存在时必须提供
+`--confirm-overwrite`，且 source、backup、manifest、target 不得解析为同一路径。校验与恢复会拒绝 backup、
+target 或 ledger 旁残留的 `-wal`、`-shm`、`-journal` sidecar，防止未纳入验证的页面影响结果。执行 restore
+前必须停止 API、Worker 及其他数据库/ledger 使用者，成功后再重启服务。
 
 ## JSONL Event 归档
 

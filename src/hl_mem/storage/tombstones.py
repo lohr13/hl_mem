@@ -118,6 +118,54 @@ class TombstoneLedger:
             created_at=str(row[4]),
         )
 
+    def find_by_identity_hash(self, identity_hash: str) -> TombstoneEntry | None:
+        """Load one durable tombstone by its opaque identity."""
+        normalized_hash = str(identity_hash).strip()
+        if not normalized_hash:
+            return None
+        connection = self._connect()
+        try:
+            self._validate(connection)
+            row = connection.execute(
+                "SELECT identity_hash,claim_ids_json,event_ids_json,"
+                "closure_scope_json,created_at FROM tombstones WHERE identity_hash=?",
+                (normalized_hash,),
+            ).fetchone()
+        finally:
+            connection.close()
+        return self._entry_from_row(row)
+
+    def entries(self) -> tuple[TombstoneEntry, ...]:
+        """Return the append-only replay stream in deterministic order."""
+        connection = self._connect()
+        try:
+            self._validate(connection)
+            rows = connection.execute(
+                "SELECT identity_hash,claim_ids_json,event_ids_json,"
+                "closure_scope_json,created_at FROM tombstones "
+                "ORDER BY created_at,identity_hash"
+            ).fetchall()
+        finally:
+            connection.close()
+        entries: list[TombstoneEntry] = []
+        for row in rows:
+            entry = self._entry_from_row(row)
+            if entry is not None:
+                entries.append(entry)
+        return tuple(entries)
+
+    @staticmethod
+    def _entry_from_row(row: sqlite3.Row | tuple[object, ...] | None) -> TombstoneEntry | None:
+        if row is None:
+            return None
+        return TombstoneEntry(
+            identity_hash=str(row[0]),
+            claim_ids=tuple(json.loads(str(row[1]))),
+            event_ids=tuple(json.loads(str(row[2]))),
+            closure_scope=tuple(json.loads(str(row[3]))),
+            created_at=str(row[4]),
+        )
+
     def record_deletion(
         self,
         *,

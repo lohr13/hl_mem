@@ -1,12 +1,16 @@
 import json
+import sqlite3
+from contextlib import closing
 
 import pytest
 
+from hl_mem.application.restore import restore_database
 from hl_mem.security.retention import enforce_event_quota, purge_retained_events
-from hl_mem.storage.backup import backup_database, restore_database
+from hl_mem.storage.backup import backup_database
 from hl_mem.storage.database import Database
 from hl_mem.storage.deferred_tasks import DeferredTaskRepository
 from hl_mem.storage.postgres import PostgresDatabase
+from hl_mem.storage.tombstones import default_tombstone_ledger_path
 
 
 def _event(connection, event_id: str, tenant: str, recorded_at: str) -> None:
@@ -32,6 +36,11 @@ def test_backup_restore_validates_sha256_manifest(tmp_path) -> None:
     backup = tmp_path / "backup.db"
     manifest = backup_database(source, backup)
     target = tmp_path / "target.db"
+    with (
+        closing(sqlite3.connect(default_tombstone_ledger_path(source))) as source_ledger,
+        closing(sqlite3.connect(default_tombstone_ledger_path(target))) as target_ledger,
+    ):
+        source_ledger.backup(target_ledger)
     restore_database(backup, manifest, target)
     assert Database(target).open().execute("SELECT count(*) FROM events").fetchone()[0] == 1
 

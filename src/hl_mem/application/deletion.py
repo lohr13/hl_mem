@@ -60,6 +60,13 @@ class ArchivedCleanupReport:
     rejections: dict[str, str]
 
 
+@dataclass(frozen=True)
+class TombstoneReplayResult:
+    identity_hash: str
+    claims_removed: int
+    events_removed: int
+
+
 class DeletionService:
     """Own the single physical-deletion transaction used by every entry point."""
 
@@ -159,6 +166,57 @@ class DeletionService:
             rejected=len(rejections),
             rejections=rejections,
         )
+
+    def replay_tombstone(self, entry: TombstoneEntry) -> TombstoneReplayResult:
+        """Apply one authoritative ledger entry without re-adjudicating old claim state."""
+        error_id = entry.claim_ids[0] if entry.claim_ids else entry.identity_hash
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            ledger = self._bound_ledger(error_id)
+            recorded = ledger.find_by_identity_hash(entry.identity_hash)
+            if recorded != entry:
+                raise DeletionRejectedError(error_id, "ledger_entry_mismatch")
+
+            claims_removed = 0
+            for claim_id in entry.claim_ids:
+                exists = self.connection.execute(
+                    "SELECT 1 FROM claims WHERE id=?",
+                    (claim_id,),
+                ).fetchone()
+                if exists is None:
+                    continue
+                self._delete_closure(claim_id, ())
+                claims_removed += 1
+
+            events_removed = 0
+            for event_id in entry.event_ids:
+                cursor = self.connection.execute(
+                    "DELETE FROM events WHERE id=? "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM evidence_links "
+                    "WHERE evidence_type='event' AND evidence_id=?"
+                    ") AND NOT EXISTS ("
+                    "SELECT 1 FROM deferred_tasks "
+                    "WHERE resource_type='event' AND resource_id=? AND status='pending'"
+                    ")",
+                    (event_id, event_id, event_id),
+                )
+                events_removed += cursor.rowcount
+
+            self.connection.execute(
+                "UPDATE deletion_ledger_state SET last_identity_hash=?,last_applied_at=? " "WHERE singleton=1",
+                (entry.identity_hash, datetime.now(timezone.utc).isoformat()),
+            )
+            self.connection.commit()
+            return TombstoneReplayResult(
+                identity_hash=entry.identity_hash,
+                claims_removed=claims_removed,
+                events_removed=events_removed,
+            )
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
 
     def _assert_deletable(self, claim_id: str, status: str) -> None:
         if status not in DELETABLE_STATUSES and status != REPLAYABLE_STATUS:
