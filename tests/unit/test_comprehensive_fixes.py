@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from hl_mem.adapters.hermes.renderer import render_context
 from hl_mem.api import server
 from hl_mem.components import make_embedder, make_reranker
 from hl_mem.errors import ConfigurationError
@@ -230,6 +231,36 @@ def test_recall_feedback_failure_does_not_change_main_result(tmp_path, monkeypat
     assert packet["feedback_state"] == "degraded"
     assert packet["items"][0]["id"] == "claim-1"
     assert packet["items"][0]["feedback_id"]
+
+
+def test_context_packet_projects_stored_claim_relation_for_reader(tmp_path) -> None:
+    app = server.create_app(tmp_path / "recall-relation.db")
+    connection = app.state.db.open()
+    ClaimRepository(connection).insert_claim(
+        {
+            "id": "claim-1",
+            "status": "active",
+            "subject_entity_id": "团队",
+            "predicate": "采用",
+            "value": "海风看板",
+            "qualifiers": {},
+            "index_text": "团队后来采用海风看板",
+            "recorded_from": "2026-07-22T00:00:00+00:00",
+        }
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/recall",
+            json={"query": "团队采用海风看板", "limit": 1, "response_format": "context_packet"},
+        )
+
+    assert response.status_code == 200
+    packet = response.json()["context_packet"]
+    assert packet["items"][0].get("role") == "团队"
+    assert packet["items"][0].get("action") == "采用"
+    assert packet["items"][0].get("object") == "海风看板"
+    assert render_context(packet).text == "团队后来采用海风看板\nrelation: 团队 → 采用 → 海风看板"
 
 
 def test_episode_state_machine_reward_and_terminal_trace_guards(tmp_path) -> None:

@@ -18,6 +18,8 @@ from hl_mem.application.context_packet import (
     RetrievalBundleItem,
     pack_retrieval_bundle,
     pack_retrieval_items,
+    retrieval_bundle_from_dict,
+    retrieval_bundle_to_dict,
 )
 from hl_mem.mcp.server import get_tool_schemas
 from hl_mem.storage.database import Database
@@ -165,6 +167,22 @@ def test_packet_schema_forbids_extra_top_level_and_item_fields(tmp_path) -> None
     empty_feedback = {**packet, "items": [{**packet["items"][0], "feedback_id": ""}]}
     with pytest.raises(ValidationError):
         ContextPacketOutput.model_validate(empty_feedback)
+    incomplete_relation = {**packet, "items": [{**packet["items"][0], "role": "团队"}]}
+    with pytest.raises(ValidationError, match="relation fields must be complete"):
+        ContextPacketOutput.model_validate(incomplete_relation)
+    ContextPacketOutput.model_validate(
+        {
+            **packet,
+            "items": [
+                {
+                    **packet["items"][0],
+                    "role": "团队",
+                    "action": "采用",
+                    "object": "海风看板",
+                }
+            ],
+        }
+    )
 
 
 def test_retrieval_bundle_rejects_hard_abstention_with_items() -> None:
@@ -207,6 +225,103 @@ def test_pack_retrieval_items_preserves_order_and_reports_budget_truncation() ->
     assert finalized.truncated is True
 
 
+def test_relation_fields_round_trip_through_retrieval_bundle_wire_format() -> None:
+    bundle = retrieval_bundle_from_dict(
+        {
+            "schema_major": 1,
+            "schema_minor": 1,
+            "query_id": "query-1",
+            "answerability": "supported",
+            "items": [
+                {
+                    "type": "claim",
+                    "id": "claim-1",
+                    "text": "团队后来采用海风看板",
+                    "evidence": [],
+                    "score": 0.9,
+                    "role": "团队",
+                    "action": "采用",
+                    "object": "海风看板",
+                }
+            ],
+            "used_tokens_estimate": None,
+            "truncated": None,
+        }
+    )
+
+    serialized = retrieval_bundle_to_dict(bundle)
+
+    assert serialized["schema_minor"] == 1
+    assert serialized["items"][0].get("role") == "团队"
+    assert serialized["items"][0].get("action") == "采用"
+    assert serialized["items"][0].get("object") == "海风看板"
+
+
+def test_relation_rendering_counts_against_the_existing_token_budget() -> None:
+    bundle = retrieval_bundle_from_dict(
+        {
+            "schema_major": 1,
+            "schema_minor": 1,
+            "query_id": "query-1",
+            "answerability": "supported",
+            "items": [
+                {
+                    "type": "claim",
+                    "id": "claim-1",
+                    "text": "短文本",
+                    "evidence": [],
+                    "score": 0.9,
+                    "role": "团队",
+                    "action": "采用",
+                    "object": "海风看板",
+                }
+            ],
+            "used_tokens_estimate": None,
+            "truncated": None,
+        }
+    )
+
+    packed = pack_retrieval_bundle(bundle, 4)
+
+    assert packed.items == ()
+    assert packed.used_tokens_estimate == 0
+    assert packed.truncated is True
+
+
+def test_materialized_packet_carries_complete_relation_fields() -> None:
+    bundle = retrieval_bundle_from_dict(
+        {
+            "schema_major": 1,
+            "schema_minor": 1,
+            "query_id": "query-1",
+            "answerability": "supported",
+            "items": [
+                {
+                    "type": "claim",
+                    "id": "claim-1",
+                    "text": "团队后来采用海风看板",
+                    "evidence": [],
+                    "score": 0.9,
+                    "role": "团队",
+                    "action": "采用",
+                    "object": "海风看板",
+                }
+            ],
+            "used_tokens_estimate": 24,
+            "truncated": False,
+        }
+    )
+    packet = ContextPacketAssembler(
+        Database(":memory:").open(),
+        feedback_id_factory=lambda: "feedback-1",
+    ).assemble(bundle)
+
+    assert packet["schema_minor"] == 1
+    assert packet["items"][0].get("role") == "团队"
+    assert packet["items"][0].get("action") == "采用"
+    assert packet["items"][0].get("object") == "海风看板"
+
+
 def test_mcp_recall_schema_freezes_packet_response_format_options() -> None:
     recall_tool = next(tool for tool in get_tool_schemas() if tool["name"] == "memory_recall")
     recall_schema = recall_tool["inputSchema"]
@@ -224,7 +339,9 @@ def test_mcp_recall_schema_freezes_packet_response_format_options() -> None:
     assert packet_schema["additionalProperties"] is False
     assert len(packet_schema["properties"]) == 8
     assert set(packet_schema["required"]) == set(packet_schema["properties"])
+    assert packet_schema["properties"]["schema_minor"] == {"type": "integer", "const": 1}
     item_schema = packet_schema["properties"]["items"]["items"]
     assert item_schema["additionalProperties"] is False
-    assert len(item_schema["properties"]) == 5
-    assert set(item_schema["required"]) == set(item_schema["properties"])
+    assert len(item_schema["properties"]) == 8
+    assert set(item_schema["required"]) == {"type", "id", "text", "evidence", "feedback_id"}
+    assert {"role", "action", "object"} <= set(item_schema["properties"])

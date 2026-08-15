@@ -58,6 +58,7 @@ from hl_mem.evaluation.c_series_runtime import (  # noqa: E402
     frozen_runtime_settings,
     materialize_visible_case_cached,
     recall_visible_case,
+    render_packet_context,
 )
 from hl_mem.ingest.embedder import FakeEmbedder  # noqa: E402
 
@@ -766,7 +767,7 @@ async def _run_one(
                     raise
                 planner_error = type(error).__name__
                 packet = execution.packet
-        context = "\n".join(f"[{index}] {item['text']}" for index, item in enumerate(packet, start=1))
+        context = render_packet_context(packet)
         predicted, usage = await _chat(
             client,
             settings,

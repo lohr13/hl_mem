@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from hl_mem.application.context_packet import render_memory_text
+
 
 @dataclass(frozen=True, slots=True)
 class RenderedContext:
@@ -38,7 +40,14 @@ def render_context(payload: Mapping[str, Any]) -> RenderedContext:
         text = item.get("text")
         if not isinstance(text, str) or not text.strip():
             continue
-        texts.append(text)
+        texts.append(
+            render_memory_text(
+                text,
+                role=item.get("role") if item.get("type") == "claim" else None,
+                action=item.get("action") if item.get("type") == "claim" else None,
+                object_=item.get("object") if item.get("type") == "claim" else None,
+            )
+        )
         feedback_id = item.get("feedback_id")
         if isinstance(feedback_id, str) and feedback_id:
             feedback_ids.append(feedback_id)

@@ -14,6 +14,7 @@ from hl_mem.evaluation.c_series_runtime import (
     materialize_visible_case,
     materialize_visible_case_cached,
     recall_visible_case,
+    render_packet_context,
 )
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.recall.reranker import FakeReranker
@@ -119,6 +120,40 @@ def test_real_recall_service_separates_c0_c1_c3_and_preserves_source_hash(tmp_pa
     assert provenance["source_cache_sha256"] == hashlib.sha256(before).hexdigest()
     assert provenance["source_corpora"] == _case()["source_corpora"]
     assert db_path.read_bytes() == before
+
+
+def test_c_series_packet_token_count_includes_reader_visible_relation(tmp_path) -> None:
+    db_path = tmp_path / "rendered-token.db"
+    case = _case()
+    materialize_visible_case(db_path, case, _settings(), embedder=FakeEmbedder(8))
+
+    execution = recall_visible_case(
+        case,
+        _settings(),
+        FakeEmbedder(8),
+        FakeReranker(),
+        db_path=db_path,
+        arm_id="C0",
+    )
+
+    seed = next(item for item in execution.packet if item["claim_id"] == "seed")
+    rendered = "白鹭项目负责人的常驻城市是哪里？ 白鹭项目负责人是赵岚\nrelation: 白鹭项目 → 负责 → 赵岚"
+    assert seed.get("rendered_text") == rendered
+    assert seed["token_count"] == (len(rendered) + 1) // 2
+
+
+def test_c_series_renderer_can_reproduce_legacy_and_structured_prompts() -> None:
+    packet = (
+        {
+            "text": "团队后来采用海风看板",
+            "role": "团队",
+            "action": "采用",
+            "object": "海风看板",
+        },
+    )
+
+    assert render_packet_context(packet, structured=False) == "[1] 团队后来采用海风看板"
+    assert render_packet_context(packet) == "[1] 团队后来采用海风看板\nrelation: 团队 → 采用 → 海风看板"
 
 
 def test_c4_uses_relation_path_between_existing_candidates_and_structured_fallback(tmp_path) -> None:

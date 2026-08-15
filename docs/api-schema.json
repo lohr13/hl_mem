@@ -324,6 +324,19 @@
         "additionalProperties": false,
         "description": "Context Packet v1 中的扁平记忆条目。",
         "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
           "evidence": {
             "items": {
               "additionalProperties": true,
@@ -341,6 +354,32 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "object": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
           },
           "text": {
             "title": "Text",
@@ -406,7 +445,7 @@
             "type": "integer"
           },
           "schema_minor": {
-            "const": 0,
+            "const": 1,
             "title": "Schema Minor",
             "type": "integer"
           },

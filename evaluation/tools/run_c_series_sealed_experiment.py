@@ -49,6 +49,7 @@ from hl_mem.evaluation.c_series import (  # noqa: E402
 from hl_mem.evaluation.c_series_runtime import (  # noqa: E402
     assert_gold_free,
     recall_visible_case,
+    render_packet_context,
 )
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402
 from hl_mem.storage.database import Database  # noqa: E402
@@ -1154,7 +1155,7 @@ async def _run_one_reader(
     async with semaphore:
         reader_settings = _reader_settings(settings, reader_id)
         packet = list(packet_snapshot["packet"])
-        context = "\n".join(f"[{index}] {item['text']}" for index, item in enumerate(packet, start=1))
+        context = render_packet_context(packet)
         started = time.perf_counter()
         predicted, usage = await base._chat(
             client,

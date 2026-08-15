@@ -21,11 +21,40 @@ MemoryType = Literal["claim", "observation", "policy", "episode", "trace"]
 _ANSWERABILITY_VALUES = frozenset({"supported", "low_confidence", "no_evidence"})
 _MEMORY_TYPE_VALUES = frozenset({"claim", "observation", "policy", "episode", "trace"})
 RETRIEVAL_BUNDLE_SCHEMA_MAJOR = 1
-RETRIEVAL_BUNDLE_SCHEMA_MINOR = 0
+RETRIEVAL_BUNDLE_SCHEMA_MINOR = 1
 
 
 class UnknownSchemaMajorError(ValueError):
     """Wire payload 使用了当前进程无法安全解释的 schema major。"""
+
+
+def normalize_relation_components(
+    role: object,
+    action: object,
+    object_: object,
+) -> tuple[str, str, str] | None:
+    """把完整 RAO 三元组归一为单行；任一缺失时不产生关系表示。"""
+
+    values = tuple(" ".join(str(value or "").split()) for value in (role, action, object_))
+    if not all(values):
+        return None
+    return cast(tuple[str, str, str], values)
+
+
+def render_memory_text(
+    text: str,
+    *,
+    role: object = None,
+    action: object = None,
+    object_: object = None,
+) -> str:
+    """渲染 reader 可见文本；只有完整 RAO 才追加结构化关系行。"""
+
+    relation = normalize_relation_components(role, action, object_)
+    if relation is None:
+        return text
+    normalized_role, normalized_action, normalized_object = relation
+    return f"{text}\nrelation: {normalized_role} → {normalized_action} → {normalized_object}"
 
 
 def estimate_tokens(text: str) -> int:
@@ -42,6 +71,9 @@ class RetrievalBundleItem:
     text: str
     evidence: tuple[Mapping[str, Any], ...] = ()
     score: float | None = None
+    role: str | None = None
+    action: str | None = None
+    object: str | None = None
 
     def __post_init__(self) -> None:
         if self.type not in _MEMORY_TYPE_VALUES:
@@ -50,6 +82,12 @@ class RetrievalBundleItem:
             raise ValueError("retrieval bundle item id must be non-empty")
         if not isinstance(self.text, str):
             raise TypeError("retrieval bundle item text must be a string")
+        relation_values = (self.role, self.action, self.object)
+        if any(value is not None for value in relation_values):
+            if self.type != "claim":
+                raise ValueError("only claim retrieval bundle items may carry relation fields")
+            if any(not isinstance(value, str) or not value.strip() for value in relation_values):
+                raise ValueError("retrieval bundle relation fields must be complete non-empty strings")
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +125,7 @@ def retrieval_bundle_to_dict(bundle: RetrievalBundle) -> dict[str, Any]:
                 "text": item.text,
                 "evidence": [dict(reference) for reference in item.evidence],
                 "score": item.score,
+                **({"role": item.role, "action": item.action, "object": item.object} if item.role is not None else {}),
             }
             for item in bundle.items
         ],
@@ -133,6 +172,12 @@ def retrieval_bundle_from_dict(payload: Mapping[str, Any]) -> RetrievalBundle:
         evidence = tuple(dict(reference) for reference in raw_evidence if isinstance(reference, Mapping))
         raw_score = raw_item.get("score")
         score = float(raw_score) if raw_score is not None else None
+        relation_values = tuple(raw_item.get(key) for key in ("role", "action", "object"))
+        if any(value is not None for value in relation_values) and not all(
+            isinstance(value, str) and value.strip() for value in relation_values
+        ):
+            raise ValueError("retrieval bundle relation fields must be complete non-empty strings")
+        role, action, object_ = cast(tuple[str | None, str | None, str | None], relation_values)
         items.append(
             RetrievalBundleItem(
                 cast(MemoryType, raw_type),
@@ -140,6 +185,9 @@ def retrieval_bundle_from_dict(payload: Mapping[str, Any]) -> RetrievalBundle:
                 raw_text,
                 evidence,
                 score,
+                role,
+                action,
+                object_,
             )
         )
 
@@ -171,7 +219,14 @@ def pack_retrieval_items(
     packed: list[RetrievalBundleItem] = []
     used = 0
     for item in candidates:
-        cost = estimate_tokens(item.text)
+        cost = estimate_tokens(
+            render_memory_text(
+                item.text,
+                role=item.role,
+                action=item.action,
+                object_=item.object,
+            )
+        )
         if used + cost > token_budget:
             continue
         packed.append(item)
@@ -237,7 +292,17 @@ class ContextPacketAssembler:
                 query_id=bundle.query_id,
                 answerability=bundle.answerability,
                 items=bundle.items,
-                used_tokens_estimate=sum(estimate_tokens(item.text) for item in bundle.items),
+                used_tokens_estimate=sum(
+                    estimate_tokens(
+                        render_memory_text(
+                            item.text,
+                            role=item.role,
+                            action=item.action,
+                            object_=item.object,
+                        )
+                    )
+                    for item in bundle.items
+                ),
                 truncated=False,
             )
         self.last_error = None
@@ -270,7 +335,7 @@ class ContextPacketAssembler:
                 )
         return {
             "schema_major": 1,
-            "schema_minor": 0,
+            "schema_minor": RETRIEVAL_BUNDLE_SCHEMA_MINOR,
             "query_id": bundle.query_id,
             "answerability": bundle.answerability,
             "feedback_state": feedback_state,
@@ -281,6 +346,11 @@ class ContextPacketAssembler:
                     "text": item.text,
                     "evidence": [dict(reference) for reference in item.evidence],
                     "feedback_id": feedback_id,
+                    **(
+                        {"role": item.role, "action": item.action, "object": item.object}
+                        if item.role is not None
+                        else {}
+                    ),
                 }
                 for item, feedback_id in zip(bundle.items, feedback_ids)
             ],

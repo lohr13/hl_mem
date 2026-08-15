@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from hl_mem.application.context_packet import normalize_relation_components, render_memory_text
 from hl_mem.application.recall import RecallService
 from hl_mem.evaluation.c_series import (
     PACKET_CLAIM_LIMIT,
@@ -149,21 +150,57 @@ def _claim_payload(
         if isinstance(value, str)
         else json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     )
+    relation = normalize_relation_components(
+        qualifiers.get("role") or claim.get("subject_entity_id"),
+        qualifiers.get("action") or claim.get("predicate"),
+        qualifiers.get("object") or object_fallback,
+    )
+    role, action, object_ = relation or ("", "", "")
+    rendered_text = render_memory_text(text, role=role, action=action, object_=object_)
     return {
         "claim_id": claim_id,
         "text": text,
         "entities": [str(item) for item in claim.get("entities") or []],
-        "role": str(qualifiers.get("role") or claim.get("subject_entity_id") or ""),
-        "action": str(qualifiers.get("action") or claim.get("predicate") or ""),
-        "object": str(qualifiers.get("object") or object_fallback or ""),
+        "role": role,
+        "action": action,
+        "object": object_,
+        "rendered_text": rendered_text,
         "slot": str(claim.get("canonical_slot") or ""),
         "evidence_event_ids": evidence_event_ids,
         "evidence_provenance": provenance,
         "rank": int(final_rank or pre_rank or 10**6),
         "seed_rank": int(pre_rank) if isinstance(pre_rank, int) and not relation_paths else None,
         "expanded_from_seed_ranks": expanded_ranks,
-        "token_count": max(1, (len(text) + 1) // 2),
+        "token_count": max(1, (len(rendered_text) + 1) // 2),
     }
+
+
+def render_packet_context(
+    packet: Sequence[Mapping[str, Any]],
+    *,
+    structured: bool = True,
+    empty: str = "",
+) -> str:
+    """按实验 packet 顺序渲染 reader 输入，可显式复现旧版纯文本表示。"""
+
+    lines: list[str] = []
+    for index, item in enumerate(packet, start=1):
+        text = str(item.get("text") or "")
+        if not text:
+            continue
+        visible = (
+            str(item.get("rendered_text") or "")
+            or render_memory_text(
+                text,
+                role=item.get("role"),
+                action=item.get("action"),
+                object_=item.get("object"),
+            )
+            if structured
+            else text
+        )
+        lines.append(f"[{index}] {visible}")
+    return "\n".join(lines) or empty
 
 
 def _event_modality(event: Mapping[str, Any]) -> str:

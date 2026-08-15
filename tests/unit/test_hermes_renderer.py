@@ -38,6 +38,66 @@ def test_renderer_preserves_item_order_and_keeps_feedback_ids_out_of_text() -> N
     assert "trace-secret" not in rendered.text
 
 
+def test_renderer_adds_complete_claim_relation_after_text() -> None:
+    rendered = render_context(
+        {
+            "schema_major": 1,
+            "items": [
+                {
+                    "type": "claim",
+                    "text": "团队后来采用海风看板",
+                    "role": "团队",
+                    "action": "采用",
+                    "object": "海风看板",
+                    "feedback_id": "feedback-1",
+                }
+            ],
+        }
+    )
+
+    assert rendered.text == "团队后来采用海风看板\nrelation: 团队 → 采用 → 海风看板"
+    assert rendered.included_feedback_ids == ("feedback-1",)
+
+
+def test_renderer_omits_incomplete_relation_fields() -> None:
+    rendered = render_context(
+        {
+            "schema_major": 1,
+            "items": [
+                {
+                    "type": "claim",
+                    "text": "团队后来采用海风看板",
+                    "role": "团队",
+                    "action": "采用",
+                    "feedback_id": "feedback-1",
+                }
+            ],
+        }
+    )
+
+    assert rendered.text == "团队后来采用海风看板"
+
+
+def test_renderer_normalizes_relation_component_line_breaks() -> None:
+    rendered = render_context(
+        {
+            "schema_major": 1,
+            "items": [
+                {
+                    "type": "claim",
+                    "text": "团队后来采用海风看板",
+                    "role": " 团队\n一组 ",
+                    "action": "采\r\n用",
+                    "object": "海风\t看板",
+                    "feedback_id": "feedback-1",
+                }
+            ],
+        }
+    )
+
+    assert rendered.text == "团队后来采用海风看板\nrelation: 团队 一组 → 采 用 → 海风 看板"
+
+
 def test_renderer_skips_blank_or_non_string_text_and_their_receipts() -> None:
     rendered = render_context(
         {

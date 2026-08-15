@@ -91,6 +91,11 @@
               "items": {
                 "additionalProperties": false,
                 "properties": {
+                  "action": {
+                    "minLength": 1,
+                    "pattern": ".*\\S.*",
+                    "type": "string"
+                  },
                   "evidence": {
                     "items": {
                       "additionalProperties": true,
@@ -104,6 +109,16 @@
                     "type": "string"
                   },
                   "id": {
+                    "type": "string"
+                  },
+                  "object": {
+                    "minLength": 1,
+                    "pattern": ".*\\S.*",
+                    "type": "string"
+                  },
+                  "role": {
+                    "minLength": 1,
+                    "pattern": ".*\\S.*",
                     "type": "string"
                   },
                   "text": {
@@ -139,7 +154,7 @@
               "type": "integer"
             },
             "schema_minor": {
-              "const": 0,
+              "const": 1,
               "type": "integer"
             },
             "truncated": {

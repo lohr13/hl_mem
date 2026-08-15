@@ -157,6 +157,18 @@ class ContextPacketItemOutput(BaseModel):
     text: str
     evidence: list[dict[str, Any]]
     feedback_id: str = Field(min_length=1, pattern=r".*\S.*")
+    role: str | None = Field(default=None, min_length=1, pattern=r".*\S.*")
+    action: str | None = Field(default=None, min_length=1, pattern=r".*\S.*")
+    object: str | None = Field(default=None, min_length=1, pattern=r".*\S.*")
+
+    @model_validator(mode="after")
+    def validate_relation_fields(self) -> "ContextPacketItemOutput":
+        relation = (self.role, self.action, self.object)
+        if any(value is not None for value in relation) and not all(value is not None for value in relation):
+            raise ValueError("context packet relation fields must be complete")
+        if self.type != "claim" and any(value is not None for value in relation):
+            raise ValueError("only claim context packet items may carry relation fields")
+        return self
 
 
 class ContextPacketOutput(BaseModel):
@@ -165,7 +177,7 @@ class ContextPacketOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_major: Literal[1]
-    schema_minor: Literal[0]
+    schema_minor: Literal[1]
     query_id: str
     answerability: Answerability
     feedback_state: Literal["available", "degraded"]

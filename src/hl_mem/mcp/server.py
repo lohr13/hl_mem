@@ -44,6 +44,9 @@ def _context_packet_schema() -> dict[str, Any]:
                 "minLength": 1,
                 "pattern": r".*\S.*",
             },
+            "role": {"type": "string", "minLength": 1, "pattern": r".*\S.*"},
+            "action": {"type": "string", "minLength": 1, "pattern": r".*\S.*"},
+            "object": {"type": "string", "minLength": 1, "pattern": r".*\S.*"},
         },
         "required": ["type", "id", "text", "evidence", "feedback_id"],
     }
@@ -52,7 +55,7 @@ def _context_packet_schema() -> dict[str, Any]:
         "additionalProperties": False,
         "properties": {
             "schema_major": {"type": "integer", "const": 1},
-            "schema_minor": {"type": "integer", "const": 0},
+            "schema_minor": {"type": "integer", "const": 1},
             "query_id": {"type": "string"},
             "answerability": {
                 "type": "string",

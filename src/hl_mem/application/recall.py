@@ -19,7 +19,9 @@ from hl_mem.application.context_packet import (
     RetrievalBundle,
     RetrievalBundleItem,
     estimate_tokens,
+    normalize_relation_components,
     pack_retrieval_bundle,
+    render_memory_text,
     retrieval_bundle_to_dict,
 )
 from hl_mem.application.ingest import new_id
@@ -74,11 +76,45 @@ def _context_text(memory_type: str, data: Mapping[str, Any]) -> str:
     """只从公开投影提取 packet/context 文本，Claim 不读取 value_json。"""
     if memory_type == "claim":
         text = data.get("text")
-        return text if isinstance(text, str) else ""
+        return (
+            render_memory_text(
+                text,
+                role=data.get("role"),
+                action=data.get("action"),
+                object_=data.get("object"),
+            )
+            if isinstance(text, str)
+            else ""
+        )
     value = data.get("text") or data.get("body") or data.get("procedure") or ""
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _claim_relation(claim: Mapping[str, Any]) -> tuple[str, str, str] | None:
+    """优先投影显式 qualifier RAO，否则使用持久化 subject/predicate/value。"""
+
+    raw_qualifiers = claim.get("qualifiers")
+    qualifiers = raw_qualifiers if isinstance(raw_qualifiers, Mapping) else {}
+    explicit = normalize_relation_components(
+        qualifiers.get("role"),
+        qualifiers.get("action"),
+        qualifiers.get("object"),
+    )
+    if explicit is not None:
+        return explicit
+    value = claim.get("value")
+    serialized_value = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) if value is not None else ""
+    )
+    return normalize_relation_components(
+        claim.get("subject_entity_id"),
+        claim.get("predicate"),
+        serialized_value,
+    )
 
 
 def recall_side_effect_health() -> dict[str, dict[str, int | str | None]]:
@@ -700,9 +736,12 @@ class RecallService:
                 RetrievalBundleItem(
                     cast(MemoryType, memory_type),
                     str(data["id"]),
-                    _context_text(memory_type, data),
+                    str(data.get("text") or "") if memory_type == "claim" else _context_text(memory_type, data),
                     evidence,
                     score,
+                    str(data["role"]) if memory_type == "claim" and data.get("role") else None,
+                    str(data["action"]) if memory_type == "claim" and data.get("action") else None,
+                    str(data["object"]) if memory_type == "claim" and data.get("object") else None,
                 )
             )
         return RetrievalBundle(
@@ -841,6 +880,9 @@ class RecallService:
                 "evidence": evidence,
                 "relations": relations_map.get(claim["id"], []),
             }
+            relation = _claim_relation(claim)
+            if relation is not None:
+                result.update(zip(("role", "action", "object"), relation, strict=True))
             for field in ("occurred_start", "occurred_end", "entities"):
                 if claim.get(field):
                     result[field] = claim[field]
