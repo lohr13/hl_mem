@@ -34,6 +34,21 @@ def test_infer_canonical_attribute_is_table_driven(predicate, value, expected) -
     assert infer_canonical_attribute(predicate, "用户", value) == expected
 
 
+@pytest.mark.parametrize("value", ["importance", "import", "transport", "importing"])
+def test_config_port_requires_a_complete_port_token(value: str) -> None:
+    assert infer_canonical_attribute("配置", "hl_mem", value) == "config.other"
+
+
+@pytest.mark.parametrize("value", ["监听 8200", "port=8200", "0.0.0.0:8200"])
+def test_config_port_requires_valid_port_semantics(value: str) -> None:
+    assert infer_canonical_attribute("配置", "hl_mem", value) == "config.port"
+
+
+@pytest.mark.parametrize("value", ["port=0", "port=65536", "监听端口"])
+def test_config_port_rejects_missing_or_out_of_range_values(value: str) -> None:
+    assert infer_canonical_attribute("配置", "hl_mem", value) == "config.other"
+
+
 def test_mapping_declares_only_allowlisted_attributes() -> None:
     for allowed, fallback in PREDICATE_ATTRIBUTE_MAP.values():
         assert set(allowed) <= ATTRIBUTE_ALLOWLIST
@@ -92,6 +107,16 @@ def test_reconcile_accepts_registered_cross_family_attribute_without_content_con
         subject="hl_mem",
         value="hl_mem 端口为 8200",
     ) == ("config.port", "registered_attribute")
+
+
+def test_reconcile_rejects_unsubstantiated_config_port_from_model() -> None:
+    assert reconcile_canonical_attribute(
+        predicate="配置",
+        llm_attribute="config.port",
+        inferred_attribute="config.other",
+        subject="hl_mem",
+        value="importance 权重为 0.5",
+    ) == ("config.other", "port_semantics_rejected")
 
 
 def test_attribute_validation_rejects_unknown_or_wrong_predicate_attribute() -> None:

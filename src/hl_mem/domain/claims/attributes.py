@@ -553,8 +553,28 @@ _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], str]
 }
 
 
+_EXPLICIT_PORT_PATTERN = re.compile(
+    r"(?i)(?:端口|(?<![\w])port(?![\w])|(?<![\w])listen(?:ing)?(?![\w])|监听)" r"[^\d-]{0,12}(\d{1,5})(?!\d)"
+)
+_HOST_PORT_PATTERN = re.compile(
+    r"(?i)(?<![\w.-])(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|"
+    r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)\s*:\s*(\d{1,5})(?!\d)"
+)
+
+
+def _has_valid_port_semantics(text: str) -> bool:
+    """端口语义必须由完整提示词或 host:port 及合法端口值共同证明。"""
+    for pattern in (_EXPLICIT_PORT_PATTERN, _HOST_PORT_PATTERN):
+        match = pattern.search(text)
+        if match is not None and 1 <= int(match.group(1)) <= 65535:
+            return True
+    return False
+
+
 def _high_confidence_attribute(predicate: str, text: str) -> str | None:
     """按从精确到宽泛的命名模式推断高置信 canonical attribute。"""
+    if predicate == "配置" and _has_valid_port_semantics(text):
+        return "config.port"
     for pattern, attribute in _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS.get(predicate, ()):
         if pattern.search(text):
             return attribute
@@ -646,6 +666,8 @@ def infer_canonical_attribute(
     if precise is not None:
         return precise
     for hints, attribute in ATTRIBUTE_HINTS.get(normalized_predicate, ()):
+        if attribute == "config.port":
+            continue
         if any(hint in text for hint in hints):
             return attribute
     return mapping[1]
@@ -672,11 +694,16 @@ def reconcile_canonical_attribute(
     if precise is not None and precise in allowed:
         return precise, "high_confidence_rule"
 
+    port_semantics = _has_valid_port_semantics(text)
     normalized_inferred = validate_canonical_attribute(normalized_predicate, inferred_attribute)
+    if normalized_inferred == "config.port" and not port_semantics:
+        normalized_inferred = fallback
     if normalized_inferred in allowed and normalized_inferred != fallback:
         return normalized_inferred, "fallback_reconciled"
 
     normalized_llm_attribute = normalize_canonical_attribute(llm_attribute or "")
+    if normalized_llm_attribute == "config.port" and not port_semantics:
+        return normalized_inferred, "port_semantics_rejected"
     if normalized_llm_attribute in ATTRIBUTE_ALLOWLIST and normalized_llm_attribute != "custom.unknown":
         return normalized_llm_attribute, "registered_attribute"
 
