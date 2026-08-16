@@ -17,6 +17,7 @@ from hl_mem.storage.database import Database
 from hl_mem.storage.deferred_tasks import DeferredTaskRepository
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
+from hl_mem.workers import job_handlers
 from hl_mem.workers.deferred import process_deferred_tasks
 from hl_mem.workers.worker import Worker
 
@@ -38,6 +39,10 @@ class RecordingAudit:
 
 def test_worker_module_exposes_cli_entrypoint() -> None:
     assert callable(worker_module.main)
+
+
+def test_worker_reexports_shared_job_dispatch_boundary() -> None:
+    assert worker_module.dispatch_job is job_handlers.dispatch_job
 
 
 def queue(

@@ -17,7 +17,6 @@ from hl_mem import components
 from hl_mem.application.ingest import IngestService
 from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.attributes import infer_canonical_attribute
-from hl_mem.domain.consolidation_scope import ConsolidationScope
 from hl_mem.domain.content import ImagePart, parse_content
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.event_filter import EventFilter
@@ -38,7 +37,6 @@ from hl_mem.workers.consolidate import (
 )
 from hl_mem.workers.decay import cleanup_stale_temporal_claims, decay_claims
 from hl_mem.workers.deduplicate import (
-    deduplicate_claims,
     enqueue_daily_deduplication,
     review_pending_near_duplicates,
 )
@@ -47,27 +45,21 @@ from hl_mem.workers.deferred import (
     handle_failed_extractions,
     process_deferred_tasks,
 )
-from hl_mem.workers.discover_relations import discover_relations
-from hl_mem.workers.induce_policies import (
-    enqueue_daily_policy_induction,
-    induce_policies,
+from hl_mem.workers.induce_policies import enqueue_daily_policy_induction
+from hl_mem.workers.job_handlers import (
+    dispatch_job,
 )
+from hl_mem.workers.job_handlers import purge_retained_events_for_namespaces as _purge_retained_events
 from hl_mem.workers.mental_models import DerivedMemoryMaintainer
-from hl_mem.workers.rebuild_usefulness import rebuild_usefulness
-from hl_mem.workers.scheduling import enqueue_daily_job
+from hl_mem.workers.scheduling import (
+    enqueue_daily_job,
+)
+from hl_mem.workers.scheduling import lease_deadline as _lease_deadline
+from hl_mem.workers.scheduling import utc_now as _now
 from hl_mem.workers.ttl import expire_claims
 
 _UNSET = object()
 LOGGER = logging.getLogger(__name__)
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _lease_deadline(settings: Settings, now: datetime | None = None) -> str:
-    anchor = now or datetime.now(timezone.utc)
-    return (anchor + timedelta(minutes=settings.worker_job_lease_minutes)).isoformat()
 
 
 class _LeaseHeartbeat:
@@ -836,268 +828,6 @@ class Worker:
             judge,
             self.settings.consolidate_confidence,
         )
-
-
-def _handle_extract(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """处理事件提取任务。"""
-    payload = job.get("payload") or json.loads(job["payload_json"] or "{}")
-    return worker._extract(payload, job["id"], _extraction_progress_callback(worker, job))
-
-
-def _extraction_progress_callback(
-    worker: Worker,
-    job: dict[str, Any],
-) -> Callable[[str, int, int, dict[str, Any]], None]:
-    """Persist extraction write counts for every job in a leased window."""
-
-    def update(stage: str, processed: int, total: int, detail: dict[str, Any]) -> None:
-        job_ids = list(job.get("leased_job_ids") or [job["id"]])
-        updated = sum(
-            worker.jobs.update_progress(
-                job_id,
-                job["lease_token"],
-                stage=stage,
-                processed=processed,
-                total=total,
-                detail=detail,
-                heartbeat_at=_now(),
-            )
-            for job_id in job_ids
-        )
-        if updated != len(job_ids):
-            raise RuntimeError("job lease ownership lost while reporting extraction writes")
-
-    return update
-
-
-def _handle_expire(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """处理 TTL 过期任务。"""
-    return expire_claims(
-        worker.connection,
-        feedback_lifecycle_mode=worker.settings.feedback_lifecycle_mode,
-        slot_short_ttl_seconds=worker.settings.slot_short_ttl_seconds,
-    )
-
-
-def _handle_decay(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """处理访问衰减任务。"""
-    return decay_claims(
-        worker.connection,
-        temporal_decay_days=worker.settings.decay_temporal_days,
-        temporal_archive_days=worker.settings.archive_temporal_days,
-        permanent_decay_days=worker.settings.decay_permanent_days,
-        permanent_archive_days=worker.settings.archive_permanent_days,
-        access_bonus_every=worker.settings.access_bonus_every,
-        access_bonus_days=worker.settings.access_bonus_days,
-        access_bonus_cap_days=worker.settings.access_bonus_cap_days,
-        rollout_grace_days=worker.settings.decay_rollout_grace_days,
-        min_confidence=worker.settings.decay_min_confidence,
-        feedback_lifecycle_mode=worker.settings.feedback_lifecycle_mode,
-        feedback_bonus_cap_days=worker.settings.feedback_bonus_cap_days,
-        decay_model=worker.settings.decay_model,
-        temporal_half_life_days=worker.settings.decay_temporal_half_life_days,
-        permanent_half_life_days=worker.settings.decay_permanent_half_life_days,
-        identity_half_life_days=worker.settings.decay_identity_half_life_days,
-        halflife_archive_threshold=worker.settings.decay_halflife_archive_threshold,
-        halflife_archive_grace_days=worker.settings.decay_halflife_archive_grace_days,
-    )
-
-
-def _handle_rebuild_usefulness(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """从 retrieval_feedback 重建 usefulness 聚合。"""
-    return rebuild_usefulness(worker.connection, worker.settings)
-
-
-def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """处理冲突归并任务。"""
-    consolidator = worker.consolidator or worker._make_consolidator()
-    payload = json.loads(job["payload_json"] or "{}")
-    scope = ConsolidationScope(
-        namespace=payload.get("namespace", "default"),
-        slot_filter=payload.get("slot_filter"),
-        tag_filter=payload.get("tag_filter"),
-        max_pairs=int(
-            payload.get(
-                "max_pairs",
-                payload.get(
-                    "limit",
-                    worker.settings.consolidate_batch_size,
-                ),
-            )
-        ),
-        similarity_threshold=float(payload.get("similarity_threshold", 0.72)),
-        similarity_ceiling=float(payload.get("similarity_ceiling", 0.95)),
-    )
-    progress_callback = _job_progress_callback(worker, job)
-    return consolidator.run_batch(
-        int(
-            payload.get(
-                "limit",
-                worker.settings.consolidate_batch_size,
-            )
-        ),
-        payload.get("namespace", "default"),
-        payload.get("watermark"),
-        bool(payload.get("dry_run", False)),
-        progress_callback,
-        scope,
-    )
-
-
-def _handle_induce_policies(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """处理策略归纳任务。"""
-    payload = json.loads(job.get("payload_json") or "{}")
-    return induce_policies(
-        worker.connection,
-        _now(),
-        worker.settings.policy_induction_lookback_days,
-        worker.settings.policy_induction_min_episodes,
-        namespace=payload.get("namespace"),
-    )
-
-
-def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """处理跨主体语义去重任务。"""
-    payload = json.loads(job["payload_json"] or "{}")
-    return deduplicate_claims(
-        worker.connection,
-        components.make_llm_client(worker.settings, worker.connection, operation="dedup"),
-        worker.embedder,
-        namespace=str(payload.get("namespace", "default")),
-        threshold=float(payload.get("threshold", worker.settings.dedup_threshold)),
-        audit_only=bool(payload.get("audit_only", worker.settings.dedup_audit_only)),
-        auto_merge_min_confidence=float(
-            payload.get(
-                "auto_merge_min_confidence",
-                worker.settings.dedup_auto_merge_min_confidence,
-            )
-        ),
-        limit=int(payload.get("limit", worker.settings.dedup_scan_limit)),
-        progress_callback=_job_progress_callback(worker, job),
-    )
-
-
-def _handle_discover_relations(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """处理单个新 Claim 的关系候选发现任务。"""
-    payload = json.loads(job["payload_json"] or "{}")
-    discoverer = worker.relation_discoverer or components.make_relation_discoverer(worker.settings, worker.connection)
-    if discoverer is None:
-        return {
-            "candidates": 0,
-            "proposals": 0,
-            "applied": 0,
-            "conflicts": 0,
-            "rejected": 0,
-        }
-    return discover_relations(
-        worker.connection,
-        discoverer,
-        str(payload["claim_id"]),
-        mode=worker.settings.relation_discovery_mode,
-        pool_limit=worker.settings.relation_discovery_pool_limit,
-        max_proposals=worker.settings.relation_discovery_max_proposals,
-        auto_apply_confidence=worker.settings.relation_auto_apply_confidence,
-        conflict_confidence=worker.settings.relation_conflict_confidence,
-    )
-
-
-def _job_progress_callback(worker: Worker, job: dict[str, Any]) -> Callable[[str, int, int], None]:
-    """创建受 lease token 保护的任务进度回调。"""
-
-    def update(stage: str, processed: int, total: int) -> None:
-        heartbeat_at = _now()
-        job_ids = list(job.get("leased_job_ids") or [job["id"]])
-        renewed = worker.jobs.renew_lease(
-            job_ids,
-            job["lease_token"],
-            leased_until=_lease_deadline(worker.settings),
-            heartbeat_at=heartbeat_at,
-        )
-        updated = worker.jobs.update_progress(
-            job["id"],
-            job["lease_token"],
-            stage=stage,
-            processed=processed,
-            total=total,
-            heartbeat_at=heartbeat_at,
-        )
-        if renewed != len(job_ids) or not updated:
-            raise RuntimeError("job lease ownership lost while reporting progress")
-
-    return update
-
-
-def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """处理 claim 重分类任务。"""
-    from hl_mem.workers.reclassify import reclassify_claims
-
-    return reclassify_claims(
-        worker.connection,
-        components.make_llm_client(worker.settings, worker.connection, operation="other"),
-        policy=worker.settings.retention_policy(),
-    )
-
-
-def _handle_purge_retention(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """处理事件保留清理任务。"""
-    payload = json.loads(job.get("payload_json") or "{}")
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=worker.settings.retention_days)).isoformat()
-    return {
-        "purged": _purge_retained_events(
-            worker.connection,
-            cutoff,
-            namespace=payload.get("namespace"),
-        )
-    }
-
-
-def _purge_retained_events(
-    connection: Any,
-    cutoff: str,
-    namespace: str | None = None,
-) -> int:
-    """清理一个或全部现存 namespace，避免把维护范围静默固定为 default。"""
-    from hl_mem.security.retention import purge_retained_events
-
-    namespaces = (
-        [namespace]
-        if namespace is not None
-        else [
-            str(row[0])
-            for row in connection.execute("SELECT DISTINCT tenant_id FROM events ORDER BY tenant_id").fetchall()
-        ]
-    )
-    return sum(purge_retained_events(connection, event_namespace, cutoff) for event_namespace in namespaces)
-
-
-def _handle_retry_failed(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """将失败任务重新置为待处理。"""
-    retried = worker.jobs.retry_failed()
-    worker.connection.commit()
-    return {"retried": retried}
-
-
-JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {
-    "extract_event": _handle_extract,
-    "expire_ttl": _handle_expire,
-    "decay_access": _handle_decay,
-    "rebuild_usefulness": _handle_rebuild_usefulness,
-    "consolidate_conflicts": _handle_consolidate,
-    "deduplicate_claims": _handle_deduplicate,
-    "discover_relations": _handle_discover_relations,
-    "induce_policies": _handle_induce_policies,
-    "reclassify_claims": _handle_reclassify,
-    "purge_retention": _handle_purge_retention,
-    "retry_failed": _handle_retry_failed,
-}
-
-
-def dispatch_job(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    """通过公开模块级入口独立分派单个后台任务。"""
-    handler = JOB_HANDLERS.get(job["job_type"])
-    if handler is None:
-        raise ValueError(f"unknown job type: {job['job_type']}")
-    return handler(worker, job)
 
 
 def main() -> None:

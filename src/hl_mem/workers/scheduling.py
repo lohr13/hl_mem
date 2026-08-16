@@ -4,9 +4,22 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from hl_mem.storage.jobs import JobRepository
+
+if TYPE_CHECKING:
+    from hl_mem.settings import Settings
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def lease_deadline(settings: Settings, now: datetime | None = None) -> str:
+    anchor = now or datetime.now(timezone.utc)
+    return (anchor + timedelta(minutes=settings.worker_job_lease_minutes)).isoformat()
 
 
 def enqueue_daily_job(
