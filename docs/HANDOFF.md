@@ -1,27 +1,27 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-15
+> 最后更新：2026-08-16
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.27.1
-- **阶段**：v0.27.1 发版准备完成；tag、Release 与 PyPI 由维护者验收后执行
+- **版本**：v0.28.0
+- **阶段**：v0.28.0 发版准备；tag、Release 与 PyPI 由维护者验收后执行
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：44 migrations（SQL 001–044），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
-## v0.27 已交付
+## v0.28 已交付
 
-- 冲突治理按整个 conflict group 收敛；组级 ResolutionService、migration 041 激活触发器和事务内
-  postcondition 共同保护互斥组 active≤1，存量异常继续走显式 audit/repair。
-- Context Packet 对关系 claim 渲染 role/action/object；answer-entity gold schema v3 与
-  `answer-entity-packet-v1` scorer 保持冻结，既有 anchors 判分并行保留。
-- 受控 archived-only 复活与 activation 半衰期完成 A/B；默认分别为 `auto` 和
-  `activation_halflife`。要保持 v0.26 行为须显式配置 `off` / `legacy_linear`。
-- C 系列三轮关系实验未让 C4 通过 sealed 产品门禁，C4 保持休眠且 reader 不切换；权重敏感性没有通过
-  v0.28 bandit 硬门。冻结结果与失败差额见 [CHANGELOG](CHANGELOG.md)。
+- forget、archived cleanup 与 restore 共用可审计的物理删除语义；独立 tombstone sidecar、主库 identity
+  绑定、backup manifest v2 和 restore replay 共同防止旧备份复活已删内容，语义不清时 fail-closed。
+- migration 044 为关系边增加 valid time，并在终态 Claim 转移时关闭边；relation expansion 同时校验边和
+  两端 Claim 可见性。integrity audit 分类报告 evidence/relation/derivation/supersede dangling 引用。
+- 提取 Job 写入数在 complete 前逐窗口持久化；canonical-slot 窄修在 v0.27 固定缓存上修复 16/16 误配且
+  无新增误配。ExperienceService 改为组合，worker 的 job handler/维护调度边界已抽离。
+- 提取关系语义两轮冻结 A/B 都未通过端到端门禁，最终不产品化且不跑 sealed v3；C1–C5/f4 与
+  source-first dormant 实验代码已删除，保留通用 scorer、sealed/coverage/pilot 防护工具。
 
 ## 当前评测
 
@@ -35,13 +35,14 @@
 
 ## 下一步
 
-- 观察 resurrection/activation 新默认的生产指标；需要回滚时显式设置 `off` / `legacy_linear`，无需降版。
-- C4 只有在新预注册协议和未烧毁 sealed 集上重新过门后才可进入默认召回路径；当前不安排 reader 切换。
-- 图片输入、Mental Model 和多租户继续作为独立版本决策，不视为 v0.27 未完成项。
+- 观察 tombstone sidecar 与 restore replay 的生产恢复演练；旧 manifest 无法证明删除历史时保持拒绝，不做
+  静默兼容。
+- 关系语义主菜已判死并删除，不保留“待默认开启”的隐含发布任务；未来如重启必须提出全新预注册假设。
+- 图片输入、Mental Model 和多租户继续作为独立版本决策，不视为 v0.28 未完成项。
 
 ## 已知限制
 
-- 关系扩展 C4 仍是 feature-flag 实验路径，尚未达到默认启用门槛。
+- 生产 relation expansion 仍依赖现有关系边质量；已淘汰的 C 系列实验臂不属于公共配置面。
 - LLM 提取和 QA 具有采样波动；不同提取缓存或不同 scorer 的单轮数字不可直接比较。
 - `low_confidence` 只标注、不阻断；调用方需要根据自身风险决定是否展示答案。
 - namespace 是数据分区键，不是安全边界。

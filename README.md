@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.27.1](https://img.shields.io/badge/version-0.27.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.28.0](https://img.shields.io/badge/version-0.28.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -172,10 +172,10 @@ hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
 ```
 
-### 从 v0.26.0 升级
+### 从 v0.27.x 升级
 
-v0.27.0 默认启用受控归档复活，并把日常衰减切换为 activation 半衰期模型。旧配置不声明这两个键时会采用新默认；
-如需保持 v0.26 行为，请显式配置：
+v0.28.0 不新增配置键，也不改变 v0.27 的配置默认值：`recall.resurrection_mode = "auto"` 与
+`decay.model = "activation_halflife"` 继续生效。若从 v0.26 跨版本升级并希望保持旧行为，仍可显式配置：
 
 ```toml
 [recall]
@@ -185,18 +185,19 @@ resurrection_mode = "off"
 model = "legacy_linear"
 ```
 
-升级前请备份并停止 API、Worker 和其他写入者；migration 041–044 只向前执行，依次增加互斥组激活保护、
-activation 生命周期字段、删除账本绑定元数据和关系边有效时间。已有冲突脏数据不会被 migration 自动裁决，仍须通过显式
-audit/repair 流程处理。
+升级前停止 API、Worker 和其他写入者，并保留主库的离线副本。首次由 v0.28 打开数据库时会自动执行
+migration 043/044；随后应立即运行一次 `hlmem backup`，它会创建并绑定 `<database>.tombstones.db`，生成
+manifest v2。主库 backup、manifest 与 tombstone ledger 必须作为一组保护；旧 manifest v1 无法证明删除历史，
+v0.28 restore 会明确拒绝。migration 不裁决存量冲突，也不自动删除历史异常，仍须通过显式 audit/repair 流程处理。
 
 ## 能力概览
 
 | 核心记忆 | 服务与治理 |
 |---|---|
-| **记忆正确性**<br>幂等摄入、原子写入与精确去重<br>保守近重复治理与受守卫的冲突收敛 | **经验通道**<br>Episode、Trace 与 Reward<br>Policy/Procedure 与派生 Observation |
-| **时间与证据**<br>有效时间 + 记录时间双时间模型<br>证据链、实体归一化、显式遗忘与 stale 传播 | **接口**<br>稳定的 FastAPI REST 与 Hermes Provider<br>Beta 阶段的七工具 MCP stdio 接口 |
+| **记忆正确性**<br>幂等摄入、原子写入与精确去重<br>冲突收敛 + 三入口删除闭环与 tombstone 防复活 | **经验通道**<br>Episode、Trace 与 Reward<br>Policy/Procedure 与派生 Observation |
+| **时间与证据**<br>Claim 与关系边双时间模型<br>证据链、实体归一化、受控归档与物理遗忘 | **接口**<br>稳定的 FastAPI REST 与 Hermes Provider<br>Beta 阶段的七工具 MCP stdio 接口 |
 | **混合召回**<br>中文 FTS5 + Dense，经 RRF 融合与可选 Reranker<br>关系/查询扩展与 Token 预算上下文 | **评测**<br>提取评测 v2、112-case 隔离检索与 40-case 中文 E2E<br>LongMemEval、MemDaily、PerLTQA 完整 runner |
-| **生命周期**<br>importance 联动 TTL、衰减、归档与重分类<br>反馈效用、审计日志与在线备份 | **治理工具**<br>7 字段 compact 提取 + 统一 AdmissionPolicy<br>有界修复、近重复审查与 active Claim 审计/修复 |
+| **生命周期**<br>importance 联动 TTL、activation 衰减与归档清理<br>manifest v2 备份 + tombstone restore replay | **治理工具**<br>7 字段 compact 提取 + 显式 evidence 的 canonical slot<br>Job 写入进度、dangling 巡检与 active Claim 修复 |
 
 ### 评测结果（公开冻结口径）
 
@@ -209,12 +210,20 @@ audit/repair 流程处理。
 | PerLTQA · v0.26.0（2026-08-15） | 378 questions，10 characters，纯检索 | **R@5 96.8%，MRR 82.8%** |
 | 中文 E2E · v0.26.0（2026-08-15） | 40 cases，`deterministic-rubric-v2` live | **38/40（95.0%）**；R@5 **100%** |
 | v0.27.1 行为变更验证（2026-08-15） | 沿用 v0.26.0 数字口径；本版未重跑全量 benchmark | **resurrection：2 次正确复活、0 次误伤，p95 12.7ms；activation：identity 零误杀，confidence 语义分离** |
+| v0.28.0 维护与实验验证（2026-08-16） | 沿用上述公开 benchmark；本版未重跑全量 benchmark | **slot 误配修复 16/16、0 回退；关系语义 packet RAO 12%、entity@5 无增益，未产品化** |
 
 中文基准的 embedding/reranker 均为 `qwen3.7-text-embedding` / `qwen3-rerank`。PerLTQA 直灌语料、不经提取；MemDaily 与中文 E2E 按提取 → 召回 → QA 全链路运行，提取和 QA 均使用 `qwen3.7-plus`。MemDaily 以 180 条轨迹全量计分。
 
 LongMemEval 三角对照统一使用 `deepseek-v4-flash-0731` reader，reader 开启 thinking、judge 关闭
 thinking；benchmark reader 与生产 recall/context packing 是不同契约。中文隔离检索和 E2E 的当前运行与
 回归口径见[评测说明](tests/eval/README.md)，本地产物命名见[结果索引](evaluation/results/README.md)。
+
+### 已知边界
+
+- 当前模型在 v0.28 source-first 冻结 A/B 中只让 12% 的关系题 packet 获得完整 RAO，entity coverage@5
+  保持 34.7%，且没有形成可供关系扩展使用的边；因此该关系语义注解方案及 C 系列实验臂均未产品化。
+  生产仍只使用既有 compact Claim、来源受控的 RAO 渲染和普通 relation expansion，不能假设系统会从平铺文本
+  自动恢复高密度、方向完备的关系链。
 
 能力成熟度、默认开关和证据见 [能力矩阵](docs/capability-matrix.md)，架构与数据流见 [架构文档](docs/architecture.md)。
 
@@ -224,7 +233,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.27.1，共 44 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.28.0，共 44 个不可变、仅向前执行的 SQL Migration。
 
 ## 文档
 

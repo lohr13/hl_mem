@@ -1,5 +1,42 @@
 # HL-Mem 变更记录
 
+## v0.28.0（2026-08-16）
+
+### Breaking / Behavior changes
+
+- 显式 forget 与 archived bulk cleanup 现在执行同一物理删除闭包，并在删除前写独立 tombstone sidecar；账本写入失败、身份错配或删除语义不明确时整笔拒绝，不再允许只改 Claim 状态后留下可复活引用。
+- backup manifest 升为格式 v2 并绑定 tombstone ledger identity。restore 必须先证明账本身份并重放删除历史，旧 v1 manifest、缺失账本或 ID 错配会 fail-closed；这是防止旧备份复活已删内容所必需的兼容性收紧。
+- 默认配置、REST 与 MCP 业务 schema 没有新增破坏性变化。数据库增加 migration 043–044，升级只向前执行；恢复旧备份前应使用 v0.28 重新生成带账本绑定的备份。
+
+### 删除完整性
+
+- 新增独立、版本化的 `TombstoneLedger` SQLite sidecar。记录只包含删除身份集合 hash、闭包范围和账本元数据，不保存敏感正文；幂等重放使用显式查重后 `INSERT`，禁止 `INSERT OR IGNORE` 掩盖账本写入异常，账本失败会在主库物理删除前中止。
+- 新增窄版 `DeletionService`，供用户 forget 与 archived cleanup 共用单一删除闭包：删除 Claim、专属 evidence、关系两端、冲突/派生/supersede 引用及失去引用的 Event。active/archived/superseded × 共享 Event × 关系两端 × ledger 缺失的 P0 矩阵 15/15 受测试保护；candidate、disputed、expired 和 open-manual 语义统一拒绝并报告，retracted 重放保持幂等。
+- migration 043 将主库绑定到 ledger identity，并保存删除应用水位。backup manifest v2 同时封存数据库、账本 checksum 与 identity；restore 在新库对外可见前验证绑定并重放 tombstone，沿用既有原子替换。中途只重放一部分可幂等续跑，缺账本、错配账本和无法证明删除历史的旧备份均拒绝恢复。
+
+### 关系时间与完整性巡检
+
+- migration 044 为 `memory_relations` 增加 `valid_from` / `valid_to`。新边从创建时起有效；Claim 转入 retracted、superseded 或 expired 时由既有终态转移路径同步关闭相关边。关系扩展每跳同时检查边的有效时间及两端 Claim 的 namespace、状态和双时间可见性，存量边以 `created_at` 回填起点且保持开放，迁移后行为兼容。
+- integrity audit 增加 evidence link、relation endpoint、derivation 与 supersede 引用的 dangling 分类计数，每类只给最多 5 条有界样本且不自动删除；删除闭包回归要求三入口完成后 dangling 为 0。
+
+### 维护正确性与结构收敛
+
+- 提取 Job 在 `complete` 前复用 `stage` 与 `progress_detail_json` 持久化逐窗口及累计 written claim count，使“Job 最终失败但此前已写入”可诊断，不新增结果总线或数据库列。
+- `canonical_slot` required qualifier 只接受显式 evidence，禁止从泛化 subject 伪造 `choice.model.task`。在带 hash 的 v0.27 旧缓存上配对验证，16 个既有误配全部修复、0 个新增误配，另 4 个正确样本保持不变；验收未使用新 prompt 缓存。
+- `ExperienceService` 从继承仓储改为组合委托；worker 仅抽出 job handler、registry 与维护调度边界，保留旧 `dispatch_job` 导入兼容，不引入通用 handler 框架。
+
+### 提取关系语义实验终局
+
+- 第一轮 compact RAO prompt 虽把来源有界率从 0 提升到 88.3%，但 exact RAO 仅 8%，普通 anchors 从 92.9% 降到 85.7%，非关系 claim yield 降至 68.8%，关系覆盖仅 5/50；按预注册纪律回滚生产改动。
+- 第二轮保持主提取不动，尝试 source-first 独立关系注解；两次 runner 权威 ID/evidence 接线缺陷均作废封存并通过 3-call pilot 门禁后重跑。最终来源边界 precision 100%、接受率 90.8%，但 exact RAO 仅 10%、packet RAO 12%、entity coverage 与基线同为 34.7%，可扩展关系边仍为 0，C0/C4 smoke 全等，未获得 sealed v3 资格。
+- 配对诊断显示关系 proposal 从 374 降到 322、实际 applied 从 207 降到 16：让同一模型 pass 同时完成候选配对与精确语义注解产生了明显“任务竞争”。方法论结论是 schema 可写与来源安全不能替代端到端可用性，新增任务必须同时验证原任务产出保持；主菜 A 最终不产品化，prompt/schema/窄表/runner 实验分支均删除。
+- 删除 dormant C1–C5/f4 臂及只为它们存在的 runner/测试，并删除已判死的 source-first 实验分支。保留生产 relation expansion、RAO 渲染、answer-entity scorer/gold、sealed 隔离纪律、关系建图覆盖/packet 差异 smoke 及通用 pilot/权威 ID 绑定门禁。
+
+### 文档与发布
+
+- README 明确默认 `sqlite_scan` 适用于约 10 万条 Claim 以内，超过该量级应评估并显式切换 `sqlite_vec`；API 文档显著声明 namespace 不是安全边界、默认本地监听不可直接暴露公网；兼容性文档补充 OpenAPI/MCP 独立快照的共同审查规则。
+- 项目版本提升至 `0.28.0`；SQL schema 为 44 个不可变、只向前执行的 migration（001–044），backup manifest 格式为 v2。
+
 ## v0.27.1（2026-08-15）
 
 - 修复 Context Packet RAO fallback 可能将未出现在公开文本中的 claim value 投影到 relation 行的信息边界问题，并在缺少本地私有评测语料时跳过相关 CI smoke，消除跨环境失败。

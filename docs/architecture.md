@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.27.1
-- Updated: 2026-08-15
+- Document baseline: v0.28.0
+- Updated: 2026-08-16
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -62,9 +62,11 @@ src/hl_mem/
 ├── application/
 │   ├── answerability.py      # Shared supported/hard/soft abstention semantics
 │   ├── context_packet.py     # Context Packet v1 assembly and exposure materialization
+│   ├── deletion.py           # Fail-closed physical deletion closure and tombstone replay
 │   ├── ingest.py             # IngestService and atomic Claim write path
 │   ├── recall.py             # RecallService orchestration and context packing
-│   └── forget.py             # ForgetService and cascading withdrawal
+│   ├── forget.py             # Explicit-forget adapter over DeletionService
+│   └── restore.py            # Restore replay orchestration before database visibility
 ├── core/
 │   └── vector.py             # Pure cosine-similarity math
 ├── domain/
@@ -109,14 +111,17 @@ src/hl_mem/
 │   ├── experience.py         # Episode/Trace/Policy repository
 │   ├── jobs.py               # Durable job queue
 │   ├── relation_proposals.py # Auditable relation candidates
+│   ├── tombstones.py         # Independent versioned deletion-ledger adapter
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
 │   └── migrations/           # 44 immutable SQL migrations (001-044)
 ├── workers/
-│   ├── worker.py             # Job leasing, dispatch, progress, heartbeat
+│   ├── worker.py             # Job leasing, progress, heartbeat, maintenance loop
+│   ├── job_handlers.py       # Job handlers, registry, and dispatch boundary
+│   ├── integrity.py          # Bounded dangling-reference reporting
 │   ├── ttl.py                # Importance-aware expiry
-│   ├── decay.py              # Confidence decay and archival
+│   ├── decay.py              # Activation/legacy decay and archival
 │   ├── consolidate.py        # LLM semantic consolidation
 │   ├── deduplicate.py        # Cross-subject semantic deduplication
 │   ├── backfill_expires_at.py# TTL backfill utility
@@ -246,6 +251,11 @@ Legacy trigram/raw tables remain only for the rollback window and are not querie
 Dense retrieval scans a configured candidate bound before scoring. Optional provider failures degrade to deterministic or
 original-query paths so the SQLite retrieval core remains available.
 
+`memory_relations` has its own valid-time interval, independent of each endpoint Claim. New edges start at creation;
+existing terminal-transition paths close connected edges when a Claim becomes retracted, superseded, or expired. Every
+relation-expansion hop checks the edge interval and both endpoint Claims for namespace, status, valid-time, and recorded-time
+visibility. Relation edges therefore cannot keep an otherwise invisible terminal Claim reachable.
+
 For `context_packet` / `both` responses and Hermes delivery, Context Packet assembly is the last recall stage, after
 relevance decisions, expansion, reranking, any intent-specific quota selection, and the selected delivery path's token
 budget. The legacy response can materialize exposures from its returned item set without invoking packet-only packing.
@@ -279,8 +289,26 @@ excluded from its physical apply path.
 
 Retention is a pure function of scope and importance. Ephemeral memories expire; temporal and permanent memories decay on
 different schedules; access and sufficiently supported helpful feedback can extend useful life within configured caps.
-Archival clears embeddings. Explicit forgetting withdraws the Claim, clears its vector, preserves audit history, and marks
-dependent derivations stale.
+Archival clears embeddings. Physical deletion is deliberately narrower and fail-closed:
+
+```mermaid
+flowchart LR
+    F[Explicit forget] --> D[DeletionService]
+    C[Archived cleanup] --> D
+    D --> L[Tombstone ledger<br/>write first, fail loud]
+    L --> X[Main DB closure<br/>Claim + private evidence + references + orphan Event]
+    B[Backup DB + ledger] --> M[Manifest v2 identity]
+    M --> R[Restore into temporary DB]
+    R --> P[Replay tombstones]
+    P --> A[Integrity check + atomic replace]
+```
+
+The live forget and archived-cleanup entries use the same closure. Active, archived, and superseded Claims are handled by
+explicit rules; candidate, disputed, expired, or open-manual states are refused when deletion semantics are ambiguous, and
+retracted replay is idempotent. Restore is the third entry: it validates the sidecar identity and replays every tombstone
+before the temporary database can replace the visible target. The ledger stores identity hashes and closure metadata, not
+sensitive Claim text. Integrity audit reports bounded evidence, relation-endpoint, derivation, and supersede dangling samples
+without auto-deleting them.
 
 ## 8. Interfaces
 
@@ -319,9 +347,12 @@ documentation at `/docs` while the service is running.
 ## 9. Storage and Operations
 
 The database layer owns WAL mode, busy timeout, connection lifecycle, online backup, and ordered immutable migrations.
-Workers use durable jobs with leases, heartbeat, stage, and processed/total progress. A separate connection renews every
-job in a leased extraction window while work is running; token-guarded terminal updates must cover the complete window or
-the worker reports `lease_lost` instead of success. Audit logs record state changes and
+Workers use durable jobs with leases, heartbeat, stage, and processed/total progress. `worker.py` owns leasing, the
+maintenance loop, and process lifecycle; `job_handlers.py` owns the handler registry and dispatch boundary. Extraction
+persists per-window and cumulative written-Claim counts in the existing `progress_detail_json` before `complete`, so a
+failed Job is distinguishable from a zero-write Job. A separate connection renews every job in a leased extraction window
+while work is running; token-guarded terminal updates must cover the complete window or the worker reports `lease_lost`
+instead of success. Audit logs record state changes and
 automatic decisions; LLM spans record operation, provider, model, status, token counts, and latency. The async `/healthz`
 route reports process-local component metrics, the configured vector backend, and the unresolved conflict count through
 the application lifecycle connection; it does not call external providers. `/v1/stats`, offline evaluation, and the
@@ -340,7 +371,9 @@ persona subjects and rebuilds derived identities under a write transaction; larg
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used
 after extraction HTTP 429 retries are exhausted, migration 041 prevents a second active claim from entering a
 mutually exclusive conflict group on any INSERT or UPDATE path, migration 042 adds activation lifecycle state, and
-migration 043 binds the main database to its deletion-ledger identity, and migration 044 adds valid-time windows to relation edges and closes them on terminal Claim transitions. The optional `sqlite_vec.py` data migration owns the dimension-specific
+migration 043 binds the main database to its deletion-ledger identity, and migration 044 adds valid-time windows to relation
+edges and closes them on terminal Claim transitions. Both run automatically on first v0.28 open; they do not rewrite
+historical conflict decisions or physically delete existing rows. The optional `sqlite_vec.py` data migration owns the dimension-specific
 derived vector table; the default remains exact `sqlite_scan`.
 
 Backup and restore are whole-database operations:
