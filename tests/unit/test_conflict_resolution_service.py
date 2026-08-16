@@ -73,6 +73,17 @@ def _exclusive_group(tmp_path):
     return connection, repository
 
 
+def _orphan_disputed_ids(connection) -> list[str]:
+    rows = connection.execute(
+        "SELECT claims.id FROM claims WHERE claims.status='disputed' AND NOT EXISTS ("
+        "SELECT 1 FROM conflict_cases AS cases "
+        "WHERE (cases.left_claim_id=claims.id OR cases.right_claim_id=claims.id) "
+        "AND cases.status IN ('pending','auto_resolved','manual_required')"
+        ") ORDER BY claims.id"
+    ).fetchall()
+    return [str(row["id"]) for row in rows]
+
+
 def test_exclusive_group_rejects_coexist_with_remediation_reason(tmp_path) -> None:
     connection, repository = _exclusive_group(tmp_path)
 
@@ -81,6 +92,22 @@ def test_exclusive_group_rejects_coexist_with_remediation_reason(tmp_path) -> No
         match="应共存需先修正 slot/qualifier 使脱离同 conflict key",
     ):
         ResolutionService(connection).resolve("case-left-right", "coexist", resolved_at=NOW)
+
+    assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right", "third")} == {
+        "candidate",
+        "disputed",
+    }
+    assert {row["status"] for row in connection.execute("SELECT status FROM conflict_cases")} == {"manual_required"}
+
+
+def test_exclusive_group_rejects_reject_with_remediation_reason(tmp_path) -> None:
+    connection, repository = _exclusive_group(tmp_path)
+
+    with pytest.raises(
+        ConflictResolutionError,
+        match="拒绝冲突需先修正 slot/qualifier 使脱离同 conflict key",
+    ):
+        ResolutionService(connection).resolve("case-left-right", "reject", resolved_at=NOW)
 
     assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right", "third")} == {
         "candidate",
@@ -160,6 +187,37 @@ def test_nonexclusive_pair_can_coexist(tmp_path) -> None:
     assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right")} == {"active"}
     case = connection.execute("SELECT status,decision,resolved_at FROM conflict_cases").fetchone()
     assert tuple(case) == ("resolved", "coexist", NOW)
+
+
+def test_nonexclusive_reject_restores_both_claims_and_leaves_no_orphans(tmp_path) -> None:
+    connection = Database(tmp_path / "reject.db").open()
+    repository = ClaimRepository(connection)
+    _claim(repository, "left", value="alpha", slot=None, conflict_key=None)
+    _claim(repository, "right", value="beta", slot=None, conflict_key=None)
+    _case(repository, "case", "left", "right")
+
+    result = ResolutionService(connection).resolve("case", "reject", resolved_at=NOW)
+
+    assert result["status"] == "rejected"
+    assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right")} == {"active"}
+    assert _orphan_disputed_ids(connection) == []
+    case = connection.execute("SELECT status,decision,resolved_at FROM conflict_cases").fetchone()
+    assert tuple(case) == ("rejected", "reject", NOW)
+
+
+def test_reject_orphan_postcondition_violation_rolls_back(tmp_path) -> None:
+    connection = Database(tmp_path / "reject-orphan.db").open()
+    repository = ClaimRepository(connection)
+    _claim(repository, "left", value="alpha", slot=None, conflict_key=None)
+    _claim(repository, "right", value="beta", slot=None, conflict_key=None)
+    _claim(repository, "unrelated-orphan", value="gamma", slot=None, conflict_key=None)
+    _case(repository, "case", "left", "right")
+
+    with pytest.raises(ConflictResolutionError, match="orphan disputed claim: unrelated-orphan"):
+        ResolutionService(connection).resolve("case", "reject", resolved_at=NOW)
+
+    assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right")} == {"disputed"}
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case'").fetchone()[0] == "manual_required"
 
 
 def test_resolution_rejects_unknown_decision_without_mutation(tmp_path) -> None:

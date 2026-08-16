@@ -8,6 +8,29 @@ from typing import Any
 from hl_mem.domain.claims.attributes import MUTUALLY_EXCLUSIVE_SLOTS
 from hl_mem.errors import ActiveClaimInvariantError, ConflictResolutionError
 
+_OPEN_CONFLICT_CASE_STATUSES = ("pending", "auto_resolved", "manual_required")
+
+
+def find_orphan_disputed_claims(connection: Any) -> list[str]:
+    """返回没有任何 open conflict case 支撑的 disputed claim。"""
+    placeholders = ",".join("?" for _ in _OPEN_CONFLICT_CASE_STATUSES)
+    rows = connection.execute(
+        "SELECT claims.id FROM claims WHERE claims.status='disputed' AND NOT EXISTS ("
+        "SELECT 1 FROM conflict_cases AS cases "
+        "WHERE (cases.left_claim_id=claims.id OR cases.right_claim_id=claims.id) "
+        f"AND cases.status IN ({placeholders})"
+        ") ORDER BY claims.id",
+        _OPEN_CONFLICT_CASE_STATUSES,
+    ).fetchall()
+    return [str(row["id"]) for row in rows]
+
+
+def assert_no_orphan_disputed_claims(connection: Any) -> None:
+    """拒绝裁决提交前断言没有不可见且失去复核入口的 disputed claim。"""
+    orphan_ids = find_orphan_disputed_claims(connection)
+    if orphan_ids:
+        raise ConflictResolutionError(f"orphan disputed claim: {orphan_ids[0]}")
+
 
 def find_dangling_conflict_references(connection: Any) -> list[dict[str, str]]:
     """返回引用缺失 Claim 的 conflict case。"""

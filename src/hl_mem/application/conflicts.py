@@ -6,7 +6,10 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from hl_mem.application.conflict_invariants import assert_conflict_postconditions
+from hl_mem.application.conflict_invariants import (
+    assert_conflict_postconditions,
+    assert_no_orphan_disputed_claims,
+)
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.errors import ConflictResolutionError
 from hl_mem.lifecycle import assert_transition
@@ -45,6 +48,12 @@ class ResolutionService:
                 raise ConflictResolutionError(
                     "同互斥 conflict group 禁止 coexist；应共存需先修正 slot/qualifier 使脱离同 conflict key"
                 )
+            if decision == "reject" and exclusive_group:
+                raise ConflictResolutionError(
+                    "同互斥 conflict group 禁止 reject；拒绝冲突需先修正 slot/qualifier 使脱离同 conflict key"
+                )
+            if decision == "reject":
+                self._restore_rejected_pair(left, right)
 
             winner_id: str | None = None
             if case["status"] in {"resolved", "rejected"}:
@@ -75,6 +84,8 @@ class ResolutionService:
                 namespace=str(left["namespace_key"]) if exclusive_group else None,
                 conflict_key=str(left["conflict_key"]) if exclusive_group else None,
             )
+            if decision == "reject":
+                assert_no_orphan_disputed_claims(self.connection)
             self.connection.commit()
         except Exception:
             if self.connection.in_transaction:
@@ -217,6 +228,11 @@ class ResolutionService:
         )
         if cursor.rowcount != 1:
             raise ConflictResolutionError(f"claim changed during resolution: {claim['id']}")
+
+    def _restore_rejected_pair(self, left: dict[str, Any], right: dict[str, Any]) -> None:
+        for claim in (left, right):
+            if claim.get("status") in NONTERMINAL_CLAIM_STATUSES:
+                self._activate_claim(claim)
 
     def _close_group_cases(
         self,
