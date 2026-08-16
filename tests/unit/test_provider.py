@@ -106,6 +106,23 @@ class EpisodeResponse(Response):
         return {"id": "episode-1"}
 
 
+def test_unavailable_reason_explains_disabled_hermes_setting() -> None:
+    provider = HLMemProvider(settings=Settings(hermes_enabled=False))
+
+    reason = provider.unavailable_reason()
+
+    assert provider.is_available() is False
+    assert "[hermes]" in reason
+    assert "enabled=true" in reason
+
+
+def test_unavailable_reason_is_empty_when_hermes_is_enabled() -> None:
+    provider = HLMemProvider(settings=Settings(hermes_enabled=True))
+
+    assert provider.is_available() is True
+    assert provider.unavailable_reason() == ""
+
+
 def test_summarize_observation_detects_strong_error_signals() -> None:
     assert _summarize_observation('{"exit_code": 0, "output": "completed"}').startswith("[success]")
     assert _summarize_observation('{"exit_code": 1, "output": "stopped"}').startswith("[error]")

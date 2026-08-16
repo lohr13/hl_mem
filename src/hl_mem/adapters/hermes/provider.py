@@ -238,6 +238,12 @@ class HLMemProvider:
         """返回提供器是否由统一配置启用。"""
         return self.enabled
 
+    def unavailable_reason(self) -> str:
+        """仅解释由 Hermes 配置显式关闭的不可用状态。"""
+        if not self.enabled:
+            return "hl_mem Hermes 集成未启用；在 hl_mem.toml [hermes] 设置 enabled=true 开启"
+        return ""
+
     def get_tool_schemas(self) -> list[Any]:
         """返回提供器暴露的工具定义。"""
         return []
