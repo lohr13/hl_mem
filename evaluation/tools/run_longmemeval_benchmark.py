@@ -1536,9 +1536,14 @@ class _BenchmarkWorker(Worker):
         "content_inspection_skipped_events",
     )
 
-    def _extract_window(self, event_ids: list[str], job_id: str | None) -> dict[str, Any]:
+    def _extract_window(
+        self,
+        event_ids: list[str],
+        job_id: str | None,
+        progress_callback: Callable[[str, int, int, dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         try:
-            return super()._extract_window(event_ids, job_id)
+            return super()._extract_window(event_ids, job_id, progress_callback)
         except httpx.HTTPStatusError as error:
             code = _data_inspection_code(error)
             if code is None:
@@ -1562,7 +1567,7 @@ class _BenchmarkWorker(Worker):
                     "content_inspection_codes": [code],
                 }
 
-            parts = [self._extract_window([event_id], job_id) for event_id in event_ids]
+            parts = [self._extract_window([event_id], job_id, progress_callback) for event_id in event_ids]
             merged: dict[str, Any] = {
                 field: sum(int(part.get(field, 0)) for part in parts) for field in self._SUM_FIELDS
             }

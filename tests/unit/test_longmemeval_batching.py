@@ -313,13 +313,16 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         )
         inspection_error = httpx.HTTPStatusError("rejected", request=request, response=response)
         calls: list[list[str]] = []
+        callbacks: list[object | None] = []
 
         def extract_window(
             _worker: object,
             event_ids: list[str],
             _job_id: str | None,
+            progress_callback: object | None = None,
         ) -> dict[str, object]:
             calls.append(event_ids)
+            callbacks.append(progress_callback)
             if "bad" in event_ids:
                 raise inspection_error
             return {
@@ -335,10 +338,12 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             }
 
         worker = runner._BenchmarkWorker.__new__(runner._BenchmarkWorker)
+        callback = object()
         with patch.object(runner.Worker, "_extract_window", autospec=True, side_effect=extract_window):
-            result = worker._extract_window(["bad", "good"], "job-1")
+            result = worker._extract_window(["bad", "good"], "job-1", callback)
 
         self.assertEqual(calls, [["bad", "good"], ["bad"], ["good"]])
+        self.assertEqual(callbacks, [callback, callback, callback])
         self.assertEqual(result["events"], 2)
         self.assertEqual(result["claims"], 2)
         self.assertEqual(result["stored"], 2)
