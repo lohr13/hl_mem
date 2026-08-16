@@ -310,12 +310,17 @@ def resolve_conflict(
     case_id: str,
     decision: str,
     *,
+    rationale: str | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """通过组级应用服务收敛指定冲突案例。"""
     database = Database(database_path, settings=settings)
     try:
-        return ResolutionService(database.open()).resolve(case_id, decision)
+        return ResolutionService(database.open()).resolve(
+            case_id,
+            decision,
+            rationale=rationale,
+        )
     finally:
         database.close()
 
@@ -385,6 +390,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     resolve = conflict_commands.add_parser("resolve")
     resolve.add_argument("case_id")
     resolve.add_argument("decision", choices=("keep_left", "keep_right", "coexist", "reject"))
+    resolve.add_argument("--rationale")
     repair_dangling = conflict_commands.add_parser("repair-dangling")
     repair_dangling.add_argument("--apply", action="store_true")
     evaluation = commands.add_parser("eval")
@@ -525,6 +531,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 database_path,
                 args.case_id,
                 args.decision,
+                rationale=args.rationale,
                 settings=settings,
             )
         else:

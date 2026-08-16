@@ -174,6 +174,49 @@ def test_cli_keep_left_does_not_mutate_terminal_loser(tmp_path) -> None:
     )
 
 
+def test_cli_resolve_passes_rationale_to_resolution_service(tmp_path, capsys) -> None:
+    path = tmp_path / "resolve-rationale.db"
+    connection = Database(path).open()
+    repository = ClaimRepository(connection)
+    _conflict_claim(
+        repository,
+        "left",
+        "SQLite",
+        status="disputed",
+        source_authority="high",
+        recorded_from="2026-01-01T00:00:00+00:00",
+    )
+    _conflict_claim(
+        repository,
+        "right",
+        "PostgreSQL",
+        status="disputed",
+        source_authority="low",
+        recorded_from="2026-01-02T00:00:00+00:00",
+    )
+    _manual_conflict(repository)
+
+    main(
+        [
+            "--db",
+            str(path),
+            "conflicts",
+            "resolve",
+            "case",
+            "keep_left",
+            "--rationale",
+            "人工确认 SQLite 是当前配置",
+        ]
+    )
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["decision"] == "keep_left"
+    assert (
+        connection.execute("SELECT rationale FROM conflict_cases WHERE id='case'").fetchone()[0]
+        == "人工确认 SQLite 是当前配置"
+    )
+
+
 def test_cli_list_conflicts_includes_claim_context_and_bounded_values(tmp_path) -> None:
     path = tmp_path / "list-conflicts.db"
     connection = Database(path).open()

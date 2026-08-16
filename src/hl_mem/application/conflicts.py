@@ -32,10 +32,12 @@ class ResolutionService:
         decision: str,
         *,
         resolved_at: str | None = None,
+        rationale: str | None = None,
     ) -> dict[str, Any]:
         if decision not in SUPPORTED_DECISIONS:
             raise ConflictResolutionError(f"unsupported conflict decision: {decision}")
         timestamp = resolved_at or datetime.now(timezone.utc).isoformat()
+        effective_rationale = rationale if rationale and rationale.strip() else None
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             case = self._load_case(case_id)
@@ -62,20 +64,27 @@ class ResolutionService:
                     decision,
                     group_claims,
                 )
+                if effective_rationale is not None:
+                    self._update_terminal_group_rationale(case, group_claims, effective_rationale)
             elif decision in {"keep_left", "keep_right"}:
                 winner_side = decision.removeprefix("keep_")
                 winner_id = str(case[f"{winner_side}_claim_id"])
                 self._converge_winner(group_claims, winner_id, timestamp)
-                closed_case_ids = self._close_group_cases(group_claims, winner_id, timestamp)
+                closed_case_ids = self._close_group_cases(
+                    group_claims,
+                    winner_id,
+                    timestamp,
+                    effective_rationale,
+                )
                 case_status = "resolved"
             elif decision == "coexist":
                 for claim in (left, right):
                     self._activate_claim(claim)
-                self._close_case(case, "resolved", "coexist", timestamp)
+                self._close_case(case, "resolved", "coexist", timestamp, effective_rationale)
                 closed_case_ids = [case_id]
                 case_status = "resolved"
             else:
-                self._close_case(case, "rejected", "reject", timestamp)
+                self._close_case(case, "rejected", "reject", timestamp, effective_rationale)
                 closed_case_ids = [case_id]
                 case_status = "rejected"
 
@@ -239,6 +248,7 @@ class ResolutionService:
         group_claims: list[dict[str, Any]],
         winner_id: str,
         timestamp: str,
+        rationale: str | None,
     ) -> list[str]:
         claim_ids = [str(claim["id"]) for claim in group_claims]
         placeholders = ",".join("?" for _ in claim_ids)
@@ -258,14 +268,44 @@ class ResolutionService:
                 case_decision = "keep_right"
             else:
                 case_decision = "group_winner"
-            self._close_case(case, "resolved", case_decision, timestamp)
+            self._close_case(case, "resolved", case_decision, timestamp, rationale)
             closed_case_ids.append(str(case["id"]))
         return closed_case_ids
 
-    def _close_case(self, case: dict[str, Any], status: str, decision: str, timestamp: str) -> None:
+    def _update_terminal_group_rationale(
+        self,
+        case: dict[str, Any],
+        group_claims: list[dict[str, Any]],
+        rationale: str,
+    ) -> None:
+        claim_ids = [str(claim["id"]) for claim in group_claims]
+        placeholders = ",".join("?" for _ in claim_ids)
         cursor = self.connection.execute(
-            "UPDATE conflict_cases SET status=?,decision=?,resolved_at=? WHERE id=? AND status=?",
-            (status, decision, timestamp, case["id"], case["status"]),
+            "UPDATE conflict_cases SET rationale=? "
+            f"WHERE left_claim_id IN ({placeholders}) AND right_claim_id IN ({placeholders}) "
+            "AND status IN ('resolved','rejected') AND resolved_at=?",
+            (rationale, *claim_ids, *claim_ids, case["resolved_at"]),
         )
+        if cursor.rowcount < 1:
+            raise ConflictResolutionError(f"terminal conflict group changed during rationale update: {case['id']}")
+
+    def _close_case(
+        self,
+        case: dict[str, Any],
+        status: str,
+        decision: str,
+        timestamp: str,
+        rationale: str | None,
+    ) -> None:
+        if rationale is None:
+            cursor = self.connection.execute(
+                "UPDATE conflict_cases SET status=?,decision=?,resolved_at=? WHERE id=? AND status=?",
+                (status, decision, timestamp, case["id"], case["status"]),
+            )
+        else:
+            cursor = self.connection.execute(
+                "UPDATE conflict_cases SET status=?,decision=?,resolved_at=?,rationale=? " "WHERE id=? AND status=?",
+                (status, decision, timestamp, rationale, case["id"], case["status"]),
+            )
         if cursor.rowcount != 1:
             raise ConflictResolutionError(f"conflict case changed during resolution: {case['id']}")

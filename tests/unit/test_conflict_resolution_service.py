@@ -141,6 +141,96 @@ def test_keep_left_converges_group_and_closes_every_overlapping_open_case(tmp_pa
     assert active_count == 1
 
 
+def test_keep_left_propagates_rationale_to_every_closed_group_case(tmp_path) -> None:
+    connection, _ = _exclusive_group(tmp_path)
+
+    ResolutionService(connection).resolve(
+        "case-left-right",
+        "keep_left",
+        resolved_at=NOW,
+        rationale="人工核对配置记录后保留 8080",
+    )
+
+    rows = connection.execute("SELECT id,rationale FROM conflict_cases ORDER BY id").fetchall()
+    assert {row["rationale"] for row in rows} == {"人工核对配置记录后保留 8080"}
+
+
+def test_resolution_without_rationale_preserves_each_open_case_value(tmp_path) -> None:
+    connection, _ = _exclusive_group(tmp_path)
+    connection.execute("UPDATE conflict_cases SET rationale='left-right evidence' WHERE id='case-left-right'")
+    connection.execute("UPDATE conflict_cases SET rationale='left-third evidence' WHERE id='case-left-third'")
+    connection.execute("UPDATE conflict_cases SET rationale='right-third evidence' WHERE id='case-right-third'")
+    connection.commit()
+
+    ResolutionService(connection).resolve("case-left-right", "keep_left", resolved_at=NOW)
+
+    rows = connection.execute("SELECT id,rationale FROM conflict_cases ORDER BY id").fetchall()
+    assert {row["id"]: row["rationale"] for row in rows} == {
+        "case-left-right": "left-right evidence",
+        "case-left-third": "left-third evidence",
+        "case-right-third": "right-third evidence",
+    }
+
+
+def test_terminal_replay_without_rationale_preserves_group_values(tmp_path) -> None:
+    connection, _ = _exclusive_group(tmp_path)
+    service = ResolutionService(connection)
+    service.resolve(
+        "case-left-right",
+        "keep_left",
+        resolved_at=NOW,
+        rationale="original rationale",
+    )
+
+    service.resolve("case-left-right", "keep_left", resolved_at="later")
+
+    rows = connection.execute("SELECT rationale FROM conflict_cases").fetchall()
+    assert {row["rationale"] for row in rows} == {"original rationale"}
+
+
+def test_terminal_replay_with_matching_decision_replaces_group_rationale(tmp_path) -> None:
+    connection, _ = _exclusive_group(tmp_path)
+    service = ResolutionService(connection)
+    service.resolve(
+        "case-left-right",
+        "keep_left",
+        resolved_at=NOW,
+        rationale="original rationale",
+    )
+
+    service.resolve(
+        "case-left-right",
+        "keep_left",
+        resolved_at="later",
+        rationale="reviewed rationale",
+    )
+
+    rows = connection.execute("SELECT rationale FROM conflict_cases").fetchall()
+    assert {row["rationale"] for row in rows} == {"reviewed rationale"}
+
+
+def test_terminal_replay_with_different_decision_does_not_replace_rationale(tmp_path) -> None:
+    connection, _ = _exclusive_group(tmp_path)
+    service = ResolutionService(connection)
+    service.resolve(
+        "case-left-right",
+        "keep_left",
+        resolved_at=NOW,
+        rationale="original rationale",
+    )
+
+    with pytest.raises(ConflictResolutionError, match="different decision"):
+        service.resolve(
+            "case-left-right",
+            "keep_right",
+            resolved_at="later",
+            rationale="must not be stored",
+        )
+
+    rows = connection.execute("SELECT rationale FROM conflict_cases").fetchall()
+    assert {row["rationale"] for row in rows} == {"original rationale"}
+
+
 @pytest.mark.parametrize("retry_decision", ["keep_left", "keep_right"])
 def test_group_winner_case_retry_returns_established_winner(tmp_path, retry_decision) -> None:
     connection, _ = _exclusive_group(tmp_path)
@@ -164,7 +254,12 @@ def test_group_resolution_rolls_back_when_overlapping_case_close_fails(tmp_path)
     connection.commit()
 
     with pytest.raises(sqlite3.IntegrityError, match="injected close failure"):
-        ResolutionService(connection).resolve("case-left-right", "keep_left", resolved_at=NOW)
+        ResolutionService(connection).resolve(
+            "case-left-right",
+            "keep_left",
+            resolved_at=NOW,
+            rationale="must roll back with the group",
+        )
 
     assert {claim_id: repository.get_claim(claim_id)["status"] for claim_id in ("left", "right", "third")} == {
         "left": "disputed",
@@ -172,6 +267,7 @@ def test_group_resolution_rolls_back_when_overlapping_case_close_fails(tmp_path)
         "third": "candidate",
     }
     assert {row["status"] for row in connection.execute("SELECT status FROM conflict_cases")} == {"manual_required"}
+    assert {row["rationale"] for row in connection.execute("SELECT rationale FROM conflict_cases")} == {None}
 
 
 def test_nonexclusive_pair_can_coexist(tmp_path) -> None:
@@ -224,10 +320,16 @@ def test_resolution_rejects_unknown_decision_without_mutation(tmp_path) -> None:
     connection, repository = _exclusive_group(tmp_path)
 
     with pytest.raises(ConflictResolutionError, match="unsupported conflict decision"):
-        ResolutionService(connection).resolve("case-left-right", "invalid", resolved_at=NOW)
+        ResolutionService(connection).resolve(
+            "case-left-right",
+            "invalid",
+            resolved_at=NOW,
+            rationale="must not be stored",
+        )
 
     assert repository.get_claim("left")["status"] == "disputed"
     assert (
         connection.execute("SELECT status FROM conflict_cases WHERE id='case-left-right'").fetchone()[0]
         == "manual_required"
     )
+    assert connection.execute("SELECT rationale FROM conflict_cases WHERE id='case-left-right'").fetchone()[0] is None
