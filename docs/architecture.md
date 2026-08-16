@@ -330,7 +330,7 @@ without auto-deleting them.
 | `POST` | `/v1/consolidate` | Scoped conflict-consolidation job |
 | `POST` | `/v1/recall` | Hybrid, evidence-aware recall |
 | `POST` | `/v1/memories` | Explicit pinned-memory ingestion |
-| `DELETE` | `/v1/memories/{memory_id}` | Cascading explicit forgetting |
+| `DELETE` | `/v1/memories/{memory_id}` | Tombstone-backed physical deletion closure |
 | `POST` | `/v1/episodes` | Episode creation |
 | `GET` | `/v1/episodes` | Episode listing |
 | `GET` | `/v1/episodes/{episode_id}` | Episode detail |

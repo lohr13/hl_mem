@@ -3,6 +3,11 @@
 from pathlib import Path
 
 from scripts import check_docs_consistency as checker
+from scripts.generate_configuration_reference import ROOT, generate
+
+
+def test_configuration_reference_matches_generator() -> None:
+    assert (ROOT / "docs/configuration.md").read_text(encoding="utf-8") == generate()
 
 
 def test_find_broken_relative_links_reports_only_missing_local_target(tmp_path: Path) -> None:

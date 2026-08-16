@@ -104,10 +104,14 @@ runtime 直接复用 `get_tool_schemas()` 的 JSON Schema，避免 transport 与
 | `memory_recall` | 召回记忆和证据 |
 | `memory_get` | 读取完整 Claim 详情 |
 | `memory_correct` | 保留分类并替换 Claim 内容 |
-| `memory_forget` | 撤回记忆 |
+| `memory_forget` | 经 tombstone 账本与统一闭包物理删除记忆 |
 | `memory_explain` | 返回事件或 Claim 的证据链 |
 | `memory_feedback` | 提交召回效用反馈和可选纠正 |
 
 成功调用同时返回 JSON 文本内容和 `structuredContent`。输入校验、资源不存在、生命周期冲突等预期业务错误返回 `isError: true`，便于模型读取错误并修正参数；未分类的内部异常仍由 SDK 作为协议级内部错误处理。同步的数据库与业务调用在线程中执行，不阻塞 MCP 事件循环。
+
+`memory_forget` 与 REST forget 共用 `DeletionService`：账本先写，随后删除 Claim 的专属 evidence、关系/冲突/派生
+引用和无引用 Event。candidate/disputed/expired/open-manual 等歧义状态以及账本失败会 fail-closed，并以业务错误
+返回；MCP 不保留一条更宽松的“只撤回状态”旁路。
 
 stdio 的 stdout 只用于 MCP 帧。诊断输出应写入 stderr；若客户端报告连接关闭，先在终端运行 `hl-mem-mcp --config <绝对路径> --env-file <绝对路径>`，检查配置或密钥错误，然后再由客户端重启进程。

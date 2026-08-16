@@ -37,10 +37,11 @@
 | TTL / decay / archive | stable | `auto` | 否 | 是 | 单 Job 失败可重试，CAS/事务避免部分更新 | 保持扫描完整性、双时间和访问 bonus 回归 |
 | Near-copy / semantic dedup | beta | 确定性摄入复用与召回折叠 `on`；LLM 灰区 `audit` | 仅旧灰区审计路径是 | 摄入可追加 evidence；维护写等价边；召回折叠不写库 | 任一结构或 protected-atom 守卫失败即保留独立 Claim；pending pair 轮转；LLM 失败保留 uncertain | 近重复 precision、Top-K 多样性、人工复核率和错误折叠/supersede 低于阈值 |
 | 冲突处理 | stable | `auto`（确定性优先） | 灰区是 | 是 | LLM 失败保留未决 case；维护任务会回访全部未决状态，人工可从 CLI 审核并裁决 | 保持 supersede 链汇聚、胜败者终态、证据和事务回归 |
+| 删除完整性 | stable | `on` | 否 | 是，主库 + 独立 tombstone sidecar | forget/cleanup/restore 共用删除闭包；账本失败、状态歧义、manifest/ledger 错配时 fail-closed，不静默降级 | P0 状态/共享 Event/关系两端矩阵、幂等 replay、恢复中断续跑和三入口 dangling=0 持续全绿 |
 | Episode / Trace | stable | `on` | 否 | 是 | 不影响 Claim 主通道；非法状态转换明确失败 | 保持 API、状态机、reward 与 usefulness 回归 |
 | Policy / Procedure 归纳 | beta | `auto`（定时 Job） | 是 | 是 | 归纳失败保留 Episode，Job 可重试且不发布新策略 | 多 Episode 支撑、成功率、退役与审计指标达到阈值 |
 | Mental Model 维护 | beta | `auto`（定时 Job） | 是 | 是 | 刷新失败保留旧模型并标记 stale/记录 Job 错误 | 水位幂等、证据覆盖、刷新质量和 stale 恢复达到阈值 |
 | MCP Server（stdio） | beta | 按需启动 | 否 | 依工具而定 | 委托 application 服务；预期业务错误返回 `isError=true`，内部异常保留协议级错误 | 工具契约、事务边界和 REST 行为持续一致，Codex/Claude/Cursor 兼容与长时间运行指标达到 SLO |
 | Hermes Provider | beta | `off`（`hermes.enabled=false`） | 是，调用本地 HL-Mem HTTP | 间接写入 | timeout/circuit breaker 后不阻断 Agent 主任务 | 兼容矩阵、重连、超时和长时间运行指标达到 SLO |
 | Audit / LLM spans | stable | `on` | 否 | 是 | 关键审计写入失败时明确报错；非关键 span 不改变业务结果 | 保持字段稳定、敏感信息脱敏和可查询性 |
-| SQLite 备份与 migration | stable | `on` | 否 | 是 | migration 失败事务回滚；备份失败不替换现有备份 | 空库升级由 CI 门禁保护；历史快照升级与恢复演练仍需独立门禁 |
+| SQLite 备份与 migration | stable | `on` | 否 | 是 | migration 失败事务回滚；manifest v2/ledger 校验或 replay 失败不替换现有目标 | 空库升级、ledger identity、tombstone replay、历史快照升级与恢复演练持续受门禁保护 |

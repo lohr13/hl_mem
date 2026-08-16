@@ -29,7 +29,9 @@ src/hl_mem/
 ├── application/            # 共享应用服务
 │   ├── ingest.py              # IngestService
 │   ├── recall.py              # RecallService
-│   └── forget.py              # ForgetService
+│   ├── deletion.py            # DeletionService 物理删除闭包
+│   ├── forget.py              # ForgetService 入口适配
+│   └── restore.py             # tombstone restore replay
 ├── domain/                 # 纯领域逻辑（不依赖基础设施）
 │   ├── claims/                # claim 写入/冲突/去重/retention/query_tags
 │   ├── temporal.py            # 双时间可见性
@@ -68,9 +70,12 @@ src/hl_mem/
 │   ├── relation_proposals.py  # 关系候选审计
 │   ├── usefulness.py          # 反馈效用聚合
 │   ├── backup.py              # 在线备份
+│   ├── tombstones.py          # 独立删除账本 sidecar
 │   └── migrations/            # 44 SQL migrations (001-044) + Python data migrations
 ├── workers/                # 后台任务
-│   ├── worker.py              # Job 调度器
+│   ├── worker.py              # Job 租约/进度/维护循环
+│   ├── job_handlers.py        # Job handler 与分派边界
+│   ├── integrity.py           # dangling 引用巡检
 │   ├── ttl.py                 # TTL 过期
 │   ├── decay.py               # 置信度衰减
 │   ├── consolidate.py         # LLM 语义归并
@@ -126,10 +131,10 @@ src/hl_mem/
 - **派生记忆接入**：recall 自动查询活跃 derivation 并填充 observations
 
 ### 生命周期管理
-- TTL 过期（ephemeral）→ 线性衰减（temporal/permanent 分级）→ 归档（embedding 清空）→ 重分类
-- 访问频率延缓衰减（每 10 次召回 +30 天）
+- TTL 过期（ephemeral）→ activation 半衰期衰减（temporal/permanent/identity 分级）→ 归档（embedding 清空）→ 重分类
+- 命中刷新 `last_accessed_at`，日常衰减不改写 confidence；legacy 线性路径仅作兼容对照
 - **冲突终态收敛**：conflict_cases 状态机（pending → auto_resolved/manual_required → resolved/rejected）
-- stale 传播：claim 撤回时关联的 derivation 自动标记 stale
+- **删除完整性**：forget/archived cleanup/restore 共用 tombstone 支撑的 fail-closed 物理删除闭包
 
 ### 架构分层
 - **api/** 是适配层（FastAPI DTO + 路由），不含业务逻辑

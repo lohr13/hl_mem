@@ -41,7 +41,7 @@ OpenAPI documentation is available at `/docs` while the service is running.
 | `POST` | `/v1/recall` | Retrieve evidence-aware memory through hybrid search and optional reranking |
 | `GET` | `/v1/memories` | List Claim memories with namespace/status filters and limit/offset pagination |
 | `POST` | `/v1/memories` | Save an explicit pinned memory through the normal ingestion path |
-| `DELETE` | `/v1/memories/{memory_id}` | Explicitly forget a memory and propagate withdrawal/staleness |
+| `DELETE` | `/v1/memories/{memory_id}` | Physically delete a memory through the tombstone-backed closure |
 | `POST` | `/v1/episodes` | Create an experience Episode in a namespace |
 | `GET` | `/v1/episodes` | List Episodes by namespace, optionally filtered by status |
 | `GET` | `/v1/episodes/{episode_id}` | Return one Episode and its details |
@@ -104,6 +104,11 @@ curl "http://127.0.0.1:8200/v1/memories?namespace=default&status=active&limit=20
 
 The response contains `memories`, `total`, `limit`, and `offset`. Items expose the Claim ID accepted by
 `DELETE /v1/memories/{memory_id}`; embedding blobs and other internal storage fields are never returned.
+
+`DELETE /v1/memories/{memory_id}` writes the independent tombstone ledger before removing the Claim, its private
+evidence, relation/conflict/derivation references, and any Event left without references. It is idempotent for an already
+retracted/deleted identity. Candidate, disputed, expired, or open-manual cases are rejected with the normal conflict-error
+contract instead of guessing deletion semantics; a ledger write or identity failure aborts the main-database deletion.
 
 ### Recall memory
 
