@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.28.1](https://img.shields.io/badge/version-0.28.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.28.2](https://img.shields.io/badge/version-0.28.2-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -111,17 +111,25 @@ launcher 会清除两个污染变量、切换到仓库根目录，并固定使�
 
 ### 集成 Hermes
 
-先启动 HL-Mem 并确认 `curl --fail http://127.0.0.1:8200/healthz` 成功，再从源码仓库运行：
+先启动 HL-Mem 并确认 `curl --fail http://127.0.0.1:8200/healthz` 成功，再安装或升级插件：
 
 ```bash
-uv run python scripts/install_to_hermes.py --hermes-home <HERMES_HOME>
+hl-mem hermes install --hermes-home <HERMES_HOME>
+hl-mem hermes upgrade --hermes-home <HERMES_HOME>
 ```
 
-插件安装到 `<HERMES_HOME>/plugins/hl_mem/`；完成后必须重启 Hermes。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
+省略 `--hermes-home` 时会从环境变量和常见目录探测 Hermes 根目录。两条命令在目标副本一致时均保持 no-op；`install` 遇到漂移会拒绝覆盖，`upgrade` 会先备份既有插件文件再刷新。`hlmem doctor` 可区分路径正确、路径错误和副本漂移。插件安装到 `<HERMES_HOME>/plugins/hl_mem/`；完成后必须重启 Hermes。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
 
 ### 常驻部署与 systemd
 
 常驻部署使用 `scripts/healthcheck.py` 探测 `/healthz`，将重启和告警交给 systemd、Windows 服务管理器或容器编排平台。systemd 的 `WorkingDirectory` 必须包含 `hl_mem.toml` 和可选 `.env`。
+
+悬空冲突可先只读巡检，再显式应用安全修复；默认命令不修改数据库，`--apply` 只删除终态且双侧 Claim 均已缺失的 case：
+
+```bash
+hl-mem conflicts repair-dangling
+hl-mem conflicts repair-dangling --apply
+```
 
 REST 的完整请求契约见 [API 文档](docs/api.md)。
 
@@ -174,7 +182,7 @@ hlmem backfill-index-text --mode natural
 
 ### 从 v0.27.x 升级
 
-v0.28.1 不新增配置键，也不改变 v0.27 的配置默认值：`recall.resurrection_mode = "auto"` 与
+v0.28.2 不新增配置键，也不改变 v0.27 的配置默认值：`recall.resurrection_mode = "auto"` 与
 `decay.model = "activation_halflife"` 继续生效。若从 v0.26 跨版本升级并希望保持旧行为，仍可显式配置：
 
 ```toml
@@ -233,7 +241,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.28.1，共 44 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.28.2，共 44 个不可变、仅向前执行的 SQL Migration。
 
 ## 文档
 

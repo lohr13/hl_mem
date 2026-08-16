@@ -1,5 +1,13 @@
 # HL-Mem 变更记录
 
+## v0.28.2（2026-08-16）
+
+- 统一 Hermes 插件部署链：Hermes 根目录探测逻辑随包发布，`doctor` 可区分路径正确且副本一致、安装路径错误与插件副本漂移；新增幂等的 `hl-mem hermes install/upgrade`，一致副本保持 no-op，升级前备份既有插件文件。
+- 增加悬空冲突自愈：maintenance worker 在 `auto_resolve_conflicts` 前自动清理终态且双侧 Claim 均缺失的 `conflict_cases`，每轮最多 100 条并写入 `audit_log`；`/healthz` 新增 `conflict_dangling`，分别报告 `terminal_both_missing`、`terminal_one_side` 与 `open_dangling`；新增 `hl-mem conflicts repair-dangling [--apply]`，默认只读 dry-run，显式 `--apply` 才执行安全子集删除。
+- 新增 `HLMemProvider.unavailable_reason()`：当 `hermes.enabled=false` 时返回包含配置位置与启用方式的可操作修复提示，已启用时保持空字符串。
+- 冲突裁决支持理由贯通：`ResolutionService.resolve(..., rationale=...)` 可接收人工裁决理由并传播到同组关闭 case，CLI `hl-mem conflicts resolve ... --rationale` 同步开放该参数。
+- 本补丁不新增配置键或 migration，REST/MCP 业务 schema 不变。
+
 ## v0.28.1（2026-08-16）
 
 - 修复 `config.port` 的裸 substring 误判：英文 `port` 现在必须是完整 token，且端口提示词必须同时有 1–65535 的数值或合法 `host:port` 形态；`importance`、`import`、`transport` 与 `importing` 不再进入端口互斥槽，模型直出的无来源 `config.port` 也会确定性降级。
