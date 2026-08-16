@@ -196,6 +196,56 @@ def test_health_reports_open_conflict_count(tmp_path) -> None:
     assert after["conflict_open_count"] == before["conflict_open_count"] + 1
 
 
+def test_health_reports_dangling_conflict_categories(tmp_path) -> None:
+    app = server.create_app(tmp_path / "health-dangling-conflicts.db")
+    with TestClient(app) as client:
+        with app.state.db.connect() as connection:
+            repository = ClaimRepository(connection)
+            assert repository.insert_claim(
+                {
+                    "id": "existing-left",
+                    "namespace_key": "default",
+                    "subject_entity_id": "gateway",
+                    "predicate": "uses",
+                    "value": "SQLite",
+                    "status": "disputed",
+                    "recorded_from": "2026-08-16T00:00:00+00:00",
+                }
+            )
+            connection.commit()
+            connection.execute("PRAGMA foreign_keys=OFF")
+            for values in (
+                ("terminal-both", "missing-a", "missing-b", "resolved"),
+                ("terminal-one", "existing-left", "missing-c", "rejected"),
+                ("open-both", "missing-d", "missing-e", "manual_required"),
+            ):
+                case_id, left_id, right_id, status = values
+                connection.execute(
+                    "INSERT INTO conflict_cases("
+                    "id,pair_key,left_claim_id,right_claim_id,status,created_at,resolved_at"
+                    ") VALUES (?,?,?,?,?,?,?)",
+                    (
+                        case_id,
+                        f"pair:{case_id}",
+                        left_id,
+                        right_id,
+                        status,
+                        "2026-08-16T00:00:00+00:00",
+                        "2026-08-16T00:00:00+00:00" if status in {"resolved", "rejected"} else None,
+                    ),
+                )
+            connection.commit()
+            connection.execute("PRAGMA foreign_keys=ON")
+
+        body = client.get("/healthz").json()
+
+    assert body["conflict_dangling"] == {
+        "terminal_both_missing": 1,
+        "terminal_one_side": 1,
+        "open_dangling": 1,
+    }
+
+
 def test_recall_feedback_failure_does_not_change_main_result(tmp_path, monkeypatch) -> None:
     """召回曝光批量写入失败时仍返回主召回结果。"""
     monkeypatch.setattr(

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from hl_mem import components
+from hl_mem.application.conflict_repairs import repair_dangling_conflicts
 from hl_mem.application.ingest import IngestService
 from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.attributes import infer_canonical_attribute
@@ -357,6 +358,10 @@ class Worker:
                 ]
                 if self.settings.dedup_enabled
                 else []
+            ),
+            (
+                "repair_dangling_conflicts",
+                lambda: repair_dangling_conflicts(self.connection, source="worker"),
             ),
             (
                 "auto_resolve_conflicts",

@@ -223,6 +223,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
+        from hl_mem.application.conflict_repairs import count_dangling_conflicts
         from hl_mem.application.health import monitoring_snapshot
 
         connection = database.connection or database.open_worker()
@@ -232,11 +233,13 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
                 "WHERE status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL"
             ).fetchone()[0]
         )
+        conflict_dangling = count_dangling_conflicts(connection)
         return {
             "status": "ok",
             "version": __version__,
             "vector_backend": str(settings.vector_backend),
             "conflict_open_count": conflict_open_count,
+            "conflict_dangling": conflict_dangling,
             "embedder": "fake" if isinstance(embedder, FakeEmbedder) else "real",
             "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
             "settings": settings.snapshot(),

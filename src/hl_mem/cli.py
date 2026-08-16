@@ -16,6 +16,10 @@ from typing import Any
 
 from hl_mem import __version__
 from hl_mem.adapters.hermes.deployment import deploy_plugin, print_deployment_result
+from hl_mem.application.conflict_repairs import (
+    inspect_dangling_conflicts,
+)
+from hl_mem.application.conflict_repairs import repair_dangling_conflicts as apply_dangling_conflict_repair
 from hl_mem.application.conflicts import ResolutionService
 from hl_mem.application.restore import restore_database
 from hl_mem.components import make_embedder
@@ -316,6 +320,31 @@ def resolve_conflict(
         database.close()
 
 
+def repair_dangling_conflicts(
+    database_path: str | Path,
+    *,
+    apply: bool = False,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Preview dangling conflict cases or repair the safe terminal subset."""
+    database = Database(database_path, settings=settings)
+    try:
+        connection = database.open()
+        cases = inspect_dangling_conflicts(connection)
+        applied = (
+            apply_dangling_conflict_repair(connection, source="cli")
+            if apply
+            else {"deleted_count": 0, "deleted_case_ids": []}
+        )
+        return {
+            "dry_run": not apply,
+            "cases": cases,
+            **applied,
+        }
+    finally:
+        database.close()
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """运行导入或导出管理命令。"""
     parser = argparse.ArgumentParser(prog="hl-mem")
@@ -356,6 +385,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     resolve = conflict_commands.add_parser("resolve")
     resolve.add_argument("case_id")
     resolve.add_argument("decision", choices=("keep_left", "keep_right", "coexist", "reject"))
+    repair_dangling = conflict_commands.add_parser("repair-dangling")
+    repair_dangling.add_argument("--apply", action="store_true")
     evaluation = commands.add_parser("eval")
     evaluation.add_argument("--benchmark", choices=("longmemeval",), default="longmemeval")
     evaluation.add_argument("--subset", default="core")
@@ -487,16 +518,21 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         return
     if args.command == "conflicts":
-        conflict_result: Any = (
-            list_conflicts(database_path, settings=settings)
-            if args.conflict_command == "list"
-            else resolve_conflict(
+        if args.conflict_command == "list":
+            conflict_result: Any = list_conflicts(database_path, settings=settings)
+        elif args.conflict_command == "resolve":
+            conflict_result = resolve_conflict(
                 database_path,
                 args.case_id,
                 args.decision,
                 settings=settings,
             )
-        )
+        else:
+            conflict_result = repair_dangling_conflicts(
+                database_path,
+                apply=args.apply,
+                settings=settings,
+            )
         print(json.dumps(conflict_result, ensure_ascii=False, sort_keys=True))
         return
     if args.command == "export":
