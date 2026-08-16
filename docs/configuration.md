@@ -1,8 +1,11 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.27.1 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.28.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
+
+v0.28.0 没有新增 TOML 键，也没有改变 v0.27 默认值；删除闭包、tombstone ledger、restore replay、关系边双时间
+和 Job 写入进度均是数据库/应用契约，不引入第二套配置面。
 
 ## 加载规则
 
@@ -51,6 +54,17 @@ identity 的 v1 manifest 均 fail-closed，不能静默恢复。
 `--confirm-overwrite`，且 source、backup、manifest、target 不得解析为同一路径。校验与恢复会拒绝 backup、
 target 或 ledger 旁残留的 `-wal`、`-shm`、`-journal` sidecar，防止未纳入验证的页面影响结果。执行 restore
 前必须停止 API、Worker 及其他数据库/ledger 使用者，成功后再重启服务。
+
+## 从 v0.27.x 升级
+
+先停止 API、Worker 和全部写入者，并保留主库的离线副本。v0.28 首次打开主库时会按顺序自动执行 migration
+043/044：前者增加 ledger identity/删除应用水位，后者为存量关系边以 `created_at` 回填 `valid_from` 并保持
+`valid_to = null`。它们不裁决历史冲突、不删除存量 Claim，也不创建新的长期配置键。
+
+迁移成功后立即运行一次 `hlmem backup`。若该库此前没有 tombstone sidecar，backup 会创建并绑定
+`<database>.tombstones.db`，再生成 manifest v2；从此应把主库 backup、manifest 和 ledger 作为同一恢复集合保存。
+旧 manifest v1 可留作升级前取证副本，但 v0.28 restore 会拒绝它，因为它无法证明删除历史。确认新的 v2
+backup 可校验后，再恢复 API/Worker 服务。
 
 ## JSONL Event 归档
 
