@@ -159,6 +159,13 @@ Real components and external-call paths must be supplied with their own key; the
 deployment only raises `recall.relevance_relative_drop` from the code default `0.15` to `0.30` and keeps
 `recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model with 5/6-second per-call/total timeouts.
 
+### Vector search sizing
+
+The default two-stage exact `sqlite_scan` backend is intended for local stores up to roughly 100,000 Claims; the actual
+boundary also depends on embedding dimensions, concurrency, and latency targets. Near or above that scale, install
+`hl-mem[sqlite-vec]` and explicitly set `recall.vector_backend = "sqlite_vec"` instead of treating a full vector scan as
+an unbounded production index. SQLite remains authoritative and the sqlite-vec projection stays rebuildable.
+
 When migrating an existing database from a legacy index, preview it read-only before explicitly running the backfill. The backfill updates `index_text`, FTS, and dense embeddings together; deployments using a real embedder must provide the corresponding key:
 
 ```bash

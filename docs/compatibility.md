@@ -42,3 +42,11 @@ Audit-log field schemas are stable within a major version. New optional fields m
 
 MCP tool names and required core parameters are stable. Optional parameters may be added. The committed
 `docs/mcp-tools.json` snapshot records the current tool contract.
+
+## OpenAPI and MCP consistency
+
+REST and MCP reuse the same application services, but their transport schemas are independent public contracts:
+`docs/api-schema.json` freezes generated OpenAPI, while `docs/mcp-tools.json` freezes MCP tool names and input schemas.
+A change to shared request semantics must review both snapshots and run both `check_openapi_snapshot.py` and
+`check_mcp_snapshot.py`; updating one snapshot never implies that the other contract changed. This keeps transport-specific
+differences explicit while preventing shared business behavior from drifting silently.

@@ -158,6 +158,13 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 示例部署仅把 `recall.relevance_relative_drop` 从代码默认 `0.15` 显式调整为 `0.30`，并保持
 `recall.relevance_keep_top1 = true`。query expansion 使用独立可配置模型，单次/总超时为 5/6 秒。
 
+### 向量检索规模指引
+
+默认 `sqlite_scan` 是两阶段精确扫描，适合约 10 万条 Claim 以内的本地库；实际边界还取决于 embedding
+维度、并发和延迟目标。接近或超过该规模时，应安装 `hl-mem[sqlite-vec]` 并显式设置
+`recall.vector_backend = "sqlite_vec"`，避免把全量向量扫描当作无界生产索引。SQLite 主表仍是权威数据源，
+`sqlite_vec` 只维护可重建的派生投影。
+
 从 legacy 索引迁移既有数据库时，先只读预览，再显式执行回填；回填会同步 `index_text`、FTS 和 dense embedding，使用 real embedder 的部署需提供对应密钥：
 
 ```bash

@@ -4,6 +4,11 @@ HL-Mem exposes a FastAPI application with 17 routes. From a working directory co
 start the service with `uv run python start_server.py`; the default address is `http://127.0.0.1:8200`. Interactive
 OpenAPI documentation is available at `/docs` while the service is running.
 
+> **Security boundary:** HL-Mem is a trusted, local, single-tenant service. `namespace` only partitions relevance and
+> profile data; it does not authenticate or authorize callers. Keep the default `127.0.0.1` binding or place the API
+> behind authentication, authorization, and TLS supplied by a trusted reverse proxy. Never expose it directly to the
+> public Internet.
+
 ## Conventions
 
 - Request and response bodies use JSON unless noted otherwise.
