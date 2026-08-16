@@ -1,5 +1,12 @@
 # HL-Mem 变更记录
 
+## v0.28.1（2026-08-16）
+
+- 修复 `config.port` 的裸 substring 误判：英文 `port` 现在必须是完整 token，且端口提示词必须同时有 1–65535 的数值或合法 `host:port` 形态；`importance`、`import`、`transport` 与 `importing` 不再进入端口互斥槽，模型直出的无来源 `config.port` 也会确定性降级。
+- 修复 `ResolutionService.reject` 只关闭 case 却遗留不可见 disputed Claim 的事务缺口：非互斥 pair 的非终态双方恢复 active，同互斥组在修正 slot/qualifier 前 fail-loud，提交前断言不存在无 open case 的 disputed Claim，违例整笔回滚。
+- 事件复盘：2026-08-15 的开发对话因 `port` 子串误判和旧 reject 语义在单日积压 250 个 `manual_required` case；存量 18 条孤儿已恢复为 15 条 active 与 3 条指向 active 后继的 exact-duplicate superseded，当前孤儿与 open case 均为 0。
+- 本热修不新增配置键或 migration，REST/MCP 业务 schema 不变。
+
 ## v0.28.0（2026-08-16）
 
 ### Breaking / Behavior changes

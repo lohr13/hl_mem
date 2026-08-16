@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.28.0](https://img.shields.io/badge/version-0.28.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.28.1](https://img.shields.io/badge/version-0.28.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -175,7 +175,7 @@ hlmem backfill-index-text --mode natural
 
 ### Upgrading from v0.27.x
 
-v0.28.0 adds no configuration keys and does not change the v0.27 defaults: `recall.resurrection_mode = "auto"` and
+v0.28.1 adds no configuration keys and does not change the v0.27 defaults: `recall.resurrection_mode = "auto"` and
 `decay.model = "activation_halflife"` remain active. A deployment skipping directly from v0.26 can still retain the old
 behavior with:
 
@@ -237,7 +237,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.28.0 with 44 immutable, forward-only migrations.
+The current baseline is v0.28.1 with 44 immutable, forward-only migrations.
 
 ## Documentation
 

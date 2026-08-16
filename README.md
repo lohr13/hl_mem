@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.28.0](https://img.shields.io/badge/version-0.28.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.28.1](https://img.shields.io/badge/version-0.28.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -174,7 +174,7 @@ hlmem backfill-index-text --mode natural
 
 ### 从 v0.27.x 升级
 
-v0.28.0 不新增配置键，也不改变 v0.27 的配置默认值：`recall.resurrection_mode = "auto"` 与
+v0.28.1 不新增配置键，也不改变 v0.27 的配置默认值：`recall.resurrection_mode = "auto"` 与
 `decay.model = "activation_halflife"` 继续生效。若从 v0.26 跨版本升级并希望保持旧行为，仍可显式配置：
 
 ```toml
@@ -233,7 +233,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.28.0，共 44 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.28.1，共 44 个不可变、仅向前执行的 SQL Migration。
 
 ## 文档
 
