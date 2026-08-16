@@ -7,10 +7,20 @@ from pathlib import Path
 
 import pytest
 
-from hl_mem.doctor import CheckResult, CheckStatus, count_code_migrations, run_doctor
+import hl_mem.doctor as doctor_module
+from hl_mem.doctor import CheckResult, CheckStatus, _check_hermes, count_code_migrations, run_doctor
 from hl_mem.errors import ConfigurationError
 from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.database import Database
+
+HERMES_PLUGIN_FILES = ("__init__.py", "plugin.yaml")
+
+
+def _copy_packaged_plugin(target: Path) -> None:
+    source = Path(doctor_module.__file__).resolve().parent / "adapters" / "hermes" / "plugin"
+    target.mkdir(parents=True)
+    for name in HERMES_PLUGIN_FILES:
+        (target / name).write_bytes((source / name).read_bytes())
 
 
 def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
@@ -69,3 +79,78 @@ def test_enabled_components_reject_placeholder_secrets() -> None:
 
     with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
         Settings(extractor_mode="real", llm_api_key="your-key").validate()
+
+
+def test_hermes_check_reports_matching_plugin(tmp_path: Path) -> None:
+    """期望目录中的两个文件逐字节一致时才应通过。"""
+    expected = tmp_path / "plugins" / "hl_mem"
+    _copy_packaged_plugin(expected)
+
+    result = _check_hermes(Settings(hermes_home=str(tmp_path)))
+
+    assert result == CheckResult(CheckStatus.OK, "Hermes 插件", f"路径正确且无漂移：{expected}")
+
+
+def test_hermes_check_reports_legacy_plugin_path(tmp_path: Path) -> None:
+    """插件位于 legacy 目录时应同时指出实际路径与期望路径。"""
+    actual = tmp_path / "plugins" / "memory" / "hl_mem"
+    expected = tmp_path / "plugins" / "hl_mem"
+    _copy_packaged_plugin(actual)
+
+    result = _check_hermes(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.FAIL
+    assert str(actual) in result.detail
+    assert str(expected) in result.detail
+
+
+def test_hermes_check_reports_plugin_under_unmarked_agent_subdirectory(tmp_path: Path) -> None:
+    """旧猜测逻辑装入无标志 hermes-agent 子目录时应报告实际与期望路径。"""
+    actual = tmp_path / "hermes-agent" / "plugins" / "hl_mem"
+    expected = tmp_path / "plugins" / "hl_mem"
+    _copy_packaged_plugin(actual)
+
+    result = _check_hermes(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.FAIL
+    assert str(actual) in result.detail
+    assert str(expected) in result.detail
+
+
+def test_hermes_check_prefers_installed_legacy_copy_over_empty_expected_directory(tmp_path: Path) -> None:
+    """空期望目录不能遮蔽 legacy 路径中的完整插件副本。"""
+    expected = tmp_path / "plugins" / "hl_mem"
+    expected.mkdir(parents=True)
+    actual = tmp_path / "plugins" / "memory" / "hl_mem"
+    _copy_packaged_plugin(actual)
+
+    result = _check_hermes(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.FAIL
+    assert str(actual) in result.detail
+    assert str(expected) in result.detail
+
+
+def test_hermes_check_ignores_empty_legacy_directory(tmp_path: Path) -> None:
+    """空 legacy 目录不是已安装插件，不能被报告为实际路径。"""
+    expected = tmp_path / "plugins" / "hl_mem"
+    (tmp_path / "plugins" / "memory" / "hl_mem").mkdir(parents=True)
+
+    result = _check_hermes(Settings(hermes_home=str(tmp_path)))
+
+    assert result == CheckResult(CheckStatus.FAIL, "Hermes 插件", f"应安装到 {expected}")
+
+
+def test_hermes_check_reports_plugin_drift(tmp_path: Path) -> None:
+    """期望目录中的副本与包内文件不同应提示 upgrade。"""
+    expected = tmp_path / "plugins" / "hl_mem"
+    _copy_packaged_plugin(expected)
+    (expected / "plugin.yaml").write_bytes(b"drifted")
+
+    result = _check_hermes(Settings(hermes_home=str(tmp_path)))
+
+    assert result == CheckResult(
+        CheckStatus.FAIL,
+        "Hermes 插件",
+        "检测到插件副本漂移，运行 hl-mem hermes upgrade",
+    )

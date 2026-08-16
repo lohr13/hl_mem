@@ -14,6 +14,8 @@ from typing import Mapping, Sequence
 
 import httpx
 
+from hl_mem.adapters.hermes.deployment import PLUGIN_FILES, plugin_files_match, plugin_files_present
+from hl_mem.adapters.hermes.discovery import find_hermes_home
 from hl_mem.config_loader import load_settings
 from hl_mem.http_utils import retry_http
 from hl_mem.ingest.embedder import Embedder
@@ -211,16 +213,35 @@ def _check_port() -> CheckResult:
 
 
 def _check_hermes(settings: Settings) -> CheckResult:
-    hermes_home = Path(settings.hermes_home).expanduser() if settings.hermes_home else Path.home() / ".hermes"
+    try:
+        hermes_home = find_hermes_home(settings.hermes_home)
+    except RuntimeError:
+        return CheckResult(CheckStatus.WARN, "Hermes 插件", "未检测到 Hermes，跳过")
     if not hermes_home.exists():
         return CheckResult(CheckStatus.WARN, "Hermes 插件", "未检测到 Hermes，跳过")
-    agent_home = hermes_home / "hermes-agent" if (hermes_home / "hermes-agent").is_dir() else hermes_home
-    expected = agent_home / "plugins" / "hl_mem"
-    if all((expected / name).is_file() for name in ("__init__.py", "plugin.yaml")):
-        return CheckResult(CheckStatus.OK, "Hermes 插件", f"路径正确：{expected}")
-    legacy = agent_home / "plugins" / "memory" / "hl_mem"
-    suffix = f"；检测到旧错误路径 {legacy}" if legacy.exists() else ""
-    return CheckResult(CheckStatus.FAIL, "Hermes 插件", f"应安装到 {expected}{suffix}")
+    expected = hermes_home / "plugins" / "hl_mem"
+    if plugin_files_match(expected):
+        return CheckResult(CheckStatus.OK, "Hermes 插件", f"路径正确且无漂移：{expected}")
+    if plugin_files_present(expected):
+        return CheckResult(
+            CheckStatus.FAIL,
+            "Hermes 插件",
+            "检测到插件副本漂移，运行 hl-mem hermes upgrade",
+        )
+    candidates = [
+        hermes_home / "plugins" / "memory" / "hl_mem",
+        hermes_home / "hermes-agent" / "plugins" / "hl_mem",
+    ]
+    actual = next((candidate for candidate in candidates if plugin_files_present(candidate)), None)
+    if actual is not None:
+        return CheckResult(CheckStatus.FAIL, "Hermes 插件", f"插件实际位于 {actual}；应安装到 {expected}")
+    if any((expected / name).is_file() for name in PLUGIN_FILES):
+        return CheckResult(
+            CheckStatus.FAIL,
+            "Hermes 插件",
+            "检测到插件副本漂移，运行 hl-mem hermes upgrade",
+        )
+    return CheckResult(CheckStatus.FAIL, "Hermes 插件", f"应安装到 {expected}")
 
 
 def run_doctor(

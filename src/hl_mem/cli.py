@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from hl_mem import __version__
+from hl_mem.adapters.hermes.deployment import deploy_plugin, print_deployment_result
 from hl_mem.application.conflicts import ResolutionService
 from hl_mem.application.restore import restore_database
 from hl_mem.components import make_embedder
@@ -376,9 +377,28 @@ def main(argv: Sequence[str] | None = None) -> None:
     doctor.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--config", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--env-file", type=Path, default=argparse.SUPPRESS)
+    hermes = commands.add_parser("hermes", help="安装或升级 Hermes 插件")
+    hermes_commands = hermes.add_subparsers(dest="hermes_command", required=True)
+    for action in ("install", "upgrade"):
+        deployment = hermes_commands.add_parser(action)
+        deployment.add_argument("--hermes-home", type=Path)
+        deployment.add_argument("--dry-run", action="store_true")
     add_daily_commands(commands)
     args = parser.parse_args(argv)
     if handle_daily_command(args, parser):
+        return
+    if args.command == "hermes":
+        try:
+            print_deployment_result(
+                deploy_plugin(
+                    args.hermes_command,
+                    args.hermes_home,
+                    dry_run=args.dry_run,
+                )
+            )
+        except (OSError, RuntimeError) as error:
+            print(f"Hermes plugin {args.hermes_command} failed: {error}", file=sys.stderr)
+            raise SystemExit(1) from error
         return
     if args.command == "doctor":
         doctor_args: list[str] = []
