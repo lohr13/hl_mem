@@ -81,12 +81,19 @@ def test_enabled_components_reject_placeholder_secrets() -> None:
         Settings(extractor_mode="real", llm_api_key="your-key").validate()
 
 
-def test_hermes_check_reports_matching_plugin(tmp_path: Path) -> None:
-    """期望目录中的两个文件逐字节一致时才应通过。"""
+def test_hermes_check_uses_user_plugin_root_even_with_agent_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """源码 checkout 存在时仍应检查 HERMES_HOME 根下的用户插件。"""
     expected = tmp_path / "plugins" / "hl_mem"
     _copy_packaged_plugin(expected)
+    agent_checkout = tmp_path / "hermes-agent"
+    agent_checkout.mkdir()
+    (agent_checkout / "pyproject.toml").touch()
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
-    result = _check_hermes(Settings(hermes_home=str(tmp_path)))
+    result = _check_hermes(Settings())
 
     assert result == CheckResult(CheckStatus.OK, "Hermes 插件", f"路径正确且无漂移：{expected}")
 

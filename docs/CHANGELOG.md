@@ -1,5 +1,11 @@
 # HL-Mem 变更记录
 
+## v0.28.3（2026-08-16）
+
+- 修复 Hermes 根目录探测对 `HERMES_HOME/hermes-agent` 子目录的错误偏好；用户插件路径统一为 `HERMES_HOME/plugins/hl_mem`，完整源码 checkout 与仅含 `.venv` 的 agent 子目录都不再导致 `doctor` 误报路径错误。
+- 修复 v0.28.2 新增的 4 个 CLI 测试在无 `hl_mem.toml` 环境中的封闭性；测试显式注入安全的测试配置，不再依赖仓库工作目录中恰好存在的 gitignored 配置文件。
+- 本热修不新增配置键或 migration，REST/MCP 业务 schema 不变。
+
 ## v0.28.2（2026-08-16）
 
 - 统一 Hermes 插件部署链：Hermes 根目录探测逻辑随包发布，`doctor` 可区分路径正确且副本一致、安装路径错误与插件副本漂移；新增幂等的 `hl-mem hermes install/upgrade`，一致副本保持 no-op，升级前备份既有插件文件。

@@ -2,9 +2,11 @@ import json
 
 import pytest
 
+import hl_mem.cli as cli_module
 from hl_mem import __version__
 from hl_mem.cli import export_database, import_database, list_conflicts, main, resolve_conflict
 from hl_mem.mcp.server import McpMemoryServer
+from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 
@@ -174,7 +176,7 @@ def test_cli_keep_left_does_not_mutate_terminal_loser(tmp_path) -> None:
     )
 
 
-def test_cli_resolve_passes_rationale_to_resolution_service(tmp_path, capsys) -> None:
+def test_cli_resolve_passes_rationale_to_resolution_service(tmp_path, capsys, monkeypatch) -> None:
     path = tmp_path / "resolve-rationale.db"
     connection = Database(path).open()
     repository = ClaimRepository(connection)
@@ -195,6 +197,7 @@ def test_cli_resolve_passes_rationale_to_resolution_service(tmp_path, capsys) ->
         recorded_from="2026-01-02T00:00:00+00:00",
     )
     _manual_conflict(repository)
+    monkeypatch.setattr(cli_module, "load_settings", lambda *_: Settings.for_test())
 
     main(
         [

@@ -9,11 +9,28 @@ import sys
 from pathlib import Path
 
 
-def test_find_hermes_home_ignores_unmarked_agent_subdirectory(
+def test_find_hermes_home_does_not_prefer_agent_source_checkout(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """只有虚拟环境的 hermes-agent 子目录不能遮蔽真正的 Hermes 根目录。"""
+    """完整源码 checkout 也不能遮蔽承载用户插件的 Hermes 根目录。"""
+    hermes_home = tmp_path / ".hermes"
+    (hermes_home / "plugins").mkdir(parents=True)
+    agent_checkout = hermes_home / "hermes-agent"
+    agent_checkout.mkdir(parents=True)
+    (agent_checkout / "pyproject.toml").touch()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+    discovery = importlib.import_module("hl_mem.adapters.hermes.discovery")
+
+    assert discovery.find_hermes_home(None) == hermes_home.resolve()
+
+
+def test_find_hermes_home_ignores_venv_only_agent_subdirectory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """只有虚拟环境的 agent 子目录同样不能改变 Hermes 用户数据根。"""
     hermes_home = tmp_path / ".hermes"
     (hermes_home / "plugins").mkdir(parents=True)
     (hermes_home / "hermes-agent" / ".venv").mkdir(parents=True)
@@ -22,6 +39,18 @@ def test_find_hermes_home_ignores_unmarked_agent_subdirectory(
     discovery = importlib.import_module("hl_mem.adapters.hermes.discovery")
 
     assert discovery.find_hermes_home(None) == hermes_home.resolve()
+
+
+def test_find_hermes_home_uses_windows_platform_default(tmp_path: Path, monkeypatch) -> None:
+    """未设置环境变量时应与 Hermes 的 Windows 平台默认根保持一致。"""
+    local_appdata = tmp_path / "LocalAppData"
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
+
+    discovery = importlib.import_module("hl_mem.adapters.hermes.discovery")
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert discovery.find_hermes_home(None) == (local_appdata / "hermes").resolve()
 
 
 def test_discovery_imports_without_project_or_third_party_dependencies() -> None:

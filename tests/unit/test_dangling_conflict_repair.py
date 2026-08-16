@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
+import hl_mem.cli as cli_module
 import hl_mem.workers.worker as worker_module
 from hl_mem.cli import main
 from hl_mem.monitoring.worker import WorkerRuntimeState
@@ -180,10 +181,11 @@ def test_worker_repairs_dangling_before_auto_resolve_and_stops_failure_accumulat
     )
 
 
-def test_cli_repair_dangling_dry_run_lists_without_mutation(tmp_path, capsys) -> None:
+def test_cli_repair_dangling_dry_run_lists_without_mutation(tmp_path, capsys, monkeypatch) -> None:
     path = tmp_path / "cli-dry-run.db"
     connection = Database(path).open()
     _seed_dangling_cases(connection)
+    monkeypatch.setattr(cli_module, "load_settings", lambda *_: Settings.for_test())
 
     main(["--db", str(path), "conflicts", "repair-dangling"])
 
@@ -227,10 +229,11 @@ def test_cli_repair_dangling_dry_run_lists_without_mutation(tmp_path, capsys) ->
     assert connection.execute("SELECT count(*) FROM audit_log").fetchone()[0] == 0
 
 
-def test_cli_repair_dangling_apply_only_deletes_terminal_both_missing(tmp_path, capsys) -> None:
+def test_cli_repair_dangling_apply_only_deletes_terminal_both_missing(tmp_path, capsys, monkeypatch) -> None:
     path = tmp_path / "cli-apply.db"
     connection = Database(path).open()
     _seed_dangling_cases(connection)
+    monkeypatch.setattr(cli_module, "load_settings", lambda *_: Settings.for_test())
 
     main(["--db", str(path), "conflicts", "repair-dangling", "--apply"])
 
@@ -250,9 +253,10 @@ def test_cli_repair_dangling_apply_only_deletes_terminal_both_missing(tmp_path, 
     assert detail["case_ids"] == ["terminal-both"]
 
 
-def test_cli_repair_dangling_reports_empty_when_no_references_are_dangling(tmp_path, capsys) -> None:
+def test_cli_repair_dangling_reports_empty_when_no_references_are_dangling(tmp_path, capsys, monkeypatch) -> None:
     path = tmp_path / "cli-empty.db"
     Database(path).open().close()
+    monkeypatch.setattr(cli_module, "load_settings", lambda *_: Settings.for_test())
 
     main(["--db", str(path), "conflicts", "repair-dangling"])
 

@@ -41,6 +41,26 @@ def test_cli_hermes_install_is_idempotent(tmp_path: Path, capsys: pytest.Capture
     _assert_installed_plugin_matches_package(target)
 
 
+@pytest.mark.parametrize("action", ["install", "upgrade"])
+def test_cli_hermes_deploys_to_user_plugin_root_even_with_agent_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    action: str,
+) -> None:
+    """环境探测不得把 install/upgrade 目标改写到源码 checkout 下。"""
+    agent_checkout = tmp_path / "hermes-agent"
+    agent_checkout.mkdir()
+    (agent_checkout / "pyproject.toml").touch()
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    cli_main(["hermes", action])
+
+    capsys.readouterr()
+    _assert_installed_plugin_matches_package(tmp_path / "plugins" / "hl_mem")
+    assert not (agent_checkout / "plugins" / "hl_mem").exists()
+
+
 def test_cli_hermes_install_dry_run_does_not_write(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """install --dry-run 应报告计划但不创建插件目录。"""
     target = tmp_path / "plugins" / "hl_mem"
