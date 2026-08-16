@@ -351,7 +351,10 @@ def test_recall_service_side_effects_use_final_enforced_results(
         return [dict(claim) for claim in claims]
 
     monkeypatch.setattr(recall_module, "hybrid_claims", fake_hybrid_claims)
-    monkeypatch.setattr(recall_module.ExperienceService, "list_policies", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "hl_mem.storage.experience.ExperienceRepository.list_policies",
+        lambda *args, **kwargs: [],
+    )
     service = RecallService(
         sqlite3.connect(":memory:"),
         FakeEmbedder(4),

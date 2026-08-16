@@ -940,7 +940,7 @@ class RecallService:
             for item in claim_results
         ]
         candidates = recall_procedure(
-            ExperienceService(self.connection),
+            ExperienceService(self.connection).repository,
             query,
             selected_intent,
             namespace,

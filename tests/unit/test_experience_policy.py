@@ -2,6 +2,17 @@ import pytest
 
 from hl_mem.experience.service import ExperienceService, backprop_episode_reward
 from hl_mem.storage.database import Database
+from hl_mem.storage.experience import ExperienceRepository
+
+
+def test_experience_service_composes_repository(tmp_path) -> None:
+    connection = Database(tmp_path / "composition.db").open()
+    service = ExperienceService(connection)
+
+    assert not issubclass(ExperienceService, ExperienceRepository)
+    assert isinstance(service.repository, ExperienceRepository)
+    service.record_episode("e1", "deploy", "success", 1.0, "2026-01-01T00:00:00Z")
+    assert service.get_episode("e1")["goal"] == "deploy"
 
 
 def test_schema_embeds_procedure_in_policy_without_procedures_table(tmp_path) -> None:
