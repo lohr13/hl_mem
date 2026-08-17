@@ -5,8 +5,8 @@
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.28.3
-- **阶段**：v0.28.3 hotfix 准备；tag、Release 与 PyPI 由维护者验收后执行
+- **版本**：v0.28.4
+- **阶段**：v0.28.4 hotfix 准备；tag、Release 与 PyPI 由维护者验收后执行
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：44 migrations（SQL 001–044），只允许向前迁移

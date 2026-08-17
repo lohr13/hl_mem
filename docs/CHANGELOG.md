@@ -1,5 +1,12 @@
 # HL-Mem 变更记录
 
+## v0.28.4（2026-08-17）
+
+- 限制摄入期去重候选的持久归档下限：`IngestService` 写入新 Claim 时，仅当与既有语义候选的余弦相似度 ≥ `INGEST_DEDUP_PAIR_SIMILARITY_FLOOR`（0.88）才将灰色地带 pair 记入 `dedup_pairs` 审查队列。此前任何相似度都会被记录，导致低价值（<0.88）候选在每日 `ORDER BY similarity DESC` 审查队列尾部无限累积（实测单日可新增上百条）。
+- 行为边界：仅影响写入期 `_insert_pending_dedup_pair` 记档路径；每日跨主体去重 worker、召回折叠（仅认 `judge_reason='deterministic_near_copy_v1'` 的 equivalent）、LLM judge 与 `audit_only` 默认行为均不变。
+- 新增测试：相似度恰为 0.88 正常记档、0.87 不记档但 Claim 正常入库。
+- 本热修不新增配置键或 migration，REST/MCP 业务 schema 不变。
+
 ## v0.28.3（2026-08-16）
 
 - 修复 Hermes 根目录探测对 `HERMES_HOME/hermes-agent` 子目录的错误偏好；用户插件路径统一为 `HERMES_HOME/plugins/hl_mem`，完整源码 checkout 与仅含 `.venv` 的 agent 子目录都不再导致 `doctor` 误报路径错误。
