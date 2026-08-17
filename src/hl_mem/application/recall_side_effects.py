@@ -142,6 +142,7 @@ class RecallSideEffectDispatcher:
         self._condition = threading.Condition()
         self._pending = 0
         self._closed = False
+        self._accepted_exposure_ids: set[str] = set()
         self._health: dict[str, dict[str, int | str | None]] = {
             name: {"submitted": 0, "persisted": 0, "completed": 0, "failures": 0, "last_error": None}
             for name in ("access_record", "feedback_record", "audit_emit")
@@ -243,9 +244,20 @@ class RecallSideEffectDispatcher:
                 self._record_failure_locked(submission.operation, RuntimeError("dispatcher queue full"))
                 return False
             self._pending += 1
+            if isinstance(submission, _DeferredSubmission) and submission.task_type == "record_recall_exposures":
+                self._accepted_exposure_ids.update(
+                    str(exposure[0])
+                    for exposure in submission.payload.get("exposures", [])
+                    if isinstance(exposure, list) and exposure
+                )
             status = self._health[submission.operation]
             status["submitted"] = int(status["submitted"] or 0) + 1
             return True
+
+    def has_pending_exposures(self, feedback_ids: list[str]) -> bool:
+        """判断 receipt 是否仍在进程内等待 durable enqueue。"""
+        with self._condition:
+            return all(feedback_id in self._accepted_exposure_ids for feedback_id in feedback_ids)
 
     def health(self, connection: Any = None) -> dict[str, dict[str, int | str | None]]:
         """返回进程投递/持久化计数，并可合并 durable task 完成数。"""
@@ -255,7 +267,11 @@ class RecallSideEffectDispatcher:
             return result
         task_groups = {
             "access_record": ("record_recall_access", "resurrect_recalled_claim"),
-            "feedback_record": ("record_recall_exposures",),
+            "feedback_record": (
+                "record_recall_exposures",
+                "apply_retrieval_feedback",
+                "mark_recall_feedback_injected",
+            ),
         }
         for operation, task_types in task_groups.items():
             placeholders = ",".join("?" for _ in task_types)
@@ -301,6 +317,13 @@ class RecallSideEffectDispatcher:
         thread.join(max(0.0, timeout))
         return drained and not thread.is_alive()
 
+    @property
+    def recommended_shutdown_timeout(self) -> float:
+        """覆盖单项 durable enqueue 的 busy timeout 与退避预算。"""
+        attempts = max(1, self.settings.recall_side_effect_max_attempts)
+        backoff = self.settings.recall_side_effect_backoff_seconds * sum(2**attempt for attempt in range(attempts - 1))
+        return float(max(5.0, attempts * self.database.busy_timeout_seconds + backoff + 1.0))
+
     def _run(self) -> None:
         while True:
             submission = self._queue.get()
@@ -309,20 +332,10 @@ class RecallSideEffectDispatcher:
                 return
             try:
                 if isinstance(submission, _DeferredSubmission):
-                    with self.database.connect() as connection:
-                        DeferredTaskRepository(connection).defer(
-                            task_type=submission.task_type,
-                            resource_type=submission.resource_type,
-                            resource_id=submission.resource_id,
-                            payload=submission.payload,
-                            idempotency_key=submission.idempotency_key,
-                            run_after=submission.run_after,
-                            max_attempts=submission.max_attempts,
-                            error="",
-                            updated_at=submission.run_after,
-                        )
+                    self._persist_deferred(submission)
                 elif isinstance(submission, _AuditSubmission):
-                    submission.target.emit(*submission.args, **submission.kwargs)
+                    if submission.target.emit(*submission.args, **submission.kwargs) is False:
+                        raise RuntimeError("audit emit rejected")
                 else:
                     with self.database.connect() as connection:
                         LLMSpanRecorder(connection).record(**submission.payload)
@@ -330,11 +343,48 @@ class RecallSideEffectDispatcher:
                     status = self._health[submission.operation]
                     status["persisted"] = int(status["persisted"] or 0) + 1
             except Exception as error:
-                with self._condition:
-                    self._record_failure_locked(submission.operation, error)
+                if not isinstance(submission, _DeferredSubmission):
+                    with self._condition:
+                        self._record_failure_locked(submission.operation, error)
                 LOGGER.exception("recall side-effect submission persistence failed: %s", submission.operation)
             finally:
                 with self._condition:
+                    if (
+                        isinstance(submission, _DeferredSubmission)
+                        and submission.task_type == "record_recall_exposures"
+                    ):
+                        self._accepted_exposure_ids.difference_update(
+                            str(exposure[0])
+                            for exposure in submission.payload.get("exposures", [])
+                            if isinstance(exposure, list) and exposure
+                        )
                     self._pending -= 1
                     self._condition.notify_all()
                 self._queue.task_done()
+
+    def _persist_deferred(self, submission: _DeferredSubmission) -> None:
+        """在写线程内有界重试 durable enqueue，绝不反向阻塞 recall 请求。"""
+        attempts = max(1, self.settings.recall_side_effect_max_attempts)
+        for attempt in range(attempts):
+            try:
+                with self.database.connect() as connection:
+                    DeferredTaskRepository(connection).defer(
+                        task_type=submission.task_type,
+                        resource_type=submission.resource_type,
+                        resource_id=submission.resource_id,
+                        payload=submission.payload,
+                        idempotency_key=submission.idempotency_key,
+                        run_after=submission.run_after,
+                        max_attempts=submission.max_attempts,
+                        error="",
+                        updated_at=submission.run_after,
+                    )
+                return
+            except Exception as error:
+                with self._condition:
+                    self._record_failure_locked(submission.operation, error)
+                if attempt + 1 >= attempts:
+                    raise
+                delay = self.settings.recall_side_effect_backoff_seconds * (2**attempt)
+                if delay > 0:
+                    time.sleep(delay)

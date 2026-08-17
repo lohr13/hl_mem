@@ -63,8 +63,6 @@ def test_procedure_episode_feedback_reaches_usefulness(
             for item in recalled["context_packet"]["items"]
             if item["type"] == "episode" and item["id"] == episode_id
         )
-        connection = app.state.db.open()
-        _settle_recall_side_effects(app, connection)
         response = client.post(
             "/v1/feedback",
             json={
@@ -74,6 +72,8 @@ def test_procedure_episode_feedback_reaches_usefulness(
             },
         )
         assert response.status_code == 200
+        connection = app.state.db.open()
+        _settle_recall_side_effects(app, connection)
         row = connection.execute(
             "SELECT helpful_count,outcome_count FROM memory_usefulness " "WHERE memory_type=? AND memory_id=?",
             ("episode", episode_id),
@@ -115,14 +115,16 @@ def test_api_feedback_bonus_flows_into_ttl_valid_to(
                     "response_format": "context_packet",
                 },
             ).json()
-            _settle_recall_side_effects(app, connection)
-            client.post(
+            response = client.post(
                 "/v1/feedback",
                 json={
                     "feedback_id": recalled["context_packet"]["items"][0]["feedback_id"],
                     "helpful": True,
                 },
             )
+            assert response.status_code == 200
+
+        _settle_recall_side_effects(app, connection)
 
         assert expire_claims(
             connection,

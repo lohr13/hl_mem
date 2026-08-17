@@ -145,12 +145,15 @@ eight top-level fields: `schema_major`, `schema_minor`, `query_id`, `answerabili
 materialized non-empty `feedback_id`; its array position is its rank. Claim text comes only from the stored
 `index_text` projection.
 
-`feedback_state=available` means every item exposure was atomically persisted. `degraded` means the packet text remains
-usable, but its feedback identifiers must not be submitted. Exposure persistence failure never turns a successful
-recall into an HTTP 503. The internal `injected` flag means an adapter explicitly delivered the item across the Agent
-host/model input boundary; it does not claim that the model read, adopted, or cited the memory.
-Successful `legacy` responses retain item-level `feedback_id` values for compatibility; if their exposure batch cannot
-be confirmed, those identifiers are omitted rather than returning unusable receipts without a `feedback_state`.
+`feedback_state=available` means every item exposure was accepted by the bounded recall side-effect pipeline for durable,
+eventually consistent persistence. The returned feedback identifiers may be submitted immediately: when their exposure
+is not visible yet, feedback and injected receipts are registered as idempotent dependent tasks and applied after the
+exposure. `degraded` means the packet text remains usable, but its feedback identifiers must not be submitted. A rejected
+side-effect submission never turns a successful recall into an HTTP 503. The internal `injected` flag means an adapter
+explicitly delivered the item across the Agent host/model input boundary; it does not claim that the model read, adopted,
+or cited the memory. Successful `legacy` responses retain item-level `feedback_id` values for compatibility; if their
+exposure batch cannot be accepted, those identifiers are omitted rather than returning unusable receipts without a
+`feedback_state`.
 
 ## Experience Requests
 
@@ -160,8 +163,9 @@ requires the same soft partition to avoid cross-profile aggregation. Append Trac
 optional reward in the `[0, 1]` range, and `outcome_summary`. Policy induction buckets Episodes by namespace, and every
 supporting Episode must share the Policy namespace.
 
-Retrieval feedback requires `feedback_id` and `helpful`; `task_outcome` is optional. A correction can target a Claim with
-an idempotent `retract` or `replace` action. Replacement also requires `corrected_text`.
+Retrieval feedback requires `feedback_id` and `helpful`; `task_outcome` is optional. A successful response may mean the
+update was applied immediately or durably accepted pending its exposure. A correction can target a Claim with an
+idempotent `retract` or `replace` action. Replacement also requires `corrected_text`.
 
 ## Source of Truth
 

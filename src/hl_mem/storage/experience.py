@@ -395,6 +395,8 @@ class ExperienceRepository:
         helpful: bool,
         task_outcome: float | None,
         created_at: str,
+        *,
+        commit: bool = True,
     ) -> dict[str, bool]:
         """按 exposure 主键幂等提交或修改检索反馈。"""
         from hl_mem.domain.feedback import BayesianUsefulnessPolicy
@@ -409,7 +411,8 @@ class ExperienceRepository:
             settings.feedback_bonus_days,
             settings.feedback_bonus_cap_days,
         )
-        self.connection.execute("BEGIN IMMEDIATE")
+        if commit:
+            self.connection.execute("BEGIN IMMEDIATE")
         try:
             row = self.connection.execute(
                 "SELECT memory_type,memory_id,helpful,task_outcome FROM retrieval_feedback WHERE id=?",
@@ -420,14 +423,16 @@ class ExperienceRepository:
             old_helpful = row["helpful"]
             old_outcome = row["task_outcome"]
             if old_helpful == int(helpful) and old_outcome == task_outcome:
-                self.connection.commit()
+                if commit:
+                    self.connection.commit()
                 return {"created": False, "updated": False}
             if settings.feedback_lifecycle_mode == "off":
                 self.connection.execute(
                     "UPDATE retrieval_feedback SET helpful=?,task_outcome=? WHERE id=?",
                     (int(helpful), task_outcome, feedback_id),
                 )
-                self.connection.commit()
+                if commit:
+                    self.connection.commit()
                 return {"created": False, "updated": True}
             repository = UsefulnessRepository(self.connection, policy)
             if old_helpful is not None or old_outcome is not None:
@@ -453,10 +458,12 @@ class ExperienceRepository:
                 outcome_delta=int(task_outcome is not None),
                 commit=False,
             )
-            self.connection.commit()
+            if commit:
+                self.connection.commit()
             return {"created": False, "updated": True}
         except Exception:
-            self.connection.rollback()
+            if commit:
+                self.connection.rollback()
             raise
 
     def induce_policy(

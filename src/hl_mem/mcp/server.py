@@ -356,8 +356,9 @@ class McpMemoryServer:
 
     def close(self) -> None:
         """排空 recall 副作用并关闭数据库资源。"""
-        self.recall_side_effects.close(5.0)
-        self.database.close()
+        closed = self.recall_side_effects.close(self.recall_side_effects.recommended_shutdown_timeout)
+        if closed:
+            self.database.close()
 
     @staticmethod
     def _forget(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -386,7 +387,11 @@ class McpMemoryServer:
             raise ValidationError("task_outcome must be between 0 and 1")
         now = datetime.now(timezone.utc).isoformat()
         try:
-            result: dict[str, Any] = ExperienceService(connection, settings=self.settings).submit_retrieval_feedback(
+            result: dict[str, Any] = ExperienceService(
+                connection,
+                settings=self.settings,
+                pending_exposure_check=self.recall_side_effects.has_pending_exposures,
+            ).submit_retrieval_feedback_eventually(
                 feedback_id,
                 arguments["helpful"],
                 float(task_outcome) if task_outcome is not None else None,

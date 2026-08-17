@@ -169,9 +169,14 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         try:
             yield
         finally:
-            recall_side_effects.close(5.0)
+            side_effects_closed = recall_side_effects.close(recall_side_effects.recommended_shutdown_timeout)
             audit.close()
-            database.close()
+            if side_effects_closed:
+                database.close()
+            else:
+                LOGGER.error(
+                    "recall side-effect dispatcher did not stop; database connections remain open for thread safety"
+                )
 
     app = FastAPI(title="HL-Mem", version=__version__, lifespan=lifespan)
     app.state.db, app.state.token_budget, app.state.reranker = (
@@ -458,7 +463,14 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         ):
             raise HTTPException(422, "feedback_ids must be a non-empty string array")
         try:
-            updated = ExperienceService(connection).mark_feedback_injected_batch(feedback_ids)
+            updated = ExperienceService(
+                connection,
+                settings=settings,
+                pending_exposure_check=recall_side_effects.has_pending_exposures,
+            ).mark_feedback_injected_eventually(
+                feedback_ids,
+                _now(),
+            )
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
         return {"updated": updated}
@@ -484,9 +496,11 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         payload: FeedbackInput, connection: sqlite3.Connection = Depends(get_connection)
     ) -> dict[str, Any]:
         try:
-            result: dict[str, Any] = ExperienceService(connection, settings=settings).submit_retrieval_feedback(
-                payload.feedback_id, payload.helpful, payload.task_outcome, _now()
-            )
+            result: dict[str, Any] = ExperienceService(
+                connection,
+                settings=settings,
+                pending_exposure_check=recall_side_effects.has_pending_exposures,
+            ).submit_retrieval_feedback_eventually(payload.feedback_id, payload.helpful, payload.task_outcome, _now())
         except ValueError as error:
             if str(error).startswith("feedback exposure not found:"):
                 raise HTTPException(404, str(error)) from error

@@ -42,6 +42,7 @@ from hl_mem.workers.deduplicate import (
     review_pending_near_duplicates,
 )
 from hl_mem.workers.deferred import (
+    cleanup_recall_side_effect_tasks,
     complete_deferred_extractions,
     handle_failed_extractions,
     process_deferred_tasks,
@@ -138,6 +139,17 @@ def enqueue_daily_reclassify(connection: Any, now: str, cron: str) -> bool:
         )
         is not None
     )
+
+
+def _process_recall_side_effects_safely(connection: Any, now: str) -> dict[str, int]:
+    """隔离高频副作用消费异常，避免单次锁竞争终止 worker 主循环。"""
+    try:
+        return process_recall_side_effect_tasks(connection, now=now)
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        LOGGER.exception("recall_side_effect_processing_failed")
+        return {"completed": 0, "retried": 0, "abandoned": 0}
 
 
 class Worker:
@@ -274,7 +286,7 @@ class Worker:
         try:
             while True:
                 self.worker_runtime.heartbeat(_now())
-                process_recall_side_effect_tasks(self.connection, now=_now())
+                _process_recall_side_effects_safely(self.connection, _now())
                 current = time.monotonic()
                 if current >= next_ttl:
                     self._run_maintenance()
@@ -299,6 +311,10 @@ class Worker:
             (
                 "process_deferred_tasks",
                 lambda: process_deferred_tasks(self.connection, now=maintenance_now),
+            ),
+            (
+                "cleanup_recall_side_effect_tasks",
+                lambda: cleanup_recall_side_effect_tasks(self.connection, before=cutoff),
             ),
             (
                 "cleanup_stale_temporal_claims",

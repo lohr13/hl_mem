@@ -106,6 +106,17 @@ class DeferredTaskRepository:
         ).fetchone()
         return self._decode(row) if row is not None else None
 
+    def has_pending_recall_exposure(self, feedback_id: str) -> bool:
+        """判断 feedback receipt 是否属于尚待物化的 durable exposure。"""
+        row = self.connection.execute(
+            "SELECT 1 FROM deferred_tasks AS task "
+            "JOIN json_each(task.payload_json,'$.exposures') AS exposure "
+            "WHERE task.task_type='record_recall_exposures' AND task.status='pending' "
+            "AND json_extract(exposure.value,'$[0]')=? LIMIT 1",
+            (feedback_id,),
+        ).fetchone()
+        return row is not None
+
     def record_attempt(
         self,
         task_id: str,
@@ -178,6 +189,26 @@ class DeferredTaskRepository:
         )
         self.connection.commit()
         return cursor.rowcount == 1
+
+    def cleanup_terminal(
+        self,
+        before: str,
+        *,
+        task_types: tuple[str, ...],
+        limit: int = 1000,
+    ) -> int:
+        """有界删除指定类型、保留期外的 completed/abandoned 任务。"""
+        if not task_types or limit < 1:
+            return 0
+        placeholders = ",".join("?" for _ in task_types)
+        cursor = self.connection.execute(
+            "DELETE FROM deferred_tasks WHERE id IN ("
+            "SELECT id FROM deferred_tasks WHERE status IN ('completed','abandoned') AND updated_at<? "
+            f"AND task_type IN ({placeholders}) ORDER BY updated_at,id LIMIT ?)",
+            (before, *task_types, limit),
+        )
+        self.connection.commit()
+        return cursor.rowcount
 
     def _finish_resources(
         self,

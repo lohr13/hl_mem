@@ -101,9 +101,8 @@ def test_prefetch_is_receipt_free_and_each_delivery_is_fresh_and_injected(tmp_pa
         assert "SECRET_RAW_VALUE" not in first_text
         assert "SECRET_RAW_VALUE" not in second_text
         assert provider.health()["delivery"]["pending_injections"] == 2
-        _settle_recall_side_effects(app, connection)
-        assert {row[0] for row in connection.execute("SELECT injected FROM retrieval_feedback").fetchall()} == {0}
         assert provider.flush_delivery_receipts() == 2
+        _settle_recall_side_effects(app, connection)
         receipts = provider.delivery_receipts
         assert len(receipts) == 2
         assert receipts[0].query_id == receipts[1].query_id == cached.query_id

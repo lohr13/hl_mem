@@ -23,6 +23,8 @@ RECALL_SIDE_EFFECT_RETRY_DELAY = timedelta(seconds=1)
 RECALL_SIDE_EFFECT_TASK_TYPES = (
     "record_recall_access",
     "record_recall_exposures",
+    "apply_retrieval_feedback",
+    "mark_recall_feedback_injected",
     "resurrect_recalled_claim",
 )
 DeferredTaskHandler = Callable[[sqlite3.Connection, dict[str, Any], datetime], str]
@@ -150,6 +152,20 @@ def process_recall_side_effect_tasks(
         if outcome == "completed":
             counts["completed"] += 1
     return counts
+
+
+def cleanup_recall_side_effect_tasks(
+    connection: sqlite3.Connection,
+    *,
+    before: str,
+    limit: int = 1000,
+) -> int:
+    """有界清理保留期外的召回副作用终态任务。"""
+    return DeferredTaskRepository(connection).cleanup_terminal(
+        before,
+        task_types=RECALL_SIDE_EFFECT_TASK_TYPES,
+        limit=limit,
+    )
 
 
 def _register_legacy_rate_limited_extractions(
@@ -315,6 +331,75 @@ def _record_recall_exposures(connection: sqlite3.Connection, task: dict[str, Any
         raise
 
 
+def _apply_retrieval_feedback(connection: sqlite3.Connection, task: dict[str, Any], now: datetime) -> str:
+    payload = task["payload"]
+    feedback_id = payload.get("feedback_id")
+    helpful = payload.get("helpful")
+    task_outcome = payload.get("task_outcome")
+    created_at = payload.get("created_at")
+    if not isinstance(feedback_id, str) or not feedback_id:
+        raise ValueError("apply_retrieval_feedback feedback_id must be a non-empty string")
+    if not isinstance(helpful, bool):
+        raise ValueError("apply_retrieval_feedback helpful must be a boolean")
+    if task_outcome is not None and (
+        isinstance(task_outcome, bool)
+        or not isinstance(task_outcome, (int, float))
+        or not 0.0 <= float(task_outcome) <= 1.0
+    ):
+        raise ValueError("apply_retrieval_feedback task_outcome must be between 0 and 1")
+    if not isinstance(created_at, str):
+        raise ValueError("apply_retrieval_feedback created_at must be a string")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        repository = DeferredTaskRepository(connection)
+        current = repository.get(task["id"])
+        if current is None or current["status"] != "pending":
+            connection.rollback()
+            return "postponed"
+        ExperienceRepository(
+            connection,
+            settings=getattr(connection, "hl_mem_settings", None),
+        ).submit_retrieval_feedback(
+            feedback_id,
+            helpful,
+            float(task_outcome) if task_outcome is not None else None,
+            created_at,
+            commit=False,
+        )
+        if not repository.complete_task(task["id"], now.isoformat(), commit=False):
+            raise RuntimeError("apply_retrieval_feedback task completion lost")
+        connection.commit()
+        return "completed"
+    except Exception:
+        connection.rollback()
+        raise
+
+
+def _mark_recall_feedback_injected(connection: sqlite3.Connection, task: dict[str, Any], now: datetime) -> str:
+    feedback_ids = task["payload"].get("feedback_ids")
+    if (
+        not isinstance(feedback_ids, list)
+        or not feedback_ids
+        or any(not isinstance(feedback_id, str) or not feedback_id for feedback_id in feedback_ids)
+    ):
+        raise ValueError("mark_recall_feedback_injected feedback_ids must be a non-empty string array")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        repository = DeferredTaskRepository(connection)
+        current = repository.get(task["id"])
+        if current is None or current["status"] != "pending":
+            connection.rollback()
+            return "postponed"
+        ExperienceRepository(connection).mark_feedback_injected_batch(feedback_ids)
+        if not repository.complete_task(task["id"], now.isoformat(), commit=False):
+            raise RuntimeError("mark_recall_feedback_injected task completion lost")
+        connection.commit()
+        return "completed"
+    except Exception:
+        connection.rollback()
+        raise
+
+
 def _resurrection_source_is_complete(connection: sqlite3.Connection, claim_id: str) -> bool:
     rows = connection.execute(
         "SELECT e.evidence_type,source_event.id AS event_id,source_claim.id AS claim_id,"
@@ -413,5 +498,7 @@ DEFERRED_TASK_HANDLERS: dict[str, DeferredTaskHandler] = {
     "retry_extract_event": _schedule_extract_retry,
     "record_recall_access": _record_recall_access,
     "record_recall_exposures": _record_recall_exposures,
+    "apply_retrieval_feedback": _apply_retrieval_feedback,
+    "mark_recall_feedback_injected": _mark_recall_feedback_injected,
     "resurrect_recalled_claim": _resurrect_recalled_claim,
 }

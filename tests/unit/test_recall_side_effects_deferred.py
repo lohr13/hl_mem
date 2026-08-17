@@ -18,7 +18,8 @@ from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.storage.deferred_tasks import DeferredTaskRepository
-from hl_mem.workers.deferred import process_recall_side_effect_tasks
+from hl_mem.workers.deferred import cleanup_recall_side_effect_tasks, process_recall_side_effect_tasks
+from hl_mem.workers.worker import _process_recall_side_effects_safely
 
 NOW = "2026-08-18T00:00:00+00:00"
 
@@ -67,6 +68,58 @@ def test_dispatch_is_non_blocking_while_another_connection_holds_write_lock(tmp_
     assert queued_health["submitted"] == 1
     assert queued_health["persisted"] == 1
     assert queued_health["completed"] == 0
+    dispatcher.close(2.0)
+    database.close()
+
+
+def test_dispatch_retries_durable_enqueue_after_busy_timeout(tmp_path) -> None:
+    path = tmp_path / "dispatch-retry.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(path),
+        recall_side_effect_max_attempts=4,
+        recall_side_effect_backoff_seconds=0.02,
+    )
+    database = Database(settings=settings, busy_timeout_seconds=0.05)
+    writer = database.open()
+    writer.execute("BEGIN IMMEDIATE")
+    dispatcher = RecallSideEffectDispatcher(database, settings=settings)
+
+    assert dispatcher.submit_access("query-retry", ["claim-1"], NOW) is True
+    deadline = time.monotonic() + 1.0
+    while int(dispatcher.health()["access_record"]["failures"] or 0) < 1:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    writer.rollback()
+
+    assert dispatcher.drain(2.0) is True
+    assert (
+        writer.execute(
+            "SELECT count(*) FROM deferred_tasks WHERE idempotency_key='record_recall_access:query-retry'"
+        ).fetchone()[0]
+        == 1
+    )
+    health = dispatcher.health(writer)["access_record"]
+    assert health["persisted"] == 1
+    assert int(health["failures"] or 0) >= 1
+    dispatcher.close(2.0)
+    database.close()
+
+
+def test_dispatch_tracks_exposure_until_durable_enqueue(tmp_path) -> None:
+    database = Database(tmp_path / "dispatch-exposure-window.db", busy_timeout_seconds=0.05)
+    writer = database.open()
+    writer.execute("BEGIN IMMEDIATE")
+    dispatcher = RecallSideEffectDispatcher(database, settings=Settings.for_test())
+    exposure = ("feedback-pending", "query-1", "claim", "claim-1", 1, 0.9, NOW)
+
+    assert dispatcher.submit_exposures("query-1", [exposure]) is True
+    assert dispatcher.has_pending_exposures(["feedback-pending"]) is True
+
+    writer.rollback()
+    assert dispatcher.drain(2.0) is True
+    assert dispatcher.has_pending_exposures(["feedback-pending"]) is False
+    assert DeferredTaskRepository(writer).has_pending_recall_exposure("feedback-pending") is True
     dispatcher.close(2.0)
     database.close()
 
@@ -278,6 +331,86 @@ def test_recall_audit_and_llm_span_are_dispatched_outside_the_request_write_lock
     )
     dispatcher.close(2.0)
     audit.close()
+    database.close()
+
+
+def test_rejected_audit_is_not_counted_as_persisted(tmp_path) -> None:
+    class RejectingAudit:
+        enabled = True
+
+        @staticmethod
+        def emit(*_args, **_kwargs) -> bool:
+            return False
+
+    database = Database(tmp_path / "rejected-audit.db")
+    database.open()
+    dispatcher = RecallSideEffectDispatcher(database)
+
+    assert dispatcher.submit_audit(RejectingAudit(), ("recall", "ranked", "success"), {}) is True
+    assert dispatcher.drain(2.0) is True
+
+    health = dispatcher.health()["audit_emit"]
+    assert health["persisted"] == 0
+    assert health["failures"] == 1
+    dispatcher.close(2.0)
+    database.close()
+
+
+def test_cleanup_recall_side_effect_tasks_removes_only_old_terminal_rows(tmp_path) -> None:
+    database = Database(tmp_path / "cleanup-recall-tasks.db")
+    connection = database.open()
+    repository = DeferredTaskRepository(connection)
+    for key, task_type in (
+        ("old-completed", "record_recall_access"),
+        ("old-pending", "record_recall_exposures"),
+        ("new-completed", "record_recall_access"),
+        ("legacy-completed", "retry_extract_event"),
+    ):
+        repository.defer(
+            task_type=task_type,
+            resource_type="query",
+            resource_id=key,
+            payload={},
+            idempotency_key=key,
+            run_after=NOW,
+            max_attempts=3,
+            error="",
+            updated_at=NOW,
+        )
+    connection.execute(
+        "UPDATE deferred_tasks SET status='completed',updated_at='2026-08-01T00:00:00+00:00' "
+        "WHERE idempotency_key IN ('old-completed','legacy-completed')"
+    )
+    connection.execute(
+        "UPDATE deferred_tasks SET status='completed',updated_at='2026-08-18T00:00:00+00:00' "
+        "WHERE idempotency_key='new-completed'"
+    )
+    connection.commit()
+
+    removed = cleanup_recall_side_effect_tasks(connection, before="2026-08-10T00:00:00+00:00")
+
+    assert removed == 1
+    assert {row[0] for row in connection.execute("SELECT idempotency_key FROM deferred_tasks")} == {
+        "old-pending",
+        "new-completed",
+        "legacy-completed",
+    }
+    database.close()
+
+
+def test_worker_loop_isolates_recall_side_effect_consumer_failure(tmp_path, monkeypatch) -> None:
+    database = Database(tmp_path / "worker-isolation.db")
+    connection = database.open()
+    connection.execute("BEGIN")
+    monkeypatch.setattr(
+        "hl_mem.workers.worker.process_recall_side_effect_tasks",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")),
+    )
+
+    result = _process_recall_side_effects_safely(connection, NOW)
+
+    assert result == {"completed": 0, "retried": 0, "abandoned": 0}
+    assert connection.in_transaction is False
     database.close()
 
 
