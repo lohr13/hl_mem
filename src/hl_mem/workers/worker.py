@@ -45,6 +45,7 @@ from hl_mem.workers.deferred import (
     complete_deferred_extractions,
     handle_failed_extractions,
     process_deferred_tasks,
+    process_recall_side_effect_tasks,
 )
 from hl_mem.workers.induce_policies import enqueue_daily_policy_induction
 from hl_mem.workers.job_handlers import (
@@ -273,6 +274,7 @@ class Worker:
         try:
             while True:
                 self.worker_runtime.heartbeat(_now())
+                process_recall_side_effect_tasks(self.connection, now=_now())
                 current = time.monotonic()
                 if current >= next_ttl:
                     self._run_maintenance()

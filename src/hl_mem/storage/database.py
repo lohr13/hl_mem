@@ -73,6 +73,7 @@ class Database:
         self.busy_timeout_ms = int(self.busy_timeout_seconds * 1000)
         self.connection: sqlite3.Connection | None = None
         self._pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=self.pool_size)
+        self._read_pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=self.pool_size)
         self._connections: set[sqlite3.Connection] = set()
         self._lock = threading.Lock()
         self._migrated = False
@@ -86,6 +87,37 @@ class Database:
         )
         connection.hl_mem_settings = self.settings
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+        try:
+            if VectorBackend(self.settings.vector_backend) is VectorBackend.SQLITE_VEC:
+                load_sqlite_vec_extension(connection)
+        except Exception:
+            connection.close()
+            raise
+        with self._lock:
+            self._connections.add(connection)
+        return connection
+
+    def _new_readonly_connection(self) -> sqlite3.Connection:
+        """创建强制 query-only 的文件数据库连接。"""
+        if self.path == ":memory:":
+            raise ValueError("read-only connections require a file-backed database")
+        if self.path.startswith("file:"):
+            separator = "&" if "?" in self.path else "?"
+            uri = f"{self.path}{separator}mode=ro"
+        else:
+            uri = f"{Path(self.path).expanduser().resolve().as_uri()}?mode=ro"
+        connection = sqlite3.connect(
+            uri,
+            uri=True,
+            timeout=self.busy_timeout_seconds,
+            check_same_thread=False,
+            factory=HLMemoryConnection,
+        )
+        connection.hl_mem_settings = self.settings
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
         try:
@@ -135,6 +167,14 @@ class Database:
         except queue.Empty:
             return self._new_connection()
 
+    def open_readonly(self) -> sqlite3.Connection:
+        """返回独立只读连接；调用方负责关闭或交回只读池。"""
+        self._ensure_migrated()
+        try:
+            return self._read_pool.get_nowait()
+        except queue.Empty:
+            return self._new_readonly_connection()
+
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         """获取请求级连接，并在退出时回滚残留事务后归还连接池。"""
@@ -146,6 +186,22 @@ class Database:
                 connection.rollback()
             try:
                 self._pool.put_nowait(connection)
+            except queue.Full:
+                connection.close()
+                with self._lock:
+                    self._connections.discard(connection)
+
+    @contextmanager
+    def connect_readonly(self) -> Iterator[sqlite3.Connection]:
+        """获取请求级只读连接并在退出时归还独立连接池。"""
+        connection = self.open_readonly()
+        try:
+            yield connection
+        finally:
+            if connection.in_transaction:
+                connection.rollback()
+            try:
+                self._read_pool.put_nowait(connection)
             except queue.Full:
                 connection.close()
                 with self._lock:
@@ -356,6 +412,11 @@ class Database:
         while True:
             try:
                 self._pool.get_nowait()
+            except queue.Empty:
+                break
+        while True:
+            try:
+                self._read_pool.get_nowait()
             except queue.Empty:
                 break
         for connection in connections:

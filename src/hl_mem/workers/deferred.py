@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+import base64
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.http_utils import find_http_status_error
+from hl_mem.lifecycle import assert_transition
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.deferred_tasks import DeferredTaskRepository
+from hl_mem.storage.experience import ExperienceRepository
 from hl_mem.storage.jobs import JobRepository
 
 EXTRACTION_RETRY_DELAYS = (timedelta(hours=1), timedelta(hours=4), timedelta(hours=12))
 DEFERRED_EXTRACTION_MAX_ATTEMPTS = len(EXTRACTION_RETRY_DELAYS)
 ACTIVE_JOB_POSTPONE = timedelta(minutes=15)
+RECALL_SIDE_EFFECT_RETRY_DELAY = timedelta(seconds=1)
+RECALL_SIDE_EFFECT_TASK_TYPES = (
+    "record_recall_access",
+    "record_recall_exposures",
+    "resurrect_recalled_claim",
+)
 DeferredTaskHandler = Callable[[sqlite3.Connection, dict[str, Any], datetime], str]
 
 
@@ -88,8 +99,56 @@ def process_deferred_tasks(
             )
             counts["postponed"] += 1
             continue
-        outcome = handler(connection, task, current)
-        counts[outcome] += 1
+        try:
+            outcome = handler(connection, task, current)
+        except Exception as error:
+            if task["task_type"] not in RECALL_SIDE_EFFECT_TASK_TYPES:
+                raise
+            if connection.in_transaction:
+                connection.rollback()
+            repository.record_failure(
+                task["id"],
+                run_after=(current + RECALL_SIDE_EFFECT_RETRY_DELAY).isoformat(),
+                error=str(error),
+                updated_at=current_text,
+            )
+            counts["postponed"] += 1
+            continue
+        counts[outcome] = counts.get(outcome, 0) + 1
+    return counts
+
+
+def process_recall_side_effect_tasks(
+    connection: sqlite3.Connection,
+    *,
+    now: str | None = None,
+    limit: int = 100,
+) -> dict[str, int]:
+    """高频消费召回副作用，不执行 legacy extraction 注册扫描。"""
+    current_text = now or datetime.now(timezone.utc).isoformat()
+    current = datetime.fromisoformat(current_text.replace("Z", "+00:00"))
+    repository = DeferredTaskRepository(connection)
+    counts = {"completed": 0, "retried": 0, "abandoned": 0}
+    for task in repository.list_exhausted(limit=limit, task_types=RECALL_SIDE_EFFECT_TASK_TYPES):
+        if repository.abandon_task(task["id"], "deferred retry budget exhausted", current_text):
+            counts["abandoned"] += 1
+    for task in repository.list_due(current_text, limit=limit, task_types=RECALL_SIDE_EFFECT_TASK_TYPES):
+        handler = DEFERRED_TASK_HANDLERS[task["task_type"]]
+        try:
+            outcome = handler(connection, task, current)
+        except Exception as error:
+            if connection.in_transaction:
+                connection.rollback()
+            if repository.record_failure(
+                task["id"],
+                run_after=(current + RECALL_SIDE_EFFECT_RETRY_DELAY).isoformat(),
+                error=str(error),
+                updated_at=current_text,
+            ):
+                counts["retried"] += 1
+            continue
+        if outcome == "completed":
+            counts["completed"] += 1
     return counts
 
 
@@ -207,6 +266,152 @@ def _has_active_extract_job(connection: sqlite3.Connection, task: dict[str, Any]
     return row is not None
 
 
+def _record_recall_access(connection: sqlite3.Connection, task: dict[str, Any], now: datetime) -> str:
+    payload = task["payload"]
+    claim_ids = payload.get("claim_ids")
+    accessed_at = payload.get("accessed_at")
+    if not isinstance(claim_ids, list) or any(not isinstance(claim_id, str) for claim_id in claim_ids):
+        raise ValueError("record_recall_access claim_ids must be a string array")
+    if not isinstance(accessed_at, str):
+        raise ValueError("record_recall_access accessed_at must be a string")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        current = DeferredTaskRepository(connection).get(task["id"])
+        if current is None or current["status"] != "pending":
+            connection.rollback()
+            return "postponed"
+        ClaimRepository(connection).record_access(claim_ids, accessed_at, commit=False)
+        if not DeferredTaskRepository(connection).complete_task(task["id"], now.isoformat(), commit=False):
+            raise RuntimeError("record_recall_access task completion lost")
+        connection.commit()
+        return "completed"
+    except Exception:
+        connection.rollback()
+        raise
+
+
+def _record_recall_exposures(connection: sqlite3.Connection, task: dict[str, Any], now: datetime) -> str:
+    raw_exposures = task["payload"].get("exposures")
+    if not isinstance(raw_exposures, list):
+        raise ValueError("record_recall_exposures exposures must be an array")
+    feedback: list[tuple[Any, ...]] = []
+    for exposure in raw_exposures:
+        if not isinstance(exposure, list) or len(exposure) != 7:
+            raise ValueError("record_recall_exposures item must contain seven values")
+        feedback.append((*exposure[:6], 0, None, None, exposure[6]))
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        current = DeferredTaskRepository(connection).get(task["id"])
+        if current is None or current["status"] != "pending":
+            connection.rollback()
+            return "postponed"
+        ExperienceRepository(connection).record_feedback_batch(feedback)
+        if not DeferredTaskRepository(connection).complete_task(task["id"], now.isoformat(), commit=False):
+            raise RuntimeError("record_recall_exposures task completion lost")
+        connection.commit()
+        return "completed"
+    except Exception:
+        connection.rollback()
+        raise
+
+
+def _resurrection_source_is_complete(connection: sqlite3.Connection, claim_id: str) -> bool:
+    rows = connection.execute(
+        "SELECT e.evidence_type,source_event.id AS event_id,source_claim.id AS claim_id,"
+        "source_claim.status AS claim_status FROM evidence_links e "
+        "LEFT JOIN events source_event ON e.evidence_type='event' AND source_event.id=e.evidence_id "
+        "LEFT JOIN claims source_claim ON e.evidence_type='claim' AND source_claim.id=e.evidence_id "
+        "WHERE e.derived_type='claim' AND e.derived_id=?",
+        (claim_id,),
+    ).fetchall()
+    if not rows:
+        return False
+    return all(
+        (row["evidence_type"] == "event" and row["event_id"] is not None)
+        or (
+            row["evidence_type"] == "claim"
+            and row["claim_id"] is not None
+            and row["claim_status"] not in {"candidate", "retracted"}
+        )
+        for row in rows
+    )
+
+
+def _resurrection_has_active_rival(connection: sqlite3.Connection, claim: dict[str, Any]) -> bool:
+    conflict_key = claim.get("conflict_key")
+    if not conflict_key:
+        return False
+    return (
+        connection.execute(
+            "SELECT 1 FROM claims WHERE namespace_key=? AND conflict_key=? " "AND status='active' AND id<>? LIMIT 1",
+            (claim.get("namespace_key"), conflict_key, claim.get("id")),
+        ).fetchone()
+        is not None
+    )
+
+
+def _resurrect_recalled_claim(connection: sqlite3.Connection, task: dict[str, Any], now: datetime) -> str:
+    payload = task["payload"]
+    required = ("claim_id", "embedding_base64", "embedding_model", "embedding_dim", "namespace", "as_of")
+    if any(payload.get(key) is None for key in required):
+        raise ValueError("resurrect_recalled_claim payload is incomplete")
+    try:
+        embedding = base64.b64decode(str(payload["embedding_base64"]), validate=True)
+    except ValueError as error:
+        raise ValueError("resurrect_recalled_claim embedding is invalid") from error
+    claim_id = str(payload["claim_id"])
+    namespace = str(payload["namespace"])
+    as_of = str(payload["as_of"])
+    known_as_of = payload.get("known_as_of")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        repository = DeferredTaskRepository(connection)
+        current = repository.get(task["id"])
+        if current is None or current["status"] != "pending":
+            connection.rollback()
+            return "postponed"
+        claims = ClaimRepository(connection)
+        claim = claims.get_claim(claim_id)
+        eligible = bool(
+            claim is not None
+            and claim.get("status") == "archived"
+            and claim.get("namespace_key") == namespace
+            and claim_is_visible(
+                {**claim, "status": "active"},
+                as_of,
+                str(known_as_of) if known_as_of is not None else None,
+                RecallIntent.CURRENT_STATE,
+            )
+            and _resurrection_source_is_complete(connection, claim_id)
+            and not _resurrection_has_active_rival(connection, claim)
+        )
+        if eligible:
+            assert claim is not None
+            assert_transition("archived", "active")
+            cursor = connection.execute(
+                "UPDATE claims SET status='active',embedding_dense=?,embedding_sparse=NULL,"
+                "embedding_model=?,embedding_dim=? WHERE id=? AND status='archived'",
+                (
+                    embedding,
+                    str(payload["embedding_model"]),
+                    int(payload["embedding_dim"]),
+                    claim_id,
+                ),
+            )
+            if cursor.rowcount == 1:
+                claims.sync_vector(claim_id)
+        if not repository.complete_task(task["id"], now.isoformat(), commit=False):
+            raise RuntimeError("resurrect_recalled_claim task completion lost")
+        connection.commit()
+        return "completed"
+    except Exception:
+        connection.rollback()
+        raise
+
+
 DEFERRED_TASK_HANDLERS: dict[str, DeferredTaskHandler] = {
     "retry_extract_event": _schedule_extract_retry,
+    "record_recall_access": _record_recall_access,
+    "record_recall_exposures": _record_recall_exposures,
+    "resurrect_recalled_claim": _resurrect_recalled_claim,
 }

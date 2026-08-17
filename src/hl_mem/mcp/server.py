@@ -13,6 +13,7 @@ from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService
 from hl_mem.application.memories import MemoryQueryService
 from hl_mem.application.recall import RecallService
+from hl_mem.application.recall_side_effects import DeferredLLMSpanRecorder, RecallSideEffectDispatcher
 from hl_mem.domain.temporal import RecallIntent, parse_utc
 from hl_mem.errors import NotFoundError, ValidationError
 from hl_mem.experience.service import ExperienceService
@@ -235,9 +236,12 @@ class McpMemoryServer:
             settings = replace(Settings(), database_path=str(settings))
         components.initialize_process(settings)
         self.database = Database(settings=settings)
+        self.database.open_worker()
         self.settings = settings
         self.embedder = embedder or components.make_embedder(settings)
         self.reranker = reranker if reranker is not None else components.make_reranker(settings)
+        self.recall_side_effects = RecallSideEffectDispatcher(self.database, settings=settings)
+        self.deferred_llm_spans = DeferredLLMSpanRecorder(self.recall_side_effects)
 
     def list_tools(self) -> tuple[str, ...]:
         """返回稳定的 MCP 工具名称。"""
@@ -247,11 +251,12 @@ class McpMemoryServer:
         """调用一个记忆工具并返回 JSON 可序列化结果。"""
         if name not in self._TOOLS:
             raise ValidationError(f"unknown MCP tool: {name}")
+        if name == "memory_recall":
+            with self.database.connect_readonly() as connection:
+                return self._recall(connection, arguments)
         with self.database.connect() as connection:
             if name == "memory_save":
                 return self._save(connection, arguments)
-            if name == "memory_recall":
-                return self._recall(connection, arguments)
             if name == "memory_forget":
                 return self._forget(connection, arguments)
             if name == "memory_get":
@@ -329,7 +334,11 @@ class McpMemoryServer:
             self.embedder,
             self.reranker,
             settings=self.settings,
-            query_expander=components.make_query_expander(self.settings, connection),
+            query_expander=components.make_query_expander(
+                self.settings,
+                span_recorder=self.deferred_llm_spans,
+            ),
+            side_effect_sink=self.recall_side_effects,
         ).recall(
             query=query,
             limit=limit,
@@ -344,6 +353,11 @@ class McpMemoryServer:
             session_id=arguments.get("session_id"),
             debug=bool(arguments.get("debug", False)),
         )
+
+    def close(self) -> None:
+        """排空 recall 副作用并关闭数据库资源。"""
+        self.recall_side_effects.close(5.0)
+        self.database.close()
 
     @staticmethod
     def _forget(connection: Any, arguments: dict[str, Any]) -> dict[str, Any]:

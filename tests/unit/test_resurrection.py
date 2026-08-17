@@ -289,3 +289,52 @@ def test_main_recall_only_uses_cold_path_when_feature_is_auto(tmp_path, mode: st
     assert response["total"] == expected_total
     expected_status = "active" if mode == "auto" else "archived"
     assert connection.execute("SELECT status FROM claims WHERE id='claim-1'").fetchone()[0] == expected_status
+
+
+def test_readonly_recall_defers_resurrection_and_returns_the_safe_candidate(tmp_path) -> None:
+    class RecordingSink:
+        def __init__(self) -> None:
+            self.resurrections: list[tuple[str, str, bytes, str, int]] = []
+
+        def submit_access(self, _query_id: str, _claim_ids: list[str], _accessed_at: str) -> bool:
+            return True
+
+        def submit_exposures(self, _query_id: str, _exposures: list[tuple[object, ...]]) -> bool:
+            return True
+
+        def submit_resurrection(
+            self,
+            query_id: str,
+            claim_id: str,
+            embedding: bytes,
+            embedding_model: str,
+            embedding_dim: int,
+            *,
+            namespace: str,
+            as_of: str,
+            known_as_of: str | None,
+        ) -> bool:
+            del namespace, as_of, known_as_of
+            self.resurrections.append((query_id, claim_id, embedding, embedding_model, embedding_dim))
+            return True
+
+    database = Database(tmp_path / "readonly-resurrection.db")
+    writer = database.open()
+    _insert_event(writer)
+    _insert_claim(writer)
+    _link_source(writer)
+    sink = RecordingSink()
+
+    with database.connect_readonly() as reader:
+        response = RecallService(
+            reader,
+            _Embedder(),
+            settings=_settings(recall_dense_enabled=False),
+            side_effect_sink=sink,
+        ).recall("团队 海风看板", as_of=NOW, query_id="query-readonly")
+
+    assert response["total"] == 1
+    assert response["results"][0]["id"] == "claim-1"
+    assert writer.execute("SELECT status FROM claims WHERE id='claim-1'").fetchone()[0] == "archived"
+    assert sink.resurrections == [("query-readonly", "claim-1", pack_vector([1.0, 0.0]), "resurrection-test", 2)]
+    database.close()

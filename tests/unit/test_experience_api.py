@@ -1,10 +1,12 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
 from hl_mem.experience.service import ExperienceService
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.workers.deferred import process_recall_side_effect_tasks
 
 
 def test_episode_api_supports_lifecycle_and_listing(tmp_path) -> None:
@@ -118,6 +120,11 @@ def test_recall_records_impressions_and_feedback_updates_them(tmp_path) -> None:
             },
         ).json()
         query_id = recalled["query_id"]
+        assert app.state.recall_side_effects.drain(2.0)
+        process_recall_side_effect_tasks(
+            connection,
+            now=(datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+        )
         impression = connection.execute(
             "SELECT rank,score,injected,helpful FROM retrieval_feedback " "WHERE query_id=? AND memory_id='claim-1'",
             (query_id,),

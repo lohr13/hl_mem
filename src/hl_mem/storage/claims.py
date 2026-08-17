@@ -500,7 +500,7 @@ class ClaimRepository:
             ),
         )
 
-    def record_access(self, claim_ids: list[str], accessed_at: str) -> int:
+    def record_access(self, claim_ids: list[str], accessed_at: str, *, commit: bool = True) -> int:
         """批量累计召回访问次数并记录最近访问时间。"""
         unique_ids = list(dict.fromkeys(claim_ids))
         total = 0
@@ -517,10 +517,12 @@ class ClaimRepository:
                     (accessed_at, *chunk),
                 )
                 total += cursor.rowcount
-            self.connection.commit()
+            if commit:
+                self.connection.commit()
             return total
         except Exception:
-            self.connection.rollback()
+            if commit:
+                self.connection.rollback()
             raise
 
     def helpful_rates(self, claim_ids: list[str], min_samples: int) -> dict[str, float]:

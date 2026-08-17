@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Callable
 
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.lifecycle import assert_transition
@@ -26,11 +26,13 @@ class ResurrectionService:
         connection: sqlite3.Connection,
         embedder: EmbedderProtocol,
         settings: Settings | None = None,
+        defer_activation: Callable[[str, bytes, str, int, str, str, str | None], bool] | None = None,
     ) -> None:
         self.connection = connection
         self.embedder = embedder
         self.settings = settings or Settings()
         self.repository = ClaimRepository(connection, settings=self.settings)
+        self.defer_activation = defer_activation
 
     def try_resurrect(
         self,
@@ -93,13 +95,34 @@ class ResurrectionService:
                     detail={"error_class": type(error).__name__},
                 )
                 continue
-            activated = self._activate(
-                str(candidate["id"]),
-                embedding,
-                namespace=namespace,
-                as_of=as_of,
-                known_as_of=known_as_of,
-            )
+            if self.defer_activation is not None:
+                projected: dict[str, Any] = {
+                    **candidate,
+                    "status": "active",
+                    "embedding_dense": embedding,
+                    "embedding_model": self.embedder.model,
+                    "embedding_dim": self.embedder.dim,
+                }
+                if not claim_is_visible(projected, as_of, known_as_of, RecallIntent.CURRENT_STATE):
+                    continue
+                accepted = self.defer_activation(
+                    str(candidate["id"]),
+                    embedding,
+                    self.embedder.model,
+                    self.embedder.dim,
+                    namespace,
+                    as_of,
+                    known_as_of,
+                )
+                activated = projected if accepted else None
+            else:
+                activated = self._activate(
+                    str(candidate["id"]),
+                    embedding,
+                    namespace=namespace,
+                    as_of=as_of,
+                    known_as_of=known_as_of,
+                )
             if activated is None:
                 continue
             try:

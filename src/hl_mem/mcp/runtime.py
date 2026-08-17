@@ -112,4 +112,4 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         anyio.run(run_stdio, memory)
     finally:
-        memory.database.close()
+        memory.close()

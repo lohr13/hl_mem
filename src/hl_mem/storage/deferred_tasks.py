@@ -54,21 +54,44 @@ class DeferredTaskRepository:
         self.connection.commit()
         return self.connection.total_changes > before
 
-    def list_due(self, now: str, limit: int = 20) -> list[dict[str, Any]]:
+    def list_due(
+        self,
+        now: str,
+        limit: int = 20,
+        *,
+        task_types: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
         """返回到期且仍有重试预算的任务。"""
+        type_filter = ""
+        params: tuple[Any, ...] = (now,)
+        if task_types:
+            placeholders = ",".join("?" for _ in task_types)
+            type_filter = f"AND task_type IN ({placeholders}) "
+            params = (now, *task_types)
         rows = self.connection.execute(
             "SELECT * FROM deferred_tasks WHERE status='pending' AND attempts<max_attempts AND run_after<=? "
-            "ORDER BY run_after,created_at,id LIMIT ?",
-            (now, limit),
+            f"{type_filter}ORDER BY run_after,created_at,id LIMIT ?",
+            (*params, limit),
         ).fetchall()
         return [self._decode(row) for row in rows]
 
-    def list_exhausted(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_exhausted(
+        self,
+        limit: int = 20,
+        *,
+        task_types: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
         """返回预算已耗尽但尚未收敛终态的任务。"""
+        type_filter = ""
+        params: tuple[Any, ...] = ()
+        if task_types:
+            placeholders = ",".join("?" for _ in task_types)
+            type_filter = f"AND task_type IN ({placeholders}) "
+            params = task_types
         rows = self.connection.execute(
             "SELECT * FROM deferred_tasks WHERE status='pending' AND attempts>=max_attempts "
-            "ORDER BY updated_at,id LIMIT ?",
-            (limit,),
+            f"{type_filter}ORDER BY updated_at,id LIMIT ?",
+            (*params, limit),
         ).fetchall()
         return [self._decode(row) for row in rows]
 
@@ -95,6 +118,34 @@ class DeferredTaskRepository:
             "UPDATE deferred_tasks SET attempts=attempts+1,run_after=?,updated_at=? "
             "WHERE id=? AND status='pending' AND attempts<max_attempts",
             (run_after, updated_at, task_id),
+        )
+        if commit:
+            self.connection.commit()
+        return cursor.rowcount == 1
+
+    def record_failure(
+        self,
+        task_id: str,
+        *,
+        run_after: str,
+        error: str,
+        updated_at: str,
+    ) -> bool:
+        """原子消耗一次重试预算并记录失败原因。"""
+        cursor = self.connection.execute(
+            "UPDATE deferred_tasks SET attempts=attempts+1,run_after=?,last_error=?,updated_at=? "
+            "WHERE id=? AND status='pending' AND attempts<max_attempts",
+            (run_after, error[:2000], updated_at, task_id),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def complete_task(self, task_id: str, updated_at: str, *, commit: bool = True) -> bool:
+        """完成单个任务；可加入调用方业务事务。"""
+        cursor = self.connection.execute(
+            "UPDATE deferred_tasks SET status='completed',last_error=NULL,updated_at=? "
+            "WHERE id=? AND status='pending'",
+            (updated_at, task_id),
         )
         if commit:
             self.connection.commit()

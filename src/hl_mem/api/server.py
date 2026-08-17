@@ -48,6 +48,11 @@ from hl_mem.application.forget import ForgetService
 from hl_mem.application.ingest import IngestService, new_id
 from hl_mem.application.memories import MemoryQueryService
 from hl_mem.application.recall import RecallService, recall_side_effect_health
+from hl_mem.application.recall_side_effects import (
+    DeferredAuditLogger,
+    DeferredLLMSpanRecorder,
+    RecallSideEffectDispatcher,
+)
 from hl_mem.errors import ConflictError, NotFoundError, ValidationError
 from hl_mem.experience.service import (
     ExperienceService,
@@ -149,10 +154,13 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         settings = replace(Settings.for_test(), database_path=str(settings))
     components.initialize_process(settings)
     database = Database(settings=settings)
+    recall_side_effects = RecallSideEffectDispatcher(database, settings=settings)
     embedder = components.make_embedder(settings)
     reranker = components.make_reranker(settings)
     budget = TokenBudget(settings.daily_token_limit, Path(database.path).with_suffix(".budget.db"))
     audit = audit or NullAuditLogger()
+    deferred_audit = DeferredAuditLogger(audit, recall_side_effects)
+    deferred_llm_spans = DeferredLLMSpanRecorder(recall_side_effects)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -161,6 +169,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         try:
             yield
         finally:
+            recall_side_effects.close(5.0)
             audit.close()
             database.close()
 
@@ -172,6 +181,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.audit = audit
+    app.state.recall_side_effects = recall_side_effects
     app.add_middleware(RequestSizeLimitMiddleware, max_request_body=settings.max_request_body)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(VersionHeaderMiddleware)
@@ -195,6 +205,10 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         with database.connect() as connection:
             yield connection
 
+    def get_read_connection() -> Iterator[sqlite3.Connection]:
+        with database.connect_readonly() as connection:
+            yield connection
+
     def make_recall_service(connection: sqlite3.Connection) -> RecallService:
         """组装 REST recall 与 Hermes 内部 materializer 共用的应用服务。"""
         return RecallService(
@@ -206,7 +220,8 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
                 max_depth=settings.relation_expansion_max_depth,
             ),
             settings,
-            components.make_query_expander(settings, connection),
+            components.make_query_expander(settings, span_recorder=deferred_llm_spans),
+            side_effect_sink=recall_side_effects,
         )
 
     def execute_recall(
@@ -256,7 +271,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             "settings": settings.snapshot(),
             "components": components.component_health(),
             "vector_search": SearchTracer.vector_search_metrics(),
-            "recall_side_effects": recall_side_effect_health(),
+            "recall_side_effects": recall_side_effect_health(connection, recall_side_effects),
             "monitoring": monitoring_snapshot(),
         }
 
@@ -365,11 +380,11 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     def recall(
         payload: RecallInput,
         request: Request,
-        connection: sqlite3.Connection = Depends(get_connection),
+        connection: sqlite3.Connection = Depends(get_read_connection),
     ) -> dict[str, Any]:
         query_id = request.headers.get("X-Request-ID") or new_id()
         with audit_scope(
-            audit,
+            deferred_audit,
             trace_id=query_id,
             query_id=query_id,
             tenant_id=payload.effective_namespace,
@@ -388,12 +403,12 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     def retrieve_bundle(
         payload: RecallInput,
         request: Request,
-        connection: sqlite3.Connection = Depends(get_connection),
+        connection: sqlite3.Connection = Depends(get_read_connection),
     ) -> dict[str, Any]:
         """为 Hermes 预取 receipt-free bundle；旧 daemon 会安全返回 404。"""
         query_id = request.headers.get("X-Request-ID") or new_id()
         with audit_scope(
-            audit,
+            deferred_audit,
             trace_id=query_id,
             query_id=query_id,
             tenant_id=payload.effective_namespace,
@@ -411,7 +426,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     )
     def materialize_context_packet(
         payload: dict[str, Any],
-        connection: sqlite3.Connection = Depends(get_connection),
+        connection: sqlite3.Connection = Depends(get_read_connection),
     ) -> dict[str, Any]:
         """为 Hermes 缓存的 receipt-free bundle 创建本次 delivery receipt。"""
         raw_bundle = payload.get("retrieval_bundle", payload)

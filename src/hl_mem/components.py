@@ -95,6 +95,7 @@ def make_llm_client(
     *,
     operation: str = "other",
     model: str | None = None,
+    span_recorder: Any = None,
 ) -> LLMClient:
     """依据统一配置创建 provider 无关的 LLM 客户端。"""
     if not settings.llm_api_key:
@@ -120,7 +121,7 @@ def make_llm_client(
         provider=provider,
         timeout=httpx.Timeout(settings.llm_timeout),
         max_attempts=settings.llm_max_attempts,
-        span_recorder=LLMSpanRecorder(connection) if connection is not None else None,
+        span_recorder=span_recorder if span_recorder is not None else LLMSpanRecorder(connection),
         operation=operation,
     )
 
@@ -154,6 +155,8 @@ def make_reranker(settings: Settings) -> RerankerProtocol | None:
 def make_query_expander(
     settings: Settings,
     connection: sqlite3.Connection | None = None,
+    *,
+    span_recorder: Any = None,
 ) -> QueryExpander | None:
     """按模式构造查询扩展器；关闭时不创建 LLM 客户端。"""
     if settings.query_expansion_mode == "off" or settings.query_expansion_max == 0:
@@ -165,6 +168,7 @@ def make_query_expander(
             connection,
             operation="query_expansion",
             model=settings.query_expansion_model,
+            span_recorder=span_recorder,
         ),
         max_concurrency=settings.query_expansion_max_concurrency,
     )

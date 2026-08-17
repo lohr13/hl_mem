@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 import httpx
@@ -12,6 +13,15 @@ from hl_mem.adapters.hermes.provider import HLMemProvider
 from hl_mem.api.server import create_app
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.workers.deferred import process_recall_side_effect_tasks
+
+
+def _settle_recall_side_effects(app, connection) -> None:
+    assert app.state.recall_side_effects.drain(2.0)
+    process_recall_side_effect_tasks(
+        connection,
+        now=(datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+    )
 
 
 def _seed_claim(connection) -> None:
@@ -91,6 +101,7 @@ def test_prefetch_is_receipt_free_and_each_delivery_is_fresh_and_injected(tmp_pa
         assert "SECRET_RAW_VALUE" not in first_text
         assert "SECRET_RAW_VALUE" not in second_text
         assert provider.health()["delivery"]["pending_injections"] == 2
+        _settle_recall_side_effects(app, connection)
         assert {row[0] for row in connection.execute("SELECT injected FROM retrieval_feedback").fetchall()} == {0}
         assert provider.flush_delivery_receipts() == 2
         receipts = provider.delivery_receipts
@@ -160,6 +171,7 @@ def test_two_turn_query_miss_recalls_on_demand_materializes_and_marks_injected(t
         bundle_queries = [payload["query"] for path, payload in requests if path == "/v1/internal/retrieval-bundles"]
         assert bundle_queries == ["previous turn topic", "likes tea"]
         assert sum(path == "/v1/internal/context-packets/materialize" for path, _ in requests) == 1
+        _settle_recall_side_effects(app, connection)
         assert connection.execute("SELECT injected FROM retrieval_feedback").fetchone()[0] == 0
 
         assert provider.flush_delivery_receipts() == 1

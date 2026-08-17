@@ -25,6 +25,7 @@ from hl_mem.application.context_packet import (
     retrieval_bundle_to_dict,
 )
 from hl_mem.application.ingest import new_id
+from hl_mem.application.recall_side_effects import RecallSideEffectSink
 from hl_mem.application.resurrection import ResurrectionService
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
@@ -99,10 +100,21 @@ def _claim_relation(claim: Mapping[str, Any]) -> tuple[str, str, str] | None:
     return project_claim_relation(claim)
 
 
-def recall_side_effect_health() -> dict[str, dict[str, int | str | None]]:
+def recall_side_effect_health(
+    connection: sqlite3.Connection | None = None,
+    dispatcher: Any = None,
+) -> dict[str, dict[str, int | str | None]]:
     """返回召回副作用的进程级降级计数与最近错误类型。"""
     with _SIDE_EFFECT_LOCK:
-        return {name: dict(status) for name, status in _SIDE_EFFECT_HEALTH.items()}
+        fallback = {name: dict(status) for name, status in _SIDE_EFFECT_HEALTH.items()}
+    if dispatcher is None:
+        return fallback
+    result = cast(dict[str, dict[str, int | str | None]], dispatcher.health(connection))
+    for operation, status in fallback.items():
+        result[operation]["failures"] = int(result[operation]["failures"] or 0) + int(status["failures"] or 0)
+        if status["last_error"] is not None:
+            result[operation]["last_error"] = status["last_error"]
+    return result
 
 
 def _record_side_effect_failure(operation: str, error: Exception) -> None:
@@ -252,6 +264,7 @@ class RecallService:
         settings: Settings | None = None,
         query_expander: QueryExpander | None = None,
         intent_router: IntentRouterProtocol | None = None,
+        side_effect_sink: RecallSideEffectSink | None = None,
     ) -> None:
         self.connection = connection
         self.embedder = embedder
@@ -260,6 +273,7 @@ class RecallService:
         self.settings = settings or Settings()
         self.query_expander = query_expander
         self.intent_router = intent_router
+        self.side_effect_sink = side_effect_sink
 
     def recall(
         self,
@@ -538,7 +552,37 @@ class RecallService:
             relevance_enforced=enforce_enabled,
         )
         if self.settings.resurrection_mode == "auto" and provisional_answerability != "supported":
-            resurrected = ResurrectionService(self.connection, self.embedder, self.settings).try_resurrect(
+            defer_activation = None
+            if self.side_effect_sink is not None:
+                sink = self.side_effect_sink
+
+                def submit_resurrection(
+                    claim_id: str,
+                    embedding: bytes,
+                    model: str,
+                    dim: int,
+                    target_namespace: str,
+                    target_as_of: str,
+                    target_known: str | None,
+                ) -> bool:
+                    return sink.submit_resurrection(
+                        query_id,
+                        claim_id,
+                        embedding,
+                        model,
+                        dim,
+                        namespace=target_namespace,
+                        as_of=target_as_of,
+                        known_as_of=target_known,
+                    )
+
+                defer_activation = submit_resurrection
+            resurrected = ResurrectionService(
+                self.connection,
+                self.embedder,
+                self.settings,
+                defer_activation=defer_activation,
+            ).try_resurrect(
                 query,
                 namespace=namespace,
                 as_of=as_of or _now(),
@@ -553,7 +597,10 @@ class RecallService:
                 claims = [resurrected, *(claim for claim in claims if claim["id"] != resurrected["id"])][:limit]
                 tracer.record_channel("cold_fts", [resurrected])
                 tracer.record_final(claims)
-        self._record_access(claims)
+        if self.side_effect_sink is not None:
+            self._submit_access(query_id, claims)
+        else:
+            self._record_access(claims)
         assembly_started = time.perf_counter_ns()
         results = self._assemble_results(claims, namespace)
         if (
@@ -769,11 +816,15 @@ class RecallService:
     def _materialize_context_packet(self, bundle: RetrievalBundle) -> dict[str, Any]:
         """有限重试 exposure 批量落库，并把最终失败收敛为 degraded packet。"""
         service = ExperienceService(self.connection)
+
+        def persist_exposures(exposures: list[tuple[Any, ...]]) -> int:
+            if self.side_effect_sink is not None:
+                return self._submit_exposures(bundle.query_id, exposures)
+            return cast(int, self._run_side_effect_with_retry(lambda: service.record_exposure_batch(exposures)))
+
         assembler = ContextPacketAssembler(
             service,
-            persist_exposures=lambda exposures: self._run_side_effect_with_retry(
-                lambda: service.record_exposure_batch(exposures)
-            ),
+            persist_exposures=persist_exposures,
         )
         packet = assembler.assemble(bundle)
         if assembler.last_error is not None:
@@ -804,11 +855,26 @@ class RecallService:
             data = wrapped.get("data", wrapped)
             data["feedback_id"] = packet_item["feedback_id"]
 
+    def _submit_exposures(self, query_id: str, exposures: list[tuple[Any, ...]]) -> int:
+        if self.side_effect_sink is None or not self.side_effect_sink.submit_exposures(query_id, exposures):
+            raise RuntimeError("recall exposure submission rejected")
+        return len(exposures)
+
+    def _submit_access(self, query_id: str, claims: list[dict[str, Any]]) -> None:
+        try:
+            claim_ids = [claim["id"] for claim in claims]
+            accessed_at = _now()
+            assert self.side_effect_sink is not None
+            if not self.side_effect_sink.submit_access(query_id, claim_ids, accessed_at):
+                raise RuntimeError("recall access submission rejected")
+        except Exception as error:
+            _record_side_effect_failure("access_record", error)
+            LOGGER.exception("recall side effect failed: access_record")
+
     def _record_access(self, claims: list[dict[str, Any]]) -> None:
         try:
-            self._run_side_effect_with_retry(
-                lambda: ClaimRepository(self.connection).record_access([claim["id"] for claim in claims], _now())
-            )
+            claim_ids = [claim["id"] for claim in claims]
+            self._run_side_effect_with_retry(lambda: ClaimRepository(self.connection).record_access(claim_ids, _now()))
         except Exception as error:
             _record_side_effect_failure("access_record", error)
             LOGGER.exception("recall side effect failed: access_record")

@@ -247,13 +247,9 @@ def test_health_reports_dangling_conflict_categories(tmp_path) -> None:
 
 
 def test_recall_feedback_failure_does_not_change_main_result(tmp_path, monkeypatch) -> None:
-    """召回曝光批量写入失败时仍返回主召回结果。"""
-    monkeypatch.setattr(
-        ExperienceService,
-        "record_exposure_batch",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("feedback")),
-    )
+    """召回曝光投递失败时仍返回主召回结果。"""
     app = server.create_app(tmp_path / "recall-feedback.db")
+    monkeypatch.setattr(app.state.recall_side_effects, "submit_exposures", lambda *args, **kwargs: False)
     connection = app.state.db.open()
     ClaimRepository(connection).insert_claim(
         {

@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.workers.deferred import process_recall_side_effect_tasks
+
+
+def _settle_recall_side_effects(app, connection) -> None:
+    assert app.state.recall_side_effects.drain(2.0)
+    process_recall_side_effect_tasks(
+        connection,
+        now=(datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+    )
 
 
 def _seed_claims(connection) -> None:
@@ -65,6 +76,7 @@ def test_packet_materializes_only_budgeted_items_and_fresh_receipts(tmp_path) ->
         assert "context_packet" not in legacy
         assert legacy["results"]
         assert all(item["feedback_id"] for item in legacy["results"])
+        _settle_recall_side_effects(app, connection)
         legacy_exposures = connection.execute(
             "SELECT count(*) FROM retrieval_feedback WHERE query_id='legacy-query'"
         ).fetchone()[0]
@@ -108,6 +120,7 @@ def test_packet_materializes_only_budgeted_items_and_fresh_receipts(tmp_path) ->
         assert second["items"][0]["id"] == first["items"][0]["id"]
         assert second["items"][0]["feedback_id"] != first["items"][0]["feedback_id"]
 
+        _settle_recall_side_effects(app, connection)
         rows = connection.execute(
             "SELECT query_id,memory_id,rank,injected,helpful,task_outcome "
             "FROM retrieval_feedback WHERE query_id='cached-query' ORDER BY created_at,id"
