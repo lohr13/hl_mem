@@ -1,3 +1,4 @@
+import json
 import logging
 import threading
 import time
@@ -124,6 +125,129 @@ def test_unavailable_reason_is_empty_when_hermes_is_enabled() -> None:
 
     assert provider.is_available() is True
     assert provider.unavailable_reason() == ""
+
+
+def test_recall_tool_schema_exposes_stable_read_only_contract_and_usage_guidance() -> None:
+    provider = HLMemProvider()
+
+    schemas = provider.get_tool_schemas()
+
+    assert len(schemas) == 1
+    assert schemas[0]["name"] == "hl_mem_recall"
+    assert schemas[0]["parameters"] == {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "description": "要查询的历史事实 / Historical facts to search for.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 5,
+                "description": "最多返回的 claim 数量 / Maximum claims to return.",
+            },
+            "intent": {
+                "type": "string",
+                "enum": ["current_state", "historical", "preference", "tool", "procedure"],
+                "description": "可选召回意图 / Optional recall intent.",
+            },
+        },
+        "required": ["query"],
+    }
+    description = schemas[0]["description"]
+    assert "何时用我" in description
+    assert "部署" in description
+    assert "端口占用" in description
+    assert "历史决策" in description
+    assert "When to use" in description
+    assert "deployment" in description
+    assert "occupied ports" in description
+    assert "prior decisions" in description
+    assert len(description.split()) <= 150
+
+
+def test_recall_tool_call_returns_compact_claim_lines_with_bounded_read_only_request(monkeypatch) -> None:
+    provider = HLMemProvider(timeout=30.0)
+    requests = []
+    payload = _bundle_payload("tool-query", ("first memory\nwith detail", "second memory"))
+    payload["items"].append(
+        {
+            "type": "episode",
+            "id": "episode-1",
+            "text": "non-claim memory",
+            "evidence": [],
+            "score": 0.7,
+        }
+    )
+
+    def recall_bundle(request, *, timeout=None, retry=True):
+        requests.append((request, timeout, retry))
+        return JsonResponse({"retrieval_bundle": payload})
+
+    monkeypatch.setattr(provider._client, "recall_bundle", recall_bundle)
+
+    result = json.loads(
+        provider.handle_tool_call(
+            "hl_mem_recall",
+            {"query": "target deployment history", "limit": 2, "intent": "historical"},
+        )
+    )
+
+    assert result == [
+        "claim-1 | first memory with detail | relevance=0.9000",
+        "claim-2 | second memory | relevance=0.8000",
+    ]
+    assert requests == [
+        (
+            {
+                "query": "target deployment history",
+                "session_id": None,
+                "limit": 2,
+                "intent": "historical",
+                "as_of": None,
+                "known_as_of": None,
+                "namespace": "default",
+                "token_budget": provider.settings.packed_context_token_budget,
+                "context_mode": "packed",
+            },
+            8.0,
+            False,
+        )
+    ]
+    assert provider.health()["tool_calls"] == 1
+    assert provider.delivery_receipts == ()
+
+
+def test_recall_tool_call_is_fail_open_when_circuit_is_open(monkeypatch) -> None:
+    provider = HLMemProvider(timeout=30.0)
+    provider._circuit_open_until = time.monotonic() + 60.0
+
+    def unexpected_recall(_payload, **_kwargs):
+        raise AssertionError("open circuit must not issue recall")
+
+    monkeypatch.setattr(provider._client, "recall_bundle", unexpected_recall)
+
+    assert json.loads(provider.handle_tool_call("hl_mem_recall", {"query": "known state"})) == []
+    assert provider.health()["tool_calls"] == 1
+    assert provider.health()["prefetch_failures"] == 1
+
+
+def test_system_prompt_block_explains_healthy_hybrid_memory_usage() -> None:
+    provider = HLMemProvider()
+
+    lines = provider.system_prompt_block().splitlines()
+
+    assert 3 <= len(lines) <= 5
+    assert "healthy" in lines[1]
+    assert "passive memory injection" in lines[1]
+    assert "hl_mem_recall" in provider.system_prompt_block()
+    assert "deployment" in provider.system_prompt_block()
+    assert "environment surprises" in provider.system_prompt_block()
 
 
 def test_summarize_observation_detects_strong_error_signals() -> None:
@@ -476,7 +600,9 @@ def test_three_consecutive_prefetch_failures_are_visible_and_degrade_prompt(monk
     assert any("consecutive_failures=3" in record.getMessage() for record in caplog.records)
     prompt = provider.system_prompt_block()
     assert "Degraded." in prompt
-    assert "Active. Relevant memories injected" not in prompt
+    assert "passive memory injection and hl_mem_recall may be unavailable" in prompt
+    assert 3 <= len(prompt.splitlines()) <= 5
+    assert "healthy" not in prompt
 
 
 def test_open_circuit_cache_miss_returns_empty_and_counts_failure(monkeypatch) -> None:

@@ -35,6 +35,17 @@ MAX_EPISODE_ERROR_BODY_LENGTH = 1_000
 EPISODE_GOAL_FALLBACK = "Complete tool-assisted task"
 MAX_DELIVERY_RECEIPTS = 128
 MAX_INJECTION_ATTEMPTS = 3
+HERMES_RECALL_TOOL_NAME = "hl_mem_recall"
+HERMES_RECALL_INTENTS = ("current_state", "historical", "preference", "tool", "procedure")
+HERMES_RECALL_TOOL_DESCRIPTION = (
+    "查询 hl_mem 长期记忆库中的历史事实。何时用我：部署、升级或运维前，先查目标机器的部署历史和已知状态；"
+    "遇到端口占用、版本不符、配置异常等环境意外时，查环境已知事实；需要历史决策及原因时查询。"
+    "当前对话已注入的记忆足够时，不必重复调用。 Search historical facts in hl_mem long-term memory. "
+    "When to use: before deployment, upgrade, or operations, check the target machine's deployment history and "
+    "known state; when surprises such as occupied ports, version mismatch, or abnormal configuration appear, check "
+    "known environment facts; when prior decisions or rationale are needed. Skip when memories already injected into "
+    "the current conversation are sufficient."
+)
 _ERROR_PATTERNS = (
     re.compile(r"^Traceback", re.MULTILINE),
     re.compile(r"^Error:", re.MULTILINE),
@@ -160,6 +171,7 @@ class HLMemProvider:
         self._delivery_receipts: deque[DeliveryReceipt] = deque(maxlen=MAX_DELIVERY_RECEIPTS)
         self._pending_injections: deque[_PendingInjection] = deque()
         self._session_turns: dict[str, int] = {}
+        self._recall_tool_calls = 0
         self._delivery_health: dict[str, int | str | None] = {
             "deliveries": 0,
             "bundle_misses": 0,
@@ -196,10 +208,12 @@ class HLMemProvider:
             delivery = dict(self._delivery_health)
             delivery["pending_injections"] = len(self._pending_injections)
             delivery["retained_receipts"] = len(self._delivery_receipts)
+            tool_calls = self._recall_tool_calls
         return {
             "circuit_state": self.state,
             "prefetch_failures": int(prefetch["retrieval_failures"] or 0),
             "injection_successes": int(delivery["injection_successes"] or 0),
+            "tool_calls": tool_calls,
             "prefetch": prefetch,
             "delivery": delivery,
         }
@@ -230,16 +244,97 @@ class HLMemProvider:
             return "hl_mem Hermes 集成未启用；在 hl_mem.toml [hermes] 设置 enabled=true 开启"
         return ""
 
-    def get_tool_schemas(self) -> list[Any]:
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
         """返回提供器暴露的工具定义。"""
-        return []
+        return [
+            {
+                "name": HERMES_RECALL_TOOL_NAME,
+                "description": HERMES_RECALL_TOOL_DESCRIPTION,
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000,
+                            "description": "要查询的历史事实 / Historical facts to search for.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100,
+                            "default": 5,
+                            "description": "最多返回的 claim 数量 / Maximum claims to return.",
+                        },
+                        "intent": {
+                            "type": "string",
+                            "enum": list(HERMES_RECALL_INTENTS),
+                            "description": "可选召回意图 / Optional recall intent.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            }
+        ]
+
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
+        """执行 Hermes 暴露的只读主动召回工具，并返回紧凑 JSON 文本列表。"""
+        if tool_name != HERMES_RECALL_TOOL_NAME:
+            raise ValueError(f"unsupported hl_mem tool: {tool_name}")
+        with self._delivery_lock:
+            self._recall_tool_calls += 1
+
+        query = args.get("query")
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("query must be a non-empty string")
+        limit = args.get("limit", 5)
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer between 1 and 100")
+        intent = args.get("intent")
+        if intent is not None and intent not in HERMES_RECALL_INTENTS:
+            raise ValueError(f"intent must be one of: {', '.join(HERMES_RECALL_INTENTS)}")
+
+        bundle = self._prefetch_cache.fetch_now(
+            str(kwargs.get("session_id") or self._session_id),
+            query,
+            limit=limit,
+            intent=intent,
+            namespace="default",
+            token_budget=self._effective_token_budget(None),
+        )
+        if bundle is None:
+            return "[]"
+        claims = []
+        for item in bundle.items:
+            if item.type != "claim":
+                continue
+            text = " ".join(item.text.split())
+            relevance = "n/a" if item.score is None else f"{item.score:.4f}"
+            claims.append(f"{item.id} | {text} | relevance={relevance}")
+            if len(claims) >= limit:
+                break
+        return json.dumps(claims, ensure_ascii=False, separators=(",", ":"))
 
     def system_prompt_block(self) -> str:
         """返回注入 Hermes 系统提示词的记忆状态。"""
         consecutive_failures = int(self._prefetch_cache.health()["consecutive_failures"] or 0)
         if self.state != "closed" or consecutive_failures >= 3:
-            return "# hl_mem Memory\nDegraded. Memory recall is temporarily unavailable; continuing without memory context."
-        return "# hl_mem Memory\nActive. Relevant memories injected into context."
+            return (
+                "# hl_mem Memory\n"
+                "Status: Degraded.\n"
+                "The passive memory injection and hl_mem_recall may be unavailable; continue without assuming memory "
+                "context.\n"
+                "Do not treat a missing result as proof that no history exists.\n"
+                "Retry only after the memory service recovers."
+            )
+        return (
+            "# hl_mem Memory\n"
+            "Status: healthy — passive memory injection and the read-only hl_mem_recall tool are available.\n"
+            "Use hl_mem_recall before deployment/upgrade/operations, when environment surprises appear, or when prior "
+            "decisions matter.\n"
+            "Skip it when the memories already injected into this conversation are sufficient."
+        )
 
     def initialize(self, session_id: str | None = None, **kwargs: Any) -> None:
         """初始化健康状态，或保存 Hermes 提供的会话上下文。"""
