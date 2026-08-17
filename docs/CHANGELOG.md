@@ -1,5 +1,15 @@
 # HL-Mem 变更记录
 
+## v0.28.5（2026-08-17）
+
+- 修复 Hermes 注入链路的两轮时序缺陷：Hermes 在轮末以当轮文本 A 排队预取、轮初以新 query B 消费，而旧 provider 只接受包含 query hash 的完整缓存键命中，A≠B 时直接返回空。现在缓存 miss 会复用既有熔断器执行一次无重试、最长 2 秒的同步按需 recall；成功结果继续走 materialize、delivery receipt 与 injected 标记的原链路。
+- 对齐 `RecallInput.query` 的 2000 字符边界，后台预取和按需召回都在发送前确定性截断，避免插件/daemon 版本漂移触发超长 query 422。daemon 响应增加 `X-HL-Mem-Version`，客户端对 422 记录去除 `input` 后的有界字段级 detail，以及 client/server 双端版本。
+- 增强失败可见性：provider health 暴露累计 `prefetch_failures` 与 `injection_successes`；连续 3 次 prefetch 失败起升级 ERROR，成功 recall 会清零连续失败；熔断或超时仍 fail-open 返回空上下文并计数。degraded 或熔断状态下的 `system_prompt_block()` 改为明确降级，不再宣称记忆已经 injected。
+- 新增真实 daemon 两轮回归：`queue(A) → prefetch(B≠A)` 必须发生 B 的按需 recall、调用 materialize，并在 lifecycle flush 后把 `retrieval_feedback.injected` 从 0 更新为 1；另覆盖 2000 字符契约、2 秒按需边界、熔断计数、三连败 ERROR/degraded、422 脱敏双版本与 daemon 版本响应头。
+- 事件复盘：历史日志中 639 次 bundle 请求有 548 次成功、91 次 422，但成功 bundle 全属于轮末 A 的缓存项，下一轮 B 从未命中，因此 materialize 调用为 0、Hermes 注入导致的 injected 标记为 0；也就是说 548 次成功 bundle 从未进入真正的注入链路。422 仅是约 14% 的次因，主因是缓存生产/消费协议不匹配与失败状态长期不透明。
+- 修复全量门禁暴露的 Windows 资源释放缺口：`TokenBudget` 构造与只读统计不再误把 SQLite context manager 当作连接关闭器，改为在 `finally` 中显式 close，避免评测临时目录退出时 `snapshot.budget.db` 因句柄占用触发 WinError 32。
+- 本热修不新增配置键或数据库 migration，不改服务端检索、排序、dedup、冲突或 `audit_only` 语义；REST/MCP 业务 schema 与 Hermes hook 公开契约保持不变。
+
 ## v0.28.4（2026-08-17）
 
 - 限制摄入期去重候选的持久归档下限：`IngestService` 写入新 Claim 时，仅当与既有语义候选的余弦相似度 ≥ `INGEST_DEDUP_PAIR_SIMILARITY_FLOOR`（0.88）才将灰色地带 pair 记入 `dedup_pairs` 审查队列。此前任何相似度都会被记录，导致低价值（<0.88）候选在每日 `ORDER BY similarity DESC` 审查队列尾部无限累积（实测单日可新增上百条）。
