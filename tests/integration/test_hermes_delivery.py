@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi.testclient import TestClient
 
+from hl_mem import __version__
 from hl_mem.adapters.hermes.provider import HLMemProvider
 from hl_mem.api.server import create_app
 from hl_mem.settings import Settings
@@ -120,3 +121,97 @@ def test_prefetch_is_receipt_free_and_each_delivery_is_fresh_and_injected(tmp_pa
         )
         assert submitted.status_code == 200
         assert submitted.json()["updated"] is True
+
+
+def test_two_turn_query_miss_recalls_on_demand_materializes_and_marks_injected(tmp_path, monkeypatch) -> None:
+    app = create_app(tmp_path / "hermes-two-turn.db")
+    with TestClient(app) as daemon:
+        connection = app.state.db.open()
+        _seed_claim(connection)
+        requests = []
+
+        def daemon_post(
+            url: str,
+            *,
+            json: dict,
+            timeout: float,
+            headers: dict[str, str] | None = None,
+        ) -> httpx.Response:
+            del timeout
+            path = urlsplit(url).path
+            requests.append((path, json))
+            return daemon.post(path, json=json, headers=headers)
+
+        monkeypatch.setattr(httpx, "post", daemon_post)
+        provider = HLMemProvider(settings=Settings(hermes_url="http://memory.test", hermes_timeout=2))
+        request = {
+            "session_id": "session-1",
+            "limit": 1,
+            "intent": "current_state",
+            "namespace": "default",
+            "token_budget": 100,
+        }
+
+        provider.queue_prefetch("previous turn topic", **request)
+        provider._prefetch_cache.drain(2.0)  # noqa: SLF001
+        rendered = provider.prefetch("likes tea", **request)
+
+        assert rendered == "likes tea\nrelation: user → likes → tea"
+        bundle_queries = [payload["query"] for path, payload in requests if path == "/v1/internal/retrieval-bundles"]
+        assert bundle_queries == ["previous turn topic", "likes tea"]
+        assert sum(path == "/v1/internal/context-packets/materialize" for path, _ in requests) == 1
+        assert connection.execute("SELECT injected FROM retrieval_feedback").fetchone()[0] == 0
+
+        assert provider.flush_delivery_receipts() == 1
+        assert connection.execute("SELECT injected FROM retrieval_feedback").fetchone()[0] == 1
+        health = provider.health()
+        assert health["prefetch_failures"] == 0
+        assert health["injection_successes"] == 1
+
+
+def test_prefetch_truncates_query_to_recall_input_contract(tmp_path, monkeypatch) -> None:
+    app = create_app(tmp_path / "hermes-query-boundary.db")
+    with TestClient(app) as daemon:
+        sent_queries = []
+
+        def daemon_post(
+            url: str,
+            *,
+            json: dict,
+            timeout: float,
+            headers: dict[str, str] | None = None,
+        ) -> httpx.Response:
+            del timeout
+            path = urlsplit(url).path
+            if path == "/v1/internal/retrieval-bundles":
+                sent_queries.append(json["query"])
+            return daemon.post(path, json=json, headers=headers)
+
+        monkeypatch.setattr(httpx, "post", daemon_post)
+        provider = HLMemProvider(settings=Settings(hermes_url="http://memory.test", hermes_timeout=2))
+        long_query = "q" * 2_500
+
+        provider.queue_prefetch(long_query, session_id="session-1")
+        provider._prefetch_cache.drain(2.0)  # noqa: SLF001
+
+        budget = provider.settings.packed_context_token_budget
+        entry = provider._prefetch_cache.inspect(  # noqa: SLF001
+            "session-1",
+            long_query,
+            token_budget=budget,
+        )
+        assert entry is not None
+        assert entry.status == "completed"
+        assert sent_queries == ["q" * 2_000]
+
+
+def test_daemon_validation_response_reports_server_version(tmp_path) -> None:
+    app = create_app(tmp_path / "hermes-version-header.db")
+    with TestClient(app) as daemon:
+        response = daemon.post(
+            "/v1/internal/retrieval-bundles",
+            json={"query": "q" * 2_001},
+        )
+
+        assert response.status_code == 422
+        assert response.headers["X-HL-Mem-Version"] == __version__

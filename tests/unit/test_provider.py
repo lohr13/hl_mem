@@ -1,7 +1,10 @@
+import logging
 import threading
+import time
 
 import httpx
 
+from hl_mem import __version__
 from hl_mem.adapters.hermes.prefetch import PrefetchCache
 from hl_mem.adapters.hermes.provider import (
     MAX_DELIVERY_RECEIPTS,
@@ -399,6 +402,109 @@ def test_prefetch_success_timeout_and_circuit(monkeypatch) -> None:
     provider.queue_prefetch("recovered")
     provider._prefetch_cache.drain(2.0)
     assert provider.prefetch("recovered") == "cached memory"
+
+
+def test_cache_miss_runs_one_bounded_on_demand_recall(monkeypatch) -> None:
+    provider = HLMemProvider(timeout=30.0)
+    recall_calls = []
+
+    def recall_bundle(payload, *, timeout=None, retry=True):
+        recall_calls.append((payload, timeout, retry))
+        return JsonResponse({"retrieval_bundle": _bundle_payload("on-demand-query")})
+
+    monkeypatch.setattr(provider._client, "recall_bundle", recall_bundle)
+    monkeypatch.setattr(
+        provider._client,
+        "materialize_context_packet",
+        lambda bundle: JsonResponse({"context_packet": _packet_payload(bundle)}),
+    )
+
+    rendered = provider.prefetch("next query", session_id="session-1")
+
+    assert rendered == "cached memory"
+    assert len(recall_calls) == 1
+    payload, timeout, retry = recall_calls[0]
+    assert payload["query"] == "next query"
+    assert payload["session_id"] == "session-1"
+    assert payload["context_mode"] == "packed"
+    assert timeout == 2.0
+    assert retry is False
+    assert provider.health()["delivery"]["bundle_misses"] == 1
+
+
+def test_three_consecutive_prefetch_failures_are_visible_and_degrade_prompt(monkeypatch, caplog) -> None:
+    provider = HLMemProvider(timeout=30.0)
+
+    def fail_recall(_payload, **_kwargs):
+        raise httpx.ReadTimeout("on-demand recall timed out")
+
+    monkeypatch.setattr(provider._client, "recall_bundle", fail_recall)
+
+    with caplog.at_level(logging.WARNING, logger="hl_mem.adapters.hermes.prefetch"):
+        assert provider.prefetch("query-1") == ""
+        assert provider.prefetch("query-2") == ""
+        assert provider.prefetch("query-3") == ""
+
+    health = provider.health()
+    assert health["prefetch_failures"] == 3
+    assert health["prefetch"]["consecutive_failures"] == 3
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
+    assert any("consecutive_failures=3" in record.getMessage() for record in caplog.records)
+    prompt = provider.system_prompt_block()
+    assert "Degraded." in prompt
+    assert "Active. Relevant memories injected" not in prompt
+
+
+def test_open_circuit_cache_miss_returns_empty_and_counts_failure(monkeypatch) -> None:
+    provider = HLMemProvider(timeout=30.0)
+    provider._circuit_open_until = time.monotonic() + 60.0
+
+    def unexpected_recall(_payload, **_kwargs):
+        raise AssertionError("open circuit must not issue recall")
+
+    monkeypatch.setattr(provider._client, "recall_bundle", unexpected_recall)
+
+    assert provider.prefetch("query while open") == ""
+    health = provider.health()
+    assert health["prefetch_failures"] == 1
+    assert health["prefetch"]["consecutive_failures"] == 1
+
+
+def test_prefetch_422_log_redacts_input_and_reports_both_versions(monkeypatch, caplog) -> None:
+    provider = HLMemProvider(timeout=30.0)
+
+    def reject_recall(_payload, **_kwargs):
+        request = httpx.Request("POST", "http://memory.test/v1/internal/retrieval-bundles")
+        response = httpx.Response(
+            422,
+            request=request,
+            headers={"X-HL-Mem-Version": "0.27.9"},
+            json={
+                "detail": [
+                    {
+                        "type": "string_too_long",
+                        "loc": ["body", "query"],
+                        "msg": "String should have at most 2000 characters",
+                        "input": "private conversation content",
+                    }
+                ]
+            },
+        )
+        raise httpx.HTTPStatusError("validation failed", request=request, response=response)
+
+    monkeypatch.setattr(provider._client, "recall_bundle", reject_recall)
+
+    with caplog.at_level(logging.WARNING, logger="hl_mem.adapters.hermes.prefetch"):
+        assert provider.prefetch("query") == ""
+
+    diagnostic = "\n".join(record.getMessage() for record in caplog.records)
+    assert "status=422" in diagnostic
+    assert f"client_version={__version__}" in diagnostic
+    assert "server_version=0.27.9" in diagnostic
+    assert "string_too_long" in diagnostic
+    assert "body" in diagnostic
+    assert "query" in diagnostic
+    assert "private conversation content" not in diagnostic
 
 
 def test_prefetch_forwards_parameters_isolates_keys_and_caches_no_receipts(
