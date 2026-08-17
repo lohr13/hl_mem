@@ -113,6 +113,7 @@ def main() -> int:
         handoff = read("docs/HANDOFF.md")
         capability_matrix = read("docs/capability-matrix.md")
         changelog = read("docs/CHANGELOG.md")
+        agents_md = read("AGENTS.md")
 
         errors: list[str] = []
         if project_version != version:
@@ -146,6 +147,12 @@ def main() -> int:
             r"\*\*版本\*\*[：:]\s*v?(\d+\.\d+\.\d+)",
             version,
             "HANDOFF version",
+        )
+        errors += check_value(
+            agents_md,
+            r"\*\*当前版本[：:]\s*v?(\d+\.\d+\.\d+)",
+            version,
+            "AGENTS.md version",
         )
         errors += check_value(
             capability_matrix,
