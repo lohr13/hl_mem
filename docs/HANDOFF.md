@@ -1,12 +1,12 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-17
+> 最后更新：2026-08-18
 
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.28.5
-- **阶段**：v0.28.5 hotfix 准备；tag、Release 与 PyPI 由维护者验收后执行
+- **版本**：v0.28.6
+- **阶段**：v0.28.6 hotfix 准备；tag、Release 与 PyPI 由维护者验收后执行
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：44 migrations（SQL 001–044），只允许向前迁移
@@ -14,6 +14,8 @@
 
 ## v0.28 已交付
 
+- 召回 REST/MCP 主路径使用 WAL 只读连接；access、exposure、自动复活、召回审计与 query-expansion span
+  均移出请求线程，持久副作用由 `deferred_tasks` 幂等重试并最终一致落库。Hermes 按需召回超时默认 8 秒。
 - forget、archived cleanup 与 restore 共用可审计的物理删除语义；独立 tombstone sidecar、主库 identity
   绑定、backup manifest v2 和 restore replay 共同防止旧备份复活已删内容，语义不清时 fail-closed。
 - migration 044 为关系边增加 valid time，并在终态 Claim 转移时关闭边；relation expansion 同时校验边和

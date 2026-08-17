@@ -1,5 +1,14 @@
 # HL-Mem 变更记录
 
+## v0.28.6（2026-08-18）
+
+- 根治提取高峰期的 SQLite 写锁型召回延迟：REST recall、内部 retrieval bundle/context packet materialize 与 MCP recall 统一使用 `mode=ro`、`query_only=ON` 的独立连接池，在 WAL 下不再与 claims 写事务争抢写锁；启动期完成迁移，召回请求内保持零同步 SQLite 写。
+- 新增有界的召回副作用 dispatcher：access count/last accessed、exposure feedback 与安全校验后的自动复活先非阻塞投递，再由单写线程写入现有 `deferred_tasks`；worker 高频消费并将业务变更与任务完成置于同一事务。access 以 query ID、exposure 以 delivery feedback ID 集合生成幂等键，失败按既有重试预算收敛；召回 audit 与 query-expansion span 也移出请求线程。
+- `/healthz.recall_side_effects` 继续按 access、feedback、audit 三类报告状态，计数明确为进程内 `submitted`、已写 durable task/审计表的 `persisted`、已完成最终业务写的 `completed`，并保留 `failures`/`last_error` 降级可见性。exposure 改为最终一致可见，不改变 feedback receipt 或 injected 标记契约。
+- Hermes 按需召回上限由 2 秒调整为默认 8 秒，并新增 `hermes.on_demand_recall_timeout_seconds` TOML 配置；纯检索仍以提取写锁高峰下小于 2 秒为目标，8 秒用于 query expansion LLM 的长尾容错。
+- 评估后不实现“客户端超时后把结果落入 prefetch cache”：Hermes 下一轮通常使用不同 query，完整缓存键无法复用；当前按需路径是同步 HTTP 调用，没有可注册的 in-flight future。为低概率重复 query 引入后台 future、取消、容量和关闭治理，收益不足以抵消复杂度。
+- 新增只读连接拒写、请求内零 SQLite 写、写锁竞争下小于 2 秒、deferred access/exposure/复活幂等与失败重试、异步 audit/span、8 秒默认值及 TOML 覆盖、两轮 Hermes 最终一致交付回归。未改检索、排序、rerank、dedup、冲突或 `audit_only` 语义；无新 migration，REST/MCP 业务 schema 不变。
+
 ## v0.28.5（2026-08-17）
 
 - 修复 Hermes 注入链路的两轮时序缺陷：Hermes 在轮末以当轮文本 A 排队预取、轮初以新 query B 消费，而旧 provider 只接受包含 query hash 的完整缓存键命中，A≠B 时直接返回空。现在缓存 miss 会复用既有熔断器执行一次无重试、最长 2 秒的同步按需 recall；成功结果继续走 materialize、delivery receipt 与 injected 标记的原链路。
