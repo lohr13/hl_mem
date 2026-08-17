@@ -21,11 +21,15 @@ class TokenBudget:
         self.path = Path(path)
         self._today = today
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS token_budget ("
-                "budget_date TEXT PRIMARY KEY, used_tokens INTEGER NOT NULL CHECK (used_tokens >= 0))"
-            )
+        connection = self._connect()
+        try:
+            with connection:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS token_budget ("
+                    "budget_date TEXT PRIMARY KEY, used_tokens INTEGER NOT NULL CHECK (used_tokens >= 0))"
+                )
+        finally:
+            connection.close()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5.0)
@@ -63,8 +67,11 @@ class TokenBudget:
     def get_stats(self) -> dict[str, int | str]:
         """返回今日预算上限、已用量和剩余额度。daily_limit<=0 时剩余为 -1（无限制）。"""
         current = self._today().isoformat()
-        with self._connect() as connection:
+        connection = self._connect()
+        try:
             row = connection.execute("SELECT used_tokens FROM token_budget WHERE budget_date=?", (current,)).fetchone()
+        finally:
+            connection.close()
         used = int(row[0]) if row else 0
         remaining = -1 if self.daily_limit <= 0 else max(0, self.daily_limit - used)
         return {
