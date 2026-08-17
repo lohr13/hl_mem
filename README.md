@@ -85,6 +85,33 @@ uv run hlmem server
 
 开发环境使用 `uv sync --dev`；安装后可运行 `hlmem doctor` 做只读诊断。SQLite 需要 FTS5，Python 官方发行版通常已包含。
 
+#### editable 源码部署的升级
+
+若生产机使用 `python -m pip install -e .` 安装，`site-packages` 中保存的是指向当前源码目录的链接。此时执行
+`python -m pip install -U hl-mem` 不会替换 checkout 中的源码，editable 安装仍会遮蔽后来安装的普通包。升级时必须先
+停止 API、Worker 和其他写入者，再通过 Git 更新源码；无外网机器可从审核过的 bundle 快进到目标提交：
+
+```bash
+# 联网部署
+git pull --ff-only
+
+# 离线部署（二选一）
+git fetch /mnt/releases/hl_mem.bundle main
+git merge --ff-only FETCH_HEAD
+```
+
+源码更新后，用项目虚拟环境的 pip 重新同步依赖和入口点，再重启服务。Linux 发行版的系统 Python 可能受 PEP 668
+保护并报 `externally-managed-environment`；不要使用 `sudo pip` 绕过，应创建或复用 venv：
+
+```bash
+cd /opt/hl_mem
+python3 -m venv .venv                 # 已存在时跳过
+env -u PYTHONPATH -u PYTHONHOME .venv/bin/python -m pip install -e .
+sudo systemctl restart hl-mem
+```
+
+Windows 对应使用 `scripts\hlmem-python.cmd -m pip install -e .`，然后通过实际的服务管理器或计划任务重启服务。
+
 #### 受污染宿主环境
 
 Hermes gateway 等宿主可能向子进程注入指向自身虚拟环境的 `PYTHONPATH` 或 `PYTHONHOME`。此时直接调用本仓库 `.venv` 的 Python，仍可能导入宿主环境中的包，并因 Python 版本不同而加载到不兼容的二进制扩展。从这类宿主运行源码时，请统一通过 launcher 启动：
@@ -100,6 +127,22 @@ scripts\hlmem-python.cmd -m hl_mem.cli doctor
 ```
 
 launcher 会清除两个污染变量、切换到仓库根目录，并固定使用 `.venv/Scripts/python.exe`。`start_hl_mem.sh` 和 `start_production.bat` 也委托给同一入口。
+
+如果 venv 内出现 `No module named pydantic_core._pydantic_core`、`ImportError` 或 Windows 的 `DLL load failed`，先检查
+`PYTHONPATH` / `PYTHONHOME`。仅激活 venv 不会清除宿主注入的这两个变量；运行 venv 内的 pip、doctor、server 等工具前，
+先移除它们：
+
+```bash
+# Windows Git Bash / MSYS
+env -u PYTHONPATH -u PYTHONHOME .venv/Scripts/python.exe -m hl_mem.cli doctor
+
+# Linux：当前 shell 后续命令都使用干净环境
+unset PYTHONPATH PYTHONHOME
+.venv/bin/python -m hl_mem.cli doctor
+```
+
+Windows `cmd.exe` 可直接使用上述 `scripts\hlmem-python.cmd`；它等价于先将两个变量置空，再调用仓库 venv。确认干净环境
+仍报错时，再在同一 venv 中重新安装依赖，避免把宿主 Python 的二进制扩展复制进来。
 
 ### 启用在线模型
 
@@ -122,7 +165,48 @@ hl-mem hermes upgrade --hermes-home <HERMES_HOME>
 
 ### 常驻部署与 systemd
 
-常驻部署使用 `scripts/healthcheck.py` 探测 `/healthz`，将重启和告警交给 systemd、Windows 服务管理器或容器编排平台。systemd 的 `WorkingDirectory` 必须包含 `hl_mem.toml` 和可选 `.env`。
+常驻部署使用 `scripts/healthcheck.py` 探测 `/healthz`，将重启和告警交给 systemd、Windows 计划任务或容器编排平台。
+systemd 的 `WorkingDirectory` 必须包含 `hl_mem.toml` 和可选 `.env`。
+
+#### Windows：计划任务探活 supervisor（推荐）
+
+仓库内的 `scripts/hlmem_supervisor.py` 是单次执行的静默 supervisor：每次运行复用 healthcheck 探测，健康时清零失败
+计数；端口仍被 HL-Mem 占用但 `/healthz` 连续 N 次失败时，校验进程归属后重启服务（N=3，当前默认值）。8200 端口
+无人监听时会立即启动，
+重启后有 60 秒冷却；状态和日志分别写入 `var/supervisor.state`、`var/supervisor.log`。以下示例假定仓库位于
+`D:\workspace\hl_agent\hl_mem`，路径中不含空格。
+
+1. 在管理员 `cmd.exe` 中准备 venv、配置并手动跑一次 supervisor。首次运行会启动服务；随后确认 healthcheck 成功：
+
+   ```bat
+   cd /d D:\workspace\hl_agent\hl_mem
+   py -3.11 -m venv .venv
+   scripts\hlmem-python.cmd -m pip install -e .
+   if not exist hl_mem.toml copy config.example.toml hl_mem.toml
+   scripts\hlmem-python.cmd scripts\hlmem_supervisor.py
+   scripts\hlmem-python.cmd scripts\healthcheck.py
+   ```
+
+   已有 `.venv` 或生产配置时跳过对应创建步骤，不要覆盖现有 `hl_mem.toml` / `.env`。
+
+2. 创建每 2 分钟运行一次的计划任务。任务使用 `pythonw.exe`，探活和重启均不弹控制台窗口；`SYSTEM` 账户还需对仓库、
+   `var/`、配置和 `.env` 有访问权限：
+
+   ```bat
+   schtasks /Create /TN "HL-Mem Supervisor" /SC MINUTE /MO 2 /ST 00:00 /RU SYSTEM /RL HIGHEST /TR "D:\workspace\hl_agent\hl_mem\.venv\Scripts\pythonw.exe D:\workspace\hl_agent\hl_mem\scripts\hlmem_supervisor.py" /F
+   schtasks /Run /TN "HL-Mem Supervisor"
+   ```
+
+3. 验证任务、健康状态和日志：
+
+   ```bat
+   schtasks /Query /TN "HL-Mem Supervisor" /V /FO LIST
+   D:\workspace\hl_agent\hl_mem\.venv\Scripts\python.exe D:\workspace\hl_agent\hl_mem\scripts\healthcheck.py
+   powershell -NoProfile -Command "Get-Content 'D:\workspace\hl_agent\hl_mem\var\supervisor.log' -Tail 50"
+   ```
+
+   计划任务的“上次运行结果”可能因一次探活失败显示非零，故障原因与是否已重启以 `supervisor.log` 为准。取消部署时运行
+   `schtasks /Delete /TN "HL-Mem Supervisor" /F`；删除任务不会删除数据库、日志或已经运行的服务进程。
 
 悬空冲突可先只读巡检，再显式应用安全修复；默认命令不修改数据库，`--apply` 只删除终态且双侧 Claim 均已缺失的 case：
 
