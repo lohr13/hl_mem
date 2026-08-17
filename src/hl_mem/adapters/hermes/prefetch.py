@@ -12,16 +12,26 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 from typing import Literal
 
+from hl_mem import __version__
 from hl_mem.adapters.hermes.http_client import HLMemHttpClient
 from hl_mem.application.context_packet import (
     RetrievalBundle,
     UnknownSchemaMajorError,
     retrieval_bundle_from_dict,
 )
+from hl_mem.http_utils import (
+    HL_MEM_VERSION_HEADER,
+    find_http_status_error,
+    sanitize_http_response_body,
+    validation_response_body,
+)
 
 logger = logging.getLogger(__name__)
 
 PrefetchStatus = Literal["pending", "completed", "expired"]
+MAX_RECALL_QUERY_LENGTH = 2_000
+MAX_ON_DEMAND_RECALL_TIMEOUT_SECONDS = 2.0
+PREFETCH_ERROR_THRESHOLD = 3
 
 
 class PrefetchOverloadedError(RuntimeError):
@@ -104,6 +114,7 @@ class PrefetchCache:
         self._schema_failures = 0
         self._overload_rejections = 0
         self._closed_rejections = 0
+        self._consecutive_failures = 0
         self._last_error: str | None = None
 
     def queue(
@@ -120,6 +131,7 @@ class PrefetchCache:
         projection_version: str | None = None,
     ) -> PrefetchKey:
         """按 key 去重一次后台 retrieval；不同 key 可同时执行。"""
+        query = _bounded_recall_query(query)
         key = self._key(
             session_id,
             query,
@@ -215,6 +227,7 @@ class PrefetchCache:
         projection_version: str | None = None,
     ) -> RetrievalBundle | None:
         """读取完整 key 对应的未过期 receipt-free bundle。"""
+        query = _bounded_recall_query(query)
         key = self._key(
             session_id,
             query,
@@ -232,6 +245,68 @@ class PrefetchCache:
                 return None
             return entry.bundle
 
+    def fetch_now(
+        self,
+        session_id: str,
+        query: str,
+        *,
+        limit: int = 10,
+        intent: str | None = None,
+        as_of: str | None = None,
+        known_as_of: str | None = None,
+        namespace: str = "default",
+        token_budget: int = 2000,
+        projection_version: str | None = None,
+    ) -> RetrievalBundle | None:
+        """缓存 miss 时执行一次受熔断器和短超时保护的同步 retrieval。"""
+        query = _bounded_recall_query(query)
+        key = self._key(
+            session_id,
+            query,
+            limit=limit,
+            intent=intent,
+            as_of=as_of,
+            known_as_of=known_as_of,
+            namespace=namespace,
+            token_budget=token_budget,
+            projection_version=projection_version,
+        )
+        with self._lock:
+            entry = self._expire_locked(key, self._clock())
+            if entry is not None and entry.status == "completed":
+                return entry.bundle
+            closed = self._closed
+        if closed:
+            error = PrefetchClosedError("prefetch cache is shut down")
+            self._handle_retrieval_failure(error)
+            return None
+
+        try:
+            bundle = self._retrieve(key, query, bounded=True)
+        except Exception as error:
+            self._handle_retrieval_failure(error)
+            return None
+
+        now = self._clock()
+        with self._lock:
+            self._consecutive_failures = 0
+            current = self._expire_locked(key, now)
+            if current is not None and current.status == "completed":
+                return current.bundle
+            if current is None:
+                try:
+                    self._make_room_locked()
+                except RuntimeError:
+                    return bundle
+            if current is None or current.status != "pending":
+                self._values[key] = PrefetchEntry(
+                    "completed",
+                    bundle,
+                    now,
+                    now + self.ttl_seconds,
+                )
+        return bundle
+
     def inspect(
         self,
         session_id: str,
@@ -246,6 +321,7 @@ class PrefetchCache:
         projection_version: str | None = None,
     ) -> PrefetchEntry | None:
         """返回 key 的可观测状态快照，读取时同步推进过期状态。"""
+        query = _bounded_recall_query(query)
         key = self._key(
             session_id,
             query,
@@ -337,6 +413,7 @@ class PrefetchCache:
                 "schema_failures": self._schema_failures,
                 "overload_rejections": self._overload_rejections,
                 "closed_rejections": self._closed_rejections,
+                "consecutive_failures": self._consecutive_failures,
                 "closed": self._closed,
                 "last_error": self._last_error,
             }
@@ -348,36 +425,8 @@ class PrefetchCache:
         query: str,
     ) -> None:
         try:
-            if not self.client.can_call():
-                raise RuntimeError("memory daemon circuit is open")
-            response = self.client.recall_bundle(
-                {
-                    "query": query,
-                    "session_id": key.session or None,
-                    "limit": key.limit,
-                    "intent": key.intent,
-                    "as_of": key.as_of,
-                    "known_as_of": key.known_as_of,
-                    "namespace": key.namespace,
-                    "token_budget": key.token_budget,
-                    "context_mode": "packed",
-                }
-            )
-            payload = response.json()
-            if not isinstance(payload, Mapping):
-                raise TypeError("retrieval bundle response must be an object")
-            raw_bundle = payload.get("retrieval_bundle")
-            if not isinstance(raw_bundle, Mapping):
-                raise TypeError("retrieval bundle response is missing retrieval_bundle")
-            bundle = retrieval_bundle_from_dict(raw_bundle)
-            self.client.on_success()
+            bundle = self._retrieve(key, query, bounded=False)
         except Exception as error:
-            schema_failure = isinstance(error, UnknownSchemaMajorError)
-            logger.warning(
-                "Hermes memory prefetch failed; bundle unavailable",
-                exc_info=True,
-            )
-            self.client.on_failure()
             with self._lock:
                 if self._values.get(key) is pending:
                     self._values[key] = PrefetchEntry(
@@ -387,10 +436,11 @@ class PrefetchCache:
                         self._clock(),
                         type(error).__name__,
                     )
-                    self._record_failure_locked(error, schema=schema_failure)
+            self._handle_retrieval_failure(error)
             return
 
         with self._lock:
+            self._consecutive_failures = 0
             if self._values.get(key) is pending:
                 self._values[key] = PrefetchEntry(
                     "completed",
@@ -398,6 +448,72 @@ class PrefetchCache:
                     pending.created_at,
                     self._clock() + self.ttl_seconds,
                 )
+
+    def _retrieve(
+        self,
+        key: PrefetchKey,
+        query: str,
+        *,
+        bounded: bool,
+    ) -> RetrievalBundle:
+        if not self.client.can_call():
+            raise RuntimeError("memory daemon circuit is open")
+        payload = {
+            "query": query,
+            "session_id": key.session or None,
+            "limit": key.limit,
+            "intent": key.intent,
+            "as_of": key.as_of,
+            "known_as_of": key.known_as_of,
+            "namespace": key.namespace,
+            "token_budget": key.token_budget,
+            "context_mode": "packed",
+        }
+        if bounded:
+            response = self.client.recall_bundle(
+                payload,
+                timeout=min(self.client.timeout, MAX_ON_DEMAND_RECALL_TIMEOUT_SECONDS),
+                retry=False,
+            )
+        else:
+            response = self.client.recall_bundle(payload)
+        response_payload = response.json()
+        if not isinstance(response_payload, Mapping):
+            raise TypeError("retrieval bundle response must be an object")
+        raw_bundle = response_payload.get("retrieval_bundle")
+        if not isinstance(raw_bundle, Mapping):
+            raise TypeError("retrieval bundle response is missing retrieval_bundle")
+        bundle = retrieval_bundle_from_dict(raw_bundle)
+        self.client.on_success()
+        return bundle
+
+    def _handle_retrieval_failure(self, error: Exception) -> None:
+        self.client.on_failure()
+        schema_failure = isinstance(error, UnknownSchemaMajorError)
+        with self._lock:
+            consecutive_failures = self._record_failure_locked(error, schema=schema_failure)
+        log = logger.error if consecutive_failures >= PREFETCH_ERROR_THRESHOLD else logger.warning
+        status_error = find_http_status_error(error)
+        if status_error is not None and status_error.response.status_code == 422:
+            server_version = sanitize_http_response_body(
+                status_error.response.headers.get(HL_MEM_VERSION_HEADER, "unknown"),
+                limit=64,
+            )
+            log(
+                "Hermes memory prefetch rejected status=422 client_version=%s server_version=%s "
+                "consecutive_failures=%d validation_detail=%s",
+                __version__,
+                server_version,
+                consecutive_failures,
+                validation_response_body(status_error.response),
+                exc_info=True,
+            )
+            return
+        log(
+            "Hermes memory prefetch failed; bundle unavailable consecutive_failures=%d",
+            consecutive_failures,
+            exc_info=True,
+        )
 
     def _discard_future(self, future: Future[None]) -> None:
         with self._lock:
@@ -482,11 +598,13 @@ class PrefetchCache:
         error: Exception,
         *,
         schema: bool,
-    ) -> None:
+    ) -> int:
         self._retrieval_failures += 1
+        self._consecutive_failures += 1
         if schema:
             self._schema_failures += 1
         self._last_error = type(error).__name__
+        return self._consecutive_failures
 
     def _key(
         self,
@@ -521,3 +639,8 @@ class PrefetchCache:
             token_budget=token_budget,
             projection_version=version,
         )
+
+
+def _bounded_recall_query(query: str) -> str:
+    """对齐服务端 RecallInput.query 的 2000 字符上限。"""
+    return query[:MAX_RECALL_QUERY_LENGTH]

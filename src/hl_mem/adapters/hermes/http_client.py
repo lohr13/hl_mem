@@ -87,9 +87,22 @@ class HLMemHttpClient:
 
         return retry_http(send_request) if retry else send_request()
 
-    def recall_bundle(self, payload: dict[str, Any]) -> httpx.Response:
+    def recall_bundle(
+        self,
+        payload: dict[str, Any],
+        *,
+        timeout: float | None = None,
+        retry: bool = True,
+    ) -> httpx.Response:
         """请求 receipt-free RetrievalBundle，不触发 exposure。"""
-        return self.post("/v1/internal/retrieval-bundles", payload)
+        if timeout is None and retry:
+            return self.post("/v1/internal/retrieval-bundles", payload)
+        return self._post(
+            "/v1/internal/retrieval-bundles",
+            payload,
+            retry=retry,
+            timeout=timeout,
+        )
 
     def materialize_context_packet(self, retrieval_bundle: dict[str, Any]) -> httpx.Response:
         """为缓存 bundle 请求本次 delivery 的新 Context Packet receipt。"""

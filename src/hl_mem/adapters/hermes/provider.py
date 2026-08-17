@@ -23,7 +23,7 @@ from hl_mem.application.context_packet import (
     UnknownSchemaMajorError,
     retrieval_bundle_to_dict,
 )
-from hl_mem.http_utils import sanitize_http_response_body
+from hl_mem.http_utils import validation_response_body
 from hl_mem.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -111,28 +111,9 @@ def _messages_after_last_user(messages: list[dict[str, Any]]) -> list[dict[str, 
     return messages if last_user_index is None else messages[last_user_index + 1 :]
 
 
-def _redact_validation_inputs(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _redact_validation_inputs(item) for key, item in value.items() if key != "input"}
-    if isinstance(value, list):
-        return [_redact_validation_inputs(item) for item in value]
-    return value
-
-
 def _validation_response_body(response: httpx.Response) -> str:
     """保留 422 诊断结构，但移除可能包含完整对话的 input。"""
-    try:
-        payload = response.json()
-    except (TypeError, ValueError, httpx.ResponseNotRead):
-        try:
-            return sanitize_http_response_body(response.text, limit=MAX_EPISODE_ERROR_BODY_LENGTH)
-        except httpx.ResponseNotRead:
-            return "<unavailable>"
-    payload = _redact_validation_inputs(payload)
-    return sanitize_http_response_body(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        limit=MAX_EPISODE_ERROR_BODY_LENGTH,
-    )
+    return validation_response_body(response, limit=MAX_EPISODE_ERROR_BODY_LENGTH)
 
 
 class HLMemProvider:
@@ -183,6 +164,7 @@ class HLMemProvider:
             "bundle_misses": 0,
             "materialization_failures": 0,
             "injection_failures": 0,
+            "injection_successes": 0,
             "injection_deferred": 0,
             "injection_retries": 0,
             "injection_abandoned": 0,
@@ -208,13 +190,16 @@ class HLMemProvider:
 
     def health(self) -> dict[str, Any]:
         """返回 Hermes prefetch/delivery 的无敏感内容健康快照。"""
+        prefetch = self._prefetch_cache.health()
         with self._delivery_lock:
             delivery = dict(self._delivery_health)
             delivery["pending_injections"] = len(self._pending_injections)
             delivery["retained_receipts"] = len(self._delivery_receipts)
         return {
             "circuit_state": self.state,
-            "prefetch": self._prefetch_cache.health(),
+            "prefetch_failures": int(prefetch["retrieval_failures"] or 0),
+            "injection_successes": int(delivery["injection_successes"] or 0),
+            "prefetch": prefetch,
             "delivery": delivery,
         }
 
@@ -250,6 +235,9 @@ class HLMemProvider:
 
     def system_prompt_block(self) -> str:
         """返回注入 Hermes 系统提示词的记忆状态。"""
+        consecutive_failures = int(self._prefetch_cache.health()["consecutive_failures"] or 0)
+        if self.state != "closed" or consecutive_failures >= 3:
+            return "# hl_mem Memory\nDegraded. Memory recall is temporarily unavailable; continuing without memory context."
         return "# hl_mem Memory\nActive. Relevant memories injected into context."
 
     def initialize(self, session_id: str | None = None, **kwargs: Any) -> None:
@@ -606,7 +594,19 @@ class HLMemProvider:
         if bundle is None:
             with self._delivery_lock:
                 self._delivery_health["bundle_misses"] = int(self._delivery_health["bundle_misses"] or 0) + 1
-            return ""
+            bundle = self._prefetch_cache.fetch_now(
+                session_id,
+                query,
+                limit=limit,
+                intent=intent,
+                as_of=as_of,
+                known_as_of=known_as_of,
+                namespace=namespace,
+                token_budget=token_budget,
+                projection_version=projection_version,
+            )
+            if bundle is None:
+                return ""
 
         try:
             packet = self._materialize_prefetched_bundle(bundle)
@@ -726,6 +726,10 @@ class HLMemProvider:
         try:
             self._client.mark_feedback_injected(list(receipt.feedback_ids))
             self._client.on_success()
+            with self._delivery_lock:
+                self._delivery_health["injection_successes"] = (
+                    int(self._delivery_health["injection_successes"] or 0) + 1
+                )
             return True
         except Exception as error:
             self._client.on_failure()

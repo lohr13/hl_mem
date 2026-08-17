@@ -54,6 +54,7 @@ from hl_mem.experience.service import (
     InvalidStateTransitionError,
     backprop_episode_reward,
 )
+from hl_mem.http_utils import HL_MEM_VERSION_HEADER
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
@@ -133,6 +134,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             )
 
 
+class VersionHeaderMiddleware(BaseHTTPMiddleware):
+    """在成功与验证失败响应上暴露 daemon 版本，供跨版本诊断。"""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        response.headers[HL_MEM_VERSION_HEADER] = __version__
+        return response
+
+
 def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     """使用已加载的统一配置组装数据库、应用服务、审计和全部 REST 路由。"""
     if not isinstance(settings, Settings):
@@ -164,6 +174,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     app.state.audit = audit
     app.add_middleware(RequestSizeLimitMiddleware, max_request_body=settings.max_request_body)
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(VersionHeaderMiddleware)
 
     @app.exception_handler(NotFoundError)
     async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:

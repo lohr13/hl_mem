@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Callable, Iterable, Iterator
@@ -13,6 +14,7 @@ import httpx
 
 T = TypeVar("T")
 RetryCallback = Callable[[int, int, float, BaseException], None]
+HL_MEM_VERSION_HEADER = "X-HL-Mem-Version"
 
 
 def exception_chain(error: BaseException) -> Iterator[BaseException]:
@@ -57,6 +59,31 @@ def sanitize_http_response_body(body: str, *, limit: int = 500, secrets: Iterabl
     )
     sanitized = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-[REDACTED]", sanitized)
     return sanitized[:limit]
+
+
+def _redact_validation_inputs(value: Any) -> Any:
+    """递归移除 Pydantic 422 detail 中可能包含请求正文的 input。"""
+    if isinstance(value, dict):
+        return {key: _redact_validation_inputs(item) for key, item in value.items() if key != "input"}
+    if isinstance(value, list):
+        return [_redact_validation_inputs(item) for item in value]
+    return value
+
+
+def validation_response_body(response: httpx.Response, *, limit: int = 1_000) -> str:
+    """保留字段级 422 原因，同时移除原始 input 并限制日志长度。"""
+    try:
+        payload = response.json()
+    except (TypeError, ValueError, httpx.ResponseNotRead):
+        try:
+            return sanitize_http_response_body(response.text, limit=limit)
+        except httpx.ResponseNotRead:
+            return "<unavailable>"
+    payload = _redact_validation_inputs(payload)
+    return sanitize_http_response_body(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        limit=limit,
+    )
 
 
 def _provider_error_fields(
