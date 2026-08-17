@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from hl_mem.api.server import create_app
 from hl_mem.protocols import RelationProposal
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.workers.deferred import process_recall_side_effect_tasks
 from hl_mem.workers.discover_relations import discover_relations
 from hl_mem.workers.ttl import expire_claims
 
@@ -23,6 +25,14 @@ def _configure_test_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HL_MEM_QUERY_EXPANSION_MODE", "off")
     monkeypatch.setenv("HL_MEM_RELATION_DISCOVERY_MODE", "off")
     monkeypatch.setenv("HL_MEM_FEEDBACK_LIFECYCLE_MODE", "on")
+
+
+def _settle_recall_side_effects(app, connection) -> None:
+    assert app.state.recall_side_effects.drain(2.0)
+    process_recall_side_effect_tasks(
+        connection,
+        now=(datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+    )
 
 
 def test_procedure_episode_feedback_reaches_usefulness(
@@ -53,6 +63,8 @@ def test_procedure_episode_feedback_reaches_usefulness(
             for item in recalled["context_packet"]["items"]
             if item["type"] == "episode" and item["id"] == episode_id
         )
+        connection = app.state.db.open()
+        _settle_recall_side_effects(app, connection)
         response = client.post(
             "/v1/feedback",
             json={
@@ -62,14 +74,10 @@ def test_procedure_episode_feedback_reaches_usefulness(
             },
         )
         assert response.status_code == 200
-        row = (
-            app.state.db.open()
-            .execute(
-                "SELECT helpful_count,outcome_count FROM memory_usefulness " "WHERE memory_type=? AND memory_id=?",
-                ("episode", episode_id),
-            )
-            .fetchone()
-        )
+        row = connection.execute(
+            "SELECT helpful_count,outcome_count FROM memory_usefulness " "WHERE memory_type=? AND memory_id=?",
+            ("episode", episode_id),
+        ).fetchone()
         assert tuple(row) == (1, 1)
 
 
@@ -107,6 +115,7 @@ def test_api_feedback_bonus_flows_into_ttl_valid_to(
                     "response_format": "context_packet",
                 },
             ).json()
+            _settle_recall_side_effects(app, connection)
             client.post(
                 "/v1/feedback",
                 json={
