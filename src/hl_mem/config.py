@@ -6,3 +6,6 @@ from __future__ import annotations
 
 # 写入期、同 subject 候选的 best-match 算法阈值。
 DEDUP_SEMANTIC_THRESHOLD = 0.82
+
+# 写入期、同 subject 语义灰区候选进入持久审查队列的相似度下限。
+INGEST_DEDUP_PAIR_SIMILARITY_FLOOR = 0.88

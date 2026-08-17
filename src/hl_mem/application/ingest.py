@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from itertools import combinations
 from typing import Any, Sequence
 
+from hl_mem.config import INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import (
     is_mutually_exclusive_attribute,
@@ -575,7 +576,11 @@ class IngestService:
                 emit_audit_events()
                 return StoreClaimResult(result_id, "stored", "concurrent_duplicate")
 
-            if semantic_candidate_id is not None and semantic_candidate_similarity is not None:
+            if (
+                semantic_candidate_id is not None
+                and semantic_candidate_similarity is not None
+                and semantic_candidate_similarity >= INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
+            ):
                 _insert_pending_dedup_pair(
                     connection,
                     semantic_candidate_id,

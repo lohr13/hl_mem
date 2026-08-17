@@ -1,4 +1,7 @@
+import math
+
 from hl_mem.application.ingest import IngestService
+from hl_mem.core.vector import pack_vector
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.storage.database import Database
@@ -6,6 +9,20 @@ from hl_mem.storage.database import Database
 
 def store_extracted(conn, claim, event, now, embedder, **kw):
     return IngestService.store_extracted(conn, claim, event, now, embedder, **kw)
+
+
+class _PairSimilarityEmbedder(FakeEmbedder):
+    def __init__(self, similarity: float) -> None:
+        super().__init__(2)
+        self._vectors = iter(
+            (
+                pack_vector([1.0, 0.0]),
+                pack_vector([similarity, math.sqrt(1.0 - similarity * similarity)]),
+            )
+        )
+
+    def embed_one(self, _text: str) -> bytes:
+        return next(self._vectors)
 
 
 def test_fact_hash_exact_duplicate_merges_evidence(tmp_path) -> None:
@@ -82,14 +99,11 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
     database.close()
 
 
-def test_semantic_candidate_is_inserted_and_queued_for_async_judgment(tmp_path) -> None:
-    class ConstantEmbedder(FakeEmbedder):
-        def embed_one(self, _text: str) -> bytes:
-            return super().embed_one("constant-vector")
-
+def test_semantic_candidate_at_pair_similarity_floor_is_queued_for_async_judgment(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("hl_mem.application.ingest.cosine_similarity", lambda *_args: 0.88)
     database = Database(tmp_path / "semantic-candidate.db")
     connection = database.open()
-    embedder = ConstantEmbedder(8)
+    embedder = _PairSimilarityEmbedder(0.88)
     event = {
         "tenant_id": "default",
         "actor_type": "user",
@@ -132,7 +146,49 @@ def test_semantic_candidate_is_inserted_and_queued_for_async_judgment(tmp_path) 
     assert pair["right_claim_id"] == second.claim_id
     assert pair["decision"] is None
     assert pair["policy_version"] == "v2"
-    assert pair["similarity"] == 1.0
+    assert pair["similarity"] == 0.88
+    database.close()
+
+
+def test_semantic_candidate_below_pair_similarity_floor_is_not_recorded(tmp_path) -> None:
+    database = Database(tmp_path / "low-similarity-semantic-candidate.db")
+    connection = database.open()
+    embedder = _PairSimilarityEmbedder(0.87)
+    event = {
+        "tenant_id": "default",
+        "actor_type": "user",
+        "occurred_at": "2026-07-21T10:00:00+00:00",
+    }
+    store_extracted(
+        connection,
+        ExtractedClaim(
+            "事实",
+            "supports offline recall",
+            subject="hl_mem",
+            canonical_attribute="fact.capability",
+            canonical_slot="fact.capability",
+        ),
+        {**event, "id": "event-low-similarity-1"},
+        "2026-07-21T10:01:00+00:00",
+        embedder,
+    )
+    second = store_extracted(
+        connection,
+        ExtractedClaim(
+            "事实",
+            "can recall memories without a server",
+            subject="hl_mem",
+            canonical_attribute="fact.capability",
+            canonical_slot="fact.capability",
+        ),
+        {**event, "id": "event-low-similarity-2"},
+        "2026-07-21T10:02:00+00:00",
+        embedder,
+    )
+
+    assert second.reason == "inserted"
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 2
+    assert connection.execute("SELECT count(*) FROM dedup_pairs").fetchone()[0] == 0
     database.close()
 
 
