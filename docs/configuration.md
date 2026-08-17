@@ -192,6 +192,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `hermes.circuit_open_seconds` | 数值 | `60.0` | > 0 | `hermes_circuit_open_seconds` |
 | `hermes.enabled` | 布尔值 | `false` | `true`、`false` | `hermes_enabled` |
 | `hermes.home` | 字符串 | 未设置 | 非空字符串；可省略 | `hermes_home` |
+| `hermes.on_demand_recall_timeout_seconds` | 数值 | `8.0` | > 0 | `hermes_on_demand_recall_timeout_seconds` |
 | `hermes.prefetch_cache_ttl_seconds` | 数值 | `300.0` | > 0 | `hermes_prefetch_cache_ttl_seconds` |
 | `hermes.timeout` | 整数 | `30` | >= 1 | `hermes_timeout` |
 | `hermes.url` | 字符串 | `"http://127.0.0.1:8200"` | 任意字符串 | `hermes_url` |

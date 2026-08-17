@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 PrefetchStatus = Literal["pending", "completed", "expired"]
 MAX_RECALL_QUERY_LENGTH = 2_000
-MAX_ON_DEMAND_RECALL_TIMEOUT_SECONDS = 2.0
+MAX_ON_DEMAND_RECALL_TIMEOUT_SECONDS = 8.0
 PREFETCH_ERROR_THRESHOLD = 3
 
 
@@ -81,6 +81,7 @@ class PrefetchCache:
         max_workers: int = 4,
         max_entries: int = 256,
         max_pending: int | None = None,
+        on_demand_timeout_seconds: float = MAX_ON_DEMAND_RECALL_TIMEOUT_SECONDS,
     ) -> None:
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be positive")
@@ -93,11 +94,14 @@ class PrefetchCache:
         resolved_max_pending = min(max_workers * 2, max_entries - 1) if max_pending is None else max_pending
         if resolved_max_pending < 1 or resolved_max_pending >= max_entries:
             raise ValueError("max_pending must be positive and smaller than max_entries")
+        if on_demand_timeout_seconds <= 0:
+            raise ValueError("on_demand_timeout_seconds must be positive")
         self.client = client
         self.ttl_seconds = ttl_seconds
         self.projection_version = projection_version
         self.max_entries = max_entries
         self.max_pending = resolved_max_pending
+        self.on_demand_timeout_seconds = on_demand_timeout_seconds
         self._clock = clock
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(
@@ -472,7 +476,7 @@ class PrefetchCache:
         if bounded:
             response = self.client.recall_bundle(
                 payload,
-                timeout=min(self.client.timeout, MAX_ON_DEMAND_RECALL_TIMEOUT_SECONDS),
+                timeout=min(self.client.timeout, self.on_demand_timeout_seconds),
                 retry=False,
             )
         else:

@@ -427,9 +427,33 @@ def test_cache_miss_runs_one_bounded_on_demand_recall(monkeypatch) -> None:
     assert payload["query"] == "next query"
     assert payload["session_id"] == "session-1"
     assert payload["context_mode"] == "packed"
-    assert timeout == 2.0
+    assert timeout == 8.0
     assert retry is False
     assert provider.health()["delivery"]["bundle_misses"] == 1
+
+
+def test_on_demand_recall_timeout_is_configurable(monkeypatch) -> None:
+    provider = HLMemProvider(
+        settings=Settings(
+            hermes_timeout=30,
+            hermes_on_demand_recall_timeout_seconds=6.5,
+        )
+    )
+    timeouts = []
+
+    def recall_bundle(_payload, *, timeout=None, retry=True):
+        timeouts.append((timeout, retry))
+        return JsonResponse({"retrieval_bundle": _bundle_payload("configured-timeout")})
+
+    monkeypatch.setattr(provider._client, "recall_bundle", recall_bundle)
+    monkeypatch.setattr(
+        provider._client,
+        "materialize_context_packet",
+        lambda bundle: JsonResponse({"context_packet": _packet_payload(bundle)}),
+    )
+
+    assert provider.prefetch("configured", session_id="session-1") == "cached memory"
+    assert timeouts == [(6.5, False)]
 
 
 def test_three_consecutive_prefetch_failures_are_visible_and_degrade_prompt(monkeypatch, caplog) -> None:

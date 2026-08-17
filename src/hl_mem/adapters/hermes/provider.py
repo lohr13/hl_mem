@@ -151,6 +151,7 @@ class HLMemProvider:
             self._client,
             resolved_settings.hermes_prefetch_cache_ttl_seconds,
             projection_version=(f"{resolved_settings.index_text_mode}:" f"{resolved_settings.index_text_version}"),
+            on_demand_timeout_seconds=resolved_settings.hermes_on_demand_recall_timeout_seconds,
         )
         self._mapper = EpisodeMapper()
         self._session_id = ""

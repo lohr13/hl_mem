@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 168
+    assert len(fields(Settings)) == 169
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -40,6 +40,7 @@ def test_settings_contract_includes_bypass_and_recall_fields() -> None:
     assert settings.hermes_enabled is False
     assert settings.hermes_url == "http://127.0.0.1:8200"
     assert settings.hermes_timeout == 30
+    assert settings.hermes_on_demand_recall_timeout_seconds == 8.0
     assert settings.hermes_home is None
     assert settings.entity_aliases_path is None
     assert settings.database_pool_size == 8
@@ -87,6 +88,7 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"query_context_mode": "invalid"}, "recall.query_context_mode"),
         ({"procedure_recall_mode": "invalid"}, "recall.procedure_mode"),
         ({"vector_batch_size": 0}, "recall.vector_batch_size"),
+        ({"hermes_on_demand_recall_timeout_seconds": 0}, "hermes.on_demand_recall_timeout_seconds"),
         ({"dedup_threshold": 2.0}, "dedup.threshold"),
         ({"index_text_mode": "invalid"}, "index.text_mode"),
         ({"reranker_provider": "invalid"}, "reranker.provider"),

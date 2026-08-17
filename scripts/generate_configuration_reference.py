@@ -69,6 +69,7 @@ CONSTRAINTS = {
     "hermes.home": "非空字符串；可省略",
     "hermes.circuit_failure_threshold": ">= 1",
     "hermes.circuit_open_seconds": "> 0",
+    "hermes.on_demand_recall_timeout_seconds": "> 0",
     "hermes.prefetch_cache_ttl_seconds": "> 0",
     "llm.model": "非空字符串",
     "llm.timeout": "> 0",

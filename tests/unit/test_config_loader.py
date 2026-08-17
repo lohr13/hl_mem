@@ -34,6 +34,17 @@ def test_empty_toml_uses_static_defaults(tmp_path: Path) -> None:
     )
 
 
+def test_hermes_on_demand_recall_timeout_loads_from_toml(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "hermes-timeout.toml",
+        "[hermes]\non_demand_recall_timeout_seconds = 6.5\n" "[recall]\nquery_expansion_mode = 'off'\n",
+    )
+
+    settings = load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert settings.hermes_on_demand_recall_timeout_seconds == 6.5
+
+
 def test_old_config_without_lifecycle_keys_adopts_v027_defaults(tmp_path: Path) -> None:
     config_path = _write(
         tmp_path / "old.toml",

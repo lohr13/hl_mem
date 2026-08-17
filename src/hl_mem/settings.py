@@ -289,6 +289,10 @@ class Settings:
     hermes_enabled: bool = field(default=False, metadata={"toml": "hermes.enabled"})
     hermes_url: str = field(default="http://127.0.0.1:8200", metadata={"toml": "hermes.url"})
     hermes_timeout: int = field(default=30, metadata={"toml": "hermes.timeout"})
+    hermes_on_demand_recall_timeout_seconds: float = field(
+        default=8.0,
+        metadata={"toml": "hermes.on_demand_recall_timeout_seconds"},
+    )
     hermes_home: str | None = field(default=None, metadata={"toml": "hermes.home"})
     hermes_circuit_failure_threshold: int = field(
         default=5,
@@ -600,6 +604,8 @@ class Settings:
             raise ConfigurationError("hermes enabled must be a boolean")
         if self.hermes_timeout < 1:
             raise ConfigurationError("hermes timeout must be positive")
+        if self.hermes_on_demand_recall_timeout_seconds <= 0:
+            raise ConfigurationError("hermes.on_demand_recall_timeout_seconds must be positive")
         if self.hermes_enabled and not self.hermes_url.strip():
             raise ConfigurationError("hermes URL must not be empty when Hermes is enabled")
         if self.hermes_home is not None and not self.hermes_home.strip():
@@ -894,6 +900,7 @@ class Settings:
             "recall_side_effect_backoff_seconds": self.recall_side_effect_backoff_seconds,
             "vector_backend": self.vector_backend,
             "vector_batch_size": self.vector_batch_size,
+            "hermes_on_demand_recall_timeout_seconds": self.hermes_on_demand_recall_timeout_seconds,
             "extract_pre_filter": self.extract_pre_filter,
             "verification_mode": self.verification_mode,
             "llm_model": self.llm_model,

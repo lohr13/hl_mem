@@ -111,3 +111,5 @@ discovery_mode = "off"
 enabled = false
 url = "http://127.0.0.1:8200"
 timeout = 30
+# 按需召回可能触发 query expansion LLM；默认 8 秒不改变纯检索 <2 秒目标。
+on_demand_recall_timeout_seconds = 8.0
