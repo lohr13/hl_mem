@@ -382,10 +382,69 @@ class DeletionService:
             (claim_id,),
         )
         ClaimRepository(self.connection).delete_vector(claim_id)
-        cursor = self.connection.execute("DELETE FROM claims WHERE id=?", (claim_id,))
+        cursor = self._delete_claim_row(claim_id)
         if cursor.rowcount != 1:
             raise NotFoundError(f"memory not found: {claim_id}")
         self.connection.execute("DELETE FROM claim_vector_dirty WHERE claim_id=?", (claim_id,))
         if event_ids:
             placeholders = ",".join("?" for _ in event_ids)
             self.connection.execute(f"DELETE FROM events WHERE id IN ({placeholders})", event_ids)
+
+    def _delete_claim_row(self, claim_id: str) -> sqlite3.Cursor:
+        """删除 Claim，并兼容已损坏的 legacy tag FTS 删除投影。"""
+        try:
+            return self.connection.execute("DELETE FROM claims WHERE id=?", (claim_id,))
+        except sqlite3.OperationalError as error:
+            if str(error) != "SQL logic error":
+                raise
+            return self._delete_claim_row_without_legacy_tag_trigger(claim_id, error)
+
+    def _delete_claim_row_without_legacy_tag_trigger(
+        self,
+        claim_id: str,
+        original_error: sqlite3.OperationalError,
+    ) -> sqlite3.Cursor:
+        trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='claims_tags_ad'"
+        ).fetchone()
+        trigger_sql = str(trigger["sql"] if trigger is not None else "")
+        if "claims_tags_fts" not in trigger_sql:
+            raise original_error
+        claim = self.connection.execute(
+            "SELECT rowid,topic_tags_json FROM claims WHERE id=?",
+            (claim_id,),
+        ).fetchone()
+        if claim is None:
+            raise NotFoundError(f"memory not found: {claim_id}")
+
+        self.connection.execute("DROP TRIGGER claims_tags_ad")
+        if not self._delete_legacy_tag_projection(
+            int(claim["rowid"]),
+            str(claim["topic_tags_json"] or ""),
+        ):
+            raise original_error
+        cursor = self.connection.execute("DELETE FROM claims WHERE id=?", (claim_id,))
+        self.connection.execute(trigger_sql)
+        return cursor
+
+    def _delete_legacy_tag_projection(self, rowid: int, tags_text: str) -> bool:
+        statements = (
+            (
+                "INSERT INTO claims_tags_fts(claims_tags_fts,rowid,tags_text) "
+                "VALUES('delete',?,?)",
+                (rowid, tags_text),
+            ),
+            ("DELETE FROM claims_tags_fts WHERE rowid=?", (rowid,)),
+        )
+        for index, (statement, parameters) in enumerate(statements):
+            savepoint = f"delete_legacy_tag_projection_{index}"
+            self.connection.execute(f"SAVEPOINT {savepoint}")
+            try:
+                self.connection.execute(statement, parameters)
+            except sqlite3.OperationalError:
+                self.connection.execute(f"ROLLBACK TO {savepoint}")
+                self.connection.execute(f"RELEASE {savepoint}")
+                continue
+            self.connection.execute(f"RELEASE {savepoint}")
+            return True
+        return False

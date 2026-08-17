@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 
 DEFAULT_SERVER_URL = "http://127.0.0.1:8200"
-DAILY_HTTP_COMMANDS = frozenset({"remember", "recall", "list", "forget"})
+DAILY_HTTP_COMMANDS = frozenset({"remember", "recall", "list", "forget", "correct"})
 
 OFFLINE_CONFIG = """# HL-Mem offline configuration: no API keys or network models required.
 # Fake embedding is deterministic storage compatibility data, not semantic search.
@@ -125,6 +125,11 @@ def add_daily_commands(commands: argparse._SubParsersAction[argparse.ArgumentPar
     forget.add_argument("memory_id")
     _add_url(forget)
 
+    correct = commands.add_parser("correct", help="按 Claim ID 纠正记忆")
+    correct.add_argument("memory_id")
+    correct.add_argument("--text", required=True, help="纠正后的记忆文本")
+    _add_url(correct)
+
 
 def _add_url(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -185,6 +190,19 @@ def handle_daily_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             },
         )
         _print_memory_page(result)
+        return True
+    if args.command == "correct":
+        result = _request_json(
+            args.url,
+            "POST",
+            f"/v1/memories/{args.memory_id}/correct",
+            json_body={"corrected_text": args.text},
+        )
+        state = "已纠正记忆" if result.get("created", True) else "纠正已存在"
+        print(
+            f"{state} {args.memory_id}（新 Claim ID：{result.get('new_claim_id', '-')}；"
+            f"纠正事件 ID：{result.get('correction_event_id', '-')}）。"
+        )
         return True
     result = _request_json(args.url, "DELETE", f"/v1/memories/{args.memory_id}")
     print(f"已撤回记忆 {result.get('id', args.memory_id)}。")

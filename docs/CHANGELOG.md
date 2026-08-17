@@ -1,5 +1,10 @@
 # HL-Mem 变更记录
 
+## 未发布
+
+- 修复 `DELETE /v1/memories/{id}` 在存量 legacy tag FTS5 投影无法执行删除命令时稳定返回 500：删除闭包仅对该精确 `SQL logic error` 在同一主库事务内临时卸载 `claims_tags_ad`、清理目标投影、删除 Claim 并原样恢复触发器；失败仍整笔回滚，未知 Claim 保持 404。
+- 新增 `hl-mem correct <memory_id> --text "..." [--url URL]`，复用现有纠正端点并输出新 Claim ID、纠正事件 ID 与幂等创建状态；无新增配置键或 migration。
+
 ## v0.28.7（2026-08-18）
 
 - Hermes provider 新增只读 `hl_mem_recall` 工具，采用宿主要求的裸 OpenAI function schema，仅接收必填 `query`、默认 5 的可选 `limit` 与可选 `intent`。调用复用现有 receipt-free retrieval bundle 通道和 `PrefetchCache.fetch_now()`：受同一熔断器保护、无重试、默认最长 8 秒，不 materialize exposure，也不改变被动注入链路；结果只保留 Claim，并以 `id | value | relevance` 紧凑 JSON 文本列表返回。

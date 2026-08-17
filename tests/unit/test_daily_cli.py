@@ -175,6 +175,44 @@ def test_forget_deletes_claim_and_prints_confirmation(
     assert "已撤回记忆 claim-1" in capsys.readouterr().out
 
 
+def test_correct_posts_replacement_and_prints_new_claim_id(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/memories/claim-old/correct"
+        assert json.loads(request.content) == {"corrected_text": "新配置"}
+        return httpx.Response(
+            200,
+            json={
+                "correction_event_id": "correction-1",
+                "new_claim_id": "claim-new",
+                "created": True,
+            },
+        )
+
+    _use_http_handler(monkeypatch, httpx.MockTransport(handle))
+
+    main(["correct", "claim-old", "--text", "新配置", "--url", "http://127.0.0.1:8300"])
+
+    output = capsys.readouterr().out
+    assert "已纠正记忆 claim-old" in output
+    assert "claim-new" in output
+    assert "correction-1" in output
+
+
+def test_correct_help_lists_required_text_and_optional_url(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["correct", "--help"])
+
+    assert error.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "memory_id" in help_text
+    assert "--text" in help_text
+    assert "--url" in help_text
+
+
 def test_daily_command_reports_how_to_start_server_when_unreachable(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
