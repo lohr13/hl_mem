@@ -1,5 +1,13 @@
 # HL-Mem 变更记录
 
+## v0.28.7（2026-08-18）
+
+- Hermes provider 新增只读 `hl_mem_recall` 工具，采用宿主要求的裸 OpenAI function schema，仅接收必填 `query`、默认 5 的可选 `limit` 与可选 `intent`。调用复用现有 receipt-free retrieval bundle 通道和 `PrefetchCache.fetch_now()`：受同一熔断器保护、无重试、默认最长 8 秒，不 materialize exposure，也不改变被动注入链路；结果只保留 Claim，并以 `id | value | relevance` 紧凑 JSON 文本列表返回。
+- 工具 description 增加中英双语的“何时用我”引导：部署、升级或运维前先查目标机器历史与已知状态；端口占用、版本不符、配置异常等环境意外出现时查已知事实；需要历史决策依据时主动查询；当前对话已注入记忆足够时不重复调用。
+- `system_prompt_block()` 健康分支改为 4 行真实双层使用说明，明确被动注入与只读主动查询均可用及触发时机；degraded 分支改为 5 行真实状态，明确注入和工具可能不可用，禁止把空结果误判为“没有历史”。provider health 新增线程安全累计 `tool_calls`。
+- 事件复盘：小宇宙目标机早在 8 月初已有 0.28.4 部署，但被动 prefetch 按用户原话未召回该历史，导致按新机安装、发现旧服务再回头升级的 20 分钟弯路；本版用“被动注入 + 主动工具 + 使用引导”补上可靠性鸿沟。
+- 新增 Hermes 工具 schema、双语触发说明、默认 8 秒无重试调用、claim-only 紧凑结果、熔断 fail-open、无 delivery receipt、健康/降级提示与 `tool_calls` 计数回归。未改服务端检索、排序、rerank、dedup、冲突或 `audit_only` 语义；无新配置键、migration 或 REST/MCP 业务 schema 变化。
+
 ## v0.28.6（2026-08-18）
 
 - 根治提取高峰期的 SQLite 写锁型召回延迟：REST recall、内部 retrieval bundle/context packet materialize 与 MCP recall 统一使用 `mode=ro`、`query_only=ON` 的独立连接池，在 WAL 下不再与 claims 写事务争抢写锁；启动期完成迁移，召回请求内保持零同步 SQLite 写。
