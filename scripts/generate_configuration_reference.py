@@ -238,7 +238,7 @@ def generate() -> str:
         "`Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。",
         "模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。",
         "",
-        "v0.28.3 没有新增 TOML 键，也没有改变 v0.27 默认值；删除闭包、tombstone ledger、restore replay、关系边双时间",
+        f"v{__version__} 没有新增 TOML 键，也没有改变 v0.27 默认值；删除闭包、tombstone ledger、restore replay、关系边双时间",
         "和 Job 写入进度均是数据库/应用契约，不引入第二套配置面。",
         "",
         "## 加载规则",
