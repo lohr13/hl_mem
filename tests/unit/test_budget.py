@@ -3,6 +3,45 @@ from datetime import date
 from hl_mem.ingest.budget import TokenBudget
 
 
+class _TrackingConnection:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def execute(self, *_args):
+        return self
+
+    def fetchone(self):
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_constructor_and_stats_close_short_lived_connections(tmp_path, monkeypatch) -> None:
+    connections = []
+
+    def connect(_budget):
+        connection = _TrackingConnection()
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(TokenBudget, "_connect", connect)
+
+    budget = TokenBudget(10, tmp_path / "budget.db")
+    assert len(connections) == 1
+    assert connections[0].closed is True
+
+    assert budget.get_stats()["used_tokens"] == 0
+    assert len(connections) == 2
+    assert connections[1].closed is True
+
+
 def test_budget_records_persists_and_exhausts(tmp_path) -> None:
     path = tmp_path / "budget.json"
     budget = TokenBudget(10, path)
