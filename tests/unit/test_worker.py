@@ -30,7 +30,8 @@ class RecordingAudit:
         self.events.append((phase, action, outcome, detail or {}))
         return True
 
-    def cleanup(self, _retention_days):
+    def cleanup(self, _retention_days, *, batch_size=2_000):
+        del batch_size
         return True
 
     def close(self):

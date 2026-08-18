@@ -1,6 +1,6 @@
 # HL-Mem 能力成熟度矩阵
 
-> 基线：v0.28.8。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
+> 基线：v0.28.9。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
 
 ## 成熟度定义
 
@@ -36,7 +36,7 @@
 | 双时间与作用域过滤 | stable | `on` | 否 | 是 | 不降级；非法时间/作用域明确失败 | 保持历史查询、可见性与并发回归 |
 | TTL / decay / archive | stable | `auto` | 否 | 是 | 单 Job 失败可重试，CAS/事务避免部分更新 | 保持扫描完整性、双时间和访问 bonus 回归 |
 | Near-copy / semantic dedup | beta | 确定性摄入复用与召回折叠 `on`；LLM 灰区 `audit` | 仅旧灰区审计路径是 | 摄入可追加 evidence；维护写等价边；召回折叠不写库 | 任一结构或 protected-atom 守卫失败即保留独立 Claim；pending pair 轮转；LLM 失败保留 uncertain | 近重复 precision、Top-K 多样性、人工复核率和错误折叠/supersede 低于阈值 |
-| 冲突处理 | stable | `auto`（确定性优先） | 灰区是 | 是 | LLM 失败保留未决 case；维护任务会回访全部未决状态，人工可从 CLI 审核并裁决 | 保持 supersede 链汇聚、胜败者终态、证据和事务回归 |
+| 冲突处理 | stable | `auto`（确定性优先） | 灰区是 | 是 | 同组 1:N 候选归入单案；维护只消费 dirty queue 并按预算/退避处理，稳定人工案零扫描零写；版本不匹配的人工裁决返回 409 | 保持组 revision、全候选折叠、胜败者终态、证据和事务回归；generation 压缩与冷热分层留待 v0.29 |
 | 删除完整性 | stable | `on` | 否 | 是，主库 + 独立 tombstone sidecar | forget/cleanup/restore 共用删除闭包；账本失败、状态歧义、manifest/ledger 错配时 fail-closed，不静默降级 | P0 状态/共享 Event/关系两端矩阵、幂等 replay、恢复中断续跑和三入口 dangling=0 持续全绿 |
 | Episode / Trace | stable | `on` | 否 | 是 | 不影响 Claim 主通道；非法状态转换明确失败 | 保持 API、状态机、reward 与 usefulness 回归 |
 | Policy / Procedure 归纳 | beta | `auto`（定时 Job） | 是 | 是 | 归纳失败保留 Episode，Job 可重试且不发布新策略 | 多 Episode 支撑、成功率、退役与审计指标达到阈值 |

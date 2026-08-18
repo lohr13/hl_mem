@@ -1,7 +1,5 @@
 """M5 冲突归并 worker 测试。"""
 
-import pytest
-
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database

@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.28.8
+- Document baseline: v0.28.9
 - Updated: 2026-08-18
 - Deployment baseline: local-first, SQLite-first
 
@@ -115,7 +115,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 44 immutable SQL migrations (001-044)
+│   └── migrations/           # 46 immutable SQL migrations (001-046)
 ├── workers/
 │   ├── worker.py             # Job leasing, progress, heartbeat, maintenance loop
 │   ├── job_handlers.py       # Job handlers, registry, and dispatch boundary
@@ -194,7 +194,8 @@ Client
   → Claim commit
 ```
 
-The Claim mutation sequence—status update, Claim insert, supersede operation, and evidence link—runs in one
+The Claim mutation sequence—status update, Claim insert, conflict-candidate attach/revision bump, supersede operation,
+and evidence link—runs in one
 `BEGIN IMMEDIATE` transaction. External calls use configured timeouts and retries; errors are recorded rather than
 silently swallowed. Idempotent retries return the original Event instead of duplicating work.
 
@@ -267,11 +268,15 @@ recalled text.
 ## 7. Conflict, Deduplication, and Lifecycle
 
 The write path applies progressively more expensive checks: bounded JSON `fact_hash` equality, canonical-attribute
-`conflict_key`, then semantic similarity. Deterministic mutual-exclusion rules take priority; ambiguous cases can enter the
-audited conflict consolidator. Automatic maintenance revisits every unresolved `pending`, `auto_resolved`, or
-`manual_required` case, follows supersede chains, and resolves converged endpoints or a surviving non-terminal endpoint.
-Manual `keep_left`/`keep_right` decisions apply the same winner/loser terminal semantics, including `superseded_by_id` and
-dual-time closure for the loser.
+`conflict_key`, then semantic similarity. Only mutually exclusive slots form group conflicts. One current open case owns
+all candidates for `(namespace, group_key, generation)`; the legacy left/right columns are compatibility representatives,
+not pairwise storage. Attaching a candidate and incrementing `revision` is atomic with Claim insertion. Automatic
+maintenance consumes a persistent dirty queue, processes only the current active generation under count/time budgets and
+per-case backoff, folds every candidate through terminal/supersede chains, and auto-closes terminal or single-survivor
+cases. A stable `manual_required` case is not scanned or updated again until a trigger marks it dirty. Review returns the
+generation, revision, and complete candidate set; select/reject requires `expected_revision`, with stale requests failing
+409 before mutation. Candidate counts above the configured auto threshold remain manual. The schema reserves generation
+boundaries for v0.29, where compression and cold storage may be added; v0.28.9 does not advance generations.
 
 Near-copy control deliberately shares one conservative predicate across ingestion, maintenance, and recall. It requires
 compatible namespace, predicate, canonical slot/attribute, qualifiers, and validity; high cosine and lexical near-copy
@@ -365,15 +370,17 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 44 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 46 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used
 after extraction HTTP 429 retries are exhausted, migration 041 prevents a second active claim from entering a
 mutually exclusive conflict group on any INSERT or UPDATE path, migration 042 adds activation lifecycle state, and
 migration 043 binds the main database to its deletion-ledger identity, and migration 044 adds valid-time windows to relation
-edges and closes them on terminal Claim transitions. Both run automatically on first v0.28 open; they do not rewrite
-historical conflict decisions or physically delete existing rows. The optional `sqlite_vec.py` data migration owns the dimension-specific
+edges and closes them on terminal Claim transitions. Migration 045 adds group candidates, generation/revision, a persistent
+review queue/cursor, and dirty triggers; migration 046 adds bounded-retention indexes and retires historical below-floor
+pending dedup candidates. They run automatically on first v0.28.9 open; migration 045 does not adjudicate historical
+conflicts. The optional `sqlite_vec.py` data migration owns the dimension-specific
 derived vector table; the default remains exact `sqlite_scan`.
 
 Backup and restore are whole-database operations:

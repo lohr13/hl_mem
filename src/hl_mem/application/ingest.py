@@ -46,6 +46,7 @@ from hl_mem.domain.entity import (
 from hl_mem.errors import ConflictError, ValidationError
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.lifecycle import assert_transition
+from hl_mem.monitoring.metrics import DEFAULT_ADMISSION_METRICS, AdmissionMetrics
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol
 from hl_mem.settings import Settings
@@ -910,9 +911,19 @@ def _insert_pending_dedup_pair(
     new_claim: dict[str, Any],
     similarity: float,
     created_at: str,
-) -> None:
+    *,
+    metrics: AdmissionMetrics = DEFAULT_ADMISSION_METRICS,
+) -> bool:
     """Record an LLM gray-area pair without making a remote call in the write transaction."""
-    connection.execute(
+
+    settings = getattr(connection, "hl_mem_settings", None) or Settings()
+    pending_count = int(
+        connection.execute("SELECT count(*) FROM dedup_pairs WHERE decision IS NULL").fetchone()[0]
+    )
+    if pending_count >= settings.dedup_max_pending_pairs:
+        metrics.record_dedup_pending_pair_skipped()
+        return False
+    cursor = connection.execute(
         "INSERT OR IGNORE INTO dedup_pairs("
         "id,pair_key,left_claim_id,right_claim_id,namespace_key,similarity,"
         "embedding_text_version,policy_version,predicate,created_at"
@@ -930,6 +941,7 @@ def _insert_pending_dedup_pair(
             created_at,
         ),
     )
+    return cursor.rowcount == 1
 
 
 def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = False) -> None:

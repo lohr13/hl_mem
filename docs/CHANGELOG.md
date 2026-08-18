@@ -1,5 +1,39 @@
 # HL-Mem 变更记录
 
+## v0.28.9（2026-08-18）
+
+### 版本化组级冲突
+
+- 冲突持久化由两两 case 升级为 `(namespace, group_key, generation)` 下的单案多候选。检测仍保留新 Claim 对既有
+  1:N 候选的完整竞争集合，但写库只 attach canonical candidate，不再展开为 N 个 pair；`left_claim_id` /
+  `right_claim_id` 仅保留为兼容代表。Claim、evidence、candidate attach 与 case `revision + 1` 继续位于同一
+  `BEGIN IMMEDIATE` 事务。
+- 只有互斥 slot 创建组级冲突；非互斥 slot 仅保留 exact evidence 去重语义。组审核 REST 返回 generation、revision
+  和完整候选集；`select_candidate` / `reject_candidate` 必须提交 `expected_revision`，陈旧请求以 409 拒绝且零变更。
+  候选终态会自动关案，单一活跃候选可确定性收敛；超过默认 8 个候选的案保持人工处理。
+- 自动维护改为持久 dirty queue + cursor：只处理当前活跃 generation，在每轮 case 数与时间预算内执行，并按 case
+  失败退避、主动让出 writer。稳定 `manual_required` 案在没有候选/权威值/端点变化时不会再扫描或 UPDATE。
+  generation 推进、候选压缩与冷热分层只保留扩展点，明确推迟到 v0.29。
+
+### 存量修复与运维保留
+
+- 新增 `hl-mem conflicts repair-invalid-groups`：默认只读预览；`--apply` 必须配合精确 `--expected-count`，在单一
+  即时事务内修复旧摄入路径形成的非互斥 open group，并以审计记录收敛。生产执行前必须离线备份并停止 API、
+  Worker 与其他写入者；5841 案形状 fixture 修复后仅保留 3 个合法 open case，且无 disputed orphan/dangling。
+- Job、LLM span、已裁决 dedup pair、未标注 feedback 与 audit history 按各自窗口、逐表独立事务和批量上限清理；
+  pending/running Job、pending dedup pair 及已标注 feedback 不删除。默认窗口为 succeeded Job 30 天、dead/failed
+  Job 90 天、LLM span 30 天、已裁决 dedup pair 90 天、未注入/已注入未标注 feedback 7/90 天。
+- 摄入期 pending dedup pair 增加默认 10000 条容量上限和可观测跳过计数。migration 046 一次性将低于 0.88
+  摄入 floor 的历史 pending pair 标记为 `dismissed_below_floor`。清理后的终态 Job 幂等键可重新使用；超过窗口的
+  未标注 feedback receipt 可能不再接受反馈，调用方不应把 receipt 当作永久标识。
+
+### Migration 与兼容性
+
+- migration 045 增加 group candidate、generation/revision、持久 review queue/cursor、唯一 open group 与端点/权威值
+  dirty triggers；migration 046 增加运维清理索引及 dedup decision 扩展。项目版本升至 `0.28.9`，schema 为 46 个
+  不可变、只向前执行的 SQL migration（001–046）。
+- REST 新增两条组审核/裁决端点并同步 OpenAPI 快照；旧 CLI left/right 裁决路径继续兼容。MCP 业务 schema 不变。
+
 ## v0.28.8（2026-08-18）
 
 - 修复 `DELETE /v1/memories/{id}` 在存量 legacy tag FTS5 投影无法执行删除命令时稳定返回 500：删除闭包仅对该精确 `SQL logic error` 在同一主库事务内临时卸载 `claims_tags_ad`、清理目标投影、删除 Claim 并原样恢复触发器；失败仍整笔回滚，未知 Claim 保持 404。

@@ -1,11 +1,11 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.28.8 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.28.9 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
-v0.28.8 没有新增 TOML 键；沿用 v0.28.6 的 `hermes.on_demand_recall_timeout_seconds` 默认 8 秒，其余 v0.27 默认值保持不变。
-删除闭包、tombstone ledger、restore replay、关系边双时间和 Job 写入进度均是数据库/应用契约，不引入第二套配置面。
+v0.28.9 新增冲突 dirty queue 的有界处理/退避/候选上限、去重 pending cap，以及 Job、LLM span、dedup pair、feedback 和 audit 的运维保留窗口；全部有安全默认值。
+冲突 generation/压缩/冷热分层仍是 v0.29 的扩展点，本版本不提供相应配置键。
 
 ## 加载规则
 
@@ -55,15 +55,15 @@ identity 的 v1 manifest 均 fail-closed，不能静默恢复。
 target 或 ledger 旁残留的 `-wal`、`-shm`、`-journal` sidecar，防止未纳入验证的页面影响结果。执行 restore
 前必须停止 API、Worker 及其他数据库/ledger 使用者，成功后再重启服务。
 
-## 从 v0.27.x 升级
+## 升级到 v0.28.9
 
-先停止 API、Worker 和全部写入者，并保留主库的离线副本。v0.28 首次打开主库时会按顺序自动执行 migration
-043/044：前者增加 ledger identity/删除应用水位，后者为存量关系边以 `created_at` 回填 `valid_from` 并保持
-`valid_to = null`。它们不裁决历史冲突、不删除存量 Claim，也不创建新的长期配置键。
+先停止 API、Worker 和全部写入者，并保留主库的离线副本。v0.28.9 首次打开主库时会继续执行 migration
+045/046：前者建立单案多候选、generation/revision、dirty queue 与版本化裁决约束；后者增加运维清理索引，并将
+历史上低于摄入 floor 的 pending dedup pair 一次性标记为已审查。migration 不执行存量冲突裁决。
 
 迁移成功后立即运行一次 `hlmem backup`。若该库此前没有 tombstone sidecar，backup 会创建并绑定
 `<database>.tombstones.db`，再生成 manifest v2；从此应把主库 backup、manifest 和 ledger 作为同一恢复集合保存。
-旧 manifest v1 可留作升级前取证副本，但 v0.28 restore 会拒绝它，因为它无法证明删除历史。确认新的 v2
+旧 manifest v1 可留作升级前取证副本，但 v0.28.9 restore 会拒绝它，因为它无法证明删除历史。确认新的 v2
 backup 可校验后，再恢复 API/Worker 服务。
 
 ## JSONL Event 归档
@@ -138,6 +138,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `dedup.auto_merge_min_confidence` | 数值 | `0.98` | dedup.threshold - 1.0 | `dedup_auto_merge_min_confidence` |
 | `dedup.cron` | 字符串 | `"03:00"` | HH:MM（00:00 - 23:59） | `dedup_cron` |
 | `dedup.enabled` | 布尔值 | `true` | `true`、`false` | `dedup_enabled` |
+| `dedup.max_pending_pairs` | 整数 | `10000` | >= 1 | `dedup_max_pending_pairs` |
 | `dedup.scan_limit` | 整数 | `200` | >= 1 | `dedup_scan_limit` |
 | `dedup.threshold` | 数值 | `0.92` | 0.0 - 1.0 | `dedup_threshold` |
 
@@ -324,14 +325,22 @@ TOML 为准，活文档不固定具体型号。
 | `retention.decay_permanent_days` | 整数 | `90` | >= 1；不得大于 archive_permanent_days | `decay_permanent_days` |
 | `retention.decay_rollout_grace_days` | 整数 | `7` | >= 1 | `decay_rollout_grace_days` |
 | `retention.decay_temporal_days` | 整数 | `7` | >= 1；不得大于 archive_temporal_days | `decay_temporal_days` |
+| `retention.dedup_pair_days` | 整数 | `90` | >= 1 | `dedup_pair_days` |
 | `retention.event_days` | 整数 | `30` | 任意整数 | `retention_days` |
 | `retention.feedback_bonus_cap_days` | 整数 | `180` | >= 0 | `feedback_bonus_cap_days` |
 | `retention.feedback_bonus_days` | 整数 | `14` | >= 0 | `feedback_bonus_days` |
 | `retention.feedback_bonus_every` | 整数 | `3` | > 0 | `feedback_bonus_every` |
 | `retention.feedback_lifecycle_mode` | 字符串 | `"observe"` | `off`、`observe`、`on` | `feedback_lifecycle_mode` |
+| `retention.feedback_uninjected_days` | 整数 | `7` | >= 1 | `feedback_uninjected_days` |
+| `retention.feedback_unlabeled_days` | 整数 | `90` | >= 1 | `feedback_unlabeled_days` |
 | `retention.importance_high_threshold` | 数值 | `0.7` | 见字段联动约束 | `importance_high_threshold` |
 | `retention.importance_low_threshold` | 数值 | `0.4` | 见字段联动约束 | `importance_low_threshold` |
 | `retention.importance_write_floor` | 数值 | `0.2` | 见字段联动约束 | `importance_write_floor` |
+| `retention.job_dead_days` | 整数 | `90` | >= 1 | `job_dead_days` |
+| `retention.job_succeeded_days` | 整数 | `30` | >= 1 | `job_succeeded_days` |
+| `retention.llm_span_days` | 整数 | `30` | >= 1 | `llm_span_days` |
+| `retention.operational_batch_size` | 整数 | `2000` | >= 1 | `operational_batch_size` |
+| `retention.operational_cleanup_enabled` | 布尔值 | `true` | `true`、`false` | `operational_cleanup_enabled` |
 | `retention.slot_short_ttl_seconds` | 整数 | `86400` | >= 1 | `slot_short_ttl_seconds` |
 | `retention.temporal_cleanup_age_days` | 整数 | `30` | >= 1 | `temporal_cleanup_age_days` |
 | `retention.temporal_cleanup_expiry_days` | 整数 | `90` | >= 1 | `temporal_cleanup_expiry_days` |
@@ -341,6 +350,10 @@ TOML 为准，活文档不固定具体型号。
 | `retention.temporal_ttl_days_normal` | 整数 | `7` | >= 1 | `temporal_ttl_days_normal` |
 | `retention.ttl_backfill_batch_size` | 整数 | `100` | >= 1 | `ttl_backfill_batch_size` |
 | `retention.ttl_backfill_grace_hours` | 整数 | `0` | >= 0 | `ttl_backfill_grace_hours` |
+
+运维历史清理默认开启，并按表独立事务和 `operational_batch_size` 分批执行。pending/running Job、pending 去重候选、
+已标注 feedback 永不由该清理器删除；未注入 feedback 使用较短窗口。关闭 `operational_cleanup_enabled` 会同时跳过
+运维表和 audit 的定期清理。
 
 ### `[server]`
 
@@ -353,6 +366,12 @@ TOML 为准，活文档不固定具体型号。
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
 | `worker.audit_retention_days` | 整数 | `30` | 任意整数 | `audit_retention_days` |
+| `worker.conflict_auto_resolve_enabled` | 布尔值 | `true` | `true`、`false` | `conflict_auto_resolve_enabled` |
+| `worker.conflict_auto_resolve_max_candidates` | 整数 | `8` | 2 - 10000 | `conflict_auto_resolve_max_candidates` |
+| `worker.conflict_failure_backoff_seconds` | 整数 | `300` | 1 - 86400 | `conflict_failure_backoff_seconds` |
+| `worker.conflict_maintenance_budget_ms` | 整数 | `1000` | 50 - 10000 | `conflict_maintenance_budget_ms` |
+| `worker.conflict_maintenance_max_cases` | 整数 | `50` | 1 - 1000 | `conflict_maintenance_max_cases` |
+| `worker.conflict_writer_yield_ms` | 整数 | `25` | 0 - 1000 | `conflict_writer_yield_ms` |
 | `worker.consolidate_batch_size` | 整数 | `100` | 任意整数 | `consolidate_batch_size` |
 | `worker.consolidate_confidence` | 数值 | `0.8` | 任意数值 | `consolidate_confidence` |
 | `worker.consolidate_cron` | 字符串 | `"03:30"` | 任意字符串 | `consolidate_cron` |
@@ -367,6 +386,7 @@ TOML 为准，活文档不固定具体型号。
 
 Worker 在任务执行期间按 lease 时长的三分之一周期续租全部同窗口 job；进度回调也会续租。若 token ownership
 在终态写入前丢失，本次执行返回 `lease_lost`，不会把更新 0 行误报为成功。
+冲突维护从持久 dirty queue 按 case 数与毫秒预算有界处理；失败按 case 退避，稳定人工案不会重复扫描或写入。
 
 ## 字段联动
 

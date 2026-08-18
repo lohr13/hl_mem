@@ -83,11 +83,20 @@ audit_only = true
 auto_merge_min_confidence = 0.98
 scan_limit = 200
 cron = "03:00"
+max_pending_pairs = 10000
 
 [retention]
 temporal_ttl_days_low = 3
 temporal_ttl_days_normal = 7
 temporal_ttl_days_high = 14
+operational_cleanup_enabled = true
+operational_batch_size = 2000
+job_succeeded_days = 30
+job_dead_days = 90
+llm_span_days = 30
+dedup_pair_days = 90
+feedback_uninjected_days = 7
+feedback_unlabeled_days = 90
 
 [decay]
 # 三臂 A/B 胜出臂；日常衰减只更新 activation，confidence 保持证据强度语义。
@@ -103,6 +112,12 @@ poll_interval = 2.0
 maintenance_interval = 600
 job_lease_minutes = 5
 daily_token_limit = 500000  # set 0 to disable limit
+conflict_auto_resolve_enabled = true
+conflict_maintenance_max_cases = 50
+conflict_maintenance_budget_ms = 1000
+conflict_failure_backoff_seconds = 300
+conflict_writer_yield_ms = 5
+conflict_auto_resolve_max_candidates = 8
 
 [relation]
 discovery_mode = "off"

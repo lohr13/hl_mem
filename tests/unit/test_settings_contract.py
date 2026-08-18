@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 175
+    assert len(fields(Settings)) == 184
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -38,7 +38,17 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.conflict_failure_backoff_seconds == 300
     assert settings.conflict_writer_yield_ms == 25
     assert settings.conflict_auto_resolve_max_candidates == 8
+    assert settings.operational_cleanup_enabled is True
+    assert settings.operational_batch_size == 2_000
+    assert settings.job_succeeded_days == 30
+    assert settings.job_dead_days == 90
+    assert settings.llm_span_days == 30
+    assert settings.dedup_pair_days == 90
+    assert settings.feedback_uninjected_days == 7
+    assert settings.feedback_unlabeled_days == 90
+    assert settings.dedup_max_pending_pairs == 10_000
     assert settings.snapshot()["conflict_maintenance_max_cases"] == 50
+    assert settings.snapshot()["operational_batch_size"] == 2_000
 
 
 def test_settings_contract_includes_bypass_and_recall_fields() -> None:
@@ -104,6 +114,10 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"conflict_maintenance_budget_ms": 49}, "worker.conflict_maintenance_budget_ms"),
         ({"conflict_failure_backoff_seconds": 0}, "worker.conflict_failure_backoff_seconds"),
         ({"conflict_writer_yield_ms": 1001}, "worker.conflict_writer_yield_ms"),
+        ({"operational_batch_size": 0}, "retention.operational_batch_size"),
+        ({"job_succeeded_days": 0}, "retention.job_succeeded_days"),
+        ({"feedback_unlabeled_days": 0}, "retention.feedback_unlabeled_days"),
+        ({"dedup_max_pending_pairs": 0}, "dedup.max_pending_pairs"),
     ],
 )
 def test_validation_errors_reference_toml_paths(changes: dict[str, object], toml_path: str) -> None:

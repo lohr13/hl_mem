@@ -48,6 +48,7 @@ from hl_mem.workers.deferred import (
     process_deferred_tasks,
     process_recall_side_effect_tasks,
 )
+from hl_mem.workers.history_cleanup import HistoryCleanupPolicy, cleanup_operational_history
 from hl_mem.workers.induce_policies import enqueue_daily_policy_induction
 from hl_mem.workers.job_handlers import (
     dispatch_job,
@@ -401,11 +402,35 @@ class Worker:
                 "purge_retained_events",
                 lambda: _purge_retained_events(self.connection, cutoff),
             ),
-            (
-                "cleanup_audit_log",
-                lambda: self.audit.cleanup(self.settings.audit_retention_days),
-            ),
         ]
+        if self.settings.operational_cleanup_enabled:
+            items.extend(
+                [
+                    (
+                        "cleanup_operational_history",
+                        lambda: cleanup_operational_history(
+                            self.connection,
+                            maintenance_now,
+                            HistoryCleanupPolicy(
+                                batch_size=self.settings.operational_batch_size,
+                                job_succeeded_days=self.settings.job_succeeded_days,
+                                job_dead_days=self.settings.job_dead_days,
+                                llm_span_days=self.settings.llm_span_days,
+                                dedup_pair_days=self.settings.dedup_pair_days,
+                                feedback_uninjected_days=self.settings.feedback_uninjected_days,
+                                feedback_unlabeled_days=self.settings.feedback_unlabeled_days,
+                            ),
+                        ),
+                    ),
+                    (
+                        "cleanup_audit_log",
+                        lambda: self.audit.cleanup(
+                            self.settings.audit_retention_days,
+                            batch_size=self.settings.operational_batch_size,
+                        ),
+                    ),
+                ]
+            )
         if not is_placeholder_secret(self.settings.llm_api_key):
             items.append(
                 (
