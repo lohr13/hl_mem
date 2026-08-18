@@ -16,6 +16,10 @@ from typing import Any
 
 from hl_mem import __version__
 from hl_mem.adapters.hermes.deployment import deploy_plugin, print_deployment_result
+from hl_mem.application.conflict_backlog import (
+    inspect_invalid_conflict_groups,
+)
+from hl_mem.application.conflict_backlog import repair_invalid_conflict_groups as apply_invalid_group_repair
 from hl_mem.application.conflict_repairs import (
     inspect_dangling_conflicts,
 )
@@ -26,6 +30,7 @@ from hl_mem.components import make_embedder
 from hl_mem.config_loader import load_settings
 from hl_mem.daily_cli import add_daily_commands, handle_daily_command
 from hl_mem.doctor import main as doctor_main
+from hl_mem.errors import ConflictError
 from hl_mem.evaluation.runner import BenchmarkRunner
 from hl_mem.settings import Settings
 from hl_mem.storage.backup import backup_database, validate_backup
@@ -299,6 +304,8 @@ def list_conflicts(
                 item[f"{side}_status"] = claim.get("status") if claim is not None else None
                 item[f"{side}_authority"] = claim.get("source_authority") if claim is not None else None
                 item[f"{side}_recorded_from"] = claim.get("recorded_from") if claim is not None else None
+            if item.get("group_key") is not None:
+                item["candidates"] = ResolutionService(connection).review(str(item["id"]))["candidates"]
             result.append(item)
         return result
     finally:
@@ -311,6 +318,7 @@ def resolve_conflict(
     decision: str,
     *,
     rationale: str | None = None,
+    expected_revision: int | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """通过组级应用服务收敛指定冲突案例。"""
@@ -320,6 +328,7 @@ def resolve_conflict(
             case_id,
             decision,
             rationale=rationale,
+            expected_revision=expected_revision,
         )
     finally:
         database.close()
@@ -346,6 +355,43 @@ def repair_dangling_conflicts(
             "cases": cases,
             **applied,
         }
+    finally:
+        database.close()
+
+
+def repair_invalid_conflict_groups(
+    database_path: str | Path,
+    *,
+    apply: bool = False,
+    expected_count: int | None = None,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """默认只预览旧 ingest 形成的非互斥 open groups；apply 必须提供预期数量。"""
+
+    database = Database(database_path, settings=settings)
+    try:
+        connection = database.open()
+        preview = inspect_invalid_conflict_groups(connection)
+        actual_count = int(preview["candidate_case_count"])
+        if expected_count is not None and actual_count != expected_count:
+            raise ConflictError(
+                f"invalid conflict group count mismatch: expected {expected_count}, found {actual_count}"
+            )
+        if not apply:
+            return {
+                **preview,
+                "dry_run": True,
+                "applied_case_count": 0,
+                "activated_claim_count": 0,
+                "invalid_open_count": actual_count,
+            }
+        if expected_count is None:
+            raise ConflictError("--expected-count is required with --apply")
+        return apply_invalid_group_repair(
+            connection,
+            expected_count=expected_count,
+            source="cli",
+        )
     finally:
         database.close()
 
@@ -391,8 +437,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     resolve.add_argument("case_id")
     resolve.add_argument("decision", choices=("keep_left", "keep_right", "coexist", "reject"))
     resolve.add_argument("--rationale")
+    resolve.add_argument("--expected-revision", type=int)
     repair_dangling = conflict_commands.add_parser("repair-dangling")
     repair_dangling.add_argument("--apply", action="store_true")
+    repair_invalid = conflict_commands.add_parser("repair-invalid-groups")
+    repair_invalid.add_argument("--apply", action="store_true")
+    repair_invalid.add_argument("--expected-count", type=int)
     evaluation = commands.add_parser("eval")
     evaluation.add_argument("--benchmark", choices=("longmemeval",), default="longmemeval")
     evaluation.add_argument("--subset", default="core")
@@ -532,12 +582,20 @@ def main(argv: Sequence[str] | None = None) -> None:
                 args.case_id,
                 args.decision,
                 rationale=args.rationale,
+                expected_revision=args.expected_revision,
                 settings=settings,
             )
-        else:
+        elif args.conflict_command == "repair-dangling":
             conflict_result = repair_dangling_conflicts(
                 database_path,
                 apply=args.apply,
+                settings=settings,
+            )
+        else:
+            conflict_result = repair_invalid_conflict_groups(
+                database_path,
+                apply=args.apply,
+                expected_count=args.expected_count,
                 settings=settings,
             )
         print(json.dumps(conflict_result, ensure_ascii=False, sort_keys=True))
