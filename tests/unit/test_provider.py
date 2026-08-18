@@ -15,6 +15,7 @@ from hl_mem.adapters.hermes.provider import (
     _validation_response_body,
 )
 from hl_mem.application.context_packet import retrieval_bundle_to_dict
+from hl_mem.recall.injection import InjectionContext
 from hl_mem.settings import Settings
 
 
@@ -202,23 +203,30 @@ def test_recall_tool_call_returns_compact_claim_lines_with_bounded_read_only_req
         "claim-1 | first memory with detail | relevance=0.9000",
         "claim-2 | second memory | relevance=0.8000",
     ]
-    assert requests == [
-        (
-            {
-                "query": "target deployment history",
-                "session_id": None,
-                "limit": 2,
-                "intent": "historical",
-                "as_of": None,
-                "known_as_of": None,
-                "namespace": "default",
-                "token_budget": provider.settings.packed_context_token_budget,
-                "context_mode": "packed",
-            },
-            8.0,
-            False,
-        )
-    ]
+    assert len(requests) == 1
+    request, timeout, retry = requests[0]
+    assert timeout == 8.0
+    assert retry is False
+    rendering_now = request.pop("rendering_now")
+    freshness_time_bucket = request.pop("freshness_time_bucket")
+    assert rendering_now == freshness_time_bucket
+    assert rendering_now.endswith(":00:00+00:00")
+    assert request == {
+        "query": "target deployment history",
+        "session_id": None,
+        "limit": 2,
+        "intent": "historical",
+        "as_of": None,
+        "known_as_of": None,
+        "namespace": "default",
+        "token_budget": provider.settings.packed_context_token_budget,
+        "context_mode": "packed",
+        "delivery_purpose": "active_recall",
+        "experiment_variant": "control",
+        "echo_variant": "off",
+        "freshness_variant": "off",
+        "policy_versions": {"echo": "same-session-v1", "freshness": "risk-age-v1"},
+    }
     assert provider.health()["tool_calls"] == 1
     assert provider.delivery_receipts == ()
 
@@ -724,6 +732,11 @@ def test_prefetch_forwards_parameters_isolates_keys_and_caches_no_receipts(
     assert {request[0] for request in requests} == {"/v1/internal/retrieval-bundles"}
     assert all(request[2] is None for request in requests)
     payloads = sorted((request[1] for request in requests), key=lambda item: item["limit"])
+    for payload in payloads:
+        rendering_now = payload.pop("rendering_now")
+        freshness_time_bucket = payload.pop("freshness_time_bucket")
+        assert rendering_now == freshness_time_bucket
+        assert rendering_now.endswith(":00:00+00:00")
     assert payloads == [
         {
             "query": "same query",
@@ -735,6 +748,11 @@ def test_prefetch_forwards_parameters_isolates_keys_and_caches_no_receipts(
             "namespace": "project-a",
             "token_budget": 41,
             "context_mode": "packed",
+            "delivery_purpose": "passive_injection",
+            "experiment_variant": "control",
+            "echo_variant": "off",
+            "freshness_variant": "off",
+            "policy_versions": {"echo": "same-session-v1", "freshness": "risk-age-v1"},
         },
         {
             "query": "same query",
@@ -746,6 +764,11 @@ def test_prefetch_forwards_parameters_isolates_keys_and_caches_no_receipts(
             "namespace": "project-a",
             "token_budget": 41,
             "context_mode": "packed",
+            "delivery_purpose": "passive_injection",
+            "experiment_variant": "control",
+            "echo_variant": "off",
+            "freshness_variant": "off",
+            "policy_versions": {"echo": "same-session-v1", "freshness": "risk-age-v1"},
         },
     ]
 
@@ -761,6 +784,43 @@ def test_prefetch_forwards_parameters_isolates_keys_and_caches_no_receipts(
     assert second.query_id == "query-limit-4"
     assert all("feedback_id" not in item for item in retrieval_bundle_to_dict(first)["items"])
     assert "feedback_id" not in retrieval_bundle_to_dict(first)
+
+
+def test_prefetch_cache_isolates_injection_variants_and_freshness_time_bucket(monkeypatch) -> None:
+    """Catches control/treatment or different freshness hours sharing one cached bundle."""
+    requests = []
+    provider = HLMemProvider(timeout=2.0)
+
+    def recall_bundle(payload):
+        requests.append(payload)
+        return JsonResponse({"retrieval_bundle": _bundle_payload(f"query-{len(requests)}")})
+
+    monkeypatch.setattr(provider._client, "recall_bundle", recall_bundle)
+    base = {
+        "delivery_purpose": "passive_injection",
+        "experiment_variant": "treatment",
+        "freshness_variant": "observe",
+        "policy_versions": {"echo": "same-session-v1", "freshness": "risk-age-v1"},
+    }
+    contexts = (
+        InjectionContext.create(echo_variant="off", rendering_now="2026-08-18T12:10:00Z", **base),
+        InjectionContext.create(echo_variant="observe", rendering_now="2026-08-18T12:20:00Z", **base),
+        InjectionContext.create(echo_variant="observe", rendering_now="2026-08-18T13:20:00Z", **base),
+    )
+
+    for context in contexts:
+        provider._prefetch_cache.queue("same query", "session-1", injection_context=context)
+    provider._prefetch_cache.drain(2.0)
+
+    assert len(requests) == 3
+    assert [(item["echo_variant"], item["freshness_time_bucket"]) for item in requests] == [
+        ("off", "2026-08-18T12:00:00+00:00"),
+        ("observe", "2026-08-18T12:00:00+00:00"),
+        ("observe", "2026-08-18T13:00:00+00:00"),
+    ]
+    assert all(item["delivery_purpose"] == "passive_injection" for item in requests)
+    assert all(item["experiment_variant"] == "treatment" for item in requests)
+    assert all(item["policy_versions"] == base["policy_versions"] for item in requests)
 
 
 def test_each_delivery_materializes_fresh_receipts_with_stable_text(

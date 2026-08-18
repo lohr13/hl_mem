@@ -58,3 +58,10 @@ def test_monitoring_snapshot_includes_worker_liveness() -> None:
         "current_maintenance_item_started_at": None,
         "last_maintenance_results": {},
     }
+    assert snapshot["injection_governance"] == {
+        "schema_version": "injection-v1",
+        "delivery_purposes": ["passive_injection", "active_recall", "api"],
+        "policy_versions": {"echo": "same-session-v1", "freshness": "risk-age-v1"},
+        "echo_suppression": {"mode": "off"},
+        "freshness_annotation": {"mode": "off"},
+    }

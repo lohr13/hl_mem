@@ -37,6 +37,7 @@ from hl_mem.protocols import (
     WeightedQuery,
     embed_query,
 )
+from hl_mem.recall.injection import InjectionContext
 from hl_mem.recall.procedure_pipeline import MemoryCandidate, recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
@@ -290,6 +291,7 @@ class RecallService:
         debug: bool = False,
         response_format: str = "legacy",
         ranking_now: str | None = None,
+        injection_context: InjectionContext | None = None,
     ) -> dict[str, Any]:
         """执行混合召回；ranking_now 仅控制排序时钟，不改变时间可见性。"""
         if response_format not in _RESPONSE_FORMATS:
@@ -343,6 +345,10 @@ class RecallService:
             except (TimeoutError, ValueError, TypeError):
                 intent_source = "fallback"
         selected_intent = RecallIntent(intent or inferred_intent)
+        resolved_injection_context = injection_context or InjectionContext.create(
+            delivery_purpose="api",
+            rendering_now=ranking_now or _now(),
+        )
         tracer = SearchTracer(
             SearchTrace(
                 query_id=query_id,
@@ -356,6 +362,7 @@ class RecallService:
                 candidates={},
                 phases=SearchPhaseMetrics(),
                 intent_source=intent_source,
+                injection=resolved_injection_context.envelope(),
             )
         )
         expansion_deadline = time.monotonic() + self.settings.query_expansion_total_timeout_seconds

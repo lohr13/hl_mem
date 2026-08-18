@@ -126,6 +126,7 @@ class SearchTrace:
     reflow_tokens: int = 0
     reranker_error_class: str | None = None
     answerability: str = "no_evidence"
+    injection: dict[str, object] = field(default_factory=dict)
 
 
 class SearchTracer:

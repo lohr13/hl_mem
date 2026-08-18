@@ -9,6 +9,7 @@ from hl_mem.monitoring.metrics import (
     ProviderMetrics,
 )
 from hl_mem.monitoring.worker import DEFAULT_WORKER_RUNTIME, WorkerRuntimeState
+from hl_mem.recall.injection import injection_governance_snapshot
 
 
 def monitoring_snapshot(
@@ -21,4 +22,5 @@ def monitoring_snapshot(
         **metrics.snapshot(),
         "admission": admission_metrics.snapshot(),
         "worker": worker_runtime.snapshot(),
+        "injection_governance": injection_governance_snapshot(),
     }

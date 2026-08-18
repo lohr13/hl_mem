@@ -10,6 +10,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from typing import Literal
 
 from hl_mem import __version__
@@ -25,6 +26,7 @@ from hl_mem.http_utils import (
     sanitize_http_response_body,
     validation_response_body,
 )
+from hl_mem.recall.injection import InjectionContext
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,12 @@ class PrefetchKey:
     namespace: str
     token_budget: int
     projection_version: str
+    delivery_purpose: str
+    experiment_variant: str
+    echo_variant: str
+    freshness_variant: str
+    policy_versions: tuple[tuple[str, str], ...]
+    freshness_time_bucket: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +141,7 @@ class PrefetchCache:
         namespace: str = "default",
         token_budget: int = 2000,
         projection_version: str | None = None,
+        injection_context: InjectionContext | None = None,
     ) -> PrefetchKey:
         """按 key 去重一次后台 retrieval；不同 key 可同时执行。"""
         query = _bounded_recall_query(query)
@@ -146,6 +155,7 @@ class PrefetchCache:
             namespace=namespace,
             token_budget=token_budget,
             projection_version=projection_version,
+            injection_context=injection_context,
         )
         now = self._clock()
         future: Future[None] | None = None
@@ -229,6 +239,7 @@ class PrefetchCache:
         namespace: str = "default",
         token_budget: int = 2000,
         projection_version: str | None = None,
+        injection_context: InjectionContext | None = None,
     ) -> RetrievalBundle | None:
         """读取完整 key 对应的未过期 receipt-free bundle。"""
         query = _bounded_recall_query(query)
@@ -242,6 +253,7 @@ class PrefetchCache:
             namespace=namespace,
             token_budget=token_budget,
             projection_version=projection_version,
+            injection_context=injection_context,
         )
         with self._lock:
             entry = self._expire_locked(key, self._clock())
@@ -261,6 +273,7 @@ class PrefetchCache:
         namespace: str = "default",
         token_budget: int = 2000,
         projection_version: str | None = None,
+        injection_context: InjectionContext | None = None,
     ) -> RetrievalBundle | None:
         """缓存 miss 时执行一次受熔断器和短超时保护的同步 retrieval。"""
         query = _bounded_recall_query(query)
@@ -274,6 +287,7 @@ class PrefetchCache:
             namespace=namespace,
             token_budget=token_budget,
             projection_version=projection_version,
+            injection_context=injection_context,
         )
         with self._lock:
             entry = self._expire_locked(key, self._clock())
@@ -323,6 +337,7 @@ class PrefetchCache:
         namespace: str = "default",
         token_budget: int = 2000,
         projection_version: str | None = None,
+        injection_context: InjectionContext | None = None,
     ) -> PrefetchEntry | None:
         """返回 key 的可观测状态快照，读取时同步推进过期状态。"""
         query = _bounded_recall_query(query)
@@ -336,6 +351,7 @@ class PrefetchCache:
             namespace=namespace,
             token_budget=token_budget,
             projection_version=projection_version,
+            injection_context=injection_context,
         )
         with self._lock:
             now = self._clock()
@@ -472,6 +488,13 @@ class PrefetchCache:
             "namespace": key.namespace,
             "token_budget": key.token_budget,
             "context_mode": "packed",
+            "delivery_purpose": key.delivery_purpose,
+            "experiment_variant": key.experiment_variant,
+            "echo_variant": key.echo_variant,
+            "freshness_variant": key.freshness_variant,
+            "policy_versions": dict(key.policy_versions),
+            "rendering_now": key.freshness_time_bucket,
+            "freshness_time_bucket": key.freshness_time_bucket,
         }
         if bounded:
             response = self.client.recall_bundle(
@@ -622,6 +645,7 @@ class PrefetchCache:
         namespace: str,
         token_budget: int,
         projection_version: str | None,
+        injection_context: InjectionContext | None,
     ) -> PrefetchKey:
         if limit < 1:
             raise ValueError("limit must be positive")
@@ -632,6 +656,10 @@ class PrefetchCache:
         version = projection_version or self.projection_version
         if not version:
             raise ValueError("projection_version must be non-empty")
+        context = injection_context or InjectionContext.create(
+            delivery_purpose="passive_injection",
+            rendering_now=datetime.now(timezone.utc).isoformat(),
+        )
         return PrefetchKey(
             session=session_id,
             query_hash=hashlib.sha256(query.encode("utf-8")).hexdigest(),
@@ -642,6 +670,12 @@ class PrefetchCache:
             namespace=namespace,
             token_budget=token_budget,
             projection_version=version,
+            delivery_purpose=context.delivery_purpose,
+            experiment_variant=context.experiment_variant,
+            echo_variant=context.echo_variant,
+            freshness_variant=context.freshness_variant,
+            policy_versions=context.policy_versions,
+            freshness_time_bucket=context.freshness_time_bucket,
         )
 
 

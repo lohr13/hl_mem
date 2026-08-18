@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from hl_mem.application.answerability import Answerability
 from hl_mem.domain.recall import RecallIntent
+from hl_mem.recall.injection import DEFAULT_POLICY_VERSIONS
 
 
 class NamespaceInput(BaseModel):
@@ -97,6 +98,18 @@ class RecallInput(NamespaceInput):
     context_mode: str | None = Field(default=None, pattern="^(packed)$")
     response_format: Literal["legacy", "context_packet", "both"] = "legacy"
     debug: bool = False
+
+
+class RetrievalBundleInput(RecallInput):
+    """Hermes-only injection context; excluded from the public OpenAPI contract."""
+
+    delivery_purpose: Literal["passive_injection", "active_recall"] = "passive_injection"
+    experiment_variant: str = Field(default="control", min_length=1, max_length=100)
+    echo_variant: str = Field(default="off", min_length=1, max_length=100)
+    freshness_variant: str = Field(default="off", min_length=1, max_length=100)
+    policy_versions: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_POLICY_VERSIONS))
+    rendering_now: str | None = None
+    freshness_time_bucket: str | None = None
 
 
 class ClaimOutput(BaseModel):
