@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS, OPERATIONAL_SLOT_NAMES
 
+from .extractors import AssertionKind
+
 CanonicalSlot: TypeAlias = Literal[
     "preference.ui_theme",
     "preference.response_style",
@@ -99,6 +101,7 @@ class ExtractedClaimSchema(BaseModel):
     occurred_start: str | None = None
     occurred_end: str | None = None
     entities: list[str] | None = None
+    assertion_kind: AssertionKind = "unknown"
     source_event_indices: list[Annotated[int, Field(ge=0)]] = Field(
         default_factory=lambda: [0],
         min_length=1,
@@ -129,6 +132,7 @@ class CompactExtractedClaimSchema(BaseModel):
     kind: Literal["preference", "architecture", "identity", "config", "fact", "plan", "choice"]
     confidence: float = Field(ge=0.0, le=1.0)
     notability: Literal["high", "medium", "low"]
+    assertion_kind: AssertionKind = "unknown"
     evidence_quote: str = Field(min_length=1)
     source_event_indices: list[Annotated[int, Field(ge=0)]] = Field(
         default_factory=lambda: [0],
@@ -155,7 +159,30 @@ def legacy_extraction_response_json_schema() -> dict[str, Any]:
     """Project the frozen seven-field compact request contract from the parser schema."""
     schema = deepcopy(extraction_response_json_schema())
     claim = schema["$defs"]["CompactExtractedClaimSchema"]
+    for field in ("action", "object", "assertion_kind"):
+        claim["properties"].pop(field)
+        if field in claim["required"]:
+            claim["required"].remove(field)
+    return schema
+
+
+def source_bounded_rao_extraction_response_json_schema() -> dict[str, Any]:
+    """Keep the frozen RAO evaluation contract independent from the A1 gate."""
+    schema = deepcopy(extraction_response_json_schema())
+    claim = schema["$defs"]["CompactExtractedClaimSchema"]
+    claim["properties"].pop("assertion_kind")
+    if "assertion_kind" in claim["required"]:
+        claim["required"].remove("assertion_kind")
+    return schema
+
+
+def temporal_gate_extraction_response_json_schema() -> dict[str, Any]:
+    """Project the product eight-field contract with a required epistemic gate."""
+    schema = deepcopy(extraction_response_json_schema())
+    claim = schema["$defs"]["CompactExtractedClaimSchema"]
     for field in ("action", "object"):
         claim["properties"].pop(field)
         claim["required"].remove(field)
+    if "assertion_kind" not in claim["required"]:
+        claim["required"].append("assertion_kind")
     return schema

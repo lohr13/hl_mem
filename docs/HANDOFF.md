@@ -4,15 +4,18 @@
 
 ## 当前状态
 
-- **分支**：`main`
-- **版本**：v0.28.10
-- **阶段**：v0.28.10 hotfix 已实现，等待 Hermes 验收；tag、Release 与 PyPI 由维护者验收后执行
+- **分支**：`feature/v0.29.0-temporal`
+- **版本**：v0.29.0
+- **阶段**：v0.29.0 时间正确性开发中；当前已完成 A1 受限 assertion 门控
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：46 migrations（SQL 001–046），只允许向前迁移
+- **Schema**：47 migrations（SQL 001–047），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
 ## v0.28 已交付
+
+- v0.29.0 migration 047 新增 `assertion_kind=unknown|observation|inference`。存量 `unknown` 只可观测，不授权
+  supersede，也不改变召回或注入行为。
 
 - conflict case 已升级为 `(namespace, group_key, generation)` 下的单案多候选，revision 保护人工裁决；维护只处理
   持久 dirty queue 的当前活跃 generation，并受 case 数/时间预算、失败退避和候选上限约束。终态候选会自动关案。

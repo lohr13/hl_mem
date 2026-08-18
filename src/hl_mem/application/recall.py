@@ -950,6 +950,7 @@ class RecallService:
                 "features": dict(claim.get("_features") or {}),
                 "equivalent_claim_ids": list(claim.get("_equivalent_claim_ids") or []),
                 "status": claim["status"],
+                "assertion_kind": claim.get("assertion_kind") or "unknown",
                 "confidence": claim["confidence"],
                 "canonical_attribute": claim.get("canonical_attribute"),
                 "canonical_slot": claim.get("canonical_slot"),

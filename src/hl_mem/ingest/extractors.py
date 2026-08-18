@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from hl_mem.domain.claims.attributes import (
     infer_canonical_attribute,
     validate_slot_instance,
 )
+
+AssertionKind: TypeAlias = Literal["unknown", "observation", "inference"]
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class ExtractedClaim:
     occurred_end: str | None = None
     entities: list[str] | None = None
     memory_layer: Literal["durable", "episodic"] = "durable"
+    assertion_kind: AssertionKind = "unknown"
     source_event_indices: tuple[int, ...] = ()
 
 

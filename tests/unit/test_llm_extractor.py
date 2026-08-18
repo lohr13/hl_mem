@@ -23,6 +23,7 @@ from hl_mem.ingest.llm_extractor import (
     LLMExtractor,
     compute_prompt_hash,
 )
+from hl_mem.ingest.schemas import temporal_gate_extraction_response_json_schema
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import ZhipuProvider
 from hl_mem.llm.types import LLMRequest, LLMResponse
@@ -307,7 +308,7 @@ def test_prompt_requires_compact_candidate_fields_only() -> None:
     assert "topic_tags" not in SOURCE_BOUNDED_RAO_SYSTEM_PROMPT
 
 
-def test_product_extractor_uses_legacy_seven_field_contract_after_failed_gate() -> None:
+def test_product_extractor_uses_restricted_assertion_gate_without_relation_fields() -> None:
     raw = json.dumps(
         {
             "claims": [
@@ -317,6 +318,7 @@ def test_product_extractor_uses_legacy_seven_field_contract_after_failed_gate() 
                     "kind": "fact",
                     "confidence": 1.0,
                     "notability": "low",
+                    "assertion_kind": "observation",
                     "evidence_quote": "user visited Paris",
                 }
             ],
@@ -328,10 +330,16 @@ def test_product_extractor_uses_legacy_seven_field_contract_after_failed_gate() 
     claim = LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("user visited Paris")[0]
 
     assert client.last_request is not None
-    assert "the seven fields shown above" in client.last_request.messages[0].content
+    assert "assertion_kind" in client.last_request.messages[0].content
     properties = client.last_request.structured_output.schema["$defs"]["CompactExtractedClaimSchema"]["properties"]
     assert "action" not in properties
     assert "object" not in properties
+    assert properties["assertion_kind"]["enum"] == ["unknown", "observation", "inference"]
+    assert (
+        "assertion_kind"
+        in client.last_request.structured_output.schema["$defs"]["CompactExtractedClaimSchema"]["required"]
+    )
+    assert claim.assertion_kind == "observation"
     assert not {"role", "action", "object"}.intersection(claim.qualifiers)
 
 
@@ -534,6 +542,10 @@ def test_prompt_hash_is_stable_and_has_expected_format() -> None:
     second = compute_prompt_hash(SYSTEM_PROMPT)
 
     assert first == second == PROMPT_HASH
+    assert first == compute_prompt_hash(
+        SYSTEM_PROMPT,
+        response_schema=temporal_gate_extraction_response_json_schema(),
+    )
     assert re.fullmatch(r"[0-9a-f]{12}", PROMPT_HASH)
 
 

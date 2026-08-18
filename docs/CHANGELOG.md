@@ -1,5 +1,16 @@
 # HL-Mem 变更记录
 
+## v0.29.0（2026-08-18）
+
+### 受限 assertion 门控
+
+- Claim 新增正交的 `assertion_kind=unknown|observation|inference` 认识论字段。产品 compact 提取契约要求模型区分
+  证据直接报告的 observation 与推导结论 inference；无法可靠判断时必须输出 unknown。冻结的七字段与 RAO 评测
+  契约保持独立，legacy 解析继续兼容。
+- migration 047 为存量 Claim 回填 `unknown`。该默认值只用于观测和公开 DTO，不参与 supersede、召回过滤、注入或
+  排序；只有新写入的显式门控值可被后续高精度时间关链逻辑消费。项目版本升至 `0.29.0`，schema 为 47 个不可变、
+  只向前执行的 SQL migration（001–047）。
+
 ## v0.28.10（2026-08-18）
 
 - 修复存量 legacy `claims_tags_fts` 投影在 `claims_tags_au` UPDATE 触发器中抛出 `SQL logic error`、导致

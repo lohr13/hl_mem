@@ -774,6 +774,11 @@ def _build_claim_drafts(
         "observed_at": observed_at,
         "expires_at": expires_at,
         "volatility": extracted.volatility,
+        "assertion_kind": (
+            extracted.assertion_kind
+            if extracted.assertion_kind in {"unknown", "observation", "inference"}
+            else "unknown"
+        ),
         "status": "active",
         "confidence": extracted.confidence,
         "scope": scope,

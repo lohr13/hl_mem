@@ -87,6 +87,27 @@ class RecallScoreOutputTest(unittest.TestCase):
         )
         self.assertAlmostEqual(claims[0]["_score"], claims[0]["_pre_score"])
 
+    def test_assembly_exposes_the_stored_assertion_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = Database(Path(directory) / "assertion-kind-output.db").open()
+            result = RecallService(connection, FakeEmbedder(2))._assemble_results(
+                [
+                    {
+                        "id": "observed",
+                        "value": "Tailscale is online",
+                        "status": "active",
+                        "assertion_kind": "observation",
+                        "confidence": 0.9,
+                        "valid_from": None,
+                        "superseded_by_id": None,
+                    }
+                ]
+            )[0]
+            connection.close()
+
+        self.assertEqual(result["assertion_kind"], "observation")
+        self.assertEqual(ClaimOutput.model_validate(result).assertion_kind, "observation")
+
     def test_assembly_combines_evidence_from_folded_equivalent_claims(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = Database(Path(directory) / "equivalent-evidence.db").open()
