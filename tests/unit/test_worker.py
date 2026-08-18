@@ -546,6 +546,31 @@ def test_maintenance_reviews_pending_near_duplicates_without_llm(monkeypatch, tm
     worker.database.close()
 
 
+def test_maintenance_observes_expired_cleanup_with_bounded_settings(monkeypatch, tmp_path) -> None:
+    worker = Worker(
+        replace(
+            Settings.for_test(),
+            database_path=str(tmp_path / "maintenance-expired.db"),
+            expired_cleanup_mode="observe",
+            expired_claim_retention_days=120,
+            expired_cleanup_batch_size=7,
+        )
+    )
+    calls: list[tuple[int, int, str]] = []
+
+    def maintain(_connection, *, now, retention_days, batch_size, mode):
+        assert now
+        calls.append((retention_days, batch_size, mode))
+        return {"eligible_claim_count": 0, "deleted": 0}
+
+    monkeypatch.setattr(worker_module, "maintain_expired_claims", maintain)
+
+    worker._run_maintenance()
+
+    assert calls == [(120, 7, "observe")]
+    worker.database.close()
+
+
 def test_maintenance_passes_conflict_budget_and_records_result(monkeypatch, tmp_path) -> None:
     runtime = WorkerRuntimeState()
     worker = Worker(

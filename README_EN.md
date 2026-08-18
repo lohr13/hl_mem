@@ -183,6 +183,14 @@ hl-mem --db copy.db dedup drain-below-floor
 hl-mem --db copy.db dedup drain-below-floor --apply --expected-count 597
 ```
 
+Expired history is retained for 90 days. Only Claims without downstream evidence consumers or open conflicts are
+eligible for bounded reclamation on an offline copy:
+
+```bash
+hl-mem --db copy.db expired cleanup
+hl-mem --db copy.db expired cleanup --apply --expected-count 4508 --limit 100
+```
+
 ### Upgrading from v0.27.x
 
 v0.28.6 adds the optional `hermes.on_demand_recall_timeout_seconds` setting (default `8.0`) without changing the v0.27

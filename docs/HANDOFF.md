@@ -22,6 +22,8 @@
   `off`，使用独立开关；v0.29.1 不引入 `verified_at`。
 - `hl-mem --db <副本> dedup drain-below-floor` 默认只读报告；`--apply` 必须带精确
   `--expected-count`。597 条生产形状 fixture 只终结 pair，不改 Claim。
+- expired 回收默认 `observe`，删除资格为超过 90 天历史保留窗、无下游 evidence 消费者、无 open conflict；
+  apply 需精确 expected-count、每轮最多 100 条并复用独立 tombstone 删除闭包。
 - 终态 conflict generation 保持不可变：同一 active winner 的精确重申只追加 evidence；不同当前值复用现有
   group/candidate/revision 基建创建下一代单 open case，不扩展为 issue platform。
 - A2 `temporal-v1` 只让新写入的 `observation` 授权原子 online/offline 或显式旧值锚定的价格更正。非互斥 slot

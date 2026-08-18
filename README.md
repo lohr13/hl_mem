@@ -223,6 +223,13 @@ hl-mem --db copy.db dedup drain-below-floor
 hl-mem --db copy.db dedup drain-below-floor --apply --expected-count 597
 ```
 
+expired 历史先保留 90 天；仅无下游 evidence 消费者且无 open conflict 的项目可在副本预览并按精确计数有界回收：
+
+```bash
+hl-mem --db copy.db expired cleanup
+hl-mem --db copy.db expired cleanup --apply --expected-count 4508 --limit 100
+```
+
 REST 的完整请求契约见 [API 文档](docs/api.md)。
 
 ## 关键配置

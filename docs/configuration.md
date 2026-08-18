@@ -332,6 +332,9 @@ TOML 为准，活文档不固定具体型号。
 | `retention.decay_temporal_days` | 整数 | `7` | >= 1；不得大于 archive_temporal_days | `decay_temporal_days` |
 | `retention.dedup_pair_days` | 整数 | `90` | >= 1 | `dedup_pair_days` |
 | `retention.event_days` | 整数 | `30` | 任意整数 | `retention_days` |
+| `retention.expired_claim_retention_days` | 整数 | `90` | >= 1；expired 历史查询保留窗 | `expired_claim_retention_days` |
+| `retention.expired_cleanup_batch_size` | 整数 | `100` | >= 1 | `expired_cleanup_batch_size` |
+| `retention.expired_cleanup_mode` | 字符串 | `"observe"` | `off`、`observe`、`on` | `expired_cleanup_mode` |
 | `retention.feedback_bonus_cap_days` | 整数 | `180` | >= 0 | `feedback_bonus_cap_days` |
 | `retention.feedback_bonus_days` | 整数 | `14` | >= 0 | `feedback_bonus_days` |
 | `retention.feedback_bonus_every` | 整数 | `3` | > 0 | `feedback_bonus_every` |
@@ -359,6 +362,11 @@ TOML 为准，活文档不固定具体型号。
 运维历史清理默认开启，并按表独立事务和 `operational_batch_size` 分批执行。pending/running Job、pending 去重候选、
 已标注 feedback 永不由该清理器删除；未注入 feedback 使用较短窗口。关闭 `operational_cleanup_enabled` 会同时跳过
 运维表和 audit 的定期清理。
+
+expired Claim 只有在超过 `expired_claim_retention_days`、没有下游 evidence 消费者且不属于 open conflict 时才有
+删除资格。维护默认 `observe`；切换 `on` 后每轮仍只处理一个有界 batch，并逐条复用 tombstone
+`DeletionService`。存量处理先在离线副本运行 `hl-mem --db copy.db expired cleanup`，apply 必须追加预览得到的
+`--expected-count`，例如 `expired cleanup --apply --expected-count 4508 --limit 100`。
 
 低于当前 `dedup.threshold` 的历史 pending pair 不再属于现行审查集合。先在离线副本运行
 `hl-mem --db copy.db dedup drain-below-floor` 获取只读报告，再用同一路径追加

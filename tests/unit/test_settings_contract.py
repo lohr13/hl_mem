@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 190
+    assert len(fields(Settings)) == 193
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -40,6 +40,9 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.conflict_auto_resolve_max_candidates == 8
     assert settings.operational_cleanup_enabled is True
     assert settings.operational_batch_size == 2_000
+    assert settings.expired_cleanup_mode == "observe"
+    assert settings.expired_claim_retention_days == 90
+    assert settings.expired_cleanup_batch_size == 100
     assert settings.job_succeeded_days == 30
     assert settings.job_dead_days == 90
     assert settings.llm_span_days == 30
@@ -126,6 +129,9 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"conflict_failure_backoff_seconds": 0}, "worker.conflict_failure_backoff_seconds"),
         ({"conflict_writer_yield_ms": 1001}, "worker.conflict_writer_yield_ms"),
         ({"operational_batch_size": 0}, "retention.operational_batch_size"),
+        ({"expired_cleanup_mode": "invalid"}, "retention.expired_cleanup_mode"),
+        ({"expired_claim_retention_days": 0}, "retention.expired_claim_retention_days"),
+        ({"expired_cleanup_batch_size": 0}, "retention.expired_cleanup_batch_size"),
         ({"job_succeeded_days": 0}, "retention.job_succeeded_days"),
         ({"feedback_unlabeled_days": 0}, "retention.feedback_unlabeled_days"),
         ({"dedup_max_pending_pairs": 0}, "dedup.max_pending_pairs"),

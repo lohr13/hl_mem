@@ -25,6 +25,7 @@ QueryExpansionMode = Literal["off", "auto", "always"]
 QueryContextMode = Literal["off", "coreference"]
 ProcedureRecallMode = Literal["off", "keyword", "auto"]
 FeedbackLifecycleMode = Literal["off", "observe", "on"]
+ExpiredCleanupMode = Literal["off", "observe", "on"]
 DecayModel = Literal["legacy_linear", "activation_halflife", "confidence_halflife"]
 RelevanceGateMode = Literal["off", "observe", "enforce"]
 EchoSuppressionMode = Literal["off", "observe", "enforce"]
@@ -490,6 +491,18 @@ class Settings:
         default=2_000,
         metadata={"toml": "retention.operational_batch_size"},
     )
+    expired_cleanup_mode: ExpiredCleanupMode = field(
+        default="observe",
+        metadata={"toml": "retention.expired_cleanup_mode"},
+    )
+    expired_claim_retention_days: int = field(
+        default=90,
+        metadata={"toml": "retention.expired_claim_retention_days"},
+    )
+    expired_cleanup_batch_size: int = field(
+        default=100,
+        metadata={"toml": "retention.expired_cleanup_batch_size"},
+    )
     job_succeeded_days: int = field(default=30, metadata={"toml": "retention.job_succeeded_days"})
     job_dead_days: int = field(default=90, metadata={"toml": "retention.job_dead_days"})
     llm_span_days: int = field(default=30, metadata={"toml": "retention.llm_span_days"})
@@ -724,6 +737,8 @@ class Settings:
             raise ConfigurationError("permanent decay days must not exceed archive days")
         if self.feedback_lifecycle_mode not in {"off", "observe", "on"}:
             raise ConfigurationError("retention.feedback_lifecycle_mode must be 'off', 'observe', or 'on'")
+        if self.expired_cleanup_mode not in {"off", "observe", "on"}:
+            raise ConfigurationError("retention.expired_cleanup_mode must be 'off', 'observe', or 'on'")
         if self.feedback_bonus_every <= 0:
             raise ConfigurationError("retention.feedback_bonus_every must be positive")
         if min(self.feedback_bonus_days, self.feedback_bonus_cap_days) < 0:
@@ -909,6 +924,10 @@ class Settings:
                 "retention.job_dead_days, retention.llm_span_days, retention.dedup_pair_days, "
                 "retention.feedback_uninjected_days, and retention.feedback_unlabeled_days must be positive"
             )
+        if self.expired_claim_retention_days < 1:
+            raise ConfigurationError("retention.expired_claim_retention_days must be positive")
+        if self.expired_cleanup_batch_size < 1:
+            raise ConfigurationError("retention.expired_cleanup_batch_size must be positive")
         if self.verification_mode not in {"off", "audit", "enforce"}:
             raise ConfigurationError("extraction.verification_mode must be 'off', 'audit', or 'enforce'")
         if (

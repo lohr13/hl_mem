@@ -80,6 +80,19 @@ class DeletionService:
         self.ledger_path = Path(ledger_path).expanduser().resolve() if ledger_path else None
 
     def delete_claim(self, claim_id: str) -> DeletionResult:
+        return self._delete_claim(claim_id, allow_expired=False, require_no_evidence_consumers=False)
+
+    def delete_expired_claim(self, claim_id: str) -> DeletionResult:
+        """Delete one expired Claim only after proving it has no downstream evidence consumers."""
+        return self._delete_claim(claim_id, allow_expired=True, require_no_evidence_consumers=True)
+
+    def _delete_claim(
+        self,
+        claim_id: str,
+        *,
+        allow_expired: bool,
+        require_no_evidence_consumers: bool,
+    ) -> DeletionResult:
         normalized_id = str(claim_id).strip()
         if not normalized_id:
             raise NotFoundError("memory not found: ")
@@ -94,7 +107,23 @@ class DeletionService:
                 self.connection.commit()
                 return result
 
-            self._assert_deletable(normalized_id, str(claim["status"]))
+            self._assert_deletable(
+                normalized_id,
+                str(claim["status"]),
+                allow_expired=allow_expired,
+            )
+            if require_no_evidence_consumers:
+                consumer = self.connection.execute(
+                    "SELECT id,derived_type,derived_id FROM evidence_links "
+                    "WHERE evidence_type='claim' AND evidence_id=? ORDER BY id LIMIT 1",
+                    (normalized_id,),
+                ).fetchone()
+                if consumer is not None:
+                    raise DeletionRejectedError(
+                        normalized_id,
+                        "evidence_consumers",
+                        f"{consumer['id']}:{consumer['derived_type']}:{consumer['derived_id']}",
+                    )
             event_ids = self._exclusive_event_ids(normalized_id)
             ledger = self._bound_ledger(normalized_id)
             try:
@@ -218,8 +247,9 @@ class DeletionService:
                 self.connection.rollback()
             raise
 
-    def _assert_deletable(self, claim_id: str, status: str) -> None:
-        if status not in DELETABLE_STATUSES and status != REPLAYABLE_STATUS:
+    def _assert_deletable(self, claim_id: str, status: str, *, allow_expired: bool = False) -> None:
+        allowed_statuses = DELETABLE_STATUSES | ({"expired"} if allow_expired else set())
+        if status not in allowed_statuses and status != REPLAYABLE_STATUS:
             raise DeletionRejectedError(claim_id, f"status_{status}")
         placeholders = ",".join("?" for _ in OPEN_CASE_STATUSES)
         open_case = self.connection.execute(
