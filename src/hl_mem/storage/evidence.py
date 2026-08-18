@@ -44,6 +44,58 @@ class EvidenceRepository:
                 result[row["derived_id"]].append({"type": row["evidence_type"], "id": row["evidence_id"]})
         return result
 
+    def batch_get_echo_signals(
+        self,
+        claim_ids: list[str],
+        *,
+        namespace: str,
+        session_id: str,
+    ) -> dict[str, dict[str, object]]:
+        """Resolve bounded provenance and ingest-pair signals without guessing legacy endpoints."""
+        unique_ids = list(dict.fromkeys(claim_ids))
+        result: dict[str, dict[str, object]] = {
+            claim_id: {
+                "source_session_resolved": False,
+                "matching_session_recorded_at": None,
+                "pending_similarity": None,
+                "pending_created_at": None,
+            }
+            for claim_id in unique_ids
+        }
+        for start in range(0, len(unique_ids), 500):
+            chunk = unique_ids[start : start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            event_rows = self.connection.execute(
+                "SELECT e.derived_id,v.session_id,v.recorded_at FROM evidence_links e "
+                "JOIN events v ON v.id=e.evidence_id AND e.evidence_type='event' "
+                "WHERE e.derived_type='claim' AND e.relation IN ('derived_from','supports') "
+                f"AND e.derived_id IN ({placeholders}) AND v.tenant_id=?",
+                (*chunk, namespace),
+            ).fetchall()
+            for row in event_rows:
+                signal = result[str(row["derived_id"])]
+                source_session = row["session_id"]
+                if isinstance(source_session, str) and source_session:
+                    signal["source_session_resolved"] = True
+                    if source_session == session_id and (
+                        signal["matching_session_recorded_at"] is None
+                        or str(row["recorded_at"]) > str(signal["matching_session_recorded_at"])
+                    ):
+                        signal["matching_session_recorded_at"] = str(row["recorded_at"])
+            pair_rows = self.connection.execute(
+                "SELECT new_claim_id,similarity,created_at FROM dedup_pairs "
+                "WHERE decision IS NULL AND pair_source='ingest' "
+                f"AND new_claim_id IN ({placeholders}) "
+                "ORDER BY similarity DESC,created_at DESC,id",
+                tuple(chunk),
+            ).fetchall()
+            for row in pair_rows:
+                signal = result[str(row["new_claim_id"])]
+                if signal["pending_similarity"] is None:
+                    signal["pending_similarity"] = float(row["similarity"])
+                    signal["pending_created_at"] = str(row["created_at"])
+        return result
+
     def get_links_for_evidence(self, evidence_type: str, evidence_id: str) -> list[dict[str, Any]]:
         """返回直接引用指定证据的链接。"""
         rows = self.connection.execute(

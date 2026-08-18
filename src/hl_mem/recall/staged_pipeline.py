@@ -26,6 +26,11 @@ from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.domain.temporal import claim_is_visible
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import RerankerProtocol, WeightedQuery
+from hl_mem.recall.echo_suppression import (
+    DEFAULT_ECHO_SUPPRESSION_METRICS,
+    EchoRequest,
+    EchoSuppressionPolicy,
+)
 from hl_mem.recall.ranking import (
     DEFAULT_WEIGHTS,
     blend_reranker_score,
@@ -123,6 +128,9 @@ class RecallContext:
     rerank_scores: dict[str, float] = field(default_factory=dict)
     ranked_result: list[dict[str, Any]] = field(default_factory=list)
     outcome: str = ""
+    echo_policy: EchoSuppressionPolicy | None = None
+    echo_request: EchoRequest | None = None
+    echo_signal_loader: Callable[[list[str]], dict[str, dict[str, object]]] | None = None
 
 
 def _claim_text(claim: dict[str, Any]) -> str:
@@ -233,6 +241,9 @@ def hybrid_claims(
     weighted_queries: list[WeightedQuery] | None = None,
     query_blobs: list[bytes] | None = None,
     low_recall_expander: Callable[[int, int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
+    echo_policy: EchoSuppressionPolicy | None = None,
+    echo_request: EchoRequest | None = None,
+    echo_signal_loader: Callable[[list[str]], dict[str, dict[str, object]]] | None = None,
 ) -> list[dict[str, Any]]:
     """协调候选收集、过滤评分、关系扩展、重排和结果收尾。"""
     state = _collect_candidates(
@@ -260,8 +271,11 @@ def hybrid_claims(
         weighted_queries=weighted_queries,
         query_blobs=query_blobs,
         low_recall_expander=low_recall_expander,
+        echo_policy=echo_policy,
+        echo_request=echo_request,
+        echo_signal_loader=echo_signal_loader,
     )
-    return _finalize(_rerank(_expand_related(_filter_and_score(state))))
+    return _finalize(_rerank(_apply_echo_suppression(_expand_related(_filter_and_score(state)))))
 
 
 def _collect_candidates(
@@ -290,6 +304,9 @@ def _collect_candidates(
     weighted_queries: list[WeightedQuery] | None = None,
     query_blobs: list[bytes] | None = None,
     low_recall_expander: Callable[[int, int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
+    echo_policy: EchoSuppressionPolicy | None = None,
+    echo_request: EchoRequest | None = None,
+    echo_signal_loader: Callable[[list[str]], dict[str, dict[str, object]]] | None = None,
 ) -> RecallContext:
     """仅执行 FTS 与向量检索，并建立统一时间快照。"""
     config = recall_config or RecallConfig()
@@ -442,6 +459,9 @@ def _collect_candidates(
         dense_us=dense_us,
         tag_us=tag_us,
         total_started=total_started,
+        echo_policy=echo_policy,
+        echo_request=echo_request,
+        echo_signal_loader=echo_signal_loader,
     )
 
 
@@ -672,6 +692,54 @@ def _rerank(ctx: RecallContext) -> RecallContext:
     )
     ctx.ranked_result = reranked_claims
     ctx.outcome = "applied"
+    return ctx
+
+
+def _apply_echo_suppression(ctx: RecallContext) -> RecallContext:
+    """Fail-open provenance policy between relation expansion and reranking."""
+    policy = ctx.echo_policy
+    request = ctx.echo_request
+    if policy is None or request is None:
+        return ctx
+    claim_ids = [str(claim["id"]) for claim in ctx.ranked_claims]
+    if policy.mode == "off":
+        evaluation = policy.evaluate(claim_ids, request, {})
+    elif ctx.echo_signal_loader is None:
+        evaluation = policy.read_failure(claim_ids, "signal_loader_missing")
+    else:
+        try:
+            signals = ctx.echo_signal_loader(claim_ids)
+        except Exception:
+            evaluation = policy.read_failure(claim_ids)
+        else:
+            evaluation = policy.evaluate(claim_ids, request, signals)
+    DEFAULT_ECHO_SUPPRESSION_METRICS.record(evaluation)
+    if ctx.tracer is not None:
+        ctx.tracer.trace.injection["echo_suppression"] = evaluation.summary()
+    suppressed_ids: set[str] = set()
+    for decision in evaluation.decisions:
+        for reason in decision.trace_reasons:
+            if ctx.tracer is not None:
+                ctx.tracer.record_filter(decision.claim_id, reason)
+        if decision.suppress:
+            suppressed_ids.add(decision.claim_id)
+        if decision.matched_reason is not None:
+            current_audit().emit(
+                "recall",
+                "echo_suppression",
+                "suppressed" if decision.suppress else "would_suppress",
+                query_id=ctx.tracer.trace.query_id if ctx.tracer is not None else None,
+                claim_id=decision.claim_id,
+                detail={
+                    "reason": decision.matched_reason,
+                    "age_bucket": decision.age_bucket,
+                    "similarity_bucket": decision.similarity_bucket,
+                    "policy_version": request.policy_version,
+                    "experiment_variant": request.experiment_variant,
+                },
+            )
+    if suppressed_ids:
+        ctx.ranked_claims = [claim for claim in ctx.ranked_claims if str(claim["id"]) not in suppressed_ids]
     return ctx
 
 

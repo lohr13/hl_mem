@@ -555,6 +555,36 @@ def test_worker_rechecks_old_pending_pair_with_v2_policy_without_calling_llm(tmp
     connection.close()
 
 
+def test_worker_discovery_marks_maintenance_pair_without_new_claim_endpoint(tmp_path) -> None:
+    connection = Database(tmp_path / "dedup-maintenance-source.db").open()
+    repo, embedder = ClaimRepository(connection), FakeEmbedder(8)
+    vector = embedder.embed_one("same")
+    common = {
+        "namespace_key": "default",
+        "predicate": "fact",
+        "value": "same",
+        "recorded_from": "2026-01-01T00:00:00+00:00",
+        "status": "active",
+        "canonical_slot": None,
+        "embedding_dense": vector,
+    }
+    repo.insert_claim({**common, "id": "left", "subject_entity_id": "hl_mem"})
+    repo.insert_claim({**common, "id": "right", "subject_entity_id": "hl_agent"})
+
+    class NoCallClient:
+        model = "must-not-run"
+
+        def complete(self, _request):
+            raise AssertionError("deterministic distinct pair must not call the LLM")
+
+    result = deduplicate_claims(connection, NoCallClient(), embedder, audit_only=True)
+    row = connection.execute("SELECT pair_source,new_claim_id FROM dedup_pairs").fetchone()
+
+    assert result["discovered"] == 1
+    assert tuple(row) == ("maintenance", None)
+    connection.close()
+
+
 def test_apply_equivalent_pair_rejects_v1_policy_decision(tmp_path) -> None:
     connection = Database(tmp_path / "dedup-v1-apply-guard.db").open()
     repo = ClaimRepository(connection)

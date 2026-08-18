@@ -178,7 +178,13 @@ def test_recall_trace_exposes_safe_injection_context_envelope(tmp_path: Path) ->
     finally:
         database.close()
 
-    assert response["search_trace"]["injection"] == context.envelope()
+    injection = response["search_trace"]["injection"]
+    for key, value in context.envelope().items():
+        assert injection[key] == value
+    assert injection["echo_suppression"]["mode"] == "off"
+    assert injection["echo_suppression"]["bypass_reason"] == "mode_off"
+    assert "private query" not in json.dumps(injection)
+    assert "session_id" not in json.dumps(injection)
 
 
 def test_recall_trace_preserves_dense_cosine_for_relevance_gate(tmp_path: Path) -> None:

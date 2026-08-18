@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 184
+    assert len(fields(Settings)) == 189
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -49,6 +49,12 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.dedup_max_pending_pairs == 10_000
     assert settings.snapshot()["conflict_maintenance_max_cases"] == 50
     assert settings.snapshot()["operational_batch_size"] == 2_000
+    assert settings.echo_suppression_mode == "off"
+    assert settings.echo_session_window_seconds == 1800
+    assert settings.echo_pending_review_enabled is False
+    assert settings.echo_pending_similarity_threshold == 0.95
+    assert settings.echo_pending_max_seconds == 7200
+    assert settings.snapshot()["echo_suppression_mode"] == "off"
 
 
 def test_settings_contract_includes_bypass_and_recall_fields() -> None:
@@ -103,6 +109,8 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"relation_expansion_mode": "invalid"}, "relation.expansion_mode"),
         ({"relevance_gate_mode": "invalid"}, "recall.relevance_gate_mode"),
         ({"query_context_mode": "invalid"}, "recall.query_context_mode"),
+        ({"echo_suppression_mode": "invalid"}, "recall.echo_suppression_mode"),
+        ({"echo_session_window_seconds": 59}, "recall.echo_session_window_seconds"),
         ({"procedure_recall_mode": "invalid"}, "recall.procedure_mode"),
         ({"vector_batch_size": 0}, "recall.vector_batch_size"),
         ({"hermes_on_demand_recall_timeout_seconds": 0}, "hermes.on_demand_recall_timeout_seconds"),

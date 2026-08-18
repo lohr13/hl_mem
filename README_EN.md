@@ -146,6 +146,7 @@ variables. Common keys are listed below.
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan` (default) or `sqlite_vec`, which requires `hl-mem[sqlite-vec]` |
 | `recall.dedup_threshold` | `0.95` | Near-copy folding threshold inside the bounded candidate window; `0` disables folding |
 | `recall.dedup_candidate_limit` | `100` | Maximum recall candidates considered for near-copy folding |
+| `recall.echo_suppression_mode` | `off` | Same-session echo governance: `off`, observe-only `observe`, or `enforce` |
 | `recall.resurrection_mode` | `auto` | Bounded archived-only cold path when primary recall is insufficient; `off` disables it |
 | `recall.query_expansion_mode` | `auto` | `off`, `auto`, or `always` |
 | `decay.model` | `activation_halflife` | Decays activation by scope-specific half-life without changing confidence during routine decay |
@@ -237,7 +238,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.29.0 with 47 immutable, forward-only migrations.
+The current baseline is v0.29.0 with 48 immutable, forward-only migrations.
 
 ## Documentation
 

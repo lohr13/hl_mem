@@ -9,13 +9,15 @@
 - **阶段**：v0.29.0 五项锁定范围已完成，等待交付复核；无 push
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：47 migrations（SQL 001–047），只允许向前迁移
+- **Schema**：48 migrations（SQL 001–048），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
 ## v0.28 已交付
 
 - v0.29.0 migration 047 新增 `assertion_kind=unknown|observation|inference`。存量 `unknown` 只可观测，不授权
   supersede，也不改变召回或注入行为。
+- migration 048 为 `dedup_pairs` 增加确定性的 `pair_source` 与 `new_claim_id` 注入信号；存量行标记为
+  `legacy`，不猜测新写入端点。
 - 终态 conflict generation 保持不可变：同一 active winner 的精确重申只追加 evidence；不同当前值复用现有
   group/candidate/revision 基建创建下一代单 open case，不扩展为 issue platform。
 - A2 `temporal-v1` 只让新写入的 `observation` 授权原子 online/offline 或显式旧值锚定的价格更正。非互斥 slot

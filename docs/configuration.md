@@ -244,6 +244,11 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `recall.dedup_threshold` | 数值 | `0.95` | 0.0 - 1.0；0 关闭折叠 | `recall_dedup_threshold` |
 | `recall.default_limit` | 整数 | `5` | 1 - 100 | `recall_default_limit` |
 | `recall.dense_enabled` | 布尔值 | `true` | `true`、`false` | `recall_dense_enabled` |
+| `recall.echo_pending_max_seconds` | 整数 | `7200` | >= 60 | `echo_pending_max_seconds` |
+| `recall.echo_pending_review_enabled` | 布尔值 | `false` | `true`、`false` | `echo_pending_review_enabled` |
+| `recall.echo_pending_similarity_threshold` | 数值 | `0.95` | 0.0 - 1.0 | `echo_pending_similarity_threshold` |
+| `recall.echo_session_window_seconds` | 整数 | `1800` | 60 - 14400 | `echo_session_window_seconds` |
+| `recall.echo_suppression_mode` | 字符串 | `"off"` | `off`、`observe`、`enforce` | `echo_suppression_mode` |
 | `recall.expansion_circuit_failure_threshold` | 整数 | `5` | >= 1 | `expansion_circuit_failure_threshold` |
 | `recall.expansion_circuit_open_seconds` | 数值 | `60.0` | > 0 | `expansion_circuit_open_seconds` |
 | `recall.feedback_min_samples` | 整数 | `3` | >= 1 | `feedback_min_samples` |

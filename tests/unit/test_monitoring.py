@@ -4,6 +4,7 @@ from hl_mem.application.health import monitoring_snapshot
 from hl_mem.monitoring.alerts import AlertManager, CircuitBreaker
 from hl_mem.monitoring.metrics import ProviderCall, ProviderMetrics
 from hl_mem.monitoring.worker import WorkerRuntimeState
+from hl_mem.recall.echo_suppression import EchoSuppressionMetrics
 
 
 class _Channel:
@@ -41,7 +42,11 @@ def test_circuit_breaker_opens_after_failures() -> None:
 
 
 def test_monitoring_snapshot_includes_worker_liveness() -> None:
-    snapshot = monitoring_snapshot(ProviderMetrics(), WorkerRuntimeState())
+    snapshot = monitoring_snapshot(
+        ProviderMetrics(),
+        WorkerRuntimeState(),
+        echo_metrics=EchoSuppressionMetrics(),
+    )
 
     assert snapshot["worker"] == {
         "running": False,
@@ -58,10 +63,22 @@ def test_monitoring_snapshot_includes_worker_liveness() -> None:
         "current_maintenance_item_started_at": None,
         "last_maintenance_results": {},
     }
-    assert snapshot["injection_governance"] == {
-        "schema_version": "injection-v1",
-        "delivery_purposes": ["passive_injection", "active_recall", "api"],
-        "policy_versions": {"echo": "same-session-v1", "freshness": "risk-age-v1"},
-        "echo_suppression": {"mode": "off"},
-        "freshness_annotation": {"mode": "off"},
+    injection = snapshot["injection_governance"]
+    assert isinstance(injection, dict)
+    assert injection["schema_version"] == "injection-v1"
+    assert injection["delivery_purposes"] == ["passive_injection", "active_recall", "api"]
+    assert injection["policy_versions"] == {"echo": "same-session-v1", "freshness": "risk-age-v1"}
+    assert injection["freshness_annotation"] == {"mode": "off"}
+    echo = injection["echo_suppression"]
+    assert isinstance(echo, dict)
+    assert {key: echo[key] for key in ("mode", "policy_version", "session_window_seconds")} == {
+        "mode": "off",
+        "policy_version": "same-session-v1",
+        "session_window_seconds": 1800,
     }
+    assert {key: echo[key] for key in ("source_session_resolved", "source_session_missing", "would_suppress")} == {
+        "source_session_resolved": 0,
+        "source_session_missing": 0,
+        "would_suppress": 0,
+    }
+    assert isinstance(echo["metrics_started_at"], str)

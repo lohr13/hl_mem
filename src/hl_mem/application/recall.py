@@ -37,6 +37,7 @@ from hl_mem.protocols import (
     WeightedQuery,
     embed_query,
 )
+from hl_mem.recall.echo_suppression import EchoRequest, EchoSuppressionPolicy
 from hl_mem.recall.injection import InjectionContext
 from hl_mem.recall.procedure_pipeline import MemoryCandidate, recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
@@ -528,6 +529,29 @@ class RecallService:
                 query_blobs if self.query_expander is not None and self.settings.query_expansion_mode != "off" else None
             ),
             low_recall_expander=low_recall_expander,
+            echo_policy=EchoSuppressionPolicy(
+                mode=self.settings.echo_suppression_mode,
+                session_window_seconds=self.settings.echo_session_window_seconds,
+                pending_review_enabled=self.settings.echo_pending_review_enabled,
+                pending_similarity_threshold=self.settings.echo_pending_similarity_threshold,
+                pending_max_seconds=self.settings.echo_pending_max_seconds,
+            ),
+            echo_request=EchoRequest(
+                delivery_purpose=resolved_injection_context.delivery_purpose,
+                session_id=session_id,
+                namespace=namespace,
+                intent=selected_intent.value,
+                as_of=as_of,
+                known_as_of=known_as_of,
+                request_now=resolved_injection_context.rendering_now,
+                experiment_variant=resolved_injection_context.experiment_variant,
+                policy_version=dict(resolved_injection_context.policy_versions)["echo"],
+            ),
+            echo_signal_loader=lambda claim_ids: EvidenceRepository(self.connection).batch_get_echo_signals(
+                claim_ids,
+                namespace=namespace,
+                session_id=session_id or "",
+            ),
         )
         enforce_enabled = False
         if self.settings.relevance_gate_mode in {"observe", "enforce"}:

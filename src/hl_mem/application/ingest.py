@@ -1054,13 +1054,14 @@ def _insert_pending_dedup_pair(
         return False
     cursor = connection.execute(
         "INSERT OR IGNORE INTO dedup_pairs("
-        "id,pair_key,left_claim_id,right_claim_id,namespace_key,similarity,"
+        "id,pair_key,left_claim_id,right_claim_id,new_claim_id,pair_source,namespace_key,similarity,"
         "embedding_text_version,policy_version,predicate,created_at"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ") VALUES (?,?,?,?,?,'ingest',?,?,?,?,?,?)",
         (
             new_id(),
             compute_dedup_pair_key(existing_claim_id, new_claim["id"]),
             existing_claim_id,
+            new_claim["id"],
             new_claim["id"],
             new_claim["namespace_key"],
             similarity,
