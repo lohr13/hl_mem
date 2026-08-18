@@ -11,6 +11,13 @@
   排序；只有新写入的显式门控值可被后续高精度时间关链逻辑消费。项目版本升至 `0.29.0`，schema 为 47 个不可变、
   只向前执行的 SQL migration（001–047）。
 
+### 终态 conflict generation/reopen
+
+- 复用 v0.28.9 的组级 case、candidate、generation、revision 与单 open-case 约束。组内已有终态 generation 时，
+  同一 active winner 的精确重申只追加 evidence；不同当前值不改写旧案，而是创建 `generation + 1` 的
+  `manual_required` 案，旧 generation 保持不可变。
+- 本版不引入 issue-platform 能力：不实现候选压缩、冷热分层、分页、冷却、拆案、重分类、延迟处理或 rollup。
+
 ## v0.28.10（2026-08-18）
 
 - 修复存量 legacy `claims_tags_fts` 投影在 `claims_tags_au` UPDATE 触发器中抛出 `SQL logic error`、导致

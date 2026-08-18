@@ -6,7 +6,7 @@
 
 - **分支**：`feature/v0.29.0-temporal`
 - **版本**：v0.29.0
-- **阶段**：v0.29.0 时间正确性开发中；当前已完成 A1 受限 assertion 门控
+- **阶段**：v0.29.0 时间正确性开发中；当前已完成 A1 受限 assertion 门控与 B generation/reopen
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：47 migrations（SQL 001–047），只允许向前迁移
@@ -16,6 +16,8 @@
 
 - v0.29.0 migration 047 新增 `assertion_kind=unknown|observation|inference`。存量 `unknown` 只可观测，不授权
   supersede，也不改变召回或注入行为。
+- 终态 conflict generation 保持不可变：同一 active winner 的精确重申只追加 evidence；不同当前值复用现有
+  group/candidate/revision 基建创建下一代单 open case，不扩展为 issue platform。
 
 - conflict case 已升级为 `(namespace, group_key, generation)` 下的单案多候选，revision 保护人工裁决；维护只处理
   持久 dirty queue 的当前活跃 generation，并受 case 数/时间预算、失败退避和候选上限约束。终态候选会自动关案。
@@ -46,7 +48,8 @@
 
 ## 下一步
 
-- v0.29 再实现 generation 推进、候选压缩和冷热分层；v0.28.9 只保留 schema/服务扩展点，不提前启用。
+- 继续实现 A2 高精度自动关链、A3 current-state 验收与 F 静态 doctor 兼容诊断；候选压缩和冷热分层不属于
+  v0.29.0 范围。
 
 - 观察 tombstone sidecar 与 restore replay 的生产恢复演练；旧 manifest 无法证明删除历史时保持拒绝，不做
   静默兼容。

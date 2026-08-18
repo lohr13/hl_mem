@@ -482,7 +482,12 @@ class IngestService:
                 started = time.perf_counter_ns()
                 group_resolution = _resolve_conflict_group(existing, {**claim, "qualifiers": qualifiers})
                 current = group_resolution.representative
-                resolution = group_resolution.outcome
+                deterministic_resolution = group_resolution.outcome
+                lifecycle = claims.conflict_group_lifecycle(namespace, str(claim["conflict_key"]))
+                reopen_after_terminal = (
+                    lifecycle.latest_terminal_generation is not None and lifecycle.open_case_id is None
+                )
+                resolution = "uncertain" if reopen_after_terminal else deterministic_resolution
                 audit_events.append(
                     (
                         ("conflict", "resolved", resolution),
@@ -497,18 +502,26 @@ class IngestService:
                                 "old": _summary(current),
                                 "member_outcomes": dict(group_resolution.member_outcomes),
                                 "active_count": group_resolution.active_count,
+                                "deterministic_resolution": deterministic_resolution,
+                                "latest_terminal_generation": lifecycle.latest_terminal_generation,
+                                "reopen_after_terminal": reopen_after_terminal,
                                 "new": _summary(claim),
                             },
                         },
                     )
                 )
-                if resolution == "entails":
+                if resolution == "entails" and not reopen_after_terminal:
                     result_id = _converge_entailed_group(claims, group_resolution, now)
                     _link_source_events(evidence, result_id, evidence_events, commit=False)
                     connection.commit()
                     emit_audit_events()
                     return StoreClaimResult(result_id, "stored", "entailed")
-                if resolution == "state_change":
+                if reopen_after_terminal:
+                    resolution = "uncertain"
+                    claim["status"] = "disputed"
+                    review_group = existing
+                    review_rationale = "terminal_generation_reopen"
+                elif resolution == "state_change":
                     # 先以 candidate 写入，旧组全部终结后再激活，兼容触发器级唯一 active 保护。
                     claim["status"] = "candidate"
                     claim["supersedes_id"] = current["id"]

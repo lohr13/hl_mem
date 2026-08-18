@@ -276,7 +276,10 @@ per-case backoff, folds every candidate through terminal/supersede chains, and a
 cases. A stable `manual_required` case is not scanned or updated again until a trigger marks it dirty. Review returns the
 generation, revision, and complete candidate set; select/reject requires `expected_revision`, with stale requests failing
 409 before mutation. Candidate counts above the configured auto threshold remain manual. The schema reserves generation
-boundaries for v0.29, where compression and cold storage may be added; v0.28.9 does not advance generations.
+boundaries for v0.29. When a group already has a terminal generation, an exact reassertion of its active winner only adds
+evidence; a different current value creates the next manual-review generation without mutating the terminal case. This
+bounded reopen path deliberately adds no pagination, cooling, split/reclassification, rollup, compression, or cold
+storage behavior.
 
 Near-copy control deliberately shares one conservative predicate across ingestion, maintenance, and recall. It requires
 compatible namespace, predicate, canonical slot/attribute, qualifiers, and validity; high cosine and lexical near-copy

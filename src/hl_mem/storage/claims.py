@@ -59,6 +59,15 @@ class SupersedeResult:
     applied: bool
 
 
+@dataclass(frozen=True)
+class ConflictGroupLifecycle:
+    """Latest persisted lifecycle facts for one group-native conflict key."""
+
+    latest_generation: int
+    latest_terminal_generation: int | None
+    open_case_id: str | None
+
+
 class ClaimRepository:
     """封装 Claim 持久化、时间可见检索、状态更新与去重查询。"""
 
@@ -368,6 +377,27 @@ class ClaimRepository:
             (conflict_key,),
         ).fetchall()
         return self._decode_rows(rows)
+
+    def conflict_group_lifecycle(self, namespace: str, conflict_key: str) -> ConflictGroupLifecycle:
+        """Return bounded generation state without reopening or mutating any case."""
+
+        group_key = compute_conflict_group_key(namespace, conflict_key)
+        row = self.connection.execute(
+            "SELECT COALESCE(max(generation),0) AS latest_generation,"
+            "max(CASE WHEN status IN ('resolved','rejected') AND resolved_at IS NOT NULL "
+            "THEN generation END) AS latest_terminal_generation,"
+            "max(CASE WHEN status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL "
+            "THEN id END) AS open_case_id FROM conflict_cases WHERE namespace_key=? AND group_key=?",
+            (namespace, group_key),
+        ).fetchone()
+        assert row is not None
+        return ConflictGroupLifecycle(
+            latest_generation=int(row["latest_generation"]),
+            latest_terminal_generation=(
+                int(row["latest_terminal_generation"]) if row["latest_terminal_generation"] is not None else None
+            ),
+            open_case_id=str(row["open_case_id"]) if row["open_case_id"] is not None else None,
+        )
 
     def find_by_fact_hash(self, namespace: str, fact_hash: str) -> dict[str, Any] | None:
         """按命名空间与事实哈希查找最新未终结 Claim。"""
