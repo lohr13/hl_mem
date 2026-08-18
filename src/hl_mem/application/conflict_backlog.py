@@ -42,9 +42,7 @@ def _target_sql(select_clause: str) -> tuple[str, tuple[Any, ...]]:
 
 
 def _target_rows(connection: Any) -> list[Any]:
-    sql, parameters = _target_sql(
-        "cases.id,cases.left_claim_id,cases.right_claim_id,left_claim.canonical_slot"
-    )
+    sql, parameters = _target_sql("cases.id,cases.left_claim_id,cases.right_claim_id,left_claim.canonical_slot")
     return list(connection.execute(f"{sql} ORDER BY cases.id", parameters).fetchall())
 
 
@@ -82,11 +80,7 @@ def inspect_invalid_conflict_groups(connection: Any) -> dict[str, Any]:
 
     rows = _target_rows(connection)
     target_case_ids = {str(row["id"]) for row in rows}
-    endpoint_ids = {
-        str(claim_id)
-        for row in rows
-        for claim_id in (row["left_claim_id"], row["right_claim_id"])
-    }
+    endpoint_ids = {str(claim_id) for row in rows for claim_id in (row["left_claim_id"], row["right_claim_id"])}
     cases_by_slot: dict[str, int] = {}
     for row in rows:
         slot = str(row["canonical_slot"])
@@ -164,9 +158,7 @@ def repair_invalid_conflict_groups(
             "UNION SELECT cases.right_claim_id FROM conflict_cases AS cases "
             "JOIN invalid_conflict_repair_targets AS targets ON targets.case_id=cases.id"
         )
-        selected_count = int(
-            connection.execute("SELECT count(*) FROM invalid_conflict_repair_targets").fetchone()[0]
-        )
+        selected_count = int(connection.execute("SELECT count(*) FROM invalid_conflict_repair_targets").fetchone()[0])
         if selected_count != expected_count:
             raise ConflictError(
                 f"invalid conflict group target changed during repair: expected {expected_count}, found {selected_count}"
@@ -222,8 +214,7 @@ def repair_invalid_conflict_groups(
             "marker": REPAIR_MARKER,
         }
         connection.execute(
-            "INSERT INTO audit_log(occurred_at,phase,action,outcome,trace_id,detail_json) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO audit_log(occurred_at,phase,action,outcome,trace_id,detail_json) " "VALUES (?,?,?,?,?,?)",
             (
                 timestamp,
                 "maintenance",

@@ -854,15 +854,18 @@ class Settings:
             raise ConfigurationError("worker.conflict_writer_yield_ms must be between 0 and 1000")
         if not 2 <= self.conflict_auto_resolve_max_candidates <= 10_000:
             raise ConfigurationError("worker.conflict_auto_resolve_max_candidates must be between 2 and 10000")
-        if min(
-            self.operational_batch_size,
-            self.job_succeeded_days,
-            self.job_dead_days,
-            self.llm_span_days,
-            self.dedup_pair_days,
-            self.feedback_uninjected_days,
-            self.feedback_unlabeled_days,
-        ) < 1:
+        if (
+            min(
+                self.operational_batch_size,
+                self.job_succeeded_days,
+                self.job_dead_days,
+                self.llm_span_days,
+                self.dedup_pair_days,
+                self.feedback_uninjected_days,
+                self.feedback_unlabeled_days,
+            )
+            < 1
+        ):
             raise ConfigurationError(
                 "retention.operational_batch_size, retention.job_succeeded_days, "
                 "retention.job_dead_days, retention.llm_span_days, retention.dedup_pair_days, "

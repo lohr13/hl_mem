@@ -198,8 +198,11 @@ def test_reject_candidate_removes_only_that_candidate_and_keeps_case_open(tmp_pa
     assert connection.execute("SELECT status FROM conflict_cases WHERE id=?", (case_id,)).fetchone()[0] == (
         "manual_required"
     )
-    assert connection.execute(
-        "SELECT count(*) FROM conflict_case_candidates WHERE case_id=?",
-        (case_id,),
-    ).fetchone()[0] == 2
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM conflict_case_candidates WHERE case_id=?",
+            (case_id,),
+        ).fetchone()[0]
+        == 2
+    )
     database.close()

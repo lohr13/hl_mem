@@ -449,8 +449,7 @@ def _ready_review_rows(
     if cursor is not None and cursor["cursor_time"] is not None and cursor["cursor_id"] is not None:
         rows.extend(
             connection.execute(
-                select_prefix
-                + f"WHERE {ready_sql} AND (state.dirty_at,state.case_id)>(?,?) "
+                select_prefix + f"WHERE {ready_sql} AND (state.dirty_at,state.case_id)>(?,?) "
                 "ORDER BY state.dirty_at,state.case_id LIMIT ?",
                 (now, cursor["cursor_time"], cursor["cursor_id"], max_cases),
             ).fetchall()

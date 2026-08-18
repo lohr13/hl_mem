@@ -79,9 +79,7 @@ def test_migration_046_upgrades_below_floor_pending_pairs_once(tmp_path: Path) -
     upgraded = database.open()
     first = [
         tuple(row)
-        for row in upgraded.execute(
-            "SELECT id,decision,judge_reason,reviewed_at FROM dedup_pairs ORDER BY id"
-        )
+        for row in upgraded.execute("SELECT id,decision,judge_reason,reviewed_at FROM dedup_pairs ORDER BY id")
     ]
     database.close()
 
@@ -89,9 +87,7 @@ def test_migration_046_upgrades_below_floor_pending_pairs_once(tmp_path: Path) -
     reopened = reopened_database.open()
     second = [
         tuple(row)
-        for row in reopened.execute(
-            "SELECT id,decision,judge_reason,reviewed_at FROM dedup_pairs ORDER BY id"
-        )
+        for row in reopened.execute("SELECT id,decision,judge_reason,reviewed_at FROM dedup_pairs ORDER BY id")
     ]
     reopened_database.close()
 

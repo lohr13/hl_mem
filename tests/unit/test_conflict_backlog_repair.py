@@ -117,7 +117,9 @@ def test_expected_count_mismatch_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(ConflictError, match="expected 3.*found 2"):
         repair_invalid_conflict_groups(connection, expected_count=3, repaired_at=NOW)
 
-    assert [tuple(row) for row in connection.execute("SELECT id,status,rationale FROM conflict_cases ORDER BY id")] == before
+    assert [
+        tuple(row) for row in connection.execute("SELECT id,status,rationale FROM conflict_cases ORDER BY id")
+    ] == before
 
 
 def test_apply_refuses_target_endpoint_used_by_another_open_case(tmp_path: Path) -> None:
@@ -134,9 +136,12 @@ def test_apply_refuses_target_endpoint_used_by_another_open_case(tmp_path: Path)
     with pytest.raises(ConflictError, match="outside the repair target"):
         repair_invalid_conflict_groups(connection, expected_count=2, repaired_at=NOW)
 
-    assert connection.execute(
-        "SELECT count(*) FROM conflict_cases WHERE id LIKE 'invalid-%' AND status='manual_required'"
-    ).fetchone()[0] == 2
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM conflict_cases WHERE id LIKE 'invalid-%' AND status='manual_required'"
+        ).fetchone()[0]
+        == 2
+    )
     assert connection.execute("SELECT status FROM claims WHERE id='disputed'").fetchone()[0] == "disputed"
 
 
@@ -159,9 +164,10 @@ def test_apply_closes_invalid_cases_restores_only_disputed_and_writes_one_audit(
     assert all(row["status"] == "rejected" and row["decision"] == "reject" for row in rows)
     assert all(row["resolved_at"] == NOW for row in rows)
     assert all(row["rationale"].endswith(";v0.28.9_invalid_nonexclusive_group") for row in rows)
-    assert connection.execute(
-        "SELECT count(*) FROM conflict_review_state WHERE case_id LIKE 'invalid-%'"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT count(*) FROM conflict_review_state WHERE case_id LIKE 'invalid-%'").fetchone()[0]
+        == 0
+    )
     assert connection.execute("SELECT count(*) FROM audit_log").fetchone()[0] == audit_before + 1
     assert inspect_invalid_conflict_groups(connection)["candidate_case_count"] == 0
 
@@ -280,7 +286,10 @@ def test_production_shaped_5841_repair_leaves_three_open_cases(tmp_path: Path) -
     assert result["invalid_open_count"] == 0
     assert find_orphan_disputed_claims(connection) == []
     assert find_dangling_conflict_references(connection) == []
-    assert connection.execute(
-        "SELECT count(*) FROM conflict_cases WHERE status IN ('pending','auto_resolved','manual_required') "
-        "AND resolved_at IS NULL"
-    ).fetchone()[0] == 3
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM conflict_cases WHERE status IN ('pending','auto_resolved','manual_required') "
+            "AND resolved_at IS NULL"
+        ).fetchone()[0]
+        == 3
+    )

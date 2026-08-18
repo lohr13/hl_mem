@@ -230,8 +230,7 @@ class ResolutionService:
                         continue
                     assert_transition(str(claim["status"]), "retracted")
                     cursor = self.connection.execute(
-                        "UPDATE claims SET status='retracted',valid_to=?,recorded_to=? "
-                        "WHERE id=? AND status=?",
+                        "UPDATE claims SET status='retracted',valid_to=?,recorded_to=? " "WHERE id=? AND status=?",
                         (timestamp, timestamp, claim["id"], claim["status"]),
                     )
                     if cursor.rowcount != 1:

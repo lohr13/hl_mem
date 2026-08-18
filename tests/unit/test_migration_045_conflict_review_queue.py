@@ -89,9 +89,7 @@ def test_migration_045_creates_group_candidate_and_review_schema(tmp_path: Path)
     case_columns = {row[1] for row in connection.execute("PRAGMA table_info(conflict_cases)")}
     tables = {
         row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'conflict_%'"
-        )
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'conflict_%'")
     }
     indexes = {
         row[0]
@@ -108,9 +106,7 @@ def test_migration_045_creates_group_candidate_and_review_schema(tmp_path: Path)
         "idx_conflict_review_left_tip",
         "idx_conflict_review_right_tip",
     } <= indexes
-    assert connection.execute(
-        "SELECT 1 FROM schema_migrations WHERE version='045_conflict_review_queue'"
-    ).fetchone()
+    assert connection.execute("SELECT 1 FROM schema_migrations WHERE version='045_conflict_review_queue'").fetchone()
 
 
 def test_migration_045_seeds_only_unsettled_review_work(tmp_path: Path) -> None:
@@ -193,9 +189,7 @@ def test_migration_045_candidate_set_changes_bump_revision_and_dirty(tmp_path: P
         namespace="default",
         group_key="service-port",
     )
-    connection.execute(
-        "UPDATE conflict_review_state SET dirty_at=NULL,dirty_reason='test_clean' WHERE case_id='case'"
-    )
+    connection.execute("UPDATE conflict_review_state SET dirty_at=NULL,dirty_reason='test_clean' WHERE case_id='case'")
 
     connection.execute(
         "INSERT INTO conflict_case_candidates("
@@ -237,14 +231,10 @@ def test_migration_045_claim_real_change_requeues_but_same_value_update_does_not
         namespace="default",
         group_key="service-port",
     )
-    connection.execute(
-        "UPDATE conflict_review_state SET dirty_at=NULL,dirty_reason='test_clean' WHERE case_id='case'"
-    )
+    connection.execute("UPDATE conflict_review_state SET dirty_at=NULL,dirty_reason='test_clean' WHERE case_id='case'")
 
     connection.execute("UPDATE claims SET source_authority=source_authority WHERE id='left'")
-    assert connection.execute(
-        "SELECT dirty_at FROM conflict_review_state WHERE case_id='case'"
-    ).fetchone()[0] is None
+    assert connection.execute("SELECT dirty_at FROM conflict_review_state WHERE case_id='case'").fetchone()[0] is None
 
     connection.execute("UPDATE claims SET source_authority='high' WHERE id='left'")
     review = connection.execute(
@@ -289,6 +279,4 @@ def test_migration_045_allows_only_one_open_case_per_namespace_group(tmp_path: P
         namespace="default",
         group_key="service-port",
     )
-    assert connection.execute(
-        "SELECT count(*) FROM conflict_cases WHERE group_key='service-port'"
-    ).fetchone()[0] == 2
+    assert connection.execute("SELECT count(*) FROM conflict_cases WHERE group_key='service-port'").fetchone()[0] == 2

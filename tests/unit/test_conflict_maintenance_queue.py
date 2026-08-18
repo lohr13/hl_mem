@@ -100,9 +100,7 @@ def test_claim_input_change_requeues_clean_manual_case(tmp_path: Path) -> None:
     connection = Database(tmp_path / "manual-requeue.db").open()
     _manual_case(connection, "case")
     auto_resolve_conflicts(connection, NOW)
-    assert connection.execute(
-        "SELECT dirty_at FROM conflict_review_state WHERE case_id='case'"
-    ).fetchone()[0] is None
+    assert connection.execute("SELECT dirty_at FROM conflict_review_state WHERE case_id='case'").fetchone()[0] is None
 
     connection.execute("UPDATE claims SET source_authority='high' WHERE id='case-left'")
     connection.commit()
@@ -121,15 +119,16 @@ def test_followed_tip_change_requeues_case_that_references_old_endpoint(tmp_path
     _case(connection, "case", "alias", "right", status="manual_required")
     first = auto_resolve_conflicts(connection, NOW)
     assert first["manual_stable"] == 1
-    assert connection.execute(
-        "SELECT left_tip_id,dirty_at FROM conflict_review_state WHERE case_id='case'"
-    ).fetchone()[0] == "tip"
+    assert (
+        connection.execute("SELECT left_tip_id,dirty_at FROM conflict_review_state WHERE case_id='case'").fetchone()[0]
+        == "tip"
+    )
 
     connection.execute("UPDATE claims SET source_authority='high' WHERE id='tip'")
     connection.commit()
-    assert connection.execute(
-        "SELECT dirty_at FROM conflict_review_state WHERE case_id='case'"
-    ).fetchone()[0] is not None
+    assert (
+        connection.execute("SELECT dirty_at FROM conflict_review_state WHERE case_id='case'").fetchone()[0] is not None
+    )
 
     result = auto_resolve_conflicts(connection, "2026-08-18T00:01:00+00:00")
     assert result["resolved"] == 1
@@ -152,12 +151,8 @@ def test_terminal_endpoint_auto_closes_open_case(tmp_path: Path, terminal_status
     result = auto_resolve_conflicts(connection, NOW)
 
     assert result["resolved"] == 1
-    assert connection.execute(
-        "SELECT status FROM conflict_cases WHERE id='case'"
-    ).fetchone()[0] == "resolved"
-    assert connection.execute(
-        "SELECT 1 FROM conflict_review_state WHERE case_id='case'"
-    ).fetchone() is None
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case'").fetchone()[0] == "resolved"
+    assert connection.execute("SELECT 1 FROM conflict_review_state WHERE case_id='case'").fetchone() is None
 
 
 def test_count_budget_uses_persistent_cursor_across_connections(tmp_path: Path) -> None:
@@ -169,9 +164,7 @@ def test_count_budget_uses_persistent_cursor_across_connections(tmp_path: Path) 
     first = auto_resolve_conflicts(connection, NOW, max_cases=3)
     first_ids = {
         row[0]
-        for row in connection.execute(
-            "SELECT case_id FROM conflict_review_state WHERE last_reviewed_at IS NOT NULL"
-        )
+        for row in connection.execute("SELECT case_id FROM conflict_review_state WHERE last_reviewed_at IS NOT NULL")
     }
     database.close()
 
@@ -180,9 +173,7 @@ def test_count_budget_uses_persistent_cursor_across_connections(tmp_path: Path) 
     second = auto_resolve_conflicts(reopened, "2026-08-18T00:01:00+00:00", max_cases=3)
     second_ids = {
         row[0]
-        for row in reopened.execute(
-            "SELECT case_id FROM conflict_review_state WHERE last_reviewed_at IS NOT NULL"
-        )
+        for row in reopened.execute("SELECT case_id FROM conflict_review_state WHERE last_reviewed_at IS NOT NULL")
     }
 
     assert first["scanned"] == 3
@@ -190,9 +181,10 @@ def test_count_budget_uses_persistent_cursor_across_connections(tmp_path: Path) 
     assert second["scanned"] == 3
     assert len(first_ids) == 3
     assert len(second_ids - first_ids) == 3
-    assert reopened.execute(
-        "SELECT cursor_id FROM maintenance_cursors WHERE task='auto_resolve_conflicts'"
-    ).fetchone()[0] == second["cursor_id"]
+    assert (
+        reopened.execute("SELECT cursor_id FROM maintenance_cursors WHERE task='auto_resolve_conflicts'").fetchone()[0]
+        == second["cursor_id"]
+    )
 
 
 def test_time_budget_stops_before_starting_next_case(tmp_path: Path) -> None:
@@ -236,9 +228,7 @@ def test_poison_case_backs_off_without_blocking_next_case(tmp_path: Path) -> Non
     assert result["resolved"] == 1
     assert tuple(state[:2]) == (1, "2026-08-18T00:10:00+00:00")
     assert "poison" in state[2]
-    assert connection.execute(
-        "SELECT status FROM conflict_cases WHERE id='case-b'"
-    ).fetchone()[0] == "resolved"
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-b'").fetchone()[0] == "resolved"
 
 
 def test_bounded_batch_releases_writer_before_full_backlog(tmp_path: Path) -> None:
@@ -288,6 +278,9 @@ def test_bounded_batch_releases_writer_before_full_backlog(tmp_path: Path) -> No
 
     assert thread.is_alive() is False
     assert waited < 1.0
-    assert background_connection.execute(
-        "SELECT count(*) FROM conflict_review_state WHERE dirty_at IS NOT NULL"
-    ).fetchone()[0] == 27
+    assert (
+        background_connection.execute(
+            "SELECT count(*) FROM conflict_review_state WHERE dirty_at IS NOT NULL"
+        ).fetchone()[0]
+        == 27
+    )

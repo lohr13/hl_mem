@@ -114,9 +114,9 @@ def _run_operations(connection, operations: Sequence[str]) -> None:
         if operation == "repair":
             repair_active_claims(connection, apply=True, repaired_at=NOW)
         elif operation == "resolve":
-            revision = connection.execute(
-                "SELECT revision FROM conflict_cases WHERE id='case-left-third'"
-            ).fetchone()[0]
+            revision = connection.execute("SELECT revision FROM conflict_cases WHERE id='case-left-third'").fetchone()[
+                0
+            ]
             ResolutionService(connection).resolve(
                 "case-left-third",
                 "keep_left",

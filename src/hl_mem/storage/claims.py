@@ -603,8 +603,7 @@ class ClaimRepository:
             ]
             generation = int(
                 self.connection.execute(
-                    "SELECT COALESCE(max(generation),0)+1 FROM conflict_cases "
-                    "WHERE namespace_key=? AND group_key=?",
+                    "SELECT COALESCE(max(generation),0)+1 FROM conflict_cases " "WHERE namespace_key=? AND group_key=?",
                     (namespace, group_key),
                 ).fetchone()[0]
             )
@@ -665,7 +664,9 @@ class ClaimRepository:
                     if open_case is None:
                         raise
                 else:
-                    open_case = self.connection.execute("SELECT * FROM conflict_cases WHERE id=?", (case_id,)).fetchone()
+                    open_case = self.connection.execute(
+                        "SELECT * FROM conflict_cases WHERE id=?", (case_id,)
+                    ).fetchone()
         if open_case is None:  # pragma: no cover - guarded by insert/reselect branches
             raise RuntimeError(f"open conflict group disappeared: {namespace}:{group_key}")
         case_id = str(open_case["id"])

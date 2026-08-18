@@ -917,9 +917,7 @@ def _insert_pending_dedup_pair(
     """Record an LLM gray-area pair without making a remote call in the write transaction."""
 
     settings = getattr(connection, "hl_mem_settings", None) or Settings()
-    pending_count = int(
-        connection.execute("SELECT count(*) FROM dedup_pairs WHERE decision IS NULL").fetchone()[0]
-    )
+    pending_count = int(connection.execute("SELECT count(*) FROM dedup_pairs WHERE decision IS NULL").fetchone()[0])
     if pending_count >= settings.dedup_max_pending_pairs:
         metrics.record_dedup_pending_pair_skipped()
         return False

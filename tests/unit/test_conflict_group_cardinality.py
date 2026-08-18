@@ -68,9 +68,12 @@ def test_101_member_exclusive_group_persists_one_case_not_all_pairs(tmp_path: Pa
     result = _ensure(repository, members)
 
     assert result["outcome"] == "created"
-    assert connection.execute(
-        "SELECT count(*) FROM conflict_cases WHERE status IN ('pending','auto_resolved','manual_required')"
-    ).fetchone()[0] == 1
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM conflict_cases WHERE status IN ('pending','auto_resolved','manual_required')"
+        ).fetchone()[0]
+        == 1
+    )
     assert connection.execute("SELECT count(*) FROM conflict_case_candidates").fetchone()[0] == 101
     assert connection.execute("SELECT count(*) FROM conflict_candidate_members").fetchone()[0] == 101
     assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] != 101 * 100 // 2
@@ -149,9 +152,12 @@ def test_new_case_for_terminal_group_uses_next_generation(tmp_path: Path) -> Non
     assert first["generation"] == 1
     assert second["generation"] == 2
     assert second["case_id"] != first["case_id"]
-    assert connection.execute(
-        "SELECT count(*) FROM conflict_cases WHERE namespace_key='default' AND group_key='gateway-port'"
-    ).fetchone()[0] == 2
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM conflict_cases WHERE namespace_key='default' AND group_key='gateway-port'"
+        ).fetchone()[0]
+        == 2
+    )
 
 
 def test_candidate_overflow_marks_single_case_manual_without_dropping_members(tmp_path: Path) -> None:
@@ -207,13 +213,14 @@ def test_group_auto_resolution_never_selects_from_only_two_representatives(tmp_p
 
     assert resolved["resolved"] == 0
     assert resolved["manual_stable"] == 1
-    assert connection.execute(
-        "SELECT status FROM conflict_cases WHERE id=?",
-        (result["case_id"],),
-    ).fetchone()[0] == "manual_required"
-    assert connection.execute(
-        "SELECT count(*) FROM claims WHERE status='disputed'"
-    ).fetchone()[0] == 3
+    assert (
+        connection.execute(
+            "SELECT status FROM conflict_cases WHERE id=?",
+            (result["case_id"],),
+        ).fetchone()[0]
+        == "manual_required"
+    )
+    assert connection.execute("SELECT count(*) FROM claims WHERE status='disputed'").fetchone()[0] == 3
 
 
 def test_terminal_representative_does_not_close_group_with_two_current_candidates(tmp_path: Path) -> None:
@@ -231,13 +238,14 @@ def test_terminal_representative_does_not_close_group_with_two_current_candidate
 
     assert resolved["resolved"] == 0
     assert resolved["manual_stable"] == 1
-    assert connection.execute(
-        "SELECT status FROM conflict_cases WHERE id=?",
-        (result["case_id"],),
-    ).fetchone()[0] == "manual_required"
-    assert connection.execute(
-        "SELECT count(*) FROM claims WHERE status='disputed'"
-    ).fetchone()[0] == 2
+    assert (
+        connection.execute(
+            "SELECT status FROM conflict_cases WHERE id=?",
+            (result["case_id"],),
+        ).fetchone()[0]
+        == "manual_required"
+    )
+    assert connection.execute("SELECT count(*) FROM claims WHERE status='disputed'").fetchone()[0] == 2
 
 
 def test_group_closes_when_only_one_current_candidate_remains(tmp_path: Path) -> None:
@@ -313,10 +321,7 @@ def test_partial_unique_race_reselects_the_winning_open_case(tmp_path: Path) -> 
 
         def execute(self, sql: str, parameters: Any = ()) -> Any:
             cursor = self.connection.execute(sql, parameters)
-            if (
-                not self.waited
-                and sql.startswith("SELECT * FROM conflict_cases WHERE namespace_key=? AND group_key=?")
-            ):
+            if not self.waited and sql.startswith("SELECT * FROM conflict_cases WHERE namespace_key=? AND group_key=?"):
                 self.waited = True
                 barrier.wait(timeout=5)
             return cursor

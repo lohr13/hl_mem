@@ -141,10 +141,13 @@ def test_ingest_quarantines_every_member_of_preexisting_dirty_active_group(tmp_p
     assert new_case["status"] == "manual_required"
     assert new_case["decision"] == "uncertain"
     assert new_case["rationale"] == "ingest_dirty_active_group"
-    assert connection.execute(
-        "SELECT count(*) FROM conflict_case_candidates "
-        "WHERE case_id=(SELECT id FROM conflict_cases WHERE status='manual_required')"
-    ).fetchone()[0] == 3
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM conflict_case_candidates "
+            "WHERE case_id=(SELECT id FROM conflict_cases WHERE status='manual_required')"
+        ).fetchone()[0]
+        == 3
+    )
 
 
 def test_exact_duplicate_also_quarantines_preexisting_dirty_active_group(tmp_path) -> None:
