@@ -175,6 +175,14 @@ hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
 ```
 
+Pending `dedup_pairs` below the current `dedup.threshold` can be previewed read-only on an offline copy. Applying the
+terminal classification requires the exact preview count and never changes Claims:
+
+```bash
+hl-mem --db copy.db dedup drain-below-floor
+hl-mem --db copy.db dedup drain-below-floor --apply --expected-count 597
+```
+
 ### Upgrading from v0.27.x
 
 v0.28.6 adds the optional `hermes.on_demand_recall_timeout_seconds` setting (default `8.0`) without changing the v0.27

@@ -215,6 +215,14 @@ hl-mem conflicts repair-dangling
 hl-mem conflicts repair-dangling --apply
 ```
 
+pending `dedup_pairs` 中低于当前 `dedup.threshold` 的项目可先在离线副本只读预览；应用时必须给出预览得到的
+精确数量，工具只写终态判定和审计，不修改 Claim：
+
+```bash
+hl-mem --db copy.db dedup drain-below-floor
+hl-mem --db copy.db dedup drain-below-floor --apply --expected-count 597
+```
+
 REST 的完整请求契约见 [API 文档](docs/api.md)。
 
 ## 关键配置

@@ -360,6 +360,10 @@ TOML 为准，活文档不固定具体型号。
 已标注 feedback 永不由该清理器删除；未注入 feedback 使用较短窗口。关闭 `operational_cleanup_enabled` 会同时跳过
 运维表和 audit 的定期清理。
 
+低于当前 `dedup.threshold` 的历史 pending pair 不再属于现行审查集合。先在离线副本运行
+`hl-mem --db copy.db dedup drain-below-floor` 获取只读报告，再用同一路径追加
+`--apply --expected-count <精确数量>`；apply 在单事务内复核数量，只写 `dismissed_below_floor` 和审计记录。
+
 ### `[server]`
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
