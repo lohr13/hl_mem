@@ -249,10 +249,10 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `recall.echo_pending_similarity_threshold` | 数值 | `0.95` | 0.0 - 1.0 | `echo_pending_similarity_threshold` |
 | `recall.echo_session_window_seconds` | 整数 | `1800` | 60 - 14400 | `echo_session_window_seconds` |
 | `recall.echo_suppression_mode` | 字符串 | `"off"` | `off`、`observe`、`enforce` | `echo_suppression_mode` |
-| `recall.freshness_annotation_mode` | 字符串 | `"off"` | `off`、`observe`、`render` | `freshness_annotation_mode` |
 | `recall.expansion_circuit_failure_threshold` | 整数 | `5` | >= 1 | `expansion_circuit_failure_threshold` |
 | `recall.expansion_circuit_open_seconds` | 数值 | `60.0` | > 0 | `expansion_circuit_open_seconds` |
 | `recall.feedback_min_samples` | 整数 | `3` | >= 1 | `feedback_min_samples` |
+| `recall.freshness_annotation_mode` | 字符串 | `"off"` | `off`、`observe`、`render` | `freshness_annotation_mode` |
 | `recall.fts_language` | 字符串 | `"auto"` | `auto`、`zh`、`en` | `fts_language` |
 | `recall.packed_context_token_budget` | 整数 | `2000` | >= 1 | `packed_context_token_budget` |
 | `recall.preference_recency_boost` | 数值 | `0.12` | 0.0 - 1.0 | `preference_recency_boost` |
@@ -332,7 +332,7 @@ TOML 为准，活文档不固定具体型号。
 | `retention.decay_temporal_days` | 整数 | `7` | >= 1；不得大于 archive_temporal_days | `decay_temporal_days` |
 | `retention.dedup_pair_days` | 整数 | `90` | >= 1 | `dedup_pair_days` |
 | `retention.event_days` | 整数 | `30` | 任意整数 | `retention_days` |
-| `retention.expired_claim_retention_days` | 整数 | `90` | >= 1；expired 历史查询保留窗 | `expired_claim_retention_days` |
+| `retention.expired_claim_retention_days` | 整数 | `90` | >= 1 | `expired_claim_retention_days` |
 | `retention.expired_cleanup_batch_size` | 整数 | `100` | >= 1 | `expired_cleanup_batch_size` |
 | `retention.expired_cleanup_mode` | 字符串 | `"observe"` | `off`、`observe`、`on` | `expired_cleanup_mode` |
 | `retention.feedback_bonus_cap_days` | 整数 | `180` | >= 0 | `feedback_bonus_cap_days` |
@@ -363,14 +363,9 @@ TOML 为准，活文档不固定具体型号。
 已标注 feedback 永不由该清理器删除；未注入 feedback 使用较短窗口。关闭 `operational_cleanup_enabled` 会同时跳过
 运维表和 audit 的定期清理。
 
-expired Claim 只有在超过 `expired_claim_retention_days`、没有下游 evidence 消费者且不属于 open conflict 时才有
-删除资格。维护默认 `observe`；切换 `on` 后每轮仍只处理一个有界 batch，并逐条复用 tombstone
-`DeletionService`。存量处理先在离线副本运行 `hl-mem --db copy.db expired cleanup`，apply 必须追加预览得到的
-`--expected-count`，例如 `expired cleanup --apply --expected-count 4508 --limit 100`。
+Expired Claims are eligible only after `expired_claim_retention_days`, with no downstream evidence consumer and no open conflict. Maintenance defaults to `observe`; `on` processes one bounded batch through the tombstone-backed `DeletionService`. Offline-copy apply requires the exact dry-run `--expected-count`.
 
-低于当前 `dedup.threshold` 的历史 pending pair 不再属于现行审查集合。先在离线副本运行
-`hl-mem --db copy.db dedup drain-below-floor` 获取只读报告，再用同一路径追加
-`--apply --expected-count <精确数量>`；apply 在单事务内复核数量，只写 `dismissed_below_floor` 和审计记录。
+Pending dedup pairs below the current `dedup.threshold` can be reported read-only and terminally classified with `dedup drain-below-floor --apply --expected-count <exact-count>`; the drain never changes Claims.
 
 ### `[server]`
 

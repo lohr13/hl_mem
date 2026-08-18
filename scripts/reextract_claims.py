@@ -57,7 +57,7 @@ from hl_mem.ingest.extractors import ExtractedClaim  # noqa: E402
 from hl_mem.settings import Settings  # noqa: E402
 from hl_mem.storage._shared import decode_json  # noqa: E402
 from hl_mem.storage.database import Database  # noqa: E402
-from hl_mem.storage.legacy_tag_fts import execute_claim_tags_update  # noqa: E402
+from hl_mem.storage.tokenized_fts import sync_claim_tokenized_fts_v2  # noqa: E402
 
 PLAN_SCHEMA_VERSION = 1
 DEFAULT_BATCH_SIZE = 50
@@ -407,9 +407,7 @@ def update_existing_claim(
         slot,
         qualifiers,
     )
-    cursor = execute_claim_tags_update(
-        connection,
-        existing_claim_id,
+    cursor = connection.execute(
         "UPDATE claims SET canonical_slot=?,topic_tags_json=?,index_text=?,embedding_dense=?,"
         "embedding_model=?,embedding_dim=?,conflict_key=?,conflict_key_version=3 WHERE id=?",
         (
@@ -423,6 +421,8 @@ def update_existing_claim(
             existing_claim_id,
         ),
     )
+    if cursor.rowcount:
+        sync_claim_tokenized_fts_v2(connection, existing_claim_id)
     connection.commit()
     return cursor.rowcount == 1
 

@@ -13,7 +13,7 @@ from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 
 V2_TABLES = {"claims_fts_v2", "events_fts_v2", "claims_tags_fts_v2"}
-LEGACY_TABLES = {"claims_fts", "events_fts", "claims_tags_fts"}
+RETAINED_LEGACY_TABLES = {"claims_fts", "events_fts"}
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def migrated_database(tmp_path: Path) -> Iterator[tuple[Database, object]]:
     database.close()
 
 
-def test_migration_036_creates_unicode61_v2_tables_and_keeps_legacy_tables(
+def test_migration_036_creates_unicode61_v2_tables_and_keeps_only_retained_legacy_tables(
     migrated_database: tuple[Database, object],
 ) -> None:
     """缺少任一 v2 表、错误 tokenizer 或删除旧表都必须失败。"""
@@ -46,7 +46,7 @@ def test_migration_036_creates_unicode61_v2_tables_and_keeps_legacy_tables(
 
     assert set(schemas) == V2_TABLES
     assert all("tokenize='unicode61'" in schema for schema in schemas.values())
-    assert legacy_tables == LEGACY_TABLES
+    assert legacy_tables == RETAINED_LEGACY_TABLES
     assert (
         connection.execute("SELECT version FROM schema_migrations WHERE version='036_tokenized_fts_v2'").fetchone()[
             "version"

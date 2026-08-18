@@ -255,7 +255,9 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.29.0 with 48 immutable, forward-only migrations.
+The current baseline is v0.29.0 with 49 immutable, forward-only migrations. Migration 049 removes the legacy
+`claims_tags_fts` only after checking database views/triggers. SQLite cannot prove the absence of external query
+consumers, so every node must be on v0.29.0+ and the old-binary rollback window must be closed before upgrading.
 
 ## Documentation
 

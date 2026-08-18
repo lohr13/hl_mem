@@ -12,6 +12,7 @@ from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
+from hl_mem.storage.tokenized_fts import sync_claim_tokenized_fts_v2
 
 
 @pytest.fixture
@@ -89,11 +90,30 @@ def test_claim_searches_read_only_v2_indexes(connection) -> None:
         (row[0], "config.model architecture"),
     )
     connection.execute("DROP TABLE claims_fts")
-    connection.execute("DROP TABLE claims_tags_fts")
+    assert connection.execute("SELECT 1 FROM sqlite_schema WHERE name='claims_tags_fts'").fetchone() is None
     connection.commit()
 
     assert [claim["id"] for claim in repository.search_claims_fts("提取模型是什么")] == ["claim-search-v2"]
     assert [claim["id"] for claim in repository.search_claims_tags(["missing", "config.model"])] == ["claim-search-v2"]
+
+
+def test_in_place_maintenance_update_explicitly_resyncs_v2_projections(connection) -> None:
+    repository = ClaimRepository(connection)
+    assert repository.insert_claim(_claim("claim-sync", "old index text", topic_tags_json='["before"]'))
+    connection.execute(
+        "UPDATE claims SET index_text=?,topic_tags_json=? WHERE id='claim-sync'",
+        ("new searchable text", '["after","after"]'),
+    )
+
+    assert sync_claim_tokenized_fts_v2(connection, "claim-sync") is True
+
+    rowid = connection.execute("SELECT rowid FROM claims WHERE id='claim-sync'").fetchone()[0]
+    assert connection.execute("SELECT terms FROM claims_fts_v2 WHERE rowid=?", (rowid,)).fetchone()[0] == (
+        prepare_fts_document("new searchable text")
+    )
+    assert connection.execute("SELECT tags_text FROM claims_tags_fts_v2 WHERE rowid=?", (rowid,)).fetchone()[0] == (
+        "after"
+    )
 
 
 def test_auto_query_matches_old_raw_and_new_stemmed_claim_indexes(connection) -> None:

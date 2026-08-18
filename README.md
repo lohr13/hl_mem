@@ -343,7 +343,9 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.29.0，共 48 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.29.0，共 49 个不可变、仅向前执行的 SQL Migration。migration 049 在确认数据库内无
+view/trigger 消费者后移除 legacy `claims_tags_fts`；外部查询无法由 SQLite schema 证明，升级前必须完成全机
+v0.29.0+ 门槛核验并结束旧二进制回滚窗口。
 
 ## 文档
 

@@ -63,6 +63,9 @@ CONSTRAINTS = {
     "recall.side_effect_backoff_seconds": ">= 0",
     "recall.vector_batch_size": ">= 1",
     "recall.feedback_min_samples": ">= 1",
+    "recall.echo_session_window_seconds": "60 - 14400",
+    "recall.echo_pending_similarity_threshold": "0.0 - 1.0",
+    "recall.echo_pending_max_seconds": ">= 60",
     "recall.expansion_circuit_failure_threshold": ">= 1",
     "recall.expansion_circuit_open_seconds": "> 0",
     "hermes.timeout": ">= 1",
@@ -112,6 +115,8 @@ CONSTRAINTS = {
     "retention.feedback_bonus_days": ">= 0",
     "retention.feedback_bonus_cap_days": ">= 0",
     "retention.operational_batch_size": ">= 1",
+    "retention.expired_claim_retention_days": ">= 1",
+    "retention.expired_cleanup_batch_size": ">= 1",
     "retention.job_succeeded_days": ">= 1",
     "retention.job_dead_days": ">= 1",
     "retention.llm_span_days": ">= 1",
@@ -170,6 +175,19 @@ TABLE_NOTES = {
         "运维表和 audit 的定期清理。",
     ],
 }
+
+
+TABLE_NOTES["retention"].extend(
+    [
+        "",
+        "Expired Claims are eligible only after `expired_claim_retention_days`, with no downstream evidence consumer "
+        "and no open conflict. Maintenance defaults to `observe`; `on` processes one bounded batch through the "
+        "tombstone-backed `DeletionService`. Offline-copy apply requires the exact dry-run `--expected-count`.",
+        "",
+        "Pending dedup pairs below the current `dedup.threshold` can be reported read-only and terminally classified "
+        "with `dedup drain-below-floor --apply --expected-count <exact-count>`; the drain never changes Claims.",
+    ]
+)
 
 
 def render_type(annotation: Any) -> str:

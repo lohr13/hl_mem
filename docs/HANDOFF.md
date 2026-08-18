@@ -9,7 +9,7 @@
 - **阶段**：v0.29.0 五项锁定范围已完成，等待交付复核；无 push
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：48 migrations（SQL 001–048），只允许向前迁移
+- **Schema**：49 migrations（SQL 001–049），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
 ## v0.28 已交付
@@ -24,6 +24,8 @@
   `--expected-count`。597 条生产形状 fixture 只终结 pair，不改 Claim。
 - expired 回收默认 `observe`，删除资格为超过 90 天历史保留窗、无下游 evidence 消费者、无 open conflict；
   apply 需精确 expected-count、每轮最多 100 条并复用独立 tombstone 删除闭包。
+- migration 049 在同一事务中先验证 047/048 版本证据与数据库内 view/trigger 消费者，再移除 legacy
+  `claims_tags_fts` 及三触发器；SQLite 无法证明外部查询不存在，三机版本门槛和旧二进制回滚窗口由发布流程保证。
 - 终态 conflict generation 保持不可变：同一 active winner 的精确重申只追加 evidence；不同当前值复用现有
   group/candidate/revision 基建创建下一代单 open case，不扩展为 issue platform。
 - A2 `temporal-v1` 只让新写入的 `observation` 授权原子 online/offline 或显式旧值锚定的价格更正。非互斥 slot
