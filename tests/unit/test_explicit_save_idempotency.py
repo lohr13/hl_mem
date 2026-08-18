@@ -72,6 +72,21 @@ def test_explicit_save_without_key_preserves_create_each_time_semantics(tmp_path
     assert _counts(connection) == (2, 2)
 
 
+def test_explicit_save_persists_optional_session_without_changing_legacy_calls(tmp_path) -> None:
+    """Catches explicit-memory writes that lose the caller session or require it for legacy callers."""
+    connection = Database(tmp_path / "explicit-session.db").open()
+    service = IngestService(connection)
+
+    with_session = service.save_explicit_memory("会话记忆", session_id="session-1")
+    without_session = service.save_explicit_memory("旧调用")
+
+    rows = connection.execute("SELECT id,session_id FROM events ORDER BY recorded_at").fetchall()
+    assert [(row["id"], row["session_id"]) for row in rows] == [
+        (with_session["id"], "session-1"),
+        (without_session["id"], None),
+    ]
+
+
 def test_ingest_accepts_namespace_alias_and_rejects_ambiguous_aliases(tmp_path) -> None:
     connection = Database(tmp_path / "namespace.db").open()
     service = IngestService(connection)

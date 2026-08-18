@@ -719,6 +719,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             payload.qualifiers,
             idempotency_key=idempotency_key or payload.idempotency_key,
             namespace=payload.effective_namespace,
+            session_id=payload.session_id,
         )
         event_id = result["id"]
         content_json = json.dumps(

@@ -317,6 +317,7 @@ class IngestService:
         *,
         idempotency_key: str | None = None,
         namespace: str = "default",
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """经统一事件事务写入显式记忆，并返回真实的新建状态。"""
         memory = {
@@ -325,13 +326,16 @@ class IngestService:
             "predicate": predicate,
             "qualifiers": qualifiers or {},
         }
+        event = {
+            "tenant_id": namespace,
+            "event_type": "explicit_memory",
+            "actor_type": "user",
+            "content": {"text": text, "memory": memory},
+        }
+        if session_id:
+            event["session_id"] = session_id
         return self.ingest_event(
-            {
-                "tenant_id": namespace,
-                "event_type": "explicit_memory",
-                "actor_type": "user",
-                "content": {"text": text, "memory": memory},
-            },
+            event,
             idempotency_key=idempotency_key,
         )
 

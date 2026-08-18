@@ -1559,6 +1559,18 @@
             "title": "Qualifiers",
             "type": "object"
           },
+          "session_id": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
           "subject": {
             "default": "用户",
             "maxLength": 200,

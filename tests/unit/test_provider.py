@@ -310,6 +310,45 @@ def test_sync_hooks_post_payloads_and_report_success(monkeypatch) -> None:
     assert provider._failure_count == 0
 
 
+def test_memory_and_pre_compress_hooks_propagate_provider_session(monkeypatch) -> None:
+    """Catches either hook dropping the session already supplied by Hermes initialize."""
+    requests = []
+
+    def post(url, **kwargs):
+        requests.append((url, kwargs["json"]))
+        return Response()
+
+    monkeypatch.setattr(httpx, "post", post)
+    provider = HLMemProvider("unused.db", "http://memory.test/", timeout=2.0)
+    provider.initialize("session-1")
+
+    provider.on_memory_write("save", "memory", "喜欢黑咖啡")
+    provider.on_pre_compress([{"role": "user", "content": "记住这个偏好"}])
+
+    assert requests == [
+        (
+            "http://memory.test/v1/memories",
+            {
+                "text": "喜欢黑咖啡",
+                "qualifiers": {"action": "save", "target": "memory"},
+                "idempotency_key": _memory_idempotency_key("save", "memory", "喜欢黑咖啡"),
+                "namespace": "default",
+                "session_id": "session-1",
+            },
+        ),
+        (
+            "http://memory.test/v1/events",
+            {
+                "event_type": "message",
+                "actor_type": "user",
+                "content": {"text": "记住这个偏好"},
+                "namespace": "default",
+                "session_id": "session-1",
+            },
+        ),
+    ]
+
+
 def test_memory_write_uses_stable_key_and_trusted_namespace(monkeypatch) -> None:
     requests = []
 

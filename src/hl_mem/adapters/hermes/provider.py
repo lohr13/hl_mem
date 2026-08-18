@@ -469,19 +469,22 @@ class HLMemProvider:
         namespace: str = "default",
     ) -> None:
         namespace = _trusted_namespace(namespace)
+        payload: dict[str, Any] = {
+            "text": content,
+            "qualifiers": {"action": action, "target": target},
+            "idempotency_key": _memory_idempotency_key(
+                action,
+                target,
+                content,
+                namespace,
+            ),
+            "namespace": namespace,
+        }
+        if self._session_id:
+            payload["session_id"] = self._session_id
         written = self._sync_post(
             "/v1/memories",
-            {
-                "text": content,
-                "qualifiers": {"action": action, "target": target},
-                "idempotency_key": _memory_idempotency_key(
-                    action,
-                    target,
-                    content,
-                    namespace,
-                ),
-                "namespace": namespace,
-            },
+            payload,
         )
         if written:
             self._prefetch_cache.invalidate_session(self._session_id)
@@ -498,7 +501,7 @@ class HLMemProvider:
         for message in messages:
             if not self._sync_post(
                 "/v1/events",
-                self._event_payload(message, namespace=namespace),
+                self._event_payload(message, namespace=namespace, session_id=self._session_id or None),
             ):
                 break
 
@@ -993,14 +996,18 @@ class HLMemProvider:
         message: dict[str, Any],
         *,
         namespace: str = "default",
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         role = message.get("role", "user")
-        return {
+        payload = {
             "event_type": "message",
             "actor_type": role,
             "content": {"text": str(message.get("content", ""))},
             "namespace": _trusted_namespace(namespace),
         }
+        if session_id:
+            payload["session_id"] = session_id
+        return payload
 
     def _hermes_event_payload(
         self,

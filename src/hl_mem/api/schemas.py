@@ -228,6 +228,7 @@ class MemoryInput(NamespaceInput):
     predicate: str = Field(default="explicit_memory", max_length=100)
     qualifiers: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
+    session_id: str | None = Field(default=None, max_length=200)
 
 
 class MemorySaveOutput(BaseModel):
