@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Literal, Protocol
 
-from hl_mem.application.conflict_invariants import assert_conflict_postconditions
+from hl_mem.application.conflict_invariants import (
+    assert_conflict_case_postconditions,
+    assert_global_conflict_postconditions,
+)
 from hl_mem.core.vector import cosine_similarity
-from hl_mem.domain.claims.conflicts import compute_claim_pair_key
+from hl_mem.domain.claims.conflicts import (
+    compute_claim_pair_key,
+    conflict_group_review_fingerprint,
+    conflict_review_fingerprint,
+)
 from hl_mem.domain.consolidation_scope import ConsolidationScope
 from hl_mem.lifecycle import assert_transition
 from hl_mem.llm.client import LLMClient
@@ -363,20 +371,14 @@ def _resolve_conflict_case(connection: Any, case_id: str, decision: str, now: st
         raise RuntimeError(f"conflict case changed during resolution: {case_id}")
 
 
-def _commit_conflict_maintenance(connection: Any) -> None:
-    """后台冲突维护提交前执行共享 postcondition。"""
-    assert_conflict_postconditions(connection)
-    connection.commit()
-
-
 def _activate_uncontested_survivor(
     connection: Any,
     repository: ClaimRepository,
     case_id: str,
     survivor: dict[str, Any],
-) -> None:
+) -> bool:
     if survivor["status"] == "active":
-        return
+        return False
     other_cases = connection.execute(
         "SELECT left_claim_id,right_claim_id FROM conflict_cases WHERE id<>? "
         f"AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL "
@@ -387,7 +389,7 @@ def _activate_uncontested_survivor(
         for endpoint in (other_case["left_claim_id"], other_case["right_claim_id"]):
             tip = _follow_superseded_chain(repository, endpoint)
             if tip is None or tip["id"] == survivor["id"]:
-                return
+                return False
     assert_transition(survivor["status"], "active")
     cursor = connection.execute(
         "UPDATE claims SET status='active' WHERE id=? AND status=?",
@@ -395,117 +397,470 @@ def _activate_uncontested_survivor(
     )
     if cursor.rowcount != 1:
         raise RuntimeError(f"conflict survivor changed during resolution: {survivor['id']}")
+    return True
 
 
-def auto_resolve_conflicts(connection: Any, now: str) -> dict[str, int]:
-    """逐案原子解决全部未决冲突，并将败者收敛为 superseded。"""
+def _ready_review_rows(
+    connection: Any,
+    now: str,
+    *,
+    max_cases: int,
+) -> tuple[list[Any], int, int, Any | None]:
+    ready_sql = (
+        "state.dirty_at IS NOT NULL "
+        "AND (state.not_before IS NULL OR state.not_before<=?) "
+        f"AND cases.status IN {_OPEN_CONFLICT_STATUSES_SQL} AND cases.resolved_at IS NULL"
+    )
+    eligible = int(
+        connection.execute(
+            "SELECT count(*) FROM conflict_review_state AS state "
+            "JOIN conflict_cases AS cases ON cases.id=state.case_id "
+            f"WHERE {ready_sql}",
+            (now,),
+        ).fetchone()[0]
+    )
+    blocked = int(
+        connection.execute(
+            "SELECT count(*) FROM conflict_review_state AS state "
+            "JOIN conflict_cases AS cases ON cases.id=state.case_id "
+            "WHERE state.dirty_at IS NOT NULL AND state.not_before>? "
+            f"AND cases.status IN {_OPEN_CONFLICT_STATUSES_SQL} AND cases.resolved_at IS NULL",
+            (now,),
+        ).fetchone()[0]
+    )
+    oldest = connection.execute(
+        "SELECT min(state.dirty_at) FROM conflict_review_state AS state "
+        "JOIN conflict_cases AS cases ON cases.id=state.case_id "
+        f"WHERE {ready_sql}",
+        (now,),
+    ).fetchone()[0]
+    if eligible == 0:
+        return [], eligible, blocked, oldest
+
+    cursor = connection.execute(
+        "SELECT cursor_time,cursor_id FROM maintenance_cursors WHERE task='auto_resolve_conflicts'"
+    ).fetchone()
+    select_prefix = (
+        "SELECT state.case_id,state.dirty_at,state.input_fingerprint,state.attempt_count "
+        "FROM conflict_review_state AS state "
+        "JOIN conflict_cases AS cases ON cases.id=state.case_id "
+    )
+    rows: list[Any] = []
+    if cursor is not None and cursor["cursor_time"] is not None and cursor["cursor_id"] is not None:
+        rows.extend(
+            connection.execute(
+                select_prefix
+                + f"WHERE {ready_sql} AND (state.dirty_at,state.case_id)>(?,?) "
+                "ORDER BY state.dirty_at,state.case_id LIMIT ?",
+                (now, cursor["cursor_time"], cursor["cursor_id"], max_cases),
+            ).fetchall()
+        )
+    remaining = max_cases - len(rows)
+    if remaining > 0:
+        seen = {str(row["case_id"]) for row in rows}
+        wrapped = connection.execute(
+            select_prefix + f"WHERE {ready_sql} ORDER BY state.dirty_at,state.case_id LIMIT ?",
+            (now, max_cases),
+        ).fetchall()
+        rows.extend([row for row in wrapped if str(row["case_id"]) not in seen][:remaining])
+    return rows, eligible, blocked, oldest
+
+
+def _timestamp_after(now: str, seconds: int) -> str:
+    parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
+    return (parsed + timedelta(seconds=seconds)).isoformat()
+
+
+def _record_review_failure(
+    connection: Any,
+    selected: Any,
+    now: str,
+    error: Exception,
+    failure_backoff_seconds: int,
+) -> None:
+    next_attempt = int(selected["attempt_count"] or 0) + 1
+    delay = min(3_600, failure_backoff_seconds * (2 ** min(next_attempt, 4)))
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        connection.execute(
+            "UPDATE conflict_review_state SET attempt_count=?,not_before=?,last_error=? "
+            "WHERE case_id=? AND dirty_at IS NOT NULL",
+            (
+                next_attempt,
+                _timestamp_after(now, delay),
+                f"{type(error).__name__}: {str(error)[:512]}",
+                selected["case_id"],
+            ),
+        )
+        connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+
+
+def _clean_review_state(
+    connection: Any,
+    case_id: str,
+    now: str,
+    fingerprint: str,
+    left_tip_id: str,
+    right_tip_id: str,
+) -> None:
+    cursor = connection.execute(
+        "UPDATE conflict_review_state SET dirty_at=NULL,dirty_reason='reviewed_clean',not_before=NULL,"
+        "attempt_count=0,last_error=NULL,last_reviewed_at=?,input_fingerprint=?,left_tip_id=?,right_tip_id=? "
+        "WHERE case_id=?",
+        (now, fingerprint, left_tip_id, right_tip_id, case_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(f"conflict review state changed during review: {case_id}")
+
+
+def _mark_case_manual(connection: Any, case: dict[str, Any]) -> int:
+    if case["status"] == "manual_required":
+        return 0
+    cursor = connection.execute(
+        "UPDATE conflict_cases SET status='manual_required' "
+        f"WHERE id=? AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL",
+        (case["id"],),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(f"conflict case changed during resolution: {case['id']}")
+    case["status"] = "manual_required"
+    return 1
+
+
+def _review_group_conflict_case(
+    connection: Any,
+    repository: ClaimRepository,
+    case: dict[str, Any],
+    now: str,
+) -> tuple[dict[str, int], list[str], list[dict[str, Any]]]:
+    """按完整 candidate set 维护组案；left/right 仅保留兼容展示语义。"""
+
     rows = connection.execute(
-        "SELECT * FROM conflict_cases "
-        f"WHERE status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL ORDER BY created_at,id"
+        "SELECT candidates.candidate_key,candidates.representative_claim_id,members.claim_id "
+        "FROM conflict_case_candidates AS candidates "
+        "LEFT JOIN conflict_candidate_members AS members "
+        "ON members.case_id=candidates.case_id AND members.candidate_key=candidates.candidate_key "
+        "WHERE candidates.case_id=? ORDER BY candidates.candidate_key,members.claim_id",
+        (case["id"],),
     ).fetchall()
+    all_members: list[dict[str, Any]] = []
+    current_by_candidate: dict[str, list[dict[str, Any]]] = {}
+    representative_by_candidate: dict[str, str] = {}
+    for row in rows:
+        candidate_key = str(row["candidate_key"])
+        representative_by_candidate[candidate_key] = str(row["representative_claim_id"])
+        if row["claim_id"] is None:
+            continue
+        claim = repository.get_claim(str(row["claim_id"]))
+        if claim is None:
+            raise RuntimeError(f"conflict candidate references missing claim: {row['claim_id']}")
+        claim["candidate_key"] = candidate_key
+        all_members.append(claim)
+        if claim["status"] in _LIVING_CLAIM_STATUSES:
+            current_by_candidate.setdefault(candidate_key, []).append(claim)
+
+    touched_claim_ids: list[str] = []
+    if len(current_by_candidate) > 1:
+        changed = _mark_case_manual(connection, case)
+        return (
+            {"changed": changed, "resolved": 0, "manual_stable": 1, "deferred": 1},
+            touched_claim_ids,
+            all_members,
+        )
+    if not current_by_candidate:
+        _resolve_conflict_case(connection, str(case["id"]), "obsolete", now)
+        return (
+            {"changed": 1, "resolved": 1, "manual_stable": 0, "deferred": 0},
+            touched_claim_ids,
+            all_members,
+        )
+
+    candidate_key, current_members = next(iter(current_by_candidate.items()))
+    representative_id = representative_by_candidate[candidate_key]
+    winner = next(
+        (member for member in current_members if str(member["id"]) == representative_id),
+        min(current_members, key=lambda member: (str(member.get("recorded_from") or ""), str(member["id"]))),
+    )
+    for member in current_members:
+        if member["id"] == winner["id"]:
+            continue
+        result = repository.supersede_with_inline(
+            str(member["id"]),
+            str(winner["id"]),
+            winner.get("value"),
+            now,
+            now,
+            commit=False,
+        )
+        if not result.applied:
+            raise RuntimeError(f"conflict group member changed during resolution: {member['id']}")
+        touched_claim_ids.append(str(member["id"]))
+    if winner["status"] != "active":
+        assert_transition(str(winner["status"]), "active")
+        cursor = connection.execute(
+            "UPDATE claims SET status='active' WHERE id=? AND status=?",
+            (winner["id"], winner["status"]),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError(f"conflict winner changed during resolution: {winner['id']}")
+        touched_claim_ids.append(str(winner["id"]))
+    _resolve_conflict_case(connection, str(case["id"]), "single_current_candidate", now)
+    return (
+        {"changed": 1, "resolved": 1, "manual_stable": 0, "deferred": 0},
+        touched_claim_ids,
+        all_members,
+    )
+
+
+def _review_conflict_case(connection: Any, selected: Any, now: str) -> dict[str, int]:
     repository = ClaimRepository(connection)
-    resolved = 0
-    manual_required = 0
-    deferred = 0
-    failures: list[Exception] = []
-    for selected_row in rows:
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            case_row = connection.execute(
-                "SELECT * FROM conflict_cases "
-                f"WHERE id=? AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL",
-                (selected_row["id"],),
-            ).fetchone()
-            if case_row is None:
-                connection.rollback()
-                deferred += 1
-                continue
-            case = dict(case_row)
-            left = _follow_superseded_chain(repository, case["left_claim_id"])
-            right = _follow_superseded_chain(repository, case["right_claim_id"])
-            if left is None or right is None:
-                connection.rollback()
-                deferred += 1
-                continue
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        row = connection.execute(
+            "SELECT cases.*,state.input_fingerprint,state.dirty_at "
+            "FROM conflict_cases AS cases "
+            "JOIN conflict_review_state AS state ON state.case_id=cases.id "
+            f"WHERE cases.id=? AND cases.status IN {_OPEN_CONFLICT_STATUSES_SQL} "
+            "AND cases.resolved_at IS NULL AND state.dirty_at IS NOT NULL",
+            (selected["case_id"],),
+        ).fetchone()
+        if row is None:
+            connection.rollback()
+            return {"changed": 0, "resolved": 0, "manual_stable": 0, "deferred": 1}
+        case = dict(row)
+        raw_left = repository.get_claim(str(case["left_claim_id"]))
+        raw_right = repository.get_claim(str(case["right_claim_id"]))
+        if raw_left is None or raw_right is None:
+            raise RuntimeError(f"conflict case references missing claim: {case['id']}")
+        left = _follow_superseded_chain(repository, str(case["left_claim_id"]))
+        right = _follow_superseded_chain(repository, str(case["right_claim_id"]))
+        if left is None or right is None:
+            raise RuntimeError(f"conflict case has an invalid supersession chain: {case['id']}")
 
-            if left["id"] == right["id"]:
-                _resolve_conflict_case(connection, case["id"], "obsolete", now)
-                _commit_conflict_maintenance(connection)
-                resolved += 1
-                continue
+        touched_claim_ids: list[str] = []
+        changed = 0
+        resolved = 0
+        manual_stable = 0
+        deferred = 0
+        group_members: list[dict[str, Any]] | None = None
 
+        if case.get("group_key") is not None:
+            outcome, touched_claim_ids, group_members = _review_group_conflict_case(
+                connection,
+                repository,
+                case,
+                now,
+            )
+            changed = outcome["changed"]
+            resolved = outcome["resolved"]
+            manual_stable = outcome["manual_stable"]
+            deferred = outcome["deferred"]
+        elif left["id"] == right["id"]:
+            _resolve_conflict_case(connection, str(case["id"]), "obsolete", now)
+            changed = resolved = 1
+        else:
             left_terminal = left["status"] in _TERMINAL_CLAIM_STATUSES
             right_terminal = right["status"] in _TERMINAL_CLAIM_STATUSES
             if left_terminal and right_terminal:
-                _resolve_conflict_case(connection, case["id"], "obsolete", now)
-                _commit_conflict_maintenance(connection)
-                resolved += 1
-                continue
-            if left_terminal != right_terminal:
+                _resolve_conflict_case(connection, str(case["id"]), "obsolete", now)
+                changed = resolved = 1
+            elif left_terminal != right_terminal:
                 survivor_side = "right" if left_terminal else "left"
                 survivor = right if left_terminal else left
                 if survivor["status"] not in _LIVING_CLAIM_STATUSES:
-                    connection.rollback()
-                    deferred += 1
-                    continue
-                _activate_uncontested_survivor(connection, repository, case["id"], survivor)
-                _resolve_conflict_case(connection, case["id"], f"keep_{survivor_side}", now)
-                _commit_conflict_maintenance(connection)
-                resolved += 1
-                continue
+                    deferred = 1
+                else:
+                    activated = _activate_uncontested_survivor(
+                        connection,
+                        repository,
+                        str(case["id"]),
+                        survivor,
+                    )
+                    if activated:
+                        touched_claim_ids.append(str(survivor["id"]))
+                    _resolve_conflict_case(connection, str(case["id"]), f"keep_{survivor_side}", now)
+                    changed = resolved = 1
+            elif bool(case["overflow"]):
+                changed = _mark_case_manual(connection, case)
+                manual_stable = deferred = 1
+            elif left["status"] != "disputed" or right["status"] != "disputed":
+                if raw_left["status"] == "superseded" or raw_right["status"] == "superseded":
+                    _resolve_conflict_case(connection, str(case["id"]), "obsolete", now)
+                    changed = resolved = 1
+                else:
+                    deferred = 1
+            else:
+                authority = {"high": 3, "medium": 2, "low": 1}
+                left_score = authority.get(left.get("source_authority", "medium"), 2)
+                right_score = authority.get(right.get("source_authority", "medium"), 2)
+                if left_score == right_score:
+                    changed = _mark_case_manual(connection, case)
+                    manual_stable = deferred = 1
+                else:
+                    winner_side = "left" if left_score > right_score else "right"
+                    winner = left if winner_side == "left" else right
+                    loser = right if winner_side == "left" else left
+                    assert_transition("disputed", "active")
+                    assert_transition("disputed", "superseded")
+                    winner_cursor = connection.execute(
+                        "UPDATE claims SET status='active' WHERE id=? AND status='disputed'",
+                        (winner["id"],),
+                    )
+                    if winner_cursor.rowcount != 1:
+                        raise RuntimeError(f"conflict winner changed during resolution: {winner['id']}")
+                    loser_cursor = connection.execute(
+                        "UPDATE claims SET status='superseded',valid_to=?,recorded_to=?,superseded_by_id=? "
+                        "WHERE id=? AND status='disputed'",
+                        (now, now, winner["id"], loser["id"]),
+                    )
+                    if loser_cursor.rowcount != 1:
+                        raise RuntimeError(f"conflict loser changed during resolution: {loser['id']}")
+                    touched_claim_ids.extend((str(winner["id"]), str(loser["id"])))
+                    _resolve_conflict_case(connection, str(case["id"]), f"keep_{winner_side}", now)
+                    changed = resolved = 1
 
-            if left["status"] != "disputed" or right["status"] != "disputed":
-                connection.rollback()
-                deferred += 1
-                continue
-
-            authority = {"high": 3, "medium": 2, "low": 1}
-            left_score = authority.get(left.get("source_authority", "medium"), 2)
-            right_score = authority.get(right.get("source_authority", "medium"), 2)
-            if left_score == right_score:
-                cursor = connection.execute(
-                    "UPDATE conflict_cases SET status='manual_required' "
-                    f"WHERE id=? AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL",
-                    (case["id"],),
-                )
-                if cursor.rowcount != 1:
-                    raise RuntimeError(f"conflict case changed during resolution: {case['id']}")
-                _commit_conflict_maintenance(connection)
-                manual_required += 1
-                deferred += 1
-                continue
-
-            winner_side = "left" if left_score > right_score else "right"
-            winner = left if winner_side == "left" else right
-            loser = right if winner_side == "left" else left
-            assert_transition("disputed", "active")
-            assert_transition("disputed", "superseded")
-            winner_cursor = connection.execute(
-                "UPDATE claims SET status='active' WHERE id=? AND status='disputed'",
-                (winner["id"],),
+        if resolved == 0:
+            fingerprint = (
+                conflict_group_review_fingerprint(case, group_members)
+                if group_members is not None
+                else conflict_review_fingerprint(case, left, right)
             )
-            if winner_cursor.rowcount != 1:
-                raise RuntimeError(f"conflict winner changed during resolution: {winner['id']}")
-            loser_cursor = connection.execute(
-                "UPDATE claims SET status='superseded',valid_to=?,recorded_to=?,superseded_by_id=? "
-                "WHERE id=? AND status='disputed'",
-                (now, now, winner["id"], loser["id"]),
+            _clean_review_state(
+                connection,
+                str(case["id"]),
+                now,
+                fingerprint,
+                str(left["id"]),
+                str(right["id"]),
             )
-            if loser_cursor.rowcount != 1:
-                raise RuntimeError(f"conflict loser changed during resolution: {loser['id']}")
-            _resolve_conflict_case(connection, case["id"], f"keep_{winner_side}", now)
-            _commit_conflict_maintenance(connection)
-            resolved += 1
+        namespace = str(left["namespace_key"]) if left.get("namespace_key") == right.get("namespace_key") else None
+        conflict_key = str(left["conflict_key"]) if left.get("conflict_key") == right.get("conflict_key") else None
+        assert_conflict_case_postconditions(
+            connection,
+            case_id=str(case["id"]),
+            namespace=namespace,
+            conflict_key=conflict_key,
+            touched_claim_ids=touched_claim_ids,
+        )
+        connection.commit()
+        return {
+            "changed": changed,
+            "resolved": resolved,
+            "manual_stable": manual_stable,
+            "deferred": deferred,
+        }
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+
+
+def _update_conflict_cursor(connection: Any, dirty_at: str, case_id: str, now: str) -> None:
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        connection.execute(
+            "INSERT INTO maintenance_cursors(task,cursor_time,cursor_id,updated_at) "
+            "VALUES ('auto_resolve_conflicts',?,?,?) "
+            "ON CONFLICT(task) DO UPDATE SET cursor_time=excluded.cursor_time,"
+            "cursor_id=excluded.cursor_id,updated_at=excluded.updated_at",
+            (dirty_at, case_id, now),
+        )
+        connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+
+
+def _oldest_dirty_age_seconds(oldest: str | None, now: str) -> float | None:
+    if oldest is None:
+        return None
+    try:
+        oldest_at = datetime.fromisoformat(str(oldest).replace("Z", "+00:00"))
+        current = datetime.fromisoformat(now.replace("Z", "+00:00"))
+        return max(0.0, (current - oldest_at).total_seconds())
+    except ValueError:
+        return None
+
+
+def auto_resolve_conflicts(
+    connection: Any,
+    now: str,
+    *,
+    max_cases: int = 50,
+    max_elapsed_ms: int = 1_000,
+    failure_backoff_seconds: int = 300,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> dict[str, int | float | str | bool | None]:
+    """按持久 dirty 队列有界裁决；稳定 manual 不进入写事务。"""
+
+    if not 1 <= max_cases <= 1_000:
+        raise ValueError("max_cases must be between 1 and 1000")
+    if not 1 <= max_elapsed_ms <= 10_000:
+        raise ValueError("max_elapsed_ms must be between 1 and 10000")
+    if not 1 <= failure_backoff_seconds <= 86_400:
+        raise ValueError("failure_backoff_seconds must be between 1 and 86400")
+
+    started = monotonic()
+    rows, eligible, blocked, oldest = _ready_review_rows(connection, now, max_cases=max_cases)
+    scanned = changed = resolved = manual_stable = deferred = failed = 0
+    budget_exhausted = eligible > len(rows)
+    last_cursor_time: str | None = None
+    last_cursor_id: str | None = None
+    for selected in rows:
+        if scanned and (monotonic() - started) * 1_000 >= max_elapsed_ms:
+            budget_exhausted = True
+            break
+        scanned += 1
+        last_cursor_time = str(selected["dirty_at"])
+        last_cursor_id = str(selected["case_id"])
+        try:
+            outcome = _review_conflict_case(connection, selected, now)
         except Exception as error:
-            if connection.in_transaction:
-                connection.rollback()
+            failed += 1
             deferred += 1
-            failures.append(error)
-    if failures:
-        raise RuntimeError(f"{len(failures)} auto conflict case(s) failed; first error: {failures[0]}") from failures[0]
+            _record_review_failure(connection, selected, now, error, failure_backoff_seconds)
+            continue
+        changed += outcome["changed"]
+        resolved += outcome["resolved"]
+        manual_stable += outcome["manual_stable"]
+        deferred += outcome["deferred"]
+
+    if scanned < eligible:
+        budget_exhausted = True
+    if last_cursor_time is not None and last_cursor_id is not None:
+        _update_conflict_cursor(connection, last_cursor_time, last_cursor_id, now)
+        assert_global_conflict_postconditions(connection)
+
+    dirty_ready = int(
+        connection.execute(
+            "SELECT count(*) FROM conflict_review_state AS state "
+            "JOIN conflict_cases AS cases ON cases.id=state.case_id "
+            "WHERE state.dirty_at IS NOT NULL AND (state.not_before IS NULL OR state.not_before<=?) "
+            f"AND cases.status IN {_OPEN_CONFLICT_STATUSES_SQL} AND cases.resolved_at IS NULL",
+            (now,),
+        ).fetchone()[0]
+    )
+    elapsed_ms = max(0, int((monotonic() - started) * 1_000))
     return {
-        "scanned": len(rows),
+        "eligible": eligible,
+        "scanned": scanned,
+        "changed": changed,
+        "manual_stable": manual_stable,
+        "resolved": resolved,
         "auto_resolved": resolved,
-        "manual_required": manual_required,
+        "manual_required": manual_stable,
         "deferred": deferred,
+        "failed": failed,
+        "budget_exhausted": budget_exhausted,
+        "cursor_time": last_cursor_time,
+        "cursor_id": last_cursor_id,
+        "elapsed_ms": elapsed_ms,
+        "dirty_ready": dirty_ready,
+        "dirty_blocked": blocked,
+        "oldest_dirty_age_seconds": _oldest_dirty_age_seconds(oldest, now),
     }

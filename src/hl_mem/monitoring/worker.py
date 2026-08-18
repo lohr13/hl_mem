@@ -22,6 +22,9 @@ class WorkerRuntimeState:
         self._last_maintenance_completed_at: str | None = None
         self._last_maintenance_error: str | None = None
         self._failure_counts: Counter[str] = Counter()
+        self._current_maintenance_item: str | None = None
+        self._current_maintenance_item_started_at: str | None = None
+        self._last_maintenance_results: dict[str, dict[str, Any]] = {}
 
     def mark_started(self, at: str) -> None:
         with self._lock:
@@ -54,8 +57,24 @@ class WorkerRuntimeState:
             self._last_maintenance_error = f"{item}: {type(error).__name__}: {str(error)[:256]}"
             self._heartbeat_at = at
 
+    def begin_maintenance_item(self, item: str, at: str) -> None:
+        with self._lock:
+            self._current_maintenance_item = item
+            self._current_maintenance_item_started_at = at
+            self._heartbeat_at = at
+
+    def finish_maintenance_item(self, item: str, result: Any, at: str) -> None:
+        with self._lock:
+            if isinstance(result, dict):
+                self._last_maintenance_results[item] = dict(result)
+            self._current_maintenance_item = None
+            self._current_maintenance_item_started_at = None
+            self._heartbeat_at = at
+
     def finish_maintenance(self, at: str) -> None:
         with self._lock:
+            self._current_maintenance_item = None
+            self._current_maintenance_item_started_at = None
             self._last_maintenance_completed_at = at
             self._heartbeat_at = at
 
@@ -72,6 +91,11 @@ class WorkerRuntimeState:
                 "last_maintenance_completed_at": self._last_maintenance_completed_at,
                 "last_maintenance_error": self._last_maintenance_error,
                 "failure_counts": dict(self._failure_counts),
+                "current_maintenance_item": self._current_maintenance_item,
+                "current_maintenance_item_started_at": self._current_maintenance_item_started_at,
+                "last_maintenance_results": {
+                    item: dict(result) for item, result in self._last_maintenance_results.items()
+                },
             }
 
 

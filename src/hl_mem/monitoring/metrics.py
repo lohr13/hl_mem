@@ -70,6 +70,25 @@ class ProviderMetrics:
 DEFAULT_PROVIDER_METRICS = ProviderMetrics()
 
 
+class AdmissionMetrics:
+    """记录摄入保护阈值拒绝的低基数进程级计数。"""
+
+    def __init__(self) -> None:
+        self._dedup_pending_pairs_skipped = 0
+        self._lock = threading.Lock()
+
+    def record_dedup_pending_pair_skipped(self) -> None:
+        with self._lock:
+            self._dedup_pending_pairs_skipped += 1
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return {"dedup_pending_pairs_skipped": self._dedup_pending_pairs_skipped}
+
+
+DEFAULT_ADMISSION_METRICS = AdmissionMetrics()
+
+
 class PersistentProviderMetrics(ProviderMetrics):
     """以内存窗口加 SQLite 事件形成跨进程 SSOT。"""
 

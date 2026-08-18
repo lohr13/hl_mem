@@ -17,8 +17,10 @@ def find_orphan_disputed_claims(connection: Any) -> list[str]:
     rows = connection.execute(
         "SELECT claims.id FROM claims WHERE claims.status='disputed' AND NOT EXISTS ("
         "SELECT 1 FROM conflict_cases AS cases "
-        "WHERE (cases.left_claim_id=claims.id OR cases.right_claim_id=claims.id) "
-        f"AND cases.status IN ({placeholders})"
+        "LEFT JOIN conflict_candidate_members AS members "
+        "ON members.case_id=cases.id AND members.claim_id=claims.id "
+        "WHERE (cases.left_claim_id=claims.id OR cases.right_claim_id=claims.id OR members.claim_id IS NOT NULL) "
+        f"AND cases.status IN ({placeholders}) AND cases.resolved_at IS NULL"
         ") ORDER BY claims.id",
         _OPEN_CONFLICT_CASE_STATUSES,
     ).fetchall()
@@ -105,3 +107,66 @@ def assert_conflict_postconditions(
             f"dangling conflict reference: {dangling[0]['id']} "
             f"({dangling[0]['left_claim_id']}, {dangling[0]['right_claim_id']})"
         )
+
+
+def assert_conflict_case_postconditions(
+    connection: sqlite3.Connection,
+    *,
+    case_id: str,
+    namespace: str | None,
+    conflict_key: str | None,
+    touched_claim_ids: list[str] | tuple[str, ...],
+) -> None:
+    """只验证单案事务触达的引用、互斥组和 disputed 支撑。"""
+
+    dangling = connection.execute(
+        "SELECT cases.id,cases.left_claim_id,cases.right_claim_id "
+        "FROM conflict_cases AS cases "
+        "LEFT JOIN claims AS left_claim ON left_claim.id=cases.left_claim_id "
+        "LEFT JOIN claims AS right_claim ON right_claim.id=cases.right_claim_id "
+        "WHERE cases.id=? AND (left_claim.id IS NULL OR right_claim.id IS NULL)",
+        (case_id,),
+    ).fetchone()
+    if dangling is not None:
+        raise ConflictResolutionError(
+            f"dangling conflict reference: {dangling['id']} "
+            f"({dangling['left_claim_id']}, {dangling['right_claim_id']})"
+        )
+
+    violations = _active_group_violations(
+        connection,
+        namespace=namespace,
+        conflict_key=conflict_key,
+    )
+    if violations:
+        first = violations[0]
+        raise ActiveClaimInvariantError(
+            "conflict postcondition found "
+            f"{first['active_count']} active claims in group "
+            f"{first['namespace_key']}:{first['conflict_key']}"
+        )
+
+    claim_ids = list(dict.fromkeys(str(claim_id) for claim_id in touched_claim_ids))
+    if not claim_ids:
+        return
+    placeholders = ",".join("?" for _ in claim_ids)
+    open_placeholders = ",".join("?" for _ in _OPEN_CONFLICT_CASE_STATUSES)
+    orphan = connection.execute(
+        "SELECT claims.id FROM claims "
+        f"WHERE claims.id IN ({placeholders}) AND claims.status='disputed' AND NOT EXISTS ("
+        "SELECT 1 FROM conflict_cases AS cases "
+        "LEFT JOIN conflict_candidate_members AS members "
+        "ON members.case_id=cases.id AND members.claim_id=claims.id "
+        "WHERE (cases.left_claim_id=claims.id OR cases.right_claim_id=claims.id OR members.claim_id IS NOT NULL) "
+        f"AND cases.status IN ({open_placeholders}) AND cases.resolved_at IS NULL"
+        ") ORDER BY claims.id LIMIT 1",
+        (*claim_ids, *_OPEN_CONFLICT_CASE_STATUSES),
+    ).fetchone()
+    if orphan is not None:
+        raise ConflictResolutionError(f"orphan disputed claim: {orphan['id']}")
+
+
+def assert_global_conflict_postconditions(connection: sqlite3.Connection) -> None:
+    """在有界批次完成后执行一次全局只读巡检。"""
+
+    assert_conflict_postconditions(connection)

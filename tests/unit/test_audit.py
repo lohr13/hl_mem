@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 from hl_mem.observability.audit import (
     AuditLogger,
@@ -58,4 +59,39 @@ def test_span_restores_context_and_records_error(tmp_path) -> None:
 def test_null_audit_logger_is_noop() -> None:
     audit = NullAuditLogger()
     assert audit.emit("recall", "ranked", "disabled", trace_id="trace") is False
+    assert audit.cleanup(30, batch_size=2) == {
+        "deleted": 0,
+        "remaining_expired": 0,
+        "complete": True,
+        "skipped": True,
+    }
     assert audit.close() is True
+
+
+def test_audit_cleanup_is_bounded_until_expired_backlog_is_drained(tmp_path) -> None:
+    path = tmp_path / "cleanup.db"
+    connection = Database(path).open()
+    connection.executemany(
+        "INSERT INTO audit_log(occurred_at,phase,action,outcome,trace_id,detail_json) "
+        "VALUES (?,'test','test','success',?,'{}')",
+        [("2025-01-01T00:00:00+00:00", f"old-{index}") for index in range(5)],
+    )
+    connection.execute(
+        "INSERT INTO audit_log(occurred_at,phase,action,outcome,trace_id,detail_json) "
+        "VALUES (?,'test','test','success','fresh','{}')",
+        (datetime.now(timezone.utc).isoformat(),),
+    )
+    connection.commit()
+    audit = AuditLogger(path)
+
+    first = audit.cleanup(30, batch_size=2)
+    second = audit.cleanup(30, batch_size=2)
+    third = audit.cleanup(30, batch_size=2)
+    fourth = audit.cleanup(30, batch_size=2)
+
+    assert first == {"deleted": 2, "remaining_expired": 3, "complete": False, "skipped": False}
+    assert second == {"deleted": 2, "remaining_expired": 1, "complete": False, "skipped": False}
+    assert third == {"deleted": 1, "remaining_expired": 0, "complete": True, "skipped": False}
+    assert fourth == {"deleted": 0, "remaining_expired": 0, "complete": True, "skipped": True}
+    assert connection.execute("SELECT trace_id FROM audit_log").fetchone()[0] == "fresh"
+    audit.close()

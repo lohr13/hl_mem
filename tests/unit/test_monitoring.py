@@ -54,4 +54,7 @@ def test_monitoring_snapshot_includes_worker_liveness() -> None:
         "last_maintenance_completed_at": None,
         "last_maintenance_error": None,
         "failure_counts": {},
+        "current_maintenance_item": None,
+        "current_maintenance_item_started_at": None,
+        "last_maintenance_results": {},
     }

@@ -21,6 +21,9 @@ from starlette.responses import Response
 
 from hl_mem import __version__, components
 from hl_mem.api.schemas import (
+    ConflictResolutionInput,
+    ConflictResolutionOutput,
+    ConflictReviewOutput,
     ConsolidationScopeInput,
     ContextPacketRecallOutput,
     DryRunExtractionInput,
@@ -39,6 +42,7 @@ from hl_mem.api.schemas import (
     RecallOutput,
     TraceInput,
 )
+from hl_mem.application.conflicts import ResolutionService
 from hl_mem.application.context_packet import (
     UnknownSchemaMajorError,
     retrieval_bundle_from_dict,
@@ -279,6 +283,35 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             "recall_side_effects": recall_side_effect_health(connection, recall_side_effects),
             "monitoring": monitoring_snapshot(),
         }
+
+    @app.get("/v1/conflicts/{case_id}", response_model=ConflictReviewOutput)
+    def review_conflict(
+        case_id: str,
+        connection: sqlite3.Connection = Depends(get_read_connection),
+    ) -> dict[str, Any]:
+        """返回 group-native case 的完整候选 revision 快照。"""
+
+        return ResolutionService(connection).review(case_id)
+
+    @app.post(
+        "/v1/conflicts/{case_id}/resolve",
+        response_model=ConflictResolutionOutput,
+        responses={409: {"description": "Stale conflict revision or state conflict"}},
+    )
+    def resolve_group_conflict(
+        case_id: str,
+        payload: ConflictResolutionInput,
+        connection: sqlite3.Connection = Depends(get_connection),
+    ) -> dict[str, Any]:
+        """仅在 expected_revision 仍匹配时执行候选选择或拒绝。"""
+
+        return ResolutionService(connection).resolve_group(
+            case_id,
+            payload.action,
+            candidate_key=payload.candidate_key,
+            expected_revision=payload.expected_revision,
+            rationale=payload.rationale,
+        )
 
     @app.post("/v1/events")
     def post_event(

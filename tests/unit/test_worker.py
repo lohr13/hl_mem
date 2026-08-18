@@ -30,7 +30,8 @@ class RecordingAudit:
         self.events.append((phase, action, outcome, detail or {}))
         return True
 
-    def cleanup(self, _retention_days):
+    def cleanup(self, _retention_days, *, batch_size=2_000):
+        del batch_size
         return True
 
     def close(self):
@@ -542,4 +543,57 @@ def test_maintenance_reviews_pending_near_duplicates_without_llm(monkeypatch, tm
     worker._run_maintenance()
 
     assert calls == [(0.93, 17)]
+    worker.database.close()
+
+
+def test_maintenance_passes_conflict_budget_and_records_result(monkeypatch, tmp_path) -> None:
+    runtime = WorkerRuntimeState()
+    worker = Worker(
+        replace(
+            Settings.for_test(),
+            database_path=str(tmp_path / "maintenance-conflicts.db"),
+            conflict_maintenance_max_cases=7,
+            conflict_maintenance_budget_ms=321,
+            conflict_failure_backoff_seconds=45,
+            conflict_writer_yield_ms=0,
+        ),
+        worker_runtime=runtime,
+    )
+    calls: list[tuple[int, int, int]] = []
+
+    def resolve(_connection, _now, *, max_cases, max_elapsed_ms, failure_backoff_seconds):
+        calls.append((max_cases, max_elapsed_ms, failure_backoff_seconds))
+        return {"scanned": 2, "changed": 1, "dirty_ready": 4, "dirty_blocked": 1}
+
+    monkeypatch.setattr(worker_module, "auto_resolve_conflicts", resolve)
+
+    worker._run_maintenance()
+
+    assert calls == [(7, 321, 45)]
+    assert runtime.snapshot()["last_maintenance_results"]["auto_resolve_conflicts"] == {
+        "scanned": 2,
+        "changed": 1,
+        "dirty_ready": 4,
+        "dirty_blocked": 1,
+    }
+    assert runtime.snapshot()["current_maintenance_item"] is None
+    worker.database.close()
+
+
+def test_maintenance_conflict_kill_switch_skips_auto_resolve(monkeypatch, tmp_path) -> None:
+    worker = Worker(
+        replace(
+            Settings.for_test(),
+            database_path=str(tmp_path / "maintenance-conflicts-disabled.db"),
+            conflict_auto_resolve_enabled=False,
+        )
+    )
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("auto resolve must be disabled")
+
+    monkeypatch.setattr(worker_module, "auto_resolve_conflicts", unexpected)
+
+    worker._run_maintenance()
+
     worker.database.close()

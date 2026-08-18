@@ -176,22 +176,49 @@ class AuditLogger:
                 **dimensions,
             )
 
-    def cleanup(self, retention_days: int) -> bool:
-        """Delete expired audit rows and reclaim free pages, at most once per UTC day."""
+    def cleanup(
+        self,
+        retention_days: int,
+        *,
+        batch_size: int = 2_000,
+    ) -> dict[str, int | bool]:
+        """每日有界删除过期审计；追平 backlog 前不标记当日完成。"""
+
+        if retention_days < 1 or batch_size < 1:
+            raise ValueError("audit retention days and batch size must be positive")
         if not self.enabled:
-            return False
+            return {"deleted": 0, "remaining_expired": 0, "complete": True, "skipped": True}
         today = datetime.now(timezone.utc).date().isoformat()
         if self._last_cleanup_date == today:
-            return True
+            return {"deleted": 0, "remaining_expired": 0, "complete": True, "skipped": True}
         try:
             cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
             with self._lock:
                 connection = self._open()
-                connection.execute("DELETE FROM audit_log WHERE occurred_at < ?", (cutoff,))
+                cursor = connection.execute(
+                    "DELETE FROM audit_log WHERE id IN ("
+                    "SELECT id FROM audit_log WHERE occurred_at<? ORDER BY occurred_at,id LIMIT ?)",
+                    (cutoff, batch_size),
+                )
                 connection.commit()
-                connection.execute("PRAGMA incremental_vacuum")
-            self._last_cleanup_date = today
-            return True
+                deleted = int(cursor.rowcount)
+                remaining = int(
+                    connection.execute(
+                        "SELECT count(*) FROM audit_log WHERE occurred_at<?",
+                        (cutoff,),
+                    ).fetchone()[0]
+                )
+                complete = deleted < batch_size and remaining == 0
+                if complete:
+                    connection.execute("PRAGMA incremental_vacuum")
+            if complete:
+                self._last_cleanup_date = today
+            return {
+                "deleted": deleted,
+                "remaining_expired": remaining,
+                "complete": complete,
+                "skipped": False,
+            }
         except Exception as error:
             self.last_error = f"{type(error).__name__}: {_safe_error(error)}"
             try:
@@ -199,7 +226,7 @@ class AuditLogger:
                     self._connection.rollback()
             except Exception as rollback_error:
                 self.last_error += f"; rollback {type(rollback_error).__name__}: " f"{_safe_error(rollback_error)}"
-            return False
+            return {"deleted": 0, "remaining_expired": 0, "complete": False, "skipped": False}
 
     def health(self) -> dict[str, int | bool | str | None]:
         return {
@@ -230,12 +257,18 @@ class NullAuditLogger:
     def emit(self, *args: Any, **kwargs: Any) -> bool:
         return False
 
+    def cleanup(
+        self,
+        retention_days: int,
+        *,
+        batch_size: int = 2_000,
+    ) -> dict[str, int | bool]:
+        del retention_days, batch_size
+        return {"deleted": 0, "remaining_expired": 0, "complete": True, "skipped": True}
+
     @contextmanager
     def span(self, *args: Any, **kwargs: Any) -> Iterator[dict[str, Any]]:
         yield {}
-
-    def cleanup(self, retention_days: int) -> bool:
-        return False
 
     def health(self) -> dict[str, int | bool | str | None]:
         return {

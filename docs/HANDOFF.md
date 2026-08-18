@@ -5,14 +5,20 @@
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.28.8
-- **阶段**：v0.28.8 hotfix 准备；tag、Release 与 PyPI 由维护者验收后执行
+- **版本**：v0.28.9
+- **阶段**：v0.28.9 C 骨架已实现，等待 Hermes 验收；tag、Release 与 PyPI 由维护者验收后执行
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：44 migrations（SQL 001–044），只允许向前迁移
+- **Schema**：46 migrations（SQL 001–046），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
 ## v0.28 已交付
+
+- conflict case 已升级为 `(namespace, group_key, generation)` 下的单案多候选，revision 保护人工裁决；维护只处理
+  持久 dirty queue 的当前活跃 generation，并受 case 数/时间预算、失败退避和候选上限约束。终态候选会自动关案。
+- 提供只读检查 + expected-count fail-closed 的存量非互斥异常修复命令；线上执行前必须离线备份并停止其他写入者。
+- 运维历史按表独立事务有界清理；pending/running Job、pending dedup pair 和已标注 feedback 保留。摄入期 pending
+  dedup pair 有容量上限并暴露跳过计数。
 
 - 召回 REST/MCP 主路径使用 WAL 只读连接；access、exposure、自动复活、召回审计与 query-expansion span
   均移出请求线程，持久副作用由 `deferred_tasks` 幂等重试并最终一致落库。Hermes 按需召回超时默认 8 秒。
@@ -36,6 +42,8 @@
 [`tests/eval/README.md`](../tests/eval/README.md) 和 [`evaluation/README.md`](../evaluation/README.md)。
 
 ## 下一步
+
+- v0.29 再实现 generation 推进、候选压缩和冷热分层；v0.28.9 只保留 schema/服务扩展点，不提前启用。
 
 - 观察 tombstone sidecar 与 restore replay 的生产恢复演练；旧 manifest 无法证明删除历史时保持拒绝，不做
   静默兼容。

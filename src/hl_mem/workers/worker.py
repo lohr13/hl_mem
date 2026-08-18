@@ -48,6 +48,7 @@ from hl_mem.workers.deferred import (
     process_deferred_tasks,
     process_recall_side_effect_tasks,
 )
+from hl_mem.workers.history_cleanup import HistoryCleanupPolicy, cleanup_operational_history
 from hl_mem.workers.induce_policies import enqueue_daily_policy_induction
 from hl_mem.workers.job_handlers import (
     dispatch_job,
@@ -381,19 +382,55 @@ class Worker:
                 "repair_dangling_conflicts",
                 lambda: repair_dangling_conflicts(self.connection, source="worker"),
             ),
-            (
-                "auto_resolve_conflicts",
-                lambda: auto_resolve_conflicts(self.connection, maintenance_now),
+            *(
+                [
+                    (
+                        "auto_resolve_conflicts",
+                        lambda: auto_resolve_conflicts(
+                            self.connection,
+                            maintenance_now,
+                            max_cases=self.settings.conflict_maintenance_max_cases,
+                            max_elapsed_ms=self.settings.conflict_maintenance_budget_ms,
+                            failure_backoff_seconds=self.settings.conflict_failure_backoff_seconds,
+                        ),
+                    )
+                ]
+                if self.settings.conflict_auto_resolve_enabled
+                else []
             ),
             (
                 "purge_retained_events",
                 lambda: _purge_retained_events(self.connection, cutoff),
             ),
-            (
-                "cleanup_audit_log",
-                lambda: self.audit.cleanup(self.settings.audit_retention_days),
-            ),
         ]
+        if self.settings.operational_cleanup_enabled:
+            items.extend(
+                [
+                    (
+                        "cleanup_operational_history",
+                        lambda: cleanup_operational_history(
+                            self.connection,
+                            maintenance_now,
+                            HistoryCleanupPolicy(
+                                batch_size=self.settings.operational_batch_size,
+                                job_succeeded_days=self.settings.job_succeeded_days,
+                                job_dead_days=self.settings.job_dead_days,
+                                llm_span_days=self.settings.llm_span_days,
+                                dedup_pair_days=self.settings.dedup_pair_days,
+                                feedback_uninjected_days=self.settings.feedback_uninjected_days,
+                                feedback_unlabeled_days=self.settings.feedback_unlabeled_days,
+                            ),
+                        ),
+                    ),
+                    (
+                        "cleanup_audit_log",
+                        lambda: self.audit.cleanup(
+                            self.settings.audit_retention_days,
+                            batch_size=self.settings.operational_batch_size,
+                        ),
+                    ),
+                ]
+            )
         if not is_placeholder_secret(self.settings.llm_api_key):
             items.append(
                 (
@@ -440,14 +477,24 @@ class Worker:
         self.worker_runtime.begin_maintenance(maintenance_now)
         try:
             for item, operation in items:
-                self._run_maintenance_item(item, operation)
+                result = self._run_maintenance_item(item, operation)
+                if (
+                    item == "auto_resolve_conflicts"
+                    and isinstance(result, dict)
+                    and int(result.get("scanned", 0)) > 0
+                    and self.settings.conflict_writer_yield_ms > 0
+                ):
+                    threading.Event().wait(self.settings.conflict_writer_yield_ms / 1_000)
         finally:
             self.worker_runtime.finish_maintenance(_now())
 
-    def _run_maintenance_item(self, item: str, operation: Callable[[], Any]) -> None:
+    def _run_maintenance_item(self, item: str, operation: Callable[[], Any]) -> Any:
         """隔离单个维护项，清理失败事务并保留可观测失败信息。"""
+        result: Any = None
+        self.worker_runtime.begin_maintenance_item(item, _now())
         try:
-            operation()
+            result = operation()
+            return result
         except Exception as error:
             rollback_error: Exception | None = None
             try:
@@ -474,6 +521,9 @@ class Worker:
                 )
             except Exception:
                 LOGGER.exception("worker_maintenance_audit_failed item=%s", item)
+            return None
+        finally:
+            self.worker_runtime.finish_maintenance_item(item, result, _now())
 
     def _extract(
         self,

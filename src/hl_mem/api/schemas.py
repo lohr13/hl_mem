@@ -299,6 +299,56 @@ class MemoryCorrectionOutput(BaseModel):
     created: bool
 
 
+class ConflictCandidateOutput(BaseModel):
+    """组级审核快照中的一个 canonical candidate。"""
+
+    candidate_key: str
+    canonical_value: Any
+    representative_claim_id: str
+    support_count: int = Field(ge=1)
+    evidence_count: int = Field(ge=0)
+    first_seen_at: str
+    last_seen_at: str
+    claim_ids: list[str] = Field(default_factory=list)
+    claim_statuses: dict[str, str] = Field(default_factory=dict)
+
+
+class ConflictReviewOutput(BaseModel):
+    """带 generation/revision 的完整组级人工审核快照。"""
+
+    case_id: str
+    namespace: str | None = None
+    group_key: str | None = None
+    generation: int = Field(ge=1)
+    revision: int = Field(ge=0)
+    status: str
+    overflow: bool
+    candidate_count: int = Field(ge=0)
+    candidates: list[ConflictCandidateOutput] = Field(default_factory=list)
+
+
+class ConflictResolutionInput(BaseModel):
+    """基于审核 revision 的组级候选操作。"""
+
+    action: Literal["select_candidate", "reject_candidate"]
+    candidate_key: str = Field(min_length=1, max_length=50000)
+    expected_revision: int = Field(ge=0)
+    rationale: str | None = Field(default=None, max_length=5000)
+
+
+class ConflictResolutionOutput(BaseModel):
+    """组级候选操作结果。"""
+
+    case_id: str
+    generation: int = Field(ge=1)
+    revision: int = Field(ge=0)
+    status: str
+    action: str
+    candidate_key: str
+    winner_id: str | None = None
+    resolved_at: str | None = None
+
+
 class EpisodeInput(NamespaceInput):
     """创建 Episode 的请求。"""
 

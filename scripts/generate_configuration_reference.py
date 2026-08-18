@@ -87,6 +87,7 @@ CONSTRAINTS = {
     "dedup.auto_merge_min_confidence": "dedup.threshold - 1.0",
     "dedup.scan_limit": ">= 1",
     "dedup.cron": "HH:MM（00:00 - 23:59）",
+    "dedup.max_pending_pairs": ">= 1",
     "retention.temporal_ttl_days_low": ">= 1",
     "retention.temporal_ttl_days_normal": ">= 1",
     "retention.temporal_ttl_days_high": ">= 1",
@@ -110,6 +111,13 @@ CONSTRAINTS = {
     "retention.feedback_bonus_every": "> 0",
     "retention.feedback_bonus_days": ">= 0",
     "retention.feedback_bonus_cap_days": ">= 0",
+    "retention.operational_batch_size": ">= 1",
+    "retention.job_succeeded_days": ">= 1",
+    "retention.job_dead_days": ">= 1",
+    "retention.llm_span_days": ">= 1",
+    "retention.dedup_pair_days": ">= 1",
+    "retention.feedback_uninjected_days": ">= 1",
+    "retention.feedback_unlabeled_days": ">= 1",
     "decay.temporal_half_life_days": ">= 1",
     "decay.permanent_half_life_days": ">= 1",
     "decay.identity_half_life_days": ">= 1",
@@ -118,6 +126,11 @@ CONSTRAINTS = {
     "worker.policy_induction_lookback_days": ">= 1",
     "worker.policy_induction_min_episodes": ">= 1",
     "worker.job_lease_minutes": ">= 1",
+    "worker.conflict_maintenance_max_cases": "1 - 1000",
+    "worker.conflict_maintenance_budget_ms": "50 - 10000",
+    "worker.conflict_failure_backoff_seconds": "1 - 86400",
+    "worker.conflict_writer_yield_ms": "0 - 1000",
+    "worker.conflict_auto_resolve_max_candidates": "2 - 10000",
 }
 
 TABLE_NOTES = {
@@ -148,6 +161,13 @@ TABLE_NOTES = {
         "",
         "Worker 在任务执行期间按 lease 时长的三分之一周期续租全部同窗口 job；进度回调也会续租。若 token ownership",
         "在终态写入前丢失，本次执行返回 `lease_lost`，不会把更新 0 行误报为成功。",
+        "冲突维护从持久 dirty queue 按 case 数与毫秒预算有界处理；失败按 case 退避，稳定人工案不会重复扫描或写入。",
+    ],
+    "retention": [
+        "",
+        "运维历史清理默认开启，并按表独立事务和 `operational_batch_size` 分批执行。pending/running Job、pending 去重候选、",
+        "已标注 feedback 永不由该清理器删除；未注入 feedback 使用较短窗口。关闭 `operational_cleanup_enabled` 会同时跳过",
+        "运维表和 audit 的定期清理。",
     ],
 }
 
@@ -240,10 +260,10 @@ def generate() -> str:
         "模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。",
         "",
         (
-            f"v{__version__} 没有新增 TOML 键；沿用 v0.28.6 的 `hermes.on_demand_recall_timeout_seconds` "
-            "默认 8 秒，其余 v0.27 默认值保持不变。"
+            f"v{__version__} 新增冲突 dirty queue 的有界处理/退避/候选上限、去重 pending cap，以及 Job、LLM span、"
+            "dedup pair、feedback 和 audit 的运维保留窗口；全部有安全默认值。"
         ),
-        "删除闭包、tombstone ledger、restore replay、关系边双时间和 Job 写入进度均是数据库/应用契约，不引入第二套配置面。",
+        "冲突 generation/压缩/冷热分层仍是 v0.29 的扩展点，本版本不提供相应配置键。",
         "",
         "## 加载规则",
         "",
@@ -293,15 +313,15 @@ def generate() -> str:
         "target 或 ledger 旁残留的 `-wal`、`-shm`、`-journal` sidecar，防止未纳入验证的页面影响结果。执行 restore",
         "前必须停止 API、Worker 及其他数据库/ledger 使用者，成功后再重启服务。",
         "",
-        "## 从 v0.27.x 升级",
+        "## 升级到 v0.28.9",
         "",
-        "先停止 API、Worker 和全部写入者，并保留主库的离线副本。v0.28 首次打开主库时会按顺序自动执行 migration",
-        "043/044：前者增加 ledger identity/删除应用水位，后者为存量关系边以 `created_at` 回填 `valid_from` 并保持",
-        "`valid_to = null`。它们不裁决历史冲突、不删除存量 Claim，也不创建新的长期配置键。",
+        "先停止 API、Worker 和全部写入者，并保留主库的离线副本。v0.28.9 首次打开主库时会继续执行 migration",
+        "045/046：前者建立单案多候选、generation/revision、dirty queue 与版本化裁决约束；后者增加运维清理索引，并将",
+        "历史上低于摄入 floor 的 pending dedup pair 一次性标记为已审查。migration 不执行存量冲突裁决。",
         "",
         "迁移成功后立即运行一次 `hlmem backup`。若该库此前没有 tombstone sidecar，backup 会创建并绑定",
         "`<database>.tombstones.db`，再生成 manifest v2；从此应把主库 backup、manifest 和 ledger 作为同一恢复集合保存。",
-        "旧 manifest v1 可留作升级前取证副本，但 v0.28 restore 会拒绝它，因为它无法证明删除历史。确认新的 v2",
+        "旧 manifest v1 可留作升级前取证副本，但 v0.28.9 restore 会拒绝它，因为它无法证明删除历史。确认新的 v2",
         "backup 可校验后，再恢复 API/Worker 服务。",
         "",
         "## JSONL Event 归档",

@@ -260,6 +260,242 @@
         "title": "ClaimOutput",
         "type": "object"
       },
+      "ConflictCandidateOutput": {
+        "description": "组级审核快照中的一个 canonical candidate。",
+        "properties": {
+          "candidate_key": {
+            "title": "Candidate Key",
+            "type": "string"
+          },
+          "canonical_value": {
+            "title": "Canonical Value"
+          },
+          "claim_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Claim Ids",
+            "type": "array"
+          },
+          "claim_statuses": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Claim Statuses",
+            "type": "object"
+          },
+          "evidence_count": {
+            "minimum": 0.0,
+            "title": "Evidence Count",
+            "type": "integer"
+          },
+          "first_seen_at": {
+            "title": "First Seen At",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "representative_claim_id": {
+            "title": "Representative Claim Id",
+            "type": "string"
+          },
+          "support_count": {
+            "minimum": 1.0,
+            "title": "Support Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_key",
+          "canonical_value",
+          "representative_claim_id",
+          "support_count",
+          "evidence_count",
+          "first_seen_at",
+          "last_seen_at"
+        ],
+        "title": "ConflictCandidateOutput",
+        "type": "object"
+      },
+      "ConflictResolutionInput": {
+        "description": "基于审核 revision 的组级候选操作。",
+        "properties": {
+          "action": {
+            "enum": [
+              "select_candidate",
+              "reject_candidate"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "candidate_key": {
+            "maxLength": 50000,
+            "minLength": 1,
+            "title": "Candidate Key",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          }
+        },
+        "required": [
+          "action",
+          "candidate_key",
+          "expected_revision"
+        ],
+        "title": "ConflictResolutionInput",
+        "type": "object"
+      },
+      "ConflictResolutionOutput": {
+        "description": "组级候选操作结果。",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "candidate_key": {
+            "title": "Candidate Key",
+            "type": "string"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "winner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winner Id"
+          }
+        },
+        "required": [
+          "case_id",
+          "generation",
+          "revision",
+          "status",
+          "action",
+          "candidate_key"
+        ],
+        "title": "ConflictResolutionOutput",
+        "type": "object"
+      },
+      "ConflictReviewOutput": {
+        "description": "带 generation/revision 的完整组级人工审核快照。",
+        "properties": {
+          "candidate_count": {
+            "minimum": 0.0,
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictCandidateOutput"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "group_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Key"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          },
+          "overflow": {
+            "title": "Overflow",
+            "type": "boolean"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "generation",
+          "revision",
+          "status",
+          "overflow",
+          "candidate_count"
+        ],
+        "title": "ConflictReviewOutput",
+        "type": "object"
+      },
       "ConsolidationScopeInput": {
         "description": "手动归并任务的显式作用域。",
         "properties": {
@@ -1796,7 +2032,7 @@
   },
   "info": {
     "title": "HL-Mem",
-    "version": "0.28.8"
+    "version": "0.28.9"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1818,6 +2054,99 @@
           }
         },
         "summary": "Healthz"
+      }
+    },
+    "/v1/conflicts/{case_id}": {
+      "get": {
+        "description": "返回 group-native case 的完整候选 revision 快照。",
+        "operationId": "review_conflict_v1_conflicts__case_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictReviewOutput"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review Conflict"
+      }
+    },
+    "/v1/conflicts/{case_id}/resolve": {
+      "post": {
+        "description": "仅在 expected_revision 仍匹配时执行候选选择或拒绝。",
+        "operationId": "resolve_group_conflict_v1_conflicts__case_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConflictResolutionInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictResolutionOutput"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Stale conflict revision or state conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Group Conflict"
       }
     },
     "/v1/consolidate": {

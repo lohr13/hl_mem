@@ -1,6 +1,6 @@
 # HL-Mem REST API
 
-HL-Mem exposes a FastAPI application with 17 routes. From a working directory containing the required `hl_mem.toml`,
+HL-Mem exposes a FastAPI application with 19 routes. From a working directory containing the required `hl_mem.toml`,
 start the service with `uv run python start_server.py`; the default address is `http://127.0.0.1:8200`. Interactive
 OpenAPI documentation is available at `/docs` while the service is running.
 
@@ -51,6 +51,8 @@ OpenAPI documentation is available at `/docs` while the service is running.
 | `GET` | `/v1/policies` | List induced Policies by status |
 | `GET` | `/v1/jobs` | Return job counts and queue contents |
 | `GET` | `/v1/stats` | Return event, claim, token, and pending-job counts |
+| `GET` | `/v1/conflicts/{case_id}` | Review one conflict case with generation, revision, and all candidates |
+| `POST` | `/v1/conflicts/{case_id}/resolve` | Select or reject candidates with an optimistic `expected_revision` guard |
 
 ## Core Requests
 
@@ -154,6 +156,17 @@ explicitly delivered the item across the Agent host/model input boundary; it doe
 or cited the memory. Successful `legacy` responses retain item-level `feedback_id` values for compatibility; if their
 exposure batch cannot be accepted, those identifiers are omitted rather than returning unusable receipts without a
 `feedback_state`.
+
+### Review and resolve conflicts
+
+`GET /v1/conflicts/{case_id}` returns one group snapshot with `generation`, `revision`, `status`, `overflow`, and every
+canonical candidate. Each candidate includes its stable `candidate_key`, canonical value, representative Claim, support
+and evidence counts, timestamps, member Claim IDs, and their current statuses.
+
+`POST /v1/conflicts/{case_id}/resolve` accepts `action` (`select_candidate` or `reject_candidate`), `candidate_key`, the
+snapshot's `expected_revision`, and an optional rationale. A revision or active-generation mismatch returns `409` before
+any Claim, candidate, case, or audit mutation. Clients should fetch a fresh snapshot and make a new decision; they must not
+blindly retry a stale request. Other manual actions and generation advancement are reserved for v0.29.
 
 ## Experience Requests
 

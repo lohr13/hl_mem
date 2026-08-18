@@ -403,6 +403,30 @@ class Settings:
         default=600.0,
         metadata={"toml": "worker.maintenance_interval"},
     )
+    conflict_auto_resolve_enabled: bool = field(
+        default=True,
+        metadata={"toml": "worker.conflict_auto_resolve_enabled"},
+    )
+    conflict_maintenance_max_cases: int = field(
+        default=50,
+        metadata={"toml": "worker.conflict_maintenance_max_cases"},
+    )
+    conflict_maintenance_budget_ms: int = field(
+        default=1_000,
+        metadata={"toml": "worker.conflict_maintenance_budget_ms"},
+    )
+    conflict_failure_backoff_seconds: int = field(
+        default=300,
+        metadata={"toml": "worker.conflict_failure_backoff_seconds"},
+    )
+    conflict_writer_yield_ms: int = field(
+        default=25,
+        metadata={"toml": "worker.conflict_writer_yield_ms"},
+    )
+    conflict_auto_resolve_max_candidates: int = field(
+        default=8,
+        metadata={"toml": "worker.conflict_auto_resolve_max_candidates"},
+    )
     worker_job_lease_minutes: int = field(default=5, metadata={"toml": "worker.job_lease_minutes"})
     daily_token_limit: int = field(default=500000, metadata={"toml": "worker.daily_token_limit"})
     audit_retention_days: int = field(default=30, metadata={"toml": "worker.audit_retention_days"})
@@ -422,11 +446,35 @@ class Settings:
     )
     dedup_scan_limit: int = field(default=200, metadata={"toml": "dedup.scan_limit"})
     dedup_cron: str = field(default="03:00", metadata={"toml": "dedup.cron"})
+    dedup_max_pending_pairs: int = field(
+        default=10_000,
+        metadata={"toml": "dedup.max_pending_pairs"},
+    )
     induce_policies_cron: str = field(default="04:00", metadata={"toml": "worker.induce_policies_cron"})
     reclassify_cron: str = field(default="04:30", metadata={"toml": "worker.reclassify_cron"})
     memory_temporal_ttl_days: int = field(
         default=7,
         metadata={"toml": "retention.temporal_ttl_days"},
+    )
+    operational_cleanup_enabled: bool = field(
+        default=True,
+        metadata={"toml": "retention.operational_cleanup_enabled"},
+    )
+    operational_batch_size: int = field(
+        default=2_000,
+        metadata={"toml": "retention.operational_batch_size"},
+    )
+    job_succeeded_days: int = field(default=30, metadata={"toml": "retention.job_succeeded_days"})
+    job_dead_days: int = field(default=90, metadata={"toml": "retention.job_dead_days"})
+    llm_span_days: int = field(default=30, metadata={"toml": "retention.llm_span_days"})
+    dedup_pair_days: int = field(default=90, metadata={"toml": "retention.dedup_pair_days"})
+    feedback_uninjected_days: int = field(
+        default=7,
+        metadata={"toml": "retention.feedback_uninjected_days"},
+    )
+    feedback_unlabeled_days: int = field(
+        default=90,
+        metadata={"toml": "retention.feedback_unlabeled_days"},
     )
     temporal_ttl_days_low: int = field(
         default=3,
@@ -781,6 +829,8 @@ class Settings:
             raise ConfigurationError("dedup.auto_merge_min_confidence must be between dedup.threshold and 1")
         if self.dedup_scan_limit < 1:
             raise ConfigurationError("dedup.scan_limit must be positive")
+        if self.dedup_max_pending_pairs < 1:
+            raise ConfigurationError("dedup.max_pending_pairs must be positive")
         parse_daily_cron(self.dedup_cron, "dedup.cron")
         if self.extraction_chunk_target_chars < 1:
             raise ConfigurationError("extraction.chunk_target_chars must be positive")
@@ -794,6 +844,30 @@ class Settings:
             raise ConfigurationError("extraction.batch_max_wait_seconds must be non-negative")
         if self.worker_job_lease_minutes < 1:
             raise ConfigurationError("worker.job_lease_minutes must be positive")
+        if not 1 <= self.conflict_maintenance_max_cases <= 1_000:
+            raise ConfigurationError("worker.conflict_maintenance_max_cases must be between 1 and 1000")
+        if not 50 <= self.conflict_maintenance_budget_ms <= 10_000:
+            raise ConfigurationError("worker.conflict_maintenance_budget_ms must be between 50 and 10000")
+        if not 1 <= self.conflict_failure_backoff_seconds <= 86_400:
+            raise ConfigurationError("worker.conflict_failure_backoff_seconds must be between 1 and 86400")
+        if not 0 <= self.conflict_writer_yield_ms <= 1_000:
+            raise ConfigurationError("worker.conflict_writer_yield_ms must be between 0 and 1000")
+        if not 2 <= self.conflict_auto_resolve_max_candidates <= 10_000:
+            raise ConfigurationError("worker.conflict_auto_resolve_max_candidates must be between 2 and 10000")
+        if min(
+            self.operational_batch_size,
+            self.job_succeeded_days,
+            self.job_dead_days,
+            self.llm_span_days,
+            self.dedup_pair_days,
+            self.feedback_uninjected_days,
+            self.feedback_unlabeled_days,
+        ) < 1:
+            raise ConfigurationError(
+                "retention.operational_batch_size, retention.job_succeeded_days, "
+                "retention.job_dead_days, retention.llm_span_days, retention.dedup_pair_days, "
+                "retention.feedback_uninjected_days, and retention.feedback_unlabeled_days must be positive"
+            )
         if self.verification_mode not in {"off", "audit", "enforce"}:
             raise ConfigurationError("extraction.verification_mode must be 'off', 'audit', or 'enforce'")
         if (
@@ -915,6 +989,21 @@ class Settings:
             "extraction_max_split_depth": self.extraction_max_split_depth,
             "extraction_batch_max_events": self.extraction_batch_max_events,
             "extraction_batch_max_wait_seconds": self.extraction_batch_max_wait_seconds,
+            "conflict_auto_resolve_enabled": self.conflict_auto_resolve_enabled,
+            "conflict_maintenance_max_cases": self.conflict_maintenance_max_cases,
+            "conflict_maintenance_budget_ms": self.conflict_maintenance_budget_ms,
+            "conflict_failure_backoff_seconds": self.conflict_failure_backoff_seconds,
+            "conflict_writer_yield_ms": self.conflict_writer_yield_ms,
+            "conflict_auto_resolve_max_candidates": self.conflict_auto_resolve_max_candidates,
+            "operational_cleanup_enabled": self.operational_cleanup_enabled,
+            "operational_batch_size": self.operational_batch_size,
+            "job_succeeded_days": self.job_succeeded_days,
+            "job_dead_days": self.job_dead_days,
+            "llm_span_days": self.llm_span_days,
+            "dedup_pair_days": self.dedup_pair_days,
+            "feedback_uninjected_days": self.feedback_uninjected_days,
+            "feedback_unlabeled_days": self.feedback_unlabeled_days,
+            "dedup_max_pending_pairs": self.dedup_max_pending_pairs,
         }
 
     def retention_policy(self) -> TTLPolicy:
