@@ -317,6 +317,7 @@ class IngestService:
         *,
         idempotency_key: str | None = None,
         namespace: str = "default",
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """经统一事件事务写入显式记忆，并返回真实的新建状态。"""
         memory = {
@@ -325,13 +326,16 @@ class IngestService:
             "predicate": predicate,
             "qualifiers": qualifiers or {},
         }
+        event = {
+            "tenant_id": namespace,
+            "event_type": "explicit_memory",
+            "actor_type": "user",
+            "content": {"text": text, "memory": memory},
+        }
+        if session_id:
+            event["session_id"] = session_id
         return self.ingest_event(
-            {
-                "tenant_id": namespace,
-                "event_type": "explicit_memory",
-                "actor_type": "user",
-                "content": {"text": text, "memory": memory},
-            },
+            event,
             idempotency_key=idempotency_key,
         )
 
@@ -1050,13 +1054,14 @@ def _insert_pending_dedup_pair(
         return False
     cursor = connection.execute(
         "INSERT OR IGNORE INTO dedup_pairs("
-        "id,pair_key,left_claim_id,right_claim_id,namespace_key,similarity,"
+        "id,pair_key,left_claim_id,right_claim_id,new_claim_id,pair_source,namespace_key,similarity,"
         "embedding_text_version,policy_version,predicate,created_at"
-        ") VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ") VALUES (?,?,?,?,?,'ingest',?,?,?,?,?,?)",
         (
             new_id(),
             compute_dedup_pair_key(existing_claim_id, new_claim["id"]),
             existing_claim_id,
+            new_claim["id"],
             new_claim["id"],
             new_claim["namespace_key"],
             similarity,

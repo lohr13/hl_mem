@@ -7,7 +7,7 @@ import logging
 import sqlite3
 import uuid
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
@@ -15,6 +15,7 @@ from hl_mem.application.answerability import Answerability
 from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MAJOR as RETRIEVAL_BUNDLE_SCHEMA_MAJOR
 from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MINOR as RETRIEVAL_BUNDLE_SCHEMA_MINOR
 from hl_mem.experience.service import ExperienceService
+from hl_mem.recall.freshness_annotation import FreshnessEvaluation
 
 LOGGER = logging.getLogger(__name__)
 
@@ -306,6 +307,38 @@ def pack_retrieval_bundle(
         items=packed,
         used_tokens_estimate=used,
         truncated=bool(bundle.truncated) or truncated,
+    )
+
+
+def apply_freshness_decisions(
+    bundle: RetrievalBundle,
+    evaluation: FreshnessEvaluation,
+    *,
+    force_render: bool = False,
+) -> RetrievalBundle:
+    """Apply eligible text projections while preserving bundle ordering and public shape."""
+    if evaluation.mode != "render" and not force_render:
+        return bundle
+    rendered_by_key = {
+        (decision.memory_type, decision.item_id): decision.rendered_text
+        for decision in evaluation.decisions
+        if decision.eligible
+    }
+    if not rendered_by_key:
+        return bundle
+    return RetrievalBundle(
+        query_id=bundle.query_id,
+        answerability=bundle.answerability,
+        items=tuple(
+            (
+                replace(item, text=rendered_by_key[(item.type, item.id)])
+                if (item.type, item.id) in rendered_by_key
+                else item
+            )
+            for item in bundle.items
+        ),
+        used_tokens_estimate=bundle.used_tokens_estimate,
+        truncated=bundle.truncated,
     )
 
 

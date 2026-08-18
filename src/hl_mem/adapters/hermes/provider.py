@@ -10,6 +10,7 @@ import threading
 import uuid
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -25,6 +26,7 @@ from hl_mem.application.context_packet import (
 )
 from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MAJOR
 from hl_mem.http_utils import validation_response_body
+from hl_mem.recall.injection import DeliveryPurpose, InjectionContext
 from hl_mem.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -303,6 +305,7 @@ class HLMemProvider:
             intent=intent,
             namespace="default",
             token_budget=self._effective_token_budget(None),
+            injection_context=self._injection_context("active_recall"),
         )
         if bundle is None:
             return "[]"
@@ -469,19 +472,22 @@ class HLMemProvider:
         namespace: str = "default",
     ) -> None:
         namespace = _trusted_namespace(namespace)
+        payload: dict[str, Any] = {
+            "text": content,
+            "qualifiers": {"action": action, "target": target},
+            "idempotency_key": _memory_idempotency_key(
+                action,
+                target,
+                content,
+                namespace,
+            ),
+            "namespace": namespace,
+        }
+        if self._session_id:
+            payload["session_id"] = self._session_id
         written = self._sync_post(
             "/v1/memories",
-            {
-                "text": content,
-                "qualifiers": {"action": action, "target": target},
-                "idempotency_key": _memory_idempotency_key(
-                    action,
-                    target,
-                    content,
-                    namespace,
-                ),
-                "namespace": namespace,
-            },
+            payload,
         )
         if written:
             self._prefetch_cache.invalidate_session(self._session_id)
@@ -498,7 +504,7 @@ class HLMemProvider:
         for message in messages:
             if not self._sync_post(
                 "/v1/events",
-                self._event_payload(message, namespace=namespace),
+                self._event_payload(message, namespace=namespace, session_id=self._session_id or None),
             ):
                 break
 
@@ -530,6 +536,7 @@ class HLMemProvider:
             namespace=namespace,
             token_budget=self._effective_token_budget(token_budget),
             projection_version=projection_version,
+            injection_context=self._injection_context("passive_injection"),
         )
 
     def prefetched(
@@ -677,6 +684,7 @@ class HLMemProvider:
         turn_id: int | str | None,
         projection_version: str | None,
     ) -> str:
+        injection_context = self._injection_context("passive_injection")
         bundle = self._prefetch_cache.get(
             session_id,
             query,
@@ -687,6 +695,7 @@ class HLMemProvider:
             namespace=namespace,
             token_budget=token_budget,
             projection_version=projection_version,
+            injection_context=injection_context,
         )
         if bundle is None:
             with self._delivery_lock:
@@ -701,6 +710,7 @@ class HLMemProvider:
                 namespace=namespace,
                 token_budget=token_budget,
                 projection_version=projection_version,
+                injection_context=injection_context,
             )
             if bundle is None:
                 return ""
@@ -742,6 +752,16 @@ class HLMemProvider:
         # receipts are only queued here; a later lifecycle flush marks injected,
         # so daemon latency cannot delay or cancel the Agent delivery.
         return rendered.text
+
+    def _injection_context(self, delivery_purpose: DeliveryPurpose) -> InjectionContext:
+        """Freeze policy variants and the rendering clock for one cache operation."""
+        return InjectionContext.create(
+            delivery_purpose=delivery_purpose,
+            experiment_variant="control",
+            echo_variant=str(getattr(self.settings, "echo_suppression_mode", "off")),
+            freshness_variant=str(getattr(self.settings, "freshness_annotation_mode", "off")),
+            rendering_now=datetime.now(timezone.utc).isoformat(),
+        )
 
     def _materialize_prefetched_bundle(
         self,
@@ -993,14 +1013,18 @@ class HLMemProvider:
         message: dict[str, Any],
         *,
         namespace: str = "default",
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         role = message.get("role", "user")
-        return {
+        payload = {
             "event_type": "message",
             "actor_type": role,
             "content": {"text": str(message.get("content", ""))},
             "namespace": _trusted_namespace(namespace),
         }
+        if session_id:
+            payload["session_id"] = session_id
+        return payload
 
     def _hermes_event_payload(
         self,

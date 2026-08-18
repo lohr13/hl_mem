@@ -159,13 +159,16 @@ def test_semantic_candidate_at_pair_similarity_floor_is_queued_for_async_judgmen
     )
 
     pair = connection.execute(
-        "SELECT left_claim_id,right_claim_id,decision,policy_version,similarity FROM dedup_pairs"
+        "SELECT left_claim_id,right_claim_id,new_claim_id,pair_source,decision,policy_version,similarity "
+        "FROM dedup_pairs"
     ).fetchone()
 
     assert second.reason == "inserted"
     assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 2
     assert pair["left_claim_id"] == first.claim_id
     assert pair["right_claim_id"] == second.claim_id
+    assert pair["new_claim_id"] == second.claim_id
+    assert pair["pair_source"] == "ingest"
     assert pair["decision"] is None
     assert pair["policy_version"] == "v2"
     assert pair["similarity"] == 0.88

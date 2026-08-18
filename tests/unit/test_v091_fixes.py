@@ -120,6 +120,34 @@ def test_slot_backfill_preserves_existing_classification_by_default(tmp_path) ->
     assert claim is not None and claim["canonical_slot"] == "preference.response_style"
 
 
+def test_slot_backfill_force_update_resyncs_v2_tags_without_legacy_trigger(tmp_path) -> None:
+    connection = Database(tmp_path / "slot-backfill-v2.db").open()
+    repository = ClaimRepository(connection)
+    repository.insert_claim(
+        {
+            "id": "legacy-tags",
+            "namespace_key": "default",
+            "subject_entity_id": "user",
+            "predicate": "偏好",
+            "canonical_attribute": "preference.ui_theme",
+            "canonical_slot": None,
+            "topic_tags_json": '["legacy"]',
+            "qualifiers": {},
+            "recorded_from": "2026-01-01T00:00:00+00:00",
+            "status": "active",
+        }
+    )
+
+    stats = backfill_claim_slots_v1(connection, apply=True, force=True)
+
+    assert stats.applied == 1
+    assert [item["id"] for item in repository.search_claims_tags(["preference"])] == ["legacy-tags"]
+    assert (
+        connection.execute("SELECT 1 FROM sqlite_schema WHERE name IN ('claims_tags_fts','claims_tags_au')").fetchone()
+        is None
+    )
+
+
 def test_expires_backfill_scope_cas_does_not_overwrite_permanent_claim(
     tmp_path,
 ) -> None:

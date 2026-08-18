@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.29.0](https://img.shields.io/badge/version-0.29.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.29.1](https://img.shields.io/badge/version-0.29.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -146,6 +146,8 @@ variables. Common keys are listed below.
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan` (default) or `sqlite_vec`, which requires `hl-mem[sqlite-vec]` |
 | `recall.dedup_threshold` | `0.95` | Near-copy folding threshold inside the bounded candidate window; `0` disables folding |
 | `recall.dedup_candidate_limit` | `100` | Maximum recall candidates considered for near-copy folding |
+| `recall.echo_suppression_mode` | `off` | Same-session echo governance: `off`, observe-only `observe`, or `enforce` |
+| `recall.freshness_annotation_mode` | `off` | Risk-gated freshness hints: `off`, observe-only `observe`, or `render` |
 | `recall.resurrection_mode` | `auto` | Bounded archived-only cold path when primary recall is insufficient; `off` disables it |
 | `recall.query_expansion_mode` | `auto` | `off`, `auto`, or `always` |
 | `decay.model` | `activation_halflife` | Decays activation by scope-specific half-life without changing confidence during routine decay |
@@ -171,6 +173,31 @@ When migrating an existing database from a legacy index, preview it read-only be
 ```bash
 hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
+```
+
+Pending `dedup_pairs` below the current `dedup.threshold` can be previewed read-only on an offline copy. Applying the
+terminal classification requires the exact preview count and never changes Claims:
+
+```bash
+hl-mem --db copy.db dedup drain-below-floor
+hl-mem --db copy.db dedup drain-below-floor --apply --expected-count 597
+```
+
+Expired history is retained for 90 days. Only Claims without downstream evidence consumers or open conflicts are
+eligible for bounded reclamation on an offline copy:
+
+```bash
+hl-mem --db copy.db expired cleanup
+hl-mem --db copy.db expired cleanup --apply --expected-count 4508 --limit 100
+```
+
+Build and replay the fixed 200-point echo × freshness fixture offline. This report enforces structural gates only;
+post-deployment Hermes observe/canary quality evaluation remains a separate release decision:
+
+```bash
+python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-replay.json
+python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-replay.json \
+  --export-expanded-fixture var/eval/v0291-injection-fixture.jsonl
 ```
 
 ### Upgrading from v0.27.x
@@ -237,7 +264,9 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.29.0 with 47 immutable, forward-only migrations.
+The current baseline is v0.29.1 with 49 immutable, forward-only migrations. Migration 049 removes the legacy
+`claims_tags_fts` only after checking database views/triggers. SQLite cannot prove the absence of external query
+consumers, so every node must be on v0.29.0+ and the old-binary rollback window must be closed before upgrading.
 
 ## Documentation
 

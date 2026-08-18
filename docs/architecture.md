@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.29.0
+- Document baseline: v0.29.1
 - Updated: 2026-08-18
 - Deployment baseline: local-first, SQLite-first
 
@@ -115,7 +115,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 47 immutable SQL migrations (001-047)
+│   └── migrations/           # 49 immutable SQL migrations (001-049)
 ├── workers/
 │   ├── worker.py             # Job leasing, progress, heartbeat, maintenance loop
 │   ├── job_handlers.py       # Job handlers, registry, and dispatch boundary
@@ -258,9 +258,10 @@ existing terminal-transition paths close connected edges when a Claim becomes re
 relation-expansion hop checks the edge interval and both endpoint Claims for namespace, status, valid-time, and recorded-time
 visibility. Relation edges therefore cannot keep an otherwise invisible terminal Claim reachable.
 
-For `context_packet` / `both` responses and Hermes delivery, Context Packet assembly is the last recall stage, after
-relevance decisions, expansion, reranking, any intent-specific quota selection, and the selected delivery path's token
-budget. The legacy response can materialize exposures from its returned item set without invoking packet-only packing.
+For `context_packet` / `both` responses and Hermes delivery, Context Packet assembly is the last recall stage. Passive
+injection governance runs echo filtering before reranking and risk-gated freshness decoration after reranking but before
+the selected delivery path's token budget is applied. Any intent-specific quota selection therefore measures decorated
+text. The legacy response can materialize exposures from its returned item set without invoking packet-only packing.
 Only the materialized items receive feedback exposure rows. Hermes may cache the receipt-free retrieval bundle, but it
 requests fresh packet receipts for each delivery and marks their migration-035 `injected` field only after rendered text
 crosses the Agent host/model input boundary; persistence failure degrades feedback attribution without discarding the
@@ -383,7 +384,7 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 47 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 49 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used

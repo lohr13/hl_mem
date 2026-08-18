@@ -1,10 +1,10 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.29.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.29.1 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
-v0.29.0 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
+v0.29.1 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
 
 ## 加载规则
 
@@ -244,9 +244,15 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `recall.dedup_threshold` | 数值 | `0.95` | 0.0 - 1.0；0 关闭折叠 | `recall_dedup_threshold` |
 | `recall.default_limit` | 整数 | `5` | 1 - 100 | `recall_default_limit` |
 | `recall.dense_enabled` | 布尔值 | `true` | `true`、`false` | `recall_dense_enabled` |
+| `recall.echo_pending_max_seconds` | 整数 | `7200` | >= 60 | `echo_pending_max_seconds` |
+| `recall.echo_pending_review_enabled` | 布尔值 | `false` | `true`、`false` | `echo_pending_review_enabled` |
+| `recall.echo_pending_similarity_threshold` | 数值 | `0.95` | 0.0 - 1.0 | `echo_pending_similarity_threshold` |
+| `recall.echo_session_window_seconds` | 整数 | `1800` | 60 - 14400 | `echo_session_window_seconds` |
+| `recall.echo_suppression_mode` | 字符串 | `"off"` | `off`、`observe`、`enforce` | `echo_suppression_mode` |
 | `recall.expansion_circuit_failure_threshold` | 整数 | `5` | >= 1 | `expansion_circuit_failure_threshold` |
 | `recall.expansion_circuit_open_seconds` | 数值 | `60.0` | > 0 | `expansion_circuit_open_seconds` |
 | `recall.feedback_min_samples` | 整数 | `3` | >= 1 | `feedback_min_samples` |
+| `recall.freshness_annotation_mode` | 字符串 | `"off"` | `off`、`observe`、`render` | `freshness_annotation_mode` |
 | `recall.fts_language` | 字符串 | `"auto"` | `auto`、`zh`、`en` | `fts_language` |
 | `recall.packed_context_token_budget` | 整数 | `2000` | >= 1 | `packed_context_token_budget` |
 | `recall.preference_recency_boost` | 数值 | `0.12` | 0.0 - 1.0 | `preference_recency_boost` |
@@ -326,6 +332,9 @@ TOML 为准，活文档不固定具体型号。
 | `retention.decay_temporal_days` | 整数 | `7` | >= 1；不得大于 archive_temporal_days | `decay_temporal_days` |
 | `retention.dedup_pair_days` | 整数 | `90` | >= 1 | `dedup_pair_days` |
 | `retention.event_days` | 整数 | `30` | 任意整数 | `retention_days` |
+| `retention.expired_claim_retention_days` | 整数 | `90` | >= 1 | `expired_claim_retention_days` |
+| `retention.expired_cleanup_batch_size` | 整数 | `100` | >= 1 | `expired_cleanup_batch_size` |
+| `retention.expired_cleanup_mode` | 字符串 | `"observe"` | `off`、`observe`、`on` | `expired_cleanup_mode` |
 | `retention.feedback_bonus_cap_days` | 整数 | `180` | >= 0 | `feedback_bonus_cap_days` |
 | `retention.feedback_bonus_days` | 整数 | `14` | >= 0 | `feedback_bonus_days` |
 | `retention.feedback_bonus_every` | 整数 | `3` | > 0 | `feedback_bonus_every` |
@@ -353,6 +362,10 @@ TOML 为准，活文档不固定具体型号。
 运维历史清理默认开启，并按表独立事务和 `operational_batch_size` 分批执行。pending/running Job、pending 去重候选、
 已标注 feedback 永不由该清理器删除；未注入 feedback 使用较短窗口。关闭 `operational_cleanup_enabled` 会同时跳过
 运维表和 audit 的定期清理。
+
+Expired Claims are eligible only after `expired_claim_retention_days`, with no downstream evidence consumer and no open conflict. Maintenance defaults to `observe`; `on` processes one bounded batch through the tombstone-backed `DeletionService`. Offline-copy apply requires the exact dry-run `--expected-count`.
+
+Pending dedup pairs below the current `dedup.threshold` can be reported read-only and terminally classified with `dedup drain-below-floor --apply --expected-count <exact-count>`; the drain never changes Claims.
 
 ### `[server]`
 

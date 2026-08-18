@@ -18,9 +18,6 @@ TRIGGER_NAMES = {
     "claims_ai",
     "claims_ad",
     "claims_au",
-    "claims_tags_ai",
-    "claims_tags_ad",
-    "claims_tags_au",
 }
 
 
@@ -75,18 +72,16 @@ def test_migration_022_upgrades_fts_to_trigram(
     _, connection = upgraded_database
     schemas = {
         row["name"]: row["sql"]
-        for row in connection.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type='table' AND name IN ('claims_fts', 'claims_tags_fts')"
-        )
+        for row in connection.execute("SELECT name, sql FROM sqlite_master WHERE type='table' AND name='claims_fts'")
     }
-    assert set(schemas) == {"claims_fts", "claims_tags_fts"}
+    assert set(schemas) == {"claims_fts"}
     assert all("tokenize='trigram'" in sql for sql in schemas.values())
     assert (
         connection.execute("SELECT count(*) FROM claims_fts WHERE claims_fts MATCH '\"记忆系统\"'").fetchone()[0] == 1
     )
     assert (
         connection.execute(
-            "SELECT count(*) FROM claims_tags_fts WHERE claims_tags_fts MATCH '\"architecture\"'"
+            "SELECT count(*) FROM claims_tags_fts_v2 WHERE claims_tags_fts_v2 MATCH '\"architecture\"'"
         ).fetchone()[0]
         == 3
     )
@@ -107,7 +102,7 @@ def test_triggers_exist_after_migration(
     """升级后两个 FTS 表所需的六个同步触发器完整存在。"""
     _, connection = upgraded_database
     rows = connection.execute(
-        "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN (?, ?, ?, ?, ?, ?)",
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN (?, ?, ?)",
         tuple(sorted(TRIGGER_NAMES)),
     )
     assert {row["name"] for row in rows} == TRIGGER_NAMES

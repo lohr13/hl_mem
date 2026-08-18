@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 184
+    assert len(fields(Settings)) == 193
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -40,6 +40,9 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.conflict_auto_resolve_max_candidates == 8
     assert settings.operational_cleanup_enabled is True
     assert settings.operational_batch_size == 2_000
+    assert settings.expired_cleanup_mode == "observe"
+    assert settings.expired_claim_retention_days == 90
+    assert settings.expired_cleanup_batch_size == 100
     assert settings.job_succeeded_days == 30
     assert settings.job_dead_days == 90
     assert settings.llm_span_days == 30
@@ -49,6 +52,14 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.dedup_max_pending_pairs == 10_000
     assert settings.snapshot()["conflict_maintenance_max_cases"] == 50
     assert settings.snapshot()["operational_batch_size"] == 2_000
+    assert settings.echo_suppression_mode == "off"
+    assert settings.echo_session_window_seconds == 1800
+    assert settings.echo_pending_review_enabled is False
+    assert settings.echo_pending_similarity_threshold == 0.95
+    assert settings.echo_pending_max_seconds == 7200
+    assert settings.snapshot()["echo_suppression_mode"] == "off"
+    assert settings.freshness_annotation_mode == "off"
+    assert settings.snapshot()["freshness_annotation_mode"] == "off"
 
 
 def test_settings_contract_includes_bypass_and_recall_fields() -> None:
@@ -103,6 +114,9 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"relation_expansion_mode": "invalid"}, "relation.expansion_mode"),
         ({"relevance_gate_mode": "invalid"}, "recall.relevance_gate_mode"),
         ({"query_context_mode": "invalid"}, "recall.query_context_mode"),
+        ({"echo_suppression_mode": "invalid"}, "recall.echo_suppression_mode"),
+        ({"echo_session_window_seconds": 59}, "recall.echo_session_window_seconds"),
+        ({"freshness_annotation_mode": "invalid"}, "recall.freshness_annotation_mode"),
         ({"procedure_recall_mode": "invalid"}, "recall.procedure_mode"),
         ({"vector_batch_size": 0}, "recall.vector_batch_size"),
         ({"hermes_on_demand_recall_timeout_seconds": 0}, "hermes.on_demand_recall_timeout_seconds"),
@@ -115,6 +129,9 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"conflict_failure_backoff_seconds": 0}, "worker.conflict_failure_backoff_seconds"),
         ({"conflict_writer_yield_ms": 1001}, "worker.conflict_writer_yield_ms"),
         ({"operational_batch_size": 0}, "retention.operational_batch_size"),
+        ({"expired_cleanup_mode": "invalid"}, "retention.expired_cleanup_mode"),
+        ({"expired_claim_retention_days": 0}, "retention.expired_claim_retention_days"),
+        ({"expired_cleanup_batch_size": 0}, "retention.expired_cleanup_batch_size"),
         ({"job_succeeded_days": 0}, "retention.job_succeeded_days"),
         ({"feedback_unlabeled_days": 0}, "retention.feedback_unlabeled_days"),
         ({"dedup_max_pending_pairs": 0}, "dedup.max_pending_pairs"),

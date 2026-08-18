@@ -40,6 +40,7 @@ from hl_mem.api.schemas import (
     MemorySaveOutput,
     RecallInput,
     RecallOutput,
+    RetrievalBundleInput,
     TraceInput,
 )
 from hl_mem.application.conflicts import ResolutionService
@@ -68,6 +69,7 @@ from hl_mem.http_utils import HL_MEM_VERSION_HEADER
 from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
+from hl_mem.recall.injection import InjectionContext
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.reranker import FakeReranker
 from hl_mem.recall.trace import SearchTracer
@@ -240,6 +242,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         query_id: str,
         connection: sqlite3.Connection,
         response_format: str,
+        injection_context: InjectionContext,
     ) -> dict[str, Any]:
         """把公开 recall 与内部 receipt-free retrieval 接到同一应用服务。"""
         return make_recall_service(connection).recall(
@@ -255,6 +258,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             namespace=payload.effective_namespace,
             session_id=payload.session_id,
             debug=payload.debug,
+            injection_context=injection_context,
         )
 
     @app.get("/healthz")
@@ -283,7 +287,12 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             "components": components.component_health(),
             "vector_search": SearchTracer.vector_search_metrics(),
             "recall_side_effects": recall_side_effect_health(connection, recall_side_effects),
-            "monitoring": monitoring_snapshot(),
+            "monitoring": monitoring_snapshot(
+                echo_mode=settings.echo_suppression_mode,
+                echo_session_window_seconds=settings.echo_session_window_seconds,
+                echo_pending_review_enabled=settings.echo_pending_review_enabled,
+                freshness_mode=settings.freshness_annotation_mode,
+            ),
         }
 
     @app.get("/v1/conflicts/{case_id}", response_model=ConflictReviewOutput)
@@ -434,6 +443,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
                 query_id=query_id,
                 connection=connection,
                 response_format=payload.response_format,
+                injection_context=InjectionContext.create(delivery_purpose="api", rendering_now=_now()),
             )
 
     @app.post(
@@ -441,7 +451,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         include_in_schema=False,
     )
     def retrieve_bundle(
-        payload: RecallInput,
+        payload: RetrievalBundleInput,
         request: Request,
         connection: sqlite3.Connection = Depends(get_read_connection),
     ) -> dict[str, Any]:
@@ -458,6 +468,14 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
                 query_id=query_id,
                 connection=connection,
                 response_format="retrieval_bundle",
+                injection_context=InjectionContext.create(
+                    delivery_purpose=payload.delivery_purpose,
+                    experiment_variant=payload.experiment_variant,
+                    echo_variant=payload.echo_variant,
+                    freshness_variant=payload.freshness_variant,
+                    policy_versions=payload.policy_versions,
+                    rendering_now=payload.rendering_now or _now(),
+                ),
             )
 
     @app.post(
@@ -719,6 +737,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             payload.qualifiers,
             idempotency_key=idempotency_key or payload.idempotency_key,
             namespace=payload.effective_namespace,
+            session_id=payload.session_id,
         )
         event_id = result["id"]
         content_json = json.dumps(

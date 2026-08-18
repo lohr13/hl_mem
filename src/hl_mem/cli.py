@@ -25,6 +25,11 @@ from hl_mem.application.conflict_repairs import (
 )
 from hl_mem.application.conflict_repairs import repair_dangling_conflicts as apply_dangling_conflict_repair
 from hl_mem.application.conflicts import ResolutionService
+from hl_mem.application.dedup_backlog import (
+    drain_below_floor_pairs,
+    inspect_below_floor_pairs,
+)
+from hl_mem.application.expired_cleanup import cleanup_expired_claims, inspect_expired_claims
 from hl_mem.application.restore import restore_database
 from hl_mem.components import make_embedder
 from hl_mem.config_loader import load_settings
@@ -396,6 +401,100 @@ def repair_invalid_conflict_groups(
         database.close()
 
 
+def drain_dedup_backlog(
+    database_path: str | Path,
+    *,
+    apply: bool = False,
+    expected_count: int | None = None,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Preview below-floor pending pairs or terminally classify the exact expected set."""
+    resolved_settings = settings or Settings()
+    threshold = resolved_settings.dedup_threshold
+    if apply and expected_count is None:
+        raise ConflictError("--expected-count is required with --apply")
+    if not apply:
+        connection = _open_readonly_database(Path(database_path))
+        try:
+            preview = inspect_below_floor_pairs(connection, threshold=threshold)
+        finally:
+            connection.close()
+        actual_count = int(preview["candidate_pair_count"])
+        if expected_count is not None and actual_count != expected_count:
+            raise ConflictError(f"dedup below-floor count mismatch: expected {expected_count}, found {actual_count}")
+        return {
+            **preview,
+            "dry_run": True,
+            "applied_pair_count": 0,
+            "remaining_below_floor_count": actual_count,
+            "claim_rows_updated": 0,
+        }
+    database = Database(database_path, settings=resolved_settings)
+    try:
+        assert expected_count is not None
+        return drain_below_floor_pairs(
+            database.open(),
+            threshold=threshold,
+            expected_count=expected_count,
+            source="cli",
+        )
+    finally:
+        database.close()
+
+
+def cleanup_expired_history(
+    database_path: str | Path,
+    *,
+    apply: bool = False,
+    expected_count: int | None = None,
+    limit: int | None = None,
+    now: str | None = None,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Preview eligible expired history or reclaim one exact, bounded batch."""
+    resolved_settings = settings or Settings()
+    reference = now or datetime.now(timezone.utc).isoformat()
+    retention_days = resolved_settings.expired_claim_retention_days
+    batch_size = limit or resolved_settings.expired_cleanup_batch_size
+    if batch_size < 1:
+        raise ValueError("--limit must be positive")
+    if apply and expected_count is None:
+        raise ConflictError("--expected-count is required with --apply")
+    if not apply:
+        connection = _open_readonly_database(Path(database_path))
+        try:
+            preview = inspect_expired_claims(
+                connection,
+                now=reference,
+                retention_days=retention_days,
+            )
+        finally:
+            connection.close()
+        actual_count = int(preview["eligible_claim_count"])
+        if expected_count is not None and actual_count != expected_count:
+            raise ConflictError(f"expired cleanup count mismatch: expected {expected_count}, found {actual_count}")
+        return {
+            **preview,
+            "dry_run": True,
+            "batch_size": batch_size,
+            "deleted": 0,
+            "remaining_eligible_count": actual_count,
+        }
+    database = Database(database_path, settings=resolved_settings)
+    try:
+        assert expected_count is not None
+        return cleanup_expired_claims(
+            database.open(),
+            now=reference,
+            retention_days=retention_days,
+            batch_size=batch_size,
+            expected_count=expected_count,
+            source="cli",
+        )
+    finally:
+        database.close()
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """运行导入或导出管理命令。"""
     parser = argparse.ArgumentParser(prog="hl-mem")
@@ -443,6 +542,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     repair_invalid = conflict_commands.add_parser("repair-invalid-groups")
     repair_invalid.add_argument("--apply", action="store_true")
     repair_invalid.add_argument("--expected-count", type=int)
+    dedup = commands.add_parser("dedup")
+    dedup.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    dedup_commands = dedup.add_subparsers(dest="dedup_command", required=True)
+    drain_below_floor = dedup_commands.add_parser("drain-below-floor")
+    drain_below_floor.add_argument("--apply", action="store_true")
+    drain_below_floor.add_argument("--expected-count", type=int)
+    expired = commands.add_parser("expired")
+    expired.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    expired_commands = expired.add_subparsers(dest="expired_command", required=True)
+    cleanup_expired = expired_commands.add_parser("cleanup")
+    cleanup_expired.add_argument("--apply", action="store_true")
+    cleanup_expired.add_argument("--expected-count", type=int)
+    cleanup_expired.add_argument("--limit", type=int)
+    cleanup_expired.add_argument("--now", help=argparse.SUPPRESS)
     evaluation = commands.add_parser("eval")
     evaluation.add_argument("--benchmark", choices=("longmemeval",), default="longmemeval")
     evaluation.add_argument("--subset", default="core")
@@ -572,6 +685,26 @@ def main(argv: Sequence[str] | None = None) -> None:
                 sort_keys=True,
             )
         )
+        return
+    if args.command == "dedup":
+        dedup_result = drain_dedup_backlog(
+            database_path,
+            apply=args.apply,
+            expected_count=args.expected_count,
+            settings=settings,
+        )
+        print(json.dumps(dedup_result, ensure_ascii=False, sort_keys=True))
+        return
+    if args.command == "expired":
+        expired_result = cleanup_expired_history(
+            database_path,
+            apply=args.apply,
+            expected_count=args.expected_count,
+            limit=args.limit,
+            now=args.now,
+            settings=settings,
+        )
+        print(json.dumps(expired_result, ensure_ascii=False, sort_keys=True))
         return
     if args.command == "conflicts":
         if args.conflict_command == "list":

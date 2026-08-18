@@ -73,6 +73,21 @@ def test_memory_api_header_key_wins_and_is_bounded(tmp_path) -> None:
         assert row[0] == "host-retry"
 
 
+def test_memory_api_accepts_optional_session_id_and_persists_it(tmp_path) -> None:
+    """Catches the REST adapter accepting session_id without forwarding it to the event."""
+    app = create_app(tmp_path / "memory-session-api.db")
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/memories",
+            json={"text": "会话内显式记忆", "session_id": "session-1"},
+        )
+
+        assert response.status_code == 200
+        connection = app.state.db.open()
+        row = connection.execute("SELECT session_id FROM events WHERE id=?", (response.json()["id"],)).fetchone()
+        assert row["session_id"] == "session-1"
+
+
 def test_namespace_alias_conflicts_and_episode_lists_are_isolated(tmp_path) -> None:
     app = create_app(tmp_path / "namespace-api.db")
     with TestClient(app) as client:

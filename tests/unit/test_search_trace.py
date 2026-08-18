@@ -10,6 +10,7 @@ import pytest
 
 from hl_mem.application.recall import RecallService
 from hl_mem.ingest.embedder import FakeEmbedder, pack_vector
+from hl_mem.recall.injection import InjectionContext
 from hl_mem.recall.recall_pipeline import hybrid_claims
 from hl_mem.recall.staged_pipeline import RecallConfig
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
@@ -155,6 +156,35 @@ def test_recall_service_only_returns_search_trace_in_debug_mode(tmp_path: Path) 
     assert debug["search_trace"]["candidate_limit"] == 9
     assert debug["search_trace"]["query_hash"] != "private query"
     assert "private query" not in json.dumps(debug["search_trace"])
+
+
+def test_recall_trace_exposes_safe_injection_context_envelope(tmp_path: Path) -> None:
+    """Catches injection A/B metadata being omitted from the per-query diagnostic trace."""
+    database = Database(tmp_path / "injection-trace.db")
+    context = InjectionContext.create(
+        delivery_purpose="passive_injection",
+        experiment_variant="E1F0",
+        echo_variant="observe",
+        freshness_variant="off",
+        rendering_now="2026-08-18T12:30:00Z",
+    )
+    try:
+        with database.connect() as connection:
+            response = RecallService(connection, FakeEmbedder(4)).recall(
+                "private query",
+                debug=True,
+                injection_context=context,
+            )
+    finally:
+        database.close()
+
+    injection = response["search_trace"]["injection"]
+    for key, value in context.envelope().items():
+        assert injection[key] == value
+    assert injection["echo_suppression"]["mode"] == "off"
+    assert injection["echo_suppression"]["bypass_reason"] == "mode_off"
+    assert "private query" not in json.dumps(injection)
+    assert "session_id" not in json.dumps(injection)
 
 
 def test_recall_trace_preserves_dense_cosine_for_relevance_gate(tmp_path: Path) -> None:

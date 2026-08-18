@@ -79,9 +79,9 @@ def deduplicate_claims(
         right = candidate["right"]
         cursor = connection.execute(
             "INSERT OR IGNORE INTO dedup_pairs("
-            "id,pair_key,left_claim_id,right_claim_id,namespace_key,similarity,"
+            "id,pair_key,left_claim_id,right_claim_id,pair_source,namespace_key,similarity,"
             "embedding_text_version,policy_version,predicate,created_at"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ") VALUES (?,?,?,?,'maintenance',?,?,?,?,?,?)",
             (
                 uuid.uuid4().hex,
                 _pair_key(left["id"], right["id"]),

@@ -25,8 +25,11 @@ QueryExpansionMode = Literal["off", "auto", "always"]
 QueryContextMode = Literal["off", "coreference"]
 ProcedureRecallMode = Literal["off", "keyword", "auto"]
 FeedbackLifecycleMode = Literal["off", "observe", "on"]
+ExpiredCleanupMode = Literal["off", "observe", "on"]
 DecayModel = Literal["legacy_linear", "activation_halflife", "confidence_halflife"]
 RelevanceGateMode = Literal["off", "observe", "enforce"]
+EchoSuppressionMode = Literal["off", "observe", "enforce"]
+FreshnessAnnotationMode = Literal["off", "observe", "render"]
 ResurrectionMode = Literal["off", "auto"]
 ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
@@ -166,6 +169,30 @@ class Settings:
     recall_dedup_candidate_limit: int = field(
         default=100,
         metadata={"toml": "recall.dedup_candidate_limit"},
+    )
+    echo_suppression_mode: EchoSuppressionMode = field(
+        default="off",
+        metadata={"toml": "recall.echo_suppression_mode"},
+    )
+    echo_session_window_seconds: int = field(
+        default=1800,
+        metadata={"toml": "recall.echo_session_window_seconds"},
+    )
+    echo_pending_review_enabled: bool = field(
+        default=False,
+        metadata={"toml": "recall.echo_pending_review_enabled"},
+    )
+    echo_pending_similarity_threshold: float = field(
+        default=0.95,
+        metadata={"toml": "recall.echo_pending_similarity_threshold"},
+    )
+    echo_pending_max_seconds: int = field(
+        default=7200,
+        metadata={"toml": "recall.echo_pending_max_seconds"},
+    )
+    freshness_annotation_mode: FreshnessAnnotationMode = field(
+        default="off",
+        metadata={"toml": "recall.freshness_annotation_mode"},
     )
     resurrection_mode: ResurrectionMode = field(
         default="auto",
@@ -464,6 +491,18 @@ class Settings:
         default=2_000,
         metadata={"toml": "retention.operational_batch_size"},
     )
+    expired_cleanup_mode: ExpiredCleanupMode = field(
+        default="observe",
+        metadata={"toml": "retention.expired_cleanup_mode"},
+    )
+    expired_claim_retention_days: int = field(
+        default=90,
+        metadata={"toml": "retention.expired_claim_retention_days"},
+    )
+    expired_cleanup_batch_size: int = field(
+        default=100,
+        metadata={"toml": "retention.expired_cleanup_batch_size"},
+    )
     job_succeeded_days: int = field(default=30, metadata={"toml": "retention.job_succeeded_days"})
     job_dead_days: int = field(default=90, metadata={"toml": "retention.job_dead_days"})
     llm_span_days: int = field(default=30, metadata={"toml": "retention.llm_span_days"})
@@ -698,6 +737,8 @@ class Settings:
             raise ConfigurationError("permanent decay days must not exceed archive days")
         if self.feedback_lifecycle_mode not in {"off", "observe", "on"}:
             raise ConfigurationError("retention.feedback_lifecycle_mode must be 'off', 'observe', or 'on'")
+        if self.expired_cleanup_mode not in {"off", "observe", "on"}:
+            raise ConfigurationError("retention.expired_cleanup_mode must be 'off', 'observe', or 'on'")
         if self.feedback_bonus_every <= 0:
             raise ConfigurationError("retention.feedback_bonus_every must be positive")
         if min(self.feedback_bonus_days, self.feedback_bonus_cap_days) < 0:
@@ -728,6 +769,18 @@ class Settings:
             raise ConfigurationError("recall.dedup_threshold must be between 0 and 1 (0 disables fold)")
         if self.recall_dedup_candidate_limit < 1:
             raise ConfigurationError("recall.dedup_candidate_limit must be positive")
+        if self.echo_suppression_mode not in {"off", "observe", "enforce"}:
+            raise ConfigurationError("recall.echo_suppression_mode must be 'off', 'observe', or 'enforce'")
+        if not 60 <= self.echo_session_window_seconds <= 14_400:
+            raise ConfigurationError("recall.echo_session_window_seconds must be between 60 and 14400")
+        if not isinstance(self.echo_pending_review_enabled, bool):
+            raise ConfigurationError("recall.echo_pending_review_enabled must be a boolean")
+        if not 0.0 <= self.echo_pending_similarity_threshold <= 1.0:
+            raise ConfigurationError("recall.echo_pending_similarity_threshold must be between 0 and 1")
+        if self.echo_pending_max_seconds < 60:
+            raise ConfigurationError("recall.echo_pending_max_seconds must be at least 60")
+        if self.freshness_annotation_mode not in {"off", "observe", "render"}:
+            raise ConfigurationError("recall.freshness_annotation_mode must be 'off', 'observe', or 'render'")
         if self.relevance_gate_mode not in {"off", "observe", "enforce"}:
             raise ConfigurationError("recall.relevance_gate_mode must be 'off', 'observe', or 'enforce'")
         relevance_thresholds = {
@@ -871,6 +924,10 @@ class Settings:
                 "retention.job_dead_days, retention.llm_span_days, retention.dedup_pair_days, "
                 "retention.feedback_uninjected_days, and retention.feedback_unlabeled_days must be positive"
             )
+        if self.expired_claim_retention_days < 1:
+            raise ConfigurationError("retention.expired_claim_retention_days must be positive")
+        if self.expired_cleanup_batch_size < 1:
+            raise ConfigurationError("retention.expired_cleanup_batch_size must be positive")
         if self.verification_mode not in {"off", "audit", "enforce"}:
             raise ConfigurationError("extraction.verification_mode must be 'off', 'audit', or 'enforce'")
         if (
@@ -942,6 +999,12 @@ class Settings:
             "fts_language": self.fts_language,
             "recall_vector_scan_limit": self.recall_vector_scan_limit,
             "recall_dense_enabled": self.recall_dense_enabled,
+            "echo_suppression_mode": self.echo_suppression_mode,
+            "echo_session_window_seconds": self.echo_session_window_seconds,
+            "echo_pending_review_enabled": self.echo_pending_review_enabled,
+            "echo_pending_similarity_threshold": self.echo_pending_similarity_threshold,
+            "echo_pending_max_seconds": self.echo_pending_max_seconds,
+            "freshness_annotation_mode": self.freshness_annotation_mode,
             "resurrection_mode": self.resurrection_mode,
             "resurrection_candidate_limit": self.resurrection_candidate_limit,
             "resurrection_min_term_coverage": self.resurrection_min_term_coverage,

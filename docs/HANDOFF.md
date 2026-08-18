@@ -4,18 +4,30 @@
 
 ## 当前状态
 
-- **分支**：`feature/v0.29.0-temporal`
-- **版本**：v0.29.0
-- **阶段**：v0.29.0 五项锁定范围已完成，等待交付复核；无 push
+- **分支**：`feature/v0.29.1-injection`
+- **版本**：v0.29.1
+- **阶段**：v0.29.1 八个顺序提交已完成，停在 worktree 等待 Hermes 验收；无 push
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：47 migrations（SQL 001–047），只允许向前迁移
+- **Schema**：49 migrations（SQL 001–049），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
-## v0.28 已交付
+## v0.29.1 已交付
 
 - v0.29.0 migration 047 新增 `assertion_kind=unknown|observation|inference`。存量 `unknown` 只可观测，不授权
   supersede，也不改变召回或注入行为。
+- migration 048 为 `dedup_pairs` 增加确定性的 `pair_source` 与 `new_claim_id` 注入信号；存量行标记为
+  `legacy`，不猜测新写入端点。
+- 注入治理顺序固定为 echo filter → reranker → freshness decorate → packing。echo 与 freshness 默认均为
+  `off`，使用独立开关；v0.29.1 不引入 `verified_at`。
+- `hl-mem --db <副本> dedup drain-below-floor` 默认只读报告；`--apply` 必须带精确
+  `--expected-count`。597 条生产形状 fixture 只终结 pair，不改 Claim。
+- expired 回收默认 `observe`，删除资格为超过 90 天历史保留窗、无下游 evidence 消费者、无 open conflict；
+  apply 需精确 expected-count、每轮最多 100 条并复用独立 tombstone 删除闭包。
+- migration 049 在同一事务中先验证 047/048 版本证据与数据库内 view/trigger 消费者，再移除 legacy
+  `claims_tags_fts` 及三触发器；SQLite 无法证明外部查询不存在，三机版本门槛和旧二进制回滚窗口由发布流程保证。
+- `scripts/run_v0291_injection_replay.py` 从固定 spec 构造 200 个 recall point，按 echo filter → fixed reranker →
+  freshness decorate → packing 回放 2×2，并把每臂去正文决策限制在 1,000 条；线上 observe 质量评估不在本交付内。
 - 终态 conflict generation 保持不可变：同一 active winner 的精确重申只追加 evidence；不同当前值复用现有
   group/candidate/revision 基建创建下一代单 open case，不扩展为 issue platform。
 - A2 `temporal-v1` 只让新写入的 `observation` 授权原子 online/offline 或显式旧值锚定的价格更正。非互斥 slot
@@ -55,7 +67,8 @@
 
 ## 下一步
 
-- 以 v0.29.0 doctor 的静态兼容结果收集部署证据，再单独裁决 v0.29.1 的不可逆兼容清理；不得把诊断扩展为协商状态机。
+- Hermes 验收后先显式启用 echo/freshness `observe` 收集 24–48 小时数据，再结合固定 2×2 回放决定 canary；
+  本 worktree 不替代线上质量裁决，也不默认开启 `enforce` / `render`。
 
 - 观察 tombstone sidecar 与 restore replay 的生产恢复演练；旧 manifest 无法证明删除历史时保持拒绝，不做
   静默兼容。

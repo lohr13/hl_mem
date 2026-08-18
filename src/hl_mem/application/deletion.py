@@ -80,6 +80,19 @@ class DeletionService:
         self.ledger_path = Path(ledger_path).expanduser().resolve() if ledger_path else None
 
     def delete_claim(self, claim_id: str) -> DeletionResult:
+        return self._delete_claim(claim_id, allow_expired=False, require_no_evidence_consumers=False)
+
+    def delete_expired_claim(self, claim_id: str) -> DeletionResult:
+        """Delete one expired Claim only after proving it has no downstream evidence consumers."""
+        return self._delete_claim(claim_id, allow_expired=True, require_no_evidence_consumers=True)
+
+    def _delete_claim(
+        self,
+        claim_id: str,
+        *,
+        allow_expired: bool,
+        require_no_evidence_consumers: bool,
+    ) -> DeletionResult:
         normalized_id = str(claim_id).strip()
         if not normalized_id:
             raise NotFoundError("memory not found: ")
@@ -94,7 +107,23 @@ class DeletionService:
                 self.connection.commit()
                 return result
 
-            self._assert_deletable(normalized_id, str(claim["status"]))
+            self._assert_deletable(
+                normalized_id,
+                str(claim["status"]),
+                allow_expired=allow_expired,
+            )
+            if require_no_evidence_consumers:
+                consumer = self.connection.execute(
+                    "SELECT id,derived_type,derived_id FROM evidence_links "
+                    "WHERE evidence_type='claim' AND evidence_id=? ORDER BY id LIMIT 1",
+                    (normalized_id,),
+                ).fetchone()
+                if consumer is not None:
+                    raise DeletionRejectedError(
+                        normalized_id,
+                        "evidence_consumers",
+                        f"{consumer['id']}:{consumer['derived_type']}:{consumer['derived_id']}",
+                    )
             event_ids = self._exclusive_event_ids(normalized_id)
             ledger = self._bound_ledger(normalized_id)
             try:
@@ -218,8 +247,9 @@ class DeletionService:
                 self.connection.rollback()
             raise
 
-    def _assert_deletable(self, claim_id: str, status: str) -> None:
-        if status not in DELETABLE_STATUSES and status != REPLAYABLE_STATUS:
+    def _assert_deletable(self, claim_id: str, status: str, *, allow_expired: bool = False) -> None:
+        allowed_statuses = DELETABLE_STATUSES | ({"expired"} if allow_expired else set())
+        if status not in allowed_statuses and status != REPLAYABLE_STATUS:
             raise DeletionRejectedError(claim_id, f"status_{status}")
         placeholders = ",".join("?" for _ in OPEN_CASE_STATUSES)
         open_case = self.connection.execute(
@@ -382,68 +412,10 @@ class DeletionService:
             (claim_id,),
         )
         ClaimRepository(self.connection).delete_vector(claim_id)
-        cursor = self._delete_claim_row(claim_id)
+        cursor = self.connection.execute("DELETE FROM claims WHERE id=?", (claim_id,))
         if cursor.rowcount != 1:
             raise NotFoundError(f"memory not found: {claim_id}")
         self.connection.execute("DELETE FROM claim_vector_dirty WHERE claim_id=?", (claim_id,))
         if event_ids:
             placeholders = ",".join("?" for _ in event_ids)
             self.connection.execute(f"DELETE FROM events WHERE id IN ({placeholders})", event_ids)
-
-    def _delete_claim_row(self, claim_id: str) -> sqlite3.Cursor:
-        """删除 Claim，并兼容已损坏的 legacy tag FTS 删除投影。"""
-        try:
-            return self.connection.execute("DELETE FROM claims WHERE id=?", (claim_id,))
-        except sqlite3.OperationalError as error:
-            if str(error) != "SQL logic error":
-                raise
-            return self._delete_claim_row_without_legacy_tag_trigger(claim_id, error)
-
-    def _delete_claim_row_without_legacy_tag_trigger(
-        self,
-        claim_id: str,
-        original_error: sqlite3.OperationalError,
-    ) -> sqlite3.Cursor:
-        trigger = self.connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='claims_tags_ad'"
-        ).fetchone()
-        trigger_sql = str(trigger["sql"] if trigger is not None else "")
-        if "claims_tags_fts" not in trigger_sql:
-            raise original_error
-        claim = self.connection.execute(
-            "SELECT rowid,topic_tags_json FROM claims WHERE id=?",
-            (claim_id,),
-        ).fetchone()
-        if claim is None:
-            raise NotFoundError(f"memory not found: {claim_id}")
-
-        self.connection.execute("DROP TRIGGER claims_tags_ad")
-        if not self._delete_legacy_tag_projection(
-            int(claim["rowid"]),
-            str(claim["topic_tags_json"] or ""),
-        ):
-            raise original_error
-        cursor = self.connection.execute("DELETE FROM claims WHERE id=?", (claim_id,))
-        self.connection.execute(trigger_sql)
-        return cursor
-
-    def _delete_legacy_tag_projection(self, rowid: int, tags_text: str) -> bool:
-        statements = (
-            (
-                "INSERT INTO claims_tags_fts(claims_tags_fts,rowid,tags_text) " "VALUES('delete',?,?)",
-                (rowid, tags_text),
-            ),
-            ("DELETE FROM claims_tags_fts WHERE rowid=?", (rowid,)),
-        )
-        for index, (statement, parameters) in enumerate(statements):
-            savepoint = f"delete_legacy_tag_projection_{index}"
-            self.connection.execute(f"SAVEPOINT {savepoint}")
-            try:
-                self.connection.execute(statement, parameters)
-            except sqlite3.OperationalError:
-                self.connection.execute(f"ROLLBACK TO {savepoint}")
-                self.connection.execute(f"RELEASE {savepoint}")
-                continue
-            self.connection.execute(f"RELEASE {savepoint}")
-            return True
-        return False

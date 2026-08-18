@@ -27,6 +27,31 @@ def event_text_for_fts(content_json: str | bytes | bytearray) -> str:
     return text if isinstance(text, str) else ""
 
 
+def sync_claim_tokenized_fts_v2(connection: sqlite3.Connection, claim_id: str) -> bool:
+    """Synchronize both v2 Claim projections after an in-place maintenance update."""
+    row = connection.execute(
+        "SELECT rowid,index_text,topic_tags_json FROM claims WHERE id=?",
+        (claim_id,),
+    ).fetchone()
+    if row is None:
+        return False
+    raw_tags = json.loads(row[2] or "[]")
+    if not isinstance(raw_tags, list):
+        raise ValueError(f"topic_tags_json for claim {claim_id} must be a JSON array")
+    tags_text = " ".join(dict.fromkeys(tag for tag in raw_tags if isinstance(tag, str)))
+    connection.execute("DELETE FROM claims_fts_v2 WHERE rowid=?", (row[0],))
+    connection.execute("DELETE FROM claims_tags_fts_v2 WHERE rowid=?", (row[0],))
+    connection.execute(
+        "INSERT INTO claims_fts_v2(rowid,terms) VALUES(?,?)",
+        (row[0], prepare_fts_document(row[1] or "", language=_fts_language(connection))),
+    )
+    connection.execute(
+        "INSERT INTO claims_tags_fts_v2(rowid,tags_text) VALUES(?,?)",
+        (row[0], tags_text),
+    )
+    return True
+
+
 def _backfill_claims(connection: sqlite3.Connection) -> int:
     language = _fts_language(connection)
     connection.execute("DELETE FROM claims_fts_v2")

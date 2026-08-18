@@ -147,6 +147,27 @@ def test_ambiguous_statuses_fail_closed_with_reason(deletion_store, status: str)
     assert not ledger_path.exists()
 
 
+def test_expired_delete_entry_requires_no_evidence_consumers(deletion_store) -> None:
+    connection, ledger_path = deletion_store
+    _insert_claim(connection, "target", "expired")
+    _insert_claim(connection, "consumer", "active")
+    connection.execute(
+        "INSERT INTO evidence_links(id,derived_type,derived_id,evidence_type,evidence_id,relation) "
+        "VALUES ('consumer-link','claim','consumer','claim','target','derived_from')"
+    )
+    connection.commit()
+
+    with pytest.raises(DeletionRejectedError, match="evidence_consumers"):
+        _service(connection, ledger_path).delete_expired_claim("target")
+
+    connection.execute("DELETE FROM evidence_links WHERE id='consumer-link'")
+    connection.commit()
+    result = _service(connection, ledger_path).delete_expired_claim("target")
+
+    assert result.deleted is True
+    assert connection.execute("SELECT 1 FROM claims WHERE id='target'").fetchone() is None
+
+
 @pytest.mark.parametrize("case_status", ("pending", "auto_resolved", "manual_required"))
 def test_open_conflict_case_fails_closed_with_reason(deletion_store, case_status: str) -> None:
     connection, ledger_path = deletion_store

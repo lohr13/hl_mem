@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from hl_mem import components
 from hl_mem.application.conflict_repairs import repair_dangling_conflicts
+from hl_mem.application.expired_cleanup import maintain_expired_claims
 from hl_mem.application.ingest import IngestService
 from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.attributes import infer_canonical_attribute
@@ -332,6 +333,22 @@ class Worker:
                     feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
                     slot_short_ttl_seconds=self.settings.slot_short_ttl_seconds,
                 ),
+            ),
+            *(
+                [
+                    (
+                        "cleanup_expired_claims",
+                        lambda: maintain_expired_claims(
+                            self.connection,
+                            now=maintenance_now,
+                            retention_days=self.settings.expired_claim_retention_days,
+                            batch_size=self.settings.expired_cleanup_batch_size,
+                            mode=self.settings.expired_cleanup_mode,
+                        ),
+                    )
+                ]
+                if self.settings.expired_cleanup_mode != "off"
+                else []
             ),
             (
                 "decay_claims",

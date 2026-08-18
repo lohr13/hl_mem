@@ -57,3 +57,8 @@ Starting with v0.29.0, `/healthz` publishes static major versions for the daemon
 and Context Packet wire schema. The packaged Hermes plugin carries the matching `contract.json`. `hl-mem doctor` compares
 the observed daemon and installed plugin against those build-time constants: an offline daemon is a warning, while missing
 evidence or a major mismatch is a failure. These checks are read-only release evidence, not a dynamic negotiation protocol.
+
+Migration 049 is an irreversible removal of the legacy `claims_tags_fts` projection. It fails before any drop when the
+database schema contains another view or trigger that references that table, and requires the preceding 047/048 migration
+evidence. Schema inspection cannot discover external SQL clients, so operators must separately verify that every runtime is
+v0.29.0 or newer and close the old-binary rollback window before opening a database with v0.29.1.

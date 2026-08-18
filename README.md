@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.29.0](https://img.shields.io/badge/version-0.29.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.29.1](https://img.shields.io/badge/version-0.29.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -215,6 +215,30 @@ hl-mem conflicts repair-dangling
 hl-mem conflicts repair-dangling --apply
 ```
 
+pending `dedup_pairs` 中低于当前 `dedup.threshold` 的项目可先在离线副本只读预览；应用时必须给出预览得到的
+精确数量，工具只写终态判定和审计，不修改 Claim：
+
+```bash
+hl-mem --db copy.db dedup drain-below-floor
+hl-mem --db copy.db dedup drain-below-floor --apply --expected-count 597
+```
+
+expired 历史先保留 90 天；仅无下游 evidence 消费者且无 open conflict 的项目可在副本预览并按精确计数有界回收：
+
+```bash
+hl-mem --db copy.db expired cleanup
+hl-mem --db copy.db expired cleanup --apply --expected-count 4508 --limit 100
+```
+
+固定 200-point 注入治理 fixture 可离线构造并回放 echo × freshness 2×2；报告只执行结构门禁，线上
+observe/canary 质量裁决仍由部署后的 Hermes 评估负责：
+
+```bash
+python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-replay.json
+python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-replay.json \
+  --export-expanded-fixture var/eval/v0291-injection-fixture.jsonl
+```
+
 REST 的完整请求契约见 [API 文档](docs/api.md)。
 
 ## 关键配置
@@ -238,6 +262,8 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan`（默认）或需安装 `hl-mem[sqlite-vec]` 的 `sqlite_vec` |
 | `recall.dedup_threshold` | `0.95` | 候选窗内近重复折叠阈值；设为 `0` 关闭折叠 |
 | `recall.dedup_candidate_limit` | `100` | 每次召回参与近重复折叠判定的候选上限 |
+| `recall.echo_suppression_mode` | `off` | 同会话回声治理：`off`、只观测的 `observe` 或 `enforce` |
+| `recall.freshness_annotation_mode` | `off` | 风险门控的新鲜度提示：`off`、只观测的 `observe` 或 `render` |
 | `recall.resurrection_mode` | `auto` | 主召回证据不足时启用有界 archived-only 冷路径；设为 `off` 可关闭 |
 | `recall.query_expansion_mode` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
 | `decay.model` | `activation_halflife` | 按 scope 半衰期衰减 activation，不因日常衰减改写 confidence |
@@ -326,7 +352,9 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.29.0，共 47 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.29.1，共 49 个不可变、仅向前执行的 SQL Migration。migration 049 在确认数据库内无
+view/trigger 消费者后移除 legacy `claims_tags_fts`；外部查询无法由 SQLite schema 证明，升级前必须完成全机
+v0.29.0+ 门槛核验并结束旧二进制回滚窗口。
 
 ## 文档
 

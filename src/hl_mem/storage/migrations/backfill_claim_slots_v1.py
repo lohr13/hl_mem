@@ -14,7 +14,7 @@ from typing import Any
 from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS, validate_slot_instance
 from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.storage.database import default_database_path
-from hl_mem.storage.legacy_tag_fts import execute_claim_tags_update
+from hl_mem.storage.tokenized_fts import sync_claim_tokenized_fts_v2
 
 
 @dataclass(frozen=True)
@@ -115,9 +115,7 @@ def backfill_claim_slots_v1(
                 tag_counts.update(tags)
                 if not apply:
                     continue
-                cursor = execute_claim_tags_update(
-                    connection,
-                    str(claim["id"]),
+                cursor = connection.execute(
                     "UPDATE claims SET canonical_slot=?,topic_tags_json=?,conflict_key=?,"
                     "conflict_key_version=3 WHERE id=? AND canonical_slot IS ? "
                     "AND topic_tags_json IS ? AND conflict_key IS ?",
@@ -131,6 +129,8 @@ def backfill_claim_slots_v1(
                         claim["conflict_key"],
                     ),
                 )
+                if cursor.rowcount:
+                    sync_claim_tokenized_fts_v2(connection, str(claim["id"]))
                 applied_count += cursor.rowcount
                 cas_skipped += int(cursor.rowcount == 0)
             if apply:
