@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hl_mem.application.context_packet import render_memory_text
+from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MAJOR
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +26,11 @@ def render_context(payload: Mapping[str, Any]) -> RenderedContext:
     """
 
     schema_major = payload.get("schema_major")
-    if not isinstance(schema_major, int) or isinstance(schema_major, bool) or schema_major != 1:
+    if (
+        not isinstance(schema_major, int)
+        or isinstance(schema_major, bool)
+        or schema_major != CONTEXT_PACKET_SCHEMA_MAJOR
+    ):
         raise ValueError(f"unsupported context packet schema major: {schema_major!r}")
 
     raw_items = payload.get("items")

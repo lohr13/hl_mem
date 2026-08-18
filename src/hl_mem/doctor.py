@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import socket
 import sqlite3
 import sys
@@ -10,12 +11,17 @@ import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import httpx
 
 from hl_mem.adapters.hermes.deployment import PLUGIN_FILES, plugin_files_match, plugin_files_present
 from hl_mem.adapters.hermes.discovery import find_hermes_home
+from hl_mem.compatibility import (
+    CONTEXT_PACKET_SCHEMA_MAJOR,
+    DAEMON_CONTRACT_MAJOR,
+    HERMES_PLUGIN_CONTRACT_MAJOR,
+)
 from hl_mem.config_loader import load_settings
 from hl_mem.http_utils import retry_http
 from hl_mem.ingest.embedder import Embedder
@@ -39,6 +45,14 @@ class CheckResult:
     status: CheckStatus
     name: str
     detail: str
+
+
+@dataclass(frozen=True)
+class DaemonProbe:
+    """One read-only observation of the configured daemon health endpoint."""
+
+    payload: Mapping[str, Any] | None
+    error: str | None
 
 
 def count_code_migrations(migration_dir: Path = MIGRATION_DIR) -> int:
@@ -212,6 +226,126 @@ def _check_port() -> CheckResult:
     return CheckResult(CheckStatus.OK, "服务端口", "127.0.0.1:8200 正在监听")
 
 
+def _probe_daemon(settings: Settings) -> DaemonProbe:
+    """Read health evidence once; this probe never mutates or negotiates state."""
+
+    url = f"{settings.hermes_url.rstrip('/')}/healthz"
+    try:
+        response = httpx.get(url, timeout=1.0)
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        return DaemonProbe(None, str(error))
+    if not isinstance(payload, dict):
+        return DaemonProbe(None, "healthz response is not a JSON object")
+    return DaemonProbe(payload, None)
+
+
+def _compatibility_section(probe: DaemonProbe) -> Mapping[str, Any] | None:
+    if probe.payload is None:
+        return None
+    compatibility = probe.payload.get("compatibility")
+    return compatibility if isinstance(compatibility, Mapping) else None
+
+
+def _contract_int(value: object) -> int | None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    return value
+
+
+def _check_daemon_compatibility(probe: DaemonProbe) -> CheckResult:
+    """Compare the observed daemon contract with this release's static major."""
+
+    name = "Daemon 兼容性"
+    if probe.payload is None:
+        return CheckResult(CheckStatus.WARN, name, f"healthz 不可用：{probe.error or 'unknown error'}")
+    compatibility = _compatibility_section(probe)
+    if compatibility is None:
+        return CheckResult(CheckStatus.FAIL, name, "healthz 缺少 compatibility 证据")
+    observed_daemon = _contract_int(compatibility.get("daemon_contract_major"))
+    observed_plugin = _contract_int(compatibility.get("required_plugin_contract_major"))
+    mismatches = []
+    if observed_daemon != DAEMON_CONTRACT_MAJOR:
+        mismatches.append(f"daemon_contract_major={observed_daemon!r} (要求 {DAEMON_CONTRACT_MAJOR})")
+    if observed_plugin != HERMES_PLUGIN_CONTRACT_MAJOR:
+        mismatches.append(f"required_plugin_contract_major={observed_plugin!r} (要求 {HERMES_PLUGIN_CONTRACT_MAJOR})")
+    if mismatches:
+        return CheckResult(CheckStatus.FAIL, name, "；".join(mismatches))
+    version = probe.payload.get("version", "unknown")
+    return CheckResult(
+        CheckStatus.OK,
+        name,
+        f"version={version}，daemon={observed_daemon} / required_plugin={observed_plugin}",
+    )
+
+
+def _check_wire_compatibility(probe: DaemonProbe) -> CheckResult:
+    """Compare the daemon's Context Packet wire major with this consumer."""
+
+    name = "Context Packet wire"
+    if probe.payload is None:
+        return CheckResult(CheckStatus.WARN, name, f"healthz 不可用：{probe.error or 'unknown error'}")
+    compatibility = _compatibility_section(probe)
+    context_packet = compatibility.get("context_packet") if compatibility is not None else None
+    if not isinstance(context_packet, Mapping):
+        return CheckResult(CheckStatus.FAIL, name, "healthz 缺少 context_packet contract 证据")
+    observed_major = _contract_int(context_packet.get("schema_major"))
+    observed_minor = _contract_int(context_packet.get("schema_minor"))
+    if observed_major != CONTEXT_PACKET_SCHEMA_MAJOR:
+        return CheckResult(
+            CheckStatus.FAIL,
+            name,
+            f"schema_major={observed_major!r}，当前仅支持 {CONTEXT_PACKET_SCHEMA_MAJOR}",
+        )
+    if observed_minor is None:
+        return CheckResult(CheckStatus.FAIL, name, "schema_minor 缺失或不是整数")
+    return CheckResult(
+        CheckStatus.OK,
+        name,
+        f"schema={observed_major}.{observed_minor}，major 兼容",
+    )
+
+
+def _check_plugin_compatibility(settings: Settings) -> CheckResult:
+    """Read the installed plugin's static manifest without importing it."""
+
+    name = "Hermes 插件兼容性"
+    try:
+        hermes_home = find_hermes_home(settings.hermes_home)
+    except RuntimeError:
+        return CheckResult(CheckStatus.WARN, name, "未检测到 Hermes，跳过")
+    if not hermes_home.exists():
+        return CheckResult(CheckStatus.WARN, name, "未检测到 Hermes，跳过")
+    contract_path = hermes_home / "plugins" / "hl_mem" / "contract.json"
+    if not contract_path.is_file():
+        return CheckResult(CheckStatus.FAIL, name, f"缺少 {contract_path}；运行 hl-mem hermes upgrade")
+    try:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        return CheckResult(CheckStatus.FAIL, name, f"contract.json 无法读取：{error}")
+    if not isinstance(contract, dict):
+        return CheckResult(CheckStatus.FAIL, name, "contract.json 必须是 JSON object")
+    expected = {
+        "plugin_contract_major": HERMES_PLUGIN_CONTRACT_MAJOR,
+        "daemon_contract_major": DAEMON_CONTRACT_MAJOR,
+        "context_packet_schema_major": CONTEXT_PACKET_SCHEMA_MAJOR,
+    }
+    mismatches = [
+        f"{key}={contract.get(key)!r} (要求 {value})"
+        for key, value in expected.items()
+        if _contract_int(contract.get(key)) != value
+    ]
+    if mismatches:
+        return CheckResult(CheckStatus.FAIL, name, "；".join(mismatches))
+    return CheckResult(
+        CheckStatus.OK,
+        name,
+        f"plugin={HERMES_PLUGIN_CONTRACT_MAJOR} / daemon={DAEMON_CONTRACT_MAJOR} / "
+        f"context_packet={CONTEXT_PACKET_SCHEMA_MAJOR} major 兼容",
+    )
+
+
 def _check_hermes(settings: Settings) -> CheckResult:
     try:
         hermes_home = find_hermes_home(settings.hermes_home)
@@ -253,6 +387,7 @@ def run_doctor(
     """执行全部诊断并返回结构化结果。"""
     settings = load_settings(config_path, env_path, environ=environ)
     resolved_database = database_path or Path(settings.database_path)
+    daemon_probe = _probe_daemon(settings)
     return [
         CheckResult(
             CheckStatus.OK if sys.version_info >= (3, 11) else CheckStatus.FAIL,
@@ -266,7 +401,10 @@ def run_doctor(
         _check_embedding(settings),
         _check_llm(settings),
         _check_port(),
+        _check_daemon_compatibility(daemon_probe),
         _check_hermes(settings),
+        _check_plugin_compatibility(settings),
+        _check_wire_compatibility(daemon_probe),
     ]
 
 

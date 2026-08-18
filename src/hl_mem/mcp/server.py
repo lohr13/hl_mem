@@ -14,6 +14,7 @@ from hl_mem.application.ingest import IngestService
 from hl_mem.application.memories import MemoryQueryService
 from hl_mem.application.recall import RecallService
 from hl_mem.application.recall_side_effects import DeferredLLMSpanRecorder, RecallSideEffectDispatcher
+from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MAJOR, CONTEXT_PACKET_SCHEMA_MINOR
 from hl_mem.domain.temporal import RecallIntent, parse_utc
 from hl_mem.errors import NotFoundError, ValidationError
 from hl_mem.experience.service import ExperienceService
@@ -64,8 +65,8 @@ def _context_packet_schema() -> dict[str, Any]:
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "schema_major": {"type": "integer", "const": 1},
-            "schema_minor": {"type": "integer", "const": 1},
+            "schema_major": {"type": "integer", "const": CONTEXT_PACKET_SCHEMA_MAJOR},
+            "schema_minor": {"type": "integer", "const": CONTEXT_PACKET_SCHEMA_MINOR},
             "query_id": {"type": "string"},
             "answerability": {
                 "type": "string",

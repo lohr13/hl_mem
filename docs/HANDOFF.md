@@ -6,7 +6,7 @@
 
 - **分支**：`feature/v0.29.0-temporal`
 - **版本**：v0.29.0
-- **阶段**：v0.29.0 时间正确性开发中；当前已完成 A1、B generation/reopen、A2 自动关链与 A3 注入验收
+- **阶段**：v0.29.0 五项锁定范围已完成，等待交付复核；无 push
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：47 migrations（SQL 001–047），只允许向前迁移
@@ -23,6 +23,8 @@
   2/2、120 条 path 与 4 条 network 共存样本误接链 0。
 - A3 证明关链后的 current-state results、packed context 与 Context Packet 都只含当前 tip；historical 仍保留旧链。
   recency 权重维持 `0.08`，没有新机制或配置。
+- F 将 daemon/plugin/Context Packet wire 的静态 major 暴露为 `/healthz` 与 Hermes `contract.json` 证据；doctor
+  分项诊断兼容性，离线 WARN、缺证据或 major 不匹配 FAIL。没有动态协商、持久状态或自动升级。
 
 - conflict case 已升级为 `(namespace, group_key, generation)` 下的单案多候选，revision 保护人工裁决；维护只处理
   持久 dirty queue 的当前活跃 generation，并受 case 数/时间预算、失败退避和候选上限约束。终态候选会自动关案。
@@ -53,7 +55,7 @@
 
 ## 下一步
 
-- 继续实现 F 静态 doctor 兼容诊断；候选压缩和冷热分层不属于 v0.29.0 范围。
+- 以 v0.29.0 doctor 的静态兼容结果收集部署证据，再单独裁决 v0.29.1 的不可逆兼容清理；不得把诊断扩展为协商状态机。
 
 - 观察 tombstone sidecar 与 restore replay 的生产恢复演练；旧 manifest 无法证明删除历史时保持拒绝，不做
   静默兼容。

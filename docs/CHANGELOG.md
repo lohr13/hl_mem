@@ -36,6 +36,14 @@
   与当前 online 两个版本。
 - 现有双时间可见性已经满足验收，回放没有提供调整排序的必要证据，因此 recency 权重保持 `0.08`，无新增配置键。
 
+### 静态兼容诊断
+
+- `/healthz` 发布 daemon contract、Hermes plugin contract 与 Context Packet wire schema 的静态 major 证据；打包的
+  Hermes 插件新增同源 `contract.json`，安装和升级继续逐字节验证完整副本。
+- `hl-mem doctor` 从 9 项扩展为 12 项，分别报告运行中 daemon、已安装插件和 wire major 的兼容性。daemon 离线时
+  只读探测为 WARN；在线但缺少证据或 major 不匹配时 fail-closed。诊断不写入状态，也不做版本动态协商。
+- 这些结果作为 v0.29.1 不可逆兼容清理前的部署证据；v0.29.0 不删除旧契约或引入自动升级机制。
+
 ## v0.28.10（2026-08-18）
 
 - 修复存量 legacy `claims_tags_fts` 投影在 `claims_tags_au` UPDATE 触发器中抛出 `SQL logic error`、导致

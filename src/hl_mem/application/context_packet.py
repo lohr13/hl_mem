@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 from hl_mem.application.answerability import Answerability
+from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MAJOR as RETRIEVAL_BUNDLE_SCHEMA_MAJOR
+from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MINOR as RETRIEVAL_BUNDLE_SCHEMA_MINOR
 from hl_mem.experience.service import ExperienceService
 
 LOGGER = logging.getLogger(__name__)
@@ -41,8 +43,6 @@ _GENERIC_RELATION_ACTIONS = frozenset(
         "配置",
     }
 )
-RETRIEVAL_BUNDLE_SCHEMA_MAJOR = 1
-RETRIEVAL_BUNDLE_SCHEMA_MINOR = 1
 CONTEXT_PACKET_CLAIM_LIMIT = 10
 
 
@@ -394,7 +394,7 @@ class ContextPacketAssembler:
                     type(error).__name__,
                 )
         return {
-            "schema_major": 1,
+            "schema_major": RETRIEVAL_BUNDLE_SCHEMA_MAJOR,
             "schema_minor": RETRIEVAL_BUNDLE_SCHEMA_MINOR,
             "query_id": bundle.query_id,
             "answerability": bundle.answerability,

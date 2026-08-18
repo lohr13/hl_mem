@@ -1,0 +1,6 @@
+{
+  "plugin_contract_major": 2,
+  "daemon_contract_major": 1,
+  "context_packet_schema_major": 1,
+  "context_packet_schema_minor": 1
+}

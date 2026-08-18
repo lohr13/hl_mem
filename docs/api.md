@@ -22,7 +22,7 @@ OpenAPI documentation is available at `/docs` while the service is running.
 - `tenant_id` is a deprecated compatibility alias for `namespace`; clients should send `namespace`, and conflicting values
   are rejected. Neither field provides SaaS multi-tenant isolation, RBAC, billing isolation, or per-tenant keys.
 - Recall can filter both valid time (`as_of`) and recorded time (`known_as_of`).
-- `/healthz` is an async liveness endpoint. It reports version, effective settings, component state, in-memory metrics,
+- `/healthz` is an async liveness endpoint. It reports version, static daemon/plugin/wire compatibility evidence, effective settings, component state, in-memory metrics,
   and `conflict_open_count`; the conflict count reuses the application lifecycle SQLite connection and includes unresolved
   `pending`, `auto_resolved`, and `manual_required` cases. The endpoint does not call an external provider or query
   historical LLM spans.

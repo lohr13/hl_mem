@@ -57,6 +57,7 @@ from hl_mem.application.recall_side_effects import (
     DeferredLLMSpanRecorder,
     RecallSideEffectDispatcher,
 )
+from hl_mem.compatibility import compatibility_manifest
 from hl_mem.errors import ConflictError, NotFoundError, ValidationError
 from hl_mem.experience.service import (
     ExperienceService,
@@ -272,6 +273,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         return {
             "status": "ok",
             "version": __version__,
+            "compatibility": compatibility_manifest(),
             "vector_backend": str(settings.vector_backend),
             "conflict_open_count": conflict_open_count,
             "conflict_dangling": conflict_dangling,
