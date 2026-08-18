@@ -399,6 +399,23 @@ class ClaimRepository:
             open_case_id=str(row["open_case_id"]) if row["open_case_id"] is not None else None,
         )
 
+    def find_temporal_candidates(self, claim: dict[str, Any], limit: int = 16) -> list[dict[str, Any]]:
+        """Return a bounded active series for the conservative temporal-link evaluator."""
+
+        if limit < 1:
+            raise ValueError("temporal candidate limit must be positive")
+        identity = tuple(
+            claim.get(field) for field in ("namespace_key", "subject_entity_id", "predicate", "canonical_attribute")
+        )
+        if any(value is None for value in identity):
+            return []
+        rows = self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? AND subject_entity_id=? AND predicate=? "
+            "AND canonical_attribute=? AND status='active' ORDER BY valid_from DESC,recorded_from DESC,id DESC LIMIT ?",
+            (*identity, limit),
+        ).fetchall()
+        return self._decode_rows(rows)
+
     def find_by_fact_hash(self, namespace: str, fact_hash: str) -> dict[str, Any] | None:
         """按命名空间与事实哈希查找最新未终结 Claim。"""
         return self._decode_claim(

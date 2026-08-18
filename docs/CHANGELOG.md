@@ -18,6 +18,17 @@
   `manual_required` 案，旧 generation 保持不可变。
 - 本版不引入 issue-platform 能力：不实现候选压缩、冷热分层、分页、冷却、拆案、重分类、延迟处理或 rollup。
 
+### 高精度自动关链
+
+- 在现有 `entails/state_change/contradicts/uncertain` 写入框架内增加 `temporal-v1` 纯函数，只接受新写入且显式为
+  `observation` 的 Claim。确定性覆盖仅含两段：同 subject/attribute/qualifiers 的原子 online/offline 状态，以及带
+  旧值锚点、价格轴、严格新时间、来源权威、币种和计费单位守卫的显式价格更正；存量 `unknown` 本身不能授权动作。
+- `config.path`、`config.network` 与任何带非互斥 operational slot 的 Claim 明确拒绝该扩展；无法证明的同轴价格
+  更新进入既有 pair conflict 人工管线，不静默 latest-wins，也不调用 LLM 或建立通用时间边分类器。
+- 固定生产历史门禁由 `scripts/run_v029_temporal_replay.py` 在 `var/eval` SQLite 副本上运行，源库强制
+  `mode=ro + query_only`。本次回放 14/14 价格 correct，precision/coverage 均为 1.0；Tailscale 三快照得到
+  `entails → state_change`；120 条 `config.path` 与 4 条 `config.network` 合法共存样本误接链为 0。
+
 ## v0.28.10（2026-08-18）
 
 - 修复存量 legacy `claims_tags_fts` 投影在 `claims_tags_au` UPDATE 触发器中抛出 `SQL logic error`、导致

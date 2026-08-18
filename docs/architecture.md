@@ -186,6 +186,7 @@ Client
   → index_text construction (legacy / value_only / natural / answerable)
   → fact_hash v2 exact deduplication
   → canonical attribute + conflict_key deterministic conflict resolution
+  → observation-gated deterministic temporal link for atomic availability or explicit anchored price replacement
   → LLM four-way consolidation for gray-zone conflicts
   → conservative same-subject near-copy reuse (structure + lexical + cosine + protected atoms)
   → best-match semantic candidate generation (domain constant 0.82)
@@ -280,6 +281,15 @@ boundaries for v0.29. When a group already has a terminal generation, an exact r
 evidence; a different current value creates the next manual-review generation without mutating the terminal case. This
 bounded reopen path deliberately adds no pagination, cooling, split/reclassification, rollup, compression, or cold
 storage behavior.
+
+The `temporal-v1` extension runs only after exact deduplication and the existing mutually-exclusive group resolver. A new
+Claim must be explicitly gated as an `observation`; legacy `unknown` values never authorize a link. The extension recognizes
+only atomic online/offline availability and explicit price replacement with a matching subject, canonical attribute,
+predicate, qualifiers, price axis, non-decreasing source authority, strictly newer valid time, old-value anchor, currency,
+and billing unit. `config.path`,
+`config.network`, and every non-exclusive operational slot are denied. A proven update reuses the existing atomic
+supersede transaction, while a recognized but unproven price update becomes one existing pair-style manual conflict case.
+No LLM call or general latest-wins classifier is added.
 
 Near-copy control deliberately shares one conservative predicate across ingestion, maintenance, and recall. It requires
 compatible namespace, predicate, canonical slot/attribute, qualifiers, and validity; high cosine and lexical near-copy
