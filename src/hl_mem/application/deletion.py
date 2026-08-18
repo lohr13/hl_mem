@@ -430,8 +430,7 @@ class DeletionService:
     def _delete_legacy_tag_projection(self, rowid: int, tags_text: str) -> bool:
         statements = (
             (
-                "INSERT INTO claims_tags_fts(claims_tags_fts,rowid,tags_text) "
-                "VALUES('delete',?,?)",
+                "INSERT INTO claims_tags_fts(claims_tags_fts,rowid,tags_text) " "VALUES('delete',?,?)",
                 (rowid, tags_text),
             ),
             ("DELETE FROM claims_tags_fts WHERE rowid=?", (rowid,)),

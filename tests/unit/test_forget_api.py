@@ -14,9 +14,7 @@ def _insert_claim_with_failing_legacy_tag_delete(database_path: Path) -> None:
     connection = database.open()
     try:
         connection.execute(
-            "INSERT INTO claims("
-            "id,recorded_from,status,index_text,topic_tags_json"
-            ") VALUES(?,?,?,?,?)",
+            "INSERT INTO claims(" "id,recorded_from,status,index_text,topic_tags_json" ") VALUES(?,?,?,?,?)",
             (
                 "claim-old",
                 "2026-08-18T00:00:00+00:00",
