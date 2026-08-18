@@ -1,5 +1,28 @@
 # HL-Mem 变更记录
 
+## v0.29.1（2026-08-18）
+
+### 注入治理与离线门禁
+
+- 修复 Hermes `on_pre_compress` / `on_memory_write` 的 session 传播，并增加共享的 delivery purpose、实验 variant、
+  policy version、rendering clock、trace/health envelope 与 cache 隔离上下文。
+- 新增相互独立的纯策略 `EchoSuppressionPolicy`（`off|observe|enforce`）和
+  `FreshnessAnnotationPolicy`（`off|observe|render`），发布默认均为 `off`。统一执行顺序固定为 echo filter →
+  reranker → freshness decorate → packing；本版不增加 `verified_at`。
+- migration 048 为 dedup pair 增加确定性来源和新 Claim 端点信号；副本工具可把 597 条低于当前 floor 的 pending
+  pair 以 `dismissed_below_floor` 终结，apply 必须提交精确 expected-count，且不改 Claim。
+- 新增固定 200-point fixture 构造和 echo × freshness 2×2 bundle replay。离线报告验证 observe 不改输出、跨会话/
+  historical/proper-noun 切片等价、18-token 上限和重新 packing；线上 observe/canary 质量评估留给 Hermes 部署后执行。
+
+### 有界回收与兼容清理
+
+- expired Claim 在超过 90 天历史保留窗、没有下游 evidence 消费者且没有 open conflict 时才可回收。维护默认
+  `observe`，`on` 每轮最多 100 条；副本 CLI 默认只读，apply 需要精确 expected-count，物理删除逐条复用独立
+  tombstone `DeletionService`。
+- migration 049 在任何 DROP 前验证 047/048 版本证据并扫描数据库内 view/trigger 消费者；有消费者即事务回滚。
+  版本门槛通过后移除 legacy `claims_tags_fts` 和三触发器，同时删除 deletion/tag-update 两个兼容 shim，维护写入
+  显式同步 tokenized FTS v2。SQLite 无法发现外部直接 SQL，旧二进制回滚窗口必须由发布流程先关闭。
+
 ## v0.29.0（2026-08-18）
 
 ### 受限 assertion 门控

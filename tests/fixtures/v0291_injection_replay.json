@@ -1,0 +1,21 @@
+{
+  "schema_version": "v0291-injection-fixture-v1",
+  "rendering_now": "2026-08-18T12:00:00+00:00",
+  "namespace": "default",
+  "session_id": "synthetic-session",
+  "default_token_budget": 2000,
+  "artifact_decision_limit_per_arm": 1000,
+  "cohorts": [
+    {"name": "echo_recent", "count": 30},
+    {"name": "echo_boundary", "count": 20},
+    {"name": "cross_session", "count": 20},
+    {"name": "proper_noun_hard_negative", "count": 20},
+    {"name": "fail_open", "count": 20},
+    {"name": "stale_incident", "count": 20},
+    {"name": "stale_related", "count": 20},
+    {"name": "stable_fact", "count": 20},
+    {"name": "correction_backed_reference", "count": 10},
+    {"name": "packing_boundary", "count": 10},
+    {"name": "historical_and_active", "count": 10}
+  ]
+}

@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.29.0](https://img.shields.io/badge/version-0.29.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.29.1](https://img.shields.io/badge/version-0.29.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -230,6 +230,15 @@ hl-mem --db copy.db expired cleanup
 hl-mem --db copy.db expired cleanup --apply --expected-count 4508 --limit 100
 ```
 
+固定 200-point 注入治理 fixture 可离线构造并回放 echo × freshness 2×2；报告只执行结构门禁，线上
+observe/canary 质量裁决仍由部署后的 Hermes 评估负责：
+
+```bash
+python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-replay.json
+python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-replay.json \
+  --export-expanded-fixture var/eval/v0291-injection-fixture.jsonl
+```
+
 REST 的完整请求契约见 [API 文档](docs/api.md)。
 
 ## 关键配置
@@ -343,7 +352,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.29.0，共 49 个不可变、仅向前执行的 SQL Migration。migration 049 在确认数据库内无
+当前基线为 v0.29.1，共 49 个不可变、仅向前执行的 SQL Migration。migration 049 在确认数据库内无
 view/trigger 消费者后移除 legacy `claims_tags_fts`；外部查询无法由 SQLite schema 证明，升级前必须完成全机
 v0.29.0+ 门槛核验并结束旧二进制回滚窗口。
 
