@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.28.10
+- Document baseline: v0.29.0
 - Updated: 2026-08-18
 - Deployment baseline: local-first, SQLite-first
 
@@ -115,7 +115,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 46 immutable SQL migrations (001-046)
+│   └── migrations/           # 47 immutable SQL migrations (001-047)
 ├── workers/
 │   ├── worker.py             # Job leasing, progress, heartbeat, maintenance loop
 │   ├── job_handlers.py       # Job handlers, registry, and dispatch boundary
@@ -186,6 +186,7 @@ Client
   → index_text construction (legacy / value_only / natural / answerable)
   → fact_hash v2 exact deduplication
   → canonical attribute + conflict_key deterministic conflict resolution
+  → observation-gated deterministic temporal link for atomic availability or explicit anchored price replacement
   → LLM four-way consolidation for gray-zone conflicts
   → conservative same-subject near-copy reuse (structure + lexical + cosine + protected atoms)
   → best-match semantic candidate generation (domain constant 0.82)
@@ -276,7 +277,19 @@ per-case backoff, folds every candidate through terminal/supersede chains, and a
 cases. A stable `manual_required` case is not scanned or updated again until a trigger marks it dirty. Review returns the
 generation, revision, and complete candidate set; select/reject requires `expected_revision`, with stale requests failing
 409 before mutation. Candidate counts above the configured auto threshold remain manual. The schema reserves generation
-boundaries for v0.29, where compression and cold storage may be added; v0.28.9 does not advance generations.
+boundaries for v0.29. When a group already has a terminal generation, an exact reassertion of its active winner only adds
+evidence; a different current value creates the next manual-review generation without mutating the terminal case. This
+bounded reopen path deliberately adds no pagination, cooling, split/reclassification, rollup, compression, or cold
+storage behavior.
+
+The `temporal-v1` extension runs only after exact deduplication and the existing mutually-exclusive group resolver. A new
+Claim must be explicitly gated as an `observation`; legacy `unknown` values never authorize a link. The extension recognizes
+only atomic online/offline availability and explicit price replacement with a matching subject, canonical attribute,
+predicate, qualifiers, price axis, non-decreasing source authority, strictly newer valid time, old-value anchor, currency,
+and billing unit. `config.path`,
+`config.network`, and every non-exclusive operational slot are denied. A proven update reuses the existing atomic
+supersede transaction, while a recognized but unproven price update becomes one existing pair-style manual conflict case.
+No LLM call or general latest-wins classifier is added.
 
 Near-copy control deliberately shares one conservative predicate across ingestion, maintenance, and recall. It requires
 compatible namespace, predicate, canonical slot/attribute, qualifiers, and validity; high cosine and lexical near-copy
@@ -370,7 +383,7 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 46 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 47 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used

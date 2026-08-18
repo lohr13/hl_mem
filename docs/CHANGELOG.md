@@ -1,5 +1,49 @@
 # HL-Mem 变更记录
 
+## v0.29.0（2026-08-18）
+
+### 受限 assertion 门控
+
+- Claim 新增正交的 `assertion_kind=unknown|observation|inference` 认识论字段。产品 compact 提取契约要求模型区分
+  证据直接报告的 observation 与推导结论 inference；无法可靠判断时必须输出 unknown。冻结的七字段与 RAO 评测
+  契约保持独立，legacy 解析继续兼容。
+- migration 047 为存量 Claim 回填 `unknown`。该默认值只用于观测和公开 DTO，不参与 supersede、召回过滤、注入或
+  排序；只有新写入的显式门控值可被后续高精度时间关链逻辑消费。项目版本升至 `0.29.0`，schema 为 47 个不可变、
+  只向前执行的 SQL migration（001–047）。
+
+### 终态 conflict generation/reopen
+
+- 复用 v0.28.9 的组级 case、candidate、generation、revision 与单 open-case 约束。组内已有终态 generation 时，
+  同一 active winner 的精确重申只追加 evidence；不同当前值不改写旧案，而是创建 `generation + 1` 的
+  `manual_required` 案，旧 generation 保持不可变。
+- 本版不引入 issue-platform 能力：不实现候选压缩、冷热分层、分页、冷却、拆案、重分类、延迟处理或 rollup。
+
+### 高精度自动关链
+
+- 在现有 `entails/state_change/contradicts/uncertain` 写入框架内增加 `temporal-v1` 纯函数，只接受新写入且显式为
+  `observation` 的 Claim。确定性覆盖仅含两段：同 subject/attribute/qualifiers 的原子 online/offline 状态，以及带
+  旧值锚点、价格轴、严格新时间、来源权威、币种和计费单位守卫的显式价格更正；存量 `unknown` 本身不能授权动作。
+- `config.path`、`config.network` 与任何带非互斥 operational slot 的 Claim 明确拒绝该扩展；无法证明的同轴价格
+  更新进入既有 pair conflict 人工管线，不静默 latest-wins，也不调用 LLM 或建立通用时间边分类器。
+- 固定生产历史门禁由 `scripts/run_v029_temporal_replay.py` 在 `var/eval` SQLite 副本上运行，源库强制
+  `mode=ro + query_only`。本次回放 14/14 价格 correct，precision/coverage 均为 1.0；Tailscale 三快照得到
+  `entails → state_change`；120 条 `config.path` 与 4 条 `config.network` 合法共存样本误接链为 0。
+
+### Current-state 注入验收
+
+- A3 不新增过滤、排序或注入机制。三快照经 A2 形成 supersede 链后，current-state 的 REST 结果候选、packed
+  context 与最终 Context Packet 均只包含当前 online tip；显式 historical retrieval bundle 仍可返回旧 offline
+  与当前 online 两个版本。
+- 现有双时间可见性已经满足验收，回放没有提供调整排序的必要证据，因此 recency 权重保持 `0.08`，无新增配置键。
+
+### 静态兼容诊断
+
+- `/healthz` 发布 daemon contract、Hermes plugin contract 与 Context Packet wire schema 的静态 major 证据；打包的
+  Hermes 插件新增同源 `contract.json`，安装和升级继续逐字节验证完整副本。
+- `hl-mem doctor` 从 9 项扩展为 12 项，分别报告运行中 daemon、已安装插件和 wire major 的兼容性。daemon 离线时
+  只读探测为 WARN；在线但缺少证据或 major 不匹配时 fail-closed。诊断不写入状态，也不做版本动态协商。
+- 这些结果作为 v0.29.1 不可逆兼容清理前的部署证据；v0.29.0 不删除旧契约或引入自动升级机制。
+
 ## v0.28.10（2026-08-18）
 
 - 修复存量 legacy `claims_tags_fts` 投影在 `claims_tags_au` UPDATE 触发器中抛出 `SQL logic error`、导致

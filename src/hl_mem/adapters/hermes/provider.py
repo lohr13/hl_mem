@@ -23,6 +23,7 @@ from hl_mem.application.context_packet import (
     UnknownSchemaMajorError,
     retrieval_bundle_to_dict,
 )
+from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MAJOR
 from hl_mem.http_utils import validation_response_body
 from hl_mem.settings import Settings
 
@@ -757,7 +758,11 @@ class HLMemProvider:
             if not isinstance(packet, dict):
                 raise TypeError("materialization response is missing context_packet")
             schema_major = packet.get("schema_major")
-            if not isinstance(schema_major, int) or isinstance(schema_major, bool) or schema_major != 1:
+            if (
+                not isinstance(schema_major, int)
+                or isinstance(schema_major, bool)
+                or schema_major != CONTEXT_PACKET_SCHEMA_MAJOR
+            ):
                 raise UnknownSchemaMajorError(f"unsupported context packet schema major: " f"{schema_major!r}")
             if packet.get("query_id") != bundle.query_id:
                 raise TypeError("materialized packet query_id does not match cached bundle")

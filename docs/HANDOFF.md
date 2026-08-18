@@ -4,15 +4,27 @@
 
 ## 当前状态
 
-- **分支**：`main`
-- **版本**：v0.28.10
-- **阶段**：v0.28.10 hotfix 已实现，等待 Hermes 验收；tag、Release 与 PyPI 由维护者验收后执行
+- **分支**：`feature/v0.29.0-temporal`
+- **版本**：v0.29.0
+- **阶段**：v0.29.0 五项锁定范围已完成，等待交付复核；无 push
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：46 migrations（SQL 001–046），只允许向前迁移
+- **Schema**：47 migrations（SQL 001–047），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
 ## v0.28 已交付
+
+- v0.29.0 migration 047 新增 `assertion_kind=unknown|observation|inference`。存量 `unknown` 只可观测，不授权
+  supersede，也不改变召回或注入行为。
+- 终态 conflict generation 保持不可变：同一 active winner 的精确重申只追加 evidence；不同当前值复用现有
+  group/candidate/revision 基建创建下一代单 open case，不扩展为 issue platform。
+- A2 `temporal-v1` 只让新写入的 `observation` 授权原子 online/offline 或显式旧值锚定的价格更正。非互斥 slot
+  明确拒绝，灰区进入既有 pair conflict 管线。生产只读副本回放为价格 14/14、precision 1.0、Tailscale 顺序
+  2/2、120 条 path 与 4 条 network 共存样本误接链 0。
+- A3 证明关链后的 current-state results、packed context 与 Context Packet 都只含当前 tip；historical 仍保留旧链。
+  recency 权重维持 `0.08`，没有新机制或配置。
+- F 将 daemon/plugin/Context Packet wire 的静态 major 暴露为 `/healthz` 与 Hermes `contract.json` 证据；doctor
+  分项诊断兼容性，离线 WARN、缺证据或 major 不匹配 FAIL。没有动态协商、持久状态或自动升级。
 
 - conflict case 已升级为 `(namespace, group_key, generation)` 下的单案多候选，revision 保护人工裁决；维护只处理
   持久 dirty queue 的当前活跃 generation，并受 case 数/时间预算、失败退避和候选上限约束。终态候选会自动关案。
@@ -43,7 +55,7 @@
 
 ## 下一步
 
-- v0.29 再实现 generation 推进、候选压缩和冷热分层；v0.28.9 只保留 schema/服务扩展点，不提前启用。
+- 以 v0.29.0 doctor 的静态兼容结果收集部署证据，再单独裁决 v0.29.1 的不可逆兼容清理；不得把诊断扩展为协商状态机。
 
 - 观察 tombstone sidecar 与 restore replay 的生产恢复演练；旧 manifest 无法证明删除历史时保持拒绝，不做
   静默兼容。

@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.28.10](https://img.shields.io/badge/version-0.28.10-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.29.0](https://img.shields.io/badge/version-0.29.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -161,7 +161,7 @@ hl-mem hermes install --hermes-home <HERMES_HOME>
 hl-mem hermes upgrade --hermes-home <HERMES_HOME>
 ```
 
-省略 `--hermes-home` 时会从环境变量和常见目录探测 Hermes 根目录。两条命令在目标副本一致时均保持 no-op；`install` 遇到漂移会拒绝覆盖，`upgrade` 会先备份既有插件文件再刷新。`hlmem doctor` 可区分路径正确、路径错误和副本漂移。插件安装到 `<HERMES_HOME>/plugins/hl_mem/`；完成后必须重启 Hermes。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
+省略 `--hermes-home` 时会从环境变量和常见目录探测 Hermes 根目录。两条命令在目标副本一致时均保持 no-op；`install` 遇到漂移会拒绝覆盖，`upgrade` 会先备份既有插件文件再刷新。`hlmem doctor` 可区分路径正确、路径错误和副本漂移，并分别诊断 daemon、插件与 Context Packet wire 的静态 major 兼容性；它不会执行动态协商或自动升级。插件安装到 `<HERMES_HOME>/plugins/hl_mem/`；完成后必须重启 Hermes。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
 
 ### 常驻部署与 systemd
 
@@ -326,7 +326,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.28.10，共 46 个不可变、仅向前执行的 SQL Migration。
+当前基线为 v0.29.0，共 47 个不可变、仅向前执行的 SQL Migration。
 
 ## 文档
 

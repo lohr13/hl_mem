@@ -2,18 +2,35 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 import hl_mem.doctor as doctor_module
-from hl_mem.doctor import CheckResult, CheckStatus, _check_hermes, count_code_migrations, run_doctor
+from hl_mem.compatibility import (
+    CONTEXT_PACKET_SCHEMA_MAJOR,
+    CONTEXT_PACKET_SCHEMA_MINOR,
+    DAEMON_CONTRACT_MAJOR,
+    HERMES_PLUGIN_CONTRACT_MAJOR,
+)
+from hl_mem.doctor import (
+    CheckResult,
+    CheckStatus,
+    DaemonProbe,
+    _check_daemon_compatibility,
+    _check_hermes,
+    _check_plugin_compatibility,
+    _check_wire_compatibility,
+    count_code_migrations,
+    run_doctor,
+)
 from hl_mem.errors import ConfigurationError
 from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.database import Database
 
-HERMES_PLUGIN_FILES = ("__init__.py", "plugin.yaml")
+HERMES_PLUGIN_FILES = ("__init__.py", "plugin.yaml", "contract.json")
 
 
 def _copy_packaged_plugin(target: Path) -> None:
@@ -37,13 +54,109 @@ def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
         "hl_mem.doctor._check_port",
         lambda: CheckResult(CheckStatus.WARN, "服务端口", "测试跳过"),
     )
+    monkeypatch.setattr(
+        "hl_mem.doctor._probe_daemon",
+        lambda settings: DaemonProbe(None, "测试离线"),
+    )
     results = run_doctor(
         database_path=database_path,
         config_path=config_path,
         env_path=env_path,
         environ={},
     )
-    assert len(results) == 9
+    assert len(results) == 12
+
+
+def test_doctor_accepts_matching_daemon_and_wire_contracts() -> None:
+    probe = DaemonProbe(
+        {
+            "version": "0.29.0",
+            "compatibility": {
+                "daemon_contract_major": DAEMON_CONTRACT_MAJOR,
+                "required_plugin_contract_major": HERMES_PLUGIN_CONTRACT_MAJOR,
+                "context_packet": {
+                    "schema_major": CONTEXT_PACKET_SCHEMA_MAJOR,
+                    "schema_minor": CONTEXT_PACKET_SCHEMA_MINOR,
+                },
+            },
+        },
+        None,
+    )
+
+    assert _check_daemon_compatibility(probe).status is CheckStatus.OK
+    assert _check_wire_compatibility(probe).status is CheckStatus.OK
+
+
+def test_doctor_rejects_daemon_or_wire_major_mismatch() -> None:
+    probe = DaemonProbe(
+        {
+            "version": "0.30.0",
+            "compatibility": {
+                "daemon_contract_major": DAEMON_CONTRACT_MAJOR + 1,
+                "required_plugin_contract_major": HERMES_PLUGIN_CONTRACT_MAJOR,
+                "context_packet": {
+                    "schema_major": CONTEXT_PACKET_SCHEMA_MAJOR + 1,
+                    "schema_minor": 0,
+                },
+            },
+        },
+        None,
+    )
+
+    assert _check_daemon_compatibility(probe).status is CheckStatus.FAIL
+    assert _check_wire_compatibility(probe).status is CheckStatus.FAIL
+
+
+def test_doctor_rejects_daemon_required_plugin_major_mismatch() -> None:
+    probe = DaemonProbe(
+        {
+            "version": "0.29.0",
+            "compatibility": {
+                "daemon_contract_major": DAEMON_CONTRACT_MAJOR,
+                "required_plugin_contract_major": HERMES_PLUGIN_CONTRACT_MAJOR + 1,
+                "context_packet": {
+                    "schema_major": CONTEXT_PACKET_SCHEMA_MAJOR,
+                    "schema_minor": CONTEXT_PACKET_SCHEMA_MINOR,
+                },
+            },
+        },
+        None,
+    )
+
+    result = _check_daemon_compatibility(probe)
+
+    assert result.status is CheckStatus.FAIL
+    assert "required_plugin_contract_major" in result.detail
+
+
+def test_doctor_warns_when_daemon_contract_cannot_be_observed() -> None:
+    probe = DaemonProbe(None, "connection refused")
+
+    assert _check_daemon_compatibility(probe).status is CheckStatus.WARN
+    assert _check_wire_compatibility(probe).status is CheckStatus.WARN
+
+
+def test_doctor_accepts_matching_installed_plugin_contract(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "hl_mem"
+    _copy_packaged_plugin(plugin_dir)
+
+    result = _check_plugin_compatibility(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.OK
+
+
+def test_doctor_rejects_incompatible_installed_plugin_contract(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "hl_mem"
+    _copy_packaged_plugin(plugin_dir)
+    contract_path = plugin_dir / "contract.json"
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    contract["context_packet_schema_major"] = CONTEXT_PACKET_SCHEMA_MAJOR + 1
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+
+    result = _check_plugin_compatibility(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.FAIL
+    assert "context_packet_schema_major" in result.detail
 
 
 def test_placeholder_secret_detection() -> None:

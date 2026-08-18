@@ -8,6 +8,7 @@ from hl_mem.ingest.schemas import (
     CompactExtractionResponseSchema,
     ExtractionResponseSchema,
     extraction_response_json_schema,
+    legacy_extraction_response_json_schema,
 )
 
 
@@ -34,7 +35,19 @@ def _valid_response() -> dict[str, Any]:
 
 
 def test_valid_extraction_response_is_accepted() -> None:
-    assert ExtractionResponseSchema.model_validate(_valid_response()).claims[0].importance == 0.8
+    claim = ExtractionResponseSchema.model_validate(_valid_response()).claims[0]
+    assert claim.importance == 0.8
+    assert claim.assertion_kind == "unknown"
+
+
+def test_assertion_kind_is_a_restricted_epistemic_gate() -> None:
+    payload = _valid_response()
+    payload["claims"][0]["assertion_kind"] = "observation"
+    assert ExtractionResponseSchema.model_validate(payload).claims[0].assertion_kind == "observation"
+
+    payload["claims"][0]["assertion_kind"] = "level"
+    with pytest.raises(ValidationError):
+        ExtractionResponseSchema.model_validate(payload)
 
 
 def test_noncanonical_attribute_reaches_domain_fallback() -> None:
@@ -91,6 +104,14 @@ def test_generated_schema_forbids_extra_fields_recursively() -> None:
         .kind
         == "preference"
     )
+
+
+def test_compact_schema_exposes_gate_without_changing_frozen_legacy_contract() -> None:
+    current_claim = extraction_response_json_schema()["$defs"]["CompactExtractedClaimSchema"]
+    legacy_claim = legacy_extraction_response_json_schema()["$defs"]["CompactExtractedClaimSchema"]
+
+    assert current_claim["properties"]["assertion_kind"]["default"] == "unknown"
+    assert "assertion_kind" not in legacy_claim["properties"]
 
 
 def test_compact_relation_fields_are_required_and_nullable() -> None:

@@ -110,6 +110,7 @@ class ClaimOutput(BaseModel):
     features: dict[str, float] = Field(default_factory=dict)
     equivalent_claim_ids: list[str] = Field(default_factory=list)
     status: str | None = None
+    assertion_kind: Literal["unknown", "observation", "inference"] = "unknown"
     confidence: float | None = None
     canonical_attribute: str | None = Field(
         default=None,
@@ -242,6 +243,7 @@ class MemoryListItemOutput(BaseModel):
     id: str
     text: str
     status: str
+    assertion_kind: Literal["unknown", "observation", "inference"] = "unknown"
     recorded_from: str
     valid_from: str | None = None
     canonical_slot: str | None = None
@@ -267,6 +269,7 @@ class MemoryDetailOutput(BaseModel):
     predicate: str | None = None
     qualifiers: dict[str, Any] = Field(default_factory=dict)
     status: str
+    assertion_kind: Literal["unknown", "observation", "inference"] = "unknown"
     confidence: float | None = None
     importance: float | None = None
     scope: str | None = None

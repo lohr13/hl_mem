@@ -12,7 +12,7 @@ from typing import Literal, Sequence
 
 from hl_mem.adapters.hermes.discovery import find_hermes_home
 
-PLUGIN_FILES = ("__init__.py", "plugin.yaml")
+PLUGIN_FILES = ("__init__.py", "plugin.yaml", "contract.json")
 PLUGIN_SOURCE_DIR = Path(__file__).resolve().parent / "plugin"
 DeploymentAction = Literal["install", "upgrade"]
 

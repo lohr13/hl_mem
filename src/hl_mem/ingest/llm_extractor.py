@@ -9,7 +9,7 @@ import re
 import unicodedata
 from copy import deepcopy
 from dataclasses import asdict, replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -72,13 +72,13 @@ from .chunking import (
     bisect_extraction_chunk,
     split_extraction_content,
 )
-from .extractors import ExtractedClaim
+from .extractors import AssertionKind, ExtractedClaim
 from .relative_time import infer_occurrence, relative_time_rules_fingerprint
 from .repair import ENUM_MAPPINGS, TOPIC_TAG_ZH_TO_EN, repair_extraction_json
 from .schemas import (
     CompactExtractionResponseSchema,
     ExtractionResponseSchema,
-    legacy_extraction_response_json_schema,
+    temporal_gate_extraction_response_json_schema,
 )
 from .verifier import EntailmentVerifier
 
@@ -351,10 +351,52 @@ SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT = _with_source_bounded_relation_fields(
     LEGACY_ENGLISH_SYSTEM_PROMPT,
     language="en",
 )
-# E3 did not pass the frozen release gate. Keep the product request contract on
-# the v0.27 seven-field baseline; the new contract remains evaluation-only.
-SYSTEM_PROMPT = LEGACY_SYSTEM_PROMPT
-ENGLISH_SYSTEM_PROMPT = LEGACY_ENGLISH_SYSTEM_PROMPT
+
+
+def _with_assertion_kind_gate(prompt: str, *, language: Literal["zh", "en"]) -> str:
+    """Deterministically add the restricted A1 gate to the frozen compact prompt."""
+    if language == "zh":
+        replacements = (
+            (
+                '      "notability": "high|medium|low",\n',
+                '      "notability": "high|medium|low",\n' '      "assertion_kind": "unknown|observation|inference",\n',
+            ),
+            (
+                "evidence_quote：",
+                "assertion_kind 门控：\n"
+                "- observation：证据直接报告或观测该事实，包括用户明确更正的当前状态。\n"
+                "- inference：claim 是从证据推导出的结论，而非证据直接陈述。\n"
+                "- unknown：无法可靠区分；不得为了填满字段猜测 observation。\n\n"
+                "evidence_quote：",
+            ),
+            ("上述 7 个字段", "上述 8 个字段"),
+        )
+    else:
+        replacements = (
+            (
+                '      "notability": "high|medium|low",\n',
+                '      "notability": "high|medium|low",\n' '      "assertion_kind": "unknown|observation|inference",\n',
+            ),
+            (
+                "evidence_quote:",
+                "assertion_kind gate:\n"
+                "- observation: the evidence directly reports or observes the fact, including an explicit current-state correction.\n"
+                "- inference: the claim is a conclusion derived from evidence rather than directly stated by it.\n"
+                "- unknown: the distinction is not reliable; never guess observation just to fill the field.\n\n"
+                "evidence_quote:",
+            ),
+            ("the seven fields shown above", "the eight fields shown above"),
+        )
+    upgraded = prompt
+    for old, new in replacements:
+        if upgraded.count(old) != 1:
+            raise RuntimeError(f"assertion gate prompt anchor must occur exactly once: {old!r}")
+        upgraded = upgraded.replace(old, new)
+    return upgraded
+
+
+SYSTEM_PROMPT = _with_assertion_kind_gate(LEGACY_SYSTEM_PROMPT, language="zh")
+ENGLISH_SYSTEM_PROMPT = _with_assertion_kind_gate(LEGACY_ENGLISH_SYSTEM_PROMPT, language="en")
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
 _HAN_CHARACTER_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -582,7 +624,9 @@ def compute_prompt_hash(
     """计算 prompt、响应 schema 与后处理规则的稳定提取配置指纹。"""
     payload = {
         "system_prompt": system_prompt,
-        "response_schema": legacy_extraction_response_json_schema() if response_schema is None else response_schema,
+        "response_schema": (
+            temporal_gate_extraction_response_json_schema() if response_schema is None else response_schema
+        ),
         "postprocess_rules": (
             _postprocess_rules_fingerprint(language_router_version) if postprocess_rules is None else postprocess_rules
         ),
@@ -1099,6 +1143,7 @@ class LLMExtractor:
             "occurred_end": occurred_end,
             "entities": self._extract_compact_entities(subject, candidate.value),
             "memory_layer": decision.memory_layer,
+            "assertion_kind": raw.get("assertion_kind", "unknown"),
             "source_event_indices": raw["source_event_indices"],
         }
 
@@ -1766,6 +1811,11 @@ class LLMExtractor:
             occurred_end=item.get("occurred_end"),
             entities=entities or None,
             memory_layer=("episodic" if item.get("memory_layer") == "episodic" else "durable"),
+            assertion_kind=(
+                cast(AssertionKind, item.get("assertion_kind"))
+                if item.get("assertion_kind") in {"unknown", "observation", "inference"}
+                else "unknown"
+            ),
             source_event_indices=tuple(item.get("source_event_indices") or ()),
         )
 
@@ -1775,4 +1825,4 @@ class LLMExtractor:
 
     def _response_json_schema(self) -> dict[str, Any]:
         """返回当前产品 compact 响应 schema；评测子类可冻结旧契约。"""
-        return legacy_extraction_response_json_schema()
+        return temporal_gate_extraction_response_json_schema()

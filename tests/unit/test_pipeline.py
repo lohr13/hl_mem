@@ -99,6 +99,28 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
     database.close()
 
 
+def test_store_extracted_persists_explicit_assertion_kind(tmp_path) -> None:
+    database = Database(tmp_path / "assertion-kind.db")
+    connection = database.open()
+    claim_id = store_extracted(
+        connection,
+        ExtractedClaim(
+            "state",
+            "Tailscale is online",
+            subject="host-a",
+            canonical_attribute="state.service_health",
+            assertion_kind="observation",
+        ),
+        {"id": "event-observation", "actor_type": "user", "tenant_id": "default"},
+        "2026-08-18T01:00:00+00:00",
+        FakeEmbedder(8),
+    ).claim_id
+
+    row = connection.execute("SELECT assertion_kind,status,valid_to FROM claims WHERE id=?", (claim_id,)).fetchone()
+    assert tuple(row) == ("observation", "active", None)
+    database.close()
+
+
 def test_semantic_candidate_at_pair_similarity_floor_is_queued_for_async_judgment(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("hl_mem.application.ingest.cosine_similarity", lambda *_args: 0.88)
     database = Database(tmp_path / "semantic-candidate.db")

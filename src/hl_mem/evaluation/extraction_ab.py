@@ -17,7 +17,10 @@ from hl_mem.ingest.llm_extractor import (
     LLMExtractor,
     compute_prompt_hash,
 )
-from hl_mem.ingest.schemas import extraction_response_json_schema, legacy_extraction_response_json_schema
+from hl_mem.ingest.schemas import (
+    legacy_extraction_response_json_schema,
+    source_bounded_rao_extraction_response_json_schema,
+)
 from hl_mem.ingest.verifier import EntailmentVerifier
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.settings import Settings
@@ -43,7 +46,7 @@ def extraction_contract_snapshot(arm: Literal["old", "new"]) -> dict[str, Any]:
         contract_id = CURRENT_CONTRACT_ID
         chinese_prompt = SOURCE_BOUNDED_RAO_SYSTEM_PROMPT
         english_prompt = SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT
-        schema = extraction_response_json_schema()
+        schema = source_bounded_rao_extraction_response_json_schema()
         product_prompt_hash = SourceBoundedRAOLLMExtractor.prompt_hash
     else:
         raise ValueError(f"unsupported extraction arm: {arm}")
@@ -76,7 +79,7 @@ class LegacyCompactLLMExtractor(LLMExtractor):
 
 _SOURCE_BOUNDED_RAO_HASH = compute_prompt_hash(
     SOURCE_BOUNDED_RAO_SYSTEM_PROMPT,
-    response_schema=extraction_response_json_schema(),
+    response_schema=source_bounded_rao_extraction_response_json_schema(),
     postprocess_rules={"relation_metadata_projection": "source-bounded-rao-v1"},
 )
 
@@ -92,7 +95,7 @@ class SourceBoundedRAOLLMExtractor(LLMExtractor):
         return SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT if language == "en" else SOURCE_BOUNDED_RAO_SYSTEM_PROMPT
 
     def _response_json_schema(self) -> dict[str, Any]:
-        return extraction_response_json_schema()
+        return source_bounded_rao_extraction_response_json_schema()
 
 
 def make_extraction_arm_extractor(

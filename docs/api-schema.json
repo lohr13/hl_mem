@@ -4,6 +4,16 @@
       "ClaimOutput": {
         "description": "公开召回 Claim 的兼容输出契约。",
         "properties": {
+          "assertion_kind": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "observation",
+              "inference"
+            ],
+            "title": "Assertion Kind",
+            "type": "string"
+          },
           "canonical_attribute": {
             "anyOf": [
               {
@@ -1294,6 +1304,16 @@
       "MemoryDetailOutput": {
         "description": "单条 Claim 的内容、生命周期、来源与冲突历史。",
         "properties": {
+          "assertion_kind": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "observation",
+              "inference"
+            ],
+            "title": "Assertion Kind",
+            "type": "string"
+          },
           "canonical_attribute": {
             "anyOf": [
               {
@@ -1579,6 +1599,16 @@
       "MemoryListItemOutput": {
         "description": "分页记忆列表中的公开 Claim 摘要。",
         "properties": {
+          "assertion_kind": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "observation",
+              "inference"
+            ],
+            "title": "Assertion Kind",
+            "type": "string"
+          },
           "canonical_slot": {
             "anyOf": [
               {
@@ -2032,7 +2062,7 @@
   },
   "info": {
     "title": "HL-Mem",
-    "version": "0.28.10"
+    "version": "0.29.0"
   },
   "openapi": "3.1.0",
   "paths": {

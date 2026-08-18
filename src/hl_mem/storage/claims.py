@@ -59,6 +59,15 @@ class SupersedeResult:
     applied: bool
 
 
+@dataclass(frozen=True)
+class ConflictGroupLifecycle:
+    """Latest persisted lifecycle facts for one group-native conflict key."""
+
+    latest_generation: int
+    latest_terminal_generation: int | None
+    open_case_id: str | None
+
+
 class ClaimRepository:
     """封装 Claim 持久化、时间可见检索、状态更新与去重查询。"""
 
@@ -366,6 +375,44 @@ class ClaimRepository:
             "ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'disputed' THEN 1 WHEN 'candidate' THEN 2 END, "
             "valid_from DESC,recorded_from DESC,id DESC",
             (conflict_key,),
+        ).fetchall()
+        return self._decode_rows(rows)
+
+    def conflict_group_lifecycle(self, namespace: str, conflict_key: str) -> ConflictGroupLifecycle:
+        """Return bounded generation state without reopening or mutating any case."""
+
+        group_key = compute_conflict_group_key(namespace, conflict_key)
+        row = self.connection.execute(
+            "SELECT COALESCE(max(generation),0) AS latest_generation,"
+            "max(CASE WHEN status IN ('resolved','rejected') AND resolved_at IS NOT NULL "
+            "THEN generation END) AS latest_terminal_generation,"
+            "max(CASE WHEN status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL "
+            "THEN id END) AS open_case_id FROM conflict_cases WHERE namespace_key=? AND group_key=?",
+            (namespace, group_key),
+        ).fetchone()
+        assert row is not None
+        return ConflictGroupLifecycle(
+            latest_generation=int(row["latest_generation"]),
+            latest_terminal_generation=(
+                int(row["latest_terminal_generation"]) if row["latest_terminal_generation"] is not None else None
+            ),
+            open_case_id=str(row["open_case_id"]) if row["open_case_id"] is not None else None,
+        )
+
+    def find_temporal_candidates(self, claim: dict[str, Any], limit: int = 16) -> list[dict[str, Any]]:
+        """Return a bounded active series for the conservative temporal-link evaluator."""
+
+        if limit < 1:
+            raise ValueError("temporal candidate limit must be positive")
+        identity = tuple(
+            claim.get(field) for field in ("namespace_key", "subject_entity_id", "predicate", "canonical_attribute")
+        )
+        if any(value is None for value in identity):
+            return []
+        rows = self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? AND subject_entity_id=? AND predicate=? "
+            "AND canonical_attribute=? AND status='active' ORDER BY valid_from DESC,recorded_from DESC,id DESC LIMIT ?",
+            (*identity, limit),
         ).fetchall()
         return self._decode_rows(rows)
 

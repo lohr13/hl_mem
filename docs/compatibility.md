@@ -50,3 +50,10 @@ REST and MCP reuse the same application services, but their transport schemas ar
 A change to shared request semantics must review both snapshots and run both `check_openapi_snapshot.py` and
 `check_mcp_snapshot.py`; updating one snapshot never implies that the other contract changed. This keeps transport-specific
 differences explicit while preventing shared business behavior from drifting silently.
+
+## Deployment contract evidence
+
+Starting with v0.29.0, `/healthz` publishes static major versions for the daemon contract, required Hermes plugin contract,
+and Context Packet wire schema. The packaged Hermes plugin carries the matching `contract.json`. `hl-mem doctor` compares
+the observed daemon and installed plugin against those build-time constants: an offline daemon is a warning, while missing
+evidence or a major mismatch is a failure. These checks are read-only release evidence, not a dynamic negotiation protocol.
