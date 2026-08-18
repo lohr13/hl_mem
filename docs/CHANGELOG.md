@@ -29,6 +29,13 @@
   `mode=ro + query_only`。本次回放 14/14 价格 correct，precision/coverage 均为 1.0；Tailscale 三快照得到
   `entails → state_change`；120 条 `config.path` 与 4 条 `config.network` 合法共存样本误接链为 0。
 
+### Current-state 注入验收
+
+- A3 不新增过滤、排序或注入机制。三快照经 A2 形成 supersede 链后，current-state 的 REST 结果候选、packed
+  context 与最终 Context Packet 均只包含当前 online tip；显式 historical retrieval bundle 仍可返回旧 offline
+  与当前 online 两个版本。
+- 现有双时间可见性已经满足验收，回放没有提供调整排序的必要证据，因此 recency 权重保持 `0.08`，无新增配置键。
+
 ## v0.28.10（2026-08-18）
 
 - 修复存量 legacy `claims_tags_fts` 投影在 `claims_tags_au` UPDATE 触发器中抛出 `SQL logic error`、导致
