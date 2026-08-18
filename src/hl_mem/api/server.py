@@ -291,6 +291,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
                 echo_mode=settings.echo_suppression_mode,
                 echo_session_window_seconds=settings.echo_session_window_seconds,
                 echo_pending_review_enabled=settings.echo_pending_review_enabled,
+                freshness_mode=settings.freshness_annotation_mode,
             ),
         }
 

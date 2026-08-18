@@ -239,6 +239,7 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `recall.dedup_threshold` | `0.95` | 候选窗内近重复折叠阈值；设为 `0` 关闭折叠 |
 | `recall.dedup_candidate_limit` | `100` | 每次召回参与近重复折叠判定的候选上限 |
 | `recall.echo_suppression_mode` | `off` | 同会话回声治理：`off`、只观测的 `observe` 或 `enforce` |
+| `recall.freshness_annotation_mode` | `off` | 风险门控的新鲜度提示：`off`、只观测的 `observe` 或 `render` |
 | `recall.resurrection_mode` | `auto` | 主召回证据不足时启用有界 archived-only 冷路径；设为 `off` 可关闭 |
 | `recall.query_expansion_mode` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
 | `decay.model` | `activation_halflife` | 按 scope 半衰期衰减 activation，不因日常衰减改写 confidence |

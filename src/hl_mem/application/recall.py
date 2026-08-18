@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -18,6 +19,7 @@ from hl_mem.application.context_packet import (
     MemoryType,
     RetrievalBundle,
     RetrievalBundleItem,
+    apply_freshness_decisions,
     estimate_tokens,
     pack_retrieval_bundle,
     project_claim_relation,
@@ -38,6 +40,13 @@ from hl_mem.protocols import (
     embed_query,
 )
 from hl_mem.recall.echo_suppression import EchoRequest, EchoSuppressionPolicy
+from hl_mem.recall.freshness_annotation import (
+    DEFAULT_FRESHNESS_ANNOTATION_METRICS,
+    FreshnessAnnotationPolicy,
+    FreshnessEvaluation,
+    FreshnessItem,
+    FreshnessRequest,
+)
 from hl_mem.recall.injection import InjectionContext
 from hl_mem.recall.procedure_pipeline import MemoryCandidate, recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
@@ -68,6 +77,92 @@ _SIDE_EFFECT_HEALTH: dict[str, dict[str, int | str | None]] = {
     "feedback_record": {"failures": 0, "last_error": None},
     "audit_emit": {"failures": 0, "last_error": None},
 }
+
+
+def _freshness_policy(settings: Settings) -> FreshnessAnnotationPolicy:
+    return FreshnessAnnotationPolicy(mode=settings.freshness_annotation_mode)
+
+
+def _freshness_request(
+    injection_context: InjectionContext,
+    intent: RecallIntent,
+    as_of: str | None,
+    known_as_of: str | None,
+) -> FreshnessRequest:
+    return FreshnessRequest(
+        delivery_purpose=injection_context.delivery_purpose,
+        intent=intent.value,
+        as_of=as_of,
+        known_as_of=known_as_of,
+        rendering_now=injection_context.rendering_now,
+        experiment_variant=injection_context.experiment_variant,
+        policy_version=dict(injection_context.policy_versions)["freshness"],
+    )
+
+
+def _freshness_item(memory_type: str, item_id: str, text: str, metadata: Mapping[str, Any]) -> FreshnessItem:
+    raw_tags = metadata.get("topic_tags") or ()
+    tags = tuple(str(tag) for tag in raw_tags) if isinstance(raw_tags, (list, tuple)) else ()
+    return FreshnessItem(
+        item_id=item_id,
+        memory_type=memory_type,
+        text=text,
+        recorded_from=str(metadata["recorded_from"]) if metadata.get("recorded_from") else None,
+        canonical_slot=str(metadata["canonical_slot"]) if metadata.get("canonical_slot") else None,
+        canonical_attribute=(str(metadata["canonical_attribute"]) if metadata.get("canonical_attribute") else None),
+        topic_tags=tags,
+    )
+
+
+def _record_freshness_evaluation(
+    evaluation: FreshnessEvaluation,
+    tracer: SearchTracer,
+    request: FreshnessRequest,
+) -> None:
+    DEFAULT_FRESHNESS_ANNOTATION_METRICS.record(evaluation)
+    tracer.trace.injection["freshness_annotation"] = evaluation.summary()
+    for decision in evaluation.decisions:
+        if not decision.eligible:
+            continue
+        current_audit().emit(
+            "recall",
+            "freshness_annotation",
+            "rendered" if evaluation.mode == "render" else "would_render",
+            query_id=tracer.trace.query_id,
+            claim_id=decision.item_id,
+            detail={
+                "render_kind": decision.render_kind,
+                "reason": decision.reason,
+                "age_bucket": decision.age_bucket,
+                "added_tokens": decision.added_token_estimate,
+                "policy_version": decision.policy_version,
+                "experiment_variant": request.experiment_variant,
+            },
+        )
+
+
+def _freshness_pack_bundle(
+    bundle: RetrievalBundle,
+    items: list[FreshnessItem],
+    *,
+    policy: FreshnessAnnotationPolicy,
+    request: FreshnessRequest,
+    token_budget: int,
+    tracer: SearchTracer,
+) -> RetrievalBundle:
+    evaluation = policy.evaluate(items, request)
+    control = pack_retrieval_bundle(bundle, token_budget)
+    hypothetical = pack_retrieval_bundle(
+        apply_freshness_decisions(bundle, evaluation, force_render=True),
+        token_budget,
+    )
+    control_keys = [(item.type, item.id) for item in control.items]
+    hypothetical_keys = [(item.type, item.id) for item in hypothetical.items]
+    evaluation = evaluation.with_truncation_changed(
+        control_keys != hypothetical_keys or control.truncated != hypothetical.truncated
+    )
+    _record_freshness_evaluation(evaluation, tracer, request)
+    return hypothetical if policy.mode == "render" else control
 
 
 def _claim_index_text(claim: dict[str, Any]) -> str:
@@ -652,6 +747,9 @@ class RecallService:
                 response_format=response_format,
                 tracer=tracer,
                 total_started=total_started,
+                injection_context=resolved_injection_context,
+                as_of=as_of,
+                known_as_of=known_as_of,
             )
         tracer.trace.phases.assembly_us = (time.perf_counter_ns() - assembly_started) // 1000
         observations = self._assemble_observations([claim["id"] for claim in claims])
@@ -677,15 +775,34 @@ class RecallService:
             answerability,
             packet_candidates,
         )
+        freshness_items = [
+            _freshness_item(
+                bundle_item.type,
+                bundle_item.id,
+                bundle_item.text,
+                wrapped.get("data", wrapped),
+            )
+            for bundle_item, wrapped in zip(retrieval_bundle.items, packet_candidates, strict=True)
+        ]
         if response_format != "legacy" or context_mode == "packed":
             budget = token_budget or self.settings.packed_context_token_budget
-            bundle = pack_retrieval_bundle(retrieval_bundle, budget)
-            packet_context = self._assemble_context(
-                results,
-                observations,
-                policies,
-                budget,
+            bundle = _freshness_pack_bundle(
+                retrieval_bundle,
+                freshness_items,
+                policy=_freshness_policy(self.settings),
+                request=_freshness_request(resolved_injection_context, selected_intent, as_of, known_as_of),
+                token_budget=budget,
+                tracer=tracer,
             )
+            if self.settings.freshness_annotation_mode == "render":
+                packet_context = self._context_from_packed_bundle(packet_candidates, bundle)
+            else:
+                packet_context = self._assemble_context(
+                    results,
+                    observations,
+                    policies,
+                    budget,
+                )
         else:
             used = sum(estimate_tokens(item.text) for item in retrieval_bundle.items)
             bundle = RetrievalBundle(
@@ -843,6 +960,38 @@ class RecallService:
             answerability=answerability,
             items=tuple(items),
         )
+
+    @staticmethod
+    def _context_from_packed_bundle(
+        context_items: list[dict[str, Any]],
+        bundle: RetrievalBundle,
+    ) -> dict[str, Any]:
+        """Project the already decorated and packed bundle back to legacy packed-context shape."""
+        remaining = list(context_items)
+        selected: list[dict[str, Any]] = []
+        for bundle_item in bundle.items:
+            match_index = next(
+                (
+                    index
+                    for index, wrapped in enumerate(remaining)
+                    if str(wrapped.get("type") or wrapped.get("data", wrapped).get("memory_type") or "")
+                    == bundle_item.type
+                    and str(wrapped.get("data", wrapped).get("id") or "") == bundle_item.id
+                ),
+                None,
+            )
+            if match_index is None:
+                continue
+            wrapped = remaining.pop(match_index)
+            data = dict(wrapped.get("data", wrapped))
+            if bundle_item.type == "claim":
+                data["text"] = bundle_item.text
+            selected.append({**wrapped, "data": data} if "data" in wrapped else data)
+        return {
+            "context_items": selected,
+            "used_tokens_estimate": int(bundle.used_tokens_estimate or 0),
+            "truncated": bool(bundle.truncated),
+        }
 
     def _materialize_context_packet(self, bundle: RetrievalBundle) -> dict[str, Any]:
         """有限重试 exposure 批量落库，并把最终失败收敛为 degraded packet。"""
@@ -1021,6 +1170,9 @@ class RecallService:
         response_format: str,
         tracer: SearchTracer,
         total_started: int,
+        injection_context: InjectionContext,
+        as_of: str | None,
+        known_as_of: str | None,
     ) -> dict[str, Any]:
         """执行 Experience 专用排序、统一 packing 与多类型 exposure。"""
         claim_candidates = [
@@ -1037,6 +1189,7 @@ class RecallService:
             )
             for item in claim_results
         ]
+        claim_metadata_by_id = {str(item["id"]): item for item in claim_results}
         candidates = recall_procedure(
             ExperienceService(self.connection).repository,
             query,
@@ -1049,7 +1202,59 @@ class RecallService:
             claim_candidates=claim_candidates,
         )
         budget = token_budget or self.settings.packed_context_token_budget
-        packed, quotas, reflow = budget_pack_by_type(candidates, selected_intent, budget)
+        freshness_request = _freshness_request(injection_context, selected_intent, as_of, known_as_of)
+        freshness_evaluation = _freshness_policy(self.settings).evaluate(
+            [
+                _freshness_item(
+                    item.memory_type,
+                    item.memory_id,
+                    item.text,
+                    claim_metadata_by_id.get(item.memory_id, {}),
+                )
+                for item in candidates
+            ],
+            freshness_request,
+        )
+        rendered_by_key = {
+            (decision.memory_type, decision.item_id): decision.rendered_text
+            for decision in freshness_evaluation.decisions
+            if decision.eligible
+        }
+        decorated_candidates = [
+            (
+                replace(item, text=rendered_by_key[(item.memory_type, item.memory_id)])
+                if (item.memory_type, item.memory_id) in rendered_by_key
+                else item
+            )
+            for item in candidates
+        ]
+        control_packed, control_quotas, control_reflow = budget_pack_by_type(
+            candidates,
+            selected_intent,
+            budget,
+        )
+        if rendered_by_key:
+            treatment_packed, treatment_quotas, treatment_reflow = budget_pack_by_type(
+                decorated_candidates,
+                selected_intent,
+                budget,
+            )
+        else:
+            treatment_packed, treatment_quotas, treatment_reflow = (
+                control_packed,
+                control_quotas,
+                control_reflow,
+            )
+        freshness_evaluation = freshness_evaluation.with_truncation_changed(
+            [(item.memory_type, item.memory_id) for item in control_packed]
+            != [(item.memory_type, item.memory_id) for item in treatment_packed]
+        )
+        _record_freshness_evaluation(freshness_evaluation, tracer, freshness_request)
+        if self.settings.freshness_annotation_mode == "render":
+            candidates = decorated_candidates
+            packed, quotas, reflow = treatment_packed, treatment_quotas, treatment_reflow
+        else:
+            packed, quotas, reflow = control_packed, control_quotas, control_reflow
         packet_selected = packed[:limit]
         selected = packet_selected if context_mode == "packed" else candidates[:limit]
         results = []

@@ -147,6 +147,7 @@ variables. Common keys are listed below.
 | `recall.dedup_threshold` | `0.95` | Near-copy folding threshold inside the bounded candidate window; `0` disables folding |
 | `recall.dedup_candidate_limit` | `100` | Maximum recall candidates considered for near-copy folding |
 | `recall.echo_suppression_mode` | `off` | Same-session echo governance: `off`, observe-only `observe`, or `enforce` |
+| `recall.freshness_annotation_mode` | `off` | Risk-gated freshness hints: `off`, observe-only `observe`, or `render` |
 | `recall.resurrection_mode` | `auto` | Bounded archived-only cold path when primary recall is insufficient; `off` disables it |
 | `recall.query_expansion_mode` | `auto` | `off`, `auto`, or `always` |
 | `decay.model` | `activation_halflife` | Decays activation by scope-specific half-life without changing confidence during routine decay |

@@ -18,6 +18,8 @@
   supersede，也不改变召回或注入行为。
 - migration 048 为 `dedup_pairs` 增加确定性的 `pair_source` 与 `new_claim_id` 注入信号；存量行标记为
   `legacy`，不猜测新写入端点。
+- 注入治理顺序固定为 echo filter → reranker → freshness decorate → packing。echo 与 freshness 默认均为
+  `off`，使用独立开关；v0.29.1 不引入 `verified_at`。
 - 终态 conflict generation 保持不可变：同一 active winner 的精确重申只追加 evidence；不同当前值复用现有
   group/candidate/revision 基建创建下一代单 open case，不扩展为 issue platform。
 - A2 `temporal-v1` 只让新写入的 `observation` 授权原子 online/offline 或显式旧值锚定的价格更正。非互斥 slot

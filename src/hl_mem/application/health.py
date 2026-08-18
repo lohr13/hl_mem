@@ -14,6 +14,11 @@ from hl_mem.recall.echo_suppression import (
     EchoSuppressionMetrics,
     EchoSuppressionMode,
 )
+from hl_mem.recall.freshness_annotation import (
+    DEFAULT_FRESHNESS_ANNOTATION_METRICS,
+    FreshnessAnnotationMetrics,
+    FreshnessAnnotationMode,
+)
 from hl_mem.recall.injection import injection_governance_snapshot
 
 
@@ -26,6 +31,8 @@ def monitoring_snapshot(
     echo_mode: EchoSuppressionMode = "off",
     echo_session_window_seconds: int = 1800,
     echo_pending_review_enabled: bool = False,
+    freshness_metrics: FreshnessAnnotationMetrics = DEFAULT_FRESHNESS_ANNOTATION_METRICS,
+    freshness_mode: FreshnessAnnotationMode = "off",
 ) -> dict[str, object]:
     """返回供 healthz 与 dashboard 消费的 provider 监控摘要。"""
     injection = injection_governance_snapshot()
@@ -34,6 +41,7 @@ def monitoring_snapshot(
         session_window_seconds=echo_session_window_seconds,
         pending_review_enabled=echo_pending_review_enabled,
     )
+    injection["freshness_annotation"] = freshness_metrics.snapshot(mode=freshness_mode)
     return {
         **metrics.snapshot(),
         "admission": admission_metrics.snapshot(),

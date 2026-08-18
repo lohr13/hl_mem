@@ -28,6 +28,7 @@ FeedbackLifecycleMode = Literal["off", "observe", "on"]
 DecayModel = Literal["legacy_linear", "activation_halflife", "confidence_halflife"]
 RelevanceGateMode = Literal["off", "observe", "enforce"]
 EchoSuppressionMode = Literal["off", "observe", "enforce"]
+FreshnessAnnotationMode = Literal["off", "observe", "render"]
 ResurrectionMode = Literal["off", "auto"]
 ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
@@ -187,6 +188,10 @@ class Settings:
     echo_pending_max_seconds: int = field(
         default=7200,
         metadata={"toml": "recall.echo_pending_max_seconds"},
+    )
+    freshness_annotation_mode: FreshnessAnnotationMode = field(
+        default="off",
+        metadata={"toml": "recall.freshness_annotation_mode"},
     )
     resurrection_mode: ResurrectionMode = field(
         default="auto",
@@ -759,6 +764,8 @@ class Settings:
             raise ConfigurationError("recall.echo_pending_similarity_threshold must be between 0 and 1")
         if self.echo_pending_max_seconds < 60:
             raise ConfigurationError("recall.echo_pending_max_seconds must be at least 60")
+        if self.freshness_annotation_mode not in {"off", "observe", "render"}:
+            raise ConfigurationError("recall.freshness_annotation_mode must be 'off', 'observe', or 'render'")
         if self.relevance_gate_mode not in {"off", "observe", "enforce"}:
             raise ConfigurationError("recall.relevance_gate_mode must be 'off', 'observe', or 'enforce'")
         relevance_thresholds = {
@@ -978,6 +985,7 @@ class Settings:
             "echo_pending_review_enabled": self.echo_pending_review_enabled,
             "echo_pending_similarity_threshold": self.echo_pending_similarity_threshold,
             "echo_pending_max_seconds": self.echo_pending_max_seconds,
+            "freshness_annotation_mode": self.freshness_annotation_mode,
             "resurrection_mode": self.resurrection_mode,
             "resurrection_candidate_limit": self.resurrection_candidate_limit,
             "resurrection_min_term_coverage": self.resurrection_min_term_coverage,
