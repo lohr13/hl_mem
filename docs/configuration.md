@@ -1,10 +1,10 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.28.9 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.28.10 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
-v0.28.9 新增冲突 dirty queue 的有界处理/退避/候选上限、去重 pending cap，以及 Job、LLM span、dedup pair、feedback 和 audit 的运维保留窗口；全部有安全默认值。
+v0.28.10 新增冲突 dirty queue 的有界处理/退避/候选上限、去重 pending cap，以及 Job、LLM span、dedup pair、feedback 和 audit 的运维保留窗口；全部有安全默认值。
 冲突 generation/压缩/冷热分层仍是 v0.29 的扩展点，本版本不提供相应配置键。
 
 ## 加载规则

@@ -5,8 +5,8 @@
 ## 当前状态
 
 - **分支**：`main`
-- **版本**：v0.28.9
-- **阶段**：v0.28.9 C 骨架已实现，等待 Hermes 验收；tag、Release 与 PyPI 由维护者验收后执行
+- **版本**：v0.28.10
+- **阶段**：v0.28.10 hotfix 已实现，等待 Hermes 验收；tag、Release 与 PyPI 由维护者验收后执行
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：46 migrations（SQL 001–046），只允许向前迁移

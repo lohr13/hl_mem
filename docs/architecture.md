@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.28.9
+- Document baseline: v0.28.10
 - Updated: 2026-08-18
 - Deployment baseline: local-first, SQLite-first
 

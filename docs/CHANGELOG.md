@@ -1,5 +1,14 @@
 # HL-Mem 变更记录
 
+## v0.28.10（2026-08-18）
+
+- 修复存量 legacy `claims_tags_fts` 投影在 `claims_tags_au` UPDATE 触发器中抛出 `SQL logic error`、导致
+  `topic_tags_json` 更新回滚的问题。slot backfill 与重新提取脚本统一通过 storage 兼容 helper 写入标签；正常库仍直接
+  执行原 UPDATE，仅在精确 legacy 错误下于同一事务内定向清理旧投影、临时卸载触发器、重放更新并补写新投影，且
+  无论成功或失败都原样恢复触发器。
+- 新增正常路径、legacy 恢复、恢复后触发器同步、清理失败回滚及重新提取入口回归；无新增配置、migration 或
+  REST/MCP 业务契约变化。
+
 ## v0.28.9（2026-08-18）
 
 ### 版本化组级冲突
