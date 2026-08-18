@@ -403,6 +403,26 @@ class Settings:
         default=600.0,
         metadata={"toml": "worker.maintenance_interval"},
     )
+    conflict_auto_resolve_enabled: bool = field(
+        default=True,
+        metadata={"toml": "worker.conflict_auto_resolve_enabled"},
+    )
+    conflict_maintenance_max_cases: int = field(
+        default=50,
+        metadata={"toml": "worker.conflict_maintenance_max_cases"},
+    )
+    conflict_maintenance_budget_ms: int = field(
+        default=1_000,
+        metadata={"toml": "worker.conflict_maintenance_budget_ms"},
+    )
+    conflict_failure_backoff_seconds: int = field(
+        default=300,
+        metadata={"toml": "worker.conflict_failure_backoff_seconds"},
+    )
+    conflict_writer_yield_ms: int = field(
+        default=25,
+        metadata={"toml": "worker.conflict_writer_yield_ms"},
+    )
     worker_job_lease_minutes: int = field(default=5, metadata={"toml": "worker.job_lease_minutes"})
     daily_token_limit: int = field(default=500000, metadata={"toml": "worker.daily_token_limit"})
     audit_retention_days: int = field(default=30, metadata={"toml": "worker.audit_retention_days"})
@@ -794,6 +814,14 @@ class Settings:
             raise ConfigurationError("extraction.batch_max_wait_seconds must be non-negative")
         if self.worker_job_lease_minutes < 1:
             raise ConfigurationError("worker.job_lease_minutes must be positive")
+        if not 1 <= self.conflict_maintenance_max_cases <= 1_000:
+            raise ConfigurationError("worker.conflict_maintenance_max_cases must be between 1 and 1000")
+        if not 50 <= self.conflict_maintenance_budget_ms <= 10_000:
+            raise ConfigurationError("worker.conflict_maintenance_budget_ms must be between 50 and 10000")
+        if not 1 <= self.conflict_failure_backoff_seconds <= 86_400:
+            raise ConfigurationError("worker.conflict_failure_backoff_seconds must be between 1 and 86400")
+        if not 0 <= self.conflict_writer_yield_ms <= 1_000:
+            raise ConfigurationError("worker.conflict_writer_yield_ms must be between 0 and 1000")
         if self.verification_mode not in {"off", "audit", "enforce"}:
             raise ConfigurationError("extraction.verification_mode must be 'off', 'audit', or 'enforce'")
         if (
@@ -915,6 +943,11 @@ class Settings:
             "extraction_max_split_depth": self.extraction_max_split_depth,
             "extraction_batch_max_events": self.extraction_batch_max_events,
             "extraction_batch_max_wait_seconds": self.extraction_batch_max_wait_seconds,
+            "conflict_auto_resolve_enabled": self.conflict_auto_resolve_enabled,
+            "conflict_maintenance_max_cases": self.conflict_maintenance_max_cases,
+            "conflict_maintenance_budget_ms": self.conflict_maintenance_budget_ms,
+            "conflict_failure_backoff_seconds": self.conflict_failure_backoff_seconds,
+            "conflict_writer_yield_ms": self.conflict_writer_yield_ms,
         }
 
     def retention_policy(self) -> TTLPolicy:

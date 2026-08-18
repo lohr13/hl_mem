@@ -235,7 +235,7 @@ def test_repair_postcondition_violation_rolls_back_group_mutations(tmp_path) -> 
     assert connection.execute("SELECT count(*) FROM conflict_cases WHERE status='manual_required'").fetchone()[0] == 0
 
 
-def test_auto_resolution_postcondition_violation_rolls_back_case_mutations(tmp_path) -> None:
+def test_auto_resolution_uses_local_postconditions_before_batch_global_audit(tmp_path) -> None:
     connection = Database(tmp_path / "auto-resolve-postcondition.db").open()
     repository = ClaimRepository(connection)
     _claim(repository, "left", "8080", status="disputed")
@@ -245,9 +245,9 @@ def test_auto_resolution_postcondition_violation_rolls_back_case_mutations(tmp_p
     _case(repository, "case", "left", "right")
     _insert_dangling_case(connection)
 
-    with pytest.raises(RuntimeError, match="dangling conflict reference"):
+    with pytest.raises(ConflictResolutionError, match="dangling conflict reference"):
         auto_resolve_conflicts(connection, NOW)
 
-    assert repository.get_claim("left")["status"] == "disputed"
-    assert repository.get_claim("right")["status"] == "disputed"
-    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case'").fetchone()[0] == "manual_required"
+    assert repository.get_claim("left")["status"] == "active"
+    assert repository.get_claim("right")["status"] == "superseded"
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case'").fetchone()[0] == "resolved"

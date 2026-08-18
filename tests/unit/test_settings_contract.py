@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 169
+    assert len(fields(Settings)) == 174
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -32,6 +32,12 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.decay_model == "activation_halflife"
     assert settings.dedup_threshold == 0.92
     assert settings.daily_token_limit == 500_000
+    assert settings.conflict_auto_resolve_enabled is True
+    assert settings.conflict_maintenance_max_cases == 50
+    assert settings.conflict_maintenance_budget_ms == 1_000
+    assert settings.conflict_failure_backoff_seconds == 300
+    assert settings.conflict_writer_yield_ms == 25
+    assert settings.snapshot()["conflict_maintenance_max_cases"] == 50
 
 
 def test_settings_contract_includes_bypass_and_recall_fields() -> None:
@@ -93,6 +99,10 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"index_text_mode": "invalid"}, "index.text_mode"),
         ({"reranker_provider": "invalid"}, "reranker.provider"),
         ({"verification_mode": "invalid"}, "extraction.verification_mode"),
+        ({"conflict_maintenance_max_cases": 0}, "worker.conflict_maintenance_max_cases"),
+        ({"conflict_maintenance_budget_ms": 49}, "worker.conflict_maintenance_budget_ms"),
+        ({"conflict_failure_backoff_seconds": 0}, "worker.conflict_failure_backoff_seconds"),
+        ({"conflict_writer_yield_ms": 1001}, "worker.conflict_writer_yield_ms"),
     ],
 )
 def test_validation_errors_reference_toml_paths(changes: dict[str, object], toml_path: str) -> None:

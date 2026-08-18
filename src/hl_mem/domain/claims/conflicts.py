@@ -20,11 +20,49 @@ from hl_mem.domain.constants import PREDICATE_PREFERENCE, PREDICATE_STATE
 
 EXCLUSIVE_QUALIFIERS = {"scope", "context", "environment", "project", "channel"}
 
+_CONFLICT_FINGERPRINT_CLAIM_FIELDS = (
+    "id",
+    "status",
+    "source_authority",
+    "namespace_key",
+    "canonical_slot",
+    "conflict_key",
+    "superseded_by_id",
+    "value_json",
+    "qualifiers_json",
+    "valid_from",
+    "valid_to",
+)
+
 
 def compute_claim_pair_key(left_claim_id: str, right_claim_id: str) -> str:
     """按 claim ID 无序计算稳定的冲突对标识。"""
     claim_ids = sorted((left_claim_id, right_claim_id))
     return hashlib.sha256("\0".join(claim_ids).encode()).hexdigest()[:24]
+
+
+def conflict_review_fingerprint(
+    case: dict[str, Any],
+    left_tip: dict[str, Any],
+    right_tip: dict[str, Any],
+) -> str:
+    """散列一次自动裁决实际读取的稳定输入快照。"""
+
+    payload = {
+        "case": {
+            "id": case.get("id"),
+            "status": case.get("status"),
+            "generation": case.get("generation", 1),
+            "revision": case.get("revision", 0),
+            "namespace_key": case.get("namespace_key"),
+            "group_key": case.get("group_key"),
+            "overflow": case.get("overflow", 0),
+        },
+        "left_tip": {field: left_tip.get(field) for field in _CONFLICT_FINGERPRINT_CLAIM_FIELDS},
+        "right_tip": {field: right_tip.get(field) for field in _CONFLICT_FINGERPRINT_CLAIM_FIELDS},
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def compute_conflict_key(

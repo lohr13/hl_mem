@@ -106,17 +106,34 @@ def _auto_conflict_case(connection, *, status: str = "auto_resolved") -> None:
     _conflict_case(connection, "case", "a", "b", status=status)
 
 
+def _assert_auto_stats(result, *, scanned: int, resolved: int, manual: int, deferred: int, failed: int = 0) -> None:
+    assert {
+        "scanned": result["scanned"],
+        "auto_resolved": result["auto_resolved"],
+        "manual_required": result["manual_required"],
+        "deferred": result["deferred"],
+        "failed": result["failed"],
+    } == {
+        "scanned": scanned,
+        "auto_resolved": resolved,
+        "manual_required": manual,
+        "deferred": deferred,
+        "failed": failed,
+    }
+
+
 def test_auto_resolve_conflict_commits_winner_loser_and_case_together(tmp_path) -> None:
     connection = Database(tmp_path / "auto-resolve.db").open()
     _auto_conflict_case(connection)
     resolved_at = "2026-01-03T04:05:06+00:00"
 
-    assert auto_resolve_conflicts(connection, resolved_at) == {
-        "scanned": 1,
-        "auto_resolved": 1,
-        "manual_required": 0,
-        "deferred": 0,
-    }
+    _assert_auto_stats(
+        auto_resolve_conflicts(connection, resolved_at),
+        scanned=1,
+        resolved=1,
+        manual=0,
+        deferred=0,
+    )
 
     winner = connection.execute("SELECT status FROM claims WHERE id='a'").fetchone()
     loser = connection.execute(
@@ -137,8 +154,8 @@ def test_auto_resolve_conflict_rolls_back_entire_case_on_failure(tmp_path) -> No
     )
     connection.commit()
 
-    with pytest.raises(Exception, match="reject resolution"):
-        auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00")
+    result = auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00")
+    _assert_auto_stats(result, scanned=1, resolved=0, manual=0, deferred=1, failed=1)
 
     claims = connection.execute(
         "SELECT id,status,superseded_by_id,valid_to,recorded_to FROM claims ORDER BY id"
@@ -171,8 +188,8 @@ def test_auto_resolve_conflict_failure_does_not_block_later_cases(tmp_path) -> N
     )
     connection.commit()
 
-    with pytest.raises(Exception, match="reject first"):
-        auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00")
+    result = auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00")
+    _assert_auto_stats(result, scanned=2, resolved=1, manual=0, deferred=1, failed=1)
 
     first = connection.execute(
         "SELECT id,status,superseded_by_id FROM claims WHERE id IN ('a','b') ORDER BY id"
@@ -190,12 +207,13 @@ def test_auto_resolve_scans_manual_required_cases(tmp_path) -> None:
     _auto_conflict_case(connection, status="manual_required")
     resolved_at = "2026-01-03T04:05:06+00:00"
 
-    assert auto_resolve_conflicts(connection, resolved_at) == {
-        "scanned": 1,
-        "auto_resolved": 1,
-        "manual_required": 0,
-        "deferred": 0,
-    }
+    _assert_auto_stats(
+        auto_resolve_conflicts(connection, resolved_at),
+        scanned=1,
+        resolved=1,
+        manual=0,
+        deferred=0,
+    )
     assert tuple(
         connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
     ) == ("resolved", "keep_left", resolved_at)
@@ -213,12 +231,13 @@ def test_auto_resolve_marks_converged_chains_obsolete(tmp_path) -> None:
     _conflict_case(connection, "case", "left", "right", status="pending")
     resolved_at = "2026-01-03T04:05:06+00:00"
 
-    assert auto_resolve_conflicts(connection, resolved_at) == {
-        "scanned": 1,
-        "auto_resolved": 1,
-        "manual_required": 0,
-        "deferred": 0,
-    }
+    _assert_auto_stats(
+        auto_resolve_conflicts(connection, resolved_at),
+        scanned=1,
+        resolved=1,
+        manual=0,
+        deferred=0,
+    )
     assert repository.get_claim("tip")["status"] == "active"
     assert tuple(
         connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
@@ -234,12 +253,13 @@ def test_auto_resolve_keeps_living_endpoint_when_other_is_terminal(tmp_path) -> 
     _conflict_case(connection, "case", "left", "right", status="pending")
     resolved_at = "2026-01-03T04:05:06+00:00"
 
-    assert auto_resolve_conflicts(connection, resolved_at) == {
-        "scanned": 1,
-        "auto_resolved": 1,
-        "manual_required": 0,
-        "deferred": 0,
-    }
+    _assert_auto_stats(
+        auto_resolve_conflicts(connection, resolved_at),
+        scanned=1,
+        resolved=1,
+        manual=0,
+        deferred=0,
+    )
     assert repository.get_claim("left")["status"] == "expired"
     assert repository.get_claim("right")["status"] == "active"
     assert tuple(
@@ -264,12 +284,13 @@ def test_auto_resolve_does_not_activate_survivor_with_another_open_case(tmp_path
         created_at="2026-01-02T00:00:00+00:00",
     )
 
-    assert auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00") == {
-        "scanned": 2,
-        "auto_resolved": 1,
-        "manual_required": 1,
-        "deferred": 1,
-    }
+    _assert_auto_stats(
+        auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00"),
+        scanned=2,
+        resolved=1,
+        manual=1,
+        deferred=1,
+    )
     assert repository.get_claim("survivor")["status"] == "disputed"
 
 
@@ -298,12 +319,13 @@ def test_auto_resolve_treats_chain_alias_as_same_contested_survivor(tmp_path) ->
         created_at="2026-01-02T00:00:00+00:00",
     )
 
-    assert auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00") == {
-        "scanned": 2,
-        "auto_resolved": 2,
-        "manual_required": 0,
-        "deferred": 0,
-    }
+    _assert_auto_stats(
+        auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00"),
+        scanned=2,
+        resolved=2,
+        manual=0,
+        deferred=0,
+    )
     assert repository.get_claim("survivor")["status"] == "active"
     assert repository.get_claim("rival")["status"] == "superseded"
     assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-2'").fetchone()[0] == "resolved"
@@ -319,12 +341,13 @@ def test_auto_resolve_marks_two_terminal_endpoints_obsolete(tmp_path) -> None:
     _conflict_case(connection, "case", "left", "right", status="manual_required")
     resolved_at = "2026-01-03T04:05:06+00:00"
 
-    assert auto_resolve_conflicts(connection, resolved_at) == {
-        "scanned": 1,
-        "auto_resolved": 1,
-        "manual_required": 0,
-        "deferred": 0,
-    }
+    _assert_auto_stats(
+        auto_resolve_conflicts(connection, resolved_at),
+        scanned=1,
+        resolved=1,
+        manual=0,
+        deferred=0,
+    )
     assert tuple(
         connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
     ) == ("resolved", "obsolete", resolved_at)
@@ -336,12 +359,13 @@ def test_auto_resolve_keeps_equal_authority_case_manual_required(tmp_path) -> No
     _claim(connection, "right", [0.8, 0.6], status="disputed", source_authority="medium")
     _conflict_case(connection, "case", "left", "right", status="manual_required")
 
-    assert auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00") == {
-        "scanned": 1,
-        "auto_resolved": 0,
-        "manual_required": 1,
-        "deferred": 1,
-    }
+    _assert_auto_stats(
+        auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00"),
+        scanned=1,
+        resolved=0,
+        manual=1,
+        deferred=1,
+    )
     assert tuple(
         connection.execute("SELECT status,decision,resolved_at FROM conflict_cases WHERE id='case'").fetchone()
     ) == ("manual_required", None, None)
@@ -381,8 +405,8 @@ def test_auto_resolve_begin_failure_does_not_block_later_cases(tmp_path) -> None
         def rollback(self) -> None:
             self.wrapped.rollback()
 
-    with pytest.raises(RuntimeError, match="reject first begin"):
-        auto_resolve_conflicts(FailFirstBegin(connection), "2026-01-03T04:05:06+00:00")
+    result = auto_resolve_conflicts(FailFirstBegin(connection), "2026-01-03T04:05:06+00:00")
+    _assert_auto_stats(result, scanned=2, resolved=1, manual=0, deferred=1, failed=1)
 
     assert connection.execute("SELECT status FROM conflict_cases WHERE id='case'").fetchone()[0] == "auto_resolved"
     assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-2'").fetchone()[0] == "resolved"
