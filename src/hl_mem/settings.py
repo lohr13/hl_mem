@@ -423,6 +423,10 @@ class Settings:
         default=25,
         metadata={"toml": "worker.conflict_writer_yield_ms"},
     )
+    conflict_auto_resolve_max_candidates: int = field(
+        default=8,
+        metadata={"toml": "worker.conflict_auto_resolve_max_candidates"},
+    )
     worker_job_lease_minutes: int = field(default=5, metadata={"toml": "worker.job_lease_minutes"})
     daily_token_limit: int = field(default=500000, metadata={"toml": "worker.daily_token_limit"})
     audit_retention_days: int = field(default=30, metadata={"toml": "worker.audit_retention_days"})
@@ -822,6 +826,8 @@ class Settings:
             raise ConfigurationError("worker.conflict_failure_backoff_seconds must be between 1 and 86400")
         if not 0 <= self.conflict_writer_yield_ms <= 1_000:
             raise ConfigurationError("worker.conflict_writer_yield_ms must be between 0 and 1000")
+        if not 2 <= self.conflict_auto_resolve_max_candidates <= 10_000:
+            raise ConfigurationError("worker.conflict_auto_resolve_max_candidates must be between 2 and 10000")
         if self.verification_mode not in {"off", "audit", "enforce"}:
             raise ConfigurationError("extraction.verification_mode must be 'off', 'audit', or 'enforce'")
         if (
@@ -948,6 +954,7 @@ class Settings:
             "conflict_maintenance_budget_ms": self.conflict_maintenance_budget_ms,
             "conflict_failure_backoff_seconds": self.conflict_failure_backoff_seconds,
             "conflict_writer_yield_ms": self.conflict_writer_yield_ms,
+            "conflict_auto_resolve_max_candidates": self.conflict_auto_resolve_max_candidates,
         }
 
     def retention_policy(self) -> TTLPolicy:

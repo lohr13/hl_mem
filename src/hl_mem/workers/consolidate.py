@@ -14,7 +14,11 @@ from hl_mem.application.conflict_invariants import (
     assert_global_conflict_postconditions,
 )
 from hl_mem.core.vector import cosine_similarity
-from hl_mem.domain.claims.conflicts import compute_claim_pair_key, conflict_review_fingerprint
+from hl_mem.domain.claims.conflicts import (
+    compute_claim_pair_key,
+    conflict_group_review_fingerprint,
+    conflict_review_fingerprint,
+)
 from hl_mem.domain.consolidation_scope import ConsolidationScope
 from hl_mem.lifecycle import assert_transition
 from hl_mem.llm.client import LLMClient
@@ -513,6 +517,105 @@ def _clean_review_state(
         raise RuntimeError(f"conflict review state changed during review: {case_id}")
 
 
+def _mark_case_manual(connection: Any, case: dict[str, Any]) -> int:
+    if case["status"] == "manual_required":
+        return 0
+    cursor = connection.execute(
+        "UPDATE conflict_cases SET status='manual_required' "
+        f"WHERE id=? AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL",
+        (case["id"],),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(f"conflict case changed during resolution: {case['id']}")
+    case["status"] = "manual_required"
+    return 1
+
+
+def _review_group_conflict_case(
+    connection: Any,
+    repository: ClaimRepository,
+    case: dict[str, Any],
+    now: str,
+) -> tuple[dict[str, int], list[str], list[dict[str, Any]]]:
+    """按完整 candidate set 维护组案；left/right 仅保留兼容展示语义。"""
+
+    rows = connection.execute(
+        "SELECT candidates.candidate_key,candidates.representative_claim_id,members.claim_id "
+        "FROM conflict_case_candidates AS candidates "
+        "LEFT JOIN conflict_candidate_members AS members "
+        "ON members.case_id=candidates.case_id AND members.candidate_key=candidates.candidate_key "
+        "WHERE candidates.case_id=? ORDER BY candidates.candidate_key,members.claim_id",
+        (case["id"],),
+    ).fetchall()
+    all_members: list[dict[str, Any]] = []
+    current_by_candidate: dict[str, list[dict[str, Any]]] = {}
+    representative_by_candidate: dict[str, str] = {}
+    for row in rows:
+        candidate_key = str(row["candidate_key"])
+        representative_by_candidate[candidate_key] = str(row["representative_claim_id"])
+        if row["claim_id"] is None:
+            continue
+        claim = repository.get_claim(str(row["claim_id"]))
+        if claim is None:
+            raise RuntimeError(f"conflict candidate references missing claim: {row['claim_id']}")
+        claim["candidate_key"] = candidate_key
+        all_members.append(claim)
+        if claim["status"] in _LIVING_CLAIM_STATUSES:
+            current_by_candidate.setdefault(candidate_key, []).append(claim)
+
+    touched_claim_ids: list[str] = []
+    if len(current_by_candidate) > 1:
+        changed = _mark_case_manual(connection, case)
+        return (
+            {"changed": changed, "resolved": 0, "manual_stable": 1, "deferred": 1},
+            touched_claim_ids,
+            all_members,
+        )
+    if not current_by_candidate:
+        _resolve_conflict_case(connection, str(case["id"]), "obsolete", now)
+        return (
+            {"changed": 1, "resolved": 1, "manual_stable": 0, "deferred": 0},
+            touched_claim_ids,
+            all_members,
+        )
+
+    candidate_key, current_members = next(iter(current_by_candidate.items()))
+    representative_id = representative_by_candidate[candidate_key]
+    winner = next(
+        (member for member in current_members if str(member["id"]) == representative_id),
+        min(current_members, key=lambda member: (str(member.get("recorded_from") or ""), str(member["id"]))),
+    )
+    for member in current_members:
+        if member["id"] == winner["id"]:
+            continue
+        result = repository.supersede_with_inline(
+            str(member["id"]),
+            str(winner["id"]),
+            winner.get("value"),
+            now,
+            now,
+            commit=False,
+        )
+        if not result.applied:
+            raise RuntimeError(f"conflict group member changed during resolution: {member['id']}")
+        touched_claim_ids.append(str(member["id"]))
+    if winner["status"] != "active":
+        assert_transition(str(winner["status"]), "active")
+        cursor = connection.execute(
+            "UPDATE claims SET status='active' WHERE id=? AND status=?",
+            (winner["id"], winner["status"]),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError(f"conflict winner changed during resolution: {winner['id']}")
+        touched_claim_ids.append(str(winner["id"]))
+    _resolve_conflict_case(connection, str(case["id"]), "single_current_candidate", now)
+    return (
+        {"changed": 1, "resolved": 1, "manual_stable": 0, "deferred": 0},
+        touched_claim_ids,
+        all_members,
+    )
+
+
 def _review_conflict_case(connection: Any, selected: Any, now: str) -> dict[str, int]:
     repository = ClaimRepository(connection)
     connection.execute("BEGIN IMMEDIATE")
@@ -543,8 +646,20 @@ def _review_conflict_case(connection: Any, selected: Any, now: str) -> dict[str,
         resolved = 0
         manual_stable = 0
         deferred = 0
+        group_members: list[dict[str, Any]] | None = None
 
-        if left["id"] == right["id"]:
+        if case.get("group_key") is not None:
+            outcome, touched_claim_ids, group_members = _review_group_conflict_case(
+                connection,
+                repository,
+                case,
+                now,
+            )
+            changed = outcome["changed"]
+            resolved = outcome["resolved"]
+            manual_stable = outcome["manual_stable"]
+            deferred = outcome["deferred"]
+        elif left["id"] == right["id"]:
             _resolve_conflict_case(connection, str(case["id"]), "obsolete", now)
             changed = resolved = 1
         else:
@@ -569,6 +684,9 @@ def _review_conflict_case(connection: Any, selected: Any, now: str) -> dict[str,
                         touched_claim_ids.append(str(survivor["id"]))
                     _resolve_conflict_case(connection, str(case["id"]), f"keep_{survivor_side}", now)
                     changed = resolved = 1
+            elif bool(case["overflow"]):
+                changed = _mark_case_manual(connection, case)
+                manual_stable = deferred = 1
             elif left["status"] != "disputed" or right["status"] != "disputed":
                 if raw_left["status"] == "superseded" or raw_right["status"] == "superseded":
                     _resolve_conflict_case(connection, str(case["id"]), "obsolete", now)
@@ -580,16 +698,7 @@ def _review_conflict_case(connection: Any, selected: Any, now: str) -> dict[str,
                 left_score = authority.get(left.get("source_authority", "medium"), 2)
                 right_score = authority.get(right.get("source_authority", "medium"), 2)
                 if left_score == right_score:
-                    if case["status"] != "manual_required":
-                        cursor = connection.execute(
-                            "UPDATE conflict_cases SET status='manual_required' "
-                            f"WHERE id=? AND status IN {_OPEN_CONFLICT_STATUSES_SQL} AND resolved_at IS NULL",
-                            (case["id"],),
-                        )
-                        if cursor.rowcount != 1:
-                            raise RuntimeError(f"conflict case changed during resolution: {case['id']}")
-                        changed = 1
-                        case["status"] = "manual_required"
+                    changed = _mark_case_manual(connection, case)
                     manual_stable = deferred = 1
                 else:
                     winner_side = "left" if left_score > right_score else "right"
@@ -615,7 +724,11 @@ def _review_conflict_case(connection: Any, selected: Any, now: str) -> dict[str,
                     changed = resolved = 1
 
         if resolved == 0:
-            fingerprint = conflict_review_fingerprint(case, left, right)
+            fingerprint = (
+                conflict_group_review_fingerprint(case, group_members)
+                if group_members is not None
+                else conflict_review_fingerprint(case, left, right)
+            )
             _clean_review_state(
                 connection,
                 str(case["id"]),

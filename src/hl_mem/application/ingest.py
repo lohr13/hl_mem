@@ -9,7 +9,6 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
-from itertools import combinations
 from typing import Any, Sequence
 
 from hl_mem.config import INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
@@ -24,7 +23,6 @@ from hl_mem.domain.claims.attributes import (
 from hl_mem.domain.claims.claim import IndexTextMode, build_index_text
 from hl_mem.domain.claims.conflicts import (
     ConflictResolver,
-    compute_claim_pair_key,
     compute_conflict_key,
     compute_legacy_conflict_key,
 )
@@ -430,7 +428,11 @@ class IngestService:
             )
             if exact:
                 result_id = exact["id"]
-                exact_group = claims.find_by_conflict_key(exact.get("conflict_key"))
+                exact_group = (
+                    claims.find_by_conflict_key(exact.get("conflict_key"))
+                    if is_mutually_exclusive_attribute(exact.get("canonical_slot"))
+                    else []
+                )
                 group_resolution = (
                     _resolve_conflict_group(exact_group, {**claim, "qualifiers": qualifiers}, preferred_id=exact["id"])
                     if exact_group
@@ -870,26 +872,31 @@ def _quarantine_conflict_group(
     decision: str,
     rationale: str,
 ) -> None:
-    """将冲突组全部非终态成员隔离，并确保所有声明对进入人工复核。"""
-    for member in members:
+    """将互斥组隔离，并把全部候选挂到唯一 group case。"""
+    unique_members = list({str(member["id"]): member for member in members}.values())
+    namespaces = {str(member.get("namespace_key") or "") for member in unique_members}
+    conflict_keys = {str(member.get("conflict_key") or "") for member in unique_members}
+    slots = {str(member.get("canonical_slot") or "") for member in unique_members}
+    if (
+        len(namespaces) != 1
+        or len(conflict_keys) != 1
+        or len(slots) != 1
+        or not all(is_mutually_exclusive_attribute(slot) for slot in slots)
+    ):
+        raise ConflictError("group quarantine requires one mutually-exclusive namespace, key, and slot")
+    for member in unique_members:
         if member.get("status") in {"active", "candidate"}:
             assert_transition(str(member["status"]), "disputed")
-            claims.update_status(member["id"], "disputed", commit=False)
-    for left, right in combinations(members, 2):
-        claims.ensure_manual_conflict_case(
-            {
-                "id": new_id(),
-                "pair_key": compute_claim_pair_key(left["id"], right["id"]),
-                "left_claim_id": left["id"],
-                "right_claim_id": right["id"],
-                "status": "manual_required",
-                "decision": decision,
-                "confidence": None,
-                "rationale": rationale,
-                "created_at": now,
-            },
-            commit=False,
-        )
+            if not claims.update_status(member["id"], "disputed", commit=False):
+                raise ConflictError(f"conflict group member changed during quarantine: {member['id']}")
+            member["status"] = "disputed"
+    claims.ensure_group_conflict_case(
+        unique_members,
+        created_at=now,
+        decision=decision,
+        rationale=rationale,
+        commit=False,
+    )
 
 
 def _persist_resolution(claims: ClaimRepository, claim: dict[str, Any]) -> bool:

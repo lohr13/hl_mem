@@ -41,6 +41,25 @@ def compute_claim_pair_key(left_claim_id: str, right_claim_id: str) -> str:
     return hashlib.sha256("\0".join(claim_ids).encode()).hexdigest()[:24]
 
 
+def compute_conflict_group_key(namespace: str, conflict_key: str) -> str:
+    """返回由 namespace 分区约束的稳定组键。"""
+
+    if not namespace.strip() or not conflict_key.strip():
+        raise ValueError("conflict group namespace and key must not be empty")
+    return conflict_key
+
+
+def compute_conflict_group_case_key(namespace: str, group_key: str, generation: int) -> str:
+    """为兼容 pair_key 唯一列生成不依赖代表端点的组案标识。"""
+
+    raw = json.dumps(
+        ["group", namespace, group_key, generation],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
 def conflict_review_fingerprint(
     case: dict[str, Any],
     left_tip: dict[str, Any],
@@ -60,6 +79,37 @@ def conflict_review_fingerprint(
         },
         "left_tip": {field: left_tip.get(field) for field in _CONFLICT_FINGERPRINT_CLAIM_FIELDS},
         "right_tip": {field: right_tip.get(field) for field in _CONFLICT_FINGERPRINT_CLAIM_FIELDS},
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def conflict_group_review_fingerprint(
+    case: dict[str, Any],
+    members: list[dict[str, Any]],
+) -> str:
+    """散列 group-native 裁决实际读取的完整成员快照。"""
+
+    payload = {
+        "case": {
+            "id": case.get("id"),
+            "status": case.get("status"),
+            "generation": case.get("generation", 1),
+            "revision": case.get("revision", 0),
+            "namespace_key": case.get("namespace_key"),
+            "group_key": case.get("group_key"),
+            "overflow": case.get("overflow", 0),
+        },
+        "members": [
+            {
+                "candidate_key": member.get("candidate_key"),
+                **{field: member.get(field) for field in _CONFLICT_FINGERPRINT_CLAIM_FIELDS},
+            }
+            for member in sorted(
+                members,
+                key=lambda item: (str(item.get("candidate_key") or ""), str(item.get("id") or "")),
+            )
+        ],
     }
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()

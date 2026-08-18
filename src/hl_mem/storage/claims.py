@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, Sequence, cast
 
 from hl_mem.core.vector import batch_cosine_similarity, cosine_similarity
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.claims.claim import build_index_text
-from hl_mem.domain.claims.conflicts import slot_qualifier_key
+from hl_mem.domain.claims.conflicts import (
+    compute_conflict_group_case_key,
+    compute_conflict_group_key,
+    slot_qualifier_key,
+)
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
-from hl_mem.errors import ActiveClaimInvariantError, ValidationError
+from hl_mem.errors import ActiveClaimInvariantError, ConflictError, ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
 from hl_mem.protocols import ClaimRow, EmbedderProtocol
 from hl_mem.recall.lexicalizer import prepare_fts_document, prepare_fts_query
@@ -72,6 +77,7 @@ class ClaimRepository:
         self.recall_vector_scan_limit = resolved_settings.recall_vector_scan_limit
         self.index_text_mode = resolved_settings.index_text_mode
         self.fts_language = resolved_settings.fts_language
+        self.conflict_auto_resolve_max_candidates = resolved_settings.conflict_auto_resolve_max_candidates
         self.vector_backend: SQLiteVecVectorBackend | None = None
         if VectorBackend(resolved_settings.vector_backend) is VectorBackend.SQLITE_VEC:
             self.vector_backend = SQLiteVecVectorBackend(
@@ -550,6 +556,192 @@ class ClaimRepository:
     def insert_conflict_case(self, conflict_case: dict[str, Any], commit: bool = True) -> bool:
         """写入幂等冲突审核记录。"""
         return insert_row(self.connection, "conflict_cases", conflict_case, commit)
+
+    def ensure_group_conflict_case(
+        self,
+        members: Sequence[dict[str, Any]],
+        *,
+        created_at: str,
+        decision: str,
+        rationale: str,
+        commit: bool = True,
+    ) -> dict[str, Any]:
+        """创建或复用一个互斥组工单，并折叠挂接全部 canonical candidates。"""
+
+        unique_members = {str(member["id"]): member for member in members}
+        if not unique_members:
+            raise ConflictError("conflict group must contain at least one member")
+        namespaces = {str(member.get("namespace_key") or "") for member in unique_members.values()}
+        conflict_keys = {str(member.get("conflict_key") or "") for member in unique_members.values()}
+        slots = {str(member.get("canonical_slot") or "") for member in unique_members.values()}
+        if (
+            len(namespaces) != 1
+            or len(conflict_keys) != 1
+            or len(slots) != 1
+            or not all(is_mutually_exclusive_attribute(slot) for slot in slots)
+        ):
+            raise ConflictError("group conflict cases require one mutually-exclusive namespace, key, and slot")
+        namespace = next(iter(namespaces))
+        conflict_key = next(iter(conflict_keys))
+        group_key = compute_conflict_group_key(namespace, conflict_key)
+        open_case = self.connection.execute(
+            "SELECT * FROM conflict_cases WHERE namespace_key=? AND group_key=? "
+            "AND status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL",
+            (namespace, group_key),
+        ).fetchone()
+        outcome = "attached"
+        if open_case is None:
+            candidate_members: dict[str, list[dict[str, Any]]] = {}
+            for member in unique_members.values():
+                candidate_key = self._conflict_candidate_key(member)
+                candidate_members.setdefault(candidate_key, []).append(member)
+            if len(candidate_members) < 2:
+                raise ConflictError("a new group conflict case requires at least two distinct candidates")
+            representative_ids = [
+                str(sorted(group, key=lambda item: (str(item.get("recorded_from") or ""), str(item["id"])))[0]["id"])
+                for _, group in sorted(candidate_members.items())
+            ]
+            generation = int(
+                self.connection.execute(
+                    "SELECT COALESCE(max(generation),0)+1 FROM conflict_cases "
+                    "WHERE namespace_key=? AND group_key=?",
+                    (namespace, group_key),
+                ).fetchone()[0]
+            )
+            legacy_case = self.connection.execute(
+                "SELECT cases.* FROM conflict_cases AS cases "
+                "JOIN claims AS left_claim ON left_claim.id=cases.left_claim_id "
+                "JOIN claims AS right_claim ON right_claim.id=cases.right_claim_id "
+                "WHERE cases.group_key IS NULL "
+                "AND cases.status IN ('pending','auto_resolved','manual_required') "
+                "AND cases.resolved_at IS NULL "
+                "AND left_claim.namespace_key=? AND right_claim.namespace_key=? "
+                "AND left_claim.conflict_key=? AND right_claim.conflict_key=? "
+                "ORDER BY cases.created_at,cases.id LIMIT 1",
+                (namespace, namespace, conflict_key, conflict_key),
+            ).fetchone()
+            if legacy_case is not None:
+                self.connection.execute(
+                    "UPDATE conflict_cases SET namespace_key=?,group_key=?,generation=? "
+                    "WHERE id=? AND group_key IS NULL",
+                    (namespace, group_key, generation, legacy_case["id"]),
+                )
+                open_case = self.connection.execute(
+                    "SELECT * FROM conflict_cases WHERE id=?",
+                    (legacy_case["id"],),
+                ).fetchone()
+                outcome = "adopted"
+            else:
+                case_id = uuid.uuid4().hex
+                try:
+                    self.connection.execute(
+                        "INSERT INTO conflict_cases("
+                        "id,pair_key,left_claim_id,right_claim_id,status,decision,rationale,created_at,"
+                        "namespace_key,group_key,generation"
+                        ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            case_id,
+                            compute_conflict_group_case_key(namespace, group_key, generation),
+                            representative_ids[0],
+                            representative_ids[1],
+                            "manual_required",
+                            decision,
+                            rationale,
+                            created_at,
+                            namespace,
+                            group_key,
+                            generation,
+                        ),
+                    )
+                    outcome = "created"
+                except sqlite3.IntegrityError as error:
+                    if "conflict_cases.namespace_key, conflict_cases.group_key" not in str(error):
+                        raise
+                    open_case = self.connection.execute(
+                        "SELECT * FROM conflict_cases WHERE namespace_key=? AND group_key=? "
+                        "AND status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL",
+                        (namespace, group_key),
+                    ).fetchone()
+                    if open_case is None:
+                        raise
+                else:
+                    open_case = self.connection.execute("SELECT * FROM conflict_cases WHERE id=?", (case_id,)).fetchone()
+        if open_case is None:  # pragma: no cover - guarded by insert/reselect branches
+            raise RuntimeError(f"open conflict group disappeared: {namespace}:{group_key}")
+        case_id = str(open_case["id"])
+        attached_members = 0
+        for member in unique_members.values():
+            candidate_key = self._conflict_candidate_key(member)
+            candidate = self.connection.execute(
+                "SELECT 1 FROM conflict_case_candidates WHERE case_id=? AND candidate_key=?",
+                (case_id, candidate_key),
+            ).fetchone()
+            if candidate is None:
+                seen_at = str(member.get("recorded_from") or created_at)
+                self.connection.execute(
+                    "INSERT INTO conflict_case_candidates("
+                    "case_id,candidate_key,canonical_value_json,representative_claim_id,"
+                    "support_count,first_seen_at,last_seen_at"
+                    ") VALUES (?,?,?,?,1,?,?)",
+                    (case_id, candidate_key, candidate_key, member["id"], seen_at, seen_at),
+                )
+            existing_member = self.connection.execute(
+                "SELECT 1 FROM conflict_candidate_members WHERE case_id=? AND claim_id=?",
+                (case_id, member["id"]),
+            ).fetchone()
+            if existing_member is not None:
+                continue
+            attached_at = str(member.get("recorded_from") or created_at)
+            self.connection.execute(
+                "INSERT INTO conflict_candidate_members(case_id,candidate_key,claim_id,attached_at) "
+                "VALUES (?,?,?,?)",
+                (case_id, candidate_key, member["id"], attached_at),
+            )
+            self.connection.execute(
+                "UPDATE conflict_case_candidates SET support_count=("
+                "SELECT count(*) FROM conflict_candidate_members "
+                "WHERE case_id=? AND candidate_key=?"
+                "),last_seen_at=max(last_seen_at,?) WHERE case_id=? AND candidate_key=?",
+                (case_id, candidate_key, attached_at, case_id, candidate_key),
+            )
+            attached_members += 1
+        candidate_count = int(
+            self.connection.execute(
+                "SELECT count(*) FROM conflict_case_candidates WHERE case_id=?",
+                (case_id,),
+            ).fetchone()[0]
+        )
+        overflow = int(candidate_count > self.conflict_auto_resolve_max_candidates)
+        self.connection.execute(
+            "UPDATE conflict_cases SET status='manual_required',decision=?,rationale=?,overflow=? "
+            "WHERE id=? AND (status IS NOT 'manual_required' OR decision IS NOT ? "
+            "OR rationale IS NOT ? OR overflow IS NOT ?)",
+            (decision, rationale, overflow, case_id, decision, rationale, overflow),
+        )
+        current = self.connection.execute(
+            "SELECT generation,revision FROM conflict_cases WHERE id=?",
+            (case_id,),
+        ).fetchone()
+        if outcome != "created" and attached_members == 0:
+            outcome = "unchanged"
+        result = {
+            "outcome": outcome,
+            "case_id": case_id,
+            "generation": int(current["generation"]),
+            "revision": int(current["revision"]),
+            "candidate_count": candidate_count,
+            "overflow": bool(overflow),
+        }
+        if commit:
+            self.connection.commit()
+        return result
+
+    @staticmethod
+    def _conflict_candidate_key(member: dict[str, Any]) -> str:
+        value_json = member.get("value_json")
+        if isinstance(value_json, str):
+            return value_json
+        return encode_json(member.get("value"), sort_keys=True)
 
     def ensure_manual_conflict_case(
         self,

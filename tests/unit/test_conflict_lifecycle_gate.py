@@ -114,7 +114,15 @@ def _run_operations(connection, operations: Sequence[str]) -> None:
         if operation == "repair":
             repair_active_claims(connection, apply=True, repaired_at=NOW)
         elif operation == "resolve":
-            ResolutionService(connection).resolve("case-left-third", "keep_left", resolved_at=NOW)
+            revision = connection.execute(
+                "SELECT revision FROM conflict_cases WHERE id='case-left-third'"
+            ).fetchone()[0]
+            ResolutionService(connection).resolve(
+                "case-left-third",
+                "keep_left",
+                resolved_at=NOW,
+                expected_revision=revision,
+            )
         elif operation == "ingest":
             _ingest_exact(connection)
         elif operation == "audit":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
@@ -33,6 +34,7 @@ class ResolutionService:
         *,
         resolved_at: str | None = None,
         rationale: str | None = None,
+        expected_revision: int | None = None,
     ) -> dict[str, Any]:
         if decision not in SUPPORTED_DECISIONS:
             raise ConflictResolutionError(f"unsupported conflict decision: {decision}")
@@ -41,6 +43,8 @@ class ResolutionService:
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             case = self._load_case(case_id)
+            if case.get("group_key") is not None:
+                self._assert_expected_revision(case, expected_revision)
             left = self._load_claim(str(case["left_claim_id"]))
             right = self._load_claim(str(case["right_claim_id"]))
             exclusive_group = self._is_exclusive_group(left, right)
@@ -108,6 +112,165 @@ class ResolutionService:
             "winner_id": winner_id,
             "closed_case_ids": closed_case_ids,
         }
+
+    def review(self, case_id: str) -> dict[str, Any]:
+        """返回一个 revision 快照及其全部 canonical candidates。"""
+
+        case = self._load_case(case_id)
+        rows = self.connection.execute(
+            "SELECT candidate_key,canonical_value_json,representative_claim_id,support_count,"
+            "first_seen_at,last_seen_at FROM conflict_case_candidates "
+            "WHERE case_id=? ORDER BY candidate_key",
+            (case_id,),
+        ).fetchall()
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            member_rows = self.connection.execute(
+                "SELECT members.claim_id,claims.status,claims.source_authority "
+                "FROM conflict_candidate_members AS members "
+                "JOIN claims ON claims.id=members.claim_id "
+                "WHERE members.case_id=? AND members.candidate_key=? ORDER BY members.claim_id",
+                (case_id, row["candidate_key"]),
+            ).fetchall()
+            claim_ids = [str(member["claim_id"]) for member in member_rows]
+            evidence_count = 0
+            if claim_ids:
+                placeholders = ",".join("?" for _ in claim_ids)
+                evidence_count = int(
+                    self.connection.execute(
+                        "SELECT count(*) FROM evidence_links WHERE derived_type='claim' "
+                        f"AND derived_id IN ({placeholders})",
+                        claim_ids,
+                    ).fetchone()[0]
+                )
+            try:
+                canonical_value = json.loads(str(row["canonical_value_json"]))
+            except json.JSONDecodeError:
+                canonical_value = row["canonical_value_json"]
+            candidates.append(
+                {
+                    "candidate_key": str(row["candidate_key"]),
+                    "canonical_value": canonical_value,
+                    "representative_claim_id": str(row["representative_claim_id"]),
+                    "support_count": int(row["support_count"]),
+                    "evidence_count": evidence_count,
+                    "first_seen_at": str(row["first_seen_at"]),
+                    "last_seen_at": str(row["last_seen_at"]),
+                    "claim_ids": claim_ids,
+                    "claim_statuses": {str(member["claim_id"]): str(member["status"]) for member in member_rows},
+                }
+            )
+        return {
+            "case_id": str(case["id"]),
+            "namespace": case.get("namespace_key"),
+            "group_key": case.get("group_key"),
+            "generation": int(case.get("generation") or 1),
+            "revision": int(case.get("revision") or 0),
+            "status": str(case["status"]),
+            "overflow": bool(case.get("overflow")),
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+        }
+
+    def resolve_group(
+        self,
+        case_id: str,
+        action: str,
+        *,
+        candidate_key: str,
+        expected_revision: int,
+        resolved_at: str | None = None,
+        rationale: str | None = None,
+    ) -> dict[str, Any]:
+        """以乐观 revision guard 选择或拒绝一个 group candidate。"""
+
+        if action not in {"select_candidate", "reject_candidate"}:
+            raise ConflictResolutionError(f"unsupported group conflict action: {action}")
+        timestamp = resolved_at or datetime.now(timezone.utc).isoformat()
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            case = self._load_case(case_id)
+            if case.get("group_key") is None or case.get("namespace_key") is None:
+                raise ConflictResolutionError(f"conflict case is not group-native: {case_id}")
+            self._assert_expected_revision(case, expected_revision)
+            candidate = self.connection.execute(
+                "SELECT * FROM conflict_case_candidates WHERE case_id=? AND candidate_key=?",
+                (case_id, candidate_key),
+            ).fetchone()
+            if candidate is None:
+                raise ConflictResolutionError(f"conflict candidate not found: {case_id}:{candidate_key}")
+            winner_id: str | None = None
+            if action == "select_candidate":
+                winner_id = str(candidate["representative_claim_id"])
+                left = self._load_claim(str(case["left_claim_id"]))
+                right = self._load_claim(str(case["right_claim_id"]))
+                group_claims = self._load_group_claims(left, right, True)
+                self._converge_winner(group_claims, winner_id, timestamp)
+                self._close_case(
+                    case,
+                    "resolved",
+                    "select_candidate",
+                    timestamp,
+                    rationale,
+                )
+                status = "resolved"
+            else:
+                member_rows = self.connection.execute(
+                    "SELECT claim_id FROM conflict_candidate_members "
+                    "WHERE case_id=? AND candidate_key=? ORDER BY claim_id",
+                    (case_id, candidate_key),
+                ).fetchall()
+                self.connection.execute(
+                    "DELETE FROM conflict_case_candidates WHERE case_id=? AND candidate_key=?",
+                    (case_id, candidate_key),
+                )
+                for member_row in member_rows:
+                    claim = self._load_claim(str(member_row["claim_id"]))
+                    if claim.get("status") not in NONTERMINAL_CLAIM_STATUSES:
+                        continue
+                    assert_transition(str(claim["status"]), "retracted")
+                    cursor = self.connection.execute(
+                        "UPDATE claims SET status='retracted',valid_to=?,recorded_to=? "
+                        "WHERE id=? AND status=?",
+                        (timestamp, timestamp, claim["id"], claim["status"]),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ConflictResolutionError(f"conflict candidate member changed: {claim['id']}")
+                status = "manual_required"
+            assert_conflict_postconditions(
+                self.connection,
+                namespace=str(case["namespace_key"]),
+                conflict_key=str(case["group_key"]),
+            )
+            current = self.connection.execute(
+                "SELECT revision,status,resolved_at FROM conflict_cases WHERE id=?",
+                (case_id,),
+            ).fetchone()
+            self.connection.commit()
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+        return {
+            "case_id": case_id,
+            "generation": int(case["generation"]),
+            "revision": int(current["revision"]),
+            "status": status,
+            "action": action,
+            "candidate_key": candidate_key,
+            "winner_id": winner_id,
+            "resolved_at": current["resolved_at"],
+        }
+
+    @staticmethod
+    def _assert_expected_revision(case: dict[str, Any], expected_revision: int | None) -> None:
+        current_revision = int(case.get("revision") or 0)
+        if expected_revision is None:
+            raise ConflictResolutionError(f"expected_revision is required for group conflict case: {case['id']}")
+        if expected_revision != current_revision:
+            raise ConflictResolutionError(
+                f"stale conflict revision: expected {expected_revision}, current {current_revision}"
+            )
 
     def _load_case(self, case_id: str) -> dict[str, Any]:
         row = self.connection.execute("SELECT * FROM conflict_cases WHERE id=?", (case_id,)).fetchone()

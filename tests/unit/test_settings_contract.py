@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 174
+    assert len(fields(Settings)) == 175
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -37,6 +37,7 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.conflict_maintenance_budget_ms == 1_000
     assert settings.conflict_failure_backoff_seconds == 300
     assert settings.conflict_writer_yield_ms == 25
+    assert settings.conflict_auto_resolve_max_candidates == 8
     assert settings.snapshot()["conflict_maintenance_max_cases"] == 50
 
 

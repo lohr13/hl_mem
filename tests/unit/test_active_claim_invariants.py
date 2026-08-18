@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from hl_mem.application.ingest import IngestService
 from hl_mem.domain.claims.conflicts import compute_claim_pair_key
 from hl_mem.ingest.embedder import FakeEmbedder
@@ -123,18 +125,11 @@ def test_ingest_quarantines_every_member_of_preexisting_dirty_active_group(tmp_p
     assert {row["id"] for row in rows} == {first.claim_id, second_id, result.claim_id}
     assert {row["status"] for row in rows} == {"disputed"}
     cases = connection.execute(
-        "SELECT left_claim_id,right_claim_id,status,decision,rationale,confidence,resolved_at "
+        "SELECT id,left_claim_id,right_claim_id,status,decision,rationale,confidence,resolved_at "
         "FROM conflict_cases ORDER BY pair_key"
     ).fetchall()
-    assert len(cases) == 3
-    assert {frozenset((row["left_claim_id"], row["right_claim_id"])) for row in cases} == {
-        frozenset((first.claim_id, second_id)),
-        frozenset((first.claim_id, result.claim_id)),
-        frozenset((second_id, result.claim_id)),
-    }
-    historical = next(
-        row for row in cases if {row["left_claim_id"], row["right_claim_id"]} == {first.claim_id, second_id}
-    )
+    assert len(cases) == 2
+    historical = next(row for row in cases if row["id"] == "seeded-resolved-case")
     assert tuple(historical[key] for key in ("status", "decision", "rationale", "confidence", "resolved_at")) == (
         "resolved",
         "coexist",
@@ -142,10 +137,14 @@ def test_ingest_quarantines_every_member_of_preexisting_dirty_active_group(tmp_p
         0.9,
         NOW,
     )
-    new_cases = [row for row in cases if row is not historical]
-    assert {row["status"] for row in new_cases} == {"manual_required"}
-    assert {row["decision"] for row in new_cases} == {"uncertain"}
-    assert {row["rationale"] for row in new_cases} == {"ingest_dirty_active_group"}
+    [new_case] = [row for row in cases if row is not historical]
+    assert new_case["status"] == "manual_required"
+    assert new_case["decision"] == "uncertain"
+    assert new_case["rationale"] == "ingest_dirty_active_group"
+    assert connection.execute(
+        "SELECT count(*) FROM conflict_case_candidates "
+        "WHERE case_id=(SELECT id FROM conflict_cases WHERE status='manual_required')"
+    ).fetchone()[0] == 3
 
 
 def test_exact_duplicate_also_quarantines_preexisting_dirty_active_group(tmp_path) -> None:
@@ -331,5 +330,46 @@ def test_uncertain_update_quarantines_active_candidate_and_new_claim(tmp_path) -
     assert {row["status"] for row in rows} == {"disputed"}
     assert {row["id"] for row in rows} == {first.claim_id, candidate_id, result.claim_id}
     cases = connection.execute("SELECT status,decision FROM conflict_cases").fetchall()
-    assert len(cases) == 3
-    assert {tuple(case) for case in cases} == {("manual_required", "uncertain")}
+    assert [tuple(case) for case in cases] == [("manual_required", "uncertain")]
+    assert connection.execute("SELECT count(*) FROM conflict_case_candidates").fetchone()[0] == 3
+
+
+@pytest.mark.parametrize(
+    ("slot", "qualifiers"),
+    (
+        ("config.path", {"purpose": "runtime"}),
+        ("config.network", {"target": "api"}),
+    ),
+)
+def test_nonexclusive_120_member_exact_replay_merges_evidence_without_case(
+    tmp_path,
+    slot: str,
+    qualifiers: dict[str, str],
+) -> None:
+    connection = Database(tmp_path / f"nonexclusive-{slot}.db").open()
+    extracted = ExtractedClaim(
+        predicate="配置",
+        value="value-000",
+        subject="API服务",
+        qualifiers=qualifiers,
+        canonical_attribute=slot,
+        canonical_slot=slot,
+    )
+    first = _store(connection, extracted, "event-first")
+    assert first.claim_id is not None
+    for index in range(1, 120):
+        _seed_group_member(
+            connection,
+            first.claim_id,
+            claim_id=f"member-{index:03d}",
+            value=f"value-{index:03d}",
+            status="active",
+        )
+
+    duplicate = _store(connection, extracted, "event-duplicate")
+
+    assert duplicate.claim_id == first.claim_id
+    assert duplicate.reason == "exact_duplicate"
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 120
+    assert connection.execute("SELECT count(*) FROM claims WHERE status='active'").fetchone()[0] == 120
+    assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 0
