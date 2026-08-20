@@ -1,10 +1,10 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.29.1 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.29.2 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
-v0.29.1 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
+v0.29.2 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
 
 ## 加载规则
 
@@ -248,11 +248,11 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `recall.echo_pending_review_enabled` | 布尔值 | `false` | `true`、`false` | `echo_pending_review_enabled` |
 | `recall.echo_pending_similarity_threshold` | 数值 | `0.95` | 0.0 - 1.0 | `echo_pending_similarity_threshold` |
 | `recall.echo_session_window_seconds` | 整数 | `1800` | 60 - 14400 | `echo_session_window_seconds` |
-| `recall.echo_suppression_mode` | 字符串 | `"off"` | `off`、`observe`、`enforce` | `echo_suppression_mode` |
+| `recall.echo_suppression_mode` | 字符串 | `"enforce"` | `off`、`observe`、`enforce` | `echo_suppression_mode` |
 | `recall.expansion_circuit_failure_threshold` | 整数 | `5` | >= 1 | `expansion_circuit_failure_threshold` |
 | `recall.expansion_circuit_open_seconds` | 数值 | `60.0` | > 0 | `expansion_circuit_open_seconds` |
 | `recall.feedback_min_samples` | 整数 | `3` | >= 1 | `feedback_min_samples` |
-| `recall.freshness_annotation_mode` | 字符串 | `"off"` | `off`、`observe`、`render` | `freshness_annotation_mode` |
+| `recall.freshness_annotation_mode` | 字符串 | `"render"` | `off`、`observe`、`render` | `freshness_annotation_mode` |
 | `recall.fts_language` | 字符串 | `"auto"` | `auto`、`zh`、`en` | `fts_language` |
 | `recall.packed_context_token_budget` | 整数 | `2000` | >= 1 | `packed_context_token_budget` |
 | `recall.preference_recency_boost` | 数值 | `0.12` | 0.0 - 1.0 | `preference_recency_boost` |

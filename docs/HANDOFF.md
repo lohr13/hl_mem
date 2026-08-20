@@ -1,25 +1,25 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-18
+> 最后更新：2026-08-20
 
 ## 当前状态
 
-- **分支**：`feature/v0.29.1-injection`
-- **版本**：v0.29.1
-- **阶段**：v0.29.1 八个顺序提交已完成，停在 worktree 等待 Hermes 验收；无 push
+- **分支**：`feature/v0.29.2-injection-defaults`
+- **版本**：v0.29.2
+- **阶段**：v0.29.2 注入治理默认值翻转已完成，停在 worktree 等待 Hermes 验收；无 push
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：49 migrations（SQL 001–049），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
-## v0.29.1 已交付
+## v0.29.2 已交付
 
 - v0.29.0 migration 047 新增 `assertion_kind=unknown|observation|inference`。存量 `unknown` 只可观测，不授权
   supersede，也不改变召回或注入行为。
 - migration 048 为 `dedup_pairs` 增加确定性的 `pair_source` 与 `new_claim_id` 注入信号；存量行标记为
   `legacy`，不猜测新写入端点。
-- 注入治理顺序固定为 echo filter → reranker → freshness decorate → packing。echo 与 freshness 默认均为
-  `off`，使用独立开关；v0.29.1 不引入 `verified_at`。
+- 注入治理顺序固定为 echo filter → reranker → freshness decorate → packing。v0.29.2 仅把 echo/freshness
+  默认值翻转为 `enforce` / `render`；显式配置 `off` 可退回旧行为，策略实现与三机现有显式配置均未改变。
 - `hl-mem --db <副本> dedup drain-below-floor` 默认只读报告；`--apply` 必须带精确
   `--expected-count`。597 条生产形状 fixture 只终结 pair，不改 Claim。
 - expired 回收默认 `observe`，删除资格为超过 90 天历史保留窗、无下游 evidence 消费者、无 open conflict；
@@ -67,8 +67,7 @@
 
 ## 下一步
 
-- Hermes 验收后先显式启用 echo/freshness `observe` 收集 24–48 小时数据，再结合固定 2×2 回放决定 canary；
-  本 worktree 不替代线上质量裁决，也不默认开启 `enforce` / `render`。
+- 由 Hermes 验收 v0.29.2 默认值翻转；三机继续使用现有显式 `enforce` / `render` 配置，本 worktree 不修改部署配置。
 
 - 观察 tombstone sidecar 与 restore replay 的生产恢复演练；旧 manifest 无法证明删除历史时保持拒绝，不做
   静默兼容。
@@ -77,6 +76,8 @@
 
 ## 已知限制
 
+- 注入治理 20 条冻结 stable 验收集为 19/20；毛刺样本双臂对称且不是机制伤害，保留为已知边界，
+  不针对单 case 调优。
 - 生产 relation expansion 仍依赖现有关系边质量；已淘汰的 C 系列实验臂不属于公共配置面。
 - LLM 提取和 QA 具有采样波动；不同提取缓存或不同 scorer 的单轮数字不可直接比较。
 - `low_confidence` 只标注、不阻断；调用方需要根据自身风险决定是否展示答案。

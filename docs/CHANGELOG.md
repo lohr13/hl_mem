@@ -1,5 +1,22 @@
 # HL-Mem 变更记录
 
+## v0.29.2（2026-08-20）
+
+### 注入治理默认开启
+
+- `recall.echo_suppression_mode` 的代码默认值由 `off` 翻转为 `enforce`，
+  `recall.freshness_annotation_mode` 的代码默认值由 `off` 翻转为 `render`；策略实现、执行顺序和显式配置均未改变。
+- 完整行为评测中，结构层 200×4 全部通过、sentinel 9/9、全量 131/131 agent + 131/131 judge、人工盲审
+  9/9；误导采信从 7.3% 降至 0%，echo 抑制召回为 1.0 且零误伤，token 代价为 claim 18、packet P95 0.9%。
+- 20 条冻结 stable 验收集为 19/20；未通过项是双臂对称的毛刺样本，不属于机制伤害，按已知边界留档，
+  不针对单个 case 调优。
+- 升级即默认开启，不需要 migration 脚本。需要退回旧行为时，在 `hl_mem.toml` 显式写入：
+
+  ```toml
+  recall.echo_suppression_mode = "off"
+  recall.freshness_annotation_mode = "off"
+  ```
+
 ## v0.29.1（2026-08-18）
 
 ### 注入治理与离线门禁

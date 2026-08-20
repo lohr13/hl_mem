@@ -223,8 +223,8 @@ def test_recall_tool_call_returns_compact_claim_lines_with_bounded_read_only_req
         "context_mode": "packed",
         "delivery_purpose": "active_recall",
         "experiment_variant": "control",
-        "echo_variant": "off",
-        "freshness_variant": "off",
+        "echo_variant": "enforce",
+        "freshness_variant": "render",
         "policy_versions": {"echo": "same-session-v1", "freshness": "risk-age-v1"},
     }
     assert provider.health()["tool_calls"] == 1
@@ -750,8 +750,8 @@ def test_prefetch_forwards_parameters_isolates_keys_and_caches_no_receipts(
             "context_mode": "packed",
             "delivery_purpose": "passive_injection",
             "experiment_variant": "control",
-            "echo_variant": "off",
-            "freshness_variant": "off",
+            "echo_variant": "enforce",
+            "freshness_variant": "render",
             "policy_versions": {"echo": "same-session-v1", "freshness": "risk-age-v1"},
         },
         {
@@ -766,17 +766,25 @@ def test_prefetch_forwards_parameters_isolates_keys_and_caches_no_receipts(
             "context_mode": "packed",
             "delivery_purpose": "passive_injection",
             "experiment_variant": "control",
-            "echo_variant": "off",
-            "freshness_variant": "off",
+            "echo_variant": "enforce",
+            "freshness_variant": "render",
             "policy_versions": {"echo": "same-session-v1", "freshness": "risk-age-v1"},
         },
     ]
 
     first = provider._prefetch_cache.get(
-        "session-1", "same query", limit=3, **{k: v for k, v in common.items() if k != "session_id"}
+        "session-1",
+        "same query",
+        limit=3,
+        injection_context=provider._injection_context("passive_injection"),
+        **{k: v for k, v in common.items() if k != "session_id"},
     )
     second = provider._prefetch_cache.get(
-        "session-1", "same query", limit=4, **{k: v for k, v in common.items() if k != "session_id"}
+        "session-1",
+        "same query",
+        limit=4,
+        injection_context=provider._injection_context("passive_injection"),
+        **{k: v for k, v in common.items() if k != "session_id"},
     )
     assert first is not None
     assert second is not None
@@ -1034,8 +1042,9 @@ def test_different_prefetch_keys_run_concurrently_without_dropping_tasks(
     provider._prefetch_cache.drain(3.0)
 
     budget = provider.settings.packed_context_token_budget
-    first = provider._prefetch_cache.get("session-1", "one", token_budget=budget)
-    second = provider._prefetch_cache.get("session-2", "two", token_budget=budget)
+    injection_context = provider._injection_context("passive_injection")
+    first = provider._prefetch_cache.get("session-1", "one", token_budget=budget, injection_context=injection_context)
+    second = provider._prefetch_cache.get("session-2", "two", token_budget=budget, injection_context=injection_context)
     assert sorted(queries) == ["one", "two"]
     assert first is not None
     assert second is not None
@@ -1071,6 +1080,7 @@ def test_prefetch_state_is_pending_completed_then_expired_and_same_key_dedupes(
         "session-1",
         "query",
         token_budget=budget,
+        injection_context=provider._injection_context("passive_injection"),
     )
     assert pending is not None
     assert pending.status == "pending"
@@ -1082,6 +1092,7 @@ def test_prefetch_state_is_pending_completed_then_expired_and_same_key_dedupes(
         "session-1",
         "query",
         token_budget=budget,
+        injection_context=provider._injection_context("passive_injection"),
     )
     assert completed is not None
     assert completed.status == "completed"
@@ -1091,6 +1102,7 @@ def test_prefetch_state_is_pending_completed_then_expired_and_same_key_dedupes(
         "session-1",
         "query",
         token_budget=budget,
+        injection_context=provider._injection_context("passive_injection"),
     )
     assert expired is not None
     assert expired.status == "expired"

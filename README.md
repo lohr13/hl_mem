@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.29.1](https://img.shields.io/badge/version-0.29.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.29.2](https://img.shields.io/badge/version-0.29.2-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -262,8 +262,8 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `recall.vector_backend` | `sqlite_scan` | `sqlite_scan`（默认）或需安装 `hl-mem[sqlite-vec]` 的 `sqlite_vec` |
 | `recall.dedup_threshold` | `0.95` | 候选窗内近重复折叠阈值；设为 `0` 关闭折叠 |
 | `recall.dedup_candidate_limit` | `100` | 每次召回参与近重复折叠判定的候选上限 |
-| `recall.echo_suppression_mode` | `off` | 同会话回声治理：`off`、只观测的 `observe` 或 `enforce` |
-| `recall.freshness_annotation_mode` | `off` | 风险门控的新鲜度提示：`off`、只观测的 `observe` 或 `render` |
+| `recall.echo_suppression_mode` | `enforce` | 同会话回声治理：`off`、只观测的 `observe` 或 `enforce` |
+| `recall.freshness_annotation_mode` | `render` | 风险门控的新鲜度提示：`off`、只观测的 `observe` 或 `render` |
 | `recall.resurrection_mode` | `auto` | 主召回证据不足时启用有界 archived-only 冷路径；设为 `off` 可关闭 |
 | `recall.query_expansion_mode` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
 | `decay.model` | `activation_halflife` | 按 scope 半衰期衰减 activation，不因日常衰减改写 confidence |
@@ -288,6 +288,16 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 ```bash
 hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
+```
+
+### 升级到 v0.29.2
+
+升级后同会话 echo 抑制和风险门控 freshness 提示即按默认值启用，不需要 migration 脚本。若要退回旧行为，
+在 `hl_mem.toml` 显式配置：
+
+```toml
+recall.echo_suppression_mode = "off"
+recall.freshness_annotation_mode = "off"
 ```
 
 ### 从 v0.27.x 升级
@@ -352,7 +362,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.29.1，共 49 个不可变、仅向前执行的 SQL Migration。migration 049 在确认数据库内无
+当前基线为 v0.29.2，共 49 个不可变、仅向前执行的 SQL Migration。migration 049 在确认数据库内无
 view/trigger 消费者后移除 legacy `claims_tags_fts`；外部查询无法由 SQLite schema 证明，升级前必须完成全机
 v0.29.0+ 门槛核验并结束旧二进制回滚窗口。
 
