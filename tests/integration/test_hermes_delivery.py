@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
@@ -14,6 +15,26 @@ from hl_mem.api.server import create_app
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.deferred import process_recall_side_effect_tasks
+
+
+def _delivery_app(database_path):
+    return create_app(
+        replace(
+            Settings.for_test(),
+            database_path=str(database_path),
+            echo_suppression_mode="off",
+            freshness_annotation_mode="off",
+        )
+    )
+
+
+def _delivery_provider_settings() -> Settings:
+    return Settings(
+        hermes_url="http://memory.test",
+        hermes_timeout=2,
+        echo_suppression_mode="off",
+        freshness_annotation_mode="off",
+    )
 
 
 def _settle_recall_side_effects(app, connection) -> None:
@@ -42,7 +63,7 @@ def _seed_claim(connection) -> None:
 
 
 def test_prefetch_is_receipt_free_and_each_delivery_is_fresh_and_injected(tmp_path, monkeypatch) -> None:
-    app = create_app(tmp_path / "hermes-delivery.db")
+    app = _delivery_app(tmp_path / "hermes-delivery.db")
     with TestClient(app) as daemon:
         connection = app.state.db.open()
         _seed_claim(connection)
@@ -62,12 +83,7 @@ def test_prefetch_is_receipt_free_and_each_delivery_is_fresh_and_injected(tmp_pa
             )
 
         monkeypatch.setattr(httpx, "post", daemon_post)
-        provider = HLMemProvider(
-            settings=Settings(
-                hermes_url="http://memory.test",
-                hermes_timeout=2,
-            )
-        )
+        provider = HLMemProvider(settings=_delivery_provider_settings())
         request = {
             "session_id": "session-1",
             "limit": 1,
@@ -134,7 +150,7 @@ def test_prefetch_is_receipt_free_and_each_delivery_is_fresh_and_injected(tmp_pa
 
 
 def test_two_turn_query_miss_recalls_on_demand_materializes_and_marks_injected(tmp_path, monkeypatch) -> None:
-    app = create_app(tmp_path / "hermes-two-turn.db")
+    app = _delivery_app(tmp_path / "hermes-two-turn.db")
     with TestClient(app) as daemon:
         connection = app.state.db.open()
         _seed_claim(connection)
@@ -153,7 +169,7 @@ def test_two_turn_query_miss_recalls_on_demand_materializes_and_marks_injected(t
             return daemon.post(path, json=json, headers=headers)
 
         monkeypatch.setattr(httpx, "post", daemon_post)
-        provider = HLMemProvider(settings=Settings(hermes_url="http://memory.test", hermes_timeout=2))
+        provider = HLMemProvider(settings=_delivery_provider_settings())
         request = {
             "session_id": "session-1",
             "limit": 1,
@@ -181,7 +197,7 @@ def test_two_turn_query_miss_recalls_on_demand_materializes_and_marks_injected(t
 
 
 def test_prefetch_truncates_query_to_recall_input_contract(tmp_path, monkeypatch) -> None:
-    app = create_app(tmp_path / "hermes-query-boundary.db")
+    app = _delivery_app(tmp_path / "hermes-query-boundary.db")
     with TestClient(app) as daemon:
         sent_queries = []
 
@@ -199,7 +215,7 @@ def test_prefetch_truncates_query_to_recall_input_contract(tmp_path, monkeypatch
             return daemon.post(path, json=json, headers=headers)
 
         monkeypatch.setattr(httpx, "post", daemon_post)
-        provider = HLMemProvider(settings=Settings(hermes_url="http://memory.test", hermes_timeout=2))
+        provider = HLMemProvider(settings=_delivery_provider_settings())
         long_query = "q" * 2_500
 
         provider.queue_prefetch(long_query, session_id="session-1")
@@ -217,7 +233,7 @@ def test_prefetch_truncates_query_to_recall_input_contract(tmp_path, monkeypatch
 
 
 def test_daemon_validation_response_reports_server_version(tmp_path) -> None:
-    app = create_app(tmp_path / "hermes-version-header.db")
+    app = _delivery_app(tmp_path / "hermes-version-header.db")
     with TestClient(app) as daemon:
         response = daemon.post(
             "/v1/internal/retrieval-bundles",
