@@ -184,6 +184,47 @@ class ConcurrencyTransport(httpx.AsyncBaseTransport):
         )
 
 
+class InvalidThenValidTransport(httpx.AsyncBaseTransport):
+    def __init__(self, valid_output: dict[str, Any]) -> None:
+        self.valid_output = valid_output
+        self.calls = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        content = "not-json" if self.calls == 1 else json.dumps(self.valid_output)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "choices": [{"message": {"content": content}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_transport_does_not_hide_billable_parse_retry_from_budget_wrapper() -> None:
+    sentinel = _sentinel()
+    wire = InvalidThenValidTransport(sentinel["expected_judgment"])
+    async with httpx.AsyncClient(transport=wire) as client:
+        transport = CompatibleStructuredTransport(
+            "secret",
+            client=client,
+            max_http_attempts=3,
+            backoff_seconds=0,
+        )
+        with pytest.raises(json.JSONDecodeError):
+            await transport.complete(
+                system_prompt="judge",
+                user_payload={"sample_id": sentinel["opaque_sample_id"]},
+                schema_name="judge",
+                response_schema=JUDGE_SCHEMA,
+                max_output_tokens=600,
+            )
+
+    assert wire.calls == 1
+
+
 @pytest.mark.asyncio
 async def test_compatible_transport_freezes_snapshot_strict_schema_and_concurrency() -> None:
     sentinel = _sentinel()

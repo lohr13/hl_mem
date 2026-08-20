@@ -368,9 +368,10 @@ class CompatibleStructuredTransport(StructuredModelTransport):
                 )
             except (httpx.RequestError, httpx.HTTPStatusError, KeyError, TypeError, ValueError) as error:
                 last_error = error
-                retryable = not isinstance(error, httpx.HTTPStatusError) or (
-                    error.response.status_code == 429 or error.response.status_code >= 500
-                )
+                if isinstance(error, httpx.HTTPStatusError):
+                    retryable = error.response.status_code == 429 or error.response.status_code >= 500
+                else:
+                    retryable = isinstance(error, httpx.RequestError)
                 if attempt >= self.max_http_attempts or not retryable:
                     raise
                 await asyncio.sleep(self.backoff_seconds * (2 ** (attempt - 1)))
