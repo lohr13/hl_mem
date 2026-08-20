@@ -1,10 +1,12 @@
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
 from hl_mem.experience.service import ExperienceService
+from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.workers.deferred import process_recall_side_effect_tasks
 
@@ -96,7 +98,14 @@ def test_policy_api_and_recall_attach_active_policies_for_task_queries(
 
 
 def test_recall_records_impressions_and_feedback_updates_them(tmp_path) -> None:
-    app = create_app(tmp_path / "feedback-api.db")
+    app = create_app(
+        replace(
+            Settings.for_test(),
+            database_path=str(tmp_path / "feedback-api.db"),
+            echo_suppression_mode="off",
+            freshness_annotation_mode="off",
+        )
+    )
     with TestClient(app) as client:
         connection = app.state.db.open()
         ClaimRepository(connection).insert_claim(

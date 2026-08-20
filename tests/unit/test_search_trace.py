@@ -181,8 +181,9 @@ def test_recall_trace_exposes_safe_injection_context_envelope(tmp_path: Path) ->
     injection = response["search_trace"]["injection"]
     for key, value in context.envelope().items():
         assert injection[key] == value
-    assert injection["echo_suppression"]["mode"] == "off"
-    assert injection["echo_suppression"]["bypass_reason"] == "mode_off"
+    assert injection["echo_suppression"]["mode"] == "enforce"
+    assert injection["echo_suppression"]["bypass_reason"] is None
+    assert injection["echo_suppression"]["fail_open_reason"] == "missing_request_session"
     assert "private query" not in json.dumps(injection)
     assert "session_id" not in json.dumps(injection)
 

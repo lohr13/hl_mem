@@ -52,14 +52,21 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.dedup_max_pending_pairs == 10_000
     assert settings.snapshot()["conflict_maintenance_max_cases"] == 50
     assert settings.snapshot()["operational_batch_size"] == 2_000
-    assert settings.echo_suppression_mode == "off"
+    assert settings.echo_suppression_mode == "enforce"
     assert settings.echo_session_window_seconds == 1800
     assert settings.echo_pending_review_enabled is False
     assert settings.echo_pending_similarity_threshold == 0.95
     assert settings.echo_pending_max_seconds == 7200
-    assert settings.snapshot()["echo_suppression_mode"] == "off"
-    assert settings.freshness_annotation_mode == "off"
-    assert settings.snapshot()["freshness_annotation_mode"] == "off"
+    assert settings.snapshot()["echo_suppression_mode"] == "enforce"
+    assert settings.freshness_annotation_mode == "render"
+    assert settings.snapshot()["freshness_annotation_mode"] == "render"
+
+
+def test_settings_without_config_enable_injection_governance_by_default() -> None:
+    settings = Settings()
+
+    assert settings.echo_suppression_mode == "enforce"
+    assert settings.freshness_annotation_mode == "render"
 
 
 def test_settings_contract_includes_bypass_and_recall_fields() -> None:

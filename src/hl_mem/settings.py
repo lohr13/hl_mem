@@ -171,7 +171,7 @@ class Settings:
         metadata={"toml": "recall.dedup_candidate_limit"},
     )
     echo_suppression_mode: EchoSuppressionMode = field(
-        default="off",
+        default="enforce",
         metadata={"toml": "recall.echo_suppression_mode"},
     )
     echo_session_window_seconds: int = field(
@@ -191,7 +191,7 @@ class Settings:
         metadata={"toml": "recall.echo_pending_max_seconds"},
     )
     freshness_annotation_mode: FreshnessAnnotationMode = field(
-        default="off",
+        default="render",
         metadata={"toml": "recall.freshness_annotation_mode"},
     )
     resurrection_mode: ResurrectionMode = field(

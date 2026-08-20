@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.29.1
-- Updated: 2026-08-18
+- Document baseline: v0.29.2
+- Updated: 2026-08-20
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -258,8 +258,8 @@ existing terminal-transition paths close connected edges when a Claim becomes re
 relation-expansion hop checks the edge interval and both endpoint Claims for namespace, status, valid-time, and recorded-time
 visibility. Relation edges therefore cannot keep an otherwise invisible terminal Claim reachable.
 
-For `context_packet` / `both` responses and Hermes delivery, Context Packet assembly is the last recall stage. Passive
-injection governance runs echo filtering before reranking and risk-gated freshness decoration after reranking but before
+For `context_packet` / `both` responses and Hermes delivery, Context Packet assembly is the last recall stage. Passive injection
+governance defaults to echo `enforce` and freshness `render`; it runs echo filtering before reranking and risk-gated freshness decoration after reranking but before
 the selected delivery path's token budget is applied. Any intent-specific quota selection therefore measures decorated
 text. The legacy response can materialize exposures from its returned item set without invoking packet-only packing.
 Only the materialized items receive feedback exposure rows. Hermes may cache the receipt-free retrieval bundle, but it
