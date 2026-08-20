@@ -74,6 +74,16 @@ def test_combined_replay_runs_policy_then_fixed_reranker_then_freshness_then_pac
     assert report["slice_equivalence"]["historical_and_active"] is True
     assert report["slice_equivalence"]["proper_noun_hard_negative"] is True
     assert all(len(arm["decisions"]) <= 1000 for arm in report["arms"].values())
+    decisions = [decision for arm in report["arms"].values() for decision in arm["decisions"]]
+    assert len(decisions) == 800
+    assert all(
+        [item["id"] for item in decision["context_packet"]["items"]] == decision["final_ids"] for decision in decisions
+    )
+    assert all(json.loads(decision["context_packet_text"]) == decision["context_packet"] for decision in decisions)
+    assert all(
+        [item["text"] for item in decision["context_packet"]["items"]] == decision["final_context_texts"]
+        for decision in decisions
+    )
 
 
 def test_replay_cli_writes_report_and_optional_expanded_fixture(tmp_path: Path) -> None:
