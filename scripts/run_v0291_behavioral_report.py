@@ -46,15 +46,22 @@ def _display(value: Any) -> str:
     return str(value).lower() if isinstance(value, bool) else str(value)
 
 
+def _display_cny(value: Any) -> str:
+    if value is None:
+        return "—"
+    return f"{float(value):.6f}".rstrip("0").rstrip(".")
+
+
 def _markdown(
     report: Mapping[str, Any],
     *,
     manifest: Mapping[str, Any] | None,
     sentinel: Mapping[str, Any] | None,
+    budget: Mapping[str, Any] | None,
     artifact_hashes: Mapping[str, str | None],
 ) -> str:
     conclusion = report["conclusion"]
-    usage = sentinel.get("usage", {}) if sentinel else {}
+    usage = budget or {}
     sentinel_ok = bool(
         sentinel
         and sentinel.get("passed") is True
@@ -96,11 +103,11 @@ def _markdown(
         "## 付费与冻结身份",
         "",
         f"- 固定模型：`{_display(manifest.get('model_snapshot') if manifest else None)}`",
-        f"- 冻结代码 commit：`{_display(manifest.get('code_commit') if manifest else None)}`",
+        f"- 评测启动时 HEAD：`{_display(manifest.get('code_commit') if manifest else None)}`",
         f"- sentinel 最坏预留：¥{_display(sentinel.get('worst_case_reserved_cny') if sentinel else None)}",
-        f"- provider usage：input={_display(usage.get('input_tokens'))}, output={_display(usage.get('output_tokens'))}",
-        f"- 本次估算实付：¥{_display(sentinel.get('estimated_cost_cny_at_list_price') if sentinel else None)}",
-        "- 预算硬上限：¥15；本次没有启动全量付费阶段。",
+        f"- 最后一次增量 provider usage：input={_display(usage.get('actual_input_tokens'))}, output={_display(usage.get('actual_output_tokens'))}",
+        f"- 最后一次增量估算实付：¥{_display_cny(usage.get('spent_cny'))}",
+        f"- 预算硬上限：¥{_display_cny(usage.get('hard_budget_cny'))}；reserved={_display_cny(usage.get('reserved_cny'))}, outstanding={_display(usage.get('outstanding_reservations'))}",
         "",
         "冻结 manifest 还记录了 behavioral/structural/sentinel fixture、agent system prompt、tool contract、judge prompt",
         "与 strict JSON Schema 的 SHA-256。行为输入按完整盲输入 SHA-256 精确去重，80 点 × 4 臂共 320 个 assignment",
@@ -142,7 +149,7 @@ def _markdown(
             "& '.\\.venv\\Scripts\\python.exe' -m scripts.run_v0291_behavioral_eval --phase all",
             "```",
             "",
-            "该入口会重新执行结构层和 9 条 sentinel；只有 sentinel 9/9 全对才会进入全量行为阶段。全量完成后还需",
+            "该入口会重新执行结构层；已有通过的 9/9 sentinel 会被复用，缺失或失效时才重跑 sentinel。只有 sentinel 9/9 全对才会进入全量行为阶段。全量完成后还需",
             "填写 `blind_review_result.json`（stale/stable/boundary 各 3 条人工盲核）并重新生成此报告。即使离线行为",
             "通过，没有五项真实运行证据时 `canary_ready` 仍保持 `false`。",
             "",
@@ -169,6 +176,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "structural_replay.json": output_dir / "structural_replay.json",
         "sentinel_smoke.json": output_dir / "sentinel_smoke.json",
         "behavioral_aggregate.json": output_dir / "behavioral_aggregate.json",
+        "budget_summary.json": output_dir / "budget_summary.json",
         "blind_review_result.json": output_dir / "blind_review_result.json",
         "runtime_evidence.json": output_dir / "runtime_evidence.json",
         "run_manifest.json": output_dir / "run_manifest.json",
@@ -177,6 +185,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     structural = _read_optional(paths["structural_replay.json"])
     sentinel = _read_optional(paths["sentinel_smoke.json"])
     aggregate = _read_optional(paths["behavioral_aggregate.json"])
+    budget = _read_optional(paths["budget_summary.json"])
     blind_review = _read_optional(paths["blind_review_result.json"])
     runtime = _read_optional(paths["runtime_evidence.json"])
     manifest = _read_optional(paths["run_manifest.json"])
@@ -192,7 +201,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     _write_json(output_dir / "conclusion.json", report)
     args.markdown_output.parent.mkdir(parents=True, exist_ok=True)
     args.markdown_output.write_text(
-        _markdown(report, manifest=manifest, sentinel=sentinel, artifact_hashes=artifact_hashes),
+        _markdown(
+            report,
+            manifest=manifest,
+            sentinel=sentinel,
+            budget=budget,
+            artifact_hashes=artifact_hashes,
+        ),
         encoding="utf-8",
     )
     print(json.dumps(report["conclusion"], sort_keys=True))

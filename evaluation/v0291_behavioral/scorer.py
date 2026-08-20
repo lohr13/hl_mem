@@ -152,6 +152,7 @@ _SENTINEL_ENUM_FIELDS = (
     "confidence",
     "review_reason",
 )
+_EVIDENCE_SOURCES = frozenset({"assistant_answer", "tool_plan", "tool_call", "final_answer"})
 
 
 class JudgmentInvalid(ValueError):
@@ -165,6 +166,64 @@ def _canonical_json(payload: object) -> str:
 def _sha256(payload: object) -> str:
     value = payload if isinstance(payload, str) else _canonical_json(payload)
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _valid_quote_examples_by_source(
+    trace: Sequence[Mapping[str, Any]],
+) -> dict[str, list[str]]:
+    """Build bounded exact trace substrings for validation-guided scorer retries."""
+
+    examples: dict[str, list[str]] = {}
+
+    def add_fragment(target: list[str], rendered: str, fragment: str) -> None:
+        candidate = fragment.strip()
+        if 1 <= len(candidate) <= 160 and candidate in rendered and candidate not in target:
+            target.append(candidate)
+
+    def add_windows(target: list[str], rendered: str, value: str) -> None:
+        add_fragment(target, rendered, value)
+        if len(value) <= 120:
+            return
+        for start in range(0, len(value), 80):
+            add_fragment(target, rendered, value[start : start + 120])
+
+    def add_structured_fragments(target: list[str], rendered: str, value: object) -> None:
+        if isinstance(value, Mapping):
+            for child in value.values():
+                add_structured_fragments(target, rendered, child)
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            for child in value:
+                add_structured_fragments(target, rendered, child)
+        elif isinstance(value, str):
+            add_windows(target, rendered, value)
+
+    for event in trace:
+        source = str(event.get("source", ""))
+        if source not in _EVIDENCE_SOURCES:
+            continue
+        content = event.get("content")
+        rendered = content if isinstance(content, str) else _canonical_json(content)
+        target = examples.setdefault(source, [])
+        if isinstance(content, str):
+            add_windows(target, rendered, content)
+        else:
+            add_structured_fragments(target, rendered, content)
+        if len(target) > 24:
+            del target[24:]
+    return examples
+
+
+def _build_judge_retry_schema(
+    judge_schema: Mapping[str, Any],
+    quote_examples: Mapping[str, Sequence[str]],
+) -> dict[str, Any]:
+    """Constrain retry quotes to exact trace substrings without changing judgment enums."""
+
+    schema = copy.deepcopy(dict(judge_schema))
+    quotes = list(dict.fromkeys(quote for values in quote_examples.values() for quote in values))
+    if quotes:
+        schema["properties"]["evidence"]["items"]["properties"]["quote"]["enum"] = quotes
+    return schema
 
 
 def build_judge_schema(
@@ -445,13 +504,15 @@ class BehavioralScorer:
         output_tokens = 0
         request_id: str | None = None
         last_error: Exception | None = None
+        request_payload: Mapping[str, Any] = judge_input
+        request_schema: Mapping[str, Any] = judge_schema
         for attempt in range(1, self.max_attempts + 1):
             try:
                 response = await self.transport.complete(
                     system_prompt=JUDGE_SYSTEM_PROMPT,
-                    user_payload=judge_input,
+                    user_payload=request_payload,
                     schema_name="hl_mem_staleness_judge_v1",
-                    response_schema=judge_schema,
+                    response_schema=request_schema,
                     max_output_tokens=600,
                 )
                 request_id = response.request_id
@@ -470,6 +531,19 @@ class BehavioralScorer:
                     output=response.output,
                     error=None,
                 )
+            except JudgmentInvalid as error:
+                last_error = error
+                quote_examples = _valid_quote_examples_by_source(trace)
+                request_payload = {
+                    **judge_input,
+                    "validation_feedback": {
+                        "instruction": "Correct the previous output and satisfy the same strict schema.",
+                        "error": str(error),
+                        "previous_output": copy.deepcopy(response.output),
+                        "valid_quote_examples_by_source": quote_examples,
+                    },
+                }
+                request_schema = _build_judge_retry_schema(judge_schema, quote_examples)
             except Exception as error:
                 last_error = error
         assert last_error is not None

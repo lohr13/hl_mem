@@ -58,7 +58,13 @@ async def _run_paid(
     )
     transport = BudgetedTransport(base_transport, ledger)
     try:
-        if phase in {"sentinel", "all"}:
+        run_sentinel = phase == "sentinel"
+        if phase == "all":
+            try:
+                require_sentinel_gate(sentinel_artifact_path)
+            except (OSError, json.JSONDecodeError, GateBlocked):
+                run_sentinel = True
+        if run_sentinel:
             sentinel = await run_sentinel_phase(
                 transport,
                 sentinel_fixture_path,

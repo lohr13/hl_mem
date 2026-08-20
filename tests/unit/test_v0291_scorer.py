@@ -171,6 +171,25 @@ async def test_scorer_retries_invalid_and_persists_actual_usage_once_valid() -> 
     assert len(record["input_sha256"]) == 64
     assert len(record["prompt_sha256"]) == 64
     assert len(record["schema_sha256"]) == 64
+    assert "validation_feedback" not in transport.calls[0]["user_payload"]
+    feedback = transport.calls[1]["user_payload"]["validation_feedback"]
+    assert feedback["previous_output"] == invalid
+    assert "evidence quote not found" in feedback["error"]
+    assert feedback["instruction"] == "Correct the previous output and satisfy the same strict schema."
+    quote_examples = feedback["valid_quote_examples_by_source"]
+    assert set(quote_examples) == {
+        event["source"]
+        for event in sentinel["trace"]
+        if event["source"] in {"assistant_answer", "tool_plan", "tool_call", "final_answer"}
+    }
+    assert any("8080" in quote for quote in quote_examples["assistant_answer"])
+    assert all(1 <= len(quote) <= 160 for quotes in quote_examples.values() for quote in quotes)
+    retry_quote_schema = transport.calls[1]["response_schema"]["properties"]["evidence"]["items"][
+        "properties"
+    ]["quote"]
+    assert set(retry_quote_schema["enum"]) == {
+        quote for quotes in quote_examples.values() for quote in quotes
+    }
 
 
 @pytest.mark.asyncio

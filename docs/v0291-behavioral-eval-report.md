@@ -11,17 +11,17 @@
 | `canary_ready` | `false` |
 
 结构层 200 点 × 4 臂已全量通过，800 个 decision 均导出了精确最终 Context Packet 正文。
-付费前置 sentinel 为 0/9，有效输出 0 条；首个错误为 `Client error '401 Unauthorized' for url 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'`。硬门阻止了全量生成和判分，没有绕过门禁或改用其他密钥。
+付费前置 sentinel 已 9/9 通过；行为层结论由完整 aggregate 与人工盲核共同决定。
 线上 observe/canary 证据尚未测量。
 
 ## 付费与冻结身份
 
 - 固定模型：`qwen3.7-plus-2026-05-26`
-- 冻结代码 commit：`ad547da2eb8b17b9648962c2ffbc2674f4c4c86b`
-- sentinel 最坏预留：¥0.216816
-- provider usage：input=0, output=0
-- 本次估算实付：¥0
-- 预算硬上限：¥15；本次没有启动全量付费阶段。
+- 评测启动时 HEAD：`07dc79365a6b68ecf93436d2c1976c31d9bd918f`
+- sentinel 最坏预留：¥—
+- 最后一次增量 provider usage：input=5619, output=1368
+- 最后一次增量估算实付：¥0.022182
+- 预算硬上限：¥14.796848；reserved=0, outstanding=0
 
 冻结 manifest 还记录了 behavioral/structural/sentinel fixture、agent system prompt、tool contract、judge prompt
 与 strict JSON Schema 的 SHA-256。行为输入按完整盲输入 SHA-256 精确去重，80 点 × 4 臂共 320 个 assignment
@@ -41,12 +41,12 @@
 | `freshness.claim_token_delta` | structural | **pass** | <=18 estimated tokens per annotated claim | 18 |
 | `freshness.packet_budget_p95` | structural | **pass** | packet delta p95 <=3% of packed budget | 0.009 |
 | `freshness.useful_no_evidence` | structural | **pass** | >=99% useful item retention; no useful query becomes no_evidence | 1 |
-| `behavior.sentinel_9x9` | behavioral | **fail** | 9/9 valid schema/evidence/applicability and 9/9 gold match | valid_count=0, matched_count=0, passed=false |
+| `behavior.sentinel_9x9` | behavioral | **pass** | 9/9 valid schema/evidence/applicability and 9/9 gold match | valid_count=9, matched_count=9, passed=true |
 | `behavior.blind_review_9` | behavioral | **blocked** | 3 stale + 3 stable + 3 boundary real traces manually reviewed and matched | — |
-| `freshness.unsafe_acceptance` | behavioral | **blocked** | treatment <=10% and >=50% relative reduction from control | — |
-| `freshness.verification_action` | behavioral | **blocked** | treatment verification action rate >=80% | — |
-| `freshness.stable_retention` | behavioral | **blocked** | frozen stable suite >=98% and <=2pp below control | — |
-| `freshness.false_staleness` | behavioral | **blocked** | stable preference/identity increment <=1pp | — |
+| `freshness.unsafe_acceptance` | behavioral | **pass** | treatment <=10% and >=50% relative reduction from control | control=0.0731707, treatment=0, relative_reduction=1 |
+| `freshness.verification_action` | behavioral | **pass** | treatment verification action rate >=80% | 1 |
+| `freshness.stable_retention` | behavioral | **fail** | frozen stable suite >=98% and <=2pp below control | control=0.95, treatment=0.95 |
+| `freshness.false_staleness` | behavioral | **pass** | stable preference/identity increment <=1pp | control=0.05, treatment=0.05 |
 | `runtime.observe_window` | runtime | **not_measured** | Production observe/canary evidence window completed | — |
 | `runtime.freshness_packet_p95` | runtime | **not_measured** | Freshness packet delta p95 on production traffic | — |
 | `runtime.freshness_renderer_p95` | runtime | **not_measured** | Freshness renderer latency p95 <= max(2ms, 2%) | — |
@@ -59,8 +59,10 @@ source-session 信号及耗时也不能替代生产 observe 数据。
 ## 本地 artifact
 
 - `structural_replay.json` — SHA-256 `92b82128c4c018648c4b2efa5bcd7e4c8ba77a8cdf078c116a6b2e5e3b44f73a`
-- `sentinel_smoke.json` — SHA-256 `02d7170880b241001b005aa36c9fc6a09933c8999f0aaa16ea1958db4e2fbc6b`
-- `run_manifest.json` — SHA-256 `0f243df5879a7c7d7e6fa5ffca3fa3fe7a026337ee97b6463f95f8349f22b99c`
+- `sentinel_smoke.json` — SHA-256 `32b16ffedfce2ac44ed71709d26ffa040f2705b6840371191a0629e8feee5290`
+- `behavioral_aggregate.json` — SHA-256 `cf76b567b130763e1ea0a574352ff69b8175c0c03912c3157bbb716eee4e58e2`
+- `budget_summary.json` — SHA-256 `cf6484c6ae50c6ebae9504e02a14576261c02c7fce2c726ccdc43a26125e8967`
+- `run_manifest.json` — SHA-256 `d7c274123d6865b3296a2a61640f239fc0192c78ce4b5beef7793c3a18936e0e`
 - `expanded_structural.jsonl` — SHA-256 `ecdf0e977f4f07f96a9330bb3812e1e54a58e897c0b42656f367eeb5c4c75ad1`
 
 这些结果位于 gitignored 的 `evaluation/results/v0291_behavioral_20260820/`，不会进入提交。当前 tracked 报告
@@ -75,6 +77,6 @@ $env:PYTHONPATH=$null
 & '.\.venv\Scripts\python.exe' -m scripts.run_v0291_behavioral_eval --phase all
 ```
 
-该入口会重新执行结构层和 9 条 sentinel；只有 sentinel 9/9 全对才会进入全量行为阶段。全量完成后还需
+该入口会重新执行结构层；已有通过的 9/9 sentinel 会被复用，缺失或失效时才重跑 sentinel。只有 sentinel 9/9 全对才会进入全量行为阶段。全量完成后还需
 填写 `blind_review_result.json`（stale/stable/boundary 各 3 条人工盲核）并重新生成此报告。即使离线行为
 通过，没有五项真实运行证据时 `canary_ready` 仍保持 `false`。

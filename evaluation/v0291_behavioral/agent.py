@@ -5,7 +5,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -34,12 +35,12 @@ AGENT_PLAN_SCHEMA: dict[str, Any] = {
         "final_answer",
     ],
     "properties": {
-        "schema_version": {"type": "string", "enum": ["hl-mem-agent-plan-v1"]},
+        "schema_version": {"type": "string", "enum": ["hl-mem-agent-plan-v2"]},
         "sample_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
         "assistant_answer": {"type": "string", "minLength": 1, "maxLength": 1200},
         "tool_plan": {
             "type": "array",
-            "maxItems": 4,
+            "maxItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -53,14 +54,18 @@ AGENT_PLAN_SCHEMA: dict[str, Any] = {
         },
         "tool_calls": {
             "type": "array",
-            "maxItems": 4,
+            "maxItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["tool_name", "arguments_json"],
+                "required": ["tool_name", "arguments"],
                 "properties": {
                     "tool_name": {"type": "string", "minLength": 1, "maxLength": 80},
-                    "arguments_json": {"type": "string", "minLength": 2, "maxLength": 500},
+                    "arguments": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "maxProperties": 0,
+                    },
                 },
             },
         },
@@ -127,6 +132,71 @@ def input_sha256(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
+def build_agent_plan_schema(available_tools: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Bind the strict plan schema to the one read-only tool executable for an input."""
+
+    if len(available_tools) > 1:
+        raise ValueError("frozen agent input supports at most one available tool")
+    schema = copy.deepcopy(AGENT_PLAN_SCHEMA)
+    tool_plan = schema["properties"]["tool_plan"]
+    tool_calls = schema["properties"]["tool_calls"]
+    if not available_tools:
+        tool_plan["maxItems"] = 0
+        tool_calls["maxItems"] = 0
+        return schema
+
+    tool = available_tools[0]
+    tool_name = tool.get("name")
+    parameters = tool.get("parameters")
+    if not isinstance(tool_name, str) or not tool_name or not isinstance(parameters, Mapping):
+        raise ValueError("available tool must contain a name and parameter schema")
+    tool_plan["items"]["properties"]["tool_name"] = {"type": "string", "enum": [tool_name]}
+    tool_calls["items"]["properties"] = {
+        "tool_name": {"type": "string", "enum": [tool_name]},
+        "arguments": copy.deepcopy(dict(parameters)),
+    }
+    return schema
+
+
+def _bound_available_tools(
+    manifest: Mapping[str, Any],
+    sample: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Expose the exact read-only invocations backed by this sample's fixtures."""
+
+    allowed = set(sample["allowed_verification_actions"])
+    fixtures = sample["deterministic_tool_results"]
+    available_tools = [
+        copy.deepcopy(tool) for tool in manifest["tool_contract"]["tools"] if tool.get("name") in allowed
+    ]
+    if len(available_tools) != len(allowed) or len(available_tools) > 1:
+        raise ValueError("each frozen agent input must expose zero or one declared tool")
+    for tool in available_tools:
+        tool_name = str(tool["name"])
+        fixture = fixtures.get(tool_name)
+        if not isinstance(fixture, Mapping) or not isinstance(fixture.get("arguments"), Mapping):
+            raise ValueError(f"available tool is missing deterministic arguments: {tool_name}")
+        parameters = tool.get("parameters")
+        if not isinstance(parameters, dict):
+            raise ValueError(f"available tool has invalid parameters: {tool_name}")
+        properties = parameters.get("properties")
+        required = parameters.get("required")
+        arguments = fixture["arguments"]
+        if (
+            not isinstance(properties, dict)
+            or not isinstance(required, list)
+            or set(arguments) != set(required)
+            or not set(arguments) <= set(properties)
+        ):
+            raise ValueError(f"fixture arguments do not match tool schema: {tool_name}")
+        for key, value in arguments.items():
+            property_schema = properties[key]
+            if not isinstance(property_schema, dict):
+                raise ValueError(f"tool argument schema must be an object: {tool_name}.{key}")
+            property_schema["const"] = copy.deepcopy(value)
+    return available_tools
+
+
 def build_blind_agent_input(
     manifest: Mapping[str, Any],
     sample: Mapping[str, Any],
@@ -134,10 +204,8 @@ def build_blind_agent_input(
 ) -> dict[str, Any]:
     """Build a model-visible input with no arm, cohort, truth, or gold fields."""
 
-    allowed = set(sample["allowed_verification_actions"])
-    available_tools = [
-        copy.deepcopy(tool) for tool in manifest["tool_contract"]["tools"] if tool.get("name") in allowed
-    ]
+    available_tools = _bound_available_tools(manifest, sample)
+    plan_schema = build_agent_plan_schema(available_tools)
     fixture_digest = hashlib.sha256(_canonical_json(sample["deterministic_tool_results"]).encode("utf-8")).hexdigest()
     prompt_digest = hashlib.sha256(
         _canonical_json(
@@ -156,6 +224,14 @@ def build_blind_agent_input(
             "available_tools": available_tools,
         },
         "model_snapshot": manifest["model_snapshot"],
+        "response_schema_sha256": hashlib.sha256(
+            _canonical_json(
+                {
+                    "agent_plan": plan_schema,
+                    "agent_final": AGENT_FINAL_SCHEMA,
+                }
+            ).encode("utf-8")
+        ).hexdigest(),
         "system_prompt_sha256": prompt_digest,
         "tool_fixture_sha256": fixture_digest,
     }
@@ -174,14 +250,15 @@ class AgentTraceGenerator:
     ) -> AgentTraceResult:
         sample_id = str(sample["opaque_sample_id"])
         model_input = blind_input["model_input"]
+        plan_schema = build_agent_plan_schema(model_input["available_tools"])
         first = await self.transport.complete(
             system_prompt=AGENT_SYSTEM_PROMPT,
             user_payload=model_input,
-            schema_name="hl_mem_agent_plan_v1",
-            response_schema=AGENT_PLAN_SCHEMA,
+            schema_name="hl_mem_agent_plan_v2",
+            response_schema=plan_schema,
             max_output_tokens=800,
         )
-        self._validate_output(first.output, AGENT_PLAN_SCHEMA, sample_id, "agent plan")
+        self._validate_output(first.output, plan_schema, sample_id, "agent plan")
         trace: list[dict[str, Any]] = [
             {"source": "assistant_answer", "content": first.output["assistant_answer"]},
             {"source": "tool_plan", "content": copy.deepcopy(first.output["tool_plan"])},
@@ -235,12 +312,22 @@ class AgentTraceGenerator:
             tool_name = str(raw_call["tool_name"])
             if tool_name not in allowed or tool_name not in fixtures:
                 raise AgentTraceInvalid(f"tool is not allowed by fixture: {tool_name}")
-            try:
-                arguments = json.loads(raw_call["arguments_json"])
-            except (TypeError, json.JSONDecodeError) as error:
-                raise AgentTraceInvalid(f"tool arguments are not valid JSON: {tool_name}") from error
+            raw_arguments = raw_call.get("arguments", raw_call.get("arguments_json"))
+            if isinstance(raw_arguments, Mapping):
+                arguments = copy.deepcopy(dict(raw_arguments))
+            elif isinstance(raw_arguments, str):
+                try:
+                    arguments = json.loads(raw_arguments)
+                except json.JSONDecodeError as error:
+                    raise AgentTraceInvalid(f"tool arguments are not valid JSON: {tool_name}") from error
+            else:
+                raise AgentTraceInvalid(f"tool arguments are not a JSON object: {tool_name}")
             fixture = fixtures[tool_name]
-            if not isinstance(arguments, dict) or arguments != fixture["arguments"]:
+            if not isinstance(arguments, dict) or not AgentTraceGenerator._arguments_match_fixture(
+                tool_name,
+                arguments,
+                fixture["arguments"],
+            ):
                 raise AgentTraceInvalid(f"tool arguments do not match fixture: {tool_name}")
             call_event = {"tool_name": tool_name, "arguments": copy.deepcopy(arguments)}
             result = copy.deepcopy(fixture["result"])
@@ -248,6 +335,25 @@ class AgentTraceGenerator:
             trace.append({"source": "tool_result", "content": result})
             results.append({"tool_name": tool_name, "arguments": copy.deepcopy(arguments), "result": result})
         return results
+
+    @staticmethod
+    def _arguments_match_fixture(
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        expected: Mapping[str, Any],
+    ) -> bool:
+        if arguments == expected:
+            return True
+        if tool_name != "inspect_python_install" or set(arguments) != {"package"} or set(expected) != {"package"}:
+            return False
+        actual_package = arguments["package"]
+        expected_package = expected["package"]
+        if not isinstance(actual_package, str) or not isinstance(expected_package, str):
+            return False
+        def normalize(value: str) -> str:
+            return re.sub(r"[-_.]+", "-", value).lower()
+
+        return normalize(actual_package) == normalize(expected_package)
 
     @staticmethod
     def _call_record(phase: str, result: ModelCallResult) -> dict[str, Any]:

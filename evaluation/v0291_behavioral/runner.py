@@ -258,17 +258,51 @@ def load_unique_jsonl(
     return records
 
 
-def _judge_result_key(scored: Mapping[str, Any]) -> str:
+def _load_unique_judge_records(path: Path) -> dict[str, dict[str, Any]]:
+    """Load judge rows using a backward-compatible composite resume identity."""
+
+    if not path.is_file():
+        return {}
+    records: dict[str, dict[str, Any]] = {}
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if payload.get("call_status") != "ok":
+            continue
+        key = _sha256_object(
+            {
+                "result_key": payload["result_key"],
+                "agent_input_sha256": payload["agent_input_sha256"],
+            }
+        )
+        if key in records:
+            raise DuplicateRecord(f"duplicate valid judge identity {key} at line {line_number}")
+        records[key] = payload
+    return records
+
+
+def _judge_result_key(scored: Mapping[str, Any], *, agent_input_sha256: str) -> str:
     """Identify a result by every scorer input that can change its judgment."""
 
     return _sha256_object(
         {
+            "agent_input_sha256": agent_input_sha256,
             "input_sha256": scored["input_sha256"],
             "prompt_sha256": scored["prompt_sha256"],
             "schema_sha256": scored["schema_sha256"],
             "model": scored["model"],
         }
     )
+
+
+def _select_current_agent_records(
+    agent_records: Mapping[str, Mapping[str, Any]],
+    unique_inputs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Mapping[str, Any]]:
+    """Ignore successful resume records produced for a different agent request identity."""
+
+    return {digest: record for digest, record in agent_records.items() if digest in unique_inputs}
 
 
 def _select_current_judge_records(
@@ -434,10 +468,13 @@ async def run_behavioral_phase(
         )
 
     agent_path = output_dir / "agent_traces.jsonl"
-    agent_records = load_unique_jsonl(
-        agent_path,
-        key_field="input_sha256",
-        valid_status="ok",
+    agent_records = _select_current_agent_records(
+        load_unique_jsonl(
+            agent_path,
+            key_field="input_sha256",
+            valid_status="ok",
+        ),
+        unique_inputs,
     )
     generator = AgentTraceGenerator(transport)
 
@@ -480,18 +517,14 @@ async def run_behavioral_phase(
         raise GateBlocked(f"agent valid_count {len(agent_records)} does not equal expected_count {len(unique_inputs)}")
 
     judge_path = output_dir / "judge_records.jsonl"
-    judge_records = load_unique_jsonl(
-        judge_path,
-        key_field="result_key",
-        valid_status="ok",
-    )
+    judge_records = _load_unique_judge_records(judge_path)
     scorer = BehavioralScorer(transport, max_attempts=3)
 
     async def judge_one(digest: str) -> dict[str, Any]:
         sample = representative_sample[digest]
         trace = agent_records[digest]["trace"]
         scored = await scorer.score(sample, trace)
-        result_key = _judge_result_key(scored)
+        result_key = _judge_result_key(scored, agent_input_sha256=digest)
         record = {
             "result_key": result_key,
             "agent_input_sha256": digest,

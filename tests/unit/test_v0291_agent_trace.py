@@ -59,10 +59,12 @@ def test_blind_agent_input_omits_arm_cohort_gold_and_current_truth() -> None:
     assert set(blind) == {
         "model_input",
         "model_snapshot",
+        "response_schema_sha256",
         "system_prompt_sha256",
         "tool_fixture_sha256",
     }
     assert blind["model_snapshot"] == "qwen3.7-plus-2026-05-26"
+    assert len(blind["response_schema_sha256"]) == 64
     assert len(blind["system_prompt_sha256"]) == 64
     assert sample["current_truth"] not in serialized
     assert sample["cohort"] not in serialized
@@ -70,6 +72,8 @@ def test_blind_agent_input_omits_arm_cohort_gold_and_current_truth() -> None:
     assert "gold_source" not in serialized
     assert "expected_applicability" not in serialized
     assert blind["model_input"]["context_packet_text"] == assignment["context_packet_text"]
+    package_schema = blind["model_input"]["available_tools"][0]["parameters"]["properties"]["package"]
+    assert package_schema["const"] == "hl-mem"
 
 
 def test_exact_input_hash_changes_for_each_behaviorally_relevant_input() -> None:
@@ -81,6 +85,7 @@ def test_exact_input_hash_changes_for_each_behaviorally_relevant_input() -> None
         (("model_input", "context_packet_text"), "{}"),
         (("model_input", "available_tools"), []),
         (("model_snapshot",), "different-snapshot"),
+        (("response_schema_sha256",), "a" * 64),
         (("system_prompt_sha256",), "f" * 64),
         (("tool_fixture_sha256",), "0" * 64),
     ):
@@ -91,7 +96,7 @@ def test_exact_input_hash_changes_for_each_behaviorally_relevant_input() -> None
         target[path[-1]] = replacement
         mutations.append(mutated)
 
-    assert len({input_sha256(original), *(input_sha256(item) for item in mutations)}) == 7
+    assert len({input_sha256(original), *(input_sha256(item) for item in mutations)}) == 8
 
 
 @pytest.mark.asyncio
@@ -100,7 +105,7 @@ async def test_agent_executes_fixture_tool_and_records_complete_ordered_trace() 
     transport = FakeTransport(
         [
             {
-                "schema_version": "hl-mem-agent-plan-v1",
+                "schema_version": "hl-mem-agent-plan-v2",
                 "sample_id": sample["opaque_sample_id"],
                 "assistant_answer": "先确认实际安装来源。",
                 "tool_plan": [
@@ -113,7 +118,7 @@ async def test_agent_executes_fixture_tool_and_records_complete_ordered_trace() 
                 "tool_calls": [
                     {
                         "tool_name": "inspect_python_install",
-                        "arguments_json": '{"package":"hl-mem"}',
+                        "arguments": {"package": "hl-mem"},
                     }
                 ],
                 "final_answer": "等待检查结果后再决定。",
@@ -141,6 +146,11 @@ async def test_agent_executes_fixture_tool_and_records_complete_ordered_trace() 
     assert len(result.call_records) == 2
     assert result.call_records[0]["usage"] == {"input_tokens": 100, "output_tokens": 20}
     assert transport.calls[1]["user_payload"]["tool_results"][0]["result"]["install_source"] == "pypi"
+    plan_schema = transport.calls[0]["response_schema"]
+    call_properties = plan_schema["properties"]["tool_calls"]["items"]["properties"]
+    assert "arguments_json" not in call_properties
+    assert call_properties["arguments"]["properties"]["package"]["const"] == "hl-mem"
+    assert plan_schema["properties"]["tool_calls"]["maxItems"] == 1
 
 
 @pytest.mark.asyncio
@@ -149,7 +159,7 @@ async def test_agent_without_tool_call_finishes_in_one_model_turn() -> None:
     transport = FakeTransport(
         [
             {
-                "schema_version": "hl-mem-agent-plan-v1",
+                "schema_version": "hl-mem-agent-plan-v2",
                 "sample_id": sample["opaque_sample_id"],
                 "assistant_answer": "会采用已保存的语言偏好。",
                 "tool_plan": [],
@@ -169,30 +179,86 @@ async def test_agent_without_tool_call_finishes_in_one_model_turn() -> None:
         "final_answer",
     ]
     assert len(result.call_records) == 1
+    assert transport.calls[0]["response_schema"]["properties"]["tool_calls"]["maxItems"] == 0
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "tool_name,arguments_json",
+    "tool_name,arguments",
     [
-        ("write_runtime_config", '{"setting":"api.port","value":9000}'),
-        ("inspect_python_install", '{"package":"another-package"}'),
+        ("write_runtime_config", {"setting": "api.port", "value": 9000}),
+        ("inspect_python_install", {"package": "another-package"}),
     ],
 )
-async def test_agent_fails_closed_for_unknown_tool_or_nonfixture_arguments(tool_name: str, arguments_json: str) -> None:
+async def test_agent_fails_closed_for_unknown_tool_or_nonfixture_arguments(
+    tool_name: str, arguments: dict[str, object]
+) -> None:
     manifest, sample, assignment = _fixture()
     transport = FakeTransport(
         [
             {
-                "schema_version": "hl-mem-agent-plan-v1",
+                "schema_version": "hl-mem-agent-plan-v2",
                 "sample_id": sample["opaque_sample_id"],
                 "assistant_answer": "检查。",
                 "tool_plan": [],
-                "tool_calls": [{"tool_name": tool_name, "arguments_json": arguments_json}],
+                "tool_calls": [{"tool_name": tool_name, "arguments": arguments}],
                 "final_answer": "继续。",
             }
         ]
     )
 
-    with pytest.raises(AgentTraceInvalid, match="tool"):
+    with pytest.raises(AgentTraceInvalid, match="schema invalid|tool"):
         await AgentTraceGenerator(transport).generate(build_blind_agent_input(manifest, sample, assignment), sample)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"package": "hl-mem"},
+        '{"package":"hl-mem"}',
+        {"package": "HL.Mem"},
+    ],
+)
+def test_tool_executor_accepts_mapping_strict_json_and_normalized_distribution_name(arguments: object) -> None:
+    _, sample, _ = _fixture()
+    trace: list[dict[str, object]] = []
+
+    results = AgentTraceGenerator._execute_tools(
+        [{"tool_name": "inspect_python_install", "arguments": arguments}],
+        sample,
+        trace,
+    )
+
+    assert results[0]["result"]["install_source"] == "pypi"
+    assert trace[0]["content"]["arguments"] == (
+        {"package": "hl-mem"} if isinstance(arguments, str) else arguments
+    )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        "{'package':'hl-mem'}",
+        '{"package":"hl-mem",}',
+    ],
+)
+def test_tool_executor_rejects_json5_style_arguments(arguments: str) -> None:
+    _, sample, _ = _fixture()
+
+    with pytest.raises(AgentTraceInvalid, match="not valid JSON"):
+        AgentTraceGenerator._execute_tools(
+            [{"tool_name": "inspect_python_install", "arguments": arguments}],
+            sample,
+            [],
+        )
+
+
+def test_tool_executor_rejects_materially_different_fixture_target() -> None:
+    _, sample, _ = _fixture()
+
+    with pytest.raises(AgentTraceInvalid, match="do not match fixture"):
+        AgentTraceGenerator._execute_tools(
+            [{"tool_name": "inspect_python_install", "arguments": {"package": "another-package"}}],
+            sample,
+            [],
+        )

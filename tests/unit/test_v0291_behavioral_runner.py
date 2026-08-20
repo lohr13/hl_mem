@@ -30,6 +30,7 @@ from evaluation.v0291_behavioral.runner import (
     run_structural_phase,
 )
 from evaluation.v0291_behavioral.scorer import BehavioralScorer, load_sentinels
+from scripts import run_v0291_behavioral_eval as behavioral_eval_script
 from scripts.run_v0291_behavioral_eval import main
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -187,6 +188,50 @@ def test_cli_structural_phase_is_zero_cost_and_behavioral_respects_failed_gate(
     )
 
 
+@pytest.mark.asyncio
+async def test_all_phase_reuses_existing_passing_sentinel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel_artifact = tmp_path / "sentinel.json"
+    sentinel_artifact.write_text(
+        json.dumps({"passed": True, "valid_count": 9, "matched_count": 9}),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    class _UnusedBaseTransport:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            calls.append("closed")
+
+    async def fail_if_sentinel_runs(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise AssertionError("passing sentinel artifact must be reused")
+
+    async def record_behavioral(**_kwargs: object) -> dict[str, object]:
+        calls.append("behavioral")
+        return {}
+
+    monkeypatch.setattr(behavioral_eval_script, "CompatibleStructuredTransport", _UnusedBaseTransport)
+    monkeypatch.setattr(behavioral_eval_script, "load_cwd_api_key", lambda: "test-key")
+    monkeypatch.setattr(behavioral_eval_script, "run_sentinel_phase", fail_if_sentinel_runs)
+    monkeypatch.setattr(behavioral_eval_script, "run_behavioral_phase", record_behavioral)
+
+    exit_code, budget = await behavioral_eval_script._run_paid(
+        phase="all",
+        output_dir=tmp_path,
+        behavior_manifest_path=MANIFEST_PATH,
+        sentinel_fixture_path=SENTINEL_PATH,
+        sentinel_artifact_path=sentinel_artifact,
+        budget_cny=0.01,
+    )
+
+    assert exit_code == 0
+    assert calls == ["behavioral", "closed"]
+    assert budget["spent_cny"] == 0
+
+
 def test_blind_review_queue_has_three_stale_stable_boundary_without_labels() -> None:
     manifest = load_behavioral_manifest(MANIFEST_PATH)
     samples = expand_behavioral_samples(manifest)
@@ -220,6 +265,44 @@ def test_jsonl_resume_rejects_duplicate_valid_keys(tmp_path: Path) -> None:
 
     with pytest.raises(DuplicateRecord, match="same"):
         load_unique_jsonl(path, key_field="key", valid_status="ok")
+
+
+def test_judge_resume_allows_legacy_result_key_collision_across_agent_inputs(tmp_path: Path) -> None:
+    path = tmp_path / "judge.jsonl"
+    rows = [
+        {
+            "result_key": "legacy-collision",
+            "agent_input_sha256": "agent-a",
+            "call_status": "ok",
+        },
+        {
+            "result_key": "legacy-collision",
+            "agent_input_sha256": "agent-b",
+            "call_status": "ok",
+        },
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    records = behavioral_runner._load_unique_judge_records(path)
+
+    assert len(records) == 2
+    assert {record["agent_input_sha256"] for record in records.values()} == {"agent-a", "agent-b"}
+
+    path.write_text("\n".join(json.dumps(row) for row in [*rows, rows[0]]) + "\n", encoding="utf-8")
+    with pytest.raises(DuplicateRecord, match="duplicate valid judge identity"):
+        behavioral_runner._load_unique_judge_records(path)
+
+
+def test_agent_resume_selects_only_records_for_current_schema_aware_inputs() -> None:
+    current = {"input_sha256": "current", "call_status": "ok"}
+    stale = {"input_sha256": "stale-schema", "call_status": "ok"}
+
+    selected = behavioral_runner._select_current_agent_records(
+        {"current": current, "stale-schema": stale},
+        {"current": {"model_input": {}}},
+    )
+
+    assert selected == {"current": current}
 
 
 class _FixedJudgeTransport:
@@ -271,10 +354,15 @@ def test_judge_result_key_changes_when_the_effective_schema_changes() -> None:
         "model": "model",
     }
 
-    original = behavioral_runner._judge_result_key(scored)
-    changed = behavioral_runner._judge_result_key({**scored, "schema_sha256": "schema-v2"})
+    original = behavioral_runner._judge_result_key(scored, agent_input_sha256="agent-a")
+    changed_schema = behavioral_runner._judge_result_key(
+        {**scored, "schema_sha256": "schema-v2"},
+        agent_input_sha256="agent-a",
+    )
+    changed_agent = behavioral_runner._judge_result_key(scored, agent_input_sha256="agent-b")
 
-    assert changed != original
+    assert changed_schema != original
+    assert changed_agent != original
 
 
 def _judgment(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from evaluation.v0291_behavioral.report import build_evaluation_report
+from scripts.run_v0291_behavioral_report import _markdown
 
 
 def _structural() -> dict:
@@ -146,3 +147,35 @@ def test_incomplete_aggregate_fails_closed_even_when_rates_pass() -> None:
     assert report["conclusion"]["offline_behavioral_pass"] is False
     unsafe = next(row for row in report["gate_table"] if row["gate_id"] == "freshness.unsafe_acceptance")
     assert unsafe["status"] == "fail"
+
+
+def test_markdown_reports_incremental_budget_without_claiming_full_phase_was_skipped() -> None:
+    sentinel = {"passed": True, "valid_count": 9, "matched_count": 9}
+    report = build_evaluation_report(
+        structural=_structural(),
+        sentinel=sentinel,
+        aggregate=_aggregate(),
+        blind_review=None,
+        runtime_evidence=None,
+    )
+
+    markdown = _markdown(
+        report,
+        manifest={"model_snapshot": "model", "code_commit": "commit"},
+        sentinel=sentinel,
+        budget={
+            "hard_budget_cny": 14.796848,
+            "spent_cny": 0.00006,
+            "actual_input_tokens": 10,
+            "actual_output_tokens": 5,
+            "reserved_cny": 0,
+            "outstanding_reservations": 0,
+        },
+        artifact_hashes={},
+    )
+
+    assert "最后一次增量 provider usage：input=10, output=5" in markdown
+    assert "最后一次增量估算实付：¥0.00006" in markdown
+    assert "评测启动时 HEAD：`commit`" in markdown
+    assert "预算硬上限：¥14.796848；reserved=0, outstanding=0" in markdown
+    assert "本次没有启动全量付费阶段" not in markdown
