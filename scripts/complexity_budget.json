@@ -26,14 +26,10 @@
   },
   {
     "path": "src/hl_mem/application/recall.py",
-    "max_lines": 1433,
+    "max_lines": 1384,
     "max_params": {
       "RecallService._recall_experience": 21,
       "RecallService.recall": 19
-    },
-    "max_callable_lines": {
-      "RecallService._recall_experience": 206,
-      "RecallService.recall": 457
     }
   },
   {
