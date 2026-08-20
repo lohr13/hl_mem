@@ -257,12 +257,13 @@ def _interaction_report(
     for metric in METRICS:
         values: list[tuple[str, float]] = []
         for arms in by_sample.values():
-            metrics = {arm: _metric_value(arms[arm], metric) for arm in ARM_NAMES}
-            if any(value is None for value in metrics.values()):
+            arm_0 = _metric_value(arms[ARM_NAMES[0]], metric)
+            arm_1 = _metric_value(arms[ARM_NAMES[1]], metric)
+            arm_2 = _metric_value(arms[ARM_NAMES[2]], metric)
+            arm_3 = _metric_value(arms[ARM_NAMES[3]], metric)
+            if arm_0 is None or arm_1 is None or arm_2 is None or arm_3 is None:
                 continue
-            interaction = (metrics[ARM_NAMES[3]] - metrics[ARM_NAMES[1]]) - (
-                metrics[ARM_NAMES[2]] - metrics[ARM_NAMES[0]]
-            )
+            interaction = (arm_3 - arm_1) - (arm_2 - arm_0)
             values.append(
                 (
                     str(arms[ARM_NAMES[0]]["scenario_family_id"]),

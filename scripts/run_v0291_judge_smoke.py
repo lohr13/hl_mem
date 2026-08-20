@@ -11,6 +11,7 @@ import sys
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -41,7 +42,7 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def _worst_case_reservation(sentinels: list[dict[str, object]], attempts: int) -> float:
+def _worst_case_reservation(sentinels: list[dict[str, Any]], attempts: int) -> float:
     input_bytes = sum(
         len((JUDGE_SYSTEM_PROMPT + _canonical_json(build_judge_input(sentinel, sentinel["trace"]))).encode("utf-8"))
         for sentinel in sentinels

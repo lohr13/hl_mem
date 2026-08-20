@@ -223,7 +223,10 @@ def prepare_agent_assignments(
 def require_sentinel_gate(path: Path) -> dict[str, Any]:
     """Require all nine valid and matching sentinel judgments before full spend."""
 
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    raw_payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw_payload, dict):
+        raise GateBlocked("sentinel scorer artifact must be a JSON object")
+    payload: dict[str, Any] = raw_payload
     if payload.get("passed") is not True or payload.get("valid_count") != 9 or payload.get("matched_count") != 9:
         raise GateBlocked("sentinel scorer gate requires valid and matching 9/9")
     return payload

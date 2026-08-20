@@ -9,7 +9,7 @@ import json
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, Mapping, Sequence, cast
 
 from hl_mem.application.context_packet import (
     RetrievalBundle,
@@ -68,7 +68,9 @@ def load_fixture_spec(path: Path) -> dict[str, Any]:
     cohorts = payload.get("cohorts")
     if not isinstance(cohorts, list):
         raise ValueError("fixture cohorts must be a list")
-    names = {item.get("name") for item in cohorts if isinstance(item, dict)}
+    if any(not isinstance(item, dict) for item in cohorts):
+        raise ValueError("fixture cohorts must contain objects")
+    names = {item["name"] for item in cohorts if isinstance(item.get("name"), str)}
     if names != EXPECTED_COHORTS:
         raise ValueError(f"fixture cohorts do not match the frozen set: {sorted(names)}")
     if any(not isinstance(item.get("count"), int) or item["count"] < 1 for item in cohorts):
@@ -93,7 +95,7 @@ def _candidate(
     topic_tags: list[str],
     gold_label: str,
     useful: bool,
-    signal: dict[str, object],
+    signal: Mapping[str, object],
     rerank_position: int,
 ) -> dict[str, Any]:
     return {
@@ -106,7 +108,7 @@ def _candidate(
         "topic_tags": topic_tags,
         "gold_label": gold_label,
         "useful": useful,
-        "signal": signal,
+        "signal": dict(signal),
         "rerank_position": rerank_position,
     }
 
