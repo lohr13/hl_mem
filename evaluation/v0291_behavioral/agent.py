@@ -350,6 +350,7 @@ class AgentTraceGenerator:
         expected_package = expected["package"]
         if not isinstance(actual_package, str) or not isinstance(expected_package, str):
             return False
+
         def normalize(value: str) -> str:
             return re.sub(r"[-_.]+", "-", value).lower()
 

@@ -184,12 +184,8 @@ async def test_scorer_retries_invalid_and_persists_actual_usage_once_valid() -> 
     }
     assert any("8080" in quote for quote in quote_examples["assistant_answer"])
     assert all(1 <= len(quote) <= 160 for quotes in quote_examples.values() for quote in quotes)
-    retry_quote_schema = transport.calls[1]["response_schema"]["properties"]["evidence"]["items"][
-        "properties"
-    ]["quote"]
-    assert set(retry_quote_schema["enum"]) == {
-        quote for quotes in quote_examples.values() for quote in quotes
-    }
+    retry_quote_schema = transport.calls[1]["response_schema"]["properties"]["evidence"]["items"]["properties"]["quote"]
+    assert set(retry_quote_schema["enum"]) == {quote for quotes in quote_examples.values() for quote in quotes}
 
 
 @pytest.mark.asyncio
