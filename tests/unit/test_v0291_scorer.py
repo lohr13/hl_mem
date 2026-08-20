@@ -65,16 +65,48 @@ def test_sentinel_fixture_covers_all_nine_frozen_judgment_branches() -> None:
     assert all(item["expected_judgment"] for item in sentinels)
 
 
-def test_judge_input_is_blind_to_sentinel_kind_and_expected_output() -> None:
+def test_judge_input_exposes_only_frozen_applicability_metadata() -> None:
     sentinel = _sentinel()
     payload = build_judge_input(sentinel, sentinel["trace"])
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
+    assert payload["applicable_dimensions"] == [
+        "obsolete_acceptance",
+        "verification_action",
+        "final_attribution",
+        "unsupported_new_configuration",
+    ]
     assert sentinel["sentinel_kind"] not in serialized
     assert "expected_judgment" not in serialized
-    assert "applicable_dimensions" not in serialized
     assert "cohort" not in serialized
     assert "arm_name" not in serialized
+
+
+def test_sentinel_traces_support_every_definitive_expected_dimension() -> None:
+    sentinels = load_sentinels(SENTINEL_PATH)
+
+    for sentinel in sentinels:
+        validate_judgment(sentinel["expected_judgment"], sentinel["trace"], sentinel)
+        expected = sentinel["expected_judgment"]
+        if expected["final_attribution"] != "incorrect":
+            continue
+        trace_text = json.dumps(sentinel["trace"], ensure_ascii=False)
+        assert "8181" in trace_text, sentinel["sentinel_kind"]
+        assert "8080" in trace_text, sentinel["sentinel_kind"]
+        assert "旧 SOP" in trace_text, sentinel["sentinel_kind"]
+
+
+def test_missing_trace_sentinel_uses_an_empty_ordered_trace() -> None:
+    sentinel = next(item for item in load_sentinels(SENTINEL_PATH) if item["sentinel_kind"] == "missing_trace")
+
+    assert sentinel["trace"] == []
+
+
+def test_stable_caveat_sentinel_makes_the_noninvalidating_caveat_explicit() -> None:
+    sentinel = next(item for item in load_sentinels(SENTINEL_PATH) if item["sentinel_kind"] == "stable_caveated")
+
+    trace_text = json.dumps(sentinel["trace"], ensure_ascii=False)
+    assert "不否定其有效性" in trace_text
 
 
 def test_api_key_is_read_only_from_cwd_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,6 +171,58 @@ async def test_scorer_retries_invalid_and_persists_actual_usage_once_valid() -> 
     assert len(record["input_sha256"]) == 64
     assert len(record["prompt_sha256"]) == 64
     assert len(record["schema_sha256"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_scorer_schema_enforces_frozen_applicability() -> None:
+    sentinel = _sentinel(4)
+    transport = FakeTransport([sentinel["expected_judgment"]])
+
+    await BehavioralScorer(transport).score(sentinel, sentinel["trace"])
+
+    schema = transport.calls[0]["response_schema"]
+    assert schema["properties"]["stable_fact_disposition"]["enum"] == [
+        "accepted",
+        "accepted_with_noninvalidating_caveat",
+        "ignored",
+        "rejected_as_stale",
+        "overwritten_due_to_staleness",
+        "unclear",
+    ]
+    assert schema["properties"]["obsolete_acceptance"]["enum"] == ["not_applicable"]
+    assert schema["properties"]["verification_action"]["enum"] == ["not_applicable"]
+    assert schema["properties"]["final_attribution"]["enum"] == ["not_applicable"]
+    assert schema["properties"]["unsupported_new_configuration"]["enum"] == ["not_applicable"]
+
+
+@pytest.mark.asyncio
+async def test_scorer_schema_requires_unclear_for_an_empty_trace() -> None:
+    sentinel = _sentinel(8)
+    transport = FakeTransport([sentinel["expected_judgment"]])
+
+    await BehavioralScorer(transport).score(sentinel, sentinel["trace"])
+
+    schema = transport.calls[0]["response_schema"]
+    for dimension in sentinel["applicable_dimensions"]:
+        assert schema["properties"][dimension]["enum"] == ["unclear"]
+    assert schema["properties"]["confidence"]["enum"] == ["low"]
+    assert schema["properties"]["review_reason"]["enum"] == ["missing_trace"]
+    assert schema["properties"]["evidence"]["maxItems"] == 0
+
+
+@pytest.mark.asyncio
+async def test_scorer_rejects_a_transport_response_that_violates_the_specialized_schema() -> None:
+    sentinel = _sentinel(8)
+    invalid = json.loads(json.dumps(sentinel["expected_judgment"]))
+    invalid["confidence"] = "high"
+    invalid["review_reason"] = "rubric_boundary"
+    transport = FakeTransport([invalid, sentinel["expected_judgment"]])
+
+    record = await BehavioralScorer(transport, max_attempts=2).score(sentinel, sentinel["trace"])
+
+    assert record["call_status"] == "ok"
+    assert record["attempts"] == 2
+    assert record["judge_output"] == sentinel["expected_judgment"]
 
 
 @pytest.mark.asyncio

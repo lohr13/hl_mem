@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from evaluation.v0291_behavioral import runner as behavioral_runner
 from evaluation.v0291_behavioral.agent import ModelCallResult
 from evaluation.v0291_behavioral.aggregate import (
     aggregate_behavioral_results,
@@ -28,10 +29,12 @@ from evaluation.v0291_behavioral.runner import (
     require_sentinel_gate,
     run_structural_phase,
 )
+from evaluation.v0291_behavioral.scorer import BehavioralScorer, load_sentinels
 from scripts.run_v0291_behavioral_eval import main
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "tests/fixtures/v0291_freshness_behavioral.json"
+SENTINEL_PATH = ROOT / "tests/fixtures/v0291_judge_sentinels.json"
 
 
 @pytest.mark.asyncio
@@ -217,6 +220,61 @@ def test_jsonl_resume_rejects_duplicate_valid_keys(tmp_path: Path) -> None:
 
     with pytest.raises(DuplicateRecord, match="same"):
         load_unique_jsonl(path, key_field="key", valid_status="ok")
+
+
+class _FixedJudgeTransport:
+    def __init__(self, output: dict[str, Any]) -> None:
+        self.output = output
+
+    async def complete(self, **kwargs: Any) -> ModelCallResult:
+        return ModelCallResult(
+            output=self.output,
+            request_id="judge-current",
+            input_tokens=10,
+            output_tokens=5,
+        )
+
+
+@pytest.mark.asyncio
+async def test_judge_resume_reuses_only_records_with_the_current_scorer_identity() -> None:
+    sentinel = load_sentinels(SENTINEL_PATH)[0]
+    digest = "agent-input-digest"
+    scored = await BehavioralScorer(_FixedJudgeTransport(sentinel["expected_judgment"])).score(
+        sentinel,
+        sentinel["trace"],
+    )
+    current = {
+        "result_key": "current",
+        "agent_input_sha256": digest,
+        **scored,
+    }
+    stale = {
+        **current,
+        "result_key": "stale",
+        "prompt_sha256": "old-prompt",
+    }
+
+    selected = behavioral_runner._select_current_judge_records(
+        {"stale": stale, "current": current},
+        {digest: sentinel},
+        {digest: {"trace": sentinel["trace"]}},
+    )
+
+    assert selected == {digest: current}
+
+
+def test_judge_result_key_changes_when_the_effective_schema_changes() -> None:
+    scored = {
+        "input_sha256": "input",
+        "prompt_sha256": "prompt",
+        "schema_sha256": "schema-v1",
+        "model": "model",
+    }
+
+    original = behavioral_runner._judge_result_key(scored)
+    changed = behavioral_runner._judge_result_key({**scored, "schema_sha256": "schema-v2"})
+
+    assert changed != original
 
 
 def _judgment(

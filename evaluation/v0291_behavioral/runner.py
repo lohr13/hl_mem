@@ -35,6 +35,8 @@ from .scorer import (
     JUDGE_SYSTEM_PROMPT,
     MODEL_SNAPSHOT,
     BehavioralScorer,
+    build_judge_input,
+    build_judge_schema,
     load_sentinels,
     sentinel_mismatches,
 )
@@ -256,6 +258,46 @@ def load_unique_jsonl(
     return records
 
 
+def _judge_result_key(scored: Mapping[str, Any]) -> str:
+    """Identify a result by every scorer input that can change its judgment."""
+
+    return _sha256_object(
+        {
+            "input_sha256": scored["input_sha256"],
+            "prompt_sha256": scored["prompt_sha256"],
+            "schema_sha256": scored["schema_sha256"],
+            "model": scored["model"],
+        }
+    )
+
+
+def _select_current_judge_records(
+    judge_records: Mapping[str, Mapping[str, Any]],
+    representative_sample: Mapping[str, Mapping[str, Any]],
+    agent_records: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Mapping[str, Any]]:
+    """Reuse only successful records produced by the current scorer identity."""
+
+    selected: dict[str, Mapping[str, Any]] = {}
+    for record in judge_records.values():
+        digest = str(record.get("agent_input_sha256", ""))
+        if digest not in representative_sample or digest not in agent_records:
+            continue
+        sample = representative_sample[digest]
+        trace = agent_records[digest]["trace"]
+        expected = {
+            "input_sha256": _sha256_object(build_judge_input(sample, trace)),
+            "prompt_sha256": _sha256_text(JUDGE_SYSTEM_PROMPT),
+            "schema_sha256": _sha256_object(
+                build_judge_schema(sample["applicable_dimensions"], missing_trace=not trace)
+            ),
+            "model": MODEL_SNAPSHOT,
+        }
+        if all(record.get(field) == value for field, value in expected.items()):
+            selected[digest] = record
+    return selected
+
+
 def run_structural_phase(fixture_path: Path, output_dir: Path) -> dict[str, Any]:
     """Run and freeze the complete zero-cost 200×4 structural replay."""
 
@@ -449,13 +491,7 @@ async def run_behavioral_phase(
         sample = representative_sample[digest]
         trace = agent_records[digest]["trace"]
         scored = await scorer.score(sample, trace)
-        result_key = _sha256_object(
-            {
-                "input_sha256": scored["input_sha256"],
-                "prompt_sha256": scored["prompt_sha256"],
-                "model": scored["model"],
-            }
-        )
+        result_key = _judge_result_key(scored)
         record = {
             "result_key": result_key,
             "agent_input_sha256": digest,
@@ -464,7 +500,7 @@ async def run_behavioral_phase(
         _append_jsonl(judge_path, record)
         return record
 
-    known_by_agent = {str(record["agent_input_sha256"]): record for record in judge_records.values()}
+    known_by_agent = _select_current_judge_records(judge_records, representative_sample, agent_records)
     judged = await asyncio.gather(*(judge_one(digest) for digest in unique_inputs if digest not in known_by_agent))
     known_by_agent.update({record["agent_input_sha256"]: record for record in judged if record["call_status"] == "ok"})
     if len(known_by_agent) != len(unique_inputs):
