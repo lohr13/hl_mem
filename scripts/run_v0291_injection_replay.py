@@ -9,13 +9,14 @@ import json
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, Mapping, Sequence, cast
 
 from hl_mem.application.context_packet import (
     RetrievalBundle,
     RetrievalBundleItem,
     apply_freshness_decisions,
     pack_retrieval_bundle,
+    retrieval_bundle_to_dict,
 )
 from hl_mem.recall.echo_suppression import EchoRequest, EchoSuppressionPolicy
 from hl_mem.recall.freshness_annotation import (
@@ -67,7 +68,9 @@ def load_fixture_spec(path: Path) -> dict[str, Any]:
     cohorts = payload.get("cohorts")
     if not isinstance(cohorts, list):
         raise ValueError("fixture cohorts must be a list")
-    names = {item.get("name") for item in cohorts if isinstance(item, dict)}
+    if any(not isinstance(item, dict) for item in cohorts):
+        raise ValueError("fixture cohorts must contain objects")
+    names = {item["name"] for item in cohorts if isinstance(item.get("name"), str)}
     if names != EXPECTED_COHORTS:
         raise ValueError(f"fixture cohorts do not match the frozen set: {sorted(names)}")
     if any(not isinstance(item.get("count"), int) or item["count"] < 1 for item in cohorts):
@@ -92,7 +95,7 @@ def _candidate(
     topic_tags: list[str],
     gold_label: str,
     useful: bool,
-    signal: dict[str, object],
+    signal: Mapping[str, object],
     rerank_position: int,
 ) -> dict[str, Any]:
     return {
@@ -105,7 +108,7 @@ def _candidate(
         "topic_tags": topic_tags,
         "gold_label": gold_label,
         "useful": useful,
-        "signal": signal,
+        "signal": dict(signal),
         "rerank_position": rerank_position,
     }
 
@@ -360,7 +363,8 @@ def write_expanded_fixture(points: list[dict[str, Any]], path: Path) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def _evaluate_point(point: dict[str, Any], *, echo_mode: str, freshness_mode: str) -> dict[str, Any]:
+def evaluate_point(point: dict[str, Any], *, echo_mode: str, freshness_mode: str) -> dict[str, Any]:
+    """Evaluate one replay point and export the exact receipt-free final packet body."""
     candidates = cast(list[dict[str, Any]], point["candidates"])
     purpose = cast(DeliveryPurpose, point["delivery_purpose"])
     echo = EchoSuppressionPolicy(mode=cast(Any, echo_mode)).evaluate(
@@ -417,11 +421,15 @@ def _evaluate_point(point: dict[str, Any], *, echo_mode: str, freshness_mode: st
     )
     decorated = apply_freshness_decisions(bundle, freshness)
     packed = pack_retrieval_bundle(decorated, int(point["token_budget"]))
+    context_packet = retrieval_bundle_to_dict(packed)
     eligible = [decision for decision in freshness.decisions if decision.eligible]
     return {
         "point_id": point["point_id"],
         "cohort": point["cohort"],
         "final_ids": [item.id for item in packed.items],
+        "final_context_texts": [item.text for item in packed.items],
+        "context_packet": context_packet,
+        "context_packet_text": _canonical_json(context_packet),
         "suppressed_ids": sorted(suppressed),
         "would_suppress_ids": sorted(decision.claim_id for decision in echo.decisions if decision.would_suppress),
         "freshness_eligible_ids": [decision.item_id for decision in eligible],
@@ -473,7 +481,7 @@ def run_replay(spec: dict[str, Any], points: list[dict[str, Any]]) -> dict[str, 
         raise ValueError(f"fixture has {len(points)} points, exceeding per-arm artifact limit {limit}")
     arms: dict[str, dict[str, Any]] = {}
     for name, echo_mode, freshness_mode in ARM_SPECS:
-        decisions = [_evaluate_point(point, echo_mode=echo_mode, freshness_mode=freshness_mode) for point in points]
+        decisions = [evaluate_point(point, echo_mode=echo_mode, freshness_mode=freshness_mode) for point in points]
         arms[name] = {
             "echo_mode": echo_mode,
             "freshness_mode": freshness_mode,
@@ -483,8 +491,8 @@ def run_replay(spec: dict[str, Any], points: list[dict[str, Any]]) -> dict[str, 
     baseline = arms["echo_off__freshness_off"]["decisions"]
     echo_treatment = arms["echo_enforce__freshness_off"]["decisions"]
     freshness_treatment = arms["echo_off__freshness_render"]["decisions"]
-    observe_echo = [_evaluate_point(point, echo_mode="observe", freshness_mode="off") for point in points]
-    observe_freshness = [_evaluate_point(point, echo_mode="off", freshness_mode="observe") for point in points]
+    observe_echo = [evaluate_point(point, echo_mode="observe", freshness_mode="off") for point in points]
+    observe_freshness = [evaluate_point(point, echo_mode="off", freshness_mode="observe") for point in points]
     metadata = _id_metadata(points)
     baseline_ids = set(_final_ids(baseline))
     echo_ids = set(_final_ids(echo_treatment))
