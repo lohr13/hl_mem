@@ -11,6 +11,16 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
 
+from hl_mem.application._ingest_resolution import (
+    _converge_entailed_group,
+    _find_resolution,
+    _insert_pending_dedup_pair_row,
+    _persist_resolution,
+    _quarantine_conflict_group,
+    _quarantine_temporal_pair,
+    _resolve_conflict_group,
+    _resolve_temporal_candidates,
+)
 from hl_mem.config import INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import (
@@ -22,23 +32,15 @@ from hl_mem.domain.claims.attributes import (
 )
 from hl_mem.domain.claims.claim import IndexTextMode, build_index_text
 from hl_mem.domain.claims.conflicts import (
-    ConflictResolver,
-    compute_claim_pair_key,
     compute_conflict_key,
     compute_legacy_conflict_key,
 )
-from hl_mem.domain.claims.dedup import (
-    DEDUP_EMBEDDING_TEXT_VERSION,
-    DEDUP_POLICY_VERSION,
-    Deduplicator,
-    compute_dedup_pair_key,
-)
+from hl_mem.domain.claims.dedup import Deduplicator
 from hl_mem.domain.claims.retention import (
     TTLPolicy,
     compute_expiration,
     normalize_utc_iso,
 )
-from hl_mem.domain.claims.temporal_links import evaluate_temporal_link
 from hl_mem.domain.constants import DEFAULT_SUBJECT
 from hl_mem.domain.entity import (
     invalid_subject_reason,
@@ -68,32 +70,28 @@ class _ClaimDraft:
 
 
 @dataclass(frozen=True)
-class _ConflictGroupResolution:
-    """全组确定性分类结果；仅 entails/state_change 可自动收敛。"""
-
-    outcome: str
-    representative: dict[str, Any]
-    member_outcomes: tuple[tuple[str, str], ...]
-    active_count: int
-
-
-@dataclass(frozen=True)
-class _TemporalResolution:
-    """Bounded non-operational series decision from the deterministic evaluator."""
-
-    outcome: str
-    representative: dict[str, Any]
-    members: tuple[dict[str, Any], ...]
-    member_outcomes: tuple[tuple[str, str, str | None], ...]
-
-
-@dataclass(frozen=True)
 class StoreClaimResult:
     """记录 claim 写入结果及写入或拒绝原因。"""
 
     claim_id: str | None
     status: str
     reason: str
+
+
+@dataclass(frozen=True)
+class _IngestResolution:
+    """Named outputs from one pre-persistence resolution branch."""
+
+    conflict_entails: StoreClaimResult | None = None
+    temporal_entails: StoreClaimResult | None = None
+    semantic_duplicate: StoreClaimResult | None = None
+    superseded_member_ids: tuple[str, ...] = ()
+    review_group: tuple[dict[str, Any], ...] = ()
+    review_decision: str | None = None
+    review_rationale: str | None = None
+    temporal_review_candidate: dict[str, Any] | None = None
+    semantic_candidate_id: str | None = None
+    semantic_candidate_similarity: float | None = None
 
 
 def _episodic_retention_anchor(
@@ -369,24 +367,8 @@ class IngestService:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
         claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
-        evidence_events = list(source_events or [event])
-        if not evidence_events:
-            raise ValidationError("source_events must not be empty")
-        primary_namespace = _event_namespace(event)
-        if any(_event_namespace(source) != primary_namespace for source in evidence_events):
-            raise ValidationError("all source events for a claim must share one namespace")
-        effective_policy = policy or Settings().retention_policy()
-        if ttl_days is not None:
-            effective_policy = TTLPolicy(
-                temporal_ttl_days_low=effective_policy.temporal_ttl_days_low,
-                temporal_ttl_days_normal=ttl_days,
-                temporal_ttl_days_high=effective_policy.temporal_ttl_days_high,
-                importance_low_threshold=effective_policy.importance_low_threshold,
-                importance_high_threshold=effective_policy.importance_high_threshold,
-                importance_write_floor=effective_policy.importance_write_floor,
-                slot_short_ttl_seconds=effective_policy.slot_short_ttl_seconds,
-                short_ttl_slots=effective_policy.short_ttl_slots,
-            )
+        evidence_events = IngestService._validate_source_events(event, source_events)
+        effective_policy = IngestService._retention_policy(policy, ttl_days)
         draft = _build_claim_drafts(
             extracted,
             event,
@@ -397,15 +379,11 @@ class IngestService:
             index_text_mode,
         )
         if isinstance(draft, StoreClaimResult):
-            audit.emit(
-                "ingest",
-                "claim_write",
-                draft.status,
-                event_id=event["id"],
-                detail={
-                    "reason": draft.reason,
-                    "importance": getattr(extracted, "importance", None),
-                },
+            IngestService._emit_rejected_claim(
+                audit,
+                draft,
+                event,
+                extracted,
             )
             return draft
         claim, qualifiers = draft.claim, draft.qualifiers
@@ -416,222 +394,82 @@ class IngestService:
             for args, kwargs in audit_events:
                 audit.emit(*args, **kwargs)
 
-        superseded_member_ids: list[str] = []
-        semantic_candidate_id: str | None = None
-        semantic_candidate_similarity: float | None = None
-        resolution: str | None = None
-        current: dict[str, Any] | None = None
-        review_group: list[dict[str, Any]] = []
-        review_rationale: str | None = None
-        temporal_review_candidate: dict[str, Any] | None = None
         result_id = claim["id"]
         connection.execute("BEGIN IMMEDIATE")
         try:
             started = time.perf_counter_ns()
             exact, existing = _find_resolution(claims, claim)
-            audit_events.append(
-                (
-                    ("dedup", "fact_hash_checked", "match" if exact else "new"),
-                    {
-                        "event_id": event["id"],
-                        "claim_id": claim["id"],
-                        "related_claim_id": exact["id"] if exact else None,
-                        "duration_us": (time.perf_counter_ns() - started) // 1000,
-                        "detail": {
-                            "fact_hash": claim["fact_hash"],
-                            "predicate": claim["predicate"],
-                        },
-                    },
-                )
+            IngestService._record_fact_hash_check(
+                audit_events,
+                event["id"],
+                claim,
+                exact,
+                started,
             )
             if exact:
-                result_id = exact["id"]
-                exact_group = (
-                    claims.find_by_conflict_key(exact.get("conflict_key"))
-                    if is_mutually_exclusive_attribute(exact.get("canonical_slot"))
-                    else []
+                exact_result = IngestService._resolve_exact_duplicate(
+                    claims,
+                    evidence,
+                    exact,
+                    claim,
+                    qualifiers,
+                    evidence_events,
+                    now,
+                    event["id"],
+                    audit_events,
                 )
-                group_resolution = (
-                    _resolve_conflict_group(exact_group, {**claim, "qualifiers": qualifiers}, preferred_id=exact["id"])
-                    if exact_group
-                    else None
-                )
-                if group_resolution is not None and group_resolution.outcome != "entails":
-                    _link_source_events(evidence, exact["id"], evidence_events, commit=False)
-                    _quarantine_conflict_group(
-                        claims,
-                        exact_group,
-                        now,
-                        decision="uncertain",
-                        rationale=(
-                            "ingest_dirty_active_group"
-                            if group_resolution.active_count > 1
-                            else "ingest_group_resolution"
-                        ),
-                    )
-                    audit_events.append(
-                        (
-                            ("conflict", "quarantined", "dirty_active_group"),
-                            {
-                                "event_id": event["id"],
-                                "claim_id": exact["id"],
-                                "detail": {
-                                    "conflict_key": exact.get("conflict_key"),
-                                    "member_outcomes": dict(group_resolution.member_outcomes),
-                                    "group_claim_ids": [item["id"] for item in exact_group],
-                                },
-                            },
-                        )
-                    )
+                if exact_result.reason == "exact_duplicate_dirty_group":
                     connection.commit()
                     emit_audit_events()
-                    return StoreClaimResult(result_id, "stored", "exact_duplicate_dirty_group")
-                if group_resolution is not None:
-                    result_id = _converge_entailed_group(claims, group_resolution, now)
-                else:
-                    result_id = exact["id"]
-                _link_source_events(evidence, result_id, evidence_events, commit=False)
+                    return exact_result
                 connection.commit()
                 emit_audit_events()
-                return StoreClaimResult(result_id, "stored", "exact_duplicate")
-
+                return exact_result
+            resolution: _IngestResolution | None
             if existing:
-                started = time.perf_counter_ns()
-                group_resolution = _resolve_conflict_group(existing, {**claim, "qualifiers": qualifiers})
-                current = group_resolution.representative
-                deterministic_resolution = group_resolution.outcome
-                lifecycle = claims.conflict_group_lifecycle(namespace, str(claim["conflict_key"]))
-                reopen_after_terminal = (
-                    lifecycle.latest_terminal_generation is not None and lifecycle.open_case_id is None
+                resolution = IngestService._resolve_conflict_candidates(
+                    claims,
+                    evidence,
+                    existing,
+                    claim,
+                    qualifiers,
+                    evidence_events,
+                    namespace,
+                    now,
+                    event["id"],
+                    audit_events,
                 )
-                resolution = "uncertain" if reopen_after_terminal else deterministic_resolution
-                audit_events.append(
-                    (
-                        ("conflict", "resolved", resolution),
-                        {
-                            "event_id": event["id"],
-                            "claim_id": claim["id"],
-                            "related_claim_id": current["id"],
-                            "duration_us": (time.perf_counter_ns() - started) // 1000,
-                            "detail": {
-                                "conflict_key": claim["conflict_key"],
-                                "candidate_count": len(existing),
-                                "old": _summary(current),
-                                "member_outcomes": dict(group_resolution.member_outcomes),
-                                "active_count": group_resolution.active_count,
-                                "deterministic_resolution": deterministic_resolution,
-                                "latest_terminal_generation": lifecycle.latest_terminal_generation,
-                                "reopen_after_terminal": reopen_after_terminal,
-                                "new": _summary(claim),
-                            },
-                        },
-                    )
-                )
-                if resolution == "entails" and not reopen_after_terminal:
-                    result_id = _converge_entailed_group(claims, group_resolution, now)
-                    _link_source_events(evidence, result_id, evidence_events, commit=False)
+                if resolution.conflict_entails is not None:
                     connection.commit()
                     emit_audit_events()
-                    return StoreClaimResult(result_id, "stored", "entailed")
-                if reopen_after_terminal:
-                    resolution = "uncertain"
-                    claim["status"] = "disputed"
-                    review_group = existing
-                    review_rationale = "terminal_generation_reopen"
-                elif resolution == "state_change":
-                    # 先以 candidate 写入，旧组全部终结后再激活，兼容触发器级唯一 active 保护。
-                    claim["status"] = "candidate"
-                    claim["supersedes_id"] = current["id"]
-                    superseded_member_ids = [item["id"] for item in existing]
-                else:
-                    claim["status"] = "disputed"
-                    review_group = existing
-                    review_rationale = (
-                        "ingest_dirty_active_group"
-                        if group_resolution.active_count > 1
-                        else "deterministic_ingest_resolution"
-                    )
+                    return resolution.conflict_entails
             else:
-                temporal_resolution = _resolve_temporal_candidates(
-                    claims.find_temporal_candidates(claim),
+                resolution = IngestService._resolve_temporal_candidate_branch(
+                    claims,
+                    evidence,
                     claim,
+                    evidence_events,
+                    event["id"],
+                    audit_events,
                 )
-                if temporal_resolution is not None:
-                    audit_events.append(
-                        (
-                            ("conflict", "temporal_link", temporal_resolution.outcome),
-                            {
-                                "event_id": event["id"],
-                                "claim_id": claim["id"],
-                                "related_claim_id": temporal_resolution.representative["id"],
-                                "detail": {
-                                    "member_outcomes": temporal_resolution.member_outcomes,
-                                    "rule_version": "temporal-v1",
-                                },
-                            },
-                        )
+                if resolution is None:
+                    resolution = IngestService._resolve_semantic_candidate_branch(
+                        claims,
+                        evidence,
+                        claim,
+                        evidence_events,
+                        embedder,
+                        event["id"],
+                        audit_events,
                     )
-                    if temporal_resolution.outcome == "entails":
-                        result_id = str(temporal_resolution.representative["id"])
-                        _link_source_events(evidence, result_id, evidence_events, commit=False)
-                        connection.commit()
-                        emit_audit_events()
-                        return StoreClaimResult(result_id, "stored", "temporal_entails")
-                    if temporal_resolution.outcome == "state_change":
-                        claim["status"] = "candidate"
-                        claim["supersedes_id"] = temporal_resolution.representative["id"]
-                        superseded_member_ids = [str(member["id"]) for member in temporal_resolution.members]
-                    else:
-                        claim["status"] = "disputed"
-                        temporal_review_candidate = temporal_resolution.representative
-                        review_rationale = "temporal_update_uncertain"
-                else:
-                    audit_events.append(
-                        (
-                            ("conflict", "not_applicable", "no_existing"),
-                            {
-                                "event_id": event["id"],
-                                "claim_id": claim["id"],
-                                "detail": {"conflict_key": claim["conflict_key"]},
-                            },
-                        )
-                    )
-                    started = time.perf_counter_ns()
-                    duplicate_id, dedup_reason = Deduplicator(claims, embedder).find_duplicate(claim)
-                    is_semantic_candidate = dedup_reason == "semantic_candidate"
-                    audit_events.append(
-                        (
-                            (
-                                "dedup",
-                                "semantic_checked",
-                                "candidate" if is_semantic_candidate else ("match" if duplicate_id else "new"),
-                            ),
-                            {
-                                "event_id": event["id"],
-                                "claim_id": claim["id"],
-                                "related_claim_id": duplicate_id,
-                                "duration_us": (time.perf_counter_ns() - started) // 1000,
-                                "detail": {
-                                    "matched": duplicate_id is not None and not is_semantic_candidate,
-                                    "candidate": is_semantic_candidate,
-                                    "reason": dedup_reason,
-                                },
-                            },
-                        )
-                    )
-                    if duplicate_id and not is_semantic_candidate:
-                        _link_source_events(evidence, duplicate_id, evidence_events, commit=False)
-                        result_id = duplicate_id
-                        connection.commit()
-                        emit_audit_events()
-                        return StoreClaimResult(result_id, "stored", "semantic_duplicate")
-                    if duplicate_id and is_semantic_candidate:
-                        candidate = claims.get_claim(duplicate_id)
-                        if candidate and candidate.get("embedding_dense") and claim.get("embedding_dense"):
-                            semantic_candidate_id = duplicate_id
-                            semantic_candidate_similarity = cosine_similarity(
-                                candidate["embedding_dense"], claim["embedding_dense"]
-                            )
+                if resolution.temporal_entails is not None:
+                    connection.commit()
+                    emit_audit_events()
+                    return resolution.temporal_entails
+                if resolution.semantic_duplicate is not None:
+                    connection.commit()
+                    emit_audit_events()
+                    return resolution.semantic_duplicate
 
             inserted = _persist_resolution(claims, claim)
             if not inserted:
@@ -644,50 +482,20 @@ class IngestService:
                 return StoreClaimResult(result_id, "stored", "concurrent_duplicate")
 
             if (
-                semantic_candidate_id is not None
-                and semantic_candidate_similarity is not None
-                and semantic_candidate_similarity >= INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
+                resolution.semantic_candidate_id is not None
+                and resolution.semantic_candidate_similarity is not None
+                and resolution.semantic_candidate_similarity >= INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
             ):
                 _insert_pending_dedup_pair(
                     connection,
-                    semantic_candidate_id,
+                    resolution.semantic_candidate_id,
                     claim,
-                    semantic_candidate_similarity,
+                    resolution.semantic_candidate_similarity,
                     now,
                 )
 
-            if review_group:
-                review_decision = resolution if resolution in {"contradicts", "uncertain"} else "uncertain"
-                _quarantine_conflict_group(
-                    claims,
-                    [*review_group, claim],
-                    now,
-                    decision=review_decision,
-                    rationale=review_rationale or "ingest_group_resolution",
-                )
-            if temporal_review_candidate is not None:
-                _quarantine_temporal_pair(
-                    claims,
-                    temporal_review_candidate,
-                    claim,
-                    now,
-                    rationale=review_rationale or "temporal_update_uncertain",
-                )
-            for superseded_member_id in superseded_member_ids:
-                superseded = claims.supersede_with_inline(
-                    superseded_member_id,
-                    claim["id"],
-                    extracted.value,
-                    claim["valid_from"],
-                    now,
-                    commit=False,
-                )
-                if not superseded.applied:
-                    raise ConflictError(f"conflict group member changed during ingest: {superseded_member_id}")
-            if superseded_member_ids:
-                assert_transition("candidate", "active")
-                if not claims.update_status(claim["id"], "active", commit=False):
-                    raise ConflictError(f"new state-change claim disappeared during ingest: {claim['id']}")
+            IngestService._quarantine_resolution(claims, claim, now, resolution)
+            IngestService._converge_superseded_members(claims, claim, extracted, now, resolution)
             _link_source_events(evidence, claim["id"], evidence_events, commit=False)
             connection.commit()
         except Exception:
@@ -706,6 +514,352 @@ class IngestService:
                 }
             )
         return StoreClaimResult(result_id, "stored", "inserted")
+
+    @staticmethod
+    def _validate_source_events(
+        event: dict[str, Any],
+        source_events: Sequence[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]]:
+        evidence_events = list(source_events or [event])
+        if not evidence_events:
+            raise ValidationError("source_events must not be empty")
+        primary_namespace = _event_namespace(event)
+        if any(_event_namespace(source) != primary_namespace for source in evidence_events):
+            raise ValidationError("all source events for a claim must share one namespace")
+        return evidence_events
+
+    @staticmethod
+    def _record_fact_hash_check(
+        audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]],
+        event_id: str,
+        claim: dict[str, Any],
+        exact: dict[str, Any] | None,
+        started: int,
+    ) -> None:
+        audit_events.append(
+            (
+                ("dedup", "fact_hash_checked", "match" if exact else "new"),
+                {
+                    "event_id": event_id,
+                    "claim_id": claim["id"],
+                    "related_claim_id": exact["id"] if exact else None,
+                    "duration_us": (time.perf_counter_ns() - started) // 1000,
+                    "detail": {
+                        "fact_hash": claim["fact_hash"],
+                        "predicate": claim["predicate"],
+                    },
+                },
+            )
+        )
+
+    @staticmethod
+    def _emit_rejected_claim(
+        audit: Any,
+        draft: StoreClaimResult,
+        event: dict[str, Any],
+        extracted: ExtractedClaim,
+    ) -> None:
+        audit.emit(
+            "ingest",
+            "claim_write",
+            draft.status,
+            event_id=event["id"],
+            detail={"reason": draft.reason, "importance": getattr(extracted, "importance", None)},
+        )
+
+    @staticmethod
+    def _retention_policy(policy: TTLPolicy | None, ttl_days: int | None) -> TTLPolicy:
+        effective_policy = policy or Settings().retention_policy()
+        if ttl_days is None:
+            return effective_policy
+        return TTLPolicy(
+            temporal_ttl_days_low=effective_policy.temporal_ttl_days_low,
+            temporal_ttl_days_normal=ttl_days,
+            temporal_ttl_days_high=effective_policy.temporal_ttl_days_high,
+            importance_low_threshold=effective_policy.importance_low_threshold,
+            importance_high_threshold=effective_policy.importance_high_threshold,
+            importance_write_floor=effective_policy.importance_write_floor,
+            slot_short_ttl_seconds=effective_policy.slot_short_ttl_seconds,
+            short_ttl_slots=effective_policy.short_ttl_slots,
+        )
+
+    @staticmethod
+    def _resolve_exact_duplicate(
+        claims: ClaimRepository,
+        evidence: EvidenceRepository,
+        exact: dict[str, Any],
+        claim: dict[str, Any],
+        qualifiers: dict[str, Any],
+        evidence_events: Sequence[dict[str, Any]],
+        now: str,
+        event_id: str,
+        audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]],
+    ) -> StoreClaimResult:
+        exact_group = (
+            claims.find_by_conflict_key(exact.get("conflict_key"))
+            if is_mutually_exclusive_attribute(exact.get("canonical_slot"))
+            else []
+        )
+        group_resolution = (
+            _resolve_conflict_group(
+                exact_group,
+                {**claim, "qualifiers": qualifiers},
+                preferred_id=exact["id"],
+            )
+            if exact_group
+            else None
+        )
+        if group_resolution is not None and group_resolution.outcome != "entails":
+            _link_source_events(evidence, exact["id"], evidence_events, commit=False)
+            _quarantine_conflict_group(
+                claims,
+                exact_group,
+                now,
+                decision="uncertain",
+                rationale=(
+                    "ingest_dirty_active_group" if group_resolution.active_count > 1 else "ingest_group_resolution"
+                ),
+            )
+            audit_events.append(
+                (
+                    ("conflict", "quarantined", "dirty_active_group"),
+                    {
+                        "event_id": event_id,
+                        "claim_id": exact["id"],
+                        "detail": {
+                            "conflict_key": exact.get("conflict_key"),
+                            "member_outcomes": dict(group_resolution.member_outcomes),
+                            "group_claim_ids": [item["id"] for item in exact_group],
+                        },
+                    },
+                )
+            )
+            return StoreClaimResult(exact["id"], "stored", "exact_duplicate_dirty_group")
+        result_id = (
+            _converge_entailed_group(claims, group_resolution, now) if group_resolution is not None else exact["id"]
+        )
+        _link_source_events(evidence, result_id, evidence_events, commit=False)
+        return StoreClaimResult(result_id, "stored", "exact_duplicate")
+
+    @staticmethod
+    def _resolve_conflict_candidates(
+        claims: ClaimRepository,
+        evidence: EvidenceRepository,
+        existing: Sequence[dict[str, Any]],
+        claim: dict[str, Any],
+        qualifiers: dict[str, Any],
+        evidence_events: Sequence[dict[str, Any]],
+        namespace: str,
+        now: str,
+        event_id: str,
+        audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]],
+    ) -> _IngestResolution:
+        started = time.perf_counter_ns()
+        group_resolution = _resolve_conflict_group(existing, {**claim, "qualifiers": qualifiers})
+        current = group_resolution.representative
+        deterministic_resolution = group_resolution.outcome
+        lifecycle = claims.conflict_group_lifecycle(namespace, str(claim["conflict_key"]))
+        reopen_after_terminal = lifecycle.latest_terminal_generation is not None and lifecycle.open_case_id is None
+        resolution = "uncertain" if reopen_after_terminal else deterministic_resolution
+        audit_events.append(
+            (
+                ("conflict", "resolved", resolution),
+                {
+                    "event_id": event_id,
+                    "claim_id": claim["id"],
+                    "related_claim_id": current["id"],
+                    "duration_us": (time.perf_counter_ns() - started) // 1000,
+                    "detail": {
+                        "conflict_key": claim["conflict_key"],
+                        "candidate_count": len(existing),
+                        "old": _summary(current),
+                        "member_outcomes": dict(group_resolution.member_outcomes),
+                        "active_count": group_resolution.active_count,
+                        "deterministic_resolution": deterministic_resolution,
+                        "latest_terminal_generation": lifecycle.latest_terminal_generation,
+                        "reopen_after_terminal": reopen_after_terminal,
+                        "new": _summary(claim),
+                    },
+                },
+            )
+        )
+        if resolution == "entails" and not reopen_after_terminal:
+            result_id = _converge_entailed_group(claims, group_resolution, now)
+            _link_source_events(evidence, result_id, evidence_events, commit=False)
+            return _IngestResolution(conflict_entails=StoreClaimResult(result_id, "stored", "entailed"))
+        if reopen_after_terminal:
+            claim["status"] = "disputed"
+            return _IngestResolution(
+                review_group=tuple(existing),
+                review_decision="uncertain",
+                review_rationale="terminal_generation_reopen",
+            )
+        if resolution == "state_change":
+            claim["status"] = "candidate"
+            claim["supersedes_id"] = current["id"]
+            return _IngestResolution(
+                superseded_member_ids=tuple(item["id"] for item in existing),
+            )
+        claim["status"] = "disputed"
+        return _IngestResolution(
+            review_group=tuple(existing),
+            review_decision=resolution if resolution in {"contradicts", "uncertain"} else "uncertain",
+            review_rationale=(
+                "ingest_dirty_active_group" if group_resolution.active_count > 1 else "deterministic_ingest_resolution"
+            ),
+        )
+
+    @staticmethod
+    def _resolve_temporal_candidate_branch(
+        claims: ClaimRepository,
+        evidence: EvidenceRepository,
+        claim: dict[str, Any],
+        evidence_events: Sequence[dict[str, Any]],
+        event_id: str,
+        audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]],
+    ) -> _IngestResolution | None:
+        temporal_resolution = _resolve_temporal_candidates(
+            claims.find_temporal_candidates(claim),
+            claim,
+        )
+        if temporal_resolution is not None:
+            audit_events.append(
+                (
+                    ("conflict", "temporal_link", temporal_resolution.outcome),
+                    {
+                        "event_id": event_id,
+                        "claim_id": claim["id"],
+                        "related_claim_id": temporal_resolution.representative["id"],
+                        "detail": {
+                            "member_outcomes": temporal_resolution.member_outcomes,
+                            "rule_version": "temporal-v1",
+                        },
+                    },
+                )
+            )
+            if temporal_resolution.outcome == "entails":
+                result_id = str(temporal_resolution.representative["id"])
+                _link_source_events(evidence, result_id, evidence_events, commit=False)
+                return _IngestResolution(temporal_entails=StoreClaimResult(result_id, "stored", "temporal_entails"))
+            if temporal_resolution.outcome == "state_change":
+                claim["status"] = "candidate"
+                claim["supersedes_id"] = temporal_resolution.representative["id"]
+                return _IngestResolution(
+                    superseded_member_ids=tuple(str(member["id"]) for member in temporal_resolution.members),
+                )
+            claim["status"] = "disputed"
+            return _IngestResolution(
+                temporal_review_candidate=temporal_resolution.representative,
+                review_rationale="temporal_update_uncertain",
+            )
+
+        audit_events.append(
+            (
+                ("conflict", "not_applicable", "no_existing"),
+                {
+                    "event_id": event_id,
+                    "claim_id": claim["id"],
+                    "detail": {"conflict_key": claim["conflict_key"]},
+                },
+            )
+        )
+        return None
+
+    @staticmethod
+    def _resolve_semantic_candidate_branch(
+        claims: ClaimRepository,
+        evidence: EvidenceRepository,
+        claim: dict[str, Any],
+        evidence_events: Sequence[dict[str, Any]],
+        embedder: EmbedderProtocol,
+        event_id: str,
+        audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]],
+    ) -> _IngestResolution:
+        started = time.perf_counter_ns()
+        duplicate_id, dedup_reason = Deduplicator(claims, embedder).find_duplicate(claim)
+        is_semantic_candidate = dedup_reason == "semantic_candidate"
+        audit_events.append(
+            (
+                (
+                    "dedup",
+                    "semantic_checked",
+                    "candidate" if is_semantic_candidate else ("match" if duplicate_id else "new"),
+                ),
+                {
+                    "event_id": event_id,
+                    "claim_id": claim["id"],
+                    "related_claim_id": duplicate_id,
+                    "duration_us": (time.perf_counter_ns() - started) // 1000,
+                    "detail": {
+                        "matched": duplicate_id is not None and not is_semantic_candidate,
+                        "candidate": is_semantic_candidate,
+                        "reason": dedup_reason,
+                    },
+                },
+            )
+        )
+        if duplicate_id and not is_semantic_candidate:
+            _link_source_events(evidence, duplicate_id, evidence_events, commit=False)
+            return _IngestResolution(semantic_duplicate=StoreClaimResult(duplicate_id, "stored", "semantic_duplicate"))
+        if duplicate_id and is_semantic_candidate:
+            candidate = claims.get_claim(duplicate_id)
+            if candidate and candidate.get("embedding_dense") and claim.get("embedding_dense"):
+                return _IngestResolution(
+                    semantic_candidate_id=duplicate_id,
+                    semantic_candidate_similarity=cosine_similarity(
+                        candidate["embedding_dense"], claim["embedding_dense"]
+                    ),
+                )
+        return _IngestResolution()
+
+    @staticmethod
+    def _quarantine_resolution(
+        claims: ClaimRepository,
+        claim: dict[str, Any],
+        now: str,
+        resolution: _IngestResolution,
+    ) -> None:
+        if resolution.review_group:
+            _quarantine_conflict_group(
+                claims,
+                [*resolution.review_group, claim],
+                now,
+                decision=resolution.review_decision or "uncertain",
+                rationale=resolution.review_rationale or "ingest_group_resolution",
+            )
+        if resolution.temporal_review_candidate is not None:
+            _quarantine_temporal_pair(
+                claims,
+                resolution.temporal_review_candidate,
+                claim,
+                now,
+                rationale=resolution.review_rationale or "temporal_update_uncertain",
+                id_factory=new_id,
+            )
+
+    @staticmethod
+    def _converge_superseded_members(
+        claims: ClaimRepository,
+        claim: dict[str, Any],
+        extracted: ExtractedClaim,
+        now: str,
+        resolution: _IngestResolution,
+    ) -> None:
+        for superseded_member_id in resolution.superseded_member_ids:
+            superseded = claims.supersede_with_inline(
+                superseded_member_id,
+                claim["id"],
+                extracted.value,
+                claim["valid_from"],
+                now,
+                commit=False,
+            )
+            if not superseded.applied:
+                raise ConflictError(f"conflict group member changed during ingest: {superseded_member_id}")
+        if resolution.superseded_member_ids:
+            assert_transition("candidate", "active")
+            if not claims.update_status(claim["id"], "active", commit=False):
+                raise ConflictError(f"new state-change claim disappeared during ingest: {claim['id']}")
 
 
 def _build_claim_drafts(
@@ -868,174 +1022,6 @@ def _build_claim_drafts(
     return _ClaimDraft(claim, qualifiers)
 
 
-def _find_resolution(
-    claims: ClaimRepository,
-    claim: dict[str, Any],
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    """阶段 2：查找精确重复项和具有新冲突键的待解析候选。"""
-    exact = claims.find_by_fact_hash(claim["namespace_key"], claim["fact_hash"])
-    if exact is not None:
-        if Deduplicator._deterministic_check(exact, claim) == "equivalent":
-            return exact, []
-        return None, []
-    conflict_key = claim.get("conflict_key")
-    exclusive = is_mutually_exclusive_attribute(claim.get("canonical_slot"))
-    existing = claims.find_by_conflict_key(conflict_key) if conflict_key and exclusive else []
-    return None, existing
-
-
-def _resolve_conflict_group(
-    members: Sequence[dict[str, Any]],
-    new_claim: dict[str, Any],
-    *,
-    preferred_id: str | None = None,
-) -> _ConflictGroupResolution:
-    """对全部非终态成员求确定性结论，禁止用排序首项代表整组。"""
-    if not members:
-        raise ValueError("conflict group must contain at least one member")
-    resolver = ConflictResolver()
-    member_outcomes = tuple((member["id"], resolver.resolve(member, new_claim)) for member in members)
-    active_members = [member for member in members if member.get("status") == "active"]
-    unique_outcomes = {outcome for _, outcome in member_outcomes}
-    outcome = next(iter(unique_outcomes)) if len(unique_outcomes) == 1 else "uncertain"
-    if len(active_members) > 1:
-        outcome = "uncertain"
-
-    representative = active_members[0] if active_members else members[0]
-    if not active_members and preferred_id is not None:
-        representative = next((member for member in members if member["id"] == preferred_id), representative)
-    return _ConflictGroupResolution(
-        outcome=outcome,
-        representative=representative,
-        member_outcomes=member_outcomes,
-        active_count=len(active_members),
-    )
-
-
-def _resolve_temporal_candidates(
-    members: Sequence[dict[str, Any]],
-    new_claim: dict[str, Any],
-) -> _TemporalResolution | None:
-    """Aggregate only candidates recognized by the conservative pure evaluator."""
-
-    evaluated = [(member, evaluate_temporal_link(member, new_claim)) for member in members]
-    actionable = [(member, decision) for member, decision in evaluated if decision.outcome != "not_applicable"]
-    if not actionable:
-        return None
-    outcomes = {decision.outcome for _, decision in actionable}
-    outcome = next(iter(outcomes)) if len(outcomes) == 1 else "uncertain"
-    representative = actionable[0][0]
-    selected_members = tuple(member for member, _ in actionable)
-    return _TemporalResolution(
-        outcome=outcome,
-        representative=representative,
-        members=selected_members,
-        member_outcomes=tuple(
-            (str(member["id"]), decision.outcome, decision.rule_id) for member, decision in actionable
-        ),
-    )
-
-
-def _converge_entailed_group(
-    claims: ClaimRepository,
-    resolution: _ConflictGroupResolution,
-    now: str,
-) -> str:
-    """把全 entails 组归并为一个 active 代表，并终结其他非终态成员。"""
-    if resolution.outcome != "entails":
-        raise ValueError("only an entailed conflict group can be converged")
-    winner = resolution.representative
-    members = claims.find_by_conflict_key(winner.get("conflict_key"))
-    for member in members:
-        if member["id"] == winner["id"]:
-            continue
-        superseded = claims.supersede_with_inline(
-            member["id"],
-            winner["id"],
-            winner.get("value"),
-            now,
-            now,
-            commit=False,
-        )
-        if not superseded.applied:
-            raise ConflictError(f"entailed conflict group member changed during ingest: {member['id']}")
-    if winner.get("status") != "active":
-        assert_transition(str(winner.get("status")), "active")
-        if not claims.update_status(winner["id"], "active", commit=False):
-            raise ConflictError(f"entailed conflict group winner disappeared during ingest: {winner['id']}")
-    return str(winner["id"])
-
-
-def _quarantine_conflict_group(
-    claims: ClaimRepository,
-    members: Sequence[dict[str, Any]],
-    now: str,
-    *,
-    decision: str,
-    rationale: str,
-) -> None:
-    """将互斥组隔离，并把全部候选挂到唯一 group case。"""
-    unique_members = list({str(member["id"]): member for member in members}.values())
-    namespaces = {str(member.get("namespace_key") or "") for member in unique_members}
-    conflict_keys = {str(member.get("conflict_key") or "") for member in unique_members}
-    slots = {str(member.get("canonical_slot") or "") for member in unique_members}
-    if (
-        len(namespaces) != 1
-        or len(conflict_keys) != 1
-        or len(slots) != 1
-        or not all(is_mutually_exclusive_attribute(slot) for slot in slots)
-    ):
-        raise ConflictError("group quarantine requires one mutually-exclusive namespace, key, and slot")
-    for member in unique_members:
-        if member.get("status") in {"active", "candidate"}:
-            assert_transition(str(member["status"]), "disputed")
-            if not claims.update_status(member["id"], "disputed", commit=False):
-                raise ConflictError(f"conflict group member changed during quarantine: {member['id']}")
-            member["status"] = "disputed"
-    claims.ensure_group_conflict_case(
-        unique_members,
-        created_at=now,
-        decision=decision,
-        rationale=rationale,
-        commit=False,
-    )
-
-
-def _quarantine_temporal_pair(
-    claims: ClaimRepository,
-    existing: dict[str, Any],
-    new_claim: dict[str, Any],
-    now: str,
-    *,
-    rationale: str,
-) -> None:
-    """Route one non-operational gray update through the existing pair-case pipeline."""
-
-    if existing.get("status") != "active" or new_claim.get("status") != "disputed":
-        raise ConflictError("temporal pair quarantine requires one active and one disputed claim")
-    assert_transition("active", "disputed")
-    if not claims.update_status(str(existing["id"]), "disputed", commit=False):
-        raise ConflictError(f"temporal candidate changed during quarantine: {existing['id']}")
-    claims.ensure_manual_conflict_case(
-        {
-            "id": new_id(),
-            "pair_key": compute_claim_pair_key(str(existing["id"]), str(new_claim["id"])),
-            "left_claim_id": existing["id"],
-            "right_claim_id": new_claim["id"],
-            "status": "manual_required",
-            "decision": "uncertain",
-            "rationale": rationale,
-            "created_at": now,
-        },
-        commit=False,
-    )
-
-
-def _persist_resolution(claims: ClaimRepository, claim: dict[str, Any]) -> bool:
-    """阶段 3：在调用方已开启的事务中写入解析后的 claim。"""
-    return claims.insert_claim(claim, commit=False)
-
-
 def _insert_pending_dedup_pair(
     connection: sqlite3.Connection,
     existing_claim_id: str,
@@ -1046,32 +1032,16 @@ def _insert_pending_dedup_pair(
     metrics: AdmissionMetrics = DEFAULT_ADMISSION_METRICS,
 ) -> bool:
     """Record an LLM gray-area pair without making a remote call in the write transaction."""
-
-    settings = getattr(connection, "hl_mem_settings", None) or Settings()
-    pending_count = int(connection.execute("SELECT count(*) FROM dedup_pairs WHERE decision IS NULL").fetchone()[0])
-    if pending_count >= settings.dedup_max_pending_pairs:
-        metrics.record_dedup_pending_pair_skipped()
-        return False
-    cursor = connection.execute(
-        "INSERT OR IGNORE INTO dedup_pairs("
-        "id,pair_key,left_claim_id,right_claim_id,new_claim_id,pair_source,namespace_key,similarity,"
-        "embedding_text_version,policy_version,predicate,created_at"
-        ") VALUES (?,?,?,?,?,'ingest',?,?,?,?,?,?)",
-        (
-            new_id(),
-            compute_dedup_pair_key(existing_claim_id, new_claim["id"]),
-            existing_claim_id,
-            new_claim["id"],
-            new_claim["id"],
-            new_claim["namespace_key"],
-            similarity,
-            DEDUP_EMBEDDING_TEXT_VERSION,
-            DEDUP_POLICY_VERSION,
-            new_claim.get("predicate"),
-            created_at,
-        ),
+    return _insert_pending_dedup_pair_row(
+        connection,
+        existing_claim_id,
+        new_claim,
+        similarity,
+        created_at,
+        metrics=metrics,
+        id_factory=new_id,
+        settings_factory=Settings,
     )
-    return cursor.rowcount == 1
 
 
 def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = False) -> None:

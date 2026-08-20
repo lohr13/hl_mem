@@ -15,13 +15,14 @@
     }
   },
   {
+    "path": "src/hl_mem/application/_ingest_resolution.py",
+    "max_lines": 254
+  },
+  {
     "path": "src/hl_mem/application/ingest.py",
-    "max_lines": 1150,
+    "max_lines": 1120,
     "max_params": {
       "IngestService.store_extracted": 16
-    },
-    "max_callable_lines": {
-      "IngestService.store_extracted": 345
     }
   },
   {
