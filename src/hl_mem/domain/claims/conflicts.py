@@ -139,7 +139,7 @@ def compute_conflict_key(
             canonical_namespace,
             canonical_subject,
             slot,
-            slot_qualifier_key(slot, qualifiers),
+            coordinate_qualifier_key(slot, qualifiers),
         ],
         ensure_ascii=False,
         sort_keys=True,
@@ -176,13 +176,19 @@ def _canonicalize_json(value: Any) -> Any:
     return value
 
 
-def slot_qualifier_key(canonical_slot: str | None, qualifiers: dict[str, Any] | None) -> dict[str, Any]:
-    """提取并规范化 slot 声明要求的 qualifier，供冲突与去重共享。"""
+def coordinate_qualifier_key(canonical_slot: str | None, qualifiers: dict[str, Any] | None) -> dict[str, Any]:
+    """提取并规范化 slot 声明的坐标 qualifier。"""
     slot = validate_slot_instance(canonical_slot, qualifiers)
     if slot is None:
         return {}
     values = qualifiers or {}
-    return {key: _canonicalize_json(values.get(key)) for key in SLOT_REGISTRY[slot].required_qualifiers}
+    return {key: _canonicalize_json(values.get(key)) for key in SLOT_REGISTRY[slot].coordinate_qualifiers}
+
+
+def slot_qualifier_key(canonical_slot: str | None, qualifiers: dict[str, Any] | None) -> dict[str, Any]:
+    """兼容旧调用面，返回 slot 的坐标 qualifier 投影。"""
+
+    return coordinate_qualifier_key(canonical_slot, qualifiers)
 
 
 class ConflictResolver:

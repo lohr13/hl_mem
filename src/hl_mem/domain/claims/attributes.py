@@ -7,6 +7,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
+from hl_mem.domain.claims.slot_qualifiers import SlotQualifierPolicy
+
 
 @dataclass(frozen=True)
 class SlotDefinition:
@@ -22,6 +24,7 @@ class SlotDefinition:
     examples: tuple[str, ...] = ()
     is_operational: bool = False
     is_fallback: bool = False
+    coordinate_qualifiers: tuple[str, ...] = ()
 
 
 def _slot(
@@ -31,7 +34,7 @@ def _slot(
     *,
     participates_in_conflict: bool = False,
     ttl_class: str = "none",
-    required_qualifiers: tuple[str, ...] = (),
+    qualifier_policy: SlotQualifierPolicy = SlotQualifierPolicy(),
     aliases: tuple[str, ...] = (),
     examples: tuple[str, ...] = (),
     is_operational: bool = False,
@@ -44,12 +47,17 @@ def _slot(
         description=description,
         participates_in_conflict=participates_in_conflict,
         ttl_class=ttl_class,
-        required_qualifiers=required_qualifiers,
+        required_qualifiers=qualifier_policy.required,
+        coordinate_qualifiers=qualifier_policy.coordinate,
         aliases=aliases,
         examples=examples,
         is_operational=is_operational,
         is_fallback=is_fallback,
     )
+
+
+def _coordinate_required(*names: str) -> SlotQualifierPolicy:
+    return SlotQualifierPolicy(required=names, coordinate=names)
 
 
 _SLOT_DEFINITIONS = (
@@ -77,7 +85,7 @@ _SLOT_DEFINITIONS = (
         "preference.tool_choice",
         "偏好",
         "工具选择偏好",
-        required_qualifiers=("task",),
+        qualifier_policy=_coordinate_required("task"),
         examples=("Codex CLI 修改代码",),
         is_operational=True,
     ),
@@ -86,7 +94,7 @@ _SLOT_DEFINITIONS = (
         "choice.tool",
         "使用",
         "使用的工具",
-        required_qualifiers=("role",),
+        qualifier_policy=_coordinate_required("role"),
         examples=("Hermes Agent",),
         is_operational=True,
         is_fallback=True,
@@ -95,7 +103,7 @@ _SLOT_DEFINITIONS = (
         "choice.database",
         "使用",
         "使用的数据库",
-        required_qualifiers=("project",),
+        qualifier_policy=_coordinate_required("project"),
         examples=("PostgreSQL",),
         is_operational=True,
     ),
@@ -105,7 +113,7 @@ _SLOT_DEFINITIONS = (
         "使用",
         "使用的模型",
         participates_in_conflict=True,
-        required_qualifiers=("task",),
+        qualifier_policy=_coordinate_required("task"),
         examples=("qwen3.7-plus",),
         is_operational=True,
     ),
@@ -115,7 +123,7 @@ _SLOT_DEFINITIONS = (
         "choice.provider",
         "使用",
         "使用的服务商",
-        required_qualifiers=("service",),
+        qualifier_policy=_coordinate_required("service"),
         examples=("百炼",),
         is_operational=True,
     ),
@@ -124,7 +132,7 @@ _SLOT_DEFINITIONS = (
         "choice.memory_system",
         "使用",
         "使用的记忆系统",
-        required_qualifiers=("project",),
+        qualifier_policy=_coordinate_required("project"),
         examples=("hl_mem",),
         is_operational=True,
     ),
@@ -134,7 +142,7 @@ _SLOT_DEFINITIONS = (
         "服务健康状态",
         participates_in_conflict=True,
         ttl_class="short",
-        required_qualifiers=("service",),
+        qualifier_policy=_coordinate_required("service"),
         examples=("running",),
         is_operational=True,
     ),
@@ -161,7 +169,7 @@ _SLOT_DEFINITIONS = (
         "配置",
         "服务端口",
         participates_in_conflict=True,
-        required_qualifiers=("service",),
+        qualifier_policy=_coordinate_required("service"),
         aliases=("port",),
         examples=("8200",),
         is_operational=True,
@@ -170,7 +178,7 @@ _SLOT_DEFINITIONS = (
         "config.path",
         "配置",
         "文件路径",
-        required_qualifiers=("purpose",),
+        qualifier_policy=_coordinate_required("purpose"),
         aliases=("path",),
         examples=("REDACTED_PATH",),
         is_operational=True,
@@ -179,7 +187,7 @@ _SLOT_DEFINITIONS = (
         "config.env",
         "配置",
         "环境变量",
-        required_qualifiers=("key",),
+        qualifier_policy=_coordinate_required("key"),
         aliases=("env",),
         examples=("HL_MEM_PORT=8200",),
         is_operational=True,
@@ -188,7 +196,7 @@ _SLOT_DEFINITIONS = (
         "config.network",
         "配置",
         "网络配置",
-        required_qualifiers=("target",),
+        qualifier_policy=_coordinate_required("target"),
         aliases=("network",),
         examples=("VLESS proxy on 10808",),
         is_operational=True,
@@ -207,7 +215,7 @@ _SLOT_DEFINITIONS = (
         "plan.deadline",
         "计划",
         "截止日期",
-        required_qualifiers=("plan",),
+        qualifier_policy=_coordinate_required("plan"),
         aliases=("deadline",),
         examples=("Phase 17 完成时间",),
         is_operational=True,
