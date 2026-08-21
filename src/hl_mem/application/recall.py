@@ -8,11 +8,12 @@ import logging
 import sqlite3
 import threading
 import time
-from collections.abc import Mapping
-from dataclasses import replace
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from hl_mem.application._procedure_recall_flow import ProcedureRecallFlow as _ProcedureRecallFlow
 from hl_mem.application.answerability import Answerability
 from hl_mem.application.context_packet import (
     ContextPacketAssembler,
@@ -48,7 +49,8 @@ from hl_mem.recall.freshness_annotation import (
     FreshnessRequest,
 )
 from hl_mem.recall.injection import InjectionContext
-from hl_mem.recall.procedure_pipeline import MemoryCandidate, recall_procedure
+from hl_mem.recall.procedure_pipeline import MemoryCandidate
+from hl_mem.recall.procedure_pipeline import recall_procedure as recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
@@ -57,13 +59,7 @@ from hl_mem.recall.relevance import (
     evaluate_relevance,
     should_enforce_relevance,
 )
-from hl_mem.recall.trace import (
-    ExperienceCandidateTrace,
-    QueryExpansionTrace,
-    SearchPhaseMetrics,
-    SearchTrace,
-    SearchTracer,
-)
+from hl_mem.recall.trace import QueryExpansionTrace, SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.events import EventRepository
@@ -77,6 +73,50 @@ _SIDE_EFFECT_HEALTH: dict[str, dict[str, int | str | None]] = {
     "feedback_record": {"failures": 0, "last_error": None},
     "audit_emit": {"failures": 0, "last_error": None},
 }
+
+
+@dataclass(frozen=True)
+class RecallRequest:
+    query: str
+    limit: int | None
+    as_of: str | None
+    intent: RecallIntent | str | None
+    known_as_of: str | None
+    query_id: str | None
+    token_budget: int | None
+    context_mode: str | None
+    namespace: str
+    session_id: str | None
+    debug: bool
+    response_format: str
+    ranking_now: str | None
+    injection_context: InjectionContext | None
+
+
+@dataclass(frozen=True)
+class _RecallSession:
+    request: RecallRequest
+    limit: int
+    query_id: str
+    selected_intent: RecallIntent
+    injection_context: InjectionContext
+    tracer: SearchTracer
+    total_started: int
+
+
+@dataclass(frozen=True)
+class EnrichedSelection:
+    claims: list[dict[str, Any]]
+    results: list[dict[str, Any]]
+    relevance_enforced: bool
+    assembly_started: int
+    observations: list[dict[str, Any]] = field(default_factory=list)
+    policies: list[dict[str, Any]] = field(default_factory=list)
+    packet_candidates: list[dict[str, Any]] = field(default_factory=list)
+    answerability: Answerability = "no_evidence"
+
+
+_LowRecallExpander = Callable[[int, int], tuple[list[WeightedQuery], list[bytes]]]
 
 
 def _freshness_policy(settings: Settings) -> FreshnessAnnotationPolicy:
@@ -349,6 +389,151 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class _QueryExpansionSession:
+    """一次 recall 的 query expansion 状态与 deadline。"""
+
+    def __init__(self, service: RecallService, recall: _RecallSession) -> None:
+        self.service = service
+        self.recall = recall
+        self.deadline = time.monotonic() + service.settings.query_expansion_total_timeout_seconds
+        self.tracer = recall.tracer
+        self.session_context: tuple[tuple[str, str], ...] = ()
+        request = recall.request
+        self.weighted_queries = [WeightedQuery(request.query, "original", 1.0)]
+        self.query_blobs = [
+            embed_query(service.embedder, request.query) if service.settings.recall_dense_enabled else b""
+        ]
+        self.low_recall_expander: _LowRecallExpander | None = None
+
+    def prepare(self) -> _QueryExpansionSession:
+        request = self.recall.request
+        service = self.service
+        context_available = service.settings.query_context_mode != "off"
+        initial_trigger = QueryExpander.trigger_for(
+            request.query,
+            service.settings.query_expansion_mode,
+            context_available=context_available,
+        )
+        additions_made = False
+        if initial_trigger is not None and service.query_expander is not None:
+            additions, blobs = self.expand_for(initial_trigger)
+            additions_made = bool(additions)
+            self.weighted_queries.extend(additions)
+            self.query_blobs.extend(blobs)
+        if (
+            service.settings.query_expansion_mode == "auto"
+            and not additions_made
+            and service.query_expander is not None
+        ):
+            self.low_recall_expander = self._expand_for_low_recall
+        return self
+
+    def expand_for(self, trigger: str) -> tuple[list[WeightedQuery], list[bytes]]:
+        request = self.recall.request
+        service = self.service
+        trace_source = {
+            "short_query": "llm_short",
+            "coreference": "llm_coreference",
+            "low_recall": "llm_low_recall",
+            "low_fts_recall": "llm_low_recall",
+            "always": "llm_short",
+        }.get(trigger, "llm_short")
+        self.tracer.trace.expansion_trigger = trigger
+        if service.query_expander is None or time.monotonic() >= self.deadline:
+            self.tracer.trace.expansions.append(QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout"))
+            return [], []
+        self.session_context = ()
+        self.tracer.trace.context_outcome = "disabled"
+        if trigger == "coreference" and service.settings.query_context_mode == "coreference":
+            if not request.session_id:
+                self.tracer.trace.context_outcome = "missing_session"
+                return [], []
+            if time.monotonic() >= self.deadline:
+                self.tracer.trace.context_outcome = "deadline_exhausted"
+                return [], []
+            try:
+                self.session_context, context_truncated, context_hash, context_outcome = _session_context(
+                    service.connection,
+                    request.namespace,
+                    request.session_id,
+                    max_events=service.settings.query_context_max_events,
+                    token_budget=service.settings.query_context_token_budget,
+                )
+            except Exception as error:
+                LOGGER.warning("session context read failed: %s", type(error).__name__)
+                self.tracer.trace.context_outcome = "read_error"
+                return [], []
+            self.tracer.trace.context_event_count = len(self.session_context)
+            self.tracer.trace.context_truncated = context_truncated
+            self.tracer.trace.context_hash = context_hash
+            self.tracer.trace.context_outcome = context_outcome
+            if not self.session_context:
+                return [], []
+            if time.monotonic() >= self.deadline:
+                self.tracer.trace.context_outcome = "deadline_exhausted"
+                return [], []
+        remaining = max(0.001, self.deadline - time.monotonic())
+        result = service.query_expander.expand(
+            request.query,
+            intent=self.recall.selected_intent,
+            max_expansions=service.settings.query_expansion_max,
+            timeout_seconds=min(service.settings.query_expansion_timeout_seconds, remaining),
+            token_ceiling=service.settings.query_expansion_token_ceiling,
+            source=trigger,
+            session_context=self.session_context,
+        )
+        self.tracer.trace.expansion_total_tokens += result.input_tokens + result.output_tokens
+        if not result.expansions:
+            self.tracer.trace.expansions.append(
+                QueryExpansionTrace.from_text(
+                    "",
+                    trace_source,
+                    0.6,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    latency_ms=result.latency_ms,
+                    outcome=result.outcome,
+                    error_class=result.error_class,
+                    attempts=result.attempts,
+                    http_status=result.http_status,
+                    provider_code=result.provider_code,
+                )
+            )
+            return [], []
+        additions = [WeightedQuery(item.text, item.source, item.weight) for item in result.expansions]
+        for item in additions:
+            self.tracer.trace.expansions.append(
+                QueryExpansionTrace.from_text(
+                    item.text,
+                    item.source,
+                    item.weight,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    latency_ms=result.latency_ms,
+                )
+            )
+        return additions, [
+            embed_query(service.embedder, item.text) if service.settings.recall_dense_enabled else b""
+            for item in additions
+        ]
+
+    def _expand_for_low_recall(
+        self,
+        candidate_count: int,
+        fts_candidate_count: int,
+    ) -> tuple[list[WeightedQuery], list[bytes]]:
+        service = self.service
+        trigger = QueryExpander.trigger_for(
+            self.recall.request.query,
+            "auto",
+            candidate_count=candidate_count,
+            candidate_floor=service.settings.query_expansion_candidate_floor,
+            fts_candidate_count=fts_candidate_count,
+            context_available=service.settings.query_context_mode != "off",
+        )
+        return self.expand_for(trigger) if trigger is not None else ([], [])
+
+
 class RecallService:
     """记忆召回应用服务。"""
 
@@ -372,6 +557,349 @@ class RecallService:
         self.intent_router = intent_router
         self.side_effect_sink = side_effect_sink
 
+    def _resolve_recall_request(self, request: RecallRequest) -> _RecallSession:
+        if request.response_format not in _RESPONSE_FORMATS:
+            raise ValueError(f"unsupported response_format: {request.response_format}")
+        limit = self.settings.recall_default_limit if request.limit is None else request.limit
+        total_started = time.perf_counter_ns()
+        query_id = request.query_id or new_id()
+        intent_source = "explicit" if request.intent is not None else "keyword"
+        inferred_intent = route_recall_intent(request.query, request.as_of)
+        if (
+            request.intent is None
+            and self.settings.procedure_recall_mode == "off"
+            and inferred_intent in {RecallIntent.TOOL, RecallIntent.PROCEDURE}
+        ):
+            inferred_intent = RecallIntent.CURRENT_STATE
+            intent_source = "fallback"
+        elif (
+            request.intent is None
+            and inferred_intent is RecallIntent.CURRENT_STATE
+            and self.settings.procedure_recall_mode == "auto"
+            and self.intent_router is not None
+        ):
+            try:
+                decision = self.intent_router.route(
+                    request.query,
+                    allowed=(RecallIntent.CURRENT_STATE, RecallIntent.TOOL, RecallIntent.PROCEDURE),
+                    timeout_seconds=self.settings.procedure_router_timeout_seconds,
+                )
+                if (
+                    isinstance(decision.intent, RecallIntent)
+                    and decision.intent in {RecallIntent.CURRENT_STATE, RecallIntent.TOOL, RecallIntent.PROCEDURE}
+                    and decision.confidence >= self.settings.procedure_llm_threshold
+                ):
+                    inferred_intent = decision.intent
+                    intent_source = "llm"
+                else:
+                    intent_source = "fallback"
+            except (TimeoutError, ValueError, TypeError):
+                intent_source = "fallback"
+        selected_intent = RecallIntent(request.intent or inferred_intent)
+        injection_context = request.injection_context or InjectionContext.create(
+            delivery_purpose="api",
+            rendering_now=request.ranking_now or _now(),
+        )
+        tracer = SearchTracer(
+            SearchTrace(
+                query_id=query_id,
+                query_hash=hashlib.sha256(request.query.encode()).hexdigest(),
+                intent=selected_intent.value,
+                limit=limit,
+                candidate_limit=min(
+                    self.settings.recall_vector_scan_limit,
+                    max(limit * 5, self.settings.recall_candidate_floor),
+                ),
+                candidates={},
+                phases=SearchPhaseMetrics(),
+                intent_source=intent_source,
+                injection=injection_context.envelope(),
+            )
+        )
+        return _RecallSession(request, limit, query_id, selected_intent, injection_context, tracer, total_started)
+
+    def _prepare_queries(self, session: _RecallSession) -> _QueryExpansionSession:
+        return _QueryExpansionSession(self, session).prepare()
+
+    def _run_claim_pipeline(
+        self,
+        session: _RecallSession,
+        expansion: _QueryExpansionSession,
+    ) -> list[dict[str, Any]]:
+        request = session.request
+        expansion_enabled = self.query_expander is not None and self.settings.query_expansion_mode != "off"
+        return hybrid_claims(
+            ClaimRepository(
+                self.connection,
+                vector_batch_size=self.settings.vector_batch_size,
+                settings=self.settings,
+            ),
+            request.query,
+            expansion.query_blobs[0],
+            session.limit,
+            request.as_of,
+            self.reranker,
+            now=request.ranking_now,
+            intent=session.selected_intent,
+            known_as_of=request.known_as_of,
+            namespace=request.namespace,
+            recall_config=RecallConfig(
+                vector_scan_limit=self.settings.recall_vector_scan_limit,
+                dense_enabled=self.settings.recall_dense_enabled,
+                candidate_floor=self.settings.recall_candidate_floor,
+                tag_boost_enabled=self.settings.tag_boost_enabled,
+                tag_boost_weight=self.settings.tag_boost_weight,
+                tag_channel_enabled=self.settings.tag_channel_enabled,
+                tag_channel_weight=self.settings.tag_channel_weight,
+                tag_candidate_limit=self.settings.tag_candidate_limit,
+                preference_recency_boost=self.settings.preference_recency_boost,
+                dedup_threshold=self.settings.recall_dedup_threshold,
+                dedup_candidate_limit=self.settings.recall_dedup_candidate_limit,
+                feedback_min_samples=self.settings.feedback_min_samples,
+                decay_model=self.settings.decay_model,
+            ),
+            relation_connection=self.connection,
+            relation_config=self.relation_config,
+            tracer=session.tracer,
+            weighted_queries=expansion.weighted_queries if expansion_enabled else None,
+            query_blobs=expansion.query_blobs if expansion_enabled else None,
+            low_recall_expander=expansion.low_recall_expander,
+            echo_policy=EchoSuppressionPolicy(
+                mode=self.settings.echo_suppression_mode,
+                session_window_seconds=self.settings.echo_session_window_seconds,
+                pending_review_enabled=self.settings.echo_pending_review_enabled,
+                pending_similarity_threshold=self.settings.echo_pending_similarity_threshold,
+                pending_max_seconds=self.settings.echo_pending_max_seconds,
+            ),
+            echo_request=EchoRequest(
+                delivery_purpose=session.injection_context.delivery_purpose,
+                session_id=request.session_id,
+                namespace=request.namespace,
+                intent=session.selected_intent.value,
+                as_of=request.as_of,
+                known_as_of=request.known_as_of,
+                request_now=session.injection_context.rendering_now,
+                experiment_variant=session.injection_context.experiment_variant,
+                policy_version=dict(session.injection_context.policy_versions)["echo"],
+            ),
+            echo_signal_loader=lambda claim_ids: EvidenceRepository(self.connection).batch_get_echo_signals(
+                claim_ids,
+                namespace=request.namespace,
+                session_id=request.session_id or "",
+            ),
+        )
+
+    def _postprocess_selection(
+        self,
+        session: _RecallSession,
+        claims: list[dict[str, Any]],
+    ) -> EnrichedSelection:
+        request = session.request
+        enforce_enabled = False
+        if self.settings.relevance_gate_mode in {"observe", "enforce"}:
+            enforce_enabled = should_enforce_relevance(
+                self.settings.relevance_gate_mode,
+                session.selected_intent.value,
+                self.settings.relevance_intents,
+            )
+            if enforce_enabled:
+                claims = enforce_relevance(
+                    claims,
+                    session.tracer,
+                    reranker_floor=self.settings.relevance_reranker_floor,
+                    dense_floor=self.settings.relevance_dense_floor,
+                    relative_drop_threshold=self.settings.relevance_relative_drop,
+                    keep_top1=self.settings.relevance_keep_top1,
+                )
+            else:
+                evaluate_relevance(
+                    [str(claim["id"]) for claim in claims],
+                    session.tracer,
+                    reranker_floor=self.settings.relevance_reranker_floor,
+                    dense_floor=self.settings.relevance_dense_floor,
+                    relative_drop_threshold=self.settings.relevance_relative_drop,
+                )
+        provisional_answerability = self._answerability(
+            claims,
+            session.tracer,
+            relevance_enforced=enforce_enabled,
+        )
+        if self.settings.resurrection_mode == "auto" and provisional_answerability != "supported":
+            defer_activation = None
+            if self.side_effect_sink is not None:
+                sink = self.side_effect_sink
+
+                def submit_resurrection(
+                    claim_id: str,
+                    embedding: bytes,
+                    model: str,
+                    dim: int,
+                    target_namespace: str,
+                    target_as_of: str,
+                    target_known: str | None,
+                ) -> bool:
+                    return sink.submit_resurrection(
+                        session.query_id,
+                        claim_id,
+                        embedding,
+                        model,
+                        dim,
+                        namespace=target_namespace,
+                        as_of=target_as_of,
+                        known_as_of=target_known,
+                    )
+
+                defer_activation = submit_resurrection
+            resurrected = ResurrectionService(
+                self.connection,
+                self.embedder,
+                self.settings,
+                defer_activation=defer_activation,
+            ).try_resurrect(
+                request.query,
+                namespace=request.namespace,
+                as_of=request.as_of or _now(),
+                known_as_of=request.known_as_of,
+                intent=session.selected_intent,
+            )
+            if resurrected is not None:
+                resurrected["_score"] = max(
+                    1.0,
+                    max((float(claim.get("_score", 0.0)) for claim in claims), default=0.0) + 0.01,
+                )
+                claims = [resurrected, *(claim for claim in claims if claim["id"] != resurrected["id"])][
+                    : session.limit
+                ]
+                session.tracer.record_channel("cold_fts", [resurrected])
+                session.tracer.record_final(claims)
+        if self.side_effect_sink is not None:
+            self._submit_access(session.query_id, claims)
+        else:
+            self._record_access(claims)
+        assembly_started = time.perf_counter_ns()
+        return EnrichedSelection(
+            claims,
+            self._assemble_results(claims, request.namespace),
+            enforce_enabled,
+            assembly_started,
+        )
+
+    def _enrich_standard_results(
+        self,
+        session: _RecallSession,
+        selection: EnrichedSelection,
+    ) -> EnrichedSelection:
+        session.tracer.trace.phases.assembly_us = (time.perf_counter_ns() - selection.assembly_started) // 1000
+        request = session.request
+        observations = self._assemble_observations([claim["id"] for claim in selection.claims])
+        policies = matching_policies(
+            ExperienceService(self.connection).list_policies("active", namespace=request.namespace),
+            request.query,
+        )
+        policy_evidence = EvidenceRepository(self.connection).batch_get_links_for_derived(
+            "policy",
+            [str(policy["id"]) for policy in policies],
+        )
+        for policy in policies:
+            policy["evidence"] = policy_evidence.get(str(policy["id"]), [])
+        packet_candidates = self._context_candidates(selection.results, observations, policies)
+        answerability = self._answerability(
+            selection.claims,
+            session.tracer,
+            relevance_enforced=selection.relevance_enforced,
+            has_auxiliary_candidates=bool(packet_candidates),
+        )
+        return replace(
+            selection,
+            observations=observations,
+            policies=policies,
+            packet_candidates=packet_candidates,
+            answerability=answerability,
+        )
+
+    def _assemble_delivery(
+        self,
+        session: _RecallSession,
+        selection: EnrichedSelection,
+    ) -> dict[str, Any]:
+        request = session.request
+        retrieval_bundle = self._bundle_from_context_items(
+            session.query_id,
+            selection.answerability,
+            selection.packet_candidates,
+        )
+        freshness_items = [
+            _freshness_item(
+                bundle_item.type,
+                bundle_item.id,
+                bundle_item.text,
+                wrapped.get("data", wrapped),
+            )
+            for bundle_item, wrapped in zip(retrieval_bundle.items, selection.packet_candidates, strict=True)
+        ]
+        if request.response_format != "legacy" or request.context_mode == "packed":
+            budget = request.token_budget or self.settings.packed_context_token_budget
+            bundle = _freshness_pack_bundle(
+                retrieval_bundle,
+                freshness_items,
+                policy=_freshness_policy(self.settings),
+                request=_freshness_request(
+                    session.injection_context,
+                    session.selected_intent,
+                    request.as_of,
+                    request.known_as_of,
+                ),
+                token_budget=budget,
+                tracer=session.tracer,
+            )
+            if self.settings.freshness_annotation_mode == "render":
+                packet_context = self._context_from_packed_bundle(selection.packet_candidates, bundle)
+            else:
+                packet_context = self._assemble_context(
+                    selection.results,
+                    selection.observations,
+                    selection.policies,
+                    budget,
+                )
+        else:
+            used = sum(estimate_tokens(item.text) for item in retrieval_bundle.items)
+            bundle = RetrievalBundle(
+                query_id=retrieval_bundle.query_id,
+                answerability=retrieval_bundle.answerability,
+                items=retrieval_bundle.items,
+                used_tokens_estimate=used,
+                truncated=False,
+            )
+            packet_context = {
+                "context_items": selection.packet_candidates,
+                "used_tokens_estimate": used,
+                "truncated": False,
+            }
+        if request.response_format == "retrieval_bundle":
+            return {"retrieval_bundle": retrieval_bundle_to_dict(bundle)}
+        materialized_packet = self._materialize_context_packet(bundle)
+        if request.response_format != "context_packet":
+            self._attach_packet_feedback(packet_context, materialized_packet)
+        context_packet = materialized_packet if request.response_format != "legacy" else None
+        response = {
+            "results": selection.results,
+            "observations": selection.observations,
+            "policies": selection.policies,
+            "total": len(selection.results),
+            "query_id": session.query_id,
+            "answerability": selection.answerability,
+        }
+        if request.context_mode == "packed":
+            response["context"] = packet_context
+        if request.debug:
+            session.tracer.trace.phases.total_us = (time.perf_counter_ns() - session.total_started) // 1000
+            response["search_trace"] = session.tracer.to_dict()
+        if request.response_format == "context_packet":
+            return {"context_packet": context_packet}
+        if request.response_format == "both":
+            response["context_packet"] = context_packet
+        return response
+
     def recall(
         self,
         query: str,
@@ -390,345 +918,32 @@ class RecallService:
         injection_context: InjectionContext | None = None,
     ) -> dict[str, Any]:
         """执行混合召回；ranking_now 仅控制排序时钟，不改变时间可见性。"""
-        if response_format not in _RESPONSE_FORMATS:
-            raise ValueError(f"unsupported response_format: {response_format}")
-        limit = self.settings.recall_default_limit if limit is None else limit
-        total_started = time.perf_counter_ns()
-        query_id = query_id or new_id()
-        intent_source = "explicit" if intent is not None else "keyword"
-        inferred_intent = route_recall_intent(query, as_of)
-        if (
-            intent is None
-            and self.settings.procedure_recall_mode == "off"
-            and inferred_intent
-            in {
-                RecallIntent.TOOL,
-                RecallIntent.PROCEDURE,
-            }
-        ):
-            inferred_intent = RecallIntent.CURRENT_STATE
-            intent_source = "fallback"
-        elif (
-            intent is None
-            and inferred_intent is RecallIntent.CURRENT_STATE
-            and self.settings.procedure_recall_mode == "auto"
-            and self.intent_router is not None
-        ):
-            try:
-                decision = self.intent_router.route(
-                    query,
-                    allowed=(
-                        RecallIntent.CURRENT_STATE,
-                        RecallIntent.TOOL,
-                        RecallIntent.PROCEDURE,
-                    ),
-                    timeout_seconds=self.settings.procedure_router_timeout_seconds,
-                )
-                if (
-                    isinstance(decision.intent, RecallIntent)
-                    and decision.intent
-                    in {
-                        RecallIntent.CURRENT_STATE,
-                        RecallIntent.TOOL,
-                        RecallIntent.PROCEDURE,
-                    }
-                    and decision.confidence >= self.settings.procedure_llm_threshold
-                ):
-                    inferred_intent = decision.intent
-                    intent_source = "llm"
-                else:
-                    intent_source = "fallback"
-            except (TimeoutError, ValueError, TypeError):
-                intent_source = "fallback"
-        selected_intent = RecallIntent(intent or inferred_intent)
-        resolved_injection_context = injection_context or InjectionContext.create(
-            delivery_purpose="api",
-            rendering_now=ranking_now or _now(),
-        )
-        tracer = SearchTracer(
-            SearchTrace(
-                query_id=query_id,
-                query_hash=hashlib.sha256(query.encode()).hexdigest(),
-                intent=selected_intent.value,
-                limit=limit,
-                candidate_limit=min(
-                    self.settings.recall_vector_scan_limit,
-                    max(limit * 5, self.settings.recall_candidate_floor),
-                ),
-                candidates={},
-                phases=SearchPhaseMetrics(),
-                intent_source=intent_source,
-                injection=resolved_injection_context.envelope(),
-            )
-        )
-        expansion_deadline = time.monotonic() + self.settings.query_expansion_total_timeout_seconds
-        weighted_queries = [WeightedQuery(query, "original", 1.0)]
-        query_blobs = [embed_query(self.embedder, query) if self.settings.recall_dense_enabled else b""]
-
-        def expand_for(trigger: str) -> tuple[list[WeightedQuery], list[bytes]]:
-            trace_source = {
-                "short_query": "llm_short",
-                "coreference": "llm_coreference",
-                "low_recall": "llm_low_recall",
-                "low_fts_recall": "llm_low_recall",
-                "always": "llm_short",
-            }.get(trigger, "llm_short")
-            tracer.trace.expansion_trigger = trigger
-            if self.query_expander is None or time.monotonic() >= expansion_deadline:
-                tracer.trace.expansions.append(QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout"))
-                return [], []
-            session_context: tuple[tuple[str, str], ...] = ()
-            tracer.trace.context_outcome = "disabled"
-            if trigger == "coreference" and self.settings.query_context_mode == "coreference":
-                if not session_id:
-                    tracer.trace.context_outcome = "missing_session"
-                    return [], []
-                if time.monotonic() >= expansion_deadline:
-                    tracer.trace.context_outcome = "deadline_exhausted"
-                    return [], []
-                try:
-                    session_context, context_truncated, context_hash, context_outcome = _session_context(
-                        self.connection,
-                        namespace,
-                        session_id,
-                        max_events=self.settings.query_context_max_events,
-                        token_budget=self.settings.query_context_token_budget,
-                    )
-                except Exception as error:
-                    LOGGER.warning("session context read failed: %s", type(error).__name__)
-                    tracer.trace.context_outcome = "read_error"
-                    return [], []
-                tracer.trace.context_event_count = len(session_context)
-                tracer.trace.context_truncated = context_truncated
-                tracer.trace.context_hash = context_hash
-                tracer.trace.context_outcome = context_outcome
-                if not session_context:
-                    return [], []
-                if time.monotonic() >= expansion_deadline:
-                    tracer.trace.context_outcome = "deadline_exhausted"
-                    return [], []
-            remaining = max(0.001, expansion_deadline - time.monotonic())
-            result = self.query_expander.expand(
-                query,
-                intent=selected_intent,
-                max_expansions=self.settings.query_expansion_max,
-                timeout_seconds=min(self.settings.query_expansion_timeout_seconds, remaining),
-                token_ceiling=self.settings.query_expansion_token_ceiling,
-                source=trigger,
-                session_context=session_context,
-            )
-            tracer.trace.expansion_total_tokens += result.input_tokens + result.output_tokens
-            if not result.expansions:
-                tracer.trace.expansions.append(
-                    QueryExpansionTrace.from_text(
-                        "",
-                        trace_source,
-                        0.6,
-                        input_tokens=result.input_tokens,
-                        output_tokens=result.output_tokens,
-                        latency_ms=result.latency_ms,
-                        outcome=result.outcome,
-                        error_class=result.error_class,
-                        attempts=result.attempts,
-                        http_status=result.http_status,
-                        provider_code=result.provider_code,
-                    )
-                )
-                return [], []
-            additions = [WeightedQuery(item.text, item.source, item.weight) for item in result.expansions]
-            for item in additions:
-                tracer.trace.expansions.append(
-                    QueryExpansionTrace.from_text(
-                        item.text,
-                        item.source,
-                        item.weight,
-                        input_tokens=result.input_tokens,
-                        output_tokens=result.output_tokens,
-                        latency_ms=result.latency_ms,
-                    )
-                )
-            return additions, [
-                embed_query(self.embedder, item.text) if self.settings.recall_dense_enabled else b""
-                for item in additions
-            ]
-
-        context_available = self.settings.query_context_mode != "off"
-        initial_trigger = QueryExpander.trigger_for(
-            query,
-            self.settings.query_expansion_mode,
-            context_available=context_available,
-        )
-        additions_made = False
-        if initial_trigger is not None and self.query_expander is not None:
-            additions, blobs = expand_for(initial_trigger)
-            additions_made = bool(additions)
-            weighted_queries.extend(additions)
-            query_blobs.extend(blobs)
-
-        low_recall_expander = None
-        if self.settings.query_expansion_mode == "auto" and not additions_made and self.query_expander is not None:
-
-            def low_recall_expander(
-                candidate_count: int,
-                fts_candidate_count: int,
-            ) -> tuple[list[WeightedQuery], list[bytes]]:
-                trigger = QueryExpander.trigger_for(
-                    query,
-                    "auto",
-                    candidate_count=candidate_count,
-                    candidate_floor=self.settings.query_expansion_candidate_floor,
-                    fts_candidate_count=fts_candidate_count,
-                    context_available=context_available,
-                )
-                return expand_for(trigger) if trigger is not None else ([], [])
-
-        claims = hybrid_claims(
-            ClaimRepository(
-                self.connection,
-                vector_batch_size=self.settings.vector_batch_size,
-                settings=self.settings,
-            ),
-            query,
-            query_blobs[0],
-            limit,
-            as_of,
-            self.reranker,
-            now=ranking_now,
-            intent=selected_intent,
+        request = RecallRequest(
+            query=query,
+            limit=limit,
+            as_of=as_of,
+            intent=intent,
             known_as_of=known_as_of,
+            query_id=query_id,
+            token_budget=token_budget,
+            context_mode=context_mode,
             namespace=namespace,
-            recall_config=RecallConfig(
-                vector_scan_limit=self.settings.recall_vector_scan_limit,
-                dense_enabled=self.settings.recall_dense_enabled,
-                candidate_floor=self.settings.recall_candidate_floor,
-                tag_boost_enabled=self.settings.tag_boost_enabled,
-                tag_boost_weight=self.settings.tag_boost_weight,
-                tag_channel_enabled=self.settings.tag_channel_enabled,
-                tag_channel_weight=self.settings.tag_channel_weight,
-                tag_candidate_limit=self.settings.tag_candidate_limit,
-                preference_recency_boost=self.settings.preference_recency_boost,
-                dedup_threshold=self.settings.recall_dedup_threshold,
-                dedup_candidate_limit=self.settings.recall_dedup_candidate_limit,
-                feedback_min_samples=self.settings.feedback_min_samples,
-                decay_model=self.settings.decay_model,
-            ),
-            relation_connection=self.connection,
-            relation_config=self.relation_config,
-            tracer=tracer,
-            weighted_queries=(
-                weighted_queries
-                if self.query_expander is not None and self.settings.query_expansion_mode != "off"
-                else None
-            ),
-            query_blobs=(
-                query_blobs if self.query_expander is not None and self.settings.query_expansion_mode != "off" else None
-            ),
-            low_recall_expander=low_recall_expander,
-            echo_policy=EchoSuppressionPolicy(
-                mode=self.settings.echo_suppression_mode,
-                session_window_seconds=self.settings.echo_session_window_seconds,
-                pending_review_enabled=self.settings.echo_pending_review_enabled,
-                pending_similarity_threshold=self.settings.echo_pending_similarity_threshold,
-                pending_max_seconds=self.settings.echo_pending_max_seconds,
-            ),
-            echo_request=EchoRequest(
-                delivery_purpose=resolved_injection_context.delivery_purpose,
-                session_id=session_id,
-                namespace=namespace,
-                intent=selected_intent.value,
-                as_of=as_of,
-                known_as_of=known_as_of,
-                request_now=resolved_injection_context.rendering_now,
-                experiment_variant=resolved_injection_context.experiment_variant,
-                policy_version=dict(resolved_injection_context.policy_versions)["echo"],
-            ),
-            echo_signal_loader=lambda claim_ids: EvidenceRepository(self.connection).batch_get_echo_signals(
-                claim_ids,
-                namespace=namespace,
-                session_id=session_id or "",
-            ),
+            session_id=session_id,
+            debug=debug,
+            response_format=response_format,
+            ranking_now=ranking_now,
+            injection_context=injection_context,
         )
-        enforce_enabled = False
-        if self.settings.relevance_gate_mode in {"observe", "enforce"}:
-            enforce_enabled = should_enforce_relevance(
-                self.settings.relevance_gate_mode,
-                selected_intent.value,
-                self.settings.relevance_intents,
-            )
-            if enforce_enabled:
-                claims = enforce_relevance(
-                    claims,
-                    tracer,
-                    reranker_floor=self.settings.relevance_reranker_floor,
-                    dense_floor=self.settings.relevance_dense_floor,
-                    relative_drop_threshold=self.settings.relevance_relative_drop,
-                    keep_top1=self.settings.relevance_keep_top1,
-                )
-            else:
-                evaluate_relevance(
-                    [str(claim["id"]) for claim in claims],
-                    tracer,
-                    reranker_floor=self.settings.relevance_reranker_floor,
-                    dense_floor=self.settings.relevance_dense_floor,
-                    relative_drop_threshold=self.settings.relevance_relative_drop,
-                )
-        provisional_answerability = self._answerability(
-            claims,
-            tracer,
-            relevance_enforced=enforce_enabled,
-        )
-        if self.settings.resurrection_mode == "auto" and provisional_answerability != "supported":
-            defer_activation = None
-            if self.side_effect_sink is not None:
-                sink = self.side_effect_sink
+        session = self._resolve_recall_request(request)
+        limit = session.limit
+        query_id = session.query_id
+        selected_intent = session.selected_intent
+        resolved_injection_context = session.injection_context
+        tracer = session.tracer
+        total_started = session.total_started
+        expansion = self._prepare_queries(session)
 
-                def submit_resurrection(
-                    claim_id: str,
-                    embedding: bytes,
-                    model: str,
-                    dim: int,
-                    target_namespace: str,
-                    target_as_of: str,
-                    target_known: str | None,
-                ) -> bool:
-                    return sink.submit_resurrection(
-                        query_id,
-                        claim_id,
-                        embedding,
-                        model,
-                        dim,
-                        namespace=target_namespace,
-                        as_of=target_as_of,
-                        known_as_of=target_known,
-                    )
-
-                defer_activation = submit_resurrection
-            resurrected = ResurrectionService(
-                self.connection,
-                self.embedder,
-                self.settings,
-                defer_activation=defer_activation,
-            ).try_resurrect(
-                query,
-                namespace=namespace,
-                as_of=as_of or _now(),
-                known_as_of=known_as_of,
-                intent=selected_intent,
-            )
-            if resurrected is not None:
-                resurrected["_score"] = max(
-                    1.0,
-                    max((float(claim.get("_score", 0.0)) for claim in claims), default=0.0) + 0.01,
-                )
-                claims = [resurrected, *(claim for claim in claims if claim["id"] != resurrected["id"])][:limit]
-                tracer.record_channel("cold_fts", [resurrected])
-                tracer.record_final(claims)
-        if self.side_effect_sink is not None:
-            self._submit_access(query_id, claims)
-        else:
-            self._record_access(claims)
-        assembly_started = time.perf_counter_ns()
-        results = self._assemble_results(claims, namespace)
+        selection = self._postprocess_selection(session, self._run_claim_pipeline(session, expansion))
         if (
             selected_intent in {RecallIntent.TOOL, RecallIntent.PROCEDURE}
             and self.settings.procedure_recall_mode != "off"
@@ -739,8 +954,8 @@ class RecallService:
                 namespace=namespace,
                 limit=limit,
                 query_id=query_id,
-                claim_results=results,
-                claim_scores={str(item["id"]): float(item.get("_score", 0.0)) for item in claims},
+                claim_results=selection.results,
+                claim_scores={str(item["id"]): float(item.get("_score", 0.0)) for item in selection.claims},
                 token_budget=token_budget,
                 context_mode=context_mode,
                 debug=debug,
@@ -751,96 +966,8 @@ class RecallService:
                 as_of=as_of,
                 known_as_of=known_as_of,
             )
-        tracer.trace.phases.assembly_us = (time.perf_counter_ns() - assembly_started) // 1000
-        observations = self._assemble_observations([claim["id"] for claim in claims])
-        policies = matching_policies(
-            ExperienceService(self.connection).list_policies("active", namespace=namespace),
-            query,
-        )
-        policy_evidence = EvidenceRepository(self.connection).batch_get_links_for_derived(
-            "policy",
-            [str(policy["id"]) for policy in policies],
-        )
-        for policy in policies:
-            policy["evidence"] = policy_evidence.get(str(policy["id"]), [])
-        packet_candidates = self._context_candidates(results, observations, policies)
-        answerability = self._answerability(
-            claims,
-            tracer,
-            relevance_enforced=enforce_enabled,
-            has_auxiliary_candidates=bool(packet_candidates),
-        )
-        retrieval_bundle = self._bundle_from_context_items(
-            query_id,
-            answerability,
-            packet_candidates,
-        )
-        freshness_items = [
-            _freshness_item(
-                bundle_item.type,
-                bundle_item.id,
-                bundle_item.text,
-                wrapped.get("data", wrapped),
-            )
-            for bundle_item, wrapped in zip(retrieval_bundle.items, packet_candidates, strict=True)
-        ]
-        if response_format != "legacy" or context_mode == "packed":
-            budget = token_budget or self.settings.packed_context_token_budget
-            bundle = _freshness_pack_bundle(
-                retrieval_bundle,
-                freshness_items,
-                policy=_freshness_policy(self.settings),
-                request=_freshness_request(resolved_injection_context, selected_intent, as_of, known_as_of),
-                token_budget=budget,
-                tracer=tracer,
-            )
-            if self.settings.freshness_annotation_mode == "render":
-                packet_context = self._context_from_packed_bundle(packet_candidates, bundle)
-            else:
-                packet_context = self._assemble_context(
-                    results,
-                    observations,
-                    policies,
-                    budget,
-                )
-        else:
-            used = sum(estimate_tokens(item.text) for item in retrieval_bundle.items)
-            bundle = RetrievalBundle(
-                query_id=retrieval_bundle.query_id,
-                answerability=retrieval_bundle.answerability,
-                items=retrieval_bundle.items,
-                used_tokens_estimate=used,
-                truncated=False,
-            )
-            packet_context = {
-                "context_items": packet_candidates,
-                "used_tokens_estimate": used,
-                "truncated": False,
-            }
-        if response_format == "retrieval_bundle":
-            return {"retrieval_bundle": retrieval_bundle_to_dict(bundle)}
-        materialized_packet = self._materialize_context_packet(bundle)
-        if response_format != "context_packet":
-            self._attach_packet_feedback(packet_context, materialized_packet)
-        context_packet = materialized_packet if response_format != "legacy" else None
-        response = {
-            "results": results,
-            "observations": observations,
-            "policies": policies,
-            "total": len(results),
-            "query_id": query_id,
-            "answerability": answerability,
-        }
-        if context_mode == "packed":
-            response["context"] = packet_context
-        if debug:
-            tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
-            response["search_trace"] = tracer.to_dict()
-        if response_format == "context_packet":
-            return {"context_packet": context_packet}
-        if response_format == "both":
-            response["context_packet"] = context_packet
-        return response
+        selection = self._enrich_standard_results(session, selection)
+        return self._assemble_delivery(session, selection)
 
     @staticmethod
     def _answerability(
@@ -1146,9 +1273,9 @@ class RecallService:
             relation = _claim_relation(claim)
             if relation is not None:
                 result.update(zip(("role", "action", "object"), relation, strict=True))
-            for field in ("occurred_start", "occurred_end", "entities"):
-                if claim.get(field):
-                    result[field] = claim[field]
+            for field_name in ("occurred_start", "occurred_end", "entities"):
+                if claim.get(field_name):
+                    result[field_name] = claim[field_name]
             if claim["status"] == "disputed" and claim.get("conflict_key"):
                 result["conflicts"] = rivals_map.get(claim["id"], [])
             results.append(result)
@@ -1175,206 +1302,30 @@ class RecallService:
         known_as_of: str | None,
     ) -> dict[str, Any]:
         """执行 Experience 专用排序、统一 packing 与多类型 exposure。"""
-        claim_candidates = [
-            MemoryCandidate(
-                "claim",
-                str(item["id"]),
-                str(item.get("text") or ""),
-                claim_scores.get(str(item["id"]), 0.0),
-                tuple(item.get("evidence") or ()),
-                {"claim_score": claim_scores.get(str(item["id"]), 0.0)},
-                role=str(item["role"]) if item.get("role") else None,
-                action=str(item["action"]) if item.get("action") else None,
-                object=str(item["object"]) if item.get("object") else None,
-            )
-            for item in claim_results
-        ]
-        claim_metadata_by_id = {str(item["id"]): item for item in claim_results}
-        candidates = recall_procedure(
-            ExperienceService(self.connection).repository,
-            query,
-            selected_intent,
-            namespace,
-            limit,
-            candidate_limit=self.settings.procedure_candidate_limit,
-            recent_outcome_window=self.settings.procedure_recent_outcome_window,
-            outcome_half_life_days=self.settings.procedure_outcome_half_life_days,
-            claim_candidates=claim_candidates,
-        )
-        budget = token_budget or self.settings.packed_context_token_budget
-        freshness_request = _freshness_request(injection_context, selected_intent, as_of, known_as_of)
-        freshness_evaluation = _freshness_policy(self.settings).evaluate(
-            [
-                _freshness_item(
-                    item.memory_type,
-                    item.memory_id,
-                    item.text,
-                    claim_metadata_by_id.get(item.memory_id, {}),
-                )
-                for item in candidates
-            ],
-            freshness_request,
-        )
-        rendered_by_key = {
-            (decision.memory_type, decision.item_id): decision.rendered_text
-            for decision in freshness_evaluation.decisions
-            if decision.eligible
-        }
-        decorated_candidates = [
-            (
-                replace(item, text=rendered_by_key[(item.memory_type, item.memory_id)])
-                if (item.memory_type, item.memory_id) in rendered_by_key
-                else item
-            )
-            for item in candidates
-        ]
-        control_packed, control_quotas, control_reflow = budget_pack_by_type(
-            candidates,
-            selected_intent,
-            budget,
-        )
-        if rendered_by_key:
-            treatment_packed, treatment_quotas, treatment_reflow = budget_pack_by_type(
-                decorated_candidates,
-                selected_intent,
-                budget,
-            )
-        else:
-            treatment_packed, treatment_quotas, treatment_reflow = (
-                control_packed,
-                control_quotas,
-                control_reflow,
-            )
-        freshness_evaluation = freshness_evaluation.with_truncation_changed(
-            [(item.memory_type, item.memory_id) for item in control_packed]
-            != [(item.memory_type, item.memory_id) for item in treatment_packed]
-        )
-        _record_freshness_evaluation(freshness_evaluation, tracer, freshness_request)
-        if self.settings.freshness_annotation_mode == "render":
-            candidates = decorated_candidates
-            packed, quotas, reflow = treatment_packed, treatment_quotas, treatment_reflow
-        else:
-            packed, quotas, reflow = control_packed, control_quotas, control_reflow
-        packet_selected = packed[:limit]
-        selected = packet_selected if context_mode == "packed" else candidates[:limit]
-        results = []
-        for item in selected:
-            result: dict[str, Any] = {
-                "type": item.memory_type,
-                "memory_type": item.memory_type,
-                "id": item.memory_id,
-                "text": item.text,
-                "score": item.score,
-                "evidence": list(item.evidence),
-                "features": item.features,
-            }
-            if item.memory_type == "claim" and item.role is not None:
-                result.update(role=item.role, action=item.action, object=item.object)
-            results.append(result)
-        answerability = self._answerability([], tracer) if not candidates else "supported"
-        materialized_selection = packet_selected if response_format != "legacy" else selected
-        bundle = RetrievalBundle(
+        request = RecallRequest(
+            query=query,
+            limit=limit,
+            as_of=as_of,
+            intent=selected_intent,
+            known_as_of=known_as_of,
             query_id=query_id,
-            answerability=answerability,
-            items=tuple(
-                RetrievalBundleItem(
-                    cast(MemoryType, item.memory_type),
-                    item.memory_id,
-                    item.text,
-                    tuple(reference for reference in item.evidence if isinstance(reference, Mapping)),
-                    item.score,
-                    item.role if item.memory_type == "claim" else None,
-                    item.action if item.memory_type == "claim" else None,
-                    item.object if item.memory_type == "claim" else None,
-                )
-                for item in materialized_selection
-            ),
-            used_tokens_estimate=sum(
-                estimate_tokens(
-                    render_memory_text(
-                        item.text,
-                        role=item.role,
-                        action=item.action,
-                        object_=item.object,
-                    )
-                    if item.memory_type == "claim"
-                    else item.text
-                )
-                for item in materialized_selection
-            ),
-            truncated=len(materialized_selection) < len(candidates),
+            token_budget=token_budget,
+            context_mode=context_mode,
+            namespace=namespace,
+            session_id=None,
+            debug=debug,
+            response_format=response_format,
+            ranking_now=None,
+            injection_context=injection_context,
         )
-        if response_format == "retrieval_bundle":
-            return {"retrieval_bundle": retrieval_bundle_to_dict(bundle)}
-        materialized_packet = self._materialize_context_packet(bundle)
-        if response_format != "context_packet" and materialized_packet["feedback_state"] == "available":
-            feedback_by_memory = {
-                (item["type"], item["id"]): item["feedback_id"] for item in materialized_packet["items"]
-            }
-            for result in results:
-                feedback_id = feedback_by_memory.get((result["memory_type"], result["id"]))
-                if feedback_id is not None:
-                    result["feedback_id"] = feedback_id
-        context_packet = materialized_packet if response_format != "legacy" else None
-        tracer.trace.candidate_counts = {
-            kind: sum(item.memory_type == kind for item in candidates)
-            for kind in ("policy", "episode", "trace", "claim")
-        }
-        tracer.trace.quota_tokens = quotas
-        tracer.trace.reflow_tokens = reflow
-        traced_selection = materialized_selection
-        selected_keys = {(item.memory_type, item.memory_id): rank for rank, item in enumerate(traced_selection, 1)}
-        tracer.trace.experience_candidates = [
-            ExperienceCandidateTrace(
-                memory_type=item.memory_type,
-                memory_id=item.memory_id,
-                source_rank=rank,
-                features=item.features,
-                final_rank=selected_keys.get((item.memory_type, item.memory_id)),
-                included=(item.memory_type, item.memory_id) in selected_keys,
-                filter_reasons=[] if (item.memory_type, item.memory_id) in selected_keys else ["limit_or_budget"],
-            )
-            for rank, item in enumerate(candidates, 1)
-        ]
-        response: dict[str, Any] = {
-            "results": results,
-            "observations": [],
-            "policies": [item for item in results if item["memory_type"] == "policy"],
-            "total": len(results),
-            "query_id": query_id,
-            "answerability": answerability,
-        }
-        if context_mode == "packed":
-            used = sum(
-                estimate_tokens(
-                    render_memory_text(
-                        item.text,
-                        role=item.role,
-                        action=item.action,
-                        object_=item.object,
-                    )
-                    if item.memory_type == "claim"
-                    else item.text
-                )
-                for item in selected
-            )
-            response["context"] = {
-                "context_items": [
-                    {"type": item.memory_type, "data": result} for item, result in zip(selected, results)
-                ],
-                "used_tokens_estimate": used,
-                "truncated": len(selected) < len(candidates),
-                "quota_tokens": quotas,
-                "reflow_tokens": reflow,
-            }
-        if debug:
-            tracer.trace.phases.total_us = (time.perf_counter_ns() - total_started) // 1000
-            response["search_trace"] = tracer.to_dict()
-        if response_format == "context_packet":
-            return {"context_packet": context_packet}
-        if response_format == "both":
-            response["context_packet"] = context_packet
-        return response
+        return _ProcedureRecallFlow(
+            self,
+            request,
+            claim_results,
+            claim_scores,
+            tracer,
+            total_started,
+        ).run()
 
     @staticmethod
     def _batch_evidence(

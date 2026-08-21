@@ -1,18 +1,28 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-20
+> 最后更新：2026-08-21
 
 ## 当前状态
 
-- **分支**：`feature/v0.29.2-injection-defaults`
-- **版本**：v0.29.2
-- **阶段**：v0.29.2 注入治理默认值翻转已完成，停在 worktree 等待 Hermes 验收；无 push
+- **分支**：`feature/v0.29.3-slimming`
+- **版本**：v0.29.3
+- **阶段**：v0.29.3 发版准备已完成，停在 worktree 等待 Hermes 验收；无 push、无 tag
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：49 migrations（SQL 001–049），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
-## v0.29.2 已交付
+## v0.29.3 已交付（待 Hermes 验收）
+
+- temporal 为价格/计量快照增加序列坐标：同序列不同坐标自动推进，不同度量/标的共存，同坐标修订和隐式替换
+  继续人工；火山 11 案由 10 uncertain + 1 not-applicable 收敛为 7 distinct-series + 2 snapshot-advance +
+  1 uncertain + 1 not-applicable。
+- `RecallService.recall()` 与 `IngestService.store_extracted()` 分别拆轻到 68/163 行，procedure flow 与 ingest
+  resolution 独立，characterization 保证既有行为和 patch 面不变。
+- 新增模块行数、callable 参数和函数长度三预算 CI 棘轮；默认上限为 600 行、10 参数、150 行，allowlist 只降不升。
+- 无 schema migration、配置变更或破坏性 API 变化，`daemon_contract=1`；行为变化仅 temporal 三分支且无旧行为开关。
+
+## v0.29.2 基线（继续有效）
 
 - v0.29.0 migration 047 新增 `assertion_kind=unknown|observation|inference`。存量 `unknown` 只可观测，不授权
   supersede，也不改变召回或注入行为。
@@ -67,7 +77,8 @@
 
 ## 下一步
 
-- 由 Hermes 验收 v0.29.2 默认值翻转；三机继续使用现有显式 `enforce` / `render` 配置，本 worktree 不修改部署配置。
+- 由 Hermes 验收 v0.29.3 发版准备提交；验收后按 SOP merge 回 main、push、tag、等待 CI 并部署三机。
+  本 worktree 不修改部署配置、不 push、不打 tag。
 
 - 观察 tombstone sidecar 与 restore replay 的生产恢复演练；旧 manifest 无法证明删除历史时保持拒绝，不做
   静默兼容。

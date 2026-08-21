@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.29.2
-- Updated: 2026-08-20
+- Document baseline: v0.29.3
+- Updated: 2026-08-21
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -284,13 +284,23 @@ bounded reopen path deliberately adds no pagination, cooling, split/reclassifica
 storage behavior.
 
 The `temporal-v1` extension runs only after exact deduplication and the existing mutually-exclusive group resolver. A new
-Claim must be explicitly gated as an `observation`; legacy `unknown` values never authorize a link. The extension recognizes
-only atomic online/offline availability and explicit price replacement with a matching subject, canonical attribute,
-predicate, qualifiers, price axis, non-decreasing source authority, strictly newer valid time, old-value anchor, currency,
-and billing unit. `config.path`,
-`config.network`, and every non-exclusive operational slot are denied. A proven update reuses the existing atomic
-supersede transaction, while a recognized but unproven price update becomes one existing pair-style manual conflict case.
-No LLM call or general latest-wins classifier is added.
+Claim must be explicitly gated as an `observation`; legacy `unknown` values never authorize a link. Atomic online/offline
+availability and explicitly anchored price replacements retain their conservative guards for subject, attribute,
+predicate, qualifiers, source authority, valid time, currency, and billing unit. Price and measurement snapshots add three
+deterministic branches implemented in `src/hl_mem/domain/claims/temporal_links.py`:
+
+- `snapshot_advance`: different coordinates in the same subject/measurement series converge automatically. The newer
+  snapshot becomes the current tip and closes the older tip; an older snapshot ingested later is closed as backfill, so it
+  cannot replace the current value.
+- `distinct_series`: different measurements or different proven instruments coexist without creating a conflict case.
+- `uncertain`: same-coordinate revisions, implicit replacements, missing or inconsistent coordinates/subjects,
+  authority/unit mismatches, and mixed active-tip ordering remain fail-closed in the existing manual pipeline. The case
+  rationale includes the evaluator reason, such as `snapshot_coordinate_equal`, `price_replacement_not_explicit`, or
+  `snapshot_order_mixed`.
+
+`config.path`, `config.network`, and every non-exclusive operational slot remain denied. Proven convergence reuses the
+existing atomic supersede transaction; ambiguity reuses the pair-style manual case. No LLM call, general latest-wins
+classifier, schema migration, or configuration switch is added.
 
 Near-copy control deliberately shares one conservative predicate across ingestion, maintenance, and recall. It requires
 compatible namespace, predicate, canonical slot/attribute, qualifiers, and validity; high cosine and lexical near-copy

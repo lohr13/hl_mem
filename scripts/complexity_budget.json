@@ -1,0 +1,137 @@
+[
+  {
+    "path": "src/hl_mem/adapters/hermes/prefetch.py",
+    "max_lines": 691
+  },
+  {
+    "path": "src/hl_mem/adapters/hermes/provider.py",
+    "max_lines": 1062
+  },
+  {
+    "path": "src/hl_mem/api/server.py",
+    "max_lines": 807,
+    "max_callable_lines": {
+      "create_app": 648
+    }
+  },
+  {
+    "path": "src/hl_mem/application/_ingest_resolution.py",
+    "max_lines": 254
+  },
+  {
+    "path": "src/hl_mem/application/ingest.py",
+    "max_lines": 1120,
+    "max_params": {
+      "IngestService.store_extracted": 16
+    }
+  },
+  {
+    "path": "src/hl_mem/application/recall.py",
+    "max_lines": 1384,
+    "max_params": {
+      "RecallService._recall_experience": 21,
+      "RecallService.recall": 19
+    }
+  },
+  {
+    "path": "src/hl_mem/cli.py",
+    "max_lines": 767,
+    "max_callable_lines": {
+      "main": 262
+    }
+  },
+  {
+    "path": "src/hl_mem/domain/claims/attributes.py",
+    "max_lines": 733
+  },
+  {
+    "path": "src/hl_mem/domain/claims/temporal_links.py",
+    "max_lines": 430
+  },
+  {
+    "path": "src/hl_mem/ingest/llm_extractor.py",
+    "max_lines": 1838
+  },
+  {
+    "path": "src/hl_mem/observability/audit.py",
+    "max_lines": 309,
+    "max_params": {
+      "AuditLogger.emit": 18
+    }
+  },
+  {
+    "path": "src/hl_mem/observability/llm_spans.py",
+    "max_lines": 113,
+    "max_params": {
+      "LLMSpanRecorder.record": 21
+    }
+  },
+  {
+    "path": "src/hl_mem/recall/lexicalizer.py",
+    "max_lines": 288,
+    "max_callable_lines": {
+      "tokenize_for_fts": 167
+    }
+  },
+  {
+    "path": "src/hl_mem/recall/staged_pipeline.py",
+    "max_lines": 962,
+    "max_params": {
+      "_collect_candidates": 32,
+      "hybrid_claims": 32
+    },
+    "max_callable_lines": {
+      "_collect_candidates": 160
+    }
+  },
+  {
+    "path": "src/hl_mem/settings.py",
+    "max_lines": 1095,
+    "max_callable_lines": {
+      "Settings.validate": 332
+    }
+  },
+  {
+    "path": "src/hl_mem/storage/claims.py",
+    "max_lines": 1104,
+    "max_callable_lines": {
+      "ClaimRepository.ensure_group_conflict_case": 175
+    }
+  },
+  {
+    "path": "src/hl_mem/storage/experience.py",
+    "max_lines": 680,
+    "max_params": {
+      "ExperienceRepository.record_feedback": 16
+    }
+  },
+  {
+    "path": "src/hl_mem/workers/backfill_index_text.py",
+    "max_lines": 324,
+    "max_callable_lines": {
+      "backfill_index_text": 194
+    }
+  },
+  {
+    "path": "src/hl_mem/workers/consolidate.py",
+    "max_lines": 874
+  },
+  {
+    "path": "src/hl_mem/workers/decay.py",
+    "max_lines": 316,
+    "max_params": {
+      "decay_claims": 24
+    }
+  },
+  {
+    "path": "src/hl_mem/workers/worker.py",
+    "max_lines": 963,
+    "max_params": {
+      "Worker.__init__": 17
+    },
+    "max_callable_lines": {
+      "Worker._extract_window": 235,
+      "Worker._run_maintenance": 203
+    }
+  }
+]

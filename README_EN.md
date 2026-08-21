@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.29.2](https://img.shields.io/badge/version-0.29.2-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.29.3](https://img.shields.io/badge/version-0.29.3-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -200,6 +200,17 @@ python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-r
   --export-expanded-fixture var/eval/v0291-injection-fixture.jsonl
 ```
 
+### Upgrading to v0.29.3
+
+v0.29.3 requires no schema migration and introduces no configuration or breaking REST/MCP API change. Price and
+measurement snapshots now follow three temporal branches: a later coordinate in the same series advances the current tip;
+different measurements or instruments coexist; same-coordinate revisions, implicit replacements, and other unproven cases
+remain in manual conflict review. The Recall/ingest orchestration splits and complexity ratchet do not change runtime
+behavior, and `daemon_contract` remains `1`.
+
+There is no setting that restores the old temporal decisions: the three-way behavior is the purpose of this release. A
+deployment that must restore the old behavior has to downgrade the package.
+
 ### Upgrading to v0.29.2
 
 Upgrading enables same-session echo suppression and risk-gated freshness hints by default; no migration script is
@@ -274,7 +285,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.29.2 with 49 immutable, forward-only migrations. Migration 049 removes the legacy
+The current baseline is v0.29.3 with 49 immutable, forward-only migrations. Migration 049 removes the legacy
 `claims_tags_fts` only after checking database views/triggers. SQLite cannot prove the absence of external query
 consumers, so every node must be on v0.29.0+ and the old-binary rollback window must be closed before upgrading.
 

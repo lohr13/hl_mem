@@ -230,9 +230,7 @@ def test_tool_executor_accepts_mapping_strict_json_and_normalized_distribution_n
     )
 
     assert results[0]["result"]["install_source"] == "pypi"
-    assert trace[0]["content"]["arguments"] == (
-        {"package": "hl-mem"} if isinstance(arguments, str) else arguments
-    )
+    assert trace[0]["content"]["arguments"] == ({"package": "hl-mem"} if isinstance(arguments, str) else arguments)
 
 
 @pytest.mark.parametrize(

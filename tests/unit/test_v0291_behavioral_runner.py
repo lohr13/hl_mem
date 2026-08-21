@@ -189,9 +189,7 @@ def test_cli_structural_phase_is_zero_cost_and_behavioral_respects_failed_gate(
 
 
 @pytest.mark.asyncio
-async def test_all_phase_reuses_existing_passing_sentinel(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_all_phase_reuses_existing_passing_sentinel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sentinel_artifact = tmp_path / "sentinel.json"
     sentinel_artifact.write_text(
         json.dumps({"passed": True, "valid_count": 9, "matched_count": 9}),
