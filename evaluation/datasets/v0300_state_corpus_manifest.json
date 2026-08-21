@@ -1,0 +1,81 @@
+{
+  "categories": {
+    "compound_claim": {
+      "dev": 56,
+      "sealed": 24,
+      "total": 80
+    },
+    "counterexample": {
+      "dev": 56,
+      "sealed": 24,
+      "total": 80
+    },
+    "non_state_control": {
+      "dev": 28,
+      "sealed": 12,
+      "total": 40
+    },
+    "non_version_state": {
+      "dev": 56,
+      "sealed": 24,
+      "total": 80
+    },
+    "software_version": {
+      "dev": 84,
+      "sealed": 36,
+      "total": 120
+    }
+  },
+  "files": {
+    "dev_corpus": {
+      "path": "v0300_state_dev_corpus.jsonl",
+      "records": 280,
+      "sha256": "0e84c6e0d6042b0a8c35e03ac1b95e1809df33cd8845a52084b9b456ef1ef62c"
+    },
+    "dev_gold": {
+      "path": "v0300_state_dev_gold.jsonl",
+      "records": 280,
+      "sha256": "67606ed7e2b280ac98fba15612cb32b12ab4d16ed3c4788916026a7673c31bce"
+    },
+    "sealed_corpus": {
+      "path": "v0300_state_sealed_corpus.jsonl",
+      "records": 120,
+      "sha256": "d57b35b1a57d353843b9941ff4334ba0d14b44d4244714180934dd81ebbd7178"
+    },
+    "sealed_gold": {
+      "path": "v0300_state_sealed_gold.jsonl",
+      "records": 120,
+      "sha256": "43df9da64d40739df3976eb6c201bfd6e12e60f8c10b63942791c48c832c09d1"
+    }
+  },
+  "protocol": "v0.30.0-batch2-state-counterexamples",
+  "schema_version": 1,
+  "sources": {
+    "real_deidentified": {
+      "dev": 140,
+      "sealed": 60,
+      "total": 200
+    },
+    "synthetic_adversarial": {
+      "dev": 140,
+      "sealed": 60,
+      "total": 200
+    }
+  },
+  "splits": {
+    "dev": {
+      "bundles": 280,
+      "events": 700
+    },
+    "sealed": {
+      "bundles": 120,
+      "events": 300
+    }
+  },
+  "totals": {
+    "bundles": 400,
+    "events": 1000,
+    "gold_coverage": 1.0,
+    "gold_records": 400
+  }
+}

@@ -83,6 +83,32 @@ scripts\hlmem-python.cmd -m hl_mem.evaluation.state_lifecycle ^
 两库快照使用 `--before-db` / `--after-db`；同库记录时间区间使用
 `--db`、`--before-at`、`--after-at`。所有数据库均通过 SQLite `mode=ro` 打开，不运行 migration。
 
+## v0.30.0 状态候选实验
+
+批次 2 只提供离线 A/B 装备，不接生产 ingest/recall。A 臂原样保留 v0.29.3 七字段 compact JSON，B1 对同一
+JSON 执行确定性 atomicity/canonicalization，B2 只保留 response provider 接口。调用
+`hl_mem.evaluation.state_experiment_arms.run_arm_file()` 写入显式实验目录；判分调用
+`hl_mem.evaluation.state_experiment_scoring.score_protocol()`，真实 supersede 边只通过只读数据库的
+`claims.superseded_by_id` 和 `evidence_links` 消费。
+
+corpus JSONL 不是 `run_arm_file()` 的直接输入。实验执行轮先把每个 bundle 的 `events` 送入冻结的 A 提取器，
+再调用 `make_arm_sample(bundle, raw_llm_json)` 生成 `sample_id/raw_llm_json` JSONL；A 与 B1 必须重放这同一份文件，
+其中 `sample_id == bundle_id`，从而与 gold 的 assertion id 对齐。真实来源行会把不可逆闭集 skeleton 作为明确标记的
+“非事实证据”上下文写进模型可见输入，受控断言位于独立的“当前评测事件”段；原始事件文本不会进入语料。
+
+真实来源结构必须从调用方显式指定的冻结快照采样，脚本不会读取 `hl_mem.toml` 或内置数据库路径：
+
+```bat
+scripts\hlmem-python.cmd evaluation\tools\sample_state_events.py ^
+  --source-db <readonly-snapshot.db> --output <temp-redacted-seeds.jsonl> --limit 200
+scripts\hlmem-python.cmd evaluation\tools\generate_state_counterexample_corpus.py ^
+  --seed-source <temp-redacted-seeds.jsonl> --output-dir evaluation\datasets
+```
+
+冻结文件为 dev corpus/gold 各一份、sealed corpus/gold 各一份和一个 manifest。开发调参与报告只读 dev；sealed
+文件名固定含 `sealed`，交付后只允许判分器读取并输出聚合指标。日常完整性检查仅依据 manifest 对 sealed 文件做
+字节级 SHA-256 校验，不输出记录内容。
+
 ## 结果与数据治理
 
 - `evaluation/datasets/` 默认忽略，只显式跟踪公开 synthetic smoke 数据。
