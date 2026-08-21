@@ -302,7 +302,10 @@ def test_temporal_uncertain_pair_quarantine_commits_case_before_audit(tmp_path: 
         )
     } == {"disputed"}
     case = connection.execute("SELECT status,rationale FROM conflict_cases").fetchone()
-    assert tuple(case) == ("manual_required", "temporal_update_uncertain")
+    assert tuple(case) == (
+        "manual_required",
+        "temporal_update_uncertain:price_replacement_not_explicit",
+    )
     database.close()
 
 

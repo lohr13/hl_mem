@@ -25,8 +25,6 @@ from hl_mem.storage.claims import ClaimRepository
 
 @dataclass(frozen=True)
 class _ConflictGroupResolution:
-    """Whole-group deterministic result used by the ingest coordinator."""
-
     outcome: str
     representative: dict[str, Any]
     member_outcomes: tuple[tuple[str, str], ...]
@@ -35,17 +33,16 @@ class _ConflictGroupResolution:
 
 @dataclass(frozen=True)
 class _TemporalResolution:
-    """Bounded non-operational series decision from the deterministic evaluator."""
-
     outcome: str
     representative: dict[str, Any]
     members: tuple[dict[str, Any], ...]
-    member_outcomes: tuple[tuple[str, str, str | None], ...]
+    member_outcomes: tuple[tuple[str, str, str | None, str], ...]
+    rationale: str
+    snapshot_order: str | None
 
 
 def _find_resolution(
-    claims: ClaimRepository,
-    claim: dict[str, Any],
+    claims: ClaimRepository, claim: dict[str, Any]
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """Find an exact duplicate or mutually-exclusive conflict candidates."""
     exact = claims.find_by_fact_hash(claim["namespace_key"], claim["fact_hash"])
@@ -65,7 +62,6 @@ def _resolve_conflict_group(
     *,
     preferred_id: str | None = None,
 ) -> _ConflictGroupResolution:
-    """Resolve every non-terminal member instead of trusting row order."""
     if not members:
         raise ValueError("conflict group must contain at least one member")
     resolver = ConflictResolver()
@@ -75,7 +71,6 @@ def _resolve_conflict_group(
     outcome = next(iter(unique_outcomes)) if len(unique_outcomes) == 1 else "uncertain"
     if len(active_members) > 1:
         outcome = "uncertain"
-
     representative = active_members[0] if active_members else members[0]
     if not active_members and preferred_id is not None:
         representative = next((member for member in members if member["id"] == preferred_id), representative)
@@ -88,25 +83,34 @@ def _resolve_conflict_group(
 
 
 def _resolve_temporal_candidates(
-    members: Sequence[dict[str, Any]],
-    new_claim: dict[str, Any],
+    members: Sequence[dict[str, Any]], new_claim: dict[str, Any]
 ) -> _TemporalResolution | None:
-    """Aggregate only candidates recognized by the conservative pure evaluator."""
     evaluated = [(member, evaluate_temporal_link(member, new_claim)) for member in members]
     actionable = [(member, decision) for member, decision in evaluated if decision.outcome != "not_applicable"]
     if not actionable:
         return None
-    outcomes = {decision.outcome for _, decision in actionable}
+    competing = [(member, decision) for member, decision in actionable if decision.outcome != "distinct_series"]
+    selected = competing or actionable
+    outcomes = {decision.outcome for _, decision in selected}
     outcome = next(iter(outcomes)) if len(outcomes) == 1 else "uncertain"
-    representative = actionable[0][0]
-    selected_members = tuple(member for member, _ in actionable)
+    snapshot_orders = {decision.snapshot_order for _, decision in selected if decision.outcome == "snapshot_advance"}
+    mixed_snapshot_order = outcome == "snapshot_advance" and len(snapshot_orders) != 1
+    if mixed_snapshot_order:
+        outcome = "uncertain"
+    representative, representative_decision = selected[0]
+    rationale = ("temporal_member_outcomes_mixed", representative_decision.rationale)[len(outcomes) == 1]
+    if mixed_snapshot_order:
+        rationale = "snapshot_order_mixed"
     return _TemporalResolution(
         outcome=outcome,
         representative=representative,
-        members=selected_members,
+        members=tuple(member for member, _ in selected),
         member_outcomes=tuple(
-            (str(member["id"]), decision.outcome, decision.rule_id) for member, decision in actionable
+            (str(member["id"]), decision.outcome, decision.rule_id, decision.rationale)
+            for member, decision in actionable
         ),
+        rationale=rationale,
+        snapshot_order=(next(iter(snapshot_orders)) if outcome == "snapshot_advance" else None),
     )
 
 

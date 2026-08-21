@@ -45,6 +45,10 @@
     "max_lines": 733
   },
   {
+    "path": "src/hl_mem/domain/claims/temporal_links.py",
+    "max_lines": 430
+  },
+  {
     "path": "src/hl_mem/ingest/llm_extractor.py",
     "max_lines": 1838
   },

@@ -89,7 +89,8 @@ class _IngestResolution:
     review_group: tuple[dict[str, Any], ...] = ()
     review_decision: str | None = None
     review_rationale: str | None = None
-    temporal_review_candidate: dict[str, Any] | None = None
+    temporal_review_candidates: tuple[dict[str, Any], ...] = ()
+    temporal_backfill_tip: dict[str, Any] | None = None
     semantic_candidate_id: str | None = None
     semantic_candidate_similarity: float | None = None
 
@@ -495,7 +496,7 @@ class IngestService:
                 )
 
             IngestService._quarantine_resolution(claims, claim, now, resolution)
-            IngestService._converge_superseded_members(claims, claim, extracted, now, resolution)
+            IngestService._converge_superseded_members(claims, claim, now, resolution)
             _link_source_events(evidence, claim["id"], evidence_events, commit=False)
             connection.commit()
         except Exception:
@@ -718,10 +719,7 @@ class IngestService:
         event_id: str,
         audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]],
     ) -> _IngestResolution | None:
-        temporal_resolution = _resolve_temporal_candidates(
-            claims.find_temporal_candidates(claim),
-            claim,
-        )
+        temporal_resolution = _resolve_temporal_candidates(claims.find_temporal_candidates(claim), claim)
         if temporal_resolution is not None:
             audit_events.append(
                 (
@@ -741,18 +739,21 @@ class IngestService:
                 result_id = str(temporal_resolution.representative["id"])
                 _link_source_events(evidence, result_id, evidence_events, commit=False)
                 return _IngestResolution(temporal_entails=StoreClaimResult(result_id, "stored", "temporal_entails"))
-            if temporal_resolution.outcome == "state_change":
+            if temporal_resolution.outcome in {"state_change", "snapshot_advance"}:
                 claim["status"] = "candidate"
+                if temporal_resolution.snapshot_order == "older":
+                    return _IngestResolution(temporal_backfill_tip=temporal_resolution.representative)
                 claim["supersedes_id"] = temporal_resolution.representative["id"]
                 return _IngestResolution(
-                    superseded_member_ids=tuple(str(member["id"]) for member in temporal_resolution.members),
+                    superseded_member_ids=tuple(str(member["id"]) for member in temporal_resolution.members)
                 )
+            if temporal_resolution.outcome == "distinct_series":
+                return _IngestResolution()
             claim["status"] = "disputed"
             return _IngestResolution(
-                temporal_review_candidate=temporal_resolution.representative,
-                review_rationale="temporal_update_uncertain",
+                temporal_review_candidates=temporal_resolution.members,
+                review_rationale=f"temporal_update_uncertain:{temporal_resolution.rationale}",
             )
-
         audit_events.append(
             (
                 ("conflict", "not_applicable", "no_existing"),
@@ -827,10 +828,10 @@ class IngestService:
                 decision=resolution.review_decision or "uncertain",
                 rationale=resolution.review_rationale or "ingest_group_resolution",
             )
-        if resolution.temporal_review_candidate is not None:
+        for temporal_review_candidate in resolution.temporal_review_candidates:
             _quarantine_temporal_pair(
                 claims,
-                resolution.temporal_review_candidate,
+                temporal_review_candidate,
                 claim,
                 now,
                 rationale=resolution.review_rationale or "temporal_update_uncertain",
@@ -841,22 +842,24 @@ class IngestService:
     def _converge_superseded_members(
         claims: ClaimRepository,
         claim: dict[str, Any],
-        extracted: ExtractedClaim,
         now: str,
         resolution: _IngestResolution,
     ) -> None:
-        for superseded_member_id in resolution.superseded_member_ids:
+        tip = resolution.temporal_backfill_tip
+        winner = tip or claim
+        member_ids = (str(claim["id"]),) if tip else resolution.superseded_member_ids
+        for member_id in member_ids:
             superseded = claims.supersede_with_inline(
-                superseded_member_id,
-                claim["id"],
-                extracted.value,
-                claim["valid_from"],
+                member_id,
+                str(winner["id"]),
+                winner.get("value"),
+                str(winner["valid_from"]),
                 now,
                 commit=False,
             )
             if not superseded.applied:
-                raise ConflictError(f"conflict group member changed during ingest: {superseded_member_id}")
-        if resolution.superseded_member_ids:
+                raise ConflictError(f"claim changed during ingest state convergence: {member_id}")
+        if member_ids and tip is None:
             assert_transition("candidate", "active")
             if not claims.update_status(claim["id"], "active", commit=False):
                 raise ConflictError(f"new state-change claim disappeared during ingest: {claim['id']}")
