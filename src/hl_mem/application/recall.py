@@ -28,6 +28,7 @@ from hl_mem.application.context_packet import (
     retrieval_bundle_to_dict,
 )
 from hl_mem.application.ingest import new_id
+from hl_mem.application.recall_access import is_access_recording_eligible
 from hl_mem.application.recall_side_effects import RecallSideEffectSink
 from hl_mem.application.resurrection import ResurrectionService
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
@@ -772,10 +773,15 @@ class RecallService:
                 ]
                 session.tracer.record_channel("cold_fts", [resurrected])
                 session.tracer.record_final(claims)
-        if self.side_effect_sink is not None:
-            self._submit_access(session.query_id, claims)
-        else:
-            self._record_access(claims)
+        if is_access_recording_eligible(
+            intent=session.selected_intent,
+            as_of=request.as_of,
+            known_as_of=request.known_as_of,
+        ):
+            if self.side_effect_sink is not None:
+                self._submit_access(session.query_id, claims)
+            else:
+                self._record_access(claims)
         assembly_started = time.perf_counter_ns()
         return EnrichedSelection(
             claims,
