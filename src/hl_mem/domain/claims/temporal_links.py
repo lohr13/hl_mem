@@ -43,8 +43,7 @@ _FULL_ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
 _CONTEXTUAL_CHINESE_DATE = re.compile(r"(?<![\d年])(\d{1,2})月(\d{1,2})日(?!\d)")
 _HOLDING_ENTITY = re.compile(r"持有[\d,]+(?:股|份)([\u4e00-\u9fff]{2,12}(?:ETF)?)", re.IGNORECASE)
 _NAMED_PRICE_ENTITY = re.compile(
-    r"(?:若|对|挂)([\u4e00-\u9fff]{2,12}(?:ETF)?)(?:的)?"
-    r"(?:股价|价格|现价|收盘价|成本价|目标价)",
+    r"(?:若|对|挂)([\u4e00-\u9fff]{2,12}(?:ETF)?)(?:的)?" r"(?:股价|价格|现价|收盘价|成本价|目标价)",
     re.IGNORECASE,
 )
 _TICKER_ENTITY = re.compile(r"(?<![A-Za-z0-9])([A-Z]{2,8})(?![A-Za-z0-9])")

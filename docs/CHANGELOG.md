@@ -1,5 +1,37 @@
 # HL-Mem 变更记录
 
+## v0.29.3（2026-08-21）
+
+### Temporal 序列坐标
+
+- 为价格/计量类时间序列快照增加保守的序列坐标判定，避免正常快照被误送入人工冲突队列。同一标的、同一度量的
+  不同时间坐标会以 `snapshot_advance` 自动收敛：较新快照成为 current tip，旧值退出 current-state 召回；若先写入
+  当前值、后回填历史快照，回填值也会直接关闭而不覆盖当前值。不同度量或不同标的以 `distinct_series` 直接共存。
+- 同坐标修订、坐标/标的无法可靠证明、隐式目标价替换、来源或单位不兼容、候选顺序混杂等真矛盾或灰区仍为
+  `uncertain`，继续进入既有人工管线，fail-closed 边界不变。人工案的 `rationale` 现携带 evaluator 的具体原因，
+  例如 `temporal_update_uncertain:snapshot_coordinate_equal`、
+  `temporal_update_uncertain:price_replacement_not_explicit` 或
+  `temporal_update_uncertain:snapshot_order_mixed`，不再只给出泛化理由。
+- 火山 11 案冻结回放由旧版的 **10 个 `uncertain` + 1 个 `not_applicable`**，收敛为
+  **7 个 `distinct_series` + 2 个 `snapshot_advance` + 1 个 `uncertain` + 1 个 `not_applicable`**：
+  7 个不同度量/标的直接共存，2 个同序列快照推进自动关链，1 个标的无法证明的灰区继续人工，非时间事实保持
+  `not_applicable`。另有同坐标延迟修订、隐式目标价替换和同日混度量反例锁定 fail-closed 三分支边界。
+
+### 编排器拆轻与复杂度棘轮
+
+- 在 characterization 等价验证保护下拆轻 Recall/ingest 编排器，外部行为与可 patch 调用面不变：
+  `RecallService.recall()` 从 469 行降至 68 行，procedure 分支下沉到 `ProcedureRecallFlow`；
+  `IngestService.store_extracted()` 从 353 行降至 163 行，冲突/时间决议下沉到 `_ingest_resolution`。
+- 新增 `scripts/check_complexity_budget.py`、`scripts/complexity_budget.json` 与 CI 棘轮门禁，同时约束模块物理行数、
+  callable 有效参数数和 callable 长度。新模块默认不超过 600 行，新 callable 默认不超过 10 个参数和 150 行；
+  allowlist 只允许持平或下降，PR 通过 base 比较拒绝新增例外或抬高既有预算。
+
+### 配置、兼容与升级
+
+- 本版没有 schema migration、配置键变更或破坏性 REST/MCP API 变化；`daemon_contract` 保持 `1`。
+- 升级后的行为变化仅限 temporal 的 `snapshot_advance` / `distinct_series` / `uncertain` 三分支。没有退回旧判定的
+  配置开关：该行为变化就是 v0.29.3 的发布目的；若必须回退，只能降级到旧版本。
+
 ## v0.29.2（2026-08-20）
 
 ### 注入治理默认开启
