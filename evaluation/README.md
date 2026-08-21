@@ -69,6 +69,20 @@ bash scripts/hlmem-python.sh evaluation/tools/run_perltqa_benchmark.py \
 
 先运行 runner 的 `--help` 获取完整参数。不得把工程 smoke、局部重放或不同缓存的单轮结果当作正式基线。
 
+## 结构化状态生命周期评分
+
+状态坐标评分器只读 `claims` 的结构化状态列、`supersedes_id` / `superseded_by_id` 和
+`evidence_links(relation='supersedes')`；`audit_log` 只计入诊断行数，不参与任何指标。Windows 单库基线：
+
+```bat
+scripts\hlmem-python.cmd -m hl_mem.evaluation.state_lifecycle ^
+  --db var\hl_mem.db --namespace default ^
+  --output evaluation\baselines\state_lifecycle.json
+```
+
+两库快照使用 `--before-db` / `--after-db`；同库记录时间区间使用
+`--db`、`--before-at`、`--after-at`。所有数据库均通过 SQLite `mode=ro` 打开，不运行 migration。
+
 ## 结果与数据治理
 
 - `evaluation/datasets/` 默认忽略，只显式跟踪公开 synthetic smoke 数据。
