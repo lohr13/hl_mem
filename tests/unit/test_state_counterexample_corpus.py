@@ -382,6 +382,53 @@ def test_sealed_generation_is_byte_deterministic(
     assert first["files"] == second["files"]
 
 
+def test_sealed_generation_supports_a_time_isolated_reduced_real_context_pool(tmp_path: Path) -> None:
+    prefix = "v0300_state_sealed_r4"
+    manifest = generate_sealed_generation(
+        [_seed(index) for index in range(22)],
+        tmp_path,
+        generation_id="v0300-sealed-r4-20260822",
+        variant_salt="v0300-sealed-r4-independent-20260822",
+        asset_prefix=prefix,
+        context_recorded_after="2026-08-22T11:37:00Z",
+        predecessor_recorded_at_upper_bound="2026-08-22T11:37:00Z",
+        predecessor_generation_ids=("v0300-sealed-r2-20260822", "v0300-sealed-r3-reused-r2"),
+        predecessor_variant_salts=("v0300-sealed-r2-independent-20260822",),
+        selection_seed="v0300-state-heldout-r4-context-v1",
+    )
+    corpus = _jsonl(tmp_path / f"{prefix}_corpus.jsonl")
+    gold = _jsonl(tmp_path / f"{prefix}_gold.jsonl")
+
+    assert manifest["totals"] == {
+        "bundles": 120,
+        "events": 300,
+        "gold_records": 120,
+        "gold_coverage": 1.0,
+    }
+    assert manifest["categories"] == {
+        "software_version": 36,
+        "non_version_state": 24,
+        "compound_claim": 24,
+        "counterexample": 24,
+        "non_state_control": 12,
+    }
+    assert manifest["sources"] == {"real_deidentified": 22, "synthetic_adversarial": 98}
+    assert manifest["files"]["sealed_corpus"]["path"] == f"{prefix}_corpus.jsonl"
+    assert manifest["files"]["sealed_gold"]["path"] == f"{prefix}_gold.jsonl"
+    assert {row["bundle_id"] for row in corpus} == {row["bundle_id"] for row in gold}
+    assert manifest["non_overlap_proof"]["context_window"] == {
+        "recorded_after_exclusive": "2026-08-22T11:37:00Z",
+        "predecessor_recorded_at_upper_bound": "2026-08-22T11:37:00Z",
+        "overlap": 0,
+        "selected_real_contexts": 22,
+    }
+    assert manifest["non_overlap_proof"]["predecessor_generation_ids"] == [
+        "v0300-sealed-r2-20260822",
+        "v0300-sealed-r3-reused-r2",
+    ]
+    assert manifest["non_overlap_proof"]["variant_salt_overlap"] == 0
+
+
 def test_builder_cli_requires_generation_id_and_variant_salt_together(tmp_path: Path) -> None:
     seed_path = tmp_path / "replacement.jsonl"
     seed_path.write_text(

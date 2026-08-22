@@ -1,0 +1,72 @@
+{
+  "categories": {
+    "compound_claim": 24,
+    "counterexample": 24,
+    "non_state_control": 12,
+    "non_version_state": 24,
+    "software_version": 36
+  },
+  "files": {
+    "sealed_corpus": {
+      "path": "v0300_state_sealed_r4_corpus.jsonl",
+      "records": 120,
+      "sha256": "78a45f76e2dc8094f0d841b5a6601ce9e453196b580164da71312c5e80ceddd3"
+    },
+    "sealed_gold": {
+      "path": "v0300_state_sealed_r4_gold.jsonl",
+      "records": 120,
+      "sha256": "f2422d934f076c00595e6142a3f919d4b27dec230ff1d06aa32aac75b527b289"
+    }
+  },
+  "generation_id": "v0300-sealed-r4-20260822-85ea046",
+  "non_overlap_proof": {
+    "assertion_id_overlap": 0,
+    "bundle_id_overlap": 0,
+    "burned_assets_read": false,
+    "burned_v1_asset_commit": "2417f7cb2039987a6f57135f639feceb37b8d56c",
+    "burned_v1_recorded_at_upper_bound": "2026-08-22T01:56:20+08:00",
+    "context_rank_range": [
+      0,
+      22
+    ],
+    "context_time_window_overlap": 0,
+    "context_window": {
+      "overlap": 0,
+      "predecessor_recorded_at_upper_bound": "2026-08-22T11:37:00Z",
+      "recorded_after_exclusive": "2026-08-22T11:37:00Z",
+      "selected_real_contexts": 22
+    },
+    "controlled_event_fingerprint_overlap": 0,
+    "generation_id_overlap": 0,
+    "gold_record_fingerprint_overlap": 0,
+    "predecessor_generation_ids": [
+      "v0300-sealed-r2-20260822",
+      "v0300-sealed-r3-reuse-r2"
+    ],
+    "predecessor_variant_salt_sha256": [
+      "3b31a25baa66f50038fd38191526738fd7a93c945c0dc87bd74c9a4b8518a7df"
+    ],
+    "selection_seed_sha256": "eb00d692b86454e06cf58fe2ffb3f080874c9b9a0d11639e622176ee23840793",
+    "variant_salt_overlap": 0,
+    "variant_salt_sha256": "881980359c215403bf62ce9f33f3bbb0da658eb8861709ec3efa6684c336f826"
+  },
+  "protocol": "v0.30.0-state-sealed-replacement",
+  "schema_version": 1,
+  "sources": {
+    "real_deidentified": 22,
+    "synthetic_adversarial": 98
+  },
+  "splits": {
+    "sealed": {
+      "bundles": 120,
+      "events": 300
+    }
+  },
+  "totals": {
+    "bundles": 120,
+    "events": 300,
+    "gold_coverage": 1.0,
+    "gold_records": 120
+  },
+  "variant_salt": "v0300-sealed-r4-independent-20260822-85ea046"
+}

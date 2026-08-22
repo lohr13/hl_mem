@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -574,12 +575,32 @@ def _fingerprint(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _timestamp(value: str, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{label} must be an ISO-8601 timestamp") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{label} must include a timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _uniform_real_positions(total: int, count: int) -> set[int]:
+    return {(index * total) // count for index in range(count)}
+
+
 def generate_sealed_generation(
     redacted_seeds: Sequence[Mapping[str, Any]],
     output_dir: str | Path,
     *,
     generation_id: str,
     variant_salt: str,
+    asset_prefix: str = SEALED_R2_PREFIX,
+    context_recorded_after: str | None = None,
+    predecessor_recorded_at_upper_bound: str | None = None,
+    predecessor_generation_ids: Sequence[str] = (),
+    predecessor_variant_salts: Sequence[str] = (),
+    selection_seed: str = "v0300-state-counterexamples-v1",
 ) -> dict[str, Any]:
     """Generate an independent sealed-only v0.30 generation and aggregate proof."""
 
@@ -587,15 +608,34 @@ def generate_sealed_generation(
         raise ValueError("generation_id must be a lowercase slug")
     if not variant_salt.strip():
         raise ValueError("variant_salt must be non-blank")
-    if len(redacted_seeds) != 60:
-        raise ValueError("sealed replacement requires exactly 60 post-freeze redacted seeds")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_]{2,95}", asset_prefix):
+        raise ValueError("asset_prefix must be a lowercase filesystem-safe slug")
+    real_context_count = len(redacted_seeds)
+    if not 1 <= real_context_count <= 60:
+        raise ValueError("sealed replacement requires between 1 and 60 post-freeze redacted seeds")
     for index, seed in enumerate(redacted_seeds):
         validate_redacted_seed(seed, index)
-    if [str(seed["seed_id"]) for seed in redacted_seeds] != [f"real-{index:03d}" for index in range(60)]:
+    if [str(seed["seed_id"]) for seed in redacted_seeds] != [
+        f"real-{index:03d}" for index in range(real_context_count)
+    ]:
         raise ValueError("sealed replacement seeds must be deterministic post-freeze ranks 0 through 59")
+    if bool(context_recorded_after) != bool(predecessor_recorded_at_upper_bound):
+        raise ValueError("context and predecessor time boundaries must be supplied together")
+    if context_recorded_after is not None and predecessor_recorded_at_upper_bound is not None:
+        if _timestamp(context_recorded_after, "context_recorded_after") < _timestamp(
+            predecessor_recorded_at_upper_bound,
+            "predecessor_recorded_at_upper_bound",
+        ):
+            raise ValueError("context window overlaps the predecessor time window")
+    if generation_id in predecessor_generation_ids:
+        raise ValueError("generation_id must differ from predecessor generations")
 
     salt_digest = hashlib.sha256(variant_salt.encode()).hexdigest()
-    subject_suffix = f"-r2-{salt_digest[:8]}"
+    predecessor_salt_digests = {hashlib.sha256(value.encode()).hexdigest() for value in predecessor_variant_salts}
+    if salt_digest in predecessor_salt_digests:
+        raise ValueError("variant_salt must differ from predecessor generations")
+    generation_label = asset_prefix.rsplit("_", 1)[-1]
+    subject_suffix = f"-{generation_label}-{salt_digest[:8]}"
     variant_offset = int(salt_digest[:12], 16)
     corpus_rows: list[dict[str, Any]] = []
     gold_rows: list[dict[str, Any]] = []
@@ -603,9 +643,11 @@ def generate_sealed_generation(
     legacy_gold: list[dict[str, Any]] = []
     real_index = 0
     global_index = 0
+    total_bundles = sum(int(quota["sealed"]) for quota in _CATEGORY_QUOTAS.values())
+    real_positions = _uniform_real_positions(total_bundles, real_context_count)
     for category, quota in _CATEGORY_QUOTAS.items():
         for category_index in range(int(quota["sealed"])):
-            source_kind = "real_deidentified" if category_index % 2 == 0 else "synthetic_adversarial"
+            source_kind = "real_deidentified" if global_index in real_positions else "synthetic_adversarial"
             bundle_seed = redacted_seeds[real_index] if source_kind == "real_deidentified" else None
             if bundle_seed is not None:
                 real_index += 1
@@ -630,10 +672,16 @@ def generate_sealed_generation(
             legacy_templates.append(legacy_template)
             legacy_gold.append(legacy_gold_row)
             global_index += 1
+    if real_index != real_context_count:
+        raise RuntimeError(f"generator consumed {real_index} real seeds instead of {real_context_count}")
 
     target = Path(output_dir).resolve()
-    corpus_path = target / f"{SEALED_R2_PREFIX}_corpus.jsonl"
-    gold_path = target / f"{SEALED_R2_PREFIX}_gold.jsonl"
+    corpus_path = target / f"{asset_prefix}_corpus.jsonl"
+    gold_path = target / f"{asset_prefix}_gold.jsonl"
+    corpus_ids = {row["bundle_id"] for row in corpus_rows}
+    gold_ids = {row["bundle_id"] for row in gold_rows}
+    if corpus_ids != gold_ids:
+        raise ValueError("sealed corpus and gold bundle identifiers must match exactly")
     _write_jsonl(corpus_path, corpus_rows)
     _write_jsonl(gold_path, gold_rows)
     file_manifest = {
@@ -646,38 +694,69 @@ def generate_sealed_generation(
 
     legacy_assertions = {claim["assertion_id"] for row in legacy_gold for claim in row["atomic_claims"]}
     r2_assertions = {claim["assertion_id"] for row in gold_rows for claim in row["atomic_claims"]}
+    non_overlap_proof: dict[str, Any] = {
+        "burned_assets_read": False,
+        "assertion_id_overlap": len(legacy_assertions & r2_assertions),
+        "bundle_id_overlap": len(
+            {row["bundle_id"] for row in legacy_templates} & {row["bundle_id"] for row in corpus_rows}
+        ),
+        "controlled_event_fingerprint_overlap": len(
+            {_fingerprint(controlled(row)) for row in legacy_templates}
+            & {_fingerprint(controlled(row)) for row in corpus_rows}
+        ),
+        "gold_record_fingerprint_overlap": len(
+            {_fingerprint(row) for row in legacy_gold} & {_fingerprint(row) for row in gold_rows}
+        ),
+        "context_time_window_overlap": 0,
+        "burned_v1_asset_commit": "2417f7cb2039987a6f57135f639feceb37b8d56c",
+        "burned_v1_recorded_at_upper_bound": "2026-08-22T01:56:20+08:00",
+        "selection_seed_sha256": hashlib.sha256(selection_seed.encode()).hexdigest(),
+    }
+    if context_recorded_after is None:
+        non_overlap_proof.update(
+            {
+                "sealed_r2_recorded_after": "2026-08-22T01:56:20+08:00",
+                "sealed_r2_context_rank_range": [0, real_context_count],
+            }
+        )
+    else:
+        non_overlap_proof.update(
+            {
+                "context_window": {
+                    "recorded_after_exclusive": context_recorded_after,
+                    "predecessor_recorded_at_upper_bound": predecessor_recorded_at_upper_bound,
+                    "overlap": 0,
+                    "selected_real_contexts": real_context_count,
+                },
+                "context_rank_range": [0, real_context_count],
+                "predecessor_generation_ids": list(predecessor_generation_ids),
+                "generation_id_overlap": 0,
+                "variant_salt_sha256": salt_digest,
+                "predecessor_variant_salt_sha256": sorted(predecessor_salt_digests),
+                "variant_salt_overlap": 0,
+            }
+        )
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "protocol": "v0.30.0-state-sealed-replacement",
         "generation_id": generation_id,
         "variant_salt": variant_salt,
-        "totals": {"bundles": 120, "events": 300, "gold_records": 120, "gold_coverage": 1.0},
+        "totals": {
+            "bundles": len(corpus_rows),
+            "events": sum(len(row["events"]) for row in corpus_rows),
+            "gold_records": len(gold_rows),
+            "gold_coverage": len(corpus_ids & gold_ids) / len(corpus_rows),
+        },
         "splits": {"sealed": {"bundles": 120, "events": 300}},
         "categories": {category: int(quota["sealed"]) for category, quota in _CATEGORY_QUOTAS.items()},
-        "sources": {"real_deidentified": 60, "synthetic_adversarial": 60},
-        "non_overlap_proof": {
-            "burned_assets_read": False,
-            "assertion_id_overlap": len(legacy_assertions & r2_assertions),
-            "bundle_id_overlap": len(
-                {row["bundle_id"] for row in legacy_templates} & {row["bundle_id"] for row in corpus_rows}
-            ),
-            "controlled_event_fingerprint_overlap": len(
-                {_fingerprint(controlled(row)) for row in legacy_templates}
-                & {_fingerprint(controlled(row)) for row in corpus_rows}
-            ),
-            "gold_record_fingerprint_overlap": len(
-                {_fingerprint(row) for row in legacy_gold} & {_fingerprint(row) for row in gold_rows}
-            ),
-            "context_time_window_overlap": 0,
-            "burned_v1_asset_commit": "2417f7cb2039987a6f57135f639feceb37b8d56c",
-            "burned_v1_recorded_at_upper_bound": "2026-08-22T01:56:20+08:00",
-            "sealed_r2_recorded_after": "2026-08-22T01:56:20+08:00",
-            "selection_seed_sha256": hashlib.sha256(b"v0300-state-counterexamples-v1").hexdigest(),
-            "sealed_r2_context_rank_range": [0, 60],
+        "sources": {
+            source: sum(row["source_kind"] == source for row in corpus_rows)
+            for source in ("real_deidentified", "synthetic_adversarial")
         },
+        "non_overlap_proof": non_overlap_proof,
         "files": file_manifest,
     }
-    manifest_path = target / f"{SEALED_R2_PREFIX}_manifest.json"
+    manifest_path = target / f"{asset_prefix}_manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
