@@ -324,15 +324,9 @@ def test_procedure_branch_freezes_mixed_memory_order_scores_and_packet_shape(
     database.close()
 
 
-@pytest.mark.parametrize(
-    ("intent", "expected_access"),
-    [(RecallIntent.CURRENT_STATE, True), (RecallIntent.HISTORICAL, False)],
-)
-def test_deferred_sink_separates_access_eligibility_from_exposure(
+def test_deferred_sink_keeps_access_and_exposure_out_of_request_connection(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
-    intent: RecallIntent,
-    expected_access: bool,
 ) -> None:
     database = Database(tmp_path / "recall-deferred.db")
     connection = database.open()
@@ -349,15 +343,12 @@ def test_deferred_sink_separates_access_eligibility_from_exposure(
         "tea preference",
         limit=2,
         query_id="query-deferred",
-        intent=intent,
         response_format="both",
         ranking_now=NOW,
     )
 
     assert [item["id"] for item in response["results"]] == CLAIM_IDS
-    assert bool(sink.access) is expected_access
-    if sink.access:
-        assert sink.access[0][0:2] == ("query-deferred", CLAIM_IDS)
+    assert sink.access[0][0:2] == ("query-deferred", CLAIM_IDS)
     assert sink.exposures[0][0] == "query-deferred"
     assert [str(exposure[3]) for exposure in sink.exposures[0][1]] == CLAIM_IDS
     assert _access_counts(connection) == [0, 0]

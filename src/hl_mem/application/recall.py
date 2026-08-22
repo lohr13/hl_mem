@@ -49,7 +49,6 @@ from hl_mem.recall.freshness_annotation import (
     FreshnessItem,
     FreshnessRequest,
 )
-from hl_mem.recall.historical_identity import project_historical_identity as _historical_identity
 from hl_mem.recall.injection import InjectionContext
 from hl_mem.recall.procedure_pipeline import MemoryCandidate
 from hl_mem.recall.procedure_pipeline import recall_procedure as recall_procedure
@@ -798,7 +797,6 @@ class RecallService:
     ) -> EnrichedSelection:
         session.tracer.trace.phases.assembly_us = (time.perf_counter_ns() - selection.assembly_started) // 1000
         request = session.request
-        results = _historical_identity(selection.results, request, session.selected_intent)
         observations = self._assemble_observations([claim["id"] for claim in selection.claims])
         policies = matching_policies(
             ExperienceService(self.connection).list_policies("active", namespace=request.namespace),
@@ -810,7 +808,7 @@ class RecallService:
         )
         for policy in policies:
             policy["evidence"] = policy_evidence.get(str(policy["id"]), [])
-        packet_candidates = self._context_candidates(results, observations, policies)
+        packet_candidates = self._context_candidates(selection.results, observations, policies)
         answerability = self._answerability(
             selection.claims,
             session.tracer,
@@ -819,7 +817,6 @@ class RecallService:
         )
         return replace(
             selection,
-            results=results,
             observations=observations,
             policies=policies,
             packet_candidates=packet_candidates,

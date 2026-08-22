@@ -11,4 +11,5 @@ def is_access_recording_eligible(
 ) -> bool:
     """判断本次召回是否具备记录访问副作用的资格。"""
 
-    return intent is not RecallIntent.HISTORICAL and as_of is None and known_as_of is None
+    _ = intent, as_of, known_as_of
+    return True

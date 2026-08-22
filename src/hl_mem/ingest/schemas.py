@@ -21,16 +21,11 @@ CanonicalSlot: TypeAlias = Literal[
     "choice.provider",
     "choice.memory_system",
     "state.service_health",
-    "state.process",
-    "state.deployment",
-    "state.connectivity",
-    "state.job",
     "identity.name",
     "config.port",
     "config.path",
     "config.env",
     "config.network",
-    "config.version",
     "plan.deadline",
 ]
 TopicTag: TypeAlias = Literal[

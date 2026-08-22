@@ -10,7 +10,6 @@ from difflib import SequenceMatcher
 from typing import Any, Literal
 
 from hl_mem.domain.claims.attributes import MUTUALLY_EXCLUSIVE_SLOTS
-from hl_mem.domain.claims.state_projection import STATE_TRANSITION_SLOTS
 
 VALID_KINDS = frozenset({"preference", "architecture", "identity", "config", "fact", "plan", "choice"})
 VALID_NOTABILITY = frozenset({"high", "medium", "low"})
@@ -181,12 +180,7 @@ def secret_reason(value: Any) -> str | None:
     return None
 
 
-def admit_claim(
-    candidate: MemoryCandidate,
-    source_text: str,
-    *,
-    canonical_slot: str | None = None,
-) -> AdmissionDecision:
+def admit_claim(candidate: MemoryCandidate, source_text: str) -> AdmissionDecision:
     """纯函数准入判断，同时供 dry-run benchmark 和生产写入使用。"""
     if candidate.notability not in VALID_NOTABILITY or candidate.kind not in VALID_KINDS:
         return AdmissionDecision(False, "invalid_candidate")
@@ -204,17 +198,11 @@ def admit_claim(
         return AdmissionDecision(False, credential_reason)
     if not evidence_quote_matches(candidate.evidence_quote, source_text):
         return AdmissionDecision(False, "no_evidence")
-    if (
-        canonical_slot not in STATE_TRANSITION_SLOTS
-        and candidate.kind
-        not in {
-            "preference",
-            "architecture",
-        }
-        and OPERATIONAL_SNAPSHOT_RE.search(unicodedata.normalize("NFKC", str(candidate.value)))
+    if candidate.kind not in {"preference", "architecture"} and OPERATIONAL_SNAPSHOT_RE.search(
+        unicodedata.normalize("NFKC", str(candidate.value))
     ):
         return AdmissionDecision(False, "operational_snapshot")
-    if low_value_reason(candidate.value, canonical_slot) is not None:
+    if low_value_reason(candidate.value) is not None:
         return AdmissionDecision(False, "low_value")
     if candidate.notability == "low" and candidate.kind in EPISODIC_KINDS:
         return AdmissionDecision(True, "accepted_episodic", "episodic")

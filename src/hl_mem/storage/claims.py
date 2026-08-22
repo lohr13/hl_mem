@@ -16,7 +16,6 @@ from hl_mem.domain.claims.conflicts import (
     compute_conflict_group_key,
     slot_qualifier_key,
 )
-from hl_mem.domain.claims.state_projection import state_candidate_key, state_transition_eligible
 from hl_mem.domain.temporal import RecallIntent, claim_is_visible
 from hl_mem.errors import ActiveClaimInvariantError, ConflictError, ValidationError
 from hl_mem.lifecycle import ClaimStatus, assert_transition
@@ -405,11 +404,6 @@ class ClaimRepository:
 
         if limit < 1:
             raise ValueError("temporal candidate limit must be positive")
-        if state_key := state_candidate_key(claim):
-            bounded = list(filter(state_transition_eligible, self.find_active_for_dedup(*state_key)))[:limit]
-            for candidate in bounded:
-                candidate["_state_group_ambiguous"] = len(bounded) != 1
-            return [candidate for candidate in bounded if candidate.get("status") == "active"]
         identity = tuple(
             claim.get(field) for field in ("namespace_key", "subject_entity_id", "predicate", "canonical_attribute")
         )

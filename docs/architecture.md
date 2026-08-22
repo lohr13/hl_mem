@@ -200,12 +200,6 @@ and evidence link—runs in one
 `BEGIN IMMEDIATE` transaction. External calls use configured timeouts and retries; errors are recorded rather than
 silently swallowed. Idempotent retries return the original Event instead of duplicating work.
 
-State lifecycle identity is the structured `namespace + owner + canonical slot + coordinate qualifiers`. Only current
-observations with strictly ordered valid time can advance that coordinate; historical, planned, quoted, negated,
-inferred, unknown, ambiguous, or cross-coordinate claims fail closed. `scope` controls retention semantics, while
-`volatility` remains only a change-rate/TTL classification hint: it does not participate in coordinates, namespace,
-supersede decisions, or recall intent.
-
 The extraction output is governed before persistence. The LLM emits a seven-field candidate; a pure `AdmissionPolicy`
 checks notability, locatable evidence, secret/empty values, and completed operational snapshots. Stable preference and
 architecture candidates are not rejected merely because their text contains words such as “fix”, “delete”, or “test”,

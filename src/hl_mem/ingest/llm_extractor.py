@@ -80,7 +80,6 @@ from .schemas import (
     ExtractionResponseSchema,
     temporal_gate_extraction_response_json_schema,
 )
-from .state_contract import STATE_CONTRACT_VERSION, canonicalize_state_fields, with_state_snapshot_rules
 from .verifier import EntailmentVerifier
 
 LOGGER = logging.getLogger(__name__)
@@ -396,10 +395,8 @@ def _with_assertion_kind_gate(prompt: str, *, language: Literal["zh", "en"]) -> 
     return upgraded
 
 
-SYSTEM_PROMPT = with_state_snapshot_rules(_with_assertion_kind_gate(LEGACY_SYSTEM_PROMPT, language="zh"), language="zh")
-ENGLISH_SYSTEM_PROMPT = with_state_snapshot_rules(
-    _with_assertion_kind_gate(LEGACY_ENGLISH_SYSTEM_PROMPT, language="en"), language="en"
-)
+SYSTEM_PROMPT = _with_assertion_kind_gate(LEGACY_SYSTEM_PROMPT, language="zh")
+ENGLISH_SYSTEM_PROMPT = _with_assertion_kind_gate(LEGACY_ENGLISH_SYSTEM_PROMPT, language="en")
 
 ALIASES = {"pg": "PostgreSQL", "postgres": "PostgreSQL", "postgresql": "PostgreSQL"}
 _HAN_CHARACTER_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -548,7 +545,9 @@ def detect_extraction_language(text: str) -> Literal["zh", "en"]:
     return "zh"
 
 
-_normalize_compact_subject = normalize_entity_alias
+def _normalize_compact_subject(subject: str) -> str:
+    """只规范第一人称和已知别名，保留命名主体的原文形式。"""
+    return normalize_entity_alias(subject)
 
 
 def _postprocess_rules_fingerprint(
@@ -577,7 +576,6 @@ def _postprocess_rules_fingerprint(
         "compact_kind_topic_tag": _KIND_TOPIC_TAG,
         "notability_importance": _NOTABILITY_IMPORTANCE,
         "relative_time": relative_time_rules_fingerprint(),
-        "state_contract": STATE_CONTRACT_VERSION,
         "english_system_prompt": ENGLISH_SYSTEM_PROMPT,
         "language_router_version": language_router_version,
         "admission": admission_rules_fingerprint(),
@@ -978,6 +976,7 @@ class LLMExtractor:
         value: str,
         evidence_quote: str,
     ) -> dict[str, str]:
+        """Only infer required qualifiers that are explicit in value and evidence."""
         definition = SLOT_REGISTRY.get(attribute)
         if definition is None or not definition.required_qualifiers:
             return {}
@@ -1056,11 +1055,33 @@ class LLMExtractor:
         except (KeyError, TypeError, ValueError):
             return None
 
-        if candidate.kind not in _KIND_MAP:
-            self._record_admission(candidate, source_text)
+        decision = admit_claim(candidate, source_text)
+        episodic = decision.memory_layer == "episodic"
+        current_audit().emit(
+            "extract",
+            "admission_checked",
+            "accepted" if decision.accepted else "rejected",
+            detail={
+                "reason": decision.reason,
+                "kind": candidate.kind,
+                "notability": candidate.notability,
+                "memory_layer": decision.memory_layer,
+            },
+        )
+        if not decision.accepted:
+            if decision.reason in {
+                "recovery_code",
+                "secret_assignment",
+                "sk_token",
+                "mixed_alnum_token",
+            }:
+                self._secret_rejections[decision.reason] = self._secret_rejections.get(decision.reason, 0) + 1
             return None
 
         predicate, canonical_attribute, scope, volatility = _KIND_MAP[candidate.kind]
+        if episodic:
+            scope = "temporal"
+            volatility = "ephemeral"
         predicate = normalize_predicate(predicate)
         subject = _normalize_compact_subject(candidate.subject)
         inferred_attribute = infer_canonical_attribute(predicate, subject, candidate.value, {})
@@ -1068,23 +1089,12 @@ class LLMExtractor:
         if inferred_attribute not in {"custom.unknown", fallback_attribute}:
             canonical_attribute = inferred_attribute
         qualifiers = self._infer_compact_qualifiers(
-            canonical_attribute, subject, candidate.value, candidate.evidence_quote
-        )
-        subject, canonical_attribute, canonical_slot, qualifiers = canonicalize_state_fields(
-            candidate,
-            subject,
             canonical_attribute,
-            validate_slot_instance(canonical_attribute, qualifiers),
-            qualifiers,
-            str(raw.get("assertion_kind", "unknown")),
+            subject,
+            candidate.value,
+            candidate.evidence_quote,
         )
-        decision = self._record_admission(candidate, source_text, canonical_slot=canonical_slot)
-        if not decision.accepted:
-            return None
-        if decision.memory_layer == "episodic":
-            scope = "temporal"
-            volatility = "ephemeral"
-        predicate = predicate_for_canonical_attribute(canonical_attribute, predicate)
+        canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
         relation_qualifiers: dict[str, Any] = {}
         relation_reason = "not_provided"
         if self.relation_metadata_projection_enabled:
@@ -1203,15 +1213,9 @@ class LLMExtractor:
         except (KeyError, TypeError, ValueError):
             return None
 
-    def _record_admission(
-        self,
-        candidate: MemoryCandidate,
-        source_text: str,
-        *,
-        canonical_slot: str | None = None,
-    ) -> AdmissionDecision:
+    def _record_admission(self, candidate: MemoryCandidate, source_text: str) -> AdmissionDecision:
         """执行并审计 compact/legacy 共用的准入策略。"""
-        decision = admit_claim(candidate, source_text, canonical_slot=canonical_slot)
+        decision = admit_claim(candidate, source_text)
         current_audit().emit(
             "extract",
             "admission_checked",

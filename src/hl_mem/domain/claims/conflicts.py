@@ -182,8 +182,7 @@ def coordinate_qualifier_key(canonical_slot: str | None, qualifiers: dict[str, A
     if slot is None:
         return {}
     values = qualifiers or {}
-    keys = filter(values.__contains__, SLOT_REGISTRY[slot].coordinate_qualifiers)
-    return {key: _canonicalize_json(values[key]) for key in keys}
+    return {key: _canonicalize_json(values.get(key)) for key in SLOT_REGISTRY[slot].coordinate_qualifiers}
 
 
 def slot_qualifier_key(canonical_slot: str | None, qualifiers: dict[str, Any] | None) -> dict[str, Any]:

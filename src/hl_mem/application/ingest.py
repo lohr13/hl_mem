@@ -41,7 +41,6 @@ from hl_mem.domain.claims.retention import (
     compute_expiration,
     normalize_utc_iso,
 )
-from hl_mem.domain.claims.state_projection import state_valid_from as _state_valid_from
 from hl_mem.domain.constants import DEFAULT_SUBJECT
 from hl_mem.domain.entity import (
     invalid_subject_reason,
@@ -50,7 +49,6 @@ from hl_mem.domain.entity import (
 )
 from hl_mem.errors import ConflictError, ValidationError
 from hl_mem.ingest.extractors import ExtractedClaim
-from hl_mem.ingest.state_contract import canonicalize_state_fields
 from hl_mem.lifecycle import assert_transition
 from hl_mem.monitoring.metrics import DEFAULT_ADMISSION_METRICS, AdmissionMetrics
 from hl_mem.observability.audit import current_audit
@@ -876,6 +874,7 @@ def _build_claim_drafts(
     policy: TTLPolicy,
     index_text_mode: IndexTextMode,
 ) -> _ClaimDraft | StoreClaimResult:
+    """阶段 1：规范化提取结果、计算 TTL 并生成 claim 草稿。"""
     # Claim 的实体、去重与冲突身份由 (namespace_key, subject_entity_id) 共同确定。
     # 其他多租户安全边界仍需由部署层统一约束，不能仅依赖此处的 namespace。
     namespace = event.get("tenant_id", "default")
@@ -908,9 +907,6 @@ def _build_claim_drafts(
     canonical_attribute = validate_canonical_attribute(
         extracted.predicate, getattr(extracted, "canonical_attribute", None)
     )
-    subject, canonical_attribute, requested_slot, qualifiers = canonicalize_state_fields(
-        extracted, subject, canonical_attribute, getattr(extracted, "canonical_slot", None), qualifiers
-    )
     predicate = predicate_for_canonical_attribute(canonical_attribute, extracted.predicate)
     if predicate != extracted.predicate:
         current_audit().emit(
@@ -924,6 +920,7 @@ def _build_claim_drafts(
                 "reason_code": "canonical_attribute_projection",
             },
         )
+    requested_slot = getattr(extracted, "canonical_slot", None)
     canonical_slot = validate_slot_instance(requested_slot, qualifiers)
     if requested_slot and canonical_slot is None:
         current_audit().emit(
@@ -949,13 +946,12 @@ def _build_claim_drafts(
         return StoreClaimResult(None, "skipped", "importance_below_write_floor")
     observed_at = normalize_utc_iso(str(event.get("occurred_at", now)), "observed_at")
     recorded_from = normalize_utc_iso(now, "recorded_from")
-    occurred_start = getattr(extracted, "occurred_start", None) or None
     memory_layer = getattr(extracted, "memory_layer", "durable")
     if memory_layer == "episodic":
         retention_anchor = _episodic_retention_anchor(
             recorded_from,
             is_plan=canonical_attribute.startswith("plan.") or predicate == "计划",
-            occurred_start=occurred_start,
+            occurred_start=getattr(extracted, "occurred_start", None),
             occurred_end=getattr(extracted, "occurred_end", None),
         )
     else:
@@ -980,7 +976,7 @@ def _build_claim_drafts(
         "canonical_attribute": canonical_attribute,
         "canonical_slot": canonical_slot,
         "topic_tags_json": json.dumps(topic_tags, ensure_ascii=False, separators=(",", ":")),
-        "occurred_start": occurred_start,
+        "occurred_start": getattr(extracted, "occurred_start", None) or None,
         "occurred_end": getattr(extracted, "occurred_end", None) or None,
         "entities_json": (
             json.dumps(
@@ -1002,7 +998,7 @@ def _build_claim_drafts(
         ),
         "conflict_key_version": 3,
         "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, predicate, qualifiers),
-        "valid_from": _state_valid_from(canonical_slot, occurred_start, observed_at),
+        "valid_from": observed_at,
         "recorded_from": recorded_from,
         "observed_at": observed_at,
         "expires_at": expires_at,

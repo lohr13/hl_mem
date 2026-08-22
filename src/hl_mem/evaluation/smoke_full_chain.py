@@ -391,19 +391,21 @@ def run_full_chain_smoke() -> dict[str, Any]:
             corpus_records=corpus,
         )
 
-    admission_state_snapshot = all(
-        claim["projection"]["canonical_slot"] == "config.version" for sample in run for claim in sample["claims"]
+    state_snapshot_not_projected = all(
+        claim["projection"]["coordinate"] is None for sample in run for claim in sample["claims"]
     )
     expected_edge = ("smoke-upgrade:c0:a0", "smoke-upgrade:c1:a0")
-    resolver_supersede_edge = expected_edge in persisted_edges
+    resolver_state_edge_absent = expected_edge not in persisted_edges and all(
+        status_by_assertion.get(assertion_id) == "active" for assertion_id in scenarios[0].expected_assertion_ids
+    )
     checks = dict(report["checks"])
     if len(checks) != 13:
         raise RuntimeError(f"state protocol emitted {len(checks)} checks, expected 13")
     seams = {
-        "admission_state_snapshot": admission_state_snapshot,
+        "state_snapshot_not_projected": state_snapshot_not_projected,
         "default_source_index": default_source_index,
         "composite_binding": composite_binding,
-        "resolver_supersede_edge": resolver_supersede_edge,
+        "resolver_state_edge_absent": resolver_state_edge_absent,
     }
     if not all(seams.values()):
         failed = ", ".join(name for name, passed in seams.items() if not passed)

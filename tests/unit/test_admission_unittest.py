@@ -75,23 +75,9 @@ class AdmissionPolicyTest(unittest.TestCase):
             "no_evidence",
         )
 
-    def test_allows_operational_snapshots_only_for_canonical_state_slots(self) -> None:
+    def test_rejects_operational_snapshots(self) -> None:
         snapshots = (
-            ("hl_mem 当前版本为 v0.30.0", "config.version"),
-            ("gateway-1 服务状态 healthy", "state.service_health"),
-            ("gateway-1 进程正在 running", "state.process"),
-        )
-        for value, canonical_slot in snapshots:
-            with self.subTest(value=value):
-                decision = admit_claim(
-                    _candidate(value=value, kind="fact", evidence_quote=value),
-                    value,
-                    canonical_slot=canonical_slot,
-                )
-                self.assertEqual(decision.reason, "accepted")
-
-    def test_rejects_non_state_operational_snapshots(self) -> None:
-        snapshots = (
+            "hl_mem 服务已运行最新代码",
             "环境变量已清空",
             "935 tests passed",
             "CI 已全绿",
@@ -99,6 +85,7 @@ class AdmissionPolicyTest(unittest.TestCase):
             "测试通过",
             "Codex 正在跑 benchmark",
             "正在重启服务",
+            "hl_mem 当前版本为 v0.22.0",
         )
         for value in snapshots:
             with self.subTest(value=value):
@@ -107,30 +94,6 @@ class AdmissionPolicyTest(unittest.TestCase):
                     value,
                 )
                 self.assertEqual(decision.reason, "operational_snapshot")
-
-    def test_non_state_slot_cannot_bypass_operational_snapshot_policy(self) -> None:
-        value = "hl_mem 当前版本为 v0.30.0"
-
-        decision = admit_claim(
-            _candidate(value=value, kind="fact", evidence_quote=value),
-            value,
-            canonical_slot="config.port",
-        )
-
-        self.assertEqual(decision.reason, "operational_snapshot")
-
-    def test_state_slot_does_not_bypass_evidence_policy(self) -> None:
-        decision = admit_claim(
-            _candidate(
-                value="hl_mem 当前版本为 v0.30.0",
-                kind="fact",
-                evidence_quote="hl_mem 当前版本为 v0.29.3",
-            ),
-            "hl_mem 当前版本为 v0.30.0",
-            canonical_slot="config.version",
-        )
-
-        self.assertEqual(decision.reason, "no_evidence")
 
     def test_rejects_one_shot_install_code_test_and_file_operations(self) -> None:
         snapshots = (
@@ -220,37 +183,6 @@ class AdmissionPolicyTest(unittest.TestCase):
 
 
 class CompactExtractionTest(unittest.TestCase):
-    def test_state_snapshots_reach_canonical_coordinates_before_admission(self) -> None:
-        snapshots = (
-            ("hl_mem", "hl_mem 当前版本为 v0.30.0", "config.version"),
-            ("gateway-1", "gateway-1 服务状态 healthy", "state.service_health"),
-            ("api-service", "api-service 已部署到 production 环境", "state.deployment"),
-        )
-        response = {
-            "claims": [
-                {
-                    "subject": subject,
-                    "value": value,
-                    "kind": "fact",
-                    "confidence": 1.0,
-                    "notability": "high",
-                    "evidence_quote": value,
-                    "assertion_kind": "observation",
-                    "source_event_indices": [0],
-                }
-                for subject, value, _ in snapshots
-            ],
-            "should_memorize": True,
-        }
-        source = "；".join(value for _, value, _ in snapshots)
-
-        claims = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract(source)
-
-        self.assertEqual(
-            [(claim.subject, claim.canonical_slot) for claim in claims],
-            [(subject, canonical_slot) for subject, _, canonical_slot in snapshots],
-        )
-
     def test_compact_response_maps_to_existing_claim_schema(self) -> None:
         response = {
             "claims": [

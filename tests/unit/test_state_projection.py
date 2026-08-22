@@ -1,6 +1,6 @@
 import pytest
 
-from hl_mem.domain.claims.state_projection import project_state_coordinate, state_valid_from
+from hl_mem.domain.claims.state_projection import project_state_coordinate
 
 
 def test_state_projection_preserves_namespace_and_coordinate_qualifiers():
@@ -36,10 +36,3 @@ def test_state_projection_fails_closed_without_a_trusted_state_axis(subject, slo
         project_state_coordinate(namespace="tenant-a", subject=subject, canonical_slot=slot, qualifiers=qualifiers)
         is None
     )
-
-
-def test_state_valid_time_uses_source_occurrence_only_for_state_slots():
-    observed = "2026-08-22T08:00:00+00:00"
-
-    assert state_valid_from("config.version", "2026-08-20T16:00:00+08:00", observed) == "2026-08-20T08:00:00+00:00"
-    assert state_valid_from(None, "2026-08-20T16:00:00+08:00", observed) == observed
