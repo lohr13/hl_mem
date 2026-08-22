@@ -10,7 +10,7 @@ from hl_mem.evaluation.state_experiment_projection import (
     _corpus_projection,
     _gold_projection,
     _match_assertions,
-    _run_projection,
+    project_run,
 )
 from hl_mem.evaluation.state_experiment_thresholds import (
     THRESHOLDS,
@@ -25,7 +25,7 @@ def _project_inputs(
     *,
     baseline_predictions: Mapping[str, Any],
     candidate_runs: Sequence[Sequence[Mapping[str, Any]]],
-    baseline_run: Sequence[Mapping[str, Any]] | None,
+    baseline_projection: Mapping[str, Any] | None,
     corpus_records: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     if len(candidate_runs) != 3:
@@ -34,9 +34,21 @@ def _project_inputs(
     if not corpus_records:
         raise ValueError("corpus_records are required for semantic protocol scoring")
     corpus = _corpus_projection(corpus_records)
-    candidate_projections = [_run_projection(run) for run in candidate_runs]
+    candidate_projections = [project_run(run) for run in candidate_runs]
     candidate = candidate_projections[0]
-    baseline_projection = _run_projection(baseline_run) if baseline_run is not None else None
+    projection_keys = {
+        "atomic_ids",
+        "assertions",
+        "by_sample",
+        "coordinates",
+        "non_state_ids",
+        "coordinate_occurrences",
+        "claim_count",
+    }
+    if baseline_projection is not None and (
+        not isinstance(baseline_projection, Mapping) or not projection_keys.issubset(baseline_projection)
+    ):
+        raise ValueError("baseline_projection must be produced by project_run")
     declared_baseline_count = baseline_predictions.get("claim_count")
     if (
         isinstance(declared_baseline_count, bool)
@@ -45,7 +57,7 @@ def _project_inputs(
     ):
         raise ValueError("baseline claim_count must be a non-negative integer")
     if baseline_projection is not None and declared_baseline_count != baseline_projection["claim_count"]:
-        raise ValueError("baseline claim_count does not match baseline_run")
+        raise ValueError("baseline claim_count does not match baseline_projection")
     baseline_claim_count = (
         int(baseline_projection["claim_count"]) if baseline_projection is not None else declared_baseline_count
     )

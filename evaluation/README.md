@@ -85,15 +85,14 @@ scripts\hlmem-python.cmd -m hl_mem.evaluation.state_lifecycle ^
 
 ## v0.30.0 状态候选实验
 
-批次 2 只提供离线 A/B 装备，不接生产 ingest/recall。A 臂原样保留 v0.29.3 七字段 compact JSON，B1 对同一
-JSON 执行确定性 atomicity/canonicalization，B2 只保留 response provider 接口。调用
-`hl_mem.evaluation.state_experiment_arms.run_arm_file()` 写入显式实验目录；判分调用
-`hl_mem.evaluation.state_experiment_scoring.score_protocol()`，真实 supersede 边只通过只读数据库的
-`claims.superseded_by_id` 和 `evidence_links` 消费。
+状态评测只提供离线、无轮次命名的投影协议，不接生产 ingest/recall。实验 runner 先调用
+`make_projection_sample(bundle, raw_llm_json)`，再把显式 `projector` 与 `atomicity_policy` 传给
+`project_response()`；checkpoint、重试、计费线和 JSONL 文件写入均由 repo 外 runner 管理。判分调用
+`score_protocol()`，baseline 通过 `project_run()` 预投影后传入 `baseline_projection`，历史 arm 标签如需审计只放在
+可选 report metadata，不进入算法分支。真实 supersede 边只通过只读数据库的 `claims.superseded_by_id` 和
+`evidence_links` 消费。
 
-corpus JSONL 不是 `run_arm_file()` 的直接输入。实验执行轮先把每个 bundle 的 `events` 送入冻结的 A 提取器，
-再调用 `make_arm_sample(bundle, raw_llm_json)` 生成 `sample_id/raw_llm_json` JSONL；A 与 B1 必须重放这同一份文件，
-其中 `sample_id == bundle_id`，从而与 gold 的 assertion id 对齐。真实来源行会把不可逆闭集 skeleton 作为明确标记的
+`sample_id == bundle_id`，从而与 gold assertion id 对齐。真实来源行会把不可逆闭集 skeleton 作为明确标记的
 “非事实证据”上下文写进模型可见输入，受控断言位于独立的“当前评测事件”段；原始事件文本不会进入语料。
 
 真实来源结构必须从调用方显式指定的冻结快照采样，脚本不会读取 `hl_mem.toml` 或内置数据库路径：

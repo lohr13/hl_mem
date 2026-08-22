@@ -1,14 +1,11 @@
-"""Offline-only state canonicalization and atomicity experiment arms."""
+"""Offline-only compact state canonicalization and projection policies."""
 
 from __future__ import annotations
 
 import copy
-import json
-import os
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from pathlib import Path
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeAlias
 
 from hl_mem.domain.claims.conflicts import coordinate_qualifier_key
@@ -16,9 +13,9 @@ from hl_mem.domain.claims.state_coordinates import StateCoordinate
 from hl_mem.domain.entity import normalize_entity_id
 from hl_mem.evaluation.state_protocol import coordinate_mapping
 
-ArmName: TypeAlias = Literal["A", "B1", "B2"]
 AtomicityStrategy: TypeAlias = Literal["split", "reject"]
-B2ResponseProvider: TypeAlias = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+AtomicityPolicy: TypeAlias = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+ClaimProjector: TypeAlias = Callable[..., Mapping[str, Any]]
 
 _KIND_PREDICATES = {
     "preference": "偏好",
@@ -400,15 +397,15 @@ def _validated_response(value: object, label: str) -> dict[str, Any]:
     return copy.deepcopy(dict(value))
 
 
-def make_arm_sample(
+def make_projection_sample(
     corpus_bundle: Mapping[str, Any],
     raw_llm_json: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Bind a corpus bundle to one frozen extractor response for A/B replay.
+    """Bind a corpus bundle to one frozen extractor response for projection.
 
     The extractor is deliberately outside this offline post-processing module.
-    A and B1 must receive the same returned ``raw_llm_json``; ``bundle_id`` is
-    the stable sample/assertion-id prefix shared with the separated gold file.
+    ``bundle_id`` is the stable sample/assertion-id prefix shared with the
+    separated gold file.
     """
 
     bundle_id = str(corpus_bundle.get("bundle_id") or "").strip()
@@ -426,124 +423,105 @@ def make_arm_sample(
     }
 
 
-def _run_a(sample_id: str, response: dict[str, Any]) -> dict[str, Any]:
-    claims = copy.deepcopy(response["claims"])
+def preserve_atomic_claim(claim: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep one compact claim intact without applying the atomicity gate."""
+
+    return {"decision": "atomic", "detected_state_assertions": 1, "claims": [copy.deepcopy(dict(claim))]}
+
+
+def preserve_compact_claim(
+    claim: Mapping[str, Any],
+    *,
+    sample_id: str,
+    source_claim_index: int,
+    atomic_index: int,
+    atomicity: str,
+) -> dict[str, Any]:
+    """Return a validated compact claim without adding projection structure."""
+
+    del sample_id, source_claim_index, atomic_index, atomicity
+    return copy.deepcopy(dict(claim))
+
+
+def project_compact_claim(
+    claim: Mapping[str, Any],
+    *,
+    sample_id: str,
+    source_claim_index: int,
+    atomic_index: int,
+    atomicity: str,
+    namespace: str = "default",
+) -> dict[str, Any]:
+    """Build one structured assertion from an atomic compact claim."""
+
     return {
-        "sample_id": sample_id,
-        "arm": "A",
-        "raw_llm_json": response,
-        "input_claim_count": len(claims),
-        "output_claim_count": len(claims),
-        "claims": claims,
-        "rejections": [],
+        "assertion_id": f"{sample_id}:c{source_claim_index}:a{atomic_index}",
+        "source_claim_index": source_claim_index,
+        "atomic_index": atomic_index,
+        "atomicity": atomicity,
+        "claim": copy.deepcopy(dict(claim)),
+        "projection": canonicalize_claim(claim, namespace=namespace),
     }
 
 
-def _run_b1(
-    sample_id: str,
-    response: dict[str, Any],
+def project_response(
+    sample: Mapping[str, Any],
     *,
-    namespace: str,
-    atomicity_strategy: AtomicityStrategy,
-    arm: Literal["B1", "B2"],
+    projector: ClaimProjector,
+    atomicity_policy: AtomicityPolicy,
+    metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Project one validated extractor response with caller-supplied policies."""
+
+    sample_id = str(sample.get("sample_id") or "").strip()
+    if not sample_id:
+        raise ValueError("projection sample requires sample_id")
+    response = _validated_response(sample.get("raw_llm_json"), sample_id)
     output_claims: list[dict[str, Any]] = []
     rejections: list[dict[str, Any]] = []
     for claim_index, raw_claim in enumerate(response["claims"]):
-        atomicity = apply_atomicity_gate(raw_claim, strategy=atomicity_strategy)
-        if atomicity["decision"] == "rejected":
+        atomicity = atomicity_policy(raw_claim)
+        decision = str(atomicity.get("decision") or "")
+        claims = atomicity.get("claims")
+        detected = atomicity.get("detected_state_assertions")
+        if (
+            decision not in {"atomic", "split", "rejected"}
+            or not isinstance(claims, Sequence)
+            or isinstance(claims, (str, bytes))
+            or not all(isinstance(claim, Mapping) for claim in claims)
+            or isinstance(detected, bool)
+            or not isinstance(detected, int)
+            or detected < 0
+        ):
+            raise ValueError("atomicity policy returned an invalid result")
+        if decision == "rejected":
             rejections.append(
                 {
                     "source_claim_index": claim_index,
-                    "reason": "compound_state_claim",
-                    "detected_state_assertions": atomicity["detected_state_assertions"],
+                    "reason": str(atomicity.get("reason") or "compound_state_claim"),
+                    "detected_state_assertions": detected,
                 }
             )
             continue
-        for atomic_index, claim in enumerate(atomicity["claims"]):
-            output_claims.append(
-                {
-                    "assertion_id": f"{sample_id}:c{claim_index}:a{atomic_index}",
-                    "source_claim_index": claim_index,
-                    "atomic_index": atomic_index,
-                    "atomicity": atomicity["decision"],
-                    "claim": claim,
-                    "projection": canonicalize_claim(claim, namespace=namespace),
-                }
+        for atomic_index, claim in enumerate(claims):
+            projected = projector(
+                claim,
+                sample_id=sample_id,
+                source_claim_index=claim_index,
+                atomic_index=atomic_index,
+                atomicity=decision,
             )
-    return {
+            if not isinstance(projected, Mapping):
+                raise ValueError("claim projector must return an object")
+            output_claims.append(copy.deepcopy(dict(projected)))
+    result = {
         "sample_id": sample_id,
-        "arm": arm,
         "raw_llm_json": response,
         "input_claim_count": len(response["claims"]),
         "output_claim_count": len(output_claims),
         "claims": output_claims,
         "rejections": rejections,
     }
-
-
-def run_arm(
-    samples: Iterable[Mapping[str, Any]],
-    *,
-    arm: ArmName,
-    namespace: str = "default",
-    atomicity_strategy: AtomicityStrategy = "split",
-    b2_response_provider: B2ResponseProvider | None = None,
-) -> list[dict[str, Any]]:
-    """Run an offline arm over raw extractor responses without touching a database."""
-
-    if arm not in {"A", "B1", "B2"}:
-        raise ValueError(f"unsupported experiment arm: {arm}")
-    if arm == "B2" and b2_response_provider is None:
-        raise NotImplementedError("B2 response provider is required; the atomic prompt is not part of batch 2")
-    results: list[dict[str, Any]] = []
-    for sample_index, sample in enumerate(samples):
-        sample_id = str(sample.get("sample_id") or "").strip()
-        if not sample_id:
-            raise ValueError(f"sample[{sample_index}] requires sample_id")
-        response_value = (
-            b2_response_provider(sample) if arm == "B2" and b2_response_provider else sample.get("raw_llm_json")
-        )
-        response = _validated_response(response_value, sample_id)
-        if arm == "A":
-            results.append(_run_a(sample_id, response))
-        else:
-            results.append(
-                _run_b1(
-                    sample_id,
-                    response,
-                    namespace=namespace,
-                    atomicity_strategy=atomicity_strategy,
-                    arm=arm,
-                )
-            )
-    return results
-
-
-def run_arm_file(
-    input_path: str | Path,
-    output_path: str | Path,
-    *,
-    arm: ArmName,
-    namespace: str = "default",
-    atomicity_strategy: AtomicityStrategy = "split",
-) -> dict[str, Any]:
-    """Run one arm from JSONL to an explicitly supplied experiment output path."""
-
-    source = Path(input_path).resolve()
-    target = Path(output_path).resolve()
-    samples = [json.loads(line) for line in source.read_text(encoding="utf-8").splitlines() if line.strip()]
-    results = run_arm(
-        samples,
-        arm=arm,
-        namespace=namespace,
-        atomicity_strategy=atomicity_strategy,
-    )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.tmp")
-    with temporary.open("w", encoding="utf-8", newline="\n") as stream:
-        for result in results:
-            stream.write(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-            stream.write("\n")
-    os.replace(temporary, target)
-    return {"arm": arm, "samples": len(results), "output": str(target)}
+    if metadata is not None:
+        result["metadata"] = copy.deepcopy(dict(metadata))
+    return result

@@ -9,6 +9,7 @@ from hl_mem.evaluation.state_experiment_scoring import (
     check_threshold_satisfiability,
     classification_metrics,
     load_persisted_edges,
+    project_run,
     score_protocol,
     score_protocol_file,
 )
@@ -910,12 +911,13 @@ def test_candidate_mapping_cannot_change_independently_mapped_baseline_metrics()
         return score_protocol(
             gold,
             baseline_predictions={"claim_count": 1, "non_state_assertion_ids": [layout_id]},
-            baseline_run=baseline_run,
+            baseline_projection=project_run(baseline_run),
             candidate_runs=[candidate, candidate, candidate],
             persisted_edges=set(),
             baseline_observations={"current_injected_assertion_ids": [layout_id]},
             candidate_observations={"current_injected_assertion_ids": []},
             corpus_records=corpus,
+            report_metadata={"baseline_label": "A historical replay"},
         )
 
     valid_report = score(valid_candidate)
@@ -925,9 +927,11 @@ def test_candidate_mapping_cannot_change_independently_mapped_baseline_metrics()
     assert tampered_report["metrics"]["current_state_stale_injection"]["baseline_rate"] == 0.0
     assert valid_report["metrics"]["non_state_extraction"]["baseline_f1"] == 1.0
     assert tampered_report["metrics"]["non_state_extraction"]["baseline_f1"] == 1.0
+    assert valid_report["metadata"] == {"baseline_label": "A historical replay"}
+    assert tampered_report["metadata"] == {"baseline_label": "A historical replay"}
 
 
-def test_baseline_run_claim_count_mismatch_fails_closed() -> None:
+def test_baseline_projection_claim_count_mismatch_fails_closed() -> None:
     sample_id = "baseline-count"
     assertion_id = f"{sample_id}:c0:a0"
     gold = [
@@ -951,11 +955,11 @@ def test_baseline_run_claim_count_mismatch_fails_closed() -> None:
         }
     ]
 
-    with pytest.raises(ValueError, match="baseline claim_count does not match baseline_run"):
+    with pytest.raises(ValueError, match="baseline claim_count does not match baseline_projection"):
         score_protocol(
             gold,
             baseline_predictions={"claim_count": 999},
-            baseline_run=baseline_run,
+            baseline_projection=project_run(baseline_run),
             candidate_runs=[baseline_run, baseline_run, baseline_run],
             persisted_edges=set(),
             baseline_observations={"current_injected_assertion_ids": []},
@@ -1128,14 +1132,14 @@ def test_missing_corpus_coverage_reports_only_count_not_sample_ids() -> None:
     assert sample_id not in str(error.value)
 
 
-def test_malformed_baseline_run_uses_projection_validation_before_corpus_coverage() -> None:
+def test_malformed_baseline_projection_uses_validation_before_corpus_coverage() -> None:
     candidate = _candidate_run()
 
-    with pytest.raises(ValueError, match="candidate run samples must be objects"):
+    with pytest.raises(ValueError, match="baseline_projection must be produced by project_run"):
         score_protocol(
             _gold(),
             baseline_predictions={"claim_count": 5},
-            baseline_run=[None],  # type: ignore[list-item]
+            baseline_projection=[None],  # type: ignore[list-item]
             candidate_runs=[candidate, candidate, candidate],
             persisted_edges=set(),
             baseline_observations={"current_injected_assertion_ids": []},

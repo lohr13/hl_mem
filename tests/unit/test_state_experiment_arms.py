@@ -1,6 +1,5 @@
 import copy
-import json
-from pathlib import Path
+from functools import partial
 from typing import Any
 
 import pytest
@@ -8,9 +7,11 @@ import pytest
 from hl_mem.evaluation.state_experiment_arms import (
     apply_atomicity_gate,
     canonicalize_claim,
-    make_arm_sample,
-    run_arm,
-    run_arm_file,
+    make_projection_sample,
+    preserve_atomic_claim,
+    preserve_compact_claim,
+    project_compact_claim,
+    project_response,
 )
 
 
@@ -436,47 +437,64 @@ def test_atomicity_gate_can_reject_multiple_state_assertions() -> None:
     assert result == {"decision": "rejected", "detected_state_assertions": 2, "claims": []}
 
 
-def test_arm_a_is_passthrough_and_b1_emits_stable_structured_assertions() -> None:
+def test_project_response_composes_passthrough_and_structured_projection_policies() -> None:
     raw = _response(_claim(subject="Gateway", value="API 服务现在 healthy；worker 进程已经 stopped"))
-    samples = [{"sample_id": "compound-001", "raw_llm_json": raw}]
+    sample = {"sample_id": "compound-001", "raw_llm_json": raw}
 
-    [arm_a] = run_arm(samples, arm="A")
-    first_b1 = run_arm(samples, arm="B1")
-    second_b1 = run_arm(copy.deepcopy(samples), arm="B1")
+    passthrough = project_response(
+        sample,
+        projector=preserve_compact_claim,
+        atomicity_policy=preserve_atomic_claim,
+    )
+    first = project_response(
+        sample,
+        projector=partial(project_compact_claim, namespace="default"),
+        atomicity_policy=partial(apply_atomicity_gate, strategy="split"),
+    )
+    second = project_response(
+        copy.deepcopy(sample),
+        projector=partial(project_compact_claim, namespace="default"),
+        atomicity_policy=partial(apply_atomicity_gate, strategy="split"),
+    )
 
-    assert arm_a == {
+    assert passthrough == {
         "sample_id": "compound-001",
-        "arm": "A",
         "raw_llm_json": raw,
         "input_claim_count": 1,
         "output_claim_count": 1,
         "claims": raw["claims"],
         "rejections": [],
     }
-    assert first_b1 == second_b1
-    assert [item["assertion_id"] for item in first_b1[0]["claims"]] == [
+    assert first == second
+    assert [item["assertion_id"] for item in first["claims"]] == [
         "compound-001:c0:a0",
         "compound-001:c0:a1",
     ]
-    assert [item["projection"]["canonical_slot"] for item in first_b1[0]["claims"]] == [
+    assert [item["projection"]["canonical_slot"] for item in first["claims"]] == [
         "state.service_health",
         "state.process",
     ]
 
 
-def test_corpus_bundle_and_frozen_extractor_response_have_an_explicit_arm_contract() -> None:
+def test_corpus_bundle_and_frozen_response_have_a_generic_projection_contract() -> None:
     bundle = {
         "bundle_id": "dev-version-001",
         "events": [{"event_index": 0, "content": {"text": "Gateway 当前版本是 v2.0"}}],
     }
     raw = _response(_claim(subject="Gateway", value="Gateway 当前版本是 v2.0", kind="config"))
 
-    sample = make_arm_sample(bundle, raw)
-    [result] = run_arm([sample], arm="B1")
+    sample = make_projection_sample(bundle, raw)
+    result = project_response(
+        sample,
+        projector=partial(project_compact_claim, namespace="default"),
+        atomicity_policy=partial(apply_atomicity_gate, strategy="split"),
+        metadata={"label": "B1 historical replay"},
+    )
 
     assert sample == {"sample_id": "dev-version-001", "raw_llm_json": raw}
     assert result["sample_id"] == bundle["bundle_id"]
     assert result["claims"][0]["assertion_id"] == "dev-version-001:c0:a0"
+    assert result["metadata"] == {"label": "B1 historical replay"}
 
 
 @pytest.mark.parametrize(
@@ -487,16 +505,9 @@ def test_corpus_bundle_and_frozen_extractor_response_have_an_explicit_arm_contra
         {"bundle_id": "dev-001", "events": "not-an-array"},
     ],
 )
-def test_arm_sample_adapter_rejects_malformed_corpus_bundles(bundle: dict[str, Any]) -> None:
+def test_projection_sample_adapter_rejects_malformed_corpus_bundles(bundle: dict[str, Any]) -> None:
     with pytest.raises(ValueError, match="corpus bundle"):
-        make_arm_sample(bundle, _response())
-
-
-def test_arm_b2_is_an_explicit_unimplemented_interface() -> None:
-    samples = [{"sample_id": "version-001", "raw_llm_json": _response()}]
-
-    with pytest.raises(NotImplementedError, match="B2 response provider"):
-        run_arm(samples, arm="B2")
+        make_projection_sample(bundle, _response())
 
 
 @pytest.mark.parametrize(
@@ -513,35 +524,24 @@ def test_arm_b2_is_an_explicit_unimplemented_interface() -> None:
         lambda claim: claim.update({"subject": "x" * 201}),
     ],
 )
-def test_arm_runner_rejects_malformed_seven_field_claims(mutate: Any) -> None:
+def test_project_response_rejects_malformed_seven_field_claims(mutate: Any) -> None:
     claim = _claim(subject="Gateway", value="API 服务当前 healthy")
     mutate(claim)
 
     with pytest.raises(ValueError, match="compact seven-field contract"):
-        run_arm([{"sample_id": "bad-001", "raw_llm_json": _response(claim)}], arm="B1")
-
-
-def test_arm_runner_rejects_more_than_twenty_compact_claims() -> None:
-    claim = _claim(subject="Gateway", value="API 服务当前 healthy")
-
-    with pytest.raises(ValueError, match="at most 20 claims"):
-        run_arm(
-            [{"sample_id": "dense-001", "raw_llm_json": _response(*[claim] * 21)}],
-            arm="B1",
+        project_response(
+            {"sample_id": "bad-001", "raw_llm_json": _response(claim)},
+            projector=partial(project_compact_claim, namespace="default"),
+            atomicity_policy=partial(apply_atomicity_gate, strategy="split"),
         )
 
 
-def test_arm_runner_writes_jsonl_only_to_explicit_output(tmp_path: Path) -> None:
-    input_path = tmp_path / "fake-a-output.jsonl"
-    output_path = tmp_path / "runs" / "b1.jsonl"
-    row = {
-        "sample_id": "version-001",
-        "raw_llm_json": _response(_claim(subject="HL_MEM", value="HL_MEM 当前版本是 v0.30.0", kind="config")),
-    }
-    input_path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+def test_project_response_rejects_more_than_twenty_compact_claims() -> None:
+    claim = _claim(subject="Gateway", value="API 服务当前 healthy")
 
-    summary = run_arm_file(input_path, output_path, arm="B1")
-
-    assert summary == {"arm": "B1", "samples": 1, "output": str(output_path.resolve())}
-    [written] = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
-    assert written["claims"][0]["projection"]["canonical_slot"] == "config.version"
+    with pytest.raises(ValueError, match="at most 20 claims"):
+        project_response(
+            {"sample_id": "dense-001", "raw_llm_json": _response(*[claim] * 21)},
+            projector=partial(project_compact_claim, namespace="default"),
+            atomicity_policy=partial(apply_atomicity_gate, strategy="split"),
+        )

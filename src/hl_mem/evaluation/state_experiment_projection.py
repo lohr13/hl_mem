@@ -144,7 +144,7 @@ def _gold_projection(gold_records: Sequence[Mapping[str, Any]]) -> dict[str, Any
     }
 
 
-def _run_projection(run: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def project_run(run: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     atomic_ids: set[str] = set()
     assertions: dict[str, dict[str, Any]] = {}
     by_sample: dict[str, list[str]] = {}

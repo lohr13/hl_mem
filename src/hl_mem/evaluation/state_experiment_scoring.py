@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Collection, Hashable, Mapping, Sequence, Set
 from pathlib import Path
 from typing import Any
 
-from hl_mem.evaluation.state_experiment_projection import _run_projection
+from hl_mem.evaluation.state_experiment_projection import project_run
 from hl_mem.evaluation.state_experiment_stages import (
     _derive_metrics,
     _evaluate_gates,
@@ -23,10 +24,10 @@ from hl_mem.evaluation.state_sqlite_snapshot import readonly_snapshot, table_col
 
 __all__ = [
     "THRESHOLDS",
-    "_run_projection",
     "check_threshold_satisfiability",
     "classification_metrics",
     "load_persisted_edges",
+    "project_run",
     "score_protocol",
     "score_protocol_file",
 ]
@@ -94,8 +95,9 @@ def score_protocol(
     persisted_edges: Collection[tuple[str, str]],
     baseline_observations: Mapping[str, Any],
     candidate_observations: Mapping[str, Any],
-    baseline_run: Sequence[Mapping[str, Any]] | None = None,
+    baseline_projection: Mapping[str, Any] | None = None,
     corpus_records: Sequence[Mapping[str, Any]] = (),
+    report_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Score one candidate via projection, ledger, metrics, and gate stages."""
 
@@ -103,7 +105,7 @@ def score_protocol(
         gold_records,
         baseline_predictions=baseline_predictions,
         candidate_runs=candidate_runs,
-        baseline_run=baseline_run,
+        baseline_projection=baseline_projection,
         corpus_records=corpus_records,
     )
     ledger = _match_ledger(projected, persisted_edges)
@@ -115,13 +117,16 @@ def score_protocol(
         candidate_observations=candidate_observations,
     )
     gates = _evaluate_gates(projected, derived)
-    return {
+    report = {
         "schema_version": 1,
         "metrics": derived["metrics"],
         "breakdown": derived["breakdown"],
         "mapping_diagnostics": ledger["mapping_diagnostics"],
         **gates,
     }
+    if report_metadata is not None:
+        report["metadata"] = copy.deepcopy(dict(report_metadata))
+    return report
 
 
 def _load_jsonl_objects(path: Path, label: str) -> list[Mapping[str, Any]]:
@@ -144,8 +149,9 @@ def score_protocol_file(
     persisted_edges: Collection[tuple[str, str]],
     baseline_observations: Mapping[str, Any],
     candidate_observations: Mapping[str, Any],
-    baseline_run: Sequence[Mapping[str, Any]] | None = None,
+    baseline_projection: Mapping[str, Any] | None = None,
     corpus_path: str | Path | None = None,
+    report_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Consume dev or sealed gold internally and return aggregate metrics only."""
 
@@ -160,6 +166,7 @@ def score_protocol_file(
         persisted_edges=persisted_edges,
         baseline_observations=baseline_observations,
         candidate_observations=candidate_observations,
-        baseline_run=baseline_run,
+        baseline_projection=baseline_projection,
         corpus_records=corpus_records,
+        report_metadata=report_metadata,
     )

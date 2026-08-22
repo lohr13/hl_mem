@@ -2,6 +2,7 @@ import hashlib
 import json
 import sqlite3
 from collections import Counter
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,12 @@ from hl_mem.evaluation.state_counterexample_corpus import (
     sample_redacted_seeds,
     verify_sealed_manifest,
 )
-from hl_mem.evaluation.state_experiment_arms import make_arm_sample, run_arm
+from hl_mem.evaluation.state_experiment_arms import (
+    apply_atomicity_gate,
+    make_projection_sample,
+    project_compact_claim,
+    project_response,
+)
 from hl_mem.evaluation.state_experiment_scoring import score_protocol
 
 
@@ -289,8 +295,14 @@ def test_dev_bundle_runs_through_fake_extractor_boundary_b1_and_scorer(tmp_path:
                 "source_event_indices": [event["event_index"]],
             }
         )
-    sample = make_arm_sample(bundle, {"claims": raw_claims, "should_memorize": True})
-    candidate = run_arm([sample], arm="B1")
+    sample = make_projection_sample(bundle, {"claims": raw_claims, "should_memorize": True})
+    candidate = [
+        project_response(
+            sample,
+            projector=partial(project_compact_claim, namespace="default"),
+            atomicity_policy=partial(apply_atomicity_gate, strategy="split"),
+        )
+    ]
     expected_edges = {tuple(edge) for edge in gold["expected_supersede_edges"]}
     current_ids = gold["current_assertion_ids"]
     historical_ids = gold["historical_assertion_ids"]
