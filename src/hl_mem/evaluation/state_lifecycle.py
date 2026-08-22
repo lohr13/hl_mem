@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sqlite3
 import unicodedata
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -14,7 +13,14 @@ from pathlib import Path
 from typing import Any
 
 from hl_mem.domain.claims.conflicts import slot_qualifier_key
+from hl_mem.domain.claims.state_coordinates import StateCoordinate
 from hl_mem.domain.temporal import parse_utc
+from hl_mem.evaluation.state_protocol import coordinate_key, coordinate_mapping, rate
+from hl_mem.evaluation.state_sqlite_snapshot import (
+    open_readonly_database,
+    readonly_snapshot,
+    table_columns,
+)
 
 SCHEMA_VERSION = 1
 SCORER_NAME = "structured_state_lifecycle"
@@ -36,22 +42,6 @@ _CLAIM_COLUMNS = (
     "superseded_by_id",
 )
 _OPTIONAL_CLAIM_COLUMNS = ("canonical_subject", "coordinate_qualifiers_json")
-
-
-def open_readonly_database(database_path: str | Path) -> sqlite3.Connection:
-    """Open one existing SQLite database in URI read-only and query-only mode."""
-
-    path = Path(database_path).resolve()
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA query_only=ON")
-    return connection
-
-
-def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
-    return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
 
 
 def _canonical_subject(value: object) -> str:
@@ -104,16 +94,14 @@ def _coordinate(claim: Mapping[str, Any], *, has_explicit_qualifiers: bool) -> d
         qualifiers = _json_object(claim.get("coordinate_qualifiers_json"))
     else:
         qualifiers = slot_qualifier_key(slot, _json_object(claim.get("qualifiers_json")))
-    return {
-        "namespace": str(claim.get("namespace_key") or ""),
-        "canonical_subject": _canonical_subject(raw_subject),
-        "canonical_slot": slot,
-        "coordinate_qualifiers": qualifiers,
-    }
-
-
-def _coordinate_key(coordinate: Mapping[str, Any]) -> str:
-    return json.dumps(coordinate, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return coordinate_mapping(
+        StateCoordinate(
+            str(claim.get("namespace_key") or ""),
+            _canonical_subject(raw_subject),
+            slot,
+            qualifiers,
+        )
+    )
 
 
 def _observation_key(claim: Mapping[str, Any]) -> tuple[datetime, datetime, str]:
@@ -121,10 +109,6 @@ def _observation_key(claim: Mapping[str, Any]) -> tuple[datetime, datetime, str]
     recorded = _timestamp(claim.get("recorded_from")) or minimum
     valid = _timestamp(claim.get("valid_from")) or recorded
     return valid, recorded, str(claim.get("id") or "")
-
-
-def _rate(numerator: int, denominator: int) -> float:
-    return numerator / denominator if denominator else 0.0
 
 
 def _historically_recallable(claim: Mapping[str, Any], reference: datetime) -> bool:
@@ -139,7 +123,7 @@ def _load_state_claims(
     namespace: str,
     cutoff: datetime | None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    columns = _table_columns(connection, "claims")
+    columns = table_columns(connection, "claims")
     missing = set(_CLAIM_COLUMNS) - columns
     if missing:
         raise ValueError(f"claims table is missing required structured columns: {', '.join(sorted(missing))}")
@@ -201,7 +185,7 @@ def _edge_metrics(
 
 
 def _audit_row_count(connection: sqlite3.Connection, namespace: str) -> int:
-    columns = _table_columns(connection, "audit_log")
+    columns = table_columns(connection, "audit_log")
     if not columns:
         return 0
     if "tenant_id" in columns:
@@ -221,7 +205,7 @@ def _score_connection(
     claims, has_explicit_qualifiers = _load_state_claims(connection, namespace, cutoff)
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for claim in claims:
-        grouped[_coordinate_key(claim["_coordinate"])].append(claim)
+        grouped[coordinate_key(claim["_coordinate"])].append(claim)
 
     groups: list[dict[str, Any]] = []
     covered_old_ids: set[str] = set()
@@ -239,7 +223,7 @@ def _score_connection(
                 "health": health,
             }
         )
-    groups.sort(key=lambda item: _coordinate_key(item["coordinate"]))
+    groups.sort(key=lambda item: coordinate_key(item["coordinate"]))
     summary = {
         "total": len(groups),
         "healthy": sum(group["health"] == "healthy" for group in groups),
@@ -274,17 +258,17 @@ def _score_connection(
         "valid_to_closure": {
             "eligible": len(closed_chain_candidates),
             "closed": closed,
-            "rate": _rate(closed, len(closed_chain_candidates)),
+            "rate": rate(closed, len(closed_chain_candidates)),
         },
         "current_state_stale_injection": {
             "active_surface": len(active_claims),
             "stale_active": stale_active,
-            "rate": _rate(stale_active, len(active_claims)),
+            "rate": rate(stale_active, len(active_claims)),
         },
         "historical_old_snapshot_recall": {
             "covered_old": len(historical_candidates),
             "recallable": historical_recallable,
-            "rate": _rate(historical_recallable, len(historical_candidates)),
+            "rate": rate(historical_recallable, len(historical_candidates)),
         },
         "diagnostics": {
             "audit_rows": _audit_row_count(connection, namespace),
@@ -305,14 +289,8 @@ def score_database(
     """Score one database snapshot without running migrations or issuing writes."""
 
     path = Path(database_path).resolve()
-    connection = open_readonly_database(path)
-    try:
-        connection.execute("BEGIN")
+    with readonly_snapshot(path, opener=open_readonly_database) as connection:
         result = _score_connection(connection, namespace=namespace, recorded_at=recorded_at)
-    finally:
-        if connection.in_transaction:
-            connection.rollback()
-        connection.close()
     return {"database": str(path), **result}
 
 

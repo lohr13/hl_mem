@@ -14,6 +14,7 @@ from typing import Any, Literal, TypeAlias
 from hl_mem.domain.claims.conflicts import coordinate_qualifier_key
 from hl_mem.domain.claims.state_coordinates import StateCoordinate
 from hl_mem.domain.entity import normalize_entity_id
+from hl_mem.evaluation.state_protocol import coordinate_mapping
 
 ArmName: TypeAlias = Literal["A", "B1", "B2"]
 AtomicityStrategy: TypeAlias = Literal["split", "reject"]
@@ -248,17 +249,6 @@ def _coordinate_qualifiers(slot: str, candidates: dict[str, Any]) -> dict[str, A
     return dict(sorted(projected.items()))
 
 
-def _coordinate_dict(coordinate: StateCoordinate) -> dict[str, Any]:
-    return {
-        "namespace": coordinate.namespace,
-        "canonical_subject": coordinate.canonical_subject,
-        "canonical_slot": coordinate.canonical_slot,
-        "coordinate_qualifiers": {
-            key: json.loads(frozen_json) for key, frozen_json in coordinate.coordinate_qualifiers
-        },
-    }
-
-
 def canonicalize_claim(raw_claim: Mapping[str, Any], *, namespace: str = "default") -> dict[str, Any]:
     """Project one compact claim onto a deterministic candidate state coordinate."""
 
@@ -303,7 +293,7 @@ def canonicalize_claim(raw_claim: Mapping[str, Any], *, namespace: str = "defaul
         "canonical_subject": canonical_subject,
         "canonical_slot": slot,
         "coordinate_qualifiers": qualifiers,
-        "coordinate": _coordinate_dict(coordinate),
+        "coordinate": coordinate_mapping(coordinate),
         "state_context": context,
         "reason_codes": reason_codes,
     }

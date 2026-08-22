@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import math
 import re
-import sqlite3
 import unicodedata
 from collections import Counter
 from collections.abc import Collection, Hashable, Mapping, Sequence, Set
 from itertools import combinations
 from pathlib import Path
 from typing import Any
+
+from hl_mem.evaluation.state_protocol import CountMetrics, coordinate_key
+from hl_mem.evaluation.state_sqlite_snapshot import readonly_snapshot, table_columns
 
 THRESHOLDS: dict[str, dict[str, Any]] = {
     "state_coordinate_precision": {"operator": ">=", "target": 0.99},
@@ -119,36 +121,7 @@ def classification_metrics(
 ) -> dict[str, int | float]:
     """Return exact-set precision/recall/F1 with a perfect empty/empty score."""
 
-    gold_set = set(gold)
-    predicted_set = set(predicted)
-    true_positive = len(gold_set & predicted_set)
-    false_positive = len(predicted_set - gold_set)
-    false_negative = len(gold_set - predicted_set)
-    precision = true_positive / len(predicted_set) if predicted_set else float(not gold_set)
-    recall = true_positive / len(gold_set) if gold_set else float(not predicted_set)
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    return {
-        "true_positive": true_positive,
-        "false_positive": false_positive,
-        "false_negative": false_negative,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-    }
-
-
-def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
-    return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
-
-
-def _open_readonly(path_value: str | Path) -> sqlite3.Connection:
-    path = Path(path_value).resolve()
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA query_only=ON")
-    return connection
+    return CountMetrics.classify(gold, predicted).as_dict()
 
 
 def load_persisted_edges(
@@ -161,10 +134,8 @@ def load_persisted_edges(
     and inferred lifecycle language are deliberately outside this boundary.
     """
 
-    connection = _open_readonly(database_path)
-    try:
-        connection.execute("BEGIN")
-        claim_columns = _table_columns(connection, "claims")
+    with readonly_snapshot(database_path) as connection:
+        claim_columns = table_columns(connection, "claims")
         missing = {"id", "superseded_by_id"} - claim_columns
         if missing:
             raise ValueError(f"claims table is missing structured edge columns: {', '.join(sorted(missing))}")
@@ -172,7 +143,7 @@ def load_persisted_edges(
             (str(row["id"]), str(row["superseded_by_id"]))
             for row in connection.execute("SELECT id,superseded_by_id FROM claims WHERE superseded_by_id IS NOT NULL")
         }
-        evidence_columns = _table_columns(connection, "evidence_links")
+        evidence_columns = table_columns(connection, "evidence_links")
         if {"derived_id", "evidence_id", "relation", "derived_type", "evidence_type"} <= evidence_columns:
             raw_evidence_edges = {
                 (str(row["evidence_id"]), str(row["derived_id"]))
@@ -200,14 +171,6 @@ def load_persisted_edges(
             },
             "unknown_endpoint_edges": unknown_endpoint_edges,
         }
-    finally:
-        if connection.in_transaction:
-            connection.rollback()
-        connection.close()
-
-
-def _coordinate_key(value: Mapping[str, Any]) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _normalized_text(value: object) -> str:
@@ -316,7 +279,7 @@ def _gold_projection(gold_records: Sequence[Mapping[str, Any]]) -> dict[str, Any
             by_sample[sample_id].append(assertion_id)
             coordinate = claim.get("coordinate")
             if isinstance(coordinate, Mapping):
-                coordinates[assertion_id] = _coordinate_key(coordinate)
+                coordinates[assertion_id] = coordinate_key(coordinate)
             else:
                 non_state_ids.add(assertion_id)
             if record.get("counterexample_zero_supersede") is True:
@@ -388,9 +351,9 @@ def _run_projection(run: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             }
             by_sample[sample_id].append(assertion_id)
             if isinstance(coordinate, Mapping):
-                coordinate_key = _coordinate_key(coordinate)
-                coordinates[assertion_id] = coordinate_key
-                coordinate_occurrences.append((sample_id, coordinate_key))
+                stable_coordinate_key = coordinate_key(coordinate)
+                coordinates[assertion_id] = stable_coordinate_key
+                coordinate_occurrences.append((sample_id, stable_coordinate_key))
             else:
                 non_state_ids.add(assertion_id)
     return {
@@ -510,25 +473,7 @@ def _match_assertions(
 
 
 def _metrics_from_counts(true_positive: int, false_positive: int, false_negative: int) -> dict[str, int | float]:
-    precision = (
-        true_positive / (true_positive + false_positive)
-        if true_positive + false_positive
-        else float(false_negative == 0)
-    )
-    recall = (
-        true_positive / (true_positive + false_negative)
-        if true_positive + false_negative
-        else float(false_positive == 0)
-    )
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    return {
-        "true_positive": true_positive,
-        "false_positive": false_positive,
-        "false_negative": false_negative,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-    }
+    return CountMetrics(true_positive, false_positive, false_negative).as_dict()
 
 
 def _stale_rate(expected: set[str], injected: Collection[object]) -> float:
