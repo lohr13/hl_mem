@@ -1,5 +1,20 @@
 # HL-Mem 变更记录
 
+## 未发布：v0.30.0 状态实验收档（2026-08-22）
+
+- 状态坐标闭环在反复使用同一份 400-bundle dev 集完成 B2、P1、I1、Z1–Z5 和生产接线后取得 dev 13/13，
+  但该结果没有泛化到独立 held-out-r5。r5 的运行时守卫、全链冒烟、120/120 transport 和评分均无异常，最终仅
+  通过 3/13：原子 precision/recall 为 95.0156%/87.6437%，坐标 precision/recall 为
+  70.6714%/67.5676%，edge precision/recall 为 81.2500%/69.6429%，stale absolute 为 25.1852%。
+- r5 产生 27 条错误 edge，其中 3 条是冻结反例语境下的误 supersede，违反 edge precision=100% 和
+  counterexample false supersede=0 两条安全线。自动关链会让仍有效的 claim 退出 current 视图，因此不能把该结果
+  作为可接受的召回噪声发布；已撤回 admission 状态放行、状态 prompt/canonicalizer、双时间身份、resolver、历史访问
+  刷新变化和 volatility 行为文档，恢复 v0.29.3 的保守状态语义。本次未发布、未打 tag、未部署，也没有 schema、
+  migration 或配置变化。
+- 评分器与 adapter 修复、版本化 corpus builder、全链零 LLM 冒烟、runtime guard、冻结语料和实验审计记录继续保留，
+  用作未来从新假设和新独立验证集重新启动的基础设施。所有已运行 held-out/sealed 集均视为烧毁，不得用于后续调参
+  或再次充当发布证据；dev 13/13 只保留为已知分布内证据，不再宣称为生产有效性结论。
+
 ## v0.29.3（2026-08-21）
 
 ### Temporal 序列坐标
