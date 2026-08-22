@@ -15,7 +15,8 @@ from hl_mem.domain.claims.dedup import (
     Deduplicator,
     compute_dedup_pair_key,
 )
-from hl_mem.domain.claims.temporal_links import evaluate_temporal_link
+from hl_mem.domain.claims.state_projection import state_candidate_key
+from hl_mem.domain.claims.state_transitions import evaluate_state_or_temporal_link as evaluate_temporal_link
 from hl_mem.errors import ConflictError
 from hl_mem.lifecycle import assert_transition
 from hl_mem.monitoring.metrics import AdmissionMetrics
@@ -51,7 +52,7 @@ def _find_resolution(
             return exact, []
         return None, []
     conflict_key = claim.get("conflict_key")
-    exclusive = is_mutually_exclusive_attribute(claim.get("canonical_slot"))
+    exclusive = is_mutually_exclusive_attribute(claim.get("canonical_slot")) and not state_candidate_key(claim)
     existing = claims.find_by_conflict_key(conflict_key) if conflict_key and exclusive else []
     return None, existing
 

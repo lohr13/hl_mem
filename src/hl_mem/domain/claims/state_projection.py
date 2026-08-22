@@ -28,3 +28,27 @@ def state_valid_from(canonical_slot: str | None, occurred_start: str | None, obs
     if canonical_slot in STATE_TRANSITION_SLOTS and occurred_start:
         return canonical_utc_iso(occurred_start)
     return observed_at
+
+
+def state_candidate_key(claim: dict[str, Any]) -> tuple[str, str, str, dict[str, Any]] | None:
+    coordinate = project_state_coordinate(
+        namespace=claim.get("namespace_key", ""),
+        subject=claim.get("subject_entity_id", ""),
+        canonical_slot=claim.get("canonical_slot"),
+        qualifiers=claim.get("qualifiers"),
+    )
+    if coordinate is None:
+        return None
+    return (
+        coordinate.namespace,
+        coordinate.canonical_subject,
+        coordinate.canonical_slot,
+        coordinate_qualifier_key(coordinate.canonical_slot, claim.get("qualifiers")),
+    )
+
+
+def state_transition_eligible(claim: dict[str, Any]) -> bool:
+    return bool(
+        claim.get("assertion_kind", "observation") == "observation"
+        and (claim.get("qualifiers") or {}).get("_state_context", "current") == "current"
+    )

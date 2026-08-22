@@ -9,7 +9,7 @@ import pytest
 
 from hl_mem.application.ingest import IngestService
 from hl_mem.application.recall import RecallService
-from hl_mem.domain.claims.temporal_links import evaluate_temporal_link
+from hl_mem.domain.claims.state_transitions import evaluate_state_or_temporal_link, resolve_state_transition
 from hl_mem.domain.temporal import RecallIntent
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.ingest.extractors import ExtractedClaim
@@ -109,6 +109,8 @@ def test_version_shapes_share_the_production_state_identity(tmp_path: Any) -> No
     ]
 
     rows = [ClaimRepository(connection).get_claim(claim_id) for claim_id in claim_ids]
+    assert len(set(claim_ids)) == 1
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
     identities = {(row["subject_entity_id"], row["predicate"], row["canonical_attribute"]) for row in rows}
     assert identities == {("x", "配置", "config.version")}
     assert len({row["legacy_conflict_key"] for row in rows}) == 1
@@ -116,6 +118,35 @@ def test_version_shapes_share_the_production_state_identity(tmp_path: Any) -> No
     assert all(row["canonical_slot"] == "config.version" for row in rows)
     assert [row["status"] for row in rows] == ["active", "active", "active"]
     assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 0
+
+
+def test_state_qualifier_axis_prevents_cross_coordinate_supersede(tmp_path: Any) -> None:
+    connection = Database(tmp_path / "state-qualifier.db").open()
+    claim_ids = [
+        _store(
+            connection,
+            event_id=event,
+            occurred_at=observed,
+            subject="gateway",
+            predicate="状态",
+            value=f"{service} service {state}",
+            canonical_attribute="state.service_health",
+            canonical_slot="state.service_health",
+            qualifiers={"service": service},
+        )
+        for event, observed, service, state in (
+            ("api-old", OLD_TIME, "api", "healthy"),
+            ("api-new", NEW_TIME, "api", "unhealthy"),
+            ("web-new", NEW_TIME, "web", "unhealthy"),
+        )
+    ]
+
+    repository = ClaimRepository(connection)
+    api_old, api_new, web_new = claim_ids
+    old_row, api_row, web_row = map(repository.get_claim, claim_ids)
+    assert (old_row["status"], old_row["superseded_by_id"]) == ("superseded", api_new)
+    assert (api_row["status"], api_row["supersedes_id"]) == ("active", api_old)
+    assert (web_row["status"], web_row["supersedes_id"]) == ("active", None)
 
 
 def test_config_version_and_exclusive_slot_both_have_structured_coordinates(tmp_path: Any) -> None:
@@ -150,13 +181,13 @@ def test_config_version_and_exclusive_slot_both_have_structured_coordinates(tmp_
     assert isinstance(port["conflict_key"], str) and len(port["conflict_key"]) == 16
 
 
-def test_version_update_has_no_temporal_axis_and_both_values_remain_active(tmp_path: Any) -> None:
+def test_version_update_supersedes_the_old_coordinate_tip(tmp_path: Any) -> None:
     existing = {
         "namespace_key": "default",
         "subject_entity_id": "x",
         "predicate": "配置",
         "canonical_attribute": "config.version",
-        "canonical_slot": None,
+        "canonical_slot": "config.version",
         "assertion_kind": "observation",
         "qualifiers": {},
         "source_authority": "medium",
@@ -164,11 +195,11 @@ def test_version_update_has_no_temporal_axis_and_both_values_remain_active(tmp_p
         "valid_from": OLD_TIME,
     }
     newer = {**existing, "value": "X版本为0.2", "valid_from": NEW_TIME}
-    decision = evaluate_temporal_link(existing, newer)
+    decision = resolve_state_transition(existing, newer)
     assert (decision.outcome, decision.rule_id, decision.rationale) == (
-        "not_applicable",
-        None,
-        "no_proven_temporal_axis",
+        "snapshot_advance",
+        "state-v1:coordinate",
+        "newer_state_observation",
     )
 
     connection = Database(tmp_path / "version-temporal.db").open()
@@ -193,11 +224,28 @@ def test_version_update_has_no_temporal_axis_and_both_values_remain_active(tmp_p
     old_row = ClaimRepository(connection).get_claim(old_id)
     new_row = ClaimRepository(connection).get_claim(new_id)
     assert (old_row["status"], old_row["valid_to"], old_row["superseded_by_id"]) == (
-        "active",
-        None,
-        None,
+        "superseded",
+        NEW_TIME,
+        new_id,
     )
-    assert (new_row["status"], new_row["supersedes_id"]) == ("active", None)
+    assert (new_row["status"], new_row["supersedes_id"]) == ("active", old_id)
+
+    backfill_id = _store(
+        connection,
+        event_id="version-backfill",
+        occurred_at=RECALL_TIME,
+        occurred_start="2026-08-19T08:00:00+00:00",
+        subject="X",
+        predicate="配置",
+        value="X版本为0.0",
+        canonical_attribute="config.version",
+    )
+    backfill = ClaimRepository(connection).get_claim(backfill_id)
+    assert (backfill["status"], backfill["valid_to"], backfill["superseded_by_id"]) == (
+        "superseded",
+        NEW_TIME,
+        new_id,
+    )
 
 
 @pytest.mark.parametrize(
@@ -235,7 +283,7 @@ def test_price_snapshots_keep_the_existing_temporal_outcomes(
         "qualifiers": {},
         "source_authority": "medium",
     }
-    decision = evaluate_temporal_link(
+    decision = evaluate_state_or_temporal_link(
         {**base, "value": old_value, "valid_from": OLD_TIME},
         {**base, "value": new_value, "valid_from": NEW_TIME},
     )
