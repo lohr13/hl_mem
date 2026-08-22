@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Collection, Hashable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from hl_mem.domain.claims.state_coordinates import StateCoordinate
 
@@ -23,9 +23,9 @@ def coordinate_from_mapping(value: Mapping[str, Any]) -> StateCoordinate:
     if not isinstance(qualifiers, Mapping):
         raise TypeError("coordinate_qualifiers must be a mapping")
     return StateCoordinate(
-        namespace=value.get("namespace"),
-        canonical_subject=value.get("canonical_subject"),
-        canonical_slot=value.get("canonical_slot"),
+        namespace=cast(str, value.get("namespace")),
+        canonical_subject=cast(str, value.get("canonical_subject")),
+        canonical_slot=cast(str, value.get("canonical_slot")),
         coordinate_qualifiers=qualifiers,
     )
 

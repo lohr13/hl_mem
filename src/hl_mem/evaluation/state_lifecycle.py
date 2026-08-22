@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sqlite3
 import unicodedata
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
