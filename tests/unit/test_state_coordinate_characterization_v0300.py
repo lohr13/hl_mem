@@ -339,16 +339,18 @@ def test_state_occurrence_and_recording_time_remain_distinct(tmp_path: Any) -> N
 
 
 @pytest.mark.parametrize(
-    ("intent", "as_of"),
+    ("intent", "as_of", "known_as_of"),
     [
-        (RecallIntent.HISTORICAL, None),
-        (None, RECALL_TIME),
+        (RecallIntent.HISTORICAL, None, None),
+        (None, RECALL_TIME, None),
+        (RecallIntent.CURRENT_STATE, None, RECALL_TIME),
     ],
 )
-def test_historical_or_as_of_recall_records_access(
+def test_historical_or_bitemporal_recall_does_not_record_access(
     tmp_path: Any,
     intent: RecallIntent | None,
     as_of: str | None,
+    known_as_of: str | None,
 ) -> None:
     connection = Database(tmp_path / f"access-{intent or 'as-of'}.db").open()
     claim_id = _store(
@@ -366,14 +368,15 @@ def test_historical_or_as_of_recall_records_access(
         limit=5,
         as_of=as_of,
         intent=intent,
+        known_as_of=known_as_of,
         response_format="retrieval_bundle",
         token_budget=1000,
         ranking_now=RECALL_TIME,
     )
     assert [item["id"] for item in response["retrieval_bundle"]["items"]] == [claim_id]
     row = ClaimRepository(connection).get_claim(claim_id)
-    assert row["access_count"] == 1
-    assert row["last_accessed_at"] is not None
+    assert row["access_count"] == 0
+    assert row["last_accessed_at"] is None
 
 
 def test_freshness_bypasses_historical_and_only_annotates_current_state_age() -> None:
