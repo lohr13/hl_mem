@@ -50,6 +50,16 @@ _COUNTER_SUBTYPES = (
 _CONTROL_SUBTYPES = ("preference", "identity", "architecture", "ordinary_fact")
 
 
+def _replace_semantic_subject(value: Any, old_subject: str, new_subject: str) -> Any:
+    if isinstance(value, str):
+        return value.replace(old_subject, new_subject)
+    if isinstance(value, list):
+        return [_replace_semantic_subject(item, old_subject, new_subject) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _replace_semantic_subject(item, old_subject, new_subject) for key, item in value.items()}
+    return value
+
+
 def _coordinate(
     subject: str,
     slot: str,
@@ -380,8 +390,22 @@ def build_bundle_payload(
             "non_state_control": ("control", 12),
         }[category]
         old_subject = f"{subject_prefix}-{global_index % modulus:02d}"
-        serialized = json.dumps([events, gold], ensure_ascii=False)
-        events, gold = json.loads(serialized.replace(old_subject, old_subject + subject_suffix))
+        new_subject = old_subject + subject_suffix
+        events = [
+            {**event, "content": _replace_semantic_subject(event["content"], old_subject, new_subject)}
+            for event in events
+        ]
+        gold = {
+            **gold,
+            "atomic_claims": [
+                {
+                    **claim,
+                    "coordinate": _replace_semantic_subject(claim["coordinate"], old_subject, new_subject),
+                    "state_value": _replace_semantic_subject(claim["state_value"], old_subject, new_subject),
+                }
+                for claim in gold["atomic_claims"]
+            ],
+        }
     provenance: dict[str, Any]
     if source_kind == "real_deidentified":
         if seed is None:

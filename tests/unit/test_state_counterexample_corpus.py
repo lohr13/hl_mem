@@ -8,7 +8,11 @@ from typing import Any
 
 import pytest
 
-from evaluation.tools.v0300_state_corpus_builder import generate_corpus, generate_sealed_generation
+from evaluation.tools.v0300_state_corpus_builder import (
+    build_bundle_payload,
+    generate_corpus,
+    generate_sealed_generation,
+)
 from evaluation.tools.v0300_state_corpus_builder import main as corpus_builder_main
 from hl_mem.evaluation.state_counterexample_corpus import (
     aggregate_dev_statistics,
@@ -339,6 +343,28 @@ def test_sealed_generation_has_exact_quota_and_aggregate_non_overlap_proof(
         "sealed_gold_records": 120,
         "hashes_valid": True,
     }
+
+
+def test_subject_suffix_changes_semantics_without_mutating_bundle_or_assertion_ids() -> None:
+    corpus, gold = build_bundle_payload(
+        split="sealed-r4",
+        category="compound_claim",
+        category_index=2,
+        global_index=0,
+        source_kind="synthetic_adversarial",
+        seed=None,
+        subject_suffix="-salted",
+    )
+    bundle_id = "sealed-r4-compound-003"
+    assertion_ids = [f"{bundle_id}:c0:a0", f"{bundle_id}:c0:a1", f"{bundle_id}:c1:a0", f"{bundle_id}:c1:a1"]
+
+    assert corpus["bundle_id"] == gold["bundle_id"] == bundle_id
+    assert [event["event_id"] for event in corpus["events"]] == [f"{bundle_id}:e0", f"{bundle_id}:e1"]
+    assert [claim["assertion_id"] for claim in gold["atomic_claims"]] == assertion_ids
+    assert {identifier for edge in gold["expected_supersede_edges"] for identifier in edge} <= set(assertion_ids)
+    assert set(gold["current_assertion_ids"] + gold["historical_assertion_ids"]) <= set(assertion_ids)
+    assert all("compound-00-salted" in event["content"]["text"] for event in corpus["events"])
+    assert all(claim["coordinate"]["canonical_subject"] == "compound-00-salted" for claim in gold["atomic_claims"])
 
 
 def test_sealed_generation_is_byte_deterministic(
