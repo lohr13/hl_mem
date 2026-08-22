@@ -1,0 +1,104 @@
+{
+  "categories": {
+    "compound_claim": 24,
+    "counterexample": 24,
+    "non_state_control": 12,
+    "non_version_state": 24,
+    "software_version": 36
+  },
+  "files": {
+    "sealed_corpus": {
+      "path": "v0300_state_sealed_r5_corpus.jsonl",
+      "records": 120,
+      "sha256": "9ddceca3cbfe8ade3ce7fc521ae412a6133715252c5137cf971c4194091b1816"
+    },
+    "sealed_gold": {
+      "path": "v0300_state_sealed_r5_gold.jsonl",
+      "records": 120,
+      "sha256": "d7a4e14c4f262bfde9ea698488fc7a1289038cb8739edaca0659e3109ad31381"
+    }
+  },
+  "generation_id": "v0300-sealed-r5-20260822-323ae12",
+  "non_overlap_proof": {
+    "assertion_id_overlap": 0,
+    "bundle_id_overlap": 0,
+    "burned_assets_read": false,
+    "burned_v1_asset_commit": "2417f7cb2039987a6f57135f639feceb37b8d56c",
+    "burned_v1_recorded_at_upper_bound": "2026-08-22T01:56:20+08:00",
+    "context_rank_range": [
+      0,
+      12
+    ],
+    "context_time_window_overlap": 0,
+    "context_window": {
+      "overlap": 0,
+      "predecessor_recorded_at_upper_bound": "2026-08-22T21:19:09+08:00",
+      "recorded_after_exclusive": "2026-08-22T21:19:09+08:00",
+      "selected_real_contexts": 12
+    },
+    "controlled_event_fingerprint_overlap": 0,
+    "generation_id_overlap": 0,
+    "gold_record_fingerprint_overlap": 0,
+    "predecessor_asset_overlap": {
+      "r2": {
+        "assertion_id_overlap": 0,
+        "bundle_id_overlap": 0,
+        "context_source_hash_overlap": 0,
+        "controlled_event_fingerprint_overlap": 0,
+        "gold_record_fingerprint_overlap": 0
+      },
+      "r3": {
+        "assertion_id_overlap": 0,
+        "asset_basis_reused_from_r2": true,
+        "bundle_id_overlap": 0,
+        "context_source_hash_overlap": 0,
+        "controlled_event_fingerprint_overlap": 0,
+        "gold_record_fingerprint_overlap": 0
+      },
+      "r4": {
+        "assertion_id_overlap": 0,
+        "bundle_id_overlap": 0,
+        "context_source_hash_overlap": 0,
+        "controlled_event_fingerprint_overlap": 0,
+        "gold_record_fingerprint_overlap": 0
+      }
+    },
+    "predecessor_generation_ids": [
+      "v0300-sealed-r2-20260822",
+      "v0300-sealed-r3-reuse-r2",
+      "v0300-sealed-r4-20260822-85ea046"
+    ],
+    "predecessor_scope": {
+      "r2": "frozen sealed-r2 assets",
+      "r3": "r3 reused r2 assets; same aggregate comparison",
+      "r4": "frozen held-out-r4 assets",
+      "sample_content_exposed": false
+    },
+    "predecessor_variant_salt_sha256": [
+      "3b31a25baa66f50038fd38191526738fd7a93c945c0dc87bd74c9a4b8518a7df",
+      "881980359c215403bf62ce9f33f3bbb0da658eb8861709ec3efa6684c336f826"
+    ],
+    "selection_seed_sha256": "7a0bce3ed773071c87f1f0715c661b8d45cae9fc961557295dc1ef6e47562bd9",
+    "variant_salt_overlap": 0,
+    "variant_salt_sha256": "c53dcf91fe1cdb0934c3ccb6b004577da4093c6c3a5471a748397147ea4e19ad"
+  },
+  "protocol": "v0.30.0-state-sealed-replacement",
+  "schema_version": 1,
+  "sources": {
+    "real_deidentified": 12,
+    "synthetic_adversarial": 108
+  },
+  "splits": {
+    "sealed": {
+      "bundles": 120,
+      "events": 300
+    }
+  },
+  "totals": {
+    "bundles": 120,
+    "events": 300,
+    "gold_coverage": 1.0,
+    "gold_records": 120
+  },
+  "variant_salt": "v0300-sealed-r5-independent-20260822-323ae124b2a54f47bbfa68a82c2d702f"
+}
