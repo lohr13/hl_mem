@@ -181,12 +181,22 @@ def _match_token(pattern: re.Pattern[str], text: str) -> str | None:
     return _normalized_token(value) if value else None
 
 
+def _has_same_owner_service_alias(text: str, canonical_subject: str) -> bool:
+    normalized = _normalized_token(text)
+    service_matches = list(_SERVICE_RE.finditer(normalized))
+    if len(service_matches) != 1:
+        return False
+    alias = _SUBJECT_SERVICE_SUFFIX_RE.fullmatch(normalized[: service_matches[0].end()])
+    return alias is not None and normalize_entity_id(alias.group(1)) == canonical_subject
+
+
 def _qualifier_candidates(slot: str, raw_claim: Mapping[str, Any], canonical_subject: str) -> dict[str, Any]:
     value = str(raw_claim.get("value") or "")
     subject = str(raw_claim.get("subject") or "")
     text = f"{subject} {value}"
-    version_subject_alias = (
-        slot == "config.version" and _SUBJECT_SERVICE_SUFFIX_RE.fullmatch(_normalized_token(subject)) is not None
+    version_owner_alias = slot == "config.version" and (
+        _has_same_owner_service_alias(subject, canonical_subject)
+        or _has_same_owner_service_alias(value, canonical_subject)
     )
     qualifiers: dict[str, Any] = {}
     environment = _environment(text)
@@ -206,7 +216,7 @@ def _qualifier_candidates(slot: str, raw_claim: Mapping[str, Any], canonical_sub
     if slot == "state.connectivity":
         service = _match_token(_CONNECTIVITY_SERVICE_RE, value) or _match_token(_CONNECTIVITY_SERVICE_RE, subject)
     service = service or _match_token(_SERVICE_RE, value) or _match_token(_SERVICE_RE, subject)
-    if service and not version_subject_alias:
+    if service and not version_owner_alias:
         qualifiers["service"] = service
     process = _match_token(_PROCESS_NAME_RE, value) or _match_token(_PROCESS_NAME_RE, subject)
     if process:
@@ -214,7 +224,7 @@ def _qualifier_candidates(slot: str, raw_claim: Mapping[str, Any], canonical_sub
     if slot == "state.service_health" and "service" not in qualifiers:
         qualifiers["service"] = canonical_subject
 
-    if slot == "config.version" and "instance" not in qualifiers and not version_subject_alias:
+    if slot == "config.version" and "instance" not in qualifiers and not version_owner_alias:
         component = _component(value)
         if component and component != qualifiers.get("service"):
             qualifiers["component"] = component

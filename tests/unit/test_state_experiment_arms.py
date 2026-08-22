@@ -257,6 +257,69 @@ def test_subject_drift_strips_generic_service_surfaces_from_coordinate() -> None
     )
 
 
+@pytest.mark.parametrize(
+    ("subject", "alias_subject", "value"),
+    [
+        ("orion-core", "orion-core 服务", "orion-core 服务 当前版本是 v4.2"),
+        ("orion-core", "orion-core 的 API 服务", "orion-core 的 API 服务 当前版本是 v4.2"),
+        ("lumen-stack", "lumen-stack service", "lumen-stack service current version: v3.1"),
+        ("lumen-stack", "lumen-stack API service", "lumen-stack API service current version: v3.1"),
+    ],
+)
+def test_z5_version_owner_alias_is_invariant_to_subject_or_value_position(
+    subject: str,
+    alias_subject: str,
+    value: str,
+) -> None:
+    value_alias = canonicalize_claim(_claim(subject=subject, value=value, kind="config"))["coordinate"]
+    subject_alias = canonicalize_claim(_claim(subject=alias_subject, value=value, kind="config"))["coordinate"]
+
+    assert (
+        value_alias
+        == subject_alias
+        == {
+            "namespace": "default",
+            "canonical_subject": subject,
+            "canonical_slot": "config.version",
+            "coordinate_qualifiers": {},
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_service"),
+    [
+        ("payments 服务 当前版本是 v2.0", "payments"),
+        ("orion-core 的 billing 服务 当前版本是 v2.0", "billing"),
+        ("orion-core 服务与 billing 服务 当前版本是 v2.0", "orion-core"),
+    ],
+)
+def test_z5_version_value_alias_does_not_swallow_distinct_service(
+    value: str,
+    expected_service: str,
+) -> None:
+    projection = canonicalize_claim(_claim(subject="orion-core", value=value, kind="config"))
+
+    assert projection["coordinate_qualifiers"] == {"service": expected_service}
+
+
+def test_z5_version_value_alias_preserves_independent_qualifiers() -> None:
+    projection = canonicalize_claim(
+        _claim(
+            subject="orion-core",
+            value=("orion-core 的 API 服务在生产环境 blue 部署实例 node-a 的 Linux " "当前版本是 v4.2"),
+            kind="config",
+        )
+    )
+
+    assert projection["coordinate_qualifiers"] == {
+        "deployment": "blue",
+        "environment": "production",
+        "instance": "node-a",
+        "platform": "linux",
+    }
+
+
 def test_coordinate_qualifiers_keep_instances_on_separate_coordinates() -> None:
     node_a = canonicalize_claim(_claim(subject="Gateway", value="Gateway 实例 node-a 当前版本是 v3.1", kind="config"))
     node_b = canonicalize_claim(_claim(subject="Gateway", value="Gateway 实例 node-b 当前版本是 v3.1", kind="config"))
