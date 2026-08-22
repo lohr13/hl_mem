@@ -74,9 +74,7 @@ def _recall_service(connection: Any, *, freshness_mode: str = "off") -> RecallSe
     return RecallService(connection, FakeEmbedder(8), settings=settings)
 
 
-def test_version_shapes_follow_separate_identity_paths_and_stay_active(tmp_path: Any) -> None:
-    """A future canonical state coordinate must make this characterization fail."""
-
+def test_version_shapes_share_the_production_state_identity(tmp_path: Any) -> None:
     connection = Database(tmp_path / "coordinate-drift.db").open()
     claim_ids = [
         _store(
@@ -110,18 +108,15 @@ def test_version_shapes_follow_separate_identity_paths_and_stay_active(tmp_path:
 
     rows = [ClaimRepository(connection).get_claim(claim_id) for claim_id in claim_ids]
     identities = {(row["subject_entity_id"], row["predicate"], row["canonical_attribute"]) for row in rows}
-    assert identities == {
-        ("x", "配置", "config.version"),
-        ("x", "事实", "fact.other"),
-        ("x的8200服务", "配置", "config.version"),
-    }
-    assert len({row["legacy_conflict_key"] for row in rows}) == 3
-    assert [row["conflict_key"] for row in rows] == [None, None, None]
+    assert identities == {("x", "配置", "config.version")}
+    assert len({row["legacy_conflict_key"] for row in rows}) == 1
+    assert len({row["conflict_key"] for row in rows}) == 1
+    assert all(row["canonical_slot"] == "config.version" for row in rows)
     assert [row["status"] for row in rows] == ["active", "active", "active"]
     assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 0
 
 
-def test_config_version_has_no_conflict_key_while_exclusive_slot_does(tmp_path: Any) -> None:
+def test_config_version_and_exclusive_slot_both_have_structured_coordinates(tmp_path: Any) -> None:
     connection = Database(tmp_path / "version-slot.db").open()
     version_id = _store(
         connection,
@@ -147,11 +142,8 @@ def test_config_version_has_no_conflict_key_while_exclusive_slot_does(tmp_path: 
     repository = ClaimRepository(connection)
     version = repository.get_claim(version_id)
     port = repository.get_claim(port_id)
-    assert (version["canonical_attribute"], version["canonical_slot"], version["conflict_key"]) == (
-        "config.version",
-        None,
-        None,
-    )
+    assert (version["canonical_attribute"], version["canonical_slot"]) == ("config.version", "config.version")
+    assert isinstance(version["conflict_key"], str) and len(version["conflict_key"]) == 16
     assert (port["canonical_attribute"], port["canonical_slot"]) == ("config.port", "config.port")
     assert isinstance(port["conflict_key"], str) and len(port["conflict_key"]) == 16
 

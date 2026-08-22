@@ -17,7 +17,20 @@ def test_slot_definition_keeps_required_and_coordinate_qualifiers_independent() 
 
 def test_registered_coordinate_qualifiers_preserve_required_projection() -> None:
     assert SLOT_REGISTRY["state.service_health"].required_qualifiers == ("service",)
-    assert SLOT_REGISTRY["state.service_health"].coordinate_qualifiers == ("service",)
+    assert SLOT_REGISTRY["state.service_health"].coordinate_qualifiers == (
+        "service",
+        "environment",
+        "deployment",
+        "instance",
+    )
+    assert SLOT_REGISTRY["config.version"].coordinate_qualifiers == (
+        "component",
+        "service",
+        "environment",
+        "deployment",
+        "instance",
+        "platform",
+    )
     assert SLOT_REGISTRY["preference.ui_theme"].required_qualifiers == ()
     assert SLOT_REGISTRY["preference.ui_theme"].coordinate_qualifiers == ()
 
@@ -25,5 +38,6 @@ def test_registered_coordinate_qualifiers_preserve_required_projection() -> None
 def test_coordinate_qualifier_key_preserves_legacy_slot_projection() -> None:
     qualifiers = {"environment": "production", "service": " API "}
 
-    assert coordinate_qualifier_key("state.service_health", qualifiers) == {"service": "api"}
-    assert slot_qualifier_key("state.service_health", qualifiers) == {"service": "api"}
+    expected = {"service": "api", "environment": "production"}
+    assert coordinate_qualifier_key("state.service_health", qualifiers) == expected
+    assert slot_qualifier_key("state.service_health", qualifiers) == expected

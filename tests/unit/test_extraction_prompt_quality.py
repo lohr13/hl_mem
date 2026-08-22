@@ -52,9 +52,10 @@ class ExtractionPromptQualityTest(unittest.TestCase):
             "high：核心身份、永久偏好、关键架构决策",
             "medium：重要配置、项目特征、一般事实",
             "low：一次性事件及其数字、时间、地点、专名或耗时细节，进入 episodic 层",
-            "服务健康快照、CI 测试数量、版本号查询结果、过程进度、纯问候、未确认建议",
+            "不要跳过有明确证据的 version/health/process/deployment/connectivity/job 快照",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
+        self.assertNotIn("服务健康快照、CI 测试数量、版本号查询结果", SYSTEM_PROMPT)
 
         self.assertIn("Low means episodic, not disposable", ENGLISH_SYSTEM_PROMPT)
         self.assertIn("IKEA bookcase", ENGLISH_SYSTEM_PROMPT)

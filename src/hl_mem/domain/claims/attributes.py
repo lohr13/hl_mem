@@ -12,8 +12,6 @@ from hl_mem.domain.claims.slot_qualifiers import SlotQualifierPolicy
 
 @dataclass(frozen=True)
 class SlotDefinition:
-    """描述一个兼容 canonical attribute 及其 operational slot 元数据。"""
-
     name: str
     predicate: str
     description: str
@@ -40,7 +38,7 @@ def _slot(
     is_operational: bool = False,
     is_fallback: bool = False,
 ) -> SlotDefinition:
-    """用紧凑声明构造不可变 slot 定义。"""
+    state_coordinates = tuple(_STATE_COORDINATES.get(name, "").split())
     return SlotDefinition(
         name=name,
         predicate=predicate,
@@ -48,16 +46,24 @@ def _slot(
         participates_in_conflict=participates_in_conflict,
         ttl_class=ttl_class,
         required_qualifiers=qualifier_policy.required,
-        coordinate_qualifiers=qualifier_policy.coordinate,
+        coordinate_qualifiers=state_coordinates or qualifier_policy.coordinate,
         aliases=aliases,
         examples=examples,
-        is_operational=is_operational,
+        is_operational=is_operational or bool(state_coordinates),
         is_fallback=is_fallback,
     )
 
 
 def _coordinate_required(*names: str) -> SlotQualifierPolicy:
     return SlotQualifierPolicy(required=names, coordinate=names)
+
+
+_STATE_COORDINATES = dict(
+    item.split("=", 1)
+    for item in "config.version=component service environment deployment instance platform;state.service_health=service environment deployment instance;state.process=process environment deployment instance;state.deployment=deployment environment instance;state.connectivity=service environment deployment instance;state.job=job environment deployment instance".split(
+        ";"
+    )
+)
 
 
 _SLOT_DEFINITIONS = (
@@ -643,9 +649,7 @@ def validate_slot_instance(slot: str | None, qualifiers: dict[str, Any] | None) 
     values = qualifiers if isinstance(qualifiers, dict) else {}
     for key in SLOT_REGISTRY[normalized].required_qualifiers:
         value = values.get(key)
-        if value is None:
-            return None
-        if isinstance(value, str) and not unicodedata.normalize("NFKC", value).strip():
+        if value is None or (isinstance(value, str) and not unicodedata.normalize("NFKC", value).strip()):
             return None
     return normalized
 
@@ -695,26 +699,22 @@ def reconcile_canonical_attribute(
     validated = validate_canonical_attribute(normalized_predicate, llm_attribute)
     if mapping is None:
         return validated, "unknown_predicate"
-
     allowed, fallback = mapping
     text = unicodedata.normalize("NFKC", f"{subject} {value} {qualifiers or {}}").casefold()
     precise = _high_confidence_attribute(normalized_predicate, text)
     if precise is not None and precise in allowed:
         return precise, "high_confidence_rule"
-
     port_semantics = _has_valid_port_semantics(text)
     normalized_inferred = validate_canonical_attribute(normalized_predicate, inferred_attribute)
     if normalized_inferred == "config.port" and not port_semantics:
         normalized_inferred = fallback
     if normalized_inferred in allowed and normalized_inferred != fallback:
         return normalized_inferred, "fallback_reconciled"
-
     normalized_llm_attribute = normalize_canonical_attribute(llm_attribute or "")
     if normalized_llm_attribute == "config.port" and not port_semantics:
         return normalized_inferred, "port_semantics_rejected"
     if normalized_llm_attribute in ATTRIBUTE_ALLOWLIST and normalized_llm_attribute != "custom.unknown":
         return normalized_llm_attribute, "registered_attribute"
-
     if validated in {fallback, "custom.unknown"} and normalized_inferred in allowed:
         return normalized_inferred, "fallback_reconciled"
     return validated, "llm_preserved"

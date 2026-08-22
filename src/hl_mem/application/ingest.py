@@ -49,6 +49,7 @@ from hl_mem.domain.entity import (
 )
 from hl_mem.errors import ConflictError, ValidationError
 from hl_mem.ingest.extractors import ExtractedClaim
+from hl_mem.ingest.state_contract import canonicalize_state_fields
 from hl_mem.lifecycle import assert_transition
 from hl_mem.monitoring.metrics import DEFAULT_ADMISSION_METRICS, AdmissionMetrics
 from hl_mem.observability.audit import current_audit
@@ -874,7 +875,6 @@ def _build_claim_drafts(
     policy: TTLPolicy,
     index_text_mode: IndexTextMode,
 ) -> _ClaimDraft | StoreClaimResult:
-    """阶段 1：规范化提取结果、计算 TTL 并生成 claim 草稿。"""
     # Claim 的实体、去重与冲突身份由 (namespace_key, subject_entity_id) 共同确定。
     # 其他多租户安全边界仍需由部署层统一约束，不能仅依赖此处的 namespace。
     namespace = event.get("tenant_id", "default")
@@ -907,6 +907,9 @@ def _build_claim_drafts(
     canonical_attribute = validate_canonical_attribute(
         extracted.predicate, getattr(extracted, "canonical_attribute", None)
     )
+    subject, canonical_attribute, requested_slot, qualifiers = canonicalize_state_fields(
+        extracted, subject, canonical_attribute, getattr(extracted, "canonical_slot", None), qualifiers
+    )
     predicate = predicate_for_canonical_attribute(canonical_attribute, extracted.predicate)
     if predicate != extracted.predicate:
         current_audit().emit(
@@ -920,7 +923,6 @@ def _build_claim_drafts(
                 "reason_code": "canonical_attribute_projection",
             },
         )
-    requested_slot = getattr(extracted, "canonical_slot", None)
     canonical_slot = validate_slot_instance(requested_slot, qualifiers)
     if requested_slot and canonical_slot is None:
         current_audit().emit(
