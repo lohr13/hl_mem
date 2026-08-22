@@ -35,7 +35,8 @@ _NON_ASSERTED_RE = re.compile(
 _HISTORICAL_RE = re.compile(r"(?i)(?:历史|曾经|过去|之前|当时|此前|回顾|(?:19|20)\d{2}\s*年(?:时|期间))")
 _VERSION_RE = re.compile(
     r"(?i)(?:(?:当前|现在|目前|现用|已安装|运行中)[^。；;，,]{0,24})?"
-    r"(?:版本|version|release)[\s:=为是到至]*v?\d+(?:\.\d+){0,4}(?:[-+][\w.-]+)?"
+    r"(?:版本|version|release)[\s:=为是到至]*(?:当前|现在|目前)?"
+    r"[\s:=为是到至]*v?\d+(?:\.\d+){0,4}(?:[-+][\w.-]+)?"
 )
 _SERVICE_HEALTH_RE = re.compile(
     r"(?i)(?:(?:服务|service)[^。；;，,]{0,28}"
@@ -61,13 +62,28 @@ _CLAUSE_SEPARATOR_RE = re.compile(
     re.IGNORECASE,
 )
 _SERVICE_RE = re.compile(r"(?i)([a-z][a-z0-9_.-]{0,63})\s*(?:服务|service)")
+_CONNECTIVITY_SERVICE_RE = re.compile(r"(?i)([a-z][a-z0-9_.-]{0,63})\s*(?:连接|connectivity|endpoint|端点)")
 _PROCESS_NAME_RE = re.compile(r"(?i)([a-z][a-z0-9_.-]{0,63})\s*(?:进程|process)")
+_JOB_NAME_RE = re.compile(r"(?i)([a-z][a-z0-9_.-]{0,63})\s*(?:任务|job)")
 _INSTANCE_RE = re.compile(r"(?i)(?:实例|instance|节点|node)\s*[:#=-]?\s*([a-z0-9][a-z0-9_.-]{0,63})")
 _DEPLOYMENT_NAME_RE = re.compile(
     r"(?i)(?:(?:部署|deployment)\s*[:#=-]?\s*([a-z0-9][a-z0-9_.-]{0,63})"
     r"|\b(blue|green)\s*(?:部署|deployment)|(?:蓝|绿色?)部署)"
 )
 _SUBJECT_SERVICE_SUFFIX_RE = re.compile(r"(?i)^(.+?)(?:\s*的)?\s*(?:(?:api|web|worker)\s*)?(?:服务|service)$")
+_SUBJECT_INSTANCE_SUFFIX_RE = re.compile(
+    r"(?i)^(.+?)(?:\s*的\s*|\s+)(?:实例|instance|节点|node)\s*[:#=-]?\s*" r"[a-z0-9][a-z0-9_.-]{0,63}$"
+)
+_SUBJECT_PROCESS_SUFFIX_RE = re.compile(r"(?i)^(.+?)(?:\s*的\s*|\s+)[a-z][a-z0-9_.-]{0,63}\s*(?:进程|process)$")
+_SUBJECT_JOB_SUFFIX_RE = re.compile(r"(?i)^(.+?)(?:\s*的\s*|\s+)[a-z][a-z0-9_.-]{0,63}\s*(?:任务|job)$")
+_SUBJECT_DEPLOYMENT_SUFFIX_RE = re.compile(r"(?i)^(.+?)(?:\s*的\s*|\s+)(?:blue|green|蓝|绿色?)\s*(?:部署|deployment)$")
+_SUBJECT_COORDINATE_SUFFIX_PATTERNS = (
+    _SUBJECT_SERVICE_SUFFIX_RE,
+    _SUBJECT_INSTANCE_SUFFIX_RE,
+    _SUBJECT_PROCESS_SUFFIX_RE,
+    _SUBJECT_JOB_SUFFIX_RE,
+    _SUBJECT_DEPLOYMENT_SUFFIX_RE,
+)
 
 _EXPERIMENTAL_QUALIFIER_KEYS: dict[str, tuple[str, ...]] = {
     "config.version": ("component", "service", "environment", "deployment", "instance", "platform"),
@@ -85,10 +101,24 @@ def _normalized_token(value: object) -> str:
 
 def _canonical_subject(value: str) -> str:
     canonical = normalize_entity_id(value)
-    match = _SUBJECT_SERVICE_SUFFIX_RE.fullmatch(canonical)
-    if match is not None and match.group(1).strip():
-        return normalize_entity_id(match.group(1))
+    for pattern in _SUBJECT_COORDINATE_SUFFIX_PATTERNS:
+        match = pattern.fullmatch(canonical)
+        if match is not None and match.group(1).strip():
+            return normalize_entity_id(match.group(1))
     return canonical
+
+
+def _subject_has_stable_owner(value: str) -> bool:
+    normalized = _normalized_token(value)
+    generic_qualifiers = {"api", "web", "worker", "sync", "blue", "green"}
+    for pattern in _SUBJECT_COORDINATE_SUFFIX_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        owner = _normalized_token(match.group(1))
+        if owner and owner not in generic_qualifiers:
+            return True
+    return False
 
 
 def _predicate(raw_claim: Mapping[str, Any], slot: str | None) -> str:
@@ -155,37 +185,46 @@ def _qualifier_candidates(slot: str, raw_claim: Mapping[str, Any], canonical_sub
     value = str(raw_claim.get("value") or "")
     subject = str(raw_claim.get("subject") or "")
     text = f"{subject} {value}"
+    version_subject_alias = (
+        slot == "config.version" and _SUBJECT_SERVICE_SUFFIX_RE.fullmatch(_normalized_token(subject)) is not None
+    )
     qualifiers: dict[str, Any] = {}
     environment = _environment(text)
     if environment:
         qualifiers["environment"] = environment
-    instance = _match_token(_INSTANCE_RE, value)
+    instance = _match_token(_INSTANCE_RE, value) or _match_token(_INSTANCE_RE, subject)
     if instance:
         qualifiers["instance"] = instance
-    deployment = _match_token(_DEPLOYMENT_NAME_RE, value)
+    deployment = _match_token(_DEPLOYMENT_NAME_RE, value) or _match_token(_DEPLOYMENT_NAME_RE, subject)
     if deployment:
         qualifiers["deployment"] = deployment
     platform = _platform(text)
     if platform:
         qualifiers["platform"] = platform
 
-    service = _match_token(_SERVICE_RE, value)
-    if service:
+    service = None
+    if slot == "state.connectivity":
+        service = _match_token(_CONNECTIVITY_SERVICE_RE, value) or _match_token(_CONNECTIVITY_SERVICE_RE, subject)
+    service = service or _match_token(_SERVICE_RE, value) or _match_token(_SERVICE_RE, subject)
+    if service and not version_subject_alias:
         qualifiers["service"] = service
-    process = _match_token(_PROCESS_NAME_RE, value)
+    process = _match_token(_PROCESS_NAME_RE, value) or _match_token(_PROCESS_NAME_RE, subject)
     if process:
         qualifiers["process"] = process
     if slot == "state.service_health" and "service" not in qualifiers:
         qualifiers["service"] = canonical_subject
 
-    if slot == "config.version" and "instance" not in qualifiers:
+    if slot == "config.version" and "instance" not in qualifiers and not version_subject_alias:
         component = _component(value)
         if component and component != qualifiers.get("service"):
             qualifiers["component"] = component
     if slot == "state.job":
-        match = re.search(r"(?i)(?:任务|job)\s*[:#=-]?\s*([a-z0-9][a-z0-9_.-]{0,63})", value)
-        if match:
-            qualifiers["job"] = _normalized_token(match.group(1))
+        job = _match_token(_JOB_NAME_RE, value) or _match_token(_JOB_NAME_RE, subject)
+        if job is None:
+            match = re.search(r"(?i)(?:任务|job)\s*[:#=-]?\s*([a-z0-9][a-z0-9_.-]{0,63})", value)
+            job = _normalized_token(match.group(1)) if match else None
+        if job:
+            qualifiers["job"] = job
     return qualifiers
 
 
@@ -231,6 +270,8 @@ def canonicalize_claim(raw_claim: Mapping[str, Any], *, namespace: str = "defaul
         }
 
     slot = _state_slot(value)
+    if slot is None and _subject_has_stable_owner(subject):
+        slot = _state_slot(f"{subject} {value}")
     if slot is None:
         return {
             "predicate": _predicate(raw_claim, None),

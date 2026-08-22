@@ -62,6 +62,172 @@ def test_canonicalization_routes_non_version_state_and_builds_qualifiers() -> No
     }
 
 
+@pytest.mark.parametrize(
+    ("claim", "expected_coordinate"),
+    [
+        (
+            _claim(subject="compound-00 的 API 服务", value="当前 healthy"),
+            {
+                "namespace": "default",
+                "canonical_subject": "compound-00",
+                "canonical_slot": "state.service_health",
+                "coordinate_qualifiers": {"service": "api"},
+            },
+        ),
+        (
+            _claim(
+                subject="compound-02",
+                value="compound-02 的当前版本当前 v1.0",
+                kind="config",
+            ),
+            {
+                "namespace": "default",
+                "canonical_subject": "compound-02",
+                "canonical_slot": "config.version",
+                "coordinate_qualifiers": {},
+            },
+        ),
+    ],
+)
+def test_z1_routes_state_from_controlled_subject_and_value(
+    claim: dict[str, Any],
+    expected_coordinate: dict[str, Any],
+) -> None:
+    projection = canonicalize_claim(claim)
+
+    assert projection["coordinate"] == expected_coordinate
+    assert projection["state_context"] == "current"
+
+
+@pytest.mark.parametrize(
+    ("subject", "value"),
+    [
+        ("worker 进程", "当前 running"),
+        ("worker 服务", "当前 healthy"),
+        ("sync 任务", "当前 queued"),
+        ("API 连接", "当前 reachable"),
+    ],
+)
+def test_z1_does_not_invent_coordinate_when_subject_has_no_stable_owner(
+    subject: str,
+    value: str,
+) -> None:
+    projection = canonicalize_claim(_claim(subject=subject, value=value))
+
+    assert projection["coordinate"] is None
+    assert projection["state_context"] == "non_state"
+
+
+@pytest.mark.parametrize(
+    ("claim", "expected_qualifiers"),
+    [
+        (
+            _claim(
+                subject="service-07",
+                value="service-07 的 API 连接 当前状态为 reachable",
+            ),
+            {"service": "api"},
+        ),
+        (
+            _claim(
+                subject="service-08",
+                value="service-08 的 sync 任务 当前状态为 queued",
+            ),
+            {"job": "sync"},
+        ),
+    ],
+)
+def test_z2_builds_connectivity_and_job_qualifiers_from_surface_order(
+    claim: dict[str, Any],
+    expected_qualifiers: dict[str, str],
+) -> None:
+    projection = canonicalize_claim(claim)
+
+    assert projection["coordinate_qualifiers"] == expected_qualifiers
+    assert projection["coordinate"]["coordinate_qualifiers"] == expected_qualifiers
+
+
+@pytest.mark.parametrize(
+    ("claim", "expected_subject", "expected_qualifiers"),
+    [
+        (
+            _claim(
+                subject="counter-10 实例 node-a",
+                value="当前版本是 v2.0",
+                kind="config",
+            ),
+            "counter-10",
+            {"instance": "node-a"},
+        ),
+        (
+            _claim(
+                subject="service-10 的 worker 进程",
+                value="service-10 的 worker 进程 当前状态为 running",
+            ),
+            "service-10",
+            {"process": "worker"},
+        ),
+        (
+            _claim(
+                subject="service-06 sync 任务",
+                value="service-06 的 sync 任务 当前状态为 queued",
+            ),
+            "service-06",
+            {"job": "sync"},
+        ),
+        (
+            _claim(
+                subject="compound-05 的 blue 部署",
+                value="compound-05 的 blue 部署 当前 ready",
+            ),
+            "compound-05",
+            {"deployment": "blue"},
+        ),
+    ],
+)
+def test_z3_separates_coordinate_bearing_subject_suffixes(
+    claim: dict[str, Any],
+    expected_subject: str,
+    expected_qualifiers: dict[str, str],
+) -> None:
+    projection = canonicalize_claim(claim)
+
+    assert projection["canonical_subject"] == expected_subject
+    assert projection["coordinate"]["canonical_subject"] == expected_subject
+    assert projection["coordinate_qualifiers"] == expected_qualifiers
+
+
+def test_z4_repaired_endpoint_coordinates_share_lifecycle_bucket() -> None:
+    recovered_from_none = [
+        canonicalize_claim(
+            _claim(
+                subject="compound-00 的 API 服务",
+                value=f"当前 {state}",
+            )
+        )["coordinate"]
+        for state in ("healthy", "unhealthy")
+    ]
+    recovered_from_drift = [
+        canonicalize_claim(
+            _claim(
+                subject=subject,
+                value=value,
+                kind="config",
+            )
+        )["coordinate"]
+        for subject, value in (
+            ("component-03", "component-03 当前版本是 v1.0"),
+            ("component-03 服务", "component-03 服务 当前版本是 v1.1"),
+            ("component-03 的 API 服务", "component-03 的 API 服务 当前版本是 v1.2"),
+        )
+    ]
+
+    assert recovered_from_none[0] is not None
+    assert recovered_from_none[0] == recovered_from_none[1]
+    assert recovered_from_drift[0] is not None
+    assert recovered_from_drift == [recovered_from_drift[0]] * 3
+
+
 def test_predicate_drift_does_not_change_state_coordinate() -> None:
     config_projection = canonicalize_claim(_claim(subject="HL_MEM", value="HL_MEM 当前版本为 v0.30.0", kind="config"))
     fact_projection = canonicalize_claim(_claim(subject="HL_MEM", value="HL_MEM 当前版本为 v0.30.0", kind="fact"))
