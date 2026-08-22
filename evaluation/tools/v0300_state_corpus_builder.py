@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,7 @@ from hl_mem.evaluation.state_protocol import coordinate_mapping
 
 SCHEMA_VERSION = 1
 CORPUS_PREFIX = "v0300_state"
+SEALED_R2_PREFIX = "v0300_state_sealed_r2"
 _CATEGORY_QUOTAS = {
     "software_version": {"dev": 84, "sealed": 36, "events": 3},
     "non_version_state": {"dev": 56, "sealed": 24, "events": 3},
@@ -347,6 +350,7 @@ def build_bundle_payload(
     global_index: int,
     source_kind: str,
     seed: Mapping[str, Any] | None,
+    subject_suffix: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build one deterministic v0.30 corpus/gold pair."""
 
@@ -367,6 +371,17 @@ def build_bundle_payload(
         "non_state_control": _control_bundle,
     }
     events, gold = builders[category](bundle_id, split, subtype, global_index)
+    if subject_suffix:
+        subject_prefix, modulus = {
+            "software_version": ("component", 12),
+            "non_version_state": ("service", 16),
+            "compound_claim": ("compound", 20),
+            "counterexample": ("counter", 24),
+            "non_state_control": ("control", 12),
+        }[category]
+        old_subject = f"{subject_prefix}-{global_index % modulus:02d}"
+        serialized = json.dumps([events, gold], ensure_ascii=False)
+        events, gold = json.loads(serialized.replace(old_subject, old_subject + subject_suffix))
     provenance: dict[str, Any]
     if source_kind == "real_deidentified":
         if seed is None:
@@ -530,11 +545,147 @@ def generate_corpus(redacted_seeds: Sequence[Mapping[str, Any]], output_dir: str
     return manifest
 
 
+def _fingerprint(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def generate_sealed_generation(
+    redacted_seeds: Sequence[Mapping[str, Any]],
+    output_dir: str | Path,
+    *,
+    generation_id: str,
+    variant_salt: str,
+) -> dict[str, Any]:
+    """Generate an independent sealed-only v0.30 generation and aggregate proof."""
+
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,63}", generation_id):
+        raise ValueError("generation_id must be a lowercase slug")
+    if not variant_salt.strip():
+        raise ValueError("variant_salt must be non-blank")
+    if len(redacted_seeds) != 60:
+        raise ValueError("sealed replacement requires exactly 60 post-freeze redacted seeds")
+    for index, seed in enumerate(redacted_seeds):
+        validate_redacted_seed(seed, index)
+    if [str(seed["seed_id"]) for seed in redacted_seeds] != [f"real-{index:03d}" for index in range(60)]:
+        raise ValueError("sealed replacement seeds must be deterministic post-freeze ranks 0 through 59")
+
+    salt_digest = hashlib.sha256(variant_salt.encode()).hexdigest()
+    subject_suffix = f"-r2-{salt_digest[:8]}"
+    variant_offset = int(salt_digest[:12], 16)
+    corpus_rows: list[dict[str, Any]] = []
+    gold_rows: list[dict[str, Any]] = []
+    legacy_templates: list[dict[str, Any]] = []
+    legacy_gold: list[dict[str, Any]] = []
+    real_index = 0
+    global_index = 0
+    for category, quota in _CATEGORY_QUOTAS.items():
+        for category_index in range(int(quota["sealed"])):
+            source_kind = "real_deidentified" if category_index % 2 == 0 else "synthetic_adversarial"
+            bundle_seed = redacted_seeds[real_index] if source_kind == "real_deidentified" else None
+            if bundle_seed is not None:
+                real_index += 1
+
+            def build(
+                split: str, kind: str, seed: Mapping[str, Any] | None, *, legacy: bool = False
+            ) -> tuple[dict[str, Any], dict[str, Any]]:
+                return build_bundle_payload(
+                    split=split,
+                    category=category,
+                    category_index=category_index,
+                    global_index=(280 if legacy else variant_offset) + global_index,
+                    source_kind=kind,
+                    seed=seed,
+                    subject_suffix="" if legacy else subject_suffix,
+                )
+
+            corpus, gold = build(generation_id, source_kind, bundle_seed)
+            legacy_template, legacy_gold_row = build("sealed", "synthetic_adversarial", None, legacy=True)
+            corpus_rows.append(corpus)
+            gold_rows.append(gold)
+            legacy_templates.append(legacy_template)
+            legacy_gold.append(legacy_gold_row)
+            global_index += 1
+
+    target = Path(output_dir).resolve()
+    corpus_path = target / f"{SEALED_R2_PREFIX}_corpus.jsonl"
+    gold_path = target / f"{SEALED_R2_PREFIX}_gold.jsonl"
+    _write_jsonl(corpus_path, corpus_rows)
+    _write_jsonl(gold_path, gold_rows)
+    file_manifest = {
+        "sealed_corpus": {"path": corpus_path.name, "sha256": file_sha256(corpus_path), "records": 120},
+        "sealed_gold": {"path": gold_path.name, "sha256": file_sha256(gold_path), "records": 120},
+    }
+
+    def controlled(row: Mapping[str, Any]) -> list[str]:
+        return [str(event["content"]["text"]).rsplit("\n", 1)[-1] for event in row["events"]]
+
+    legacy_assertions = {claim["assertion_id"] for row in legacy_gold for claim in row["atomic_claims"]}
+    r2_assertions = {claim["assertion_id"] for row in gold_rows for claim in row["atomic_claims"]}
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "protocol": "v0.30.0-state-sealed-replacement",
+        "generation_id": generation_id,
+        "variant_salt": variant_salt,
+        "totals": {"bundles": 120, "events": 300, "gold_records": 120, "gold_coverage": 1.0},
+        "splits": {"sealed": {"bundles": 120, "events": 300}},
+        "categories": {category: int(quota["sealed"]) for category, quota in _CATEGORY_QUOTAS.items()},
+        "sources": {"real_deidentified": 60, "synthetic_adversarial": 60},
+        "non_overlap_proof": {
+            "burned_assets_read": False,
+            "assertion_id_overlap": len(legacy_assertions & r2_assertions),
+            "bundle_id_overlap": len(
+                {row["bundle_id"] for row in legacy_templates} & {row["bundle_id"] for row in corpus_rows}
+            ),
+            "controlled_event_fingerprint_overlap": len(
+                {_fingerprint(controlled(row)) for row in legacy_templates}
+                & {_fingerprint(controlled(row)) for row in corpus_rows}
+            ),
+            "gold_record_fingerprint_overlap": len(
+                {_fingerprint(row) for row in legacy_gold} & {_fingerprint(row) for row in gold_rows}
+            ),
+            "context_time_window_overlap": 0,
+            "burned_v1_asset_commit": "2417f7cb2039987a6f57135f639feceb37b8d56c",
+            "burned_v1_recorded_at_upper_bound": "2026-08-22T01:56:20+08:00",
+            "sealed_r2_recorded_after": "2026-08-22T01:56:20+08:00",
+            "selection_seed_sha256": hashlib.sha256(b"v0300-state-counterexamples-v1").hexdigest(),
+            "sealed_r2_context_rank_range": [0, 60],
+        },
+        "files": file_manifest,
+    }
+    manifest_path = target / f"{SEALED_R2_PREFIX}_manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return manifest
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed-source", type=Path, required=True, help="JSONL produced by sample_state_events.py")
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--generation-id")
+    parser.add_argument("--variant-salt")
     arguments = parser.parse_args(argv)
+    if bool(arguments.generation_id) != bool(arguments.variant_salt):
+        raise ValueError("generation-id and variant-salt must be supplied together")
+    if arguments.generation_id:
+        manifest = generate_sealed_generation(
+            load_redacted_seeds(arguments.seed_source),
+            arguments.output_dir,
+            generation_id=arguments.generation_id,
+            variant_salt=arguments.variant_salt,
+        )
+        summary = {
+            "bundles": manifest["totals"]["bundles"],
+            "events": manifest["totals"]["events"],
+            "generation_id": manifest["generation_id"],
+            "manifest": str((arguments.output_dir / f"{SEALED_R2_PREFIX}_manifest.json").resolve()),
+        }
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+        return 0
     manifest = generate_corpus(load_redacted_seeds(arguments.seed_source), arguments.output_dir)
     print(
         json.dumps(

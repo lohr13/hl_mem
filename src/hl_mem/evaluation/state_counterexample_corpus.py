@@ -340,6 +340,7 @@ def sample_redacted_seeds(
     database_path: str | Path,
     *,
     limit: int = 200,
+    recorded_after: str | None = None,
     seed: str = "v0300-state-counterexamples-v1",
 ) -> list[dict[str, Any]]:
     """Sample event structures deterministically without returning source content."""
@@ -353,12 +354,17 @@ def sample_redacted_seeds(
         missing = required - columns
         if missing:
             raise ValueError(f"events table is missing sampler columns: {', '.join(sorted(missing))}")
-        rows = list(
-            connection.execute(
-                "SELECT id,actor_type,content_json,content_hash FROM events "
-                "WHERE event_type='message' AND sensitivity='normal' ORDER BY id"
-            )
+        query = (
+            "SELECT id,actor_type,content_json,content_hash FROM events "
+            "WHERE event_type='message' AND sensitivity='normal'"
         )
+        parameters: tuple[str, ...] = ()
+        if recorded_after is not None:
+            if "recorded_at" not in columns:
+                raise ValueError("events table is missing recorded_at for constrained sampling")
+            query += " AND julianday(recorded_at)>julianday(?)"
+            parameters = (recorded_after,)
+        rows = list(connection.execute(query + " ORDER BY id", parameters))
     finally:
         connection.close()
     eligible_rows = [row for row in rows if _event_text(row) is not None]

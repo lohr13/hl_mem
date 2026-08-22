@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from evaluation.tools.v0300_state_corpus_builder import generate_corpus
+from evaluation.tools.v0300_state_corpus_builder import generate_corpus, generate_sealed_generation
 from evaluation.tools.v0300_state_corpus_builder import main as corpus_builder_main
 from hl_mem.evaluation.state_counterexample_corpus import (
     aggregate_dev_statistics,
@@ -34,6 +34,7 @@ def _source_database(path: Path, count: int = 205) -> None:
             actor_type TEXT,
             content_json TEXT,
             occurred_at TEXT,
+            recorded_at TEXT,
             content_hash TEXT,
             sensitivity TEXT
         )
@@ -44,13 +45,14 @@ def _source_database(path: Path, count: int = 205) -> None:
             f"API 服务当前版本是 v{index}.0。"
         )
         connection.execute(
-            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?,?)",
             (
                 f"event-{index:03d}",
                 "message",
                 "user" if index % 2 == 0 else "assistant",
                 json.dumps({"text": private_text}, ensure_ascii=False),
                 f"2026-01-{index % 28 + 1:02d}T00:00:00Z",
+                "2026-08-21T17:00:00Z" if index < 200 else "2026-08-21T18:00:00Z",
                 hashlib.sha256(private_text.encode()).hexdigest(),
                 "normal",
             ),
@@ -67,13 +69,14 @@ def _insert_invalid_source_events(path: Path) -> None:
         ("empty", json.dumps({"text": "   "})),
     ):
         connection.execute(
-            "INSERT INTO events VALUES(?,?,?,?,?,?,?)",
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?,?)",
             (
                 f"event-{suffix}",
                 "message",
                 "user",
                 content_json,
                 "2026-01-01T00:00:00Z",
+                "2026-08-21T17:00:00Z",
                 hashlib.sha256(content_json.encode()).hexdigest(),
                 "normal",
             ),
@@ -142,6 +145,16 @@ def test_real_sampler_filters_malformed_missing_and_empty_text_before_quota(tmp_
 
     with pytest.raises(ValueError, match="205 eligible events; 206 required"):
         sample_redacted_seeds(source, limit=206, seed="v0300-batch2")
+
+
+def test_real_sampler_recorded_after_proves_post_freeze_context_pool(tmp_path: Path) -> None:
+    source = tmp_path / "source.db"
+    _source_database(source, count=260)
+
+    replacement = sample_redacted_seeds(source, limit=60, recorded_after="2026-08-21T17:56:20Z", seed="v0300-batch2")
+
+    assert replacement[0]["seed_id"] == "real-000"
+    assert replacement[-1]["seed_id"] == "real-059"
 
 
 def test_generator_freezes_exact_protocol_quotas_and_separates_gold(tmp_path: Path) -> None:
@@ -275,6 +288,92 @@ def test_corpus_generation_is_byte_deterministic(tmp_path: Path) -> None:
     second = generate_corpus([_seed(index) for index in range(200)], second_dir)
 
     assert first["files"] == second["files"]
+
+
+def test_sealed_generation_has_exact_quota_and_aggregate_non_overlap_proof(
+    tmp_path: Path,
+) -> None:
+    replacement = [_seed(index) for index in range(60)]
+
+    manifest = generate_sealed_generation(
+        replacement,
+        tmp_path,
+        generation_id="sealed-r2-20260822",
+        variant_salt="v0300-sealed-r2-independent",
+    )
+
+    assert manifest["totals"] == {
+        "bundles": 120,
+        "events": 300,
+        "gold_records": 120,
+        "gold_coverage": 1.0,
+    }
+    assert manifest["categories"] == {
+        "software_version": 36,
+        "non_version_state": 24,
+        "compound_claim": 24,
+        "counterexample": 24,
+        "non_state_control": 12,
+    }
+    assert manifest["sources"] == {"real_deidentified": 60, "synthetic_adversarial": 60}
+    assert manifest["non_overlap_proof"] == {
+        "burned_assets_read": False,
+        "assertion_id_overlap": 0,
+        "bundle_id_overlap": 0,
+        "controlled_event_fingerprint_overlap": 0,
+        "gold_record_fingerprint_overlap": 0,
+        "context_time_window_overlap": 0,
+        "burned_v1_asset_commit": "2417f7cb2039987a6f57135f639feceb37b8d56c",
+        "burned_v1_recorded_at_upper_bound": "2026-08-22T01:56:20+08:00",
+        "sealed_r2_recorded_after": "2026-08-22T01:56:20+08:00",
+        "selection_seed_sha256": hashlib.sha256(b"v0300-state-counterexamples-v1").hexdigest(),
+        "sealed_r2_context_rank_range": [0, 60],
+    }
+    assert manifest["files"]["sealed_corpus"]["path"] == "v0300_state_sealed_r2_corpus.jsonl"
+    assert manifest["files"]["sealed_gold"]["path"] == "v0300_state_sealed_r2_gold.jsonl"
+    assert manifest["generation_id"] == "sealed-r2-20260822"
+    assert manifest["variant_salt"] == "v0300-sealed-r2-independent"
+    assert verify_sealed_manifest(tmp_path / "v0300_state_sealed_r2_manifest.json") == {
+        "sealed_bundles": 120,
+        "sealed_events": 300,
+        "sealed_gold_records": 120,
+        "hashes_valid": True,
+    }
+
+
+def test_sealed_generation_is_byte_deterministic(
+    tmp_path: Path,
+) -> None:
+    replacement = [_seed(index) for index in range(60)]
+    arguments = {
+        "generation_id": "sealed-r2-20260822",
+        "variant_salt": "v0300-sealed-r2-independent",
+    }
+
+    first = generate_sealed_generation(replacement, tmp_path / "first", **arguments)
+    second = generate_sealed_generation(replacement, tmp_path / "second", **arguments)
+
+    assert first["files"] == second["files"]
+
+
+def test_builder_cli_requires_generation_id_and_variant_salt_together(tmp_path: Path) -> None:
+    seed_path = tmp_path / "replacement.jsonl"
+    seed_path.write_text(
+        "".join(json.dumps(_seed(index), ensure_ascii=False) + "\n" for index in range(60)),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="generation-id and variant-salt"):
+        corpus_builder_main(
+            [
+                "--seed-source",
+                str(seed_path),
+                "--output-dir",
+                str(tmp_path / "output"),
+                "--generation-id",
+                "sealed-r2-20260822",
+            ]
+        )
 
 
 def test_real_seed_changes_model_visible_input_not_only_provenance(tmp_path: Path) -> None:

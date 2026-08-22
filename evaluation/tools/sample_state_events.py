@@ -16,10 +16,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--source-db", type=Path, required=True, help="existing SQLite events database; opened mode=ro")
     parser.add_argument("--output", type=Path, required=True, help="destination JSONL for irreversible seed structures")
     parser.add_argument("--limit", type=int, default=200)
+    parser.add_argument("--recorded-after")
     parser.add_argument("--seed", default="v0300-state-counterexamples-v1")
     arguments = parser.parse_args(argv)
 
-    seeds = sample_redacted_seeds(arguments.source_db, limit=arguments.limit, seed=arguments.seed)
+    seeds = sample_redacted_seeds(
+        arguments.source_db,
+        limit=arguments.limit,
+        recorded_after=arguments.recorded_after,
+        seed=arguments.seed,
+    )
     write_redacted_seeds(arguments.output, seeds)
     print(
         json.dumps(
