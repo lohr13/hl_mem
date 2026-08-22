@@ -41,6 +41,7 @@ from hl_mem.domain.claims.retention import (
     compute_expiration,
     normalize_utc_iso,
 )
+from hl_mem.domain.claims.state_projection import state_valid_from as _state_valid_from
 from hl_mem.domain.constants import DEFAULT_SUBJECT
 from hl_mem.domain.entity import (
     invalid_subject_reason,
@@ -948,12 +949,13 @@ def _build_claim_drafts(
         return StoreClaimResult(None, "skipped", "importance_below_write_floor")
     observed_at = normalize_utc_iso(str(event.get("occurred_at", now)), "observed_at")
     recorded_from = normalize_utc_iso(now, "recorded_from")
+    occurred_start = getattr(extracted, "occurred_start", None) or None
     memory_layer = getattr(extracted, "memory_layer", "durable")
     if memory_layer == "episodic":
         retention_anchor = _episodic_retention_anchor(
             recorded_from,
             is_plan=canonical_attribute.startswith("plan.") or predicate == "计划",
-            occurred_start=getattr(extracted, "occurred_start", None),
+            occurred_start=occurred_start,
             occurred_end=getattr(extracted, "occurred_end", None),
         )
     else:
@@ -978,7 +980,7 @@ def _build_claim_drafts(
         "canonical_attribute": canonical_attribute,
         "canonical_slot": canonical_slot,
         "topic_tags_json": json.dumps(topic_tags, ensure_ascii=False, separators=(",", ":")),
-        "occurred_start": getattr(extracted, "occurred_start", None) or None,
+        "occurred_start": occurred_start,
         "occurred_end": getattr(extracted, "occurred_end", None) or None,
         "entities_json": (
             json.dumps(
@@ -1000,7 +1002,7 @@ def _build_claim_drafts(
         ),
         "conflict_key_version": 3,
         "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, predicate, qualifiers),
-        "valid_from": observed_at,
+        "valid_from": _state_valid_from(canonical_slot, occurred_start, observed_at),
         "recorded_from": recorded_from,
         "observed_at": observed_at,
         "expires_at": expires_at,

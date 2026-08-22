@@ -39,6 +39,7 @@ def _store(
     canonical_attribute: str,
     canonical_slot: str | None = None,
     qualifiers: dict[str, Any] | None = None,
+    occurred_start: str | None = None,
 ) -> str:
     result = IngestService.store_extracted(
         connection,
@@ -50,6 +51,7 @@ def _store(
             canonical_slot=canonical_slot,
             qualifiers=qualifiers,
             assertion_kind="observation",
+            occurred_start=occurred_start,
         ),
         {
             "id": event_id,
@@ -240,7 +242,7 @@ def test_price_snapshots_keep_the_existing_temporal_outcomes(
     assert (decision.outcome, decision.rule_id, decision.rationale) == expected
 
 
-def test_historical_bundle_text_omits_temporal_identity(tmp_path: Any) -> None:
+def test_historical_bundle_text_includes_temporal_identity(tmp_path: Any) -> None:
     connection = Database(tmp_path / "historical-text.db").open()
     claim_id = _store(
         connection,
@@ -264,10 +266,28 @@ def test_historical_bundle_text_omits_temporal_identity(tmp_path: Any) -> None:
     )
     [item] = response["retrieval_bundle"]["items"]
     assert item["id"] == claim_id
-    assert item["text"] == stored["index_text"]
+    assert item["text"] == (
+        f'{stored["index_text"]}\n【time: valid={OLD_TIME}..open; ' f"recorded={OLD_TIME}; status=active】"
+    )
     assert set(item) == {"type", "id", "text", "evidence", "score"}
-    assert OLD_TIME not in item["text"]
-    assert "active" not in item["text"]
+
+
+def test_state_occurrence_and_recording_time_remain_distinct(tmp_path: Any) -> None:
+    connection = Database(tmp_path / "state-bitemporal.db").open()
+    claim_id = _store(
+        connection,
+        event_id="late-version",
+        occurred_at=RECALL_TIME,
+        subject="X",
+        predicate="配置",
+        value="X曾经运行版本0.1",
+        canonical_attribute="config.version",
+        occurred_start="2026-08-20T16:00:00+08:00",
+    )
+
+    row = ClaimRepository(connection).get_claim(claim_id)
+    assert row["valid_from"] == OLD_TIME
+    assert row["recorded_from"] == RECALL_TIME
 
 
 @pytest.mark.parametrize(

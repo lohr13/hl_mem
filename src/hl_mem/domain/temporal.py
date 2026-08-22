@@ -52,6 +52,9 @@ def claim_is_visible(
     """按意图、有效时间与记录时间判断 claim 是否可见。"""
     selected_intent = RecallIntent(intent)
     valid_point = parse_utc(valid_as_of)
+    qualifiers = claim.get("qualifiers") or {}
+    if selected_intent is not RecallIntent.HISTORICAL and qualifiers.get("_state_context") == "historical":
+        return False
     if selected_intent is RecallIntent.HISTORICAL:
         valid_from = claim.get("valid_from")
         if valid_from is not None and parse_utc(valid_from) > valid_point:

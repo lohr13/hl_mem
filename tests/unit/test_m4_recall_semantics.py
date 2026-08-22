@@ -96,6 +96,19 @@ def test_canonical_utc_identity_normalizes_offsets_and_rejects_naive_time() -> N
         canonical_utc_iso("2026-08-22T08:00:00")
 
 
+def test_historical_state_context_is_visible_only_to_historical_intent() -> None:
+    claim = {
+        "status": "active",
+        "valid_from": "2026-08-20T00:00:00Z",
+        "valid_to": None,
+        "recorded_from": "2026-08-22T00:00:00Z",
+        "qualifiers": {"_state_context": "historical"},
+    }
+
+    assert not claim_is_visible(claim, "2026-08-22T00:00:00Z", None, RecallIntent.CURRENT_STATE)
+    assert claim_is_visible(claim, "2026-08-22T00:00:00Z", None, RecallIntent.HISTORICAL)
+
+
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
