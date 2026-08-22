@@ -1056,33 +1056,11 @@ class LLMExtractor:
         except (KeyError, TypeError, ValueError):
             return None
 
-        decision = admit_claim(candidate, source_text)
-        episodic = decision.memory_layer == "episodic"
-        current_audit().emit(
-            "extract",
-            "admission_checked",
-            "accepted" if decision.accepted else "rejected",
-            detail={
-                "reason": decision.reason,
-                "kind": candidate.kind,
-                "notability": candidate.notability,
-                "memory_layer": decision.memory_layer,
-            },
-        )
-        if not decision.accepted:
-            if decision.reason in {
-                "recovery_code",
-                "secret_assignment",
-                "sk_token",
-                "mixed_alnum_token",
-            }:
-                self._secret_rejections[decision.reason] = self._secret_rejections.get(decision.reason, 0) + 1
+        if candidate.kind not in _KIND_MAP:
+            self._record_admission(candidate, source_text)
             return None
 
         predicate, canonical_attribute, scope, volatility = _KIND_MAP[candidate.kind]
-        if episodic:
-            scope = "temporal"
-            volatility = "ephemeral"
         predicate = normalize_predicate(predicate)
         subject = _normalize_compact_subject(candidate.subject)
         inferred_attribute = infer_canonical_attribute(predicate, subject, candidate.value, {})
@@ -1100,6 +1078,12 @@ class LLMExtractor:
             qualifiers,
             str(raw.get("assertion_kind", "unknown")),
         )
+        decision = self._record_admission(candidate, source_text, canonical_slot=canonical_slot)
+        if not decision.accepted:
+            return None
+        if decision.memory_layer == "episodic":
+            scope = "temporal"
+            volatility = "ephemeral"
         predicate = predicate_for_canonical_attribute(canonical_attribute, predicate)
         relation_qualifiers: dict[str, Any] = {}
         relation_reason = "not_provided"
@@ -1219,9 +1203,15 @@ class LLMExtractor:
         except (KeyError, TypeError, ValueError):
             return None
 
-    def _record_admission(self, candidate: MemoryCandidate, source_text: str) -> AdmissionDecision:
+    def _record_admission(
+        self,
+        candidate: MemoryCandidate,
+        source_text: str,
+        *,
+        canonical_slot: str | None = None,
+    ) -> AdmissionDecision:
         """执行并审计 compact/legacy 共用的准入策略。"""
-        decision = admit_claim(candidate, source_text)
+        decision = admit_claim(candidate, source_text, canonical_slot=canonical_slot)
         current_audit().emit(
             "extract",
             "admission_checked",
