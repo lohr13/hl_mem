@@ -8,9 +8,10 @@ from typing import Any
 
 import pytest
 
+from evaluation.tools.v0300_state_corpus_builder import generate_corpus
+from evaluation.tools.v0300_state_corpus_builder import main as corpus_builder_main
 from hl_mem.evaluation.state_counterexample_corpus import (
     aggregate_dev_statistics,
-    generate_corpus,
     open_readonly_event_database,
     sample_redacted_seeds,
     verify_sealed_manifest,
@@ -178,6 +179,7 @@ def test_generator_freezes_exact_protocol_quotas_and_separates_gold(tmp_path: Pa
     assert all(
         "context_only" not in row["events"][0] for row in dev_corpus if row["source_kind"] == "synthetic_adversarial"
     )
+
     assert Counter(row["category"] for row in dev_corpus) == {
         "software_version": 84,
         "non_version_state": 56,
@@ -225,6 +227,29 @@ def test_generator_freezes_exact_protocol_quotas_and_separates_gold(tmp_path: Pa
         if gold["category"] == "compound_claim"
         for claim in gold["atomic_claims"]
     )
+
+
+def test_v0300_builder_cli_requires_explicit_seed_and_output_paths(tmp_path: Path, capsys: Any) -> None:
+    with pytest.raises(SystemExit):
+        corpus_builder_main([])
+
+    seed_path = tmp_path / "redacted-seeds.jsonl"
+    seed_path.write_text(
+        "".join(json.dumps(_seed(index), ensure_ascii=False) + "\n" for index in range(200)),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "generated"
+
+    exit_code = corpus_builder_main(["--seed-source", str(seed_path), "--output-dir", str(output_dir)])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "bundles": 400,
+        "dev_bundles": 280,
+        "events": 1000,
+        "manifest": str((output_dir / "v0300_state_corpus_manifest.json").resolve()),
+        "sealed_bundles": 120,
+    }
 
 
 def test_sealed_verification_returns_aggregates_without_records(tmp_path: Path) -> None:

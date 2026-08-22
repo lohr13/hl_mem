@@ -100,7 +100,7 @@ scripts\hlmem-python.cmd -m hl_mem.evaluation.state_lifecycle ^
 ```bat
 scripts\hlmem-python.cmd evaluation\tools\sample_state_events.py ^
   --source-db <readonly-snapshot.db> --output <temp-redacted-seeds.jsonl> --limit 200
-scripts\hlmem-python.cmd evaluation\tools\generate_state_counterexample_corpus.py ^
+scripts\hlmem-python.cmd evaluation\tools\v0300_state_corpus_builder.py ^
   --seed-source <temp-redacted-seeds.jsonl> --output-dir evaluation\datasets
 ```
 

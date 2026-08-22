@@ -1,4 +1,4 @@
-"""Generate the frozen v0.30.0 state counterexample corpus.
+"""Reusable privacy-safe sampling and aggregate verification for state corpora.
 
 The real-source sampler retains only irreversible structural features. It
 opens SQLite in read-only/query-only mode and never emits source text, ids,
@@ -17,17 +17,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from hl_mem.evaluation.state_counterexample_templates import SCHEMA_VERSION, build_bundle_payload
-
-CORPUS_PREFIX = "v0300_state"
-
-_CATEGORY_QUOTAS = {
-    "software_version": {"dev": 84, "sealed": 36, "events": 3},
-    "non_version_state": {"dev": 56, "sealed": 24, "events": 3},
-    "compound_claim": {"dev": 56, "sealed": 24, "events": 2},
-    "counterexample": {"dev": 56, "sealed": 24, "events": 2},
-    "non_state_control": {"dev": 28, "sealed": 12, "events": 2},
-}
 _SIGNAL_PATTERNS = {
     "version": re.compile(r"(?i)(?:版本|version|release|v\d+)", re.UNICODE),
     "service_health": re.compile(r"(?i)(?:服务|service|healthy|running|挂了)", re.UNICODE),
@@ -266,7 +255,7 @@ def _safe_redacted_skeleton(value: object) -> bool:
     return True
 
 
-def _validate_redacted_seed(seed: Mapping[str, Any], index: int) -> None:
+def validate_redacted_seed(seed: Mapping[str, Any], index: int) -> None:
     if set(seed) != _REDACTED_SEED_FIELDS:
         raise ValueError(f"redacted seed schema mismatch at index {index}")
     if not re.fullmatch(r"real-\d{3}", str(seed["seed_id"])) or not re.fullmatch(
@@ -402,119 +391,12 @@ def load_redacted_seeds(path_value: str | Path) -> list[dict[str, Any]]:
     return _load_jsonl(path_value)
 
 
-def _sha256(path: Path) -> str:
+def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(65536), b""):
             digest.update(block)
     return digest.hexdigest()
-
-
-def generate_corpus(redacted_seeds: Sequence[Mapping[str, Any]], output_dir: str | Path) -> dict[str, Any]:
-    """Generate the exact 400-bundle corpus and separated gold files."""
-
-    if len(redacted_seeds) != 200:
-        raise ValueError("exactly 200 redacted real-event seeds are required")
-    for index, validation_seed in enumerate(redacted_seeds):
-        _validate_redacted_seed(validation_seed, index)
-    seed_ids = [str(seed.get("seed_id") or "") for seed in redacted_seeds]
-    if any(not seed_id for seed_id in seed_ids) or len(set(seed_ids)) != 200:
-        raise ValueError("redacted seed ids must be non-blank and unique")
-    target = Path(output_dir).resolve()
-    target.mkdir(parents=True, exist_ok=True)
-    split_corpus: dict[str, list[dict[str, Any]]] = {"dev": [], "sealed": []}
-    split_gold: dict[str, list[dict[str, Any]]] = {"dev": [], "sealed": []}
-    real_seed_index = 0
-    global_index = 0
-    for split in ("dev", "sealed"):
-        for category, quota in _CATEGORY_QUOTAS.items():
-            count = int(quota[split])
-            for category_index in range(count):
-                source_kind = "real_deidentified" if category_index % 2 == 0 else "synthetic_adversarial"
-                bundle_seed = redacted_seeds[real_seed_index] if source_kind == "real_deidentified" else None
-                if bundle_seed is not None:
-                    real_seed_index += 1
-                corpus, gold = build_bundle_payload(
-                    split=split,
-                    category=category,
-                    category_index=category_index,
-                    global_index=global_index,
-                    source_kind=source_kind,
-                    seed=bundle_seed,
-                )
-                split_corpus[split].append(corpus)
-                split_gold[split].append(gold)
-                global_index += 1
-    if real_seed_index != 200:
-        raise RuntimeError(f"generator consumed {real_seed_index} real seeds instead of 200")
-
-    paths = {
-        "dev_corpus": target / f"{CORPUS_PREFIX}_dev_corpus.jsonl",
-        "dev_gold": target / f"{CORPUS_PREFIX}_dev_gold.jsonl",
-        "sealed_corpus": target / f"{CORPUS_PREFIX}_sealed_corpus.jsonl",
-        "sealed_gold": target / f"{CORPUS_PREFIX}_sealed_gold.jsonl",
-    }
-    _write_jsonl(paths["dev_corpus"], split_corpus["dev"])
-    _write_jsonl(paths["dev_gold"], split_gold["dev"])
-    _write_jsonl(paths["sealed_corpus"], split_corpus["sealed"])
-    _write_jsonl(paths["sealed_gold"], split_gold["sealed"])
-
-    category_counts: dict[str, dict[str, int]] = {}
-    for category, quota in _CATEGORY_QUOTAS.items():
-        dev_count = int(quota["dev"])
-        sealed_count = int(quota["sealed"])
-        category_counts[category] = {"dev": dev_count, "sealed": sealed_count, "total": dev_count + sealed_count}
-    source_counts = {
-        source: {
-            "dev": sum(row["source_kind"] == source for row in split_corpus["dev"]),
-            "sealed": sum(row["source_kind"] == source for row in split_corpus["sealed"]),
-            "total": sum(row["source_kind"] == source for split in split_corpus.values() for row in split),
-        }
-        for source in ("real_deidentified", "synthetic_adversarial")
-    }
-    split_counts = {
-        split: {
-            "bundles": len(split_corpus[split]),
-            "events": sum(len(row["events"]) for row in split_corpus[split]),
-        }
-        for split in ("dev", "sealed")
-    }
-    file_manifest = {
-        name: {
-            "path": path.name,
-            "sha256": _sha256(path),
-            "records": (
-                len(split_corpus["dev"] if name == "dev_corpus" else split_gold["dev"])
-                if name.startswith("dev_")
-                else len(split_corpus["sealed"] if name == "sealed_corpus" else split_gold["sealed"])
-            ),
-        }
-        for name, path in paths.items()
-    }
-    all_corpus = [*split_corpus["dev"], *split_corpus["sealed"]]
-    all_gold = [*split_gold["dev"], *split_gold["sealed"]]
-    coverage = len({row["bundle_id"] for row in all_corpus} & {row["bundle_id"] for row in all_gold}) / len(all_corpus)
-    manifest = {
-        "schema_version": SCHEMA_VERSION,
-        "protocol": "v0.30.0-batch2-state-counterexamples",
-        "totals": {
-            "bundles": len(all_corpus),
-            "events": sum(len(row["events"]) for row in all_corpus),
-            "gold_records": len(all_gold),
-            "gold_coverage": coverage,
-        },
-        "splits": split_counts,
-        "categories": category_counts,
-        "sources": source_counts,
-        "files": file_manifest,
-    }
-    manifest_path = target / f"{CORPUS_PREFIX}_corpus_manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-    return manifest
 
 
 def verify_sealed_manifest(manifest_path: str | Path) -> dict[str, Any]:
@@ -524,7 +406,7 @@ def verify_sealed_manifest(manifest_path: str | Path) -> dict[str, Any]:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     files = manifest["files"]
     sealed_entries = (files["sealed_corpus"], files["sealed_gold"])
-    hashes_valid = all(_sha256(path.parent / entry["path"]) == entry["sha256"] for entry in sealed_entries)
+    hashes_valid = all(file_sha256(path.parent / entry["path"]) == entry["sha256"] for entry in sealed_entries)
     return {
         "sealed_bundles": int(manifest["splits"]["sealed"]["bundles"]),
         "sealed_events": int(manifest["splits"]["sealed"]["events"]),
