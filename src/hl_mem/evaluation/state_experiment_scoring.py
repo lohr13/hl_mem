@@ -64,9 +64,7 @@ def check_threshold_satisfiability(
         "lower": math.ceil(historical_assertion_count * float(THRESHOLDS["historical_old_snapshot_recall"]["target"]))
     }
     inflation_target = float(THRESHOLDS["claim_inflation"]["target"])
-    bounds["claim_inflation"]["candidate_claim_count"] = {
-        "upper": math.floor(baseline_claim_count * (1.0 + inflation_target))
-    }
+    bounds["claim_inflation"]["unmatched_candidate_count"] = {"upper": math.floor(gold_atomic_count * inflation_target)}
 
     pair_results: list[dict[str, Any]] = []
     conflicts: list[dict[str, Any]] = []
@@ -546,10 +544,16 @@ def _reduction(baseline: float, candidate: float) -> float:
     return (baseline - candidate) / baseline
 
 
-def _inflation(baseline: int, candidate: int) -> float:
+def _legacy_inflation(baseline: int, candidate: int) -> float:
     if baseline == 0:
         return 0.0 if candidate == 0 else float("inf")
     return (candidate - baseline) / baseline
+
+
+def _gold_normalized_unmatched_rate(gold_count: int, unmatched_candidate_count: int) -> float:
+    if gold_count == 0:
+        return 0.0 if unmatched_candidate_count == 0 else float("inf")
+    return unmatched_candidate_count / gold_count
 
 
 def _three_run_consistency(projections: Sequence[Sequence[tuple[str, str]]]) -> float:
@@ -768,7 +772,11 @@ def score_protocol(
         {mapped_candidate_assertion_id(value) for value in candidate["non_state_ids"]},
     )
     consistency = _three_run_consistency([projection["coordinate_occurrences"] for projection in candidate_projections])
-    claim_inflation = _inflation(baseline_claim_count, candidate["claim_count"])
+    claim_inflation = _gold_normalized_unmatched_rate(
+        len(gold["atomic_ids"]),
+        len(match["unmatched_candidate_ids"]),
+    )
+    inflation_legacy_vs_arm_a = _legacy_inflation(baseline_claim_count, candidate["claim_count"])
     non_state_f1_drop = float(baseline_non_state["f1"]) - float(candidate_non_state["f1"])
 
     stale_reduction = _reduction(baseline_rate, candidate_rate)
@@ -789,6 +797,7 @@ def score_protocol(
             "f1_drop": non_state_f1_drop,
         },
         "claim_inflation": claim_inflation,
+        "inflation_legacy_vs_arm_a": inflation_legacy_vs_arm_a,
         "three_run_coordinate_consistency": consistency,
     }
 

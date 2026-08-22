@@ -296,6 +296,7 @@ def test_protocol_scorer_maps_every_frozen_threshold_to_structured_metrics() -> 
     assert report["metrics"]["historical_old_snapshot_recall"] == 1.0
     assert report["metrics"]["non_state_extraction"]["f1_drop"] == 0.0
     assert report["metrics"]["claim_inflation"] == 0.0
+    assert report["metrics"]["inflation_legacy_vs_arm_a"] == 0.0
     assert report["metrics"]["three_run_coordinate_consistency"] == 1.0
     assert set(report["thresholds"]) == {
         "state_coordinate_precision",
@@ -797,7 +798,7 @@ def test_mapping_diagnostics_separate_extraction_and_mapping_false_negatives() -
     assert diagnostics["edge_false_negatives_from_mapping"] == 1
 
 
-def test_threshold_satisfiability_checks_all_pairs_and_reports_count_conflicts() -> None:
+def test_threshold_satisfiability_uses_unmatched_candidates_not_total_candidate_count() -> None:
     result = check_threshold_satisfiability(
         gold_atomic_count=812,
         gold_coordinate_count=692,
@@ -808,19 +809,11 @@ def test_threshold_satisfiability_checks_all_pairs_and_reports_count_conflicts()
 
     assert result["threshold_count"] == 13
     assert result["pairs_checked"] == 78
-    assert result["satisfiable"] is False
-    conflict_pairs = {tuple(conflict["thresholds"]) for conflict in result["conflicts"]}
-    assert ("atomic_claim_recall", "claim_inflation") in conflict_pairs
-    assert ("state_coordinate_recall", "claim_inflation") in conflict_pairs
-    atomic_conflict = next(
-        conflict
-        for conflict in result["conflicts"]
-        if conflict["thresholds"] == ["atomic_claim_recall", "claim_inflation"]
-    )
-    assert atomic_conflict["lower_bound"] == 772
-    assert atomic_conflict["upper_bound"] == 435
-    assert atomic_conflict["minimum_compatible_claim_inflation"] == pytest.approx(357 / 415)
-    assert "requires user approval" in atomic_conflict["recommendation"]
+    assert result["satisfiable"] is True
+    assert result["conflicts"] == []
+    assert result["bounds"]["claim_inflation"] == {"unmatched_candidate_count": {"upper": 40}}
+    assert result["bounds"]["atomic_claim_recall"] == {"candidate_claim_count": {"lower": 772}}
+    assert result["bounds"]["state_coordinate_recall"] == {"candidate_claim_count": {"lower": 658}}
 
 
 def test_duplicate_semantic_prediction_is_counted_as_false_positive() -> None:
@@ -863,6 +856,11 @@ def test_duplicate_semantic_prediction_is_counted_as_false_positive() -> None:
     assert report["metrics"]["atomic_claim"]["true_positive"] == 1
     assert report["metrics"]["atomic_claim"]["false_positive"] == 1
     assert report["metrics"]["atomic_claim"]["false_negative"] == 0
+    assert report["metrics"]["claim_inflation"] == 1.0
+    assert report["metrics"]["inflation_legacy_vs_arm_a"] == 0.0
+    assert report["thresholds"]["claim_inflation"] == {"operator": "<=", "target": 0.05}
+    assert report["checks"]["claim_inflation"]["actual"] == 1.0
+    assert report["checks"]["claim_inflation"]["passed"] is False
     assert report["mapping_diagnostics"]["semantic_rejections"]["duplicate_semantic_match"] == 1
 
 
