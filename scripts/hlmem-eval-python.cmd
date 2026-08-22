@@ -13,6 +13,11 @@ if not exist "%PYTHON_EXE%" (
 )
 
 pushd "%ROOT_DIR%" || exit /b 1
+"%PYTHON_EXE%" -m hl_mem.evaluation.runtime_guard --expected-venv "%ROOT_DIR%\.venv"
+if errorlevel 1 (
+    popd
+    exit /b 1
+)
 "%PYTHON_EXE%" %*
 set "EXIT_CODE=%ERRORLEVEL%"
 popd

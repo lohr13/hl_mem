@@ -15,4 +15,5 @@ if [[ ! -x "$python_exe" ]]; then
 fi
 
 cd "$repo_root"
+"$python_exe" -m hl_mem.evaluation.runtime_guard --expected-venv "$repo_root/.venv"
 exec "$python_exe" "$@"
