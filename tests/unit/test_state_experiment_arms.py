@@ -377,63 +377,38 @@ def test_atomicity_gate_passes_one_state_assertion_without_mutating_input() -> N
     assert claim == original
 
 
-def test_atomicity_gate_splits_multiple_state_assertions_in_source_order() -> None:
-    claim = _claim(
-        subject="Gateway",
-        value="API 服务现在 healthy；worker 进程已经 stopped",
-    )
-
-    result = apply_atomicity_gate(claim, strategy="split")
-
-    assert result["decision"] == "split"
-    assert result["detected_state_assertions"] == 2
-    assert [item["value"] for item in result["claims"]] == [
-        "API 服务现在 healthy",
-        "worker 进程已经 stopped",
-    ]
-    assert [item["evidence_quote"] for item in result["claims"]] == [
-        "API 服务现在 healthy",
-        "worker 进程已经 stopped",
-    ]
-
-
-def test_atomicity_gate_splits_english_and_sentence_boundaries() -> None:
-    claim = _claim(
-        subject="Gateway",
-        value="API service is healthy and worker process is stopped. sync job is completed",
-    )
-
-    result = apply_atomicity_gate(claim, strategy="split")
-
-    assert result["decision"] == "split"
-    assert result["detected_state_assertions"] == 3
-    assert [item["value"] for item in result["claims"]] == [
-        "API service is healthy",
-        "worker process is stopped",
-        "sync job is completed",
-    ]
-
-
-def test_atomicity_split_preserves_mixed_non_state_fragments_and_grounded_quotes() -> None:
-    claim = _claim(
-        subject="Gateway",
-        value="API 服务现在 healthy；架构仍使用 SQLite；worker 进程已经 stopped",
-    )
-
-    result = apply_atomicity_gate(claim, strategy="split")
+@pytest.mark.parametrize(
+    ("value", "detected", "fragments"),
+    [
+        (
+            "API 服务现在 healthy；worker 进程已经 stopped",
+            2,
+            ["API 服务现在 healthy", "worker 进程已经 stopped"],
+        ),
+        (
+            "API service is healthy and worker process is stopped. sync job is completed",
+            3,
+            ["API service is healthy", "worker process is stopped", "sync job is completed"],
+        ),
+        (
+            "API 服务现在 healthy；架构仍使用 SQLite；worker 进程已经 stopped",
+            2,
+            ["API 服务现在 healthy", "架构仍使用 SQLite", "worker 进程已经 stopped"],
+        ),
+    ],
+    ids=("zh-source-order", "english-boundaries", "mixed-non-state"),
+)
+def test_atomicity_split_preserves_boundaries_order_and_grounding(
+    value: str,
+    detected: int,
+    fragments: list[str],
+) -> None:
+    result = apply_atomicity_gate(_claim(subject="Gateway", value=value), strategy="split")
 
     assert result["decision"] == "split"
-    assert result["detected_state_assertions"] == 2
-    assert [item["value"] for item in result["claims"]] == [
-        "API 服务现在 healthy",
-        "架构仍使用 SQLite",
-        "worker 进程已经 stopped",
-    ]
-    assert [item["evidence_quote"] for item in result["claims"]] == [
-        "API 服务现在 healthy",
-        "架构仍使用 SQLite",
-        "worker 进程已经 stopped",
-    ]
+    assert result["detected_state_assertions"] == detected
+    assert [item["value"] for item in result["claims"]] == fragments
+    assert [item["evidence_quote"] for item in result["claims"]] == fragments
 
 
 def test_atomicity_split_rejects_when_value_fragments_are_not_grounded_in_quote() -> None:

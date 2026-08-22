@@ -978,17 +978,62 @@ def test_semantic_protocol_scoring_rejects_missing_corpus() -> None:
         )
 
 
-def test_nonliteral_gold_value_rejects_unrelated_candidate_value() -> None:
-    sample_id = "opaque-gold-value"
+@pytest.mark.parametrize(
+    ("sample_id", "event_text", "value", "evidence_quote", "expected_tp", "rejection"),
+    [
+        (
+            "opaque-gold-value",
+            "gateway version v1.0",
+            "Mars is red",
+            "gateway version v1.0",
+            0,
+            "value_evidence_mismatch",
+        ),
+        (
+            "opaque-positive",
+            "gateway 偏好简洁回复",
+            "gateway prefers concise replies",
+            "gateway 偏好简洁回复",
+            1,
+            None,
+        ),
+        (
+            "opaque-han-boundary",
+            "甲乙",
+            "甲-X-乙",
+            "甲乙",
+            0,
+            "value_evidence_mismatch",
+        ),
+        (
+            "opaque-ascii-boundary",
+            "cat",
+            "catalog",
+            "cat",
+            0,
+            "value_evidence_mismatch",
+        ),
+    ],
+    ids=("unrelated", "grounded-cross-language", "han-boundary", "ascii-token-boundary"),
+)
+def test_nonliteral_content_anchor_semantics(
+    sample_id: str,
+    event_text: str,
+    value: str,
+    evidence_quote: str,
+    expected_tp: int,
+    rejection: str | None,
+) -> None:
+    assertion_id = f"{sample_id}:gold"
     gold = [
         {
             "sample_id": sample_id,
             "atomic_claims": [
                 _semantic_gold_claim(
-                    f"{sample_id}:c0:a0",
+                    assertion_id,
                     None,
                     source_event_index=0,
-                    state_value="opaque-state-label",
+                    state_value="opaque-control-label",
                 )
             ],
         }
@@ -998,11 +1043,11 @@ def test_nonliteral_gold_value_rejects_unrelated_candidate_value() -> None:
             "sample_id": sample_id,
             "claims": [
                 _semantic_prediction(
-                    f"{sample_id}:c0:a0",
+                    f"{sample_id}:candidate",
                     None,
                     source_event_indices=[0],
-                    value="Mars is red",
-                    evidence_quote="gateway version v1.0",
+                    value=value,
+                    evidence_quote=evidence_quote,
                 )
             ],
         }
@@ -1011,13 +1056,15 @@ def test_nonliteral_gold_value_rejects_unrelated_candidate_value() -> None:
     report = _score_semantic_fixture(
         gold,
         candidate,
-        corpus=[_corpus_record(sample_id, ["gateway version v1.0"])],
+        corpus=[_corpus_record(sample_id, [event_text])],
     )
 
-    assert report["metrics"]["atomic_claim"]["true_positive"] == 0
-    assert report["metrics"]["atomic_claim"]["false_positive"] == 1
-    assert report["metrics"]["atomic_claim"]["false_negative"] == 1
-    assert report["mapping_diagnostics"]["semantic_rejections"]["value_evidence_mismatch"] == 1
+    atomic = report["metrics"]["atomic_claim"]
+    assert atomic["true_positive"] == expected_tp
+    assert atomic["false_positive"] == 1 - expected_tp
+    assert atomic["false_negative"] == 1 - expected_tp
+    if rejection is not None:
+        assert report["mapping_diagnostics"]["semantic_rejections"][rejection] == 1
 
 
 def test_ambiguous_semantic_mapping_is_invariant_to_gold_claim_order() -> None:
@@ -1055,87 +1102,6 @@ def test_ambiguous_semantic_mapping_is_invariant_to_gold_claim_order() -> None:
 
     assert forward["metrics"]["atomic_claim"] == reversed_order["metrics"]["atomic_claim"]
     assert forward["metrics"]["state_coordinate"] == reversed_order["metrics"]["state_coordinate"]
-
-
-def test_nonliteral_gold_accepts_grounded_value_evidence_content_anchor() -> None:
-    sample_id = "opaque-positive"
-    gold = [
-        {
-            "sample_id": sample_id,
-            "atomic_claims": [
-                _semantic_gold_claim(
-                    f"{sample_id}:gold",
-                    None,
-                    source_event_index=0,
-                    state_value="opaque-control-label",
-                )
-            ],
-        }
-    ]
-    candidate = [
-        {
-            "sample_id": sample_id,
-            "claims": [
-                _semantic_prediction(
-                    f"{sample_id}:candidate",
-                    None,
-                    source_event_indices=[0],
-                    value="gateway prefers concise replies",
-                    evidence_quote="gateway 偏好简洁回复",
-                )
-            ],
-        }
-    ]
-
-    report = _score_semantic_fixture(
-        gold,
-        candidate,
-        corpus=[_corpus_record(sample_id, ["gateway 偏好简洁回复"])],
-    )
-
-    assert report["metrics"]["atomic_claim"]["true_positive"] == 1
-    assert report["metrics"]["atomic_claim"]["false_positive"] == 0
-    assert report["metrics"]["atomic_claim"]["false_negative"] == 0
-
-
-def test_nonliteral_content_anchor_does_not_cross_non_han_boundaries() -> None:
-    sample_id = "opaque-han-boundary"
-    gold = [
-        {
-            "sample_id": sample_id,
-            "atomic_claims": [
-                _semantic_gold_claim(
-                    f"{sample_id}:gold",
-                    None,
-                    source_event_index=0,
-                    state_value="opaque-control-label",
-                )
-            ],
-        }
-    ]
-    candidate = [
-        {
-            "sample_id": sample_id,
-            "claims": [
-                _semantic_prediction(
-                    f"{sample_id}:candidate",
-                    None,
-                    source_event_indices=[0],
-                    value="甲-X-乙",
-                    evidence_quote="甲乙",
-                )
-            ],
-        }
-    ]
-
-    report = _score_semantic_fixture(
-        gold,
-        candidate,
-        corpus=[_corpus_record(sample_id, ["甲乙"])],
-    )
-
-    assert report["metrics"]["atomic_claim"]["true_positive"] == 0
-    assert report["mapping_diagnostics"]["semantic_rejections"]["value_evidence_mismatch"] == 1
 
 
 def test_missing_corpus_coverage_reports_only_count_not_sample_ids() -> None:
