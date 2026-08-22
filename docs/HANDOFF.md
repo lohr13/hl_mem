@@ -1,16 +1,23 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-21
+> 最后更新：2026-08-22
 
 ## 当前状态
 
-- **分支**：`feature/v0.29.3-slimming`
+- **分支**：`main`
 - **版本**：v0.29.3
-- **阶段**：v0.29.3 发版准备已完成，停在 worktree 等待 Hermes 验收；无 push、无 tag
+- **阶段**：v0.30.0 批次3代码接线完成，等待 sealed 终验；无 push、无 tag、无部署
 - **服务**：FastAPI 默认监听 8200；非敏感配置来自工作目录下的 `hl_mem.toml`
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：49 migrations（SQL 001–049），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
+
+## v0.30.0 批次3代码状态（待 sealed 终验）
+
+- 状态快照使用 namespace 隔离的稳定 owner/slot/qualifier 坐标；严格有序 current observation 才能自动关链，
+  历史与不确定语境不授权 supersede。历史或双时间召回不刷新 access，但 exposure 仍记录。
+- `scope` 管保留语义；`volatility` 只提示变化速度/TTL 分类，不参与坐标、转移、supersede 或 recall intent。
+- 无配置、migration、REST/MCP wire 或 Hermes plugin 变更；sealed 120 与部署尚未执行。
 
 ## v0.29.3 已交付（待 Hermes 验收）
 

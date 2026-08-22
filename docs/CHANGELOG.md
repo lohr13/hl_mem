@@ -1,5 +1,13 @@
 # HL-Mem 变更记录
 
+## 未发布：状态生命周期接线
+
+- 生产提取保留八字段产品契约，并叠加中英状态快照与稳定 owner 规则；结构化状态坐标只允许 current observation
+  按严格 valid time 推进，迟到旧快照只回填，历史/计划/引用/否定和歧义坐标均 fail closed。
+- historical、显式 `as_of` 与 `known_as_of` 召回不再刷新 access；exposure/feedback 可观测链保持不变。
+- `scope` 继续决定有效期/保留层次；`volatility` 仅是变动速度与 TTL 分类提示，不参与状态坐标、namespace、
+  supersede 或 recall intent。本批不新增配置键、默认值、migration 或 backfill。
+
 ## v0.29.3（2026-08-21）
 
 ### Temporal 序列坐标
