@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -90,6 +91,29 @@ def test_windows_repository_launcher_drops_all_host_python_environment() -> None
 def test_windows_evaluation_launcher_rejects_host_python_path_before_imports() -> None:
     completed = subprocess.run(
         [str(ROOT / "scripts" / "hlmem-eval-python.cmd"), "-c", _environment_probe()],
+        cwd=ROOT,
+        env=_polluted_environment(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = _last_json_line(completed.stdout)
+    assert payload["environment"] == {key: None for key in ISOLATED_KEYS}
+    assert Path(str(payload["prefix"])).resolve() == (ROOT / ".venv").resolve()
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("bash") is None, reason="Windows Git Bash behavior")
+def test_git_bash_evaluation_launcher_converts_the_expected_venv_for_windows_python() -> None:
+    completed = subprocess.run(
+        [
+            str(shutil.which("bash")),
+            (ROOT / "scripts" / "hlmem-eval-python.sh").as_posix(),
+            "-c",
+            _environment_probe(),
+        ],
         cwd=ROOT,
         env=_polluted_environment(),
         capture_output=True,

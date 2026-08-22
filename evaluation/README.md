@@ -6,11 +6,28 @@ gold、模型响应、数据库、缓存和运行报告不进入仓库，统一�
 从源码运行任何 Python benchmark 时都使用仓库 launcher：
 
 ```bash
-bash scripts/hlmem-python.sh <runner> [args...]
+bash scripts/hlmem-eval-python.sh <runner> [args...]
 ```
 
-Windows `cmd.exe` 可使用 `scripts\hlmem-python.cmd`。launcher 会定位仓库根目录、清理宿主注入的
-`PYTHONPATH`/`PYTHONHOME`，并固定使用项目虚拟环境。
+Windows `cmd.exe` 可使用 `scripts\hlmem-eval-python.cmd`。评测 launcher 会定位仓库根目录，硬清宿主注入的
+`PYTHONPATH`/`PYTHONHOME`/`VIRTUAL_ENV`/`CONDA_PREFIX`，并在运行工具前校验解释器版本、NumPy 来源与 ABI、
+sqlite-vec 实际加载能力。
+
+## 全链前置冒烟门
+
+任何 sealed/held-out 语料开始提取前，必须先运行零 LLM 的完整缝合线冒烟；命令失败时不允许烧语料：
+
+```bat
+scripts\hlmem-eval-python.cmd -m hl_mem.evaluation.smoke_full_chain
+```
+
+```bash
+bash scripts/hlmem-eval-python.sh -m hl_mem.evaluation.smoke_full_chain
+```
+
+冒烟使用固定合成响应依次经过生产 `LLMExtractor`、admission、状态 canonicalization、
+`IngestService` resolver、复合 evidence adapter 和 `score_protocol()`，并要求 13 项聚合检查成功产出。
+它不会读取正式语料、不会访问 LLM，也不以宽松数值替代正式质量门禁。
 
 ## 当前评测层次
 
@@ -31,19 +48,19 @@ Windows `cmd.exe` 可使用 `scripts\hlmem-python.cmd`。launcher 会定位仓�
 
 ```bash
 # HL-Mem structured-memory path
-bash scripts/hlmem-python.sh evaluation/tools/run_longmemeval_benchmark.py \
+bash scripts/hlmem-eval-python.sh evaluation/tools/run_longmemeval_benchmark.py \
   --dataset ~/hl_mem_eval_data/longmemeval/holdout.json \
   --output evaluation/results/longmemeval_run.json
 
 # Retrieval-free upper bound
-bash scripts/hlmem-python.sh evaluation/tools/run_longmemeval_benchmark.py \
+bash scripts/hlmem-eval-python.sh evaluation/tools/run_longmemeval_benchmark.py \
   --mode full-context \
   --dataset ~/hl_mem_eval_data/longmemeval/holdout.json \
   --config evaluation/tools/configs/longmemeval_deepseek_v4_flash.toml \
   --output evaluation/results/longmemeval_full_context.json
 
 # Raw-session dense RAG control
-bash scripts/hlmem-python.sh evaluation/tools/run_longmemeval_benchmark.py \
+bash scripts/hlmem-eval-python.sh evaluation/tools/run_longmemeval_benchmark.py \
   --mode native-rag \
   --dataset ~/hl_mem_eval_data/longmemeval/holdout.json \
   --config evaluation/tools/configs/longmemeval_deepseek_v4_flash.toml \
@@ -57,11 +74,11 @@ runner 每个 case 后原子更新报告。配额或 429 中断后应使用完�
 ## MemDaily 与 PerLTQA
 
 ```bash
-bash scripts/hlmem-python.sh evaluation/tools/run_memdaily_benchmark.py \
+bash scripts/hlmem-eval-python.sh evaluation/tools/run_memdaily_benchmark.py \
   --source ~/hl_mem_eval_data/memdaily/memdaily.json \
   --output evaluation/results/memdaily_run.json
 
-bash scripts/hlmem-python.sh evaluation/tools/run_perltqa_benchmark.py \
+bash scripts/hlmem-eval-python.sh evaluation/tools/run_perltqa_benchmark.py \
   --source ~/hl_mem_eval_data/perltqa/perltmem.json \
   --qa-source ~/hl_mem_eval_data/perltqa/perltqa.json \
   --output evaluation/results/perltqa_run.json
@@ -75,7 +92,7 @@ bash scripts/hlmem-python.sh evaluation/tools/run_perltqa_benchmark.py \
 `evidence_links(relation='supersedes')`；`audit_log` 只计入诊断行数，不参与任何指标。Windows 单库基线：
 
 ```bat
-scripts\hlmem-python.cmd -m hl_mem.evaluation.state_lifecycle ^
+scripts\hlmem-eval-python.cmd -m hl_mem.evaluation.state_lifecycle ^
   --db var\hl_mem.db --namespace default ^
   --output evaluation\baselines\state_lifecycle.json
 ```
@@ -98,9 +115,9 @@ scripts\hlmem-python.cmd -m hl_mem.evaluation.state_lifecycle ^
 真实来源结构必须从调用方显式指定的冻结快照采样，脚本不会读取 `hl_mem.toml` 或内置数据库路径：
 
 ```bat
-scripts\hlmem-python.cmd evaluation\tools\sample_state_events.py ^
+scripts\hlmem-eval-python.cmd evaluation\tools\sample_state_events.py ^
   --source-db <readonly-snapshot.db> --output <temp-redacted-seeds.jsonl> --limit 200
-scripts\hlmem-python.cmd evaluation\tools\v0300_state_corpus_builder.py ^
+scripts\hlmem-eval-python.cmd evaluation\tools\v0300_state_corpus_builder.py ^
   --seed-source <temp-redacted-seeds.jsonl> --output-dir evaluation\datasets
 ```
 

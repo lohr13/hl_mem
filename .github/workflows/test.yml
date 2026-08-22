@@ -60,6 +60,24 @@ jobs:
       - run: uv sync --frozen
       - run: uv run --frozen python scripts/run_quality_smoke.py
 
+  state-full-chain-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
+      - name: Install dependencies with sqlite-vec
+        run: uv sync --frozen --extra sqlite-vec
+      - name: Run production-to-scorer state seam smoke
+        env:
+          PYTHONPATH: /host/pythonpath/must-not-leak
+          PYTHONHOME: /host/pythonhome/must-not-leak
+          VIRTUAL_ENV: /host/venv/must-not-leak
+          CONDA_PREFIX: /host/conda/must-not-leak
+        run: bash scripts/hlmem-eval-python.sh -m hl_mem.evaluation.smoke_full_chain
+
   recall-gate:
     runs-on: ubuntu-latest
     steps:

@@ -24,6 +24,8 @@ PROBE_CODE = (
     "print(json.dumps({"
     "'pythonpath': os.environ.get('PYTHONPATH'), "
     "'pythonhome': os.environ.get('PYTHONHOME'), "
+    "'virtual_env': os.environ.get('VIRTUAL_ENV'), "
+    "'conda_prefix': os.environ.get('CONDA_PREFIX'), "
     "'prefix': sys.prefix, "
     "'numpy_file': numpy.__file__, "
     "'argument': sys.argv[1], "
@@ -45,13 +47,13 @@ def _launcher_commands() -> list[tuple[str, list[str]]]:
     commands: list[tuple[str, list[str]]] = []
     bash = shutil.which("bash")
     if bash:
-        commands.append(("bash", [bash, (REPO_ROOT / "scripts" / "hlmem-python.sh").as_posix()]))
+        commands.append(("bash", [bash, (REPO_ROOT / "scripts" / "hlmem-eval-python.sh").as_posix()]))
     if os.name == "nt":
         command_processor = os.environ.get("COMSPEC", "cmd.exe")
         commands.append(
             (
                 "cmd",
-                [command_processor, "/d", "/c", str(REPO_ROOT / "scripts" / "hlmem-python.cmd")],
+                [command_processor, "/d", "/c", str(REPO_ROOT / "scripts" / "hlmem-eval-python.cmd")],
             )
         )
     return commands
@@ -87,8 +89,8 @@ def main() -> int:
         failures += int(not passed)
 
     report(
-        "验证脚本自身的 PYTHONPATH/PYTHONHOME 已清理",
-        "PYTHONPATH" not in os.environ and "PYTHONHOME" not in os.environ,
+        "验证脚本自身的宿主 Python 环境变量已清理",
+        all(key not in os.environ for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX")),
     )
     report("验证脚本自身使用 hl_mem .venv", _is_within(sys.prefix, VENV_ROOT), sys.prefix)
     try:
@@ -115,6 +117,8 @@ def main() -> int:
         contaminated_environment = os.environ.copy()
         contaminated_environment["PYTHONPATH"] = str(fake_site_packages)
         contaminated_environment["PYTHONHOME"] = str(fake_python_home)
+        contaminated_environment["VIRTUAL_ENV"] = str(outside_directory / "external venv")
+        contaminated_environment["CONDA_PREFIX"] = str(outside_directory / "external conda")
 
         for launcher_name, launcher in launchers:
             probe = _run(
@@ -137,8 +141,12 @@ def main() -> int:
                 probe_detail if probe.returncode != 0 or not payload else "",
             )
             report(
-                f"[{launcher_name}] 清理伪造的 PYTHONPATH/PYTHONHOME",
-                bool(payload) and payload.get("pythonpath") is None and payload.get("pythonhome") is None,
+                f"[{launcher_name}] 清理全部伪造的宿主 Python 环境变量",
+                bool(payload)
+                and payload.get("pythonpath") is None
+                and payload.get("pythonhome") is None
+                and payload.get("virtual_env") is None
+                and payload.get("conda_prefix") is None,
             )
             report(
                 f"[{launcher_name}] sys.prefix 指向 hl_mem .venv",
