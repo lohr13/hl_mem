@@ -29,6 +29,11 @@ def parse_utc(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def canonical_utc_iso(value: str) -> str:
+    """返回同一瞬间唯一的 UTC ISO identity。"""
+    return parse_utc(value).isoformat()
+
+
 def _contains(start: str | None, end: str | None, point: datetime) -> bool:
     return (start is None or parse_utc(start) <= point) and (end is None or point < parse_utc(end))
 

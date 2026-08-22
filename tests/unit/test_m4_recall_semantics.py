@@ -7,7 +7,7 @@ import pytest
 from hl_mem.application.recall import RecallService
 from hl_mem.core.vector import pack_vector
 from hl_mem.domain.recall import route_recall_intent
-from hl_mem.domain.temporal import RecallIntent, claim_is_visible, parse_utc
+from hl_mem.domain.temporal import RecallIntent, canonical_utc_iso, claim_is_visible, parse_utc
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
@@ -87,6 +87,13 @@ def test_visibility_uses_half_open_valid_and_recorded_intervals() -> None:
     assert parse_utc("2026-01-01T08:00:00+08:00") == parse_utc("2026-01-01T00:00:00Z")
     with pytest.raises(ValueError, match="invalid ISO-8601"):
         parse_utc("bad")
+
+
+def test_canonical_utc_identity_normalizes_offsets_and_rejects_naive_time() -> None:
+    assert canonical_utc_iso("2026-08-22T16:00:00+08:00") == "2026-08-22T08:00:00+00:00"
+    assert canonical_utc_iso("2026-08-22T08:00:00Z") == "2026-08-22T08:00:00+00:00"
+    with pytest.raises(ValueError, match="without timezone"):
+        canonical_utc_iso("2026-08-22T08:00:00")
 
 
 @pytest.mark.parametrize(
