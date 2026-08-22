@@ -305,6 +305,7 @@ def test_dev_bundle_runs_through_fake_extractor_boundary_b1_and_scorer(tmp_path:
             "current_injected_assertion_ids": current_ids,
             "historical_retrieved_assertion_ids": historical_ids,
         },
+        corpus_records=[bundle],
     )
 
     assert [claim["assertion_id"] for claim in candidate[0]["claims"]] == [
