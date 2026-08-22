@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 ISOLATED_KEYS = ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX")
 
@@ -18,6 +20,11 @@ def _clean_environment() -> dict[str, str]:
 
 
 def test_runtime_guard_loads_native_dependencies_only_from_expected_venv() -> None:
+    try:
+        import sqlite_vec  # noqa: F401
+    except ModuleNotFoundError:
+        pytest.skip("sqlite-vec extra not installed in this environment")
+
     completed = subprocess.run(
         [
             sys.executable,
