@@ -9,6 +9,13 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from hl_mem.domain.entity_coordinates import (
+    CanonicalEntitySeed,
+    EntityAliasSeed,
+    TypedBuiltinSeeds,
+    normalize_typed_alias,
+)
+
 PERSONA_ENTITY_ALIASES: dict[str, str] = {
     "我": "user",
     "本人": "user",
@@ -151,3 +158,35 @@ def isolated_subject_id(*identity_parts: Any) -> str:
     payload = json.dumps(identity_parts, ensure_ascii=False, separators=(",", ":"), default=str)
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
     return f"unknown__{digest}"
+
+
+def typed_builtin_seeds() -> TypedBuiltinSeeds:
+    """Adapt safe legacy aliases and fixed local coordinates into typed seeds."""
+
+    entities = (
+        CanonicalEntitySeed("person:user", "person", "user", "User"),
+        CanonicalEntitySeed("agent:local_pony", "agent", "local_pony", "本地小马"),
+        CanonicalEntitySeed("agent:hermes", "agent", "hermes", "Hermes"),
+        CanonicalEntitySeed("device:user_local_pc", "device", "user_local_pc", "用户本地电脑"),
+        CanonicalEntitySeed("environment:local_runtime", "environment", "local_runtime", "本地环境"),
+        CanonicalEntitySeed("project:hl_mem", "project", "hl_mem", "HL-Mem"),
+    )
+    adapted: list[EntityAliasSeed] = []
+    for raw_alias, legacy_id in DEFAULT_ENTITY_ALIASES.items():
+        if legacy_id == "user":
+            adapted.append(EntityAliasSeed(raw_alias, "person", "person:user"))
+        elif legacy_id == "hl_mem":
+            adapted.append(EntityAliasSeed(raw_alias, "project", "project:hl_mem"))
+        elif legacy_id == "Hermes" and normalize_typed_alias(raw_alias) == "hermes-agent":
+            adapted.append(EntityAliasSeed(raw_alias, "agent", "agent:hermes"))
+    adapted.extend(
+        (
+            EntityAliasSeed("本地小马", "agent", "agent:local_pony"),
+            EntityAliasSeed("用户本地电脑", "device", "device:user_local_pc"),
+            EntityAliasSeed("本地环境", "environment", "environment:local_runtime"),
+        )
+    )
+    unique: dict[tuple[str, str], EntityAliasSeed] = {}
+    for alias_seed in adapted:
+        unique[(normalize_typed_alias(alias_seed.alias), alias_seed.entity_type)] = alias_seed
+    return TypedBuiltinSeeds(entities, tuple(unique.values()))
