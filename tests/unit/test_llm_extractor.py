@@ -132,7 +132,7 @@ def test_grounded_lesson_signal_promotes_importance_but_not_time_bounded_scope()
     assert claim.qualifiers["lesson_signal"] == "persistent_must"
     assert claim.scope == "temporal"
     assert classify_lesson_signal("This was a lesson and a pitfall.", "This was a lesson and a pitfall.") == "none"
-    assert classify_lesson_signal("Use blue theme", "A costly failure caused data loss; use blue theme") == "none"
+    assert classify_lesson_signal("Use blue theme", "A costly failure caused data loss, use blue theme") == "none"
 
 
 def test_compact_model_slot_does_not_forge_task_from_generic_subject() -> None:

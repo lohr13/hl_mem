@@ -79,3 +79,22 @@ def test_batch4_preflight_requires_explicit_gold_and_provenance(experiment: str,
     assessment = assess_batch4_manifest(manifest)
 
     assert expected <= set(assessment["blockers"])
+
+
+def test_e2_null_coordinate_values_are_never_eligible() -> None:
+    manifest = _manifest("E2")
+    manifest["cases"][0]["input"]["claims"] = [
+        {
+            "subject_canonical_entity_id": "agent:pony",
+            "canonical_slot": None,
+            "canonical_attribute": None,
+            "assertion_kind": None,
+            "entity_proof_id": None,
+        }
+        for _ in range(2)
+    ]
+
+    assessment = assess_batch4_manifest(manifest)
+
+    assert assessment["counts"]["eligible_pairs"] == 0
+    assert "missing_entity_proof_cases" in assessment["blockers"]

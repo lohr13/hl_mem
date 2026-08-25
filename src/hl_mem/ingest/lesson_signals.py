@@ -61,6 +61,7 @@ _SIGNAL_PATTERNS: tuple[tuple[LessonSignal, re.Pattern[str]], ...] = (
     ),
 )
 _CLAUSE_SPLIT_RE = re.compile(r"[;；。.!?\n]+")
+_COMMA_RE = re.compile(r"[,，、]")
 _CONTENT_TOKEN_RE = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]", re.IGNORECASE)
 
 
@@ -76,6 +77,13 @@ def _clause_supports_value(clause: str, value: str) -> bool:
     return bool(value_tokens) and len(clause_tokens & value_tokens) / len(value_tokens) >= 0.6
 
 
+def _signal_context(clause: str, start: int, end: int) -> str:
+    commas = list(_COMMA_RE.finditer(clause))
+    left = max((match.end() for match in commas if match.end() <= start), default=0)
+    right = min((match.start() for match in commas if match.start() >= end), default=len(clause))
+    return clause[left:right]
+
+
 def classify_lesson_signal(value: str, evidence_quote: str) -> LessonSignal:
     """Classify only an explicit signal present in the grounded evidence quote."""
 
@@ -84,7 +92,8 @@ def classify_lesson_signal(value: str, evidence_quote: str) -> LessonSignal:
         return "none"
     for clause in filter(None, _CLAUSE_SPLIT_RE.split(evidence)):
         for signal, pattern in _SIGNAL_PATTERNS:
-            if pattern.search(clause) and _clause_supports_value(clause, value):
+            match = pattern.search(clause)
+            if match and _clause_supports_value(_signal_context(clause, match.start(), match.end()), value):
                 return signal
     return "none"
 

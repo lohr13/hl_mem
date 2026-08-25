@@ -11,6 +11,7 @@ from typing import Any, Mapping, cast
 
 _PLACEHOLDER_RE = re.compile(r"^\?+\s+[a-z_]+\s+\d+$", re.IGNORECASE)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+_IDENTIFIER_RE = re.compile(r"^[\w:.-]{2,256}$", re.UNICODE)
 _APPROVED_GOLD = {
     "E2": frozenset({"blind_frozen", "manually_frozen"}),
     "E3": frozenset({"rule_frozen_synthetic", "manually_frozen"}),
@@ -41,17 +42,22 @@ def _valid_sha256(value: Any) -> bool:
     return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
 
 
+def _valid_identifier(value: Any) -> bool:
+    return isinstance(value, str) and _IDENTIFIER_RE.fullmatch(value) is not None
+
+
 def _approved_gold(case: Mapping[str, Any], experiment: str) -> bool:
     return str(_gold(case).get("gold_status") or "") in _APPROVED_GOLD[experiment]
 
 
 def _typed_pair_complete(case: Mapping[str, Any]) -> bool:
     claims = _claims(case)
-    required = {"canonical_slot", "canonical_attribute", "assertion_kind", "entity_proof_id"}
     return len(claims) == 2 and all(
-        isinstance(claim, Mapping)
-        and required <= set(claim)
-        and (claim.get("subject_canonical_entity_id") or claim.get("canonical_target_entity_id"))
+        all(
+            _valid_identifier(claim.get(field))
+            for field in ("canonical_slot", "canonical_attribute", "assertion_kind", "entity_proof_id")
+        )
+        and _valid_identifier(claim.get("subject_canonical_entity_id") or claim.get("canonical_target_entity_id"))
         for claim in claims
     )
 
