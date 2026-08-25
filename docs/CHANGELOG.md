@@ -1,5 +1,21 @@
 # HL-Mem 变更记录
 
+## v0.31.1（2026-08-26）
+
+### Hermes 注入链路与配置安全
+
+- Hermes 插件固定从 `<HERMES_HOME>/hl_mem.toml` 和 `<HERMES_HOME>/.env` 加载配置，不再受 gateway/CLI
+  进程当前目录影响；调用方显式传入的路径仍保持最高优先级。
+- 插件注册失败会以 ERROR 和 traceback 记录异常类型、配置路径、CWD、Hermes Home 与 hl_mem 版本，然后原样
+  抛出；日志不包含环境变量值、API key、TOML 内容或消息正文。
+- `database.path` 的相对值改为相对配置文件 symlink 的真实目标目录解析。POSIX 拒绝 Windows drive/UNC
+  绝对路径，Windows 拒绝 POSIX 绝对路径，避免错误配置静默创建影子数据库。
+- Hermes 插件 install/upgrade 在实际写入后明确要求重启所有已导入 hl_mem 的 gateway/CLI 进程，并禁止用
+  已导入旧 editable checkout 的进程验证新配置。
+
+本版没有新增 TOML key、schema migration 或 REST/MCP 契约变化。升级前应先确认新旧数据库绝对路径；若不同，
+先完成受控数据迁移，再启动写入者。小宇宙等停留在旧版的实例不应接收 v0.31 配置。
+
 ## v0.31.0（2026-08-25）
 
 ### 新能力

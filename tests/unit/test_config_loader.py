@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import fields
 from pathlib import Path
 
@@ -30,7 +31,7 @@ def test_empty_toml_uses_static_defaults(tmp_path: Path) -> None:
     config_path = _write(tmp_path / "empty.toml")
 
     assert load_settings(config_path, tmp_path / ".env", environ={"LLM_API_KEY": "test-key"}) == Settings(
-        llm_api_key="test-key"
+        database_path=str((tmp_path / "var" / "hl_mem.db").resolve()), llm_api_key="test-key"
     )
 
 
@@ -127,7 +128,7 @@ decay_min_confidence = 0.1
 
     settings = load_settings(config_path, tmp_path / ".env", environ={})
 
-    assert settings.database_path == "custom.db"
+    assert settings.database_path == str((tmp_path / "custom.db").resolve())
     assert settings.database_pool_size == 4
     assert settings.llm_timeout == 12.0
     assert settings.query_expansion_model == "glm-4.7"
@@ -196,7 +197,92 @@ def test_dotenv_secrets_are_overridden_only_by_same_process_names(tmp_path: Path
     assert settings.reranker_api_key == "dotenv-reranker"
     assert settings.image_describer_api_key == "dotenv-image"
     assert settings.image_describer_api_key != settings.llm_api_key
-    assert settings.database_path == Settings().database_path
+    assert settings.database_path == str((tmp_path / "var" / "hl_mem.db").resolve())
+
+
+def test_relative_database_path_uses_real_config_target_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """配置 symlink 的位置不得把相对数据库路径拉回宿主 CWD。"""
+    canonical_dir = tmp_path / "canonical"
+    source_dir = tmp_path / "source"
+    canonical_dir.mkdir()
+    source_dir.mkdir()
+    canonical_config = _write(
+        canonical_dir / "hl_mem.toml",
+        '[database]\npath = "data/memory.db"\n[recall]\nquery_expansion_mode = "off"\n',
+    )
+    linked_config = tmp_path / "hl_mem.toml"
+    linked_config.symlink_to(canonical_config)
+    monkeypatch.chdir(source_dir)
+
+    settings = load_settings(linked_config, tmp_path / ".env", environ={})
+
+    assert settings.database_path == str((canonical_dir / "data" / "memory.db").resolve())
+
+
+@pytest.mark.parametrize("foreign_path", ["D:/hl_mem/var/hl_mem.db", r"\\server\share\hl_mem.db"])
+def test_posix_rejects_windows_absolute_database_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    foreign_path: str,
+) -> None:
+    """POSIX 启动不得把 Windows drive 或 UNC 路径静默当成相对目录。"""
+    escaped_path = foreign_path.replace("\\", "\\\\")
+    config_path = _write(
+        tmp_path / "hl_mem.toml",
+        f'[database]\npath = "{escaped_path}"\n[recall]\nquery_expansion_mode = "off"\n',
+    )
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    with pytest.raises(ConfigurationError, match=r"database\.path.*Windows absolute path.*POSIX"):
+        load_settings(config_path, tmp_path / ".env", environ={})
+
+
+def test_windows_rejects_posix_absolute_database_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows 启动不得把 POSIX 根路径映射到当前盘符。"""
+    config_path = _write(
+        tmp_path / "hl_mem.toml",
+        '[database]\npath = "/root/hl_mem/var/hl_mem.db"\n[recall]\nquery_expansion_mode = "off"\n',
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    with pytest.raises(ConfigurationError, match=r"database\.path.*POSIX absolute path.*Windows"):
+        load_settings(config_path, tmp_path / ".env", environ={})
+
+
+@pytest.mark.parametrize(
+    ("platform", "raw_path", "expected"),
+    [
+        ("win32", "D:/hl_mem/var/hl_mem.db", "D:/hl_mem/var/hl_mem.db"),
+        ("win32", r"\\server\share\hl_mem.db", r"\\server\share\hl_mem.db"),
+        ("linux", "/srv/hl_mem/var/hl_mem.db", "/srv/hl_mem/var/hl_mem.db"),
+        ("linux", "//srv/hl_mem/var/hl_mem.db", "//srv/hl_mem/var/hl_mem.db"),
+        ("linux", "///srv/hl_mem/var/hl_mem.db", "///srv/hl_mem/var/hl_mem.db"),
+    ],
+)
+def test_native_absolute_database_path_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    raw_path: str,
+    expected: str,
+) -> None:
+    """本平台原生绝对路径只做词法规范化，不改变目标。"""
+    escaped_path = raw_path.replace("\\", "\\\\")
+    config_path = _write(
+        tmp_path / "hl_mem.toml",
+        f'[database]\npath = "{escaped_path}"\n[recall]\nquery_expansion_mode = "off"\n',
+    )
+    monkeypatch.setattr(sys, "platform", platform)
+
+    settings = load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert settings.database_path == expected
 
 
 def test_placeholder_error_is_redacted(tmp_path: Path) -> None:

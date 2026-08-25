@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.31.0](https://img.shields.io/badge/version-0.31.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.31.1](https://img.shields.io/badge/version-0.31.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -117,7 +117,7 @@ Start HL-Mem and verify `curl --fail http://127.0.0.1:8200/healthz`, then run th
 uv run python scripts/install_to_hermes.py --hermes-home <HERMES_HOME>
 ```
 
-The plugin is installed under `<HERMES_HOME>/plugins/hl_mem/`; restart Hermes afterward. The local HTTP adapter provides timeouts, circuit breaking, prefetching, and Episode/Trace synchronization.
+The plugin is installed under `<HERMES_HOME>/plugins/hl_mem/` and always reads `<HERMES_HOME>/hl_mem.toml` plus `<HERMES_HOME>/.env`, independent of the Hermes process CWD. After a real install or upgrade, restart every Hermes gateway/CLI process that imported hl_mem; never validate new configuration in a process that still holds modules from an older editable checkout. The local HTTP adapter provides timeouts, circuit breaking, prefetching, and Episode/Trace synchronization.
 
 ### Always-on deployment and systemd
 
@@ -127,12 +127,14 @@ See the [API reference](docs/api.md) for complete REST request contracts.
 
 ## Key Configuration
 
-Non-secret settings come only from `hl_mem.toml`; secrets come only from `.env` or same-named process environment
-variables. Common keys are listed below.
+General CLI/server entry points read `hl_mem.toml` from the current directory, while the Hermes plugin reads it from
+`HERMES_HOME`; secrets come only from the corresponding `.env` or same-named process environment variables. A relative
+`database.path` is resolved from the real target directory of the configuration symlink. Foreign-platform absolute paths
+fail before startup. Common keys are listed below.
 
 | TOML key | Code default | Purpose |
 |---|---:|---|
-| `database.path` | `var/hl_mem.db` | SQLite database path |
+| `database.path` | `var/hl_mem.db` | SQLite path, relative to the real configuration directory |
 | `extraction.mode` | `fake` | `fake`, `real`, or `llm` |
 | `extraction.batch_max_events` | `5` | Maximum same-session Events per extraction call |
 | `extraction.batch_max_wait_seconds` | `120.0` | Maximum wait for a non-full extraction window |
@@ -199,6 +201,15 @@ python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-r
 python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-replay.json \
   --export-expanded-fixture var/eval/v0291-injection-fixture.jsonl
 ```
+
+### Upgrading to v0.31.1
+
+v0.31.1 fixes Hermes configuration discovery and shadow-database path hazards. Before upgrading, use a fresh process to
+confirm the database's newly resolved absolute path. If it differs from the file opened by the old process, perform a
+controlled migration before allowing writers to start. Prefer `database.path = "var/hl_mem.db"`; Windows drive/UNC paths
+are rejected on POSIX, and POSIX root paths are rejected on Windows. Restart every Hermes gateway/CLI process after
+upgrading the plugin so the checkout, package metadata, deployed copy, and imported modules all agree. This release adds
+no TOML keys or migrations.
 
 ### Upgrading to v0.31.0
 
@@ -315,7 +326,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.31.0 with 54 immutable, forward-only migrations. Migrations 050–054 add the governance action
+The current baseline is v0.31.1 with 54 immutable, forward-only migrations. Migrations 050–054 add the governance action
 ledger, conflict automation policy, typed canonical entities, plan fulfillment, and slot-aware cross-subject dedup audit
 fields. Stop all writers and back up both the primary database and tombstone sidecar before upgrading; old binaries must
 not reopen an upgraded database.

@@ -3,16 +3,38 @@
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 import types
 from collections.abc import Mapping
 from dataclasses import Field, fields
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 from hl_mem.errors import ConfigurationError
 from hl_mem.settings import Settings
+
+
+def _resolve_database_path(raw_path: str, resolved_config_path: Path, platform: str) -> str:
+    """按配置文件真实目录解析数据库路径，并拒绝异平台绝对路径。"""
+    windows_absolute = PureWindowsPath(raw_path).is_absolute()
+    posix_absolute = PurePosixPath(raw_path).is_absolute()
+    if platform == "win32":
+        if windows_absolute:
+            return raw_path
+        if posix_absolute:
+            raise ConfigurationError(
+                f"{resolved_config_path}: database.path: POSIX absolute path is not valid on Windows: {raw_path}"
+            )
+    else:
+        if posix_absolute:
+            return raw_path
+        if windows_absolute:
+            raise ConfigurationError(
+                f"{resolved_config_path}: database.path: Windows absolute path is not valid on POSIX: {raw_path}"
+            )
+    return str((resolved_config_path.resolve().parent / raw_path).resolve())
 
 
 def _read_env_file(path: Path, secret_names: frozenset[str]) -> dict[str, str]:
@@ -221,6 +243,13 @@ def load_settings(
             resolved_config_path,
             key_path,
         )
+
+    database_field = toml_fields["database.path"]
+    values[database_field.name] = _resolve_database_path(
+        values.get(database_field.name, database_field.default),
+        resolved_config_path,
+        sys.platform,
+    )
 
     secret_names = frozenset(secret_fields)
     secret_values = _read_env_file(resolved_env_path, secret_names)

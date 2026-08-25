@@ -22,7 +22,23 @@ def test_main_prints_start_and_success_messages(tmp_path: Path, capsys: pytest.C
     assert exit_code == 0
     assert "Installing HL-Mem Hermes plugin" in output
     assert "Installation succeeded" in output
+    assert "Required: restart every running Hermes gateway/CLI process that imported hl_mem." in output
+    assert "Do not validate a new hl_mem.toml against a process that imported an older editable checkout." in output
     assert output.index("Installing HL-Mem Hermes plugin") < output.index("Installation succeeded")
+
+
+@pytest.mark.parametrize("action", ["install", "upgrade"])
+def test_cli_hermes_changed_deployment_requires_restart(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    action: str,
+) -> None:
+    """真实写入插件后必须阻止用户在旧宿主进程中验证新配置。"""
+    cli_main(["hermes", action, "--hermes-home", str(tmp_path)])
+
+    output = capsys.readouterr().out
+    assert "Required: restart every running Hermes gateway/CLI process that imported hl_mem." in output
+    assert "Do not validate a new hl_mem.toml against a process that imported an older editable checkout." in output
 
 
 def test_cli_hermes_install_is_idempotent(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -36,7 +52,9 @@ def test_cli_hermes_install_is_idempotent(tmp_path: Path, capsys: pytest.Capture
 
     cli_main(["hermes", "install", "--hermes-home", str(tmp_path)])
 
-    assert "no changes" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "no changes" in output
+    assert "Required: restart every running Hermes gateway/CLI process that imported hl_mem." in output
     assert list(target.glob("backup_*")) == []
     _assert_installed_plugin_matches_package(target)
 

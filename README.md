@@ -2,7 +2,7 @@
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.31.0](https://img.shields.io/badge/version-0.31.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.31.1](https://img.shields.io/badge/version-0.31.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -161,7 +161,7 @@ hl-mem hermes install --hermes-home <HERMES_HOME>
 hl-mem hermes upgrade --hermes-home <HERMES_HOME>
 ```
 
-省略 `--hermes-home` 时会从环境变量和常见目录探测 Hermes 根目录。两条命令在目标副本一致时均保持 no-op；`install` 遇到漂移会拒绝覆盖，`upgrade` 会先备份既有插件文件再刷新。`hlmem doctor` 可区分路径正确、路径错误和副本漂移，并分别诊断 daemon、插件与 Context Packet wire 的静态 major 兼容性；它不会执行动态协商或自动升级。插件安装到 `<HERMES_HOME>/plugins/hl_mem/`；完成后必须重启 Hermes。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
+省略 `--hermes-home` 时会从环境变量和常见目录探测 Hermes 根目录。两条命令在目标副本一致时均保持 no-op；`install` 遇到漂移会拒绝覆盖，`upgrade` 会先备份既有插件文件再刷新。`hlmem doctor` 可区分路径正确、路径错误和副本漂移，并分别诊断 daemon、插件与 Context Packet wire 的静态 major 兼容性；它不会执行动态协商或自动升级。插件安装到 `<HERMES_HOME>/plugins/hl_mem/`，并固定读取该目录根下的 `hl_mem.toml` 与 `.env`，不依赖 Hermes 进程 CWD。实际安装或升级后必须重启所有已导入 hl_mem 的 Hermes gateway/CLI 进程；不得用仍持有旧 editable checkout 模块的进程验证新配置。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
 
 ### 常驻部署与 systemd
 
@@ -243,12 +243,13 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 
 ## 关键配置
 
-非敏感配置只从当前工作目录的 `hl_mem.toml` 读取；密钥只从 `.env` 或同名进程环境变量读取。常用键如下，完整列表见
-[配置参考](docs/configuration.md)。
+通用 CLI/server 从当前工作目录读取 `hl_mem.toml`，Hermes 插件固定从 `<HERMES_HOME>` 读取；密钥只从对应
+`.env` 或同名进程环境变量读取。相对 `database.path` 以配置文件 symlink 的真实目标目录为基准，异平台绝对路径
+会在启动前失败。常用键如下，完整列表见 [配置参考](docs/configuration.md)。
 
 | TOML 键 | 代码默认值 | 说明 |
 |---|---:|---|
-| `database.path` | `var/hl_mem.db` | SQLite 数据库路径 |
+| `database.path` | `var/hl_mem.db` | SQLite 数据库路径；相对配置文件真实目录解析 |
 | `extraction.mode` | `fake` | 提取器：`fake`、`real` 或 `llm` |
 | `extraction.batch_max_events` | `5` | 同 session 单次提取的 Event 上限 |
 | `extraction.batch_max_wait_seconds` | `120.0` | 未满窗口的最长等待时间 |
@@ -289,6 +290,14 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
 ```
+
+### 升级到 v0.31.1
+
+v0.31.1 修复 Hermes 插件配置定位和数据库影子路径风险。升级前先在 fresh process 中确认新版本解析出的数据库
+绝对路径；若与旧进程实际打开的文件不同，先做受控迁移，不要让新版本自动创建空库。推荐保持
+`database.path = "var/hl_mem.db"`，不要在 Linux 使用 Windows drive/UNC 路径，也不要在 Windows 使用 POSIX
+根路径。插件升级后必须重启所有已导入 hl_mem 的 Hermes gateway/CLI 进程；磁盘 checkout、metadata、已部署
+插件副本和进程内模块必须一致。本版没有新增 TOML key 或 migration。
 
 ### 升级到 v0.31.0
 
@@ -399,7 +408,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.31.0，共 54 个不可变、仅向前执行的 SQL Migration。migration 050–054 依次增加治理动作账本、
+当前基线为 v0.31.1，共 54 个不可变、仅向前执行的 SQL Migration。migration 050–054 依次增加治理动作账本、
 冲突自动策略、typed canonical entity、plan fulfillment 和带 slot 的跨 subject dedup 审计字段；全部是仅向前的
 additive 升级。升级前仍须停止写入者并备份主库与 tombstone sidecar，旧二进制不得再打开已升级数据库。
 

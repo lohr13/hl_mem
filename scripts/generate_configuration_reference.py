@@ -146,6 +146,12 @@ CONSTRAINTS = {
 }
 
 TABLE_NOTES = {
+    "database": [
+        "",
+        "`database.path` 的相对值以配置文件 symlink 的真实目标目录为基准，而不是进程当前目录。建议使用",
+        '`path = "var/hl_mem.db"` 保持跨平台可移植；Windows drive/UNC 绝对路径只允许在 Windows，POSIX',
+        "绝对路径只允许在 POSIX，异平台绝对路径会在启动前 fail-fast。",
+    ],
     "embedding": [
         "",
         "`embedding.text_type` 仅在 native API 模式下发送；默认不设置，compatible 模式不使用该参数。显式启用、修改或取消",
@@ -333,8 +339,9 @@ def generate() -> str:
         "",
         "## 加载规则",
         "",
-        "- 默认读取当前工作目录的 `hl_mem.toml`；文件缺失、TOML 语法错误、未知表、未知键或类型错误都会阻止启动。",
-        "- `.env` 也是相对当前工作目录读取，但可以缺失。进程环境中的同名密钥覆盖 `.env`。",
+        "- 通用 CLI/server 默认读取当前工作目录的 `hl_mem.toml`；Hermes 插件固定读取 `<HERMES_HOME>/hl_mem.toml`，不依赖宿主进程 CWD。文件缺失、TOML 语法错误、未知表、未知键或类型错误都会阻止启动。",
+        "- 通用 CLI/server 的 `.env` 默认相对当前工作目录读取；Hermes 插件固定读取 `<HERMES_HOME>/.env`。`.env` 可以缺失，进程环境中的同名密钥覆盖它。",
+        "- 相对 `database.path` 以配置文件 symlink 的真实目标目录为基准；异平台绝对路径会阻止启动，不会被当成相对路径创建影子数据库。",
         "- 除四个密钥外，环境变量不参与配置；所有 `HL_MEM_*` 变量均被忽略。",
         "- TOML 使用原生类型；仅允许数组转换为 tuple、字符串转换为枚举。密钥不得写入 TOML。",
         "- 可从 [`config.example.toml`](../config.example.toml) 复制常用配置；该示例显式启用真实能力，推荐值不等于代码默认值。",
