@@ -41,10 +41,6 @@ class EntityRepository:
         self.connection = connection
 
     @staticmethod
-    def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
-        return dict(row) if row is not None else None
-
-    @staticmethod
     def _entity_type(entity_type: str) -> EntityType:
         if entity_type not in ENTITY_TYPES:
             raise EntityCoordinateError(f"unsupported entity type: {entity_type}")
@@ -162,7 +158,9 @@ class EntityRepository:
             ),
         )
         row = self.connection.execute("SELECT * FROM entity_aliases WHERE id=?", (alias_id,)).fetchone()
-        return cast(dict[str, Any], self._row(row))
+        if row is None:
+            raise RuntimeError("entity alias insert was not observable")
+        return dict(row)
 
     def close_alias(
         self,
@@ -225,13 +223,8 @@ class EntityRepository:
         """Idempotently seed builtins through the same create and resolve-ready rows."""
 
         seeds = typed_builtin_seeds()
-        entity_count = 0
-        alias_count = 0
+        before = self.connection.total_changes
         for entity_seed in seeds.entities:
-            existed = self.connection.execute(
-                "SELECT 1 FROM canonical_entities WHERE namespace_key=? AND id=?",
-                (namespace_key, entity_seed.id),
-            ).fetchone()
             self.create_entity(
                 entity_seed.id,
                 entity_seed.entity_type,
@@ -240,14 +233,8 @@ class EntityRepository:
                 namespace_key=namespace_key,
                 now=now,
             )
-            entity_count += existed is None
+        entity_count = self.connection.total_changes - before
         for alias_seed in seeds.aliases:
-            normalized = normalize_typed_alias(alias_seed.alias)
-            existed = self.connection.execute(
-                "SELECT 1 FROM entity_aliases WHERE namespace_key=? AND alias_normalized=? "
-                "AND entity_type=? AND valid_to IS NULL",
-                (namespace_key, normalized, alias_seed.entity_type),
-            ).fetchone()
             self.create_alias(
                 alias_seed.alias,
                 alias_seed.entity_type,
@@ -256,8 +243,7 @@ class EntityRepository:
                 namespace_key=namespace_key,
                 valid_from=now,
             )
-            alias_count += existed is None
-        return entity_count, alias_count
+        return entity_count, self.connection.total_changes - before - entity_count
 
     def create_relation(
         self,
@@ -294,7 +280,9 @@ class EntityRepository:
             ),
         )
         row = self.connection.execute("SELECT * FROM entity_relations WHERE id=?", (relation_id,)).fetchone()
-        return cast(dict[str, Any], self._row(row))
+        if row is None:
+            raise RuntimeError("entity relation insert was not observable")
+        return dict(row)
 
     def link_claim(
         self,
@@ -316,23 +304,6 @@ class EntityRepository:
         if alias_version is None or proof_id is None:
             raise EntityTypeMismatchError("claim entity links require alias version and evidence proof")
         normalized_mention = normalize_typed_alias(mention_text)
-        alias = self.connection.execute(
-            "SELECT 1 FROM entity_aliases WHERE namespace_key=? AND alias_normalized=? "
-            "AND entity_type=? AND canonical_entity_id=? AND version=?",
-            (
-                namespace_key,
-                normalized_mention,
-                target["entity_type"],
-                canonical_entity_id,
-                alias_version,
-            ),
-        ).fetchone()
-        proof = self.connection.execute(
-            "SELECT 1 FROM evidence_links WHERE id=? AND derived_type='claim' AND derived_id=?",
-            (proof_id, claim_id),
-        ).fetchone()
-        if alias is None or proof is None:
-            raise EntityTypeMismatchError("claim entity alias or evidence proof mismatch")
         payload = {
             "claim_id": claim_id,
             "canonical_entity_id": canonical_entity_id,
@@ -342,12 +313,15 @@ class EntityRepository:
             "alias_version": alias_version,
             "proof_id": proof_id,
         }
-        self.connection.execute(
-            "INSERT OR IGNORE INTO claim_entity_links("
-            "claim_id,canonical_entity_id,role,mention_text,resolution_confidence,alias_version,proof_id"
-            ") VALUES (?,?,?,?,?,?,?)",
-            tuple(payload.values()),
-        )
+        try:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO claim_entity_links("
+                "claim_id,canonical_entity_id,role,mention_text,resolution_confidence,alias_version,proof_id"
+                ") VALUES (?,?,?,?,?,?,?)",
+                tuple(payload.values()),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise EntityTypeMismatchError("claim entity alias or evidence proof mismatch") from exc
         row = self.connection.execute(
             "SELECT * FROM claim_entity_links WHERE claim_id=? AND canonical_entity_id=? AND role=?",
             (claim_id, canonical_entity_id, role),

@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from hl_mem.domain.entity_coordinates import normalize_typed_alias
 from hl_mem.settings import Settings, VectorBackend
 from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
 from hl_mem.storage.migrations.backfill_conflict_key_v3 import backfill_conflict_keys_v3
@@ -37,6 +38,10 @@ _PRE_GUARD_DATA_MIGRATIONS = (
     "016_data_conflict_key_v3",
     "038_data_subject_canonicalization_v2",
 )
+
+
+def _register_entity_functions(connection: sqlite3.Connection) -> None:
+    connection.create_function("hl_mem_normalize_alias", 1, normalize_typed_alias, deterministic=True)
 
 
 def default_database_path(settings: Settings | None = None) -> Path:
@@ -87,6 +92,7 @@ class Database:
         )
         connection.hl_mem_settings = self.settings
         connection.row_factory = sqlite3.Row
+        _register_entity_functions(connection)
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
         try:
@@ -117,6 +123,7 @@ class Database:
         )
         connection.hl_mem_settings = self.settings
         connection.row_factory = sqlite3.Row
+        _register_entity_functions(connection)
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
@@ -143,6 +150,7 @@ class Database:
             )
             connection.hl_mem_settings = self.settings
             connection.row_factory = sqlite3.Row
+            _register_entity_functions(connection)
             try:
                 if connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 0:
                     has_tables = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone()

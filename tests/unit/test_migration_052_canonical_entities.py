@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from hl_mem.storage.database import Database
-from hl_mem.storage.entities import EntityRepository
 
 MIGRATION_DIR = Path(__file__).resolve().parents[2] / "src/hl_mem/storage/migrations"
 NOW = "2026-08-25T10:00:00+00:00"
@@ -91,6 +90,32 @@ def _insert_event(connection: sqlite3.Connection, event_id: str, tenant_id: str)
     )
 
 
+def _insert_claim_link(
+    connection: sqlite3.Connection,
+    claim_id: str,
+    entity_id: str,
+    mention: str,
+    *,
+    role: str = "actor",
+) -> None:
+    connection.execute(
+        "INSERT INTO claims(id,value_json,recorded_from,status) VALUES (?, '\"value\"',?,'active')",
+        (claim_id, NOW),
+    )
+    connection.execute(
+        "INSERT INTO evidence_links("
+        "id,derived_type,derived_id,evidence_type,evidence_id,relation"
+        ") VALUES (?,'claim',?,'event','event','supports')",
+        (f"{claim_id}-proof", claim_id),
+    )
+    connection.execute(
+        "INSERT INTO claim_entity_links("
+        "claim_id,canonical_entity_id,role,mention_text,resolution_confidence,alias_version,proof_id"
+        ") VALUES (?,?,?,?,1.0,1,?)",
+        (claim_id, entity_id, role, mention, f"{claim_id}-proof"),
+    )
+
+
 def _foreign_keys(connection: sqlite3.Connection, table: str) -> list[tuple[str, tuple[tuple[str, str], ...]]]:
     grouped: dict[int, tuple[str, list[tuple[str, str]]]] = {}
     for row in connection.execute(f"PRAGMA foreign_key_list({table})"):
@@ -152,9 +177,7 @@ def test_fresh_schema_has_exact_entity_tables_hot_columns_and_foreign_keys(tmp_p
     claim_columns = {row[1] for row in connection.execute("PRAGMA table_info(claims)")}
     assert {"subject_canonical_entity_id", "canonical_target_entity_id"} <= claim_columns
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert connection.execute(
-        "SELECT 1 FROM schema_migrations WHERE version='052_canonical_entities'"
-    ).fetchone()
+    assert connection.execute("SELECT 1 FROM schema_migrations WHERE version='052_canonical_entities'").fetchone()
 
 
 def test_migration_declares_composite_and_evidence_foreign_keys(tmp_path: Path) -> None:
@@ -237,9 +260,7 @@ def test_only_one_active_alias_is_allowed_per_namespace_type_and_normalized_alia
     with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
         _insert_alias(connection, "alias-2", "shared", "agent", "agent:second", 2)
 
-    connection.execute(
-        "UPDATE entity_aliases SET valid_to='2026-08-25T11:00:00+00:00' WHERE id='alias-1'"
-    )
+    connection.execute("UPDATE entity_aliases SET valid_to='2026-08-25T11:00:00+00:00' WHERE id='alias-1'")
     _insert_alias(connection, "alias-2", "shared", "agent", "agent:second", 2)
 
 
@@ -254,9 +275,7 @@ def test_alias_target_must_exist_and_match_namespace_and_type(tmp_path: Path) ->
 
     _insert_alias(connection, "valid", "本地小马", "agent", "agent:local_pony", 1)
     with pytest.raises(sqlite3.IntegrityError, match="canonical entity coordinates are immutable"):
-        connection.execute(
-            "UPDATE canonical_entities SET namespace_key='other' WHERE id='agent:local_pony'"
-        )
+        connection.execute("UPDATE canonical_entities SET namespace_key='other' WHERE id='agent:local_pony'")
 
 
 @pytest.mark.parametrize(
@@ -267,9 +286,7 @@ def test_alias_target_must_exist_and_match_namespace_and_type(tmp_path: Path) ->
         ("agent:naïve", "naïve"),
     ],
 )
-def test_raw_sql_rejects_ids_outside_canonical_grammar(
-    tmp_path: Path, entity_id: str, canonical_key: str
-) -> None:
+def test_raw_sql_rejects_ids_outside_canonical_grammar(tmp_path: Path, entity_id: str, canonical_key: str) -> None:
     connection = Database(tmp_path / "raw-id.db").open()
 
     with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
@@ -285,12 +302,29 @@ def test_raw_sql_rejects_non_normalized_ascii_aliases(tmp_path: Path, alias: str
         _insert_alias(connection, "raw", alias, "agent", "agent:local_pony", 1)
 
 
-def test_unicode_alias_sqlite_cannot_normalize_fails_closed_on_lookup(tmp_path: Path) -> None:
+@pytest.mark.parametrize("alias", ["\uff26\uff4f\uff4f", "\u24bb\u24de\u24de", "\ufb00oo"])
+def test_database_alias_check_uses_resolver_equivalent_nfkc(tmp_path: Path, alias: str) -> None:
     connection = Database(tmp_path / "raw-unicode-alias.db").open()
     _insert_entity(connection, "agent:local_pony", "agent", "local_pony")
-    _insert_alias(connection, "raw", "Ｆｏｏ", "agent", "agent:local_pony", 1)
 
-    assert EntityRepository(connection).resolve_alias("foo") is None
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+        _insert_alias(connection, "raw", alias, "agent", "agent:local_pony", 1)
+    _insert_alias(connection, "chinese", "本地小马", "agent", "agent:local_pony", 1)
+
+
+def test_direct_sqlite_connection_without_nfkc_function_fails_writes_closed(tmp_path: Path) -> None:
+    path = tmp_path / "direct-connection.db"
+    database = Database(path)
+    managed = database.open()
+    assert managed.execute("SELECT hl_mem_normalize_alias(' ＦＯＯ ')").fetchone()[0] == "foo"
+    _insert_entity(managed, "agent:local_pony", "agent", "local_pony")
+    managed.commit()
+    assert database.open_readonly().execute("SELECT hl_mem_normalize_alias('本地小马')").fetchone()[0] == "本地小马"
+
+    direct = sqlite3.connect(path)
+    direct.execute("PRAGMA foreign_keys=ON")
+    with pytest.raises(sqlite3.OperationalError, match="unknown function: hl_mem_normalize_alias"):
+        _insert_alias(direct, "raw", "pony", "agent", "agent:local_pony", 1)
 
 
 def test_alias_history_is_immutable_except_one_way_close(tmp_path: Path) -> None:
@@ -490,11 +524,95 @@ def test_raw_claim_link_requires_matching_alias_version_mention_and_claim_proof(
         ") VALUES ('other','agent:local_pony','actor','pony',1.0,1,'proof-other')"
     )
     with pytest.raises(sqlite3.IntegrityError, match="claim entity link history is immutable"):
-        connection.execute(
-            "UPDATE claim_entity_links SET resolution_confidence=0.5 WHERE claim_id='other'"
-        )
+        connection.execute("UPDATE claim_entity_links SET resolution_confidence=0.5 WHERE claim_id='other'")
     with pytest.raises(sqlite3.IntegrityError, match="linked claim namespace is immutable"):
         connection.execute("UPDATE claims SET namespace_key='other' WHERE id='other'")
+
+
+def test_non_nfkc_raw_alias_cannot_prove_claim_link_even_when_mention_matches(tmp_path: Path) -> None:
+    connection = Database(tmp_path / "claim-link-nfkc.db").open()
+    _insert_entity(connection, "agent:local_pony", "agent", "local_pony")
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    _insert_alias(connection, "raw", "\uff26\uff4f\uff4f", "agent", "agent:local_pony", 1)
+    connection.execute("PRAGMA ignore_check_constraints=OFF")
+    connection.execute(
+        "INSERT INTO claims(id,value_json,recorded_from,status) VALUES ('claim','\"value\"',?,'active')",
+        (NOW,),
+    )
+    connection.execute(
+        "INSERT INTO evidence_links("
+        "id,derived_type,derived_id,evidence_type,evidence_id,relation"
+        ") VALUES ('proof','claim','claim','event','event','supports')"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+        connection.execute(
+            "INSERT INTO claim_entity_links("
+            "claim_id,canonical_entity_id,role,mention_text,resolution_confidence,alias_version,proof_id"
+            ") VALUES ('claim','agent:local_pony','actor','\uff26\uff4f\uff4f',1.0,1,'proof')"
+        )
+
+
+def test_entity_history_rows_reject_raw_delete_without_dangling_proof(tmp_path: Path) -> None:
+    connection = Database(tmp_path / "history-delete.db").open()
+    _insert_entity(connection, "agent:local_pony", "agent", "local_pony")
+    _insert_entity(connection, "device:user_local_pc", "device", "user_local_pc")
+    _insert_alias(connection, "alias", "pony", "agent", "agent:local_pony", 1)
+    connection.execute(
+        "INSERT INTO entity_relations("
+        "id,namespace_key,from_entity_id,to_entity_id,relation,confidence,valid_from"
+        ") VALUES ('relation','default','agent:local_pony','device:user_local_pc','runs_on',1.0,?)",
+        (NOW,),
+    )
+    _insert_claim_link(connection, "claim", "agent:local_pony", "pony")
+
+    for table, predicate, message in (
+        ("entity_aliases", "id='alias'", "entity alias history is immutable"),
+        ("entity_relations", "id='relation'", "entity relation history is immutable"),
+        ("claim_entity_links", "claim_id='claim'", "claim entity link history is immutable"),
+    ):
+        with pytest.raises(sqlite3.IntegrityError, match=message):
+            connection.execute(f"DELETE FROM {table} WHERE {predicate}")
+    with pytest.raises(sqlite3.IntegrityError, match="claim entity link history is immutable"):
+        connection.execute("DELETE FROM claims WHERE id='claim'")
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_canonical_delete_rejects_claim_link_reverse_reference(tmp_path: Path) -> None:
+    connection = Database(tmp_path / "canonical-link-delete.db").open()
+    _insert_entity(connection, "agent:local_pony", "agent", "local_pony")
+    _insert_alias(connection, "alias", "pony", "agent", "agent:local_pony", 1)
+    _insert_claim_link(connection, "claim", "agent:local_pony", "pony")
+
+    with pytest.raises(sqlite3.IntegrityError, match="canonical entity is referenced by a claim"):
+        connection.execute("DELETE FROM canonical_entities WHERE namespace_key='default' AND id='agent:local_pony'")
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_canonical_delete_allows_ordered_cleanup_of_claim_hot_references(tmp_path: Path) -> None:
+    connection = Database(tmp_path / "canonical-hot-delete.db").open()
+    _insert_entity(connection, "environment:local_runtime", "environment", "local_runtime")
+    connection.execute(
+        "INSERT INTO claims("
+        "id,value_json,recorded_from,status,subject_canonical_entity_id,canonical_target_entity_id"
+        ") VALUES ('claim','\"value\"',?,'active','environment:local_runtime','environment:local_runtime')",
+        (NOW,),
+    )
+    delete = "DELETE FROM canonical_entities " "WHERE namespace_key='default' AND id='environment:local_runtime'"
+
+    connection.execute("UPDATE claims SET subject_canonical_entity_id=NULL WHERE id='claim'")
+    with pytest.raises(sqlite3.IntegrityError, match="canonical entity is referenced by a claim"):
+        connection.execute(delete)
+    connection.execute(
+        "UPDATE claims SET subject_canonical_entity_id='environment:local_runtime', "
+        "canonical_target_entity_id=NULL WHERE id='claim'"
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="canonical entity is referenced by a claim"):
+        connection.execute(delete)
+    connection.execute("UPDATE claims SET subject_canonical_entity_id=NULL WHERE id='claim'")
+    connection.execute(delete)
+
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 def test_claim_hot_columns_reject_topic_subject_and_cross_namespace_target(tmp_path: Path) -> None:
@@ -524,9 +642,7 @@ def test_claim_hot_columns_reject_topic_subject_and_cross_namespace_target(tmp_p
         (NOW,),
     )
     with pytest.raises(sqlite3.IntegrityError, match="claim canonical entity type or namespace mismatch"):
-        connection.execute(
-            "UPDATE claims SET subject_canonical_entity_id='topic:memory' WHERE id='valid'"
-        )
+        connection.execute("UPDATE claims SET subject_canonical_entity_id='topic:memory' WHERE id='valid'")
     with pytest.raises(sqlite3.IntegrityError, match="claim canonical entity type or namespace mismatch"):
         connection.execute(
             "INSERT INTO claims("
