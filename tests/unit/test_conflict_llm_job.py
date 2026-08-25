@@ -13,9 +13,9 @@ from hl_mem.evaluation.local_qwen_runner import OversizedDocket
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
+from hl_mem.workers import job_handlers
 from hl_mem.workers.auto_resolve_conflicts import AutoDecision, L1Policy, auto_resolve_conflicts
 from hl_mem.workers.conflict_judge import LocalConflictJudge, run_conflict_llm_job
-from hl_mem.workers import job_handlers
 from hl_mem.workers.job_handlers import JOB_HANDLERS
 
 NOW = "2026-08-25T08:00:00+00:00"
@@ -220,9 +220,9 @@ def test_oversized_docket_is_l3_but_transport_failures_are_not_swallowed() -> No
     assert (decision.decision, decision.tier, decision.rule) == ("manual_required", "L3", "oversized_docket")
 
 
-def test_settings_default_to_observe_and_reject_non_loopback_judge() -> None:
+def test_settings_default_to_l0_only_and_reject_non_loopback_judge() -> None:
     settings = Settings.for_test()
-    assert settings.conflict_auto_mode == "observe"
+    assert settings.conflict_auto_mode == "l0_only"
     with pytest.raises(ConfigurationError, match="loopback"):
         LocalConflictJudge.from_settings(
             replace(Settings.for_test(), maintenance_judge_base_url="https://example.com/v1")

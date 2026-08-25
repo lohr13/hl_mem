@@ -46,6 +46,8 @@ chunk_target_chars = 12000
 batch_max_events = 5
 batch_max_wait_seconds = 120.0
 verification_mode = "off"
+# E3 v2 已封存；只记录 grounded lesson signal，不替换旧 notability prompt。
+lesson_signal_mode = "observe"
 
 [index]
 # natural 仅索引 subject 与原语言 value，避免内部 predicate/slot/tag 模板噪声。
@@ -56,6 +58,8 @@ text_version = "v2"
 default_limit = 5
 vector_scan_limit = 200
 dense_enabled = true
+# E4 行为门禁通过但证据等级不足；只跑 shadow，不在 RRF 前硬过滤。
+entity_constraint_mode = "observe"
 dedup_threshold = 0.95
 dedup_candidate_limit = 100
 # A/B 中 2 次正确复活、0 误伤且 p95 仅 12.7ms；默认启用受控 archived-only 冷路径。
@@ -79,6 +83,7 @@ fts_language = "auto"
 [dedup]
 enabled = true
 threshold = 0.92
+# E2 v2 的 0.98/0.99 臂均未达到精度门禁，保持只审计。
 audit_only = true
 auto_merge_min_confidence = 0.98
 scan_limit = 200
@@ -119,6 +124,18 @@ conflict_failure_backoff_seconds = 300
 conflict_writer_yield_ms = 5
 conflict_auto_resolve_max_candidates = 8
 
+[conflict]
+# E1 两轮封存后只执行确定性 L0；L1/L2 不进入生产默认路径。
+auto_mode = "l0_only"
+
+[price]
+# E6 B 臂通过：只对 exact code / typed alias 的现有 instrument ID 落地。
+target_mode = "enforce"
+
+[plan]
+# E5 A 臂通过：严格确定性坐标匹配可关闭 plan valid time。
+fulfillment_mode = "enforce"
+
 [relation]
 discovery_mode = "off"
 
@@ -126,5 +143,6 @@ discovery_mode = "off"
 enabled = false
 url = "http://127.0.0.1:8200"
 timeout = 30
+manual_conflict_notice = true
 # 按需召回可能触发 query expansion LLM；默认 8 秒不改变纯检索 <2 秒目标。
 on_demand_recall_timeout_seconds = 8.0

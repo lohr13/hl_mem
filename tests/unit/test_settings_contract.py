@@ -33,7 +33,7 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.dedup_threshold == 0.92
     assert settings.daily_token_limit == 500_000
     assert settings.conflict_auto_resolve_enabled is True
-    assert settings.conflict_auto_mode == "observe"
+    assert settings.conflict_auto_mode == "l0_only"
     assert settings.conflict_l1_min_time_delta_seconds == 300
     assert settings.conflict_l1_min_confidence_delta == 0.15
     assert settings.conflict_maintenance_max_cases == 50
@@ -43,8 +43,8 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.conflict_auto_resolve_max_candidates == 8
     assert settings.maintenance_judge_base_url == "http://127.0.0.1:8090/v1"
     assert settings.maintenance_judge_model == "Qwen3.8-27B-UD-IQ4_XS.gguf"
-    assert settings.price_target_mode == "observe"
-    assert settings.plan_fulfillment_mode == "audit"
+    assert settings.price_target_mode == "enforce"
+    assert settings.plan_fulfillment_mode == "enforce"
     assert settings.operational_cleanup_enabled is True
     assert settings.operational_batch_size == 2_000
     assert settings.expired_cleanup_mode == "observe"
@@ -58,8 +58,8 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.feedback_unlabeled_days == 90
     assert settings.dedup_max_pending_pairs == 10_000
     assert settings.snapshot()["conflict_maintenance_max_cases"] == 50
-    assert settings.snapshot()["price_target_mode"] == "observe"
-    assert settings.snapshot()["plan_fulfillment_mode"] == "audit"
+    assert settings.snapshot()["price_target_mode"] == "enforce"
+    assert settings.snapshot()["plan_fulfillment_mode"] == "enforce"
     assert settings.snapshot()["operational_batch_size"] == 2_000
     assert settings.echo_suppression_mode == "enforce"
     assert settings.echo_session_window_seconds == 1800

@@ -107,8 +107,8 @@ class Settings:
         metadata={"toml": "database.busy_timeout_seconds"},
     )
     entity_aliases_path: str | None = field(default=None, metadata={"toml": "entity.aliases_path"})
-    price_target_mode: PriceTargetMode = field(default="observe", metadata={"toml": "price.target_mode"})
-    plan_fulfillment_mode: PlanFulfillmentMode = field(default="audit", metadata={"toml": "plan.fulfillment_mode"})
+    price_target_mode: PriceTargetMode = field(default="enforce", metadata={"toml": "price.target_mode"})
+    plan_fulfillment_mode: PlanFulfillmentMode = field(default="enforce", metadata={"toml": "plan.fulfillment_mode"})
     embedder_mode: EmbedderMode = field(default="fake", metadata={"toml": "embedding.mode"})
     embedding_dim: int = field(default=2048, metadata={"toml": "embedding.dim"})
     embedding_api_key: str | None = field(
@@ -419,7 +419,7 @@ class Settings:
     worker_poll_interval: float = field(default=2.0, metadata={"toml": "worker.poll_interval"})
     worker_maintenance_interval: float = _toml_field(600.0, "worker.maintenance_interval")
     conflict_auto_resolve_enabled: bool = _toml_field(True, "worker.conflict_auto_resolve_enabled")
-    conflict_auto_mode: ConflictAutoMode = _toml_field("observe", "conflict.auto_mode")
+    conflict_auto_mode: ConflictAutoMode = _toml_field("l0_only", "conflict.auto_mode")
     conflict_l1_min_time_delta_seconds: int = _toml_field(300, "conflict.l1_min_time_delta_seconds")
     conflict_l1_min_confidence_delta: float = _toml_field(0.15, "conflict.l1_min_confidence_delta")
     conflict_maintenance_max_cases: int = _toml_field(50, "worker.conflict_maintenance_max_cases")

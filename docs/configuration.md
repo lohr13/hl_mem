@@ -6,6 +6,22 @@ HL-Mem 0.29.3 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或�
 
 v0.29.3 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
 
+## 合并版发版决议
+
+- `conflict.auto_mode="l0_only"`：E1 两轮均封存；生产仅执行确定性 L0，L1 禁用，L2 只保留为用户配置
+  `[maintenance_judge]` 后自行回放验证的可选能力。紧急停用可设为 `off`，只观察可设为 `observe`。
+- `plan.fulfillment_mode="enforce"`：E5 A 臂严格确定性规则通过，错误关闭为 0；回滚开关为 `observe` 或 `off`。
+- `price.target_mode="enforce"`：E6 B 臂 exact code / typed alias 通过；缺 target、跨市场歧义、币种或单位不一致仍
+  fail-closed。回滚开关为 `observe` 或 `off`。
+- `dedup.audit_only=true`：E2 v2 的 0.98/0.99 臂均未达到发布精度门禁；再次翻转前仍需 auto precision 100%、
+  Wilson 95% 下界至少 96%、结构违规为 0 且 recall 无显著退化。
+- `extraction.lesson_signal_mode="observe"`：E3 v2 封存，继续使用旧 notability prompt；新 prompt 只有在目标信号、
+  high precision、诱饵误报、误 permanent 和一般提取覆盖全部过线后才能替换。
+- `recall.entity_constraint_mode="observe"`：E4 行为门禁通过，但冻结查询 100% 为 snapshot-derived synthetic，证据
+  等级不足；取得满足预注册真实查询占比的语料前不启用 hard filter。
+- `hermes.manual_conflict_notice=true`：只提示 residual `manual_required_count`，同一会话首次或计数变化时显示；
+  可设为 `false` 立即关闭。
+
 ## 加载规则
 
 - 默认读取当前工作目录的 `hl_mem.toml`；文件缺失、TOML 语法错误、未知表、未知键或类型错误都会阻止启动。
@@ -117,6 +133,14 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `database.busy_timeout_seconds` | 整数 | `30` | >= 1 | `database_busy_timeout_seconds` |
 | `database.path` | 字符串 | `"var/hl_mem.db"` | 任意字符串 | `database_path` |
 | `database.pool_size` | 整数 | `8` | >= 1 | `database_pool_size` |
+
+### `[conflict]`
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `conflict.auto_mode` | 字符串 | `"l0_only"` | `off`、`observe`、`enforce`、`l0_only` | `conflict_auto_mode` |
+| `conflict.l1_min_confidence_delta` | 数值 | `0.15` | `0.10`、`0.15`、`0.20` | `conflict_l1_min_confidence_delta` |
+| `conflict.l1_min_time_delta_seconds` | 整数 | `300` | `0`、`300`、`3600` | `conflict_l1_min_time_delta_seconds` |
 
 ### `[decay]`
 
@@ -263,6 +287,24 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 
 只有用户自己的 replay 达到预注册门禁且逐案报告可审计后，才由用户自行把 L2 调度切到 enforce；配置本段本身
 不会启用 L1 或 L2。L1 保持禁用，紧急回滚直接恢复 `conflict.auto_mode = "l0_only"`。
+
+### `[plan]`
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `plan.fulfillment_mode` | 字符串 | `"enforce"` | `off`、`audit`、`observe`、`enforce` | `plan_fulfillment_mode` |
+
+`enforce` 只允许唯一逻辑计划组的严格坐标匹配；complete/cancel/replace 只关闭 `valid_to`，partial 使用 Decimal
+累计。任何坐标缺失、多组匹配、超量或单位变化都不关闭计划。
+
+### `[price]`
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `price.target_mode` | 字符串 | `"enforce"` | `off`、`audit`、`observe`、`enforce` | `price_target_mode` |
+
+`enforce` 只接受已存在 typed instrument 的 exchange-qualified code 或唯一显式 alias；解析器不能创建 canonical ID。
+缺 target 时价格序列继续返回 `uncertain:price_target_missing`。
 
 ### `[recall]`
 

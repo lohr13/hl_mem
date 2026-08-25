@@ -34,6 +34,29 @@ def test_empty_toml_uses_static_defaults(tmp_path: Path) -> None:
     )
 
 
+def test_release_example_config_matches_approved_modes() -> None:
+    config_path = Path(__file__).parents[2] / "config.example.toml"
+
+    settings = load_settings(
+        config_path,
+        config_path.with_name(".env.example"),
+        environ={
+            "LLM_API_KEY": "test-key",
+            "EMBEDDING_API_KEY": "test-key",
+            "RERANKER_API_KEY": "test-key",
+            "IMAGE_API_KEY": "test-key",
+        },
+    )
+
+    assert settings.conflict_auto_mode == "l0_only"
+    assert settings.plan_fulfillment_mode == "enforce"
+    assert settings.price_target_mode == "enforce"
+    assert settings.hermes_manual_conflict_notice is True
+    assert settings.dedup_audit_only is True
+    assert settings.lesson_signal_mode == "observe"
+    assert settings.entity_constraint_mode == "observe"
+
+
 def test_hermes_on_demand_recall_timeout_loads_from_toml(tmp_path: Path) -> None:
     config_path = _write(
         tmp_path / "hermes-timeout.toml",
