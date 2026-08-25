@@ -1,33 +1,15 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from hl_mem.domain.claims.conflicts import compute_conflict_key
-from hl_mem.domain.entity_coordinates import (
-    AmbiguousEntityAliasError,
-    EntityCoordinateError,
-    normalize_typed_alias,
-)
+from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
+from hl_mem.domain.entity_coordinates import EntityCoordinateError
 from hl_mem.storage.claims import ClaimRepository
-from hl_mem.storage.entities import EntityRepository
+from hl_mem.storage.entities import EntityRepository, v4_entity_conflict_key
 
 _REKEY_FIELDS = "id namespace_key status subject_entity_id canonical_slot conflict_key conflict_key_version subject_canonical_entity_id qualifiers"
-
-
-def v4_conflict_key(claim: Any, canonical_id: str) -> str | None:
-    qualifiers = claim.get("qualifiers") if isinstance(claim, dict) else json.loads(claim["qualifiers_json"] or "{}")
-    return compute_conflict_key(
-        str(claim["namespace_key"]),
-        str(claim["subject_entity_id"] or ""),
-        str(claim["predicate"] or ""),
-        claim["canonical_slot"],
-        qualifiers,
-        version=4,
-        subject_canonical_entity_id=canonical_id,
-    )
 
 
 @dataclass(frozen=True)
@@ -45,25 +27,10 @@ class EntityResolutionService:
         self.claims = ClaimRepository(connection)
 
     def resolve_subject(self, namespace_key: str, mention: str) -> SubjectResolution:
-        try:
-            normalized = normalize_typed_alias(mention)
-        except EntityCoordinateError:
-            return SubjectResolution("no_proof", str(mention).strip().casefold())
-        try:
-            resolved = self.entities.resolve_alias(mention, namespace_key=namespace_key, role="subject")
-        except (AmbiguousEntityAliasError, EntityCoordinateError):
-            return SubjectResolution("type_mismatch", normalized)
-        if resolved is None:
-            return SubjectResolution("no_proof", normalized)
-        proof = self.connection.execute(
-            "SELECT version FROM entity_aliases WHERE namespace_key=? AND alias_normalized=? "
-            "AND entity_type=? AND canonical_entity_id=? AND valid_to IS NULL "
-            "AND source_kind IN ('builtin','config_explicit','user_explicit','migration_exact')",
-            (namespace_key, normalized, resolved.entity_type, resolved.canonical_entity_id),
-        ).fetchone()
-        if proof is None:
-            return SubjectResolution("no_proof", normalized)
-        return SubjectResolution("mapping", normalized, resolved.canonical_entity_id, int(proof[0]))
+        outcome, normalized, resolved = self.entities.resolve_subject_alias(mention, namespace_key=namespace_key)
+        if resolved:
+            return SubjectResolution(outcome, normalized, resolved.canonical_entity_id, resolved.alias_version)
+        return SubjectResolution(outcome, normalized)
 
     def _proof_id(self, claim_id: str) -> str:
         proof = self.connection.execute(
@@ -106,7 +73,7 @@ class EntityResolutionService:
             resolution = self.resolve_subject(str(claim["namespace_key"]), str(claim["subject_entity_id"] or ""))
             if resolution.canonical_entity_id is None:
                 raise EntityCoordinateError(f"claim has no active alias proof: {claim_id}")
-            conflict_key = v4_conflict_key(claim, resolution.canonical_entity_id)
+            conflict_key = v4_entity_conflict_key(claim, resolution.canonical_entity_id)
             self._proof_id(claim_id)
             outcome = self.claims._cas_rekey_canonical_subject(
                 claim, resolution.canonical_entity_id, conflict_key, changed_at
@@ -128,7 +95,12 @@ class EntityResolutionService:
         *,
         changed_at: str,
     ) -> None:
-        if resolution.canonical_entity_id is None:
+        slot = incoming.get("canonical_slot")
+        if (
+            resolution.canonical_entity_id is None
+            or incoming.get("conflict_key") is None
+            or not is_mutually_exclusive_attribute(slot)
+        ):
             return
         rows = self.connection.execute(
             "SELECT DISTINCT claim.id FROM claims AS claim JOIN entity_aliases AS alias "
@@ -148,7 +120,7 @@ class EntityResolutionService:
             claim = self.claims.get_claim(str(row[0]))
             if claim is None:
                 raise EntityCoordinateError("legacy entity rekey disappeared")
-            if v4_conflict_key(claim, resolution.canonical_entity_id) != incoming.get("conflict_key"):
+            if v4_entity_conflict_key(claim, resolution.canonical_entity_id) != incoming.get("conflict_key"):
                 continue
             if (
                 self.rekey_claim(str(row[0]), self.claim_fingerprint(claim), changed_at=changed_at, commit=False)

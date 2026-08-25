@@ -3,8 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from hl_mem.application.entity_resolution import EntityResolutionService, SubjectResolution, v4_conflict_key
-from hl_mem.storage.entities import EntityRepository
+from hl_mem.storage.entities import EntityRepository, v4_entity_conflict_key
 
 COLLISION_SCAN_LIMIT = 500
 
@@ -32,11 +31,12 @@ def prepare_canonical_entity_audit_clone(connection: sqlite3.Connection, now: st
 def _collision_outcome(
     connection: sqlite3.Connection,
     row: sqlite3.Row,
-    resolution: SubjectResolution,
+    outcome: str,
+    canonical_id: str | None,
     proposed_key: str | None,
 ) -> str:
-    if proposed_key is None or (canonical_id := resolution.canonical_entity_id) is None:
-        return resolution.outcome
+    if proposed_key is None or canonical_id is None:
+        return outcome
     if connection.execute(
         "SELECT 1 FROM claims WHERE id<>? AND namespace_key=? AND conflict_key=? "
         "AND status IN ('active','candidate','disputed') LIMIT 1",
@@ -56,9 +56,9 @@ def _collision_outcome(
         (row["id"], row["namespace_key"], row["canonical_slot"], canonical_id, COLLISION_SCAN_LIMIT + 1),
     ).fetchall()
     for candidate in candidates[:COLLISION_SCAN_LIMIT]:
-        if v4_conflict_key(candidate, str(canonical_id)) == proposed_key:
+        if v4_entity_conflict_key(candidate, canonical_id) == proposed_key:
             return "collision"
-    return "overflow" if len(candidates) > COLLISION_SCAN_LIMIT else resolution.outcome
+    return "overflow" if len(candidates) > COLLISION_SCAN_LIMIT else outcome
 
 
 def audit_canonical_entity_backfill(
@@ -74,14 +74,15 @@ def audit_canonical_entity_backfill(
         "FROM claims WHERE id>? AND subject_canonical_entity_id IS NULL ORDER BY id LIMIT ?",
         (cursor or "", limit + 1),
     ).fetchall()
-    service = EntityResolutionService(connection)
+    repository = EntityRepository(connection)
     records: list[BackfillAuditRecord] = []
     for row in rows[:limit]:
-        resolution = service.resolve_subject(str(row["namespace_key"]), str(row["subject_entity_id"] or ""))
-        proposed_key = (
-            v4_conflict_key(row, resolution.canonical_entity_id) if resolution.canonical_entity_id is not None else None
+        outcome, _, resolved = repository.resolve_subject_alias(
+            str(row["subject_entity_id"] or ""), namespace_key=str(row["namespace_key"])
         )
-        outcome = _collision_outcome(connection, row, resolution, proposed_key)
-        records.append(BackfillAuditRecord(str(row["id"]), outcome, resolution.canonical_entity_id, proposed_key))
+        canonical_id = resolved.canonical_entity_id if resolved else None
+        proposed_key = v4_entity_conflict_key(row, canonical_id) if canonical_id else None
+        outcome = _collision_outcome(connection, row, outcome, canonical_id, proposed_key)
+        records.append(BackfillAuditRecord(str(row["id"]), outcome, canonical_id, proposed_key))
     next_cursor = str(rows[min(limit, len(rows)) - 1]["id"]) if records else cursor
     return BackfillAuditBatch(tuple(records), next_cursor, len(rows) <= limit)

@@ -18,10 +18,32 @@ from hl_mem.storage.database import Database
 from hl_mem.storage.entities import EntityRepository
 
 NOW = "2026-08-25T10:00:00+00:00"
+MIGRATION_DIR = Path(__file__).resolve().parents[2] / "src/hl_mem/storage/migrations"
 
 
 def _connection(tmp_path: Path):
     return Database(tmp_path / "entity-resolution.db").open()
+
+
+def _upgraded_connection(tmp_path: Path):
+    path = tmp_path / "entity-resolution-upgrade.db"
+    legacy = sqlite3.connect(path)
+    legacy.execute("CREATE TABLE schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT)")
+    migrations = [migration for migration in sorted(MIGRATION_DIR.glob("*.sql")) if migration.name < "052_"]
+    assert migrations[-1].name == "051_conflict_auto_policy.sql"
+    for migration in migrations:
+        legacy.executescript(migration.read_text(encoding="utf-8"))
+        legacy.execute("INSERT INTO schema_migrations(version) VALUES (?)", (migration.stem,))
+    for version in (
+        "006_data_conflict_key_v2",
+        "011_data_fact_hash_v2",
+        "016_data_conflict_key_v3",
+        "038_data_subject_canonicalization_v2",
+    ):
+        legacy.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+    legacy.commit()
+    legacy.close()
+    return Database(path).open()
 
 
 def _claim(subject: str, value: str = "8080") -> ExtractedClaim:
@@ -233,6 +255,43 @@ def test_ingest_fails_closed_when_applicable_v3_rekey_overflows(tmp_path: Path) 
         _store(connection, "user", "9090")
 
     assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 17
+
+
+def test_upgraded_schema_no_slot_ingest_skips_legacy_rekey_scan(tmp_path: Path) -> None:
+    connection = _upgraded_connection(tmp_path)
+    legacy_ids = []
+    for index in range(17):
+        stored = IngestService.store_extracted(
+            connection,
+            ExtractedClaim(subject="user", predicate=f"ordinary.note.{index}", value=f"legacy-{index}"),
+            {"id": f"event-legacy-{index}", "tenant_id": "default", "actor_type": "user"},
+            NOW,
+            FakeEmbedder(8),
+        )
+        legacy_ids.append(str(stored.claim_id))
+    connection.execute("DELETE FROM claim_entity_links")
+    connection.execute("UPDATE claims SET subject_canonical_entity_id=NULL,conflict_key=NULL,conflict_key_version=3")
+    connection.commit()
+    before = connection.execute(
+        "SELECT id,status,subject_canonical_entity_id,conflict_key,conflict_key_version " "FROM claims ORDER BY id"
+    ).fetchall()
+
+    incoming = IngestService.store_extracted(
+        connection,
+        ExtractedClaim(subject="user", predicate="ordinary.note.new", value="new ordinary claim"),
+        {"id": "event-new-ordinary", "tenant_id": "default", "actor_type": "user"},
+        NOW,
+        FakeEmbedder(8),
+    )
+
+    after = connection.execute(
+        "SELECT id,status,subject_canonical_entity_id,conflict_key,conflict_key_version "
+        "FROM claims WHERE id IN ({}) ORDER BY id".format(",".join("?" for _ in legacy_ids)),
+        legacy_ids,
+    ).fetchall()
+    assert incoming.claim_id is not None
+    assert [tuple(row) for row in after] == [tuple(row) for row in before]
+    assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 0
     assert connection.execute("SELECT count(*) FROM claims WHERE conflict_key_version=3").fetchone()[0] == 17
 
 

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from typing import Any, Literal, cast
 
+from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.domain.entity import typed_builtin_seeds
 from hl_mem.domain.entity_coordinates import (
     ENTITY_TYPES,
@@ -24,6 +26,19 @@ AliasSourceKind = Literal["builtin", "config_explicit", "user_explicit", "migrat
 
 _ALIAS_SOURCE_KINDS = frozenset({"builtin", "config_explicit", "user_explicit", "migration_exact"})
 _RELATIONS = frozenset({"runs_on", "owned_by", "operates_in", "part_of", "about"})
+
+
+def v4_entity_conflict_key(claim: Any, canonical_id: str) -> str | None:
+    qualifiers = claim.get("qualifiers") if isinstance(claim, dict) else json.loads(claim["qualifiers_json"] or "{}")
+    return compute_conflict_key(
+        str(claim["namespace_key"]),
+        str(claim["subject_entity_id"] or ""),
+        str(claim["predicate"] or ""),
+        claim["canonical_slot"],
+        qualifiers,
+        version=4,
+        subject_canonical_entity_id=canonical_id,
+    )
 
 
 class UnknownCanonicalEntityError(EntityCoordinateError):
@@ -218,6 +233,19 @@ class EntityRepository:
             expected_type=expected_type,
             role=role,
         )
+
+    def resolve_subject_alias(
+        self, alias: str, *, namespace_key: str = "default"
+    ) -> tuple[str, str, ResolvedEntity | None]:
+        try:
+            normalized = normalize_typed_alias(alias)
+        except EntityCoordinateError:
+            return "no_proof", str(alias).strip().casefold(), None
+        try:
+            resolved = self.resolve_alias(alias, namespace_key=namespace_key, role="subject")
+        except EntityCoordinateError:
+            return "type_mismatch", normalized, None
+        return ("mapping" if resolved else "no_proof"), normalized, resolved
 
     def seed_builtins(self, namespace_key: str = "default", *, now: str) -> tuple[int, int]:
         """Idempotently seed builtins through the same create and resolve-ready rows."""
