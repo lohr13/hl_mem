@@ -105,6 +105,19 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _handle_resolve_conflict_llm(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
+    from hl_mem.workers.conflict_judge import run_conflict_llm_job
+
+    payload = job.get("payload") or json.loads(job["payload_json"] or "{}")
+    return run_conflict_llm_job(
+        worker.connection,
+        payload,
+        components.make_conflict_judge(worker.settings),
+        mode=worker.settings.conflict_auto_mode,
+        now=utc_now(),
+    )
+
+
 def _handle_induce_policies(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     payload = json.loads(job.get("payload_json") or "{}")
     return induce_policies(
@@ -226,6 +239,7 @@ JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {
     "decay_access": _handle_decay,
     "rebuild_usefulness": _handle_rebuild_usefulness,
     "consolidate_conflicts": _handle_consolidate,
+    "resolve_conflict_llm": _handle_resolve_conflict_llm,
     "deduplicate_claims": _handle_deduplicate,
     "discover_relations": _handle_discover_relations,
     "induce_policies": _handle_induce_policies,

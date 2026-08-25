@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.errors import ConfigurationError
@@ -35,6 +36,7 @@ ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
 IndexTextMode = Literal["legacy", "value_only", "natural", "answerable"]
 FtsLanguage = Literal["auto", "zh", "en"]
+ConflictAutoMode = Literal["off", "observe", "enforce"]
 
 
 class VectorBackend(StrEnum):
@@ -66,6 +68,24 @@ def parse_daily_cron(value: str, variable_name: str) -> int:
         raise ConfigurationError(f"{variable_name} must use strict HH:MM format")
     hour, minute = value.split(":")
     return int(hour) * 60 + int(minute)
+
+
+def _toml_field(default: Any, path: str) -> Any:
+    return field(default=default, metadata={"toml": path})
+
+
+def _validate_conflict_automation(settings: "Settings") -> None:
+    if settings.conflict_auto_mode not in {"off", "observe", "enforce"}:
+        raise ConfigurationError("conflict.auto_mode must be 'off', 'observe', or 'enforce'")
+    if settings.conflict_l1_min_time_delta_seconds not in {0, 300, 3_600}:
+        raise ConfigurationError("conflict.l1_min_time_delta_seconds must be 0, 300, or 3600")
+    if settings.conflict_l1_min_confidence_delta not in {0.10, 0.15, 0.20}:
+        raise ConfigurationError("conflict.l1_min_confidence_delta must be 0.10, 0.15, or 0.20")
+    judge_host = (urlparse(settings.maintenance_judge_base_url).hostname or "").casefold()
+    if judge_host not in {"127.0.0.1", "::1", "localhost"}:
+        raise ConfigurationError("maintenance_judge.base_url must use loopback")
+    if settings.maintenance_judge_timeout_seconds <= 0:
+        raise ConfigurationError("maintenance_judge.timeout_seconds must be positive")
 
 
 @dataclass(frozen=True)
@@ -401,51 +421,24 @@ class Settings:
         default=(),
         metadata={"toml": "image_describer.file_allow_roots"},
     )
-    extraction_chunk_target_chars: int = field(
-        default=12000,
-        metadata={"toml": "extraction.chunk_target_chars"},
-    )
-    extraction_chunk_overlap_turns: int = field(
-        default=2,
-        metadata={"toml": "extraction.chunk_overlap_turns"},
-    )
-    extraction_max_split_depth: int = field(
-        default=3,
-        metadata={"toml": "extraction.max_split_depth"},
-    )
+    extraction_chunk_target_chars: int = _toml_field(12000, "extraction.chunk_target_chars")
+    extraction_chunk_overlap_turns: int = _toml_field(2, "extraction.chunk_overlap_turns")
+    extraction_max_split_depth: int = _toml_field(3, "extraction.max_split_depth")
     # Higher limits amortize LLM call cost across more same-session Events,
     # while smaller limits reduce extraction latency and per-call payload size.
-    extraction_batch_max_events: int = field(
-        default=5,
-        metadata={"toml": "extraction.batch_max_events"},
-    )
+    extraction_batch_max_events: int = _toml_field(5, "extraction.batch_max_events")
     # Longer waits improve the chance of filling a microbatch at the cost of
     # delaying extraction for low-traffic sessions.
-    extraction_batch_max_wait_seconds: float = field(
-        default=120.0,
-        metadata={"toml": "extraction.batch_max_wait_seconds"},
-    )
+    extraction_batch_max_wait_seconds: float = _toml_field(120.0, "extraction.batch_max_wait_seconds")
     worker_poll_interval: float = field(default=2.0, metadata={"toml": "worker.poll_interval"})
-    worker_maintenance_interval: float = field(
-        default=600.0,
-        metadata={"toml": "worker.maintenance_interval"},
-    )
-    conflict_auto_resolve_enabled: bool = field(
-        default=True,
-        metadata={"toml": "worker.conflict_auto_resolve_enabled"},
-    )
-    conflict_maintenance_max_cases: int = field(
-        default=50,
-        metadata={"toml": "worker.conflict_maintenance_max_cases"},
-    )
-    conflict_maintenance_budget_ms: int = field(
-        default=1_000,
-        metadata={"toml": "worker.conflict_maintenance_budget_ms"},
-    )
-    conflict_failure_backoff_seconds: int = field(
-        default=300,
-        metadata={"toml": "worker.conflict_failure_backoff_seconds"},
-    )
+    worker_maintenance_interval: float = _toml_field(600.0, "worker.maintenance_interval")
+    conflict_auto_resolve_enabled: bool = _toml_field(True, "worker.conflict_auto_resolve_enabled")
+    conflict_auto_mode: ConflictAutoMode = _toml_field("observe", "conflict.auto_mode")
+    conflict_l1_min_time_delta_seconds: int = _toml_field(300, "conflict.l1_min_time_delta_seconds")
+    conflict_l1_min_confidence_delta: float = _toml_field(0.15, "conflict.l1_min_confidence_delta")
+    conflict_maintenance_max_cases: int = _toml_field(50, "worker.conflict_maintenance_max_cases")
+    conflict_maintenance_budget_ms: int = _toml_field(1_000, "worker.conflict_maintenance_budget_ms")
+    conflict_failure_backoff_seconds: int = _toml_field(300, "worker.conflict_failure_backoff_seconds")
     conflict_writer_yield_ms: int = field(
         default=25,
         metadata={"toml": "worker.conflict_writer_yield_ms"},
@@ -454,6 +447,13 @@ class Settings:
         default=8,
         metadata={"toml": "worker.conflict_auto_resolve_max_candidates"},
     )
+    maintenance_judge_base_url: str = _toml_field("http://127.0.0.1:8090/v1", "maintenance_judge.base_url")
+    maintenance_judge_model: str = _toml_field("qwen3.8-27b-ud-iq4-xs", "maintenance_judge.model")
+    maintenance_judge_prompt_version: str = _toml_field("conflict-auto-v1", "maintenance_judge.prompt_version")
+    maintenance_judge_tokenizer_identity: str = _toml_field(
+        "qwen3.8-gguf-embedded", "maintenance_judge.tokenizer_identity"
+    )
+    maintenance_judge_timeout_seconds: float = _toml_field(90.0, "maintenance_judge.timeout_seconds")
     worker_job_lease_minutes: int = field(default=5, metadata={"toml": "worker.job_lease_minutes"})
     daily_token_limit: int = field(default=500000, metadata={"toml": "worker.daily_token_limit"})
     audit_retention_days: int = field(default=30, metadata={"toml": "worker.audit_retention_days"})
@@ -899,6 +899,7 @@ class Settings:
             raise ConfigurationError("worker.job_lease_minutes must be positive")
         if not 1 <= self.conflict_maintenance_max_cases <= 1_000:
             raise ConfigurationError("worker.conflict_maintenance_max_cases must be between 1 and 1000")
+        _validate_conflict_automation(self)
         if not 50 <= self.conflict_maintenance_budget_ms <= 10_000:
             raise ConfigurationError("worker.conflict_maintenance_budget_ms must be between 50 and 10000")
         if not 1 <= self.conflict_failure_backoff_seconds <= 86_400:
@@ -1056,11 +1057,19 @@ class Settings:
             "extraction_batch_max_events": self.extraction_batch_max_events,
             "extraction_batch_max_wait_seconds": self.extraction_batch_max_wait_seconds,
             "conflict_auto_resolve_enabled": self.conflict_auto_resolve_enabled,
+            "conflict_auto_mode": self.conflict_auto_mode,
+            "conflict_l1_min_time_delta_seconds": self.conflict_l1_min_time_delta_seconds,
+            "conflict_l1_min_confidence_delta": self.conflict_l1_min_confidence_delta,
             "conflict_maintenance_max_cases": self.conflict_maintenance_max_cases,
             "conflict_maintenance_budget_ms": self.conflict_maintenance_budget_ms,
             "conflict_failure_backoff_seconds": self.conflict_failure_backoff_seconds,
             "conflict_writer_yield_ms": self.conflict_writer_yield_ms,
             "conflict_auto_resolve_max_candidates": self.conflict_auto_resolve_max_candidates,
+            "maintenance_judge_base_url": self.maintenance_judge_base_url,
+            "maintenance_judge_model": self.maintenance_judge_model,
+            "maintenance_judge_prompt_version": self.maintenance_judge_prompt_version,
+            "maintenance_judge_tokenizer_identity": self.maintenance_judge_tokenizer_identity,
+            "maintenance_judge_timeout_seconds": self.maintenance_judge_timeout_seconds,
             "operational_cleanup_enabled": self.operational_cleanup_enabled,
             "operational_batch_size": self.operational_batch_size,
             "job_succeeded_days": self.job_succeeded_days,

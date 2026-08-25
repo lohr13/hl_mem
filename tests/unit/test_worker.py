@@ -584,17 +584,37 @@ def test_maintenance_passes_conflict_budget_and_records_result(monkeypatch, tmp_
         ),
         worker_runtime=runtime,
     )
-    calls: list[tuple[int, int, int]] = []
+    calls: list[tuple[int, int, int, str, int, float, int]] = []
 
-    def resolve(_connection, _now, *, max_cases, max_elapsed_ms, failure_backoff_seconds):
-        calls.append((max_cases, max_elapsed_ms, failure_backoff_seconds))
+    def resolve(
+        _connection,
+        _now,
+        *,
+        max_cases,
+        max_elapsed_ms,
+        failure_backoff_seconds,
+        mode,
+        l1_policy,
+        max_candidates,
+    ):
+        calls.append(
+            (
+                max_cases,
+                max_elapsed_ms,
+                failure_backoff_seconds,
+                mode,
+                l1_policy.min_time_delta_seconds,
+                l1_policy.min_confidence_delta,
+                max_candidates,
+            )
+        )
         return {"scanned": 2, "changed": 1, "dirty_ready": 4, "dirty_blocked": 1}
 
     monkeypatch.setattr(worker_module, "auto_resolve_conflicts", resolve)
 
     worker._run_maintenance()
 
-    assert calls == [(7, 321, 45)]
+    assert calls == [(7, 321, 45, "observe", 300, 0.15, 8)]
     assert runtime.snapshot()["last_maintenance_results"]["auto_resolve_conflicts"] == {
         "scanned": 2,
         "changed": 1,

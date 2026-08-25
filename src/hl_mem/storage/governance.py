@@ -7,7 +7,12 @@ import sqlite3
 import uuid
 from typing import Any, Literal, Mapping, cast
 
-from hl_mem.domain.governance import DecisionEnvelope, canonical_snapshot, snapshot_fingerprint
+from hl_mem.domain.governance import (
+    CONFLICT_AUTO_POLICY_VERSION,
+    DecisionEnvelope,
+    canonical_snapshot,
+    snapshot_fingerprint,
+)
 
 GovernanceStatus = Literal["observed", "applied", "rolled_back", "failed"]
 
@@ -129,3 +134,35 @@ class GovernanceActionRepository:
         if cursor.rowcount != 1:
             raise StaleGovernanceAction(f"governance action changed during rollback: {action_id}")
         return cast(dict[str, Any], json.loads(str(row["before_json"])))
+
+
+def upgrade_conflict_auto_policy(
+    connection: sqlite3.Connection,
+    now: str,
+    policy_version: str = CONFLICT_AUTO_POLICY_VERSION,
+) -> int:
+    """把尚未经过当前策略的 open case 一次性重新置 dirty。"""
+
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        inserted = connection.execute(
+            "INSERT OR IGNORE INTO conflict_review_state("
+            "case_id,dirty_at,dirty_reason,policy_version) "
+            "SELECT id,?,'v030_policy_upgrade',? FROM conflict_cases "
+            "WHERE status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL",
+            (now, policy_version),
+        ).rowcount
+        updated = connection.execute(
+            "UPDATE conflict_review_state SET dirty_at=?,dirty_reason='v030_policy_upgrade',"
+            "not_before=NULL,attempt_count=0,last_error=NULL,policy_version=? "
+            "WHERE COALESCE(policy_version,'')<>? AND case_id IN ("
+            "SELECT id FROM conflict_cases WHERE status IN ('pending','auto_resolved','manual_required') "
+            "AND resolved_at IS NULL)",
+            (now, policy_version, policy_version),
+        ).rowcount
+        connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    return int(inserted) + int(updated)

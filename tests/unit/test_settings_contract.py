@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 193
+    assert len(fields(Settings)) == 201
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -33,11 +33,16 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.dedup_threshold == 0.92
     assert settings.daily_token_limit == 500_000
     assert settings.conflict_auto_resolve_enabled is True
+    assert settings.conflict_auto_mode == "observe"
+    assert settings.conflict_l1_min_time_delta_seconds == 300
+    assert settings.conflict_l1_min_confidence_delta == 0.15
     assert settings.conflict_maintenance_max_cases == 50
     assert settings.conflict_maintenance_budget_ms == 1_000
     assert settings.conflict_failure_backoff_seconds == 300
     assert settings.conflict_writer_yield_ms == 25
     assert settings.conflict_auto_resolve_max_candidates == 8
+    assert settings.maintenance_judge_base_url == "http://127.0.0.1:8090/v1"
+    assert settings.maintenance_judge_model == "qwen3.8-27b-ud-iq4-xs"
     assert settings.operational_cleanup_enabled is True
     assert settings.operational_batch_size == 2_000
     assert settings.expired_cleanup_mode == "observe"

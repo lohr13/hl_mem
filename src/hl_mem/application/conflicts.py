@@ -8,50 +8,48 @@ from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.application.conflict_invariants import (
+    assert_conflict_case_postconditions,
     assert_conflict_postconditions,
     assert_no_orphan_disputed_claims,
 )
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
+from hl_mem.domain.governance import CONFLICT_AUTO_POLICY_VERSION
 from hl_mem.errors import ConflictResolutionError
 from hl_mem.lifecycle import assert_transition
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.governance import upgrade_conflict_auto_policy
 
 OPEN_CASE_STATUSES = ("pending", "auto_resolved", "manual_required")
 NONTERMINAL_CLAIM_STATUSES = frozenset({"active", "candidate", "disputed"})
 SUPPORTED_DECISIONS = frozenset({"keep_left", "keep_right", "coexist", "reject"})
-CONFLICT_AUTO_POLICY_VERSION = "conflict-auto-v1"
+__all__ = [
+    "CONFLICT_AUTO_POLICY_VERSION",
+    "ResolutionService",
+    "StaleConflictDecision",
+    "upgrade_conflict_auto_policy",
+]
 
 
-def upgrade_conflict_auto_policy(
-    connection: sqlite3.Connection,
-    now: str,
-    policy_version: str = CONFLICT_AUTO_POLICY_VERSION,
-) -> int:
-    """把尚未经过当前策略的 open case 一次性重新置 dirty。"""
+class StaleConflictDecision(ConflictResolutionError):
+    """裁决期间 case revision 或输入指纹已经变化。"""
 
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        inserted = connection.execute(
-            "INSERT OR IGNORE INTO conflict_review_state("
-            "case_id,dirty_at,dirty_reason,policy_version) "
-            "SELECT id,?,'v030_policy_upgrade',? FROM conflict_cases "
-            "WHERE status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL",
-            (now, policy_version),
-        ).rowcount
-        updated = connection.execute(
-            "UPDATE conflict_review_state SET dirty_at=?,dirty_reason='v030_policy_upgrade',"
-            "not_before=NULL,attempt_count=0,last_error=NULL,policy_version=? "
-            "WHERE COALESCE(policy_version,'')<>? AND case_id IN ("
-            "SELECT id FROM conflict_cases WHERE status IN ('pending','auto_resolved','manual_required') "
-            "AND resolved_at IS NULL)",
-            (now, policy_version, policy_version),
-        ).rowcount
-        connection.commit()
-    except Exception:
-        if connection.in_transaction:
-            connection.rollback()
-        raise
-    return int(inserted) + int(updated)
+
+def _follow_tip(repository: ClaimRepository, claim_id: str) -> dict[str, Any] | None:
+    visited: set[str] = set()
+    current_id = claim_id
+    for _ in range(33):
+        if current_id in visited:
+            return None
+        visited.add(current_id)
+        claim = repository.get_claim(current_id)
+        if claim is None:
+            return None
+        if claim.get("status") != "superseded":
+            return claim
+        current_id = str(claim.get("superseded_by_id") or "")
+        if not current_id:
+            return None
+    return None
 
 
 class ResolutionService:
@@ -68,12 +66,15 @@ class ResolutionService:
         resolved_at: str | None = None,
         rationale: str | None = None,
         expected_revision: int | None = None,
+        local_postconditions: bool = False,
     ) -> dict[str, Any]:
         if decision not in SUPPORTED_DECISIONS:
             raise ConflictResolutionError(f"unsupported conflict decision: {decision}")
         timestamp = resolved_at or datetime.now(timezone.utc).isoformat()
         effective_rationale = rationale if rationale and rationale.strip() else None
-        self.connection.execute("BEGIN IMMEDIATE")
+        owns_transaction = not self.connection.in_transaction
+        if owns_transaction:
+            self.connection.execute("BEGIN IMMEDIATE")
         try:
             case = self._load_case(case_id)
             if case.get("group_key") is not None:
@@ -125,16 +126,28 @@ class ResolutionService:
                 closed_case_ids = [case_id]
                 case_status = "rejected"
 
-            assert_conflict_postconditions(
-                self.connection,
-                namespace=str(left["namespace_key"]) if exclusive_group else None,
-                conflict_key=str(left["conflict_key"]) if exclusive_group else None,
-            )
-            if decision == "reject":
+            namespace = str(left["namespace_key"]) if exclusive_group else None
+            conflict_key = str(left["conflict_key"]) if exclusive_group else None
+            if local_postconditions:
+                assert_conflict_case_postconditions(
+                    self.connection,
+                    case_id=case_id,
+                    namespace=namespace,
+                    conflict_key=conflict_key,
+                    touched_claim_ids=[str(claim["id"]) for claim in group_claims],
+                )
+            else:
+                assert_conflict_postconditions(
+                    self.connection,
+                    namespace=namespace,
+                    conflict_key=conflict_key,
+                )
+            if decision == "reject" and not local_postconditions:
                 assert_no_orphan_disputed_claims(self.connection)
-            self.connection.commit()
+            if owns_transaction:
+                self.connection.commit()
         except Exception:
-            if self.connection.in_transaction:
+            if owns_transaction and self.connection.in_transaction:
                 self.connection.rollback()
             raise
         return {
@@ -145,6 +158,41 @@ class ResolutionService:
             "winner_id": winner_id,
             "closed_case_ids": closed_case_ids,
         }
+
+    def resolve_followed_pair(
+        self,
+        case_id: str,
+        decision: str,
+        *,
+        winner_id: str,
+        resolved_at: str,
+        rationale: str,
+        local_postconditions: bool = False,
+    ) -> None:
+        """Resolve a legacy pair against its current supersession-chain tips."""
+
+        if decision not in {"keep_left", "keep_right"}:
+            raise ConflictResolutionError(f"unsupported followed-tip decision: {decision}")
+        case = self._load_case(case_id)
+        if case.get("group_key") is not None:
+            raise ConflictResolutionError(f"followed-tip pair unexpectedly has a group key: {case_id}")
+        repository = ClaimRepository(self.connection)
+        left = _follow_tip(repository, str(case["left_claim_id"]))
+        right = _follow_tip(repository, str(case["right_claim_id"]))
+        if left is None or right is None or winner_id not in {left["id"], right["id"]}:
+            raise ConflictResolutionError(f"followed conflict endpoint changed: {case_id}")
+        self._converge_winner([left, right], winner_id, resolved_at)
+        self._close_case(case, "resolved", decision, resolved_at, rationale)
+        if local_postconditions:
+            assert_conflict_case_postconditions(
+                self.connection,
+                case_id=case_id,
+                namespace=None,
+                conflict_key=None,
+                touched_claim_ids=[str(left["id"]), str(right["id"])],
+            )
+        else:
+            assert_conflict_postconditions(self.connection)
 
     def review(self, case_id: str) -> dict[str, Any]:
         """返回一个 revision 快照及其全部 canonical candidates。"""
@@ -214,13 +262,16 @@ class ResolutionService:
         expected_revision: int,
         resolved_at: str | None = None,
         rationale: str | None = None,
+        local_postconditions: bool = False,
     ) -> dict[str, Any]:
         """以乐观 revision guard 选择或拒绝一个 group candidate。"""
 
         if action not in {"select_candidate", "reject_candidate"}:
             raise ConflictResolutionError(f"unsupported group conflict action: {action}")
         timestamp = resolved_at or datetime.now(timezone.utc).isoformat()
-        self.connection.execute("BEGIN IMMEDIATE")
+        owns_transaction = not self.connection.in_transaction
+        if owns_transaction:
+            self.connection.execute("BEGIN IMMEDIATE")
         try:
             case = self._load_case(case_id)
             if case.get("group_key") is None or case.get("namespace_key") is None:
@@ -269,18 +320,32 @@ class ResolutionService:
                     if cursor.rowcount != 1:
                         raise ConflictResolutionError(f"conflict candidate member changed: {claim['id']}")
                 status = "manual_required"
-            assert_conflict_postconditions(
-                self.connection,
-                namespace=str(case["namespace_key"]),
-                conflict_key=str(case["group_key"]),
-            )
+            if local_postconditions:
+                assert_conflict_case_postconditions(
+                    self.connection,
+                    case_id=case_id,
+                    namespace=str(case["namespace_key"]),
+                    conflict_key=str(case["group_key"]),
+                    touched_claim_ids=(
+                        [str(claim["id"]) for claim in group_claims]
+                        if action == "select_candidate"
+                        else [str(row["claim_id"]) for row in member_rows]
+                    ),
+                )
+            else:
+                assert_conflict_postconditions(
+                    self.connection,
+                    namespace=str(case["namespace_key"]),
+                    conflict_key=str(case["group_key"]),
+                )
             current = self.connection.execute(
                 "SELECT revision,status,resolved_at FROM conflict_cases WHERE id=?",
                 (case_id,),
             ).fetchone()
-            self.connection.commit()
+            if owns_transaction:
+                self.connection.commit()
         except Exception:
-            if self.connection.in_transaction:
+            if owns_transaction and self.connection.in_transaction:
                 self.connection.rollback()
             raise
         return {

@@ -25,6 +25,8 @@ def _claim(connection, claim_id, vector, **values):
         "namespace_key": "default",
         "subject_entity_id": "用户",
         "canonical_attribute": "choice.tool",
+        "canonical_slot": "choice.tool",
+        "qualifiers": {},
         "predicate": "使用",
         "value_json": f'"{claim_id}"',
         "status": "active",
@@ -285,11 +287,12 @@ def test_auto_resolve_does_not_activate_survivor_with_another_open_case(tmp_path
     _assert_auto_stats(
         auto_resolve_conflicts(connection, "2026-01-03T04:05:06+00:00"),
         scanned=2,
-        resolved=1,
-        manual=1,
-        deferred=1,
+        resolved=0,
+        manual=2,
+        deferred=2,
     )
     assert repository.get_claim("survivor")["status"] == "disputed"
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-1'").fetchone()[0] == "manual_required"
 
 
 def test_auto_resolve_treats_chain_alias_as_same_contested_survivor(tmp_path) -> None:
@@ -385,13 +388,17 @@ def test_auto_resolve_begin_failure_does_not_block_later_cases(tmp_path) -> None
     class FailFirstBegin:
         def __init__(self, wrapped) -> None:
             self.wrapped = wrapped
-            self.failed = False
+            self.begin_count = 0
 
         def execute(self, sql, parameters=()):
-            if sql == "BEGIN IMMEDIATE" and not self.failed:
-                self.failed = True
+            if sql == "BEGIN IMMEDIATE":
+                self.begin_count += 1
+            if sql == "BEGIN IMMEDIATE" and self.begin_count == 2:
                 raise RuntimeError("reject first begin")
             return self.wrapped.execute(sql, parameters)
+
+        def __getattr__(self, name):
+            return getattr(self.wrapped, name)
 
         @property
         def in_transaction(self):

@@ -267,7 +267,7 @@ def test_group_closes_when_only_one_current_candidate_remains(tmp_path: Path) ->
             "SELECT status,decision FROM conflict_cases WHERE id=?",
             (result["case_id"],),
         ).fetchone()
-    ) == ("resolved", "single_current_candidate")
+    ) == ("resolved", "select_candidate")
     assert connection.execute("SELECT status FROM claims WHERE id='claim-2'").fetchone()[0] == "active"
 
 

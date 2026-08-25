@@ -23,8 +23,10 @@ def _claim(
 ) -> None:
     connection.execute(
         "INSERT INTO claims("
-        "id,namespace_key,predicate,value_json,recorded_from,status,source_authority,superseded_by_id"
-        ") VALUES (?, 'default', 'uses', ?, ?, ?, ?, ?)",
+        "id,namespace_key,subject_entity_id,predicate,value_json,qualifiers_json,canonical_attribute,"
+        "canonical_slot,recorded_from,status,source_authority,superseded_by_id"
+        ") VALUES (?, 'default', 'gateway', 'uses', ?, '{\"service\":\"gateway\"}',"
+        "'config.port','config.port',?,?,?,?)",
         (claim_id, f'"{claim_id}"', NOW, status, authority, superseded_by_id),
     )
 
@@ -58,7 +60,8 @@ def test_stable_manual_backlog_has_zero_scan_and_zero_writes(tmp_path: Path) -> 
     for index in range(500):
         _manual_case(connection, f"case-{index:03d}")
     connection.execute(
-        "UPDATE conflict_review_state SET dirty_at=NULL,dirty_reason='stable_fixture',input_fingerprint='stable'"
+        "UPDATE conflict_review_state SET dirty_at=NULL,dirty_reason='stable_fixture',"
+        "input_fingerprint='stable',policy_version='conflict-auto-v1'"
     )
     connection.commit()
     baseline = connection.total_changes
@@ -261,6 +264,9 @@ def test_bounded_batch_releases_writer_before_full_backlog(tmp_path: Path) -> No
 
         def rollback(self) -> None:
             self.wrapped.rollback()
+
+        def __getattr__(self, name: str):
+            return getattr(self.wrapped, name)
 
     thread = threading.Thread(
         target=auto_resolve_conflicts,
