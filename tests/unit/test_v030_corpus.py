@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,7 @@ from hl_mem.evaluation.v030_corpus import (
     write_manifest,
 )
 from scripts.run_v030_experiments import main as run_experiments
+from scripts.run_v030_experiments import run_baseline
 
 
 def _case(case_id: str, *, source: str, category: str, decision: str = "keep_left", **extra: object) -> dict:
@@ -194,3 +197,79 @@ def test_experiment_orchestrator_validates_all_six_manifests(
     output = json.loads(capsys.readouterr().out)
     assert output["case_counts"] == {"E1": 70, "E2": 406, "E3": 240, "E4": 240, "E5": 140, "E6": 120}
     assert len(output["manifest_set_sha256"]) == 64
+
+
+def _baseline_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir()
+    e1_cases = _e1_cases()
+    e1_cases[0]["input"] = {
+        "case": {"group_key": None, "left_claim_id": "left", "right_claim_id": "right"},
+        "claims": [
+            {"id": "left", "source_authority": "high"},
+            {"id": "right", "source_authority": "low"},
+        ],
+        "candidates": [],
+    }
+    for experiment in sorted(("E1", "E2", "E3", "E4", "E5", "E6")):
+        cases = e1_cases if experiment == "E1" else _minimum_cases(experiment)
+        write_manifest(manifest_dir / f"{experiment.lower()}.json", _manifest(experiment, cases))
+
+    database = tmp_path / "baseline.db"
+    with sqlite3.connect(database) as connection:
+        connection.executescript("""
+            CREATE TABLE dedup_pairs(decision TEXT, reviewed_at TEXT, applied_at TEXT);
+            INSERT INTO dedup_pairs VALUES
+                ('equivalent', '2026-08-01', NULL),
+                ('distinct', '2026-08-01', NULL),
+                (NULL, NULL, NULL);
+            CREATE TABLE conflict_cases(id TEXT, status TEXT, resolved_at TEXT);
+            INSERT INTO conflict_cases VALUES
+                ('stable', 'manual_required', NULL),
+                ('dirty', 'manual_required', NULL),
+                ('pending', 'pending', NULL);
+            CREATE TABLE conflict_review_state(case_id TEXT, dirty_at TEXT);
+            INSERT INTO conflict_review_state VALUES ('stable', NULL), ('dirty', '2026-08-25');
+            """)
+    config = tmp_path / "hl_mem.toml"
+    config.write_text("[dedup]\naudit_only = true\n", encoding="utf-8")
+    recall = tmp_path / "recall.json"
+    recall.write_text(
+        json.dumps({"dataset_sha256": "b" * 64, "metrics": {"recall_at_5": 0.8, "mrr": 0.7}}),
+        encoding="utf-8",
+    )
+    return manifest_dir, database, config, recall
+
+
+def test_baseline_a_arm_is_read_only_and_byte_reproducible(tmp_path: Path) -> None:
+    manifest_dir, database, config, recall = _baseline_inputs(tmp_path)
+    output_dir = tmp_path / "baseline"
+    before = hashlib.sha256(database.read_bytes()).hexdigest()
+
+    first = run_baseline(manifest_dir, database, config, recall, output_dir, arm="A")
+    first_bytes = (output_dir / "baseline.json").read_bytes()
+    first_sums = (output_dir / "SHA256SUMS").read_bytes()
+    second = run_baseline(manifest_dir, database, config, recall, output_dir, arm="A")
+
+    assert first == second
+    assert first_bytes == (output_dir / "baseline.json").read_bytes()
+    assert first_sums == (output_dir / "SHA256SUMS").read_bytes()
+    assert hashlib.sha256(database.read_bytes()).hexdigest() == before
+    assert first["e1_l0"]["decision_counts"] == {"keep_left": 1, "manual_required": 69}
+    assert first["dedup"] == {
+        "applied": 0,
+        "audit_only": True,
+        "decision_counts": {"<null>": 1, "distinct": 1, "equivalent": 1},
+        "reviewed": 2,
+        "total": 3,
+    }
+    assert first["conflicts"] == {"open": 3, "stable_manual_required": 1}
+    assert first["recall"]["metrics"] == {"mrr": 0.7, "recall_at_5": 0.8}
+    assert (output_dir / "summary.md").is_file()
+
+
+def test_baseline_rejects_non_a_arm(tmp_path: Path) -> None:
+    manifest_dir, database, config, recall = _baseline_inputs(tmp_path)
+
+    with pytest.raises(ValueError, match="A arm"):
+        run_baseline(manifest_dir, database, config, recall, tmp_path / "baseline", arm="B")
