@@ -50,11 +50,25 @@ class EntityRepository:
             raise EntityCoordinateError(f"unsupported entity type: {entity_type}")
         return cast(EntityType, entity_type)
 
-    def _canonical_entity(self, entity_id: str) -> dict[str, Any]:
-        row = self.connection.execute("SELECT * FROM canonical_entities WHERE id=?", (entity_id,)).fetchone()
+    def _canonical_entity(self, entity_id: str, namespace_key: str) -> dict[str, Any]:
+        row = self.connection.execute(
+            "SELECT * FROM canonical_entities WHERE namespace_key=? AND id=?",
+            (namespace_key, entity_id),
+        ).fetchone()
         if row is None:
-            raise UnknownCanonicalEntityError(f"canonical entity does not exist: {entity_id}")
+            if self.connection.execute("SELECT 1 FROM canonical_entities WHERE id=?", (entity_id,)).fetchone():
+                raise EntityTypeMismatchError(f"canonical entity belongs to another namespace: {entity_id}")
+            raise UnknownCanonicalEntityError(f"canonical entity does not exist: {namespace_key}/{entity_id}")
         return dict(row)
+
+    def _validate_source_event(self, source_event_id: str | None, namespace_key: str) -> None:
+        if source_event_id is None:
+            return
+        row = self.connection.execute("SELECT tenant_id FROM events WHERE id=?", (source_event_id,)).fetchone()
+        if row is None:
+            raise EntityCoordinateError(f"source event does not exist: {source_event_id}")
+        if row[0] != namespace_key:
+            raise EntityTypeMismatchError("source event and entity must share a namespace")
 
     def create_entity(
         self,
@@ -73,7 +87,10 @@ class EntityRepository:
         validate_canonical_entity_id(entity_id, expected_type=typed)
         if entity_id != f"{typed}:{canonical_key}":
             raise EntityCoordinateError("canonical entity ID and canonical key disagree")
-        existing = self.connection.execute("SELECT * FROM canonical_entities WHERE id=?", (entity_id,)).fetchone()
+        existing = self.connection.execute(
+            "SELECT * FROM canonical_entities WHERE namespace_key=? AND id=?",
+            (namespace_key, entity_id),
+        ).fetchone()
         if existing is not None:
             decoded = dict(existing)
             coordinate = (decoded["namespace_key"], decoded["entity_type"], decoded["canonical_key"])
@@ -86,7 +103,7 @@ class EntityRepository:
             ") VALUES (?,?,?,?,?,?,?,?)",
             (entity_id, namespace_key, typed, canonical_key, display_name, status, now, now),
         )
-        return self._canonical_entity(entity_id)
+        return self._canonical_entity(entity_id, namespace_key)
 
     def create_alias(
         self,
@@ -105,9 +122,10 @@ class EntityRepository:
         typed = self._entity_type(entity_type)
         if source_kind not in _ALIAS_SOURCE_KINDS:
             raise EntityCoordinateError(f"unsupported alias source kind: {source_kind}")
-        target = self._canonical_entity(canonical_entity_id)
-        if target["entity_type"] != typed or target["namespace_key"] != namespace_key:
+        target = self._canonical_entity(canonical_entity_id, namespace_key)
+        if target["entity_type"] != typed:
             raise EntityTypeMismatchError("alias target type or namespace does not match")
+        self._validate_source_event(source_event_id, namespace_key)
         normalized = normalize_typed_alias(alias)
         active = self.connection.execute(
             "SELECT * FROM entity_aliases WHERE namespace_key=? AND alias_normalized=? "
@@ -172,13 +190,21 @@ class EntityRepository:
         rows = self.connection.execute(
             "SELECT aliases.canonical_entity_id,aliases.entity_type,aliases.version "
             "FROM entity_aliases AS aliases "
-            "JOIN canonical_entities AS entities ON entities.id=aliases.canonical_entity_id "
+            "JOIN canonical_entities AS entities "
+            "ON entities.namespace_key=aliases.namespace_key AND entities.id=aliases.canonical_entity_id "
             "WHERE aliases.namespace_key=? AND aliases.alias_normalized=? "
             "AND aliases.valid_to IS NULL AND entities.status='active' "
             "ORDER BY aliases.entity_type,aliases.canonical_entity_id",
             (namespace_key, normalized),
         ).fetchall()
-        return tuple(ActiveAlias(row[0], row[1], row[2]) for row in rows)
+        candidates: list[ActiveAlias] = []
+        for row in rows:
+            try:
+                validate_canonical_entity_id(str(row[0]), expected_type=str(row[1]))
+            except EntityCoordinateError:
+                continue
+            candidates.append(ActiveAlias(row[0], row[1], row[2]))
+        return tuple(candidates)
 
     def resolve_alias(
         self,
@@ -203,7 +229,8 @@ class EntityRepository:
         alias_count = 0
         for entity_seed in seeds.entities:
             existed = self.connection.execute(
-                "SELECT 1 FROM canonical_entities WHERE id=?", (entity_seed.id,)
+                "SELECT 1 FROM canonical_entities WHERE namespace_key=? AND id=?",
+                (namespace_key, entity_seed.id),
             ).fetchone()
             self.create_entity(
                 entity_seed.id,
@@ -246,10 +273,9 @@ class EntityRepository:
     ) -> dict[str, Any]:
         if relation not in _RELATIONS:
             raise EntityCoordinateError(f"unsupported entity relation: {relation}")
-        source = self._canonical_entity(from_entity_id)
-        target = self._canonical_entity(to_entity_id)
-        if source["namespace_key"] != namespace_key or target["namespace_key"] != namespace_key:
-            raise EntityTypeMismatchError("relation endpoints must share the declared namespace")
+        self._canonical_entity(from_entity_id, namespace_key)
+        self._canonical_entity(to_entity_id, namespace_key)
+        self._validate_source_event(source_event_id, namespace_key)
         relation_id = uuid.uuid4().hex
         self.connection.execute(
             "INSERT INTO entity_relations("
@@ -281,24 +307,46 @@ class EntityRepository:
         alias_version: int | None = None,
         proof_id: str | None = None,
     ) -> dict[str, Any]:
-        target = self._canonical_entity(canonical_entity_id)
-        validate_entity_role_binding(str(target["entity_type"]), role)
         claim = self.connection.execute("SELECT namespace_key FROM claims WHERE id=?", (claim_id,)).fetchone()
-        if claim is not None and claim[0] != target["namespace_key"]:
-            raise EntityTypeMismatchError("claim and canonical entity must share a namespace")
+        if claim is None:
+            raise EntityCoordinateError(f"claim does not exist: {claim_id}")
+        namespace_key = str(claim[0])
+        target = self._canonical_entity(canonical_entity_id, namespace_key)
+        validate_entity_role_binding(str(target["entity_type"]), role)
+        if alias_version is None or proof_id is None:
+            raise EntityTypeMismatchError("claim entity links require alias version and evidence proof")
+        normalized_mention = normalize_typed_alias(mention_text)
+        alias = self.connection.execute(
+            "SELECT 1 FROM entity_aliases WHERE namespace_key=? AND alias_normalized=? "
+            "AND entity_type=? AND canonical_entity_id=? AND version=?",
+            (
+                namespace_key,
+                normalized_mention,
+                target["entity_type"],
+                canonical_entity_id,
+                alias_version,
+            ),
+        ).fetchone()
+        proof = self.connection.execute(
+            "SELECT 1 FROM evidence_links WHERE id=? AND derived_type='claim' AND derived_id=?",
+            (proof_id, claim_id),
+        ).fetchone()
+        if alias is None or proof is None:
+            raise EntityTypeMismatchError("claim entity alias or evidence proof mismatch")
+        payload = {
+            "claim_id": claim_id,
+            "canonical_entity_id": canonical_entity_id,
+            "role": role,
+            "mention_text": normalized_mention,
+            "resolution_confidence": resolution_confidence,
+            "alias_version": alias_version,
+            "proof_id": proof_id,
+        }
         self.connection.execute(
             "INSERT OR IGNORE INTO claim_entity_links("
             "claim_id,canonical_entity_id,role,mention_text,resolution_confidence,alias_version,proof_id"
             ") VALUES (?,?,?,?,?,?,?)",
-            (
-                claim_id,
-                canonical_entity_id,
-                role,
-                mention_text,
-                resolution_confidence,
-                alias_version,
-                proof_id,
-            ),
+            tuple(payload.values()),
         )
         row = self.connection.execute(
             "SELECT * FROM claim_entity_links WHERE claim_id=? AND canonical_entity_id=? AND role=?",
@@ -306,4 +354,7 @@ class EntityRepository:
         ).fetchone()
         if row is None:
             raise RuntimeError("claim entity link insert was not observable")
-        return dict(row)
+        stored = dict(row)
+        if stored != payload:
+            raise EntityCoordinateError("claim entity link already exists with a different payload")
+        return stored

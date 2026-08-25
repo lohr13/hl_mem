@@ -115,7 +115,7 @@ def build_external_entity_id(namespace_key: str, entity_type: str, source_declar
     """Build a stable ID from immutable external declaration coordinates."""
 
     typed = _validated_entity_type(entity_type)
-    if not namespace_key or not source_declaration_id:
+    if not namespace_key.strip() or not source_declaration_id.strip():
         raise EntityCoordinateError("external entity coordinates must not be empty")
     payload = json.dumps(
         [namespace_key, typed, source_declaration_id],

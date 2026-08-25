@@ -62,6 +62,12 @@ def test_external_entity_id_uses_boundary_safe_deterministic_source_coordinates(
     )
 
 
+def test_external_entity_id_rejects_blank_namespace_and_source_coordinates() -> None:
+    for namespace_key, source_id in (("   ", "source-42"), ("tenant-a", "\t")):
+        with pytest.raises(EntityCoordinateError):
+            build_external_entity_id(namespace_key, "agent", source_id)
+
+
 def test_cross_type_same_name_requires_expected_type() -> None:
     candidates = (
         ActiveAlias("agent:local_pony", "agent", 2),
