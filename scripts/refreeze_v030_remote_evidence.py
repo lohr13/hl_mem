@@ -131,9 +131,7 @@ def _build_e1(
         )
     audit = copy.deepcopy(dict(current["source_audit"]))
     audit["volcano_raw_case_ids"] = [str(row["id"]) for row in included]
-    audit["volcano_decision_distribution"] = dict(
-        sorted(Counter(str(row["decision"]) for row in included).items())
-    )
+    audit["volcano_decision_distribution"] = dict(sorted(Counter(str(row["decision"]) for row in included).items()))
     audit["volcano_selection"] = {
         "candidate_count": len(raw_cases),
         "cutoff": cutoff_text,
@@ -144,8 +142,7 @@ def _build_e1(
     }
     reason = f"resolved_at_on_or_after_{cutoff_text}_adjacent_date_outside_exact_11_case_batch"
     audit["excluded_with_reason"] = [
-        {"case_id": str(row["id"]), "resolved_at": row.get("resolved_at"), "reason": reason}
-        for row in excluded
+        {"case_id": str(row["id"]), "resolved_at": row.get("resolved_at"), "reason": reason} for row in excluded
     ]
     return build_manifest(
         "E1",
@@ -157,9 +154,7 @@ def _build_e1(
     )
 
 
-def _build_e2(
-    current: Mapping[str, Any], evidence: Mapping[str, Any], evidence_sha256: str
-) -> dict[str, Any]:
+def _build_e2(current: Mapping[str, Any], evidence: Mapping[str, Any], evidence_sha256: str) -> dict[str, Any]:
     raw_pairs = _require_rows(evidence, "pairs")
     raw_claims = _require_rows(evidence, "claims")
     if len(raw_pairs) != 15 or any(row.get("decision") != "equivalent" for row in raw_pairs):

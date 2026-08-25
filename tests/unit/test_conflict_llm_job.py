@@ -124,7 +124,7 @@ def test_l0_only_applies_l0_decisions(tmp_path: Path) -> None:
     assert tuple(connection.execute("SELECT tier,status FROM governance_actions").fetchone()) == ("L0", "applied")
 
 
-def test_l0_only_observes_l1_decisions(tmp_path: Path) -> None:
+def test_l0_only_defers_l1_candidate_without_running_l1(tmp_path: Path) -> None:
     connection = Database(tmp_path / "l0-only-l1.db").open()
     _manual_pair(connection)
     connection.execute(
@@ -144,27 +144,71 @@ def test_l0_only_observes_l1_decisions(tmp_path: Path) -> None:
         "disputed",
         "disputed",
     ]
-    assert tuple(connection.execute("SELECT tier,status FROM governance_actions").fetchone()) == ("L1", "observed")
-
-
-def test_l0_only_dispatches_admitted_l2_jobs_as_observe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    connection = Database(tmp_path / "l0-only-l2.db").open()
-    _manual_pair(connection)
-    payload = _queued_payload(connection, mode="l0_only")
-    monkeypatch.setattr(job_handlers.components, "make_conflict_judge", lambda _settings: _FixedJudge(connection))
-    worker = SimpleNamespace(
-        connection=connection,
-        settings=replace(Settings.for_test(), conflict_auto_mode="enforce"),
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-1'").fetchone()[0] == "manual_required"
+    assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+    assert tuple(connection.execute("SELECT tier,status,resolution_rule FROM governance_actions").fetchone()) == (
+        "L3",
+        "observed",
+        "l0_only_manual_required",
     )
 
-    result = JOB_HANDLERS["resolve_conflict_llm"](worker, {"payload": payload})
 
-    assert result["status"] == "observed"
+def test_l0_only_does_not_dispatch_admitted_l2_job(tmp_path: Path) -> None:
+    connection = Database(tmp_path / "l0-only-l2.db").open()
+    _manual_pair(connection)
+    result = auto_resolve_conflicts(connection, NOW, mode="l0_only", l1_policy=L1Policy(300, 0.1))
+
+    assert result["l2_queued"] == 0
+    assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+    assert connection.execute("SELECT status FROM conflict_cases WHERE id='case-1'").fetchone()[0] == "manual_required"
     assert [row[0] for row in connection.execute("SELECT status FROM claims ORDER BY id")] == [
         "disputed",
         "disputed",
     ]
-    assert tuple(connection.execute("SELECT tier,status FROM governance_actions").fetchone()) == ("L2", "observed")
+    assert tuple(connection.execute("SELECT tier,status,resolution_rule FROM governance_actions").fetchone()) == (
+        "L3",
+        "observed",
+        "l0_only_manual_required",
+    )
+
+
+def test_enforce_skips_l1_and_dispatches_l2_job(tmp_path: Path) -> None:
+    connection = Database(tmp_path / "enforce-with-l1-candidate.db").open()
+    _manual_pair(connection)
+    connection.execute(
+        "UPDATE claims SET valid_from=?,confidence=? WHERE id='left'",
+        ("2026-08-25T07:00:00+00:00", 0.95),
+    )
+    connection.execute(
+        "UPDATE claims SET valid_from=? WHERE id='right'",
+        ("2026-08-25T06:00:00+00:00",),
+    )
+    connection.commit()
+
+    result = auto_resolve_conflicts(connection, NOW, mode="enforce", l1_policy=L1Policy(300, 0.1))
+
+    assert result["resolved"] == 0
+    assert result["l2_queued"] == 1
+    assert connection.execute("SELECT count(*) FROM governance_actions").fetchone()[0] == 0
+    payload = json.loads(connection.execute("SELECT payload_json FROM jobs").fetchone()[0])
+    assert payload["application_mode"] == "enforce"
+
+
+def test_l0_only_job_handler_skips_without_constructing_judge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = Database(tmp_path / "l0-only-stale-job.db").open()
+    worker = SimpleNamespace(connection=connection, settings=Settings.for_test())
+    monkeypatch.setattr(
+        job_handlers.components,
+        "make_conflict_judge",
+        lambda _settings: pytest.fail("l0_only must not construct a conflict judge"),
+    )
+
+    result = JOB_HANDLERS["resolve_conflict_llm"](
+        worker,
+        {"payload": {"case_id": "stale-case", "application_mode": "observe"}},
+    )
+
+    assert result == {"status": "skipped", "reason": "l0_only"}
 
 
 def test_llm_job_stale_revision_performs_zero_writes(tmp_path: Path) -> None:

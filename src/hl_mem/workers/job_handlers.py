@@ -108,9 +108,10 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 def _handle_resolve_conflict_llm(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     from hl_mem.workers.conflict_judge import run_conflict_llm_job
 
+    if worker.settings.conflict_auto_mode in {"off", "l0_only"}:
+        return {"status": "skipped", "reason": worker.settings.conflict_auto_mode}
     payload = job.get("payload") or json.loads(job["payload_json"] or "{}")
-    default_mode = "observe" if worker.settings.conflict_auto_mode == "l0_only" else worker.settings.conflict_auto_mode
-    mode = str(payload.get("application_mode") or default_mode)
+    mode = str(payload.get("application_mode") or worker.settings.conflict_auto_mode)
     return run_conflict_llm_job(
         worker.connection,
         payload,

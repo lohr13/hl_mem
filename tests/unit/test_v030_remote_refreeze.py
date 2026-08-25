@@ -28,8 +28,7 @@ def _write_base_manifests(root: Path) -> None:
         for index, decision in enumerate(e1_local_decisions)
     ]
     e1_cases.extend(
-        _case(f"volcano:{index:02}", source="volcano", category="conflict", decision="coexist")
-        for index in range(11)
+        _case(f"volcano:{index:02}", source="volcano", category="conflict", decision="coexist") for index in range(11)
     )
     e2_cases = [
         _case(f"local:eq:{index:03}", source="local", category="equivalent", decision="equivalent")
@@ -128,11 +127,7 @@ def _write_remote_evidence(root: Path) -> tuple[Path, Path]:
         case_id = f"included-{index:02}" if index < 11 else f"adjacent-{index - 11:02}"
         left_id = f"e1-left-{index:02}"
         right_id = f"e1-right-{index:02}"
-        resolved_at = (
-            "2026-08-20T12:33:12.609724+00:00"
-            if index < 11
-            else "2026-08-21T02:13:42.725926+00:00"
-        )
+        resolved_at = "2026-08-20T12:33:12.609724+00:00" if index < 11 else "2026-08-21T02:13:42.725926+00:00"
         decision = "keep_left" if index < 4 else "keep_right"
         e1_cases.append(
             {

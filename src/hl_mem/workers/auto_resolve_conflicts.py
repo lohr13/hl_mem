@@ -505,7 +505,6 @@ def auto_resolve_conflicts(
         raise ValueError("failure_backoff_seconds must be between 1 and 86400")
     upgrade_conflict_auto_policy(connection, now, policy_version)
     rows, eligible, blocked, oldest = _ready_rows(connection, now, max_cases)
-    policy = l1_policy or L1Policy(300, 0.15)
     stats = {key: 0 for key in ("scanned", "changed", "resolved", "manual_stable", "deferred", "failed", "l2_queued")}
     started = monotonic()
     last: tuple[str, str] | None = None
@@ -517,30 +516,39 @@ def auto_resolve_conflicts(
         try:
             docket = load_conflict_docket(connection, str(selected["case_id"]))
             fingerprint = conflict_docket_fingerprint(docket)
-            decision = decide_l0(docket) or decide_l1(docket, policy)
+            decision = decide_l0(docket)
             if decision is None:
-                docket["context"]["previous_reason"] = "l0_l1_insufficient"
-                admission = assess_l2_admission(
-                    docket,
-                    now,
-                    max_candidates=max_candidates,
-                    policy_version=policy_version,
-                )
-                if admission.admitted:
-                    stats["l2_queued"] += int(
-                        _enqueue_l2(
-                            connection,
-                            docket,
-                            fingerprint,
-                            now,
-                            policy_version,
-                            _application_mode(mode, "L2"),
-                        )
+                if mode == "l0_only":
+                    decision = AutoDecision(
+                        "manual_required",
+                        None,
+                        0.0,
+                        "L3",
+                        "l0_only_manual_required",
                     )
-                    stats["manual_stable"] += 1
-                    stats["deferred"] += 1
-                    continue
-                decision = AutoDecision("manual_required", None, 0.0, "L3", admission.reason)
+                else:
+                    docket["context"]["previous_reason"] = "l0_insufficient"
+                    admission = assess_l2_admission(
+                        docket,
+                        now,
+                        max_candidates=max_candidates,
+                        policy_version=policy_version,
+                    )
+                    if admission.admitted:
+                        stats["l2_queued"] += int(
+                            _enqueue_l2(
+                                connection,
+                                docket,
+                                fingerprint,
+                                now,
+                                policy_version,
+                                _application_mode(mode, "L2"),
+                            )
+                        )
+                        stats["manual_stable"] += 1
+                        stats["deferred"] += 1
+                        continue
+                    decision = AutoDecision("manual_required", None, 0.0, "L3", admission.reason)
             application_mode = _application_mode(mode, str(decision.tier))
             result = apply_auto_conflict_decision(
                 connection,

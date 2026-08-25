@@ -92,7 +92,7 @@ def test_store_extracted_writes_canonical_attribute_and_v2_keys(tmp_path) -> Non
         (claim_id,),
     ).fetchone()
     assert row["canonical_attribute"] == "choice.database"
-    assert row["conflict_key_version"] == 3
+    assert row["conflict_key_version"] == 4
     assert row["conflict_key"]
     assert row["legacy_conflict_key"]
     assert row["conflict_key"] != row["legacy_conflict_key"]

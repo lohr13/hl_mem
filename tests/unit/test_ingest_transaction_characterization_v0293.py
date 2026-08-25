@@ -155,8 +155,9 @@ def test_new_claim_commits_all_writes_before_flushing_audit_buffer(tmp_path: Any
 
     assert result.reason == "inserted"
     assert timeline[0] == "BEGIN"
-    assert timeline[-4:] == [
+    assert timeline[-5:] == [
         "COMMIT",
+        "AUDIT:ingest:instrument_target:unresolved",
         "AUDIT:dedup:fact_hash_checked:new",
         "AUDIT:conflict:not_applicable:no_existing",
         "AUDIT:dedup:semantic_checked:new",
@@ -195,6 +196,7 @@ def test_exact_duplicate_early_return_commits_evidence_before_audit(tmp_path: An
         "BEGIN",
         "INSERT:evidence_links",
         "COMMIT",
+        "AUDIT:ingest:instrument_target:unresolved",
         "AUDIT:dedup:fact_hash_checked:match",
     ]
     _assert_audit_after_commit(timeline)
@@ -241,6 +243,7 @@ def test_conflict_group_quarantine_is_atomic_and_audited_after_commit(tmp_path: 
         "UPDATE:conflict_cases",
         "INSERT:evidence_links",
         "COMMIT",
+        "AUDIT:ingest:instrument_target:unresolved",
         "AUDIT:dedup:fact_hash_checked:new",
         "AUDIT:conflict:resolved:contradicts",
     ]
@@ -296,6 +299,7 @@ def test_temporal_uncertain_pair_quarantine_commits_case_before_audit(tmp_path: 
         "INSERT:conflict_cases",
         "INSERT:evidence_links",
         "COMMIT",
+        "AUDIT:ingest:instrument_target:unresolved",
         "AUDIT:dedup:fact_hash_checked:new",
         "AUDIT:conflict:temporal_link:uncertain",
     ]

@@ -6,7 +6,7 @@
 
 - **分支**：`batch5-v0310-release`
 - **版本**：v0.31.0
-- **阶段**：发版层 5.1/5.2 已完成；等待 Windows 全套预检、全量 unittest 与 Hermes 终验
+- **阶段**：发版层 5.1–5.3 已完成；等待 Hermes 终验
 - **发布状态**：无 push、无 tag、无 PyPI 发布；v0.30.0 撤回轮保持未发布记录
 - **服务**：FastAPI 默认监听 8200；非敏感配置只从工作目录 `hl_mem.toml` 读取
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
@@ -39,6 +39,8 @@ L2，须先用随包 E1 回放装备在自己的冻结语料上自验并显式�
 - 价格序列以 `(axis, canonical_target_entity_id, snapshot_date)` 定位；qualified code 与唯一 typed alias 可 enforce，
   target/date/币种/单位不完整继续 `uncertain`。
 - conflict、dedup、plan 共享输入 fingerprint、短事务 CAS、governance ledger 和有条件 rollback，但不共享领域决策枚举。
+- `l0_only` 运行时只调用 L0；L1 不进入维护路径，未命中 L0 的案稳定转 `manual_required` 且不建 L2 job。即使
+  jobs 表残留旧 L2 job，handler 也会在构造 judge 前返回 skipped。
 - query entity filter 只运行 observe shadow，不增加通道、boost 或 weight；lesson signal 只记录 qualifier/audit，不改变
   importance/scope。
 - `/healthz` 提供 residual `manual_required` 计数与年龄，Hermes plugin 2.1.0 提供 session 级 no-spam 提示；
@@ -71,10 +73,15 @@ L2，须先用随包 E1 回放装备在自己的冻结语料上自验并显式�
 
 ## 下一步
 
-1. 运行 Black、isort、Ruff、mypy、全部仓库 check 脚本和文档/契约检查。
-2. 按发版任务书环境变量运行 `tests/unit/` 全量 pytest；仅 worktree runtime guard/launcher 的三个已知 venv
-   伪影可在报告中明确豁免，其他失败必须修复。
-3. 写入最终测试数字与 commit 清单，保持本分支待 push；Hermes 验收后再统一 push/tag。
+Windows 全套预检已通过：Black、isort、Ruff、mypy、import boundary、complexity ratchet、quality smoke、docs、
+OpenAPI 和 MCP snapshot 均为绿。全量 pytest 原始运行在修复非伪影回归后只剩 4 个 worktree `.venv` 伪影；
+精确排除这 4 个 node id 后结果为 **2206 passed、1 skipped、4 deselected、110 subtests passed**。
+
+任务书预告 3 个 runtime/launcher 伪影；本机另安装了 Git Bash，因此同一缺失 worktree `.venv` 根因的 Git Bash
+launcher 分支也被执行，实际为 4 个。四项均明确指向缺失的 `.venv/pyvenv.cfg` 或
+`.venv/Scripts/python.exe`，没有业务测试被豁免。
+
+下一步仅由 Hermes 审阅本分支与外部发版证据；验收后再统一 push/tag。本 worktree 不 push、不打 tag、不部署。
 
 ## 当前规范
 

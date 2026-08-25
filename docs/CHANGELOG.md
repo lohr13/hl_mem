@@ -15,7 +15,8 @@
 - 价格序列增加 `(axis, canonical_target_entity_id, snapshot_date)` 坐标；qualified code 与唯一 typed alias
   可确定性解析，缺 target、跨市场歧义、币种或单位变化继续 fail-closed。
 - 冲突维护增加 L0–L3 分层、policy-version 重扫和可选 loopback `[maintenance_judge]`。本发布只启用 L0；生产
-  零常驻 LLM 依赖。随包评测装备可供用户在自己的冻结语料上自验后再显式选择 L2。
+  零常驻 LLM 依赖。`l0_only` 不执行 L1、不创建 L2 job，且会在构造 judge 前跳过升级前残留的 L2 job；随包
+  评测装备可供用户在自己的冻结语料上自验后再显式选择 L2。
 - dedup 增加 typed governing entity + slot bucket 的跨 subject 候选及 protected-atom apply gate；查询增加实体
   mention/proof/coverage shadow trace；提取后处理增加 grounded `lesson_signal`。三者发布默认均保持非破坏模式。
 - `/healthz` 暴露 residual `manual_required` 计数与最老年龄；Hermes 插件 2.1.0 在同一 session 首次或计数变化时

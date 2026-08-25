@@ -22,6 +22,7 @@ from hl_mem.settings import Settings
 mcp = pytest.importorskip("mcp")
 Client = mcp.Client
 MCPError = pytest.importorskip("mcp.shared.exceptions").MCPError
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_mcp_runtime_module_is_available() -> None:
@@ -128,7 +129,7 @@ def test_packaged_console_and_module_entry_points(tmp_path: Path) -> None:
     assert entry.value == "hl_mem.mcp.runtime:main"
 
     environment = os.environ.copy()
-    environment.pop("PYTHONPATH", None)
+    environment["PYTHONPATH"] = str(ROOT / "src")
     completed = subprocess.run(
         [sys.executable, "-m", "hl_mem.mcp", "--version"],
         cwd=tmp_path,

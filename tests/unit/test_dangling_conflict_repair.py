@@ -161,14 +161,14 @@ def test_worker_repairs_dangling_before_auto_resolve_and_stops_failure_accumulat
     connection.execute("PRAGMA foreign_keys=ON")
     runtime = WorkerRuntimeState()
     worker = Worker(
-        replace(Settings.for_test(), database_path=str(path)),
+        replace(Settings.for_test(), database_path=str(path), conflict_auto_mode="l0_only"),
         connection=connection,
         worker_runtime=runtime,
     )
 
     worker._run_maintenance_item(
         "auto_resolve_conflicts",
-        lambda: worker_module.auto_resolve_conflicts(connection, NOW),
+        lambda: worker_module.auto_resolve_conflicts(connection, NOW, mode="l0_only"),
     )
     assert runtime.snapshot()["failure_counts"] == {"auto_resolve_conflicts": 1}
 

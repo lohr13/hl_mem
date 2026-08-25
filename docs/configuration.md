@@ -126,14 +126,6 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `alert.smtp_port` | 整数 | `25` | 任意整数 | `smtp_port` |
 | `alert.webhook_url` | 字符串 | 未设置 | 字符串；可省略 | `alert_webhook_url` |
 
-### `[database]`
-
-| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
-|---|---|---|---|---|
-| `database.busy_timeout_seconds` | 整数 | `30` | >= 1 | `database_busy_timeout_seconds` |
-| `database.path` | 字符串 | `"var/hl_mem.db"` | 任意字符串 | `database_path` |
-| `database.pool_size` | 整数 | `8` | >= 1 | `database_pool_size` |
-
 ### `[conflict]`
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
@@ -141,6 +133,14 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `conflict.auto_mode` | 字符串 | `"l0_only"` | `off`、`observe`、`enforce`、`l0_only` | `conflict_auto_mode` |
 | `conflict.l1_min_confidence_delta` | 数值 | `0.15` | `0.10`、`0.15`、`0.20` | `conflict_l1_min_confidence_delta` |
 | `conflict.l1_min_time_delta_seconds` | 整数 | `300` | `0`、`300`、`3600` | `conflict_l1_min_time_delta_seconds` |
+
+### `[database]`
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `database.busy_timeout_seconds` | 整数 | `30` | >= 1 | `database_busy_timeout_seconds` |
+| `database.path` | 字符串 | `"var/hl_mem.db"` | 任意字符串 | `database_path` |
+| `database.pool_size` | 整数 | `8` | >= 1 | `database_pool_size` |
 
 ### `[decay]`
 
@@ -197,8 +197,8 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `extraction.batch_max_wait_seconds` | 数值 | `120.0` | >= 0 | `extraction_batch_max_wait_seconds` |
 | `extraction.chunk_overlap_turns` | 整数 | `2` | >= 0 | `extraction_chunk_overlap_turns` |
 | `extraction.chunk_target_chars` | 整数 | `12000` | >= 1 | `extraction_chunk_target_chars` |
-| `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
 | `extraction.lesson_signal_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `lesson_signal_mode` |
+| `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
 | `extraction.mode` | 字符串 | `"fake"` | `fake`、`real`、`llm` | `extractor_mode` |
 | `extraction.pre_filter` | 布尔值 | `false` | `true`、`false` | `extract_pre_filter` |
 | `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
@@ -263,17 +263,17 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 
 ### `[maintenance_judge]`
 
-`[maintenance_judge]` 是可选的冲突 backlog 判官配置，不属于摄取 LLM。生产发布配置使用
-`conflict.auto_mode = "l0_only"`，不配置本段时没有常驻 AI 旁听或生产 LLM 依赖；模糊案保留为
-`manual_required`，可由 Hermes 的一次性提示暴露。
-
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
 | `maintenance_judge.base_url` | 字符串 | `"http://127.0.0.1:8090/v1"` | loopback OpenAI-compatible `/v1` 端点 | `maintenance_judge_base_url` |
 | `maintenance_judge.model` | 字符串 | `"Qwen3.8-27B-UD-IQ4_XS.gguf"` | 端点提供的模型名 | `maintenance_judge_model` |
 | `maintenance_judge.prompt_version` | 字符串 | `"conflict-auto-v1"` | 非空版本标识 | `maintenance_judge_prompt_version` |
-| `maintenance_judge.tokenizer_identity` | 字符串 | `"qwen3.8-gguf-embedded"` | 非空 tokenizer 标识 | `maintenance_judge_tokenizer_identity` |
 | `maintenance_judge.timeout_seconds` | 数值 | `90.0` | > 0 | `maintenance_judge_timeout_seconds` |
+| `maintenance_judge.tokenizer_identity` | 字符串 | `"qwen3.8-gguf-embedded"` | 非空 tokenizer 标识 | `maintenance_judge_tokenizer_identity` |
+
+`[maintenance_judge]` 是可选的冲突 backlog 判官配置，不属于摄取 LLM。生产发布配置使用
+`conflict.auto_mode = "l0_only"`，不配置本段时没有常驻 AI 旁听或生产 LLM 依赖；模糊案保留为
+`manual_required`，可由 Hermes 的一次性提示暴露。
 
 端点可以承载任意 OpenAI-compatible 判官和更强模型；非本机服务应先通过 loopback-only 网关暴露，避免维护
 进程直接依赖公网地址。需要定时裁决 backlog 时，先用随包 E1 装备对冻结 70 案自验：
@@ -315,12 +315,12 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `recall.dedup_threshold` | 数值 | `0.95` | 0.0 - 1.0；0 关闭折叠 | `recall_dedup_threshold` |
 | `recall.default_limit` | 整数 | `5` | 1 - 100 | `recall_default_limit` |
 | `recall.dense_enabled` | 布尔值 | `true` | `true`、`false` | `recall_dense_enabled` |
-| `recall.entity_constraint_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `entity_constraint_mode` |
 | `recall.echo_pending_max_seconds` | 整数 | `7200` | >= 60 | `echo_pending_max_seconds` |
 | `recall.echo_pending_review_enabled` | 布尔值 | `false` | `true`、`false` | `echo_pending_review_enabled` |
 | `recall.echo_pending_similarity_threshold` | 数值 | `0.95` | 0.0 - 1.0 | `echo_pending_similarity_threshold` |
 | `recall.echo_session_window_seconds` | 整数 | `1800` | 60 - 14400 | `echo_session_window_seconds` |
 | `recall.echo_suppression_mode` | 字符串 | `"enforce"` | `off`、`observe`、`enforce` | `echo_suppression_mode` |
+| `recall.entity_constraint_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `entity_constraint_mode` |
 | `recall.expansion_circuit_failure_threshold` | 整数 | `5` | >= 1 | `expansion_circuit_failure_threshold` |
 | `recall.expansion_circuit_open_seconds` | 数值 | `60.0` | > 0 | `expansion_circuit_open_seconds` |
 | `recall.feedback_min_samples` | 整数 | `3` | >= 1 | `feedback_min_samples` |
