@@ -69,7 +69,7 @@ def load_e1_replay_manifest(base_path: str | Path, overlay_path: str | Path) -> 
         raise ValueError("E1 replay overlay schema is invalid")
     if overlay.get("base_manifest_sha256") != base.get("manifest_sha256"):
         raise ValueError("E1 replay overlay base manifest hash mismatch")
-    replay = copy.deepcopy(base)
+    replay: dict[str, Any] = copy.deepcopy(base)
     cases = {str(item["case_id"]): item for item in replay["cases"]}
     seen: set[str] = set()
     for row in overlay.get("cases") or []:
@@ -347,9 +347,23 @@ def _arm_report(
     score = score_decisions(cases, predictions)
     score["invariant_violations"] = len(invariant_ids)
     score["gold_invariant_conflict_case_ids"] = invariant_ids
+    gold_by_id = {str(item["case_id"]): cast(Mapping[str, Any], item["gold"]) for item in cases}
+    mismatches = [str(row["case_id"]) for row in predictions if not _matches_gold(row, gold_by_id[str(row["case_id"])])]
     return {
         "predictions": predictions,
         "score": score,
+        "tier_distribution": dict(sorted(Counter(str(row["tier"]) for row in predictions).items())),
+        "rule_distribution": dict(sorted(Counter(str(row["rule"]) for row in predictions).items())),
+        "l3_reason_distribution": dict(
+            sorted(
+                Counter(
+                    str(row["rule"])
+                    for row in predictions
+                    if row["tier"] == "L3" or row["decision"] == "manual_required"
+                ).items()
+            )
+        ),
+        "mismatch_case_ids": mismatches,
         "gate": evaluate_decision_gate(
             score,
             min_exact=67,
@@ -360,11 +374,50 @@ def _arm_report(
     }
 
 
-def _write_e1_report(report: Mapping[str, Any], output_dir: str | Path) -> None:
+def _remaining_gaps(
+    arms: Mapping[str, Mapping[str, Any]],
+    case_rows: Sequence[Mapping[str, Any]],
+    invariant_ids: Sequence[str],
+) -> dict[str, Any]:
+    c_arm = arms["C"]
+    c_score = cast(Mapping[str, Any], c_arm["score"])
+    l3_cases: dict[str, list[str]] = {}
+    semantic_cases: dict[str, list[str]] = {}
+    for item in case_rows:
+        prediction = cast(Mapping[str, Any], cast(Mapping[str, Any], item["arms"])["C"])
+        rule = str(prediction["rule"])
+        if prediction["tier"] == "L3" or prediction["decision"] == "manual_required":
+            l3_cases.setdefault(rule, []).append(str(item["case_id"]))
+        elif not cast(Mapping[str, Any], item["exact"])["C"]:
+            semantic_cases.setdefault(rule, []).append(str(item["case_id"]))
+    b_destructive_ids = set(cast(Mapping[str, Any], arms["B"]["score"])["destructive_error_case_ids"])
+    b_destructive_rules: dict[str, list[str]] = {}
+    for item in case_rows:
+        if item["case_id"] not in b_destructive_ids:
+            continue
+        prediction = cast(Mapping[str, Any], cast(Mapping[str, Any], item["arms"])["B"])
+        b_destructive_rules.setdefault(str(prediction["rule"]), []).append(str(item["case_id"]))
+    passed = bool(cast(Mapping[str, Any], c_arm["gate"])["passed"])
+    return {
+        "gate_deficits": {
+            "exact_below_67": max(0, 67 - int(c_score["exact"])),
+            "l3_above_3": max(0, int(c_score["abstentions"]) - 3),
+            "destructive_errors": len(c_score["destructive_error_case_ids"]),
+            "gold_invariant_conflicts": len(invariant_ids),
+        },
+        "l3_defer_cases_by_reason": dict(sorted(l3_cases.items())),
+        "semantic_mismatch_cases_by_rule": dict(sorted(semantic_cases.items())),
+        "b_destructive_cases_by_rule": dict(sorted(b_destructive_rules.items())),
+        "next_action": "release_enforce_at_version_gate" if passed else "keep_observe_and_preregister_any_followup",
+    }
+
+
+def _write_e1_report(report: Mapping[str, Any], output_dir: str | Path, *, version: str) -> None:
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
-    json_path = root / "e1_report.json"
-    md_path = root / "e1_report.md"
+    suffix = "_v2" if version == "v2" else ""
+    json_path = root / f"e1_report{suffix}.json"
+    md_path = root / f"e1_report{suffix}.md"
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     rows = ["| Arm | Exact | L3 | Destructive | Gate |", "|---|---:|---:|---:|---|"]
     for name in ("A", "B", "C"):
@@ -376,14 +429,32 @@ def _write_e1_report(report: Mapping[str, Any], output_dir: str | Path) -> None:
         )
     c_rules = Counter(item["arms"]["C"]["rule"] for item in report["cases"])
     mismatch_rules = Counter(item["arms"]["C"]["rule"] for item in report["cases"] if not item["exact"]["C"])
+    invariant_summary = cast(Mapping[str, Any], report["gold_invariant_conflicts"])
     rows.extend(
         [
             "",
-            "## Failure analysis",
+            f"## Gold invariant conflicts ({invariant_summary['count']})",
+            "",
+            *(f"- `{case_id}`" for case_id in invariant_summary["case_ids"]),
+            *(["- None"] if not invariant_summary["case_ids"] else []),
+            "",
+            "## Tier and defer distributions",
+            "",
+            *(
+                f"- {name}: tiers=`{json.dumps(report['arms'][name]['tier_distribution'], sort_keys=True)}`; "
+                f"L3=`{json.dumps(report['arms'][name]['l3_reason_distribution'], sort_keys=True)}`"
+                for name in ("A", "B", "C")
+            ),
+            "",
+            "## Mismatch analysis",
             "",
             f"- C rule counts: `{json.dumps(dict(c_rules), ensure_ascii=False, sort_keys=True)}`",
             f"- C mismatch rules: `{json.dumps(dict(mismatch_rules), ensure_ascii=False, sort_keys=True)}`",
-            "- If C fails, keep `conflict.auto_mode=observe`; do not change preregistered thresholds.",
+            f"- C mismatch cases: `{json.dumps(report['arms']['C']['mismatch_case_ids'], ensure_ascii=False)}`",
+            "",
+            "## Remaining gaps",
+            "",
+            f"- `{json.dumps(report['remaining_gaps'], ensure_ascii=False, sort_keys=True)}`",
             "",
             "## 70-case replay",
             "",
@@ -400,7 +471,36 @@ def _write_e1_report(report: Mapping[str, Any], output_dir: str | Path) -> None:
             f"gold unavailable / {','.join(arms['C']['decisive_evidence_ids']) or 'none'} | "
             f"{'yes' if item['destructive'] else 'no'} |"
         )
-    md_path.write_text("# E1 conflict automation gate\n\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    recommendation = cast(Mapping[str, Any], report["enforce_recommendation"])
+    rows.extend(
+        [
+            "",
+            "## Enforce recommendation",
+            "",
+            f"- Decision: `{recommendation['decision']}`",
+            f"- Current batch mode: `{recommendation['current_batch_mode']}`",
+            f"- Release mode: `{recommendation['release_mode']}`",
+            f"- L1 policy: `{recommendation['selected_l1_policy']}`",
+            f"- L1 rules: `{json.dumps(recommendation['enabled_l1_rules'], ensure_ascii=False)}`",
+            f"- L2 confidence floor: `{recommendation['l2_confidence_floor']}`",
+        ]
+    )
+    title = "# E1 conflict automation gate v2" if version == "v2" else "# E1 conflict automation gate"
+    md_path.write_text(title + "\n\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    if version == "v2":
+        passed = bool(report["arms"]["C"]["gate"]["passed"])
+        seal_path = root / ("E1_V2_PASSED" if passed else "SEALED_FAILED_v2")
+        seal_path.write_text(
+            f"status={'PASS' if passed else 'SEALED_FAILED'}\n"
+            f"json_sha256={_file_sha256(json_path)}\n"
+            f"markdown_sha256={_file_sha256(md_path)}\n",
+            encoding="ascii",
+        )
+        paths = (json_path, md_path, seal_path)
+        (root / "SHA256SUMS_v2").write_text(
+            "\n".join(f"{_file_sha256(path)}  {path.name}" for path in paths) + "\n",
+            encoding="ascii",
+        )
 
 
 def run_e1_experiment(
@@ -409,15 +509,23 @@ def run_e1_experiment(
     *,
     l2_decider: E1L2Decider | None = None,
     model_metadata: Mapping[str, Any] | None = None,
+    replay_overlay_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run frozen true-L0, candidate-L1, and safe-L1 plus double-pass-L2 arms."""
 
-    manifest = load_manifest(manifest_path)
+    version = "v2" if replay_overlay_path is not None else "v1"
+    manifest = (
+        load_e1_replay_manifest(manifest_path, replay_overlay_path)
+        if replay_overlay_path is not None
+        else load_manifest(manifest_path)
+    )
     if manifest["experiment"] != "E1":
         raise ValueError("run_e1_experiment requires the E1 manifest")
     cases = cast(list[Mapping[str, Any]], manifest["cases"])
     dockets = {str(item["case_id"]): _e1_docket(item) for item in cases}
-    invariant_ids = _gold_invariant_conflicts(cases, dockets)
+    invariant_ids = sorted(
+        set(_gold_invariant_conflicts(cases, dockets)) | set(manifest.get("gold_invariant_conflicts") or [])
+    )
     a_predictions = [_prediction(case_id, decide_l0(docket), "l0_insufficient") for case_id, docket in dockets.items()]
     policy_reports: dict[str, dict[str, Any]] = {}
     policy_predictions: dict[str, list[dict[str, Any]]] = {}
@@ -505,9 +613,12 @@ def run_e1_experiment(
         }
         for item in cases
     ]
+    c_passed = bool(arms["C"]["gate"]["passed"])
     report: dict[str, Any] = {
-        "schema_version": "v030-e1-report-v1",
+        "schema_version": f"v030-e1-report-{version}",
         "manifest_sha256": manifest["manifest_sha256"],
+        "replay_overlay_sha256": manifest.get("replay_overlay_sha256"),
+        "gold_invariant_conflicts": {"count": len(invariant_ids), "case_ids": invariant_ids},
         "thresholds": {"min_exact": 67, "max_l3": 3, "max_destructive": 0, "max_invariants": 0},
         "selected_l1_policy": selected_key,
         "l1_selection_rule": "zero-destructive-first, exact-desc, abstention-asc, conservative-tie-break",
@@ -515,10 +626,19 @@ def run_e1_experiment(
         "candidate_l1_policies": policy_reports,
         "model": dict(model_metadata or {}),
         "model_calls": list(getattr(getattr(l2_decider, "__self__", None), "audit_records", [])),
+        "enforce_recommendation": {
+            "decision": "recommend_enforce_at_release" if c_passed else "keep_observe",
+            "current_batch_mode": "observe",
+            "release_mode": "enforce" if c_passed else "observe",
+            "selected_l1_policy": selected_key,
+            "enabled_l1_rules": enabled_rules,
+            "l2_confidence_floor": 0.90,
+        },
+        "remaining_gaps": _remaining_gaps(arms, case_rows, invariant_ids),
         "arms": arms,
         "cases": case_rows,
     }
-    _write_e1_report(report, output_dir)
+    _write_e1_report(report, output_dir, version=version)
     return report
 
 
@@ -536,6 +656,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--model-file", type=Path)
     parser.add_argument("--model-sha256")
     parser.add_argument("--llama-build")
+    parser.add_argument("--e1-replay-overlay", type=Path)
     args = parser.parse_args(argv)
     if args.phase == "validate":
         result = validate_manifest_directory(args.manifest_dir)
@@ -571,6 +692,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output_dir,
             l2_decider=judge.judge,
             model_metadata=metadata,
+            replay_overlay_path=args.e1_replay_overlay,
         )
         result = {
             "phase": "e1",

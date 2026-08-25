@@ -279,7 +279,7 @@ def test_baseline_rejects_non_a_arm(tmp_path: Path) -> None:
         run_baseline(manifest_dir, database, config, recall, tmp_path / "baseline", arm="B")
 
 
-def test_e1_orchestrator_runs_three_arms_without_leaking_gold(tmp_path: Path) -> None:
+def _e1_orchestrator_fixture(tmp_path: Path) -> tuple[Path, dict[str, dict[str, object]]]:
     manifest = _manifest("E1")
     expected: dict[str, dict[str, object]] = {}
     for item in manifest["cases"]:
@@ -319,7 +319,13 @@ def test_e1_orchestrator_runs_three_arms_without_leaking_gold(tmp_path: Path) ->
         source_snapshots=manifest["source_snapshots"],
         source_audit=manifest["source_audit"],
     )
-    write_manifest(tmp_path / "e1.json", manifest)
+    manifest_path = tmp_path / "e1.json"
+    write_manifest(manifest_path, manifest)
+    return manifest_path, expected
+
+
+def test_e1_orchestrator_runs_three_arms_without_leaking_gold(tmp_path: Path) -> None:
+    manifest_path, expected = _e1_orchestrator_fixture(tmp_path)
 
     def perfect_l2(docket: dict[str, object]) -> AutoDecision:
         assert "gold" not in json.dumps(docket)
@@ -327,11 +333,59 @@ def test_e1_orchestrator_runs_three_arms_without_leaking_gold(tmp_path: Path) ->
         winner = gold.get("winner_candidate_key")
         return AutoDecision(str(gold["decision"]), str(winner) if winner else None, 0.99, "L2", "fixture")
 
-    report = run_e1_experiment(tmp_path / "e1.json", tmp_path / "out", l2_decider=perfect_l2)
+    report = run_e1_experiment(manifest_path, tmp_path / "out", l2_decider=perfect_l2)
 
     assert report["arms"]["C"]["gate"]["passed"] is True
     assert len(report["cases"]) == 70
     assert all((tmp_path / "out" / name).is_file() for name in ("e1_report.json", "e1_report.md"))
+
+
+def test_e1_v2_report_is_versioned_sealed_and_summarizes_invariant_conflicts(tmp_path: Path) -> None:
+    manifest_path, expected = _e1_orchestrator_fixture(tmp_path)
+    manifest = load_manifest(manifest_path)
+    first_case_id = str(manifest["cases"][0]["case_id"])
+    overlay_path = tmp_path / "e1_v2.json"
+    overlay_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v030-e1-replay-overlay-v2",
+                "base_manifest_sha256": manifest["manifest_sha256"],
+                "cases": [],
+                "gold_invariant_conflicts": [first_case_id],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def perfect_l2(docket: dict[str, object]) -> AutoDecision:
+        gold = expected[docket["case"]["id"]]  # type: ignore[index]
+        winner = gold.get("winner_candidate_key")
+        return AutoDecision(str(gold["decision"]), str(winner) if winner else None, 0.99, "L2", "fixture")
+
+    output_dir = tmp_path / "out"
+    report = run_e1_experiment(
+        manifest_path,
+        output_dir,
+        l2_decider=perfect_l2,
+        replay_overlay_path=overlay_path,
+    )
+
+    assert report["schema_version"] == "v030-e1-report-v2"
+    assert report["gold_invariant_conflicts"] == {"count": 1, "case_ids": [first_case_id]}
+    assert report["arms"]["C"]["gate"]["passed"] is False
+    assert report["arms"]["C"]["tier_distribution"]
+    assert "l3_reason_distribution" in report["arms"]["C"]
+    assert report["remaining_gaps"]["gate_deficits"]["gold_invariant_conflicts"] == 1
+    assert report["remaining_gaps"]["next_action"] == "keep_observe_and_preregister_any_followup"
+    assert (output_dir / "e1_report.json").exists() is False
+    assert all(
+        (output_dir / name).is_file()
+        for name in ("e1_report_v2.json", "e1_report_v2.md", "SEALED_FAILED_v2", "SHA256SUMS_v2")
+    )
+    markdown = (output_dir / "e1_report_v2.md").read_text(encoding="utf-8")
+    assert "Gold invariant conflicts (1)" in markdown
+    assert first_case_id in markdown
+    assert "Remaining gaps" in markdown
 
 
 @pytest.mark.parametrize(
