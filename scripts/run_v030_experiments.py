@@ -18,6 +18,11 @@ from typing import Any, Callable, Mapping, cast
 
 from hl_mem.domain.governance import is_terminal_conflict_status
 from hl_mem.evaluation.v030_corpus import EXPERIMENTS, load_manifest, validate_manifest
+from hl_mem.evaluation.v030_plan_price import (
+    assess_e5_manifest,
+    assess_e6_manifest,
+    write_sealed_report,
+)
 from hl_mem.evaluation.v030_scorers import evaluate_decision_gate, score_decisions
 from hl_mem.workers.auto_resolve_conflicts import (
     AutoDecision,
@@ -642,9 +647,33 @@ def run_e1_experiment(
     return report
 
 
+def run_plan_price_preflight(
+    manifest_path: str | Path,
+    output_dir: str | Path,
+) -> dict[str, Any]:
+    """Authenticate E5/E6 and stop before qwen when the frozen corpus cannot support scoring."""
+
+    manifest = load_manifest(manifest_path)
+    experiment = str(manifest["experiment"])
+    if experiment == "E5":
+        assessment = assess_e5_manifest(manifest)
+    elif experiment == "E6":
+        assessment = assess_e6_manifest(manifest)
+    else:
+        raise ValueError("plan/price preflight accepts only E5 or E6")
+    if assessment["ready"]:
+        return {
+            "schema_version": f"v030-{experiment.lower()}-waiting-qwen-v1",
+            "status": "WAITING_QWEN",
+            "manifest_sha256": manifest["manifest_sha256"],
+            "assessment": assessment,
+        }
+    return write_sealed_report(output_dir, manifest, assessment)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("validate", "baseline", "e1"))
+    parser.add_argument("phase", choices=("validate", "baseline", "e1", "e5", "e6"))
     parser.add_argument("--manifest-dir", type=Path, required=True)
     parser.add_argument("--database", type=Path)
     parser.add_argument("--config", type=Path)
@@ -672,7 +701,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output_dir,
             arm=args.arm,
         )
-    else:
+    elif args.phase == "e1":
         if args.output_dir is None:
             parser.error("e1 requires --output-dir")
         from hl_mem.settings import Settings
@@ -700,6 +729,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "gates": {name: arm["gate"] for name, arm in report["arms"].items()},
             "output_dir": str(args.output_dir),
         }
+    else:
+        if args.output_dir is None:
+            parser.error(f"{args.phase} requires --output-dir")
+        result = run_plan_price_preflight(
+            args.manifest_dir / f"{args.phase}.json",
+            args.output_dir,
+        )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 
