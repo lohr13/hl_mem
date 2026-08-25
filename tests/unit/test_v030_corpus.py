@@ -15,8 +15,9 @@ from hl_mem.evaluation.v030_corpus import (
     validate_manifest,
     write_manifest,
 )
+from hl_mem.workers.auto_resolve_conflicts import AutoDecision
 from scripts.run_v030_experiments import main as run_experiments
-from scripts.run_v030_experiments import run_baseline
+from scripts.run_v030_experiments import run_baseline, run_e1_experiment
 
 
 def _case(case_id: str, *, source: str, category: str, decision: str = "keep_left", **extra: object) -> dict:
@@ -273,3 +274,58 @@ def test_baseline_rejects_non_a_arm(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="A arm"):
         run_baseline(manifest_dir, database, config, recall, tmp_path / "baseline", arm="B")
+
+
+def test_e1_orchestrator_runs_three_arms_without_leaking_gold(tmp_path: Path) -> None:
+    manifest = _manifest("E1")
+    expected: dict[str, dict[str, object]] = {}
+    for item in manifest["cases"]:
+        case_id = item["case_id"]
+        gold = item["gold"]
+        if gold["decision"] == "select_candidate":
+            gold["winner_candidate_key"] = "left-value"
+        expected[case_id] = gold
+        item["input"] = {
+            "case": {
+                "id": case_id,
+                "left_claim_id": "left",
+                "right_claim_id": "right",
+                "group_key": "group" if gold["decision"] == "select_candidate" else None,
+            },
+            "claims": [
+                {
+                    "id": claim_id,
+                    "value": f"{claim_id}-value",
+                    "status": "disputed",
+                    "namespace_key": "default",
+                    "subject_entity_id": "subject",
+                    "canonical_slot": "config.port",
+                    "qualifiers": {"service": "fixture"},
+                }
+                for claim_id in ("left", "right")
+            ],
+            "candidates": [
+                {"candidate_key": "left-value", "representative_claim_id": "left", "support_count": 1},
+                {"candidate_key": "right-value", "representative_claim_id": "right", "support_count": 1},
+            ],
+            "evidence_refs": {},
+        }
+    manifest = build_manifest(
+        "E1",
+        manifest["cases"],
+        source_snapshots=manifest["source_snapshots"],
+        source_audit=manifest["source_audit"],
+    )
+    write_manifest(tmp_path / "e1.json", manifest)
+
+    def perfect_l2(docket: dict[str, object]) -> AutoDecision:
+        assert "gold" not in json.dumps(docket)
+        gold = expected[docket["case"]["id"]]  # type: ignore[index]
+        winner = gold.get("winner_candidate_key")
+        return AutoDecision(str(gold["decision"]), str(winner) if winner else None, 0.99, "L2", "fixture")
+
+    report = run_e1_experiment(tmp_path / "e1.json", tmp_path / "out", l2_decider=perfect_l2)
+
+    assert report["arms"]["C"]["gate"]["passed"] is True
+    assert len(report["cases"]) == 70
+    assert all((tmp_path / "out" / name).is_file() for name in ("e1_report.json", "e1_report.md"))

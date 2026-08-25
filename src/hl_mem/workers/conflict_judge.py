@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Mapping, Protocol
 
 from hl_mem.domain.governance import CONFLICT_AUTO_POLICY_VERSION
+from hl_mem.errors import ConfigurationError
 from hl_mem.evaluation.local_qwen_runner import (
     LocalQwenRunner,
     OversizedDocket,
@@ -37,18 +40,23 @@ class LocalConflictJudge:
     def __init__(self, runner: LocalQwenRunner, *, rule_enabled: bool = True) -> None:
         self.runner = runner
         self.rule_enabled = rule_enabled
+        self.audit_records: list[dict[str, Any]] = []
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "LocalConflictJudge":
-        settings.validate()
-        config = QwenRunConfig(
-            base_url=settings.maintenance_judge_base_url,
-            model=settings.maintenance_judge_model,
-            prompt_version=settings.maintenance_judge_prompt_version,
-            tokenizer_identity=settings.maintenance_judge_tokenizer_identity,
-            enable_thinking=False,
-            timeout_seconds=settings.maintenance_judge_timeout_seconds,
-        )
+        if settings.maintenance_judge_timeout_seconds <= 0:
+            raise ConfigurationError("maintenance_judge.timeout_seconds must be positive")
+        try:
+            config = QwenRunConfig(
+                base_url=settings.maintenance_judge_base_url,
+                model=settings.maintenance_judge_model,
+                prompt_version=settings.maintenance_judge_prompt_version,
+                tokenizer_identity=settings.maintenance_judge_tokenizer_identity,
+                enable_thinking=False,
+                timeout_seconds=settings.maintenance_judge_timeout_seconds,
+            )
+        except ValueError as error:
+            raise ConfigurationError(str(error)) from error
         return cls(LocalQwenRunner(token_counter=_conservative_token_count, config=config))
 
     def judge(self, docket: Mapping[str, Any]) -> AutoDecision:
@@ -76,6 +84,13 @@ class LocalConflictJudge:
         try:
             result = self.runner.run_case(payload)
         except OversizedDocket:
+            self.audit_records.append(
+                {
+                    "case_id": payload["case_id"],
+                    "call_count": len(getattr(self.runner, "payload_snapshots", [])),
+                    "oversized": True,
+                }
+            )
             return AutoDecision(
                 "manual_required",
                 None,
@@ -84,6 +99,28 @@ class LocalConflictJudge:
                 "oversized_docket",
                 resolver_model=self.runner.config.model,
             )
+        except Exception as error:
+            snapshots = getattr(self.runner, "payload_snapshots", [])
+            self.audit_records.append(
+                {
+                    "case_id": payload["case_id"],
+                    "call_count": len(snapshots),
+                    "request_sha256": [
+                        hashlib.sha256(json.dumps(item, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                        for item in snapshots
+                    ],
+                    "error": type(error).__name__,
+                }
+            )
+            raise
+        self.audit_records.append(
+            {
+                "case_id": payload["case_id"],
+                "call_count": result["call_count"],
+                "request_sha256": result["request_sha256"],
+                "consistent": result["consistent"],
+            }
+        )
         return validate_l2_result(
             docket,
             result,

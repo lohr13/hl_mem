@@ -448,7 +448,7 @@ class Settings:
         metadata={"toml": "worker.conflict_auto_resolve_max_candidates"},
     )
     maintenance_judge_base_url: str = _toml_field("http://127.0.0.1:8090/v1", "maintenance_judge.base_url")
-    maintenance_judge_model: str = _toml_field("qwen3.8-27b-ud-iq4-xs", "maintenance_judge.model")
+    maintenance_judge_model: str = _toml_field("Qwen3.8-27B-UD-IQ4_XS.gguf", "maintenance_judge.model")
     maintenance_judge_prompt_version: str = _toml_field("conflict-auto-v1", "maintenance_judge.prompt_version")
     maintenance_judge_tokenizer_identity: str = _toml_field(
         "qwen3.8-gguf-embedded", "maintenance_judge.tokenizer_identity"

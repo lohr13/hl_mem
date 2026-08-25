@@ -10,10 +10,22 @@ import sqlite3
 import tomllib
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import asdict
+from itertools import product
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, Mapping, cast
 
 from hl_mem.evaluation.v030_corpus import EXPERIMENTS, load_manifest, validate_manifest
+from hl_mem.evaluation.v030_scorers import evaluate_decision_gate, score_decisions
+from hl_mem.workers.auto_resolve_conflicts import (
+    AutoDecision,
+    L1Policy,
+    assess_l2_admission,
+    decide_l0,
+    decide_l1,
+)
+
+E1L2Decider = Callable[[dict[str, Any]], AutoDecision]
 
 
 def validate_manifest_directory(manifest_dir: str | Path) -> dict[str, object]:
@@ -144,19 +156,344 @@ def run_baseline(
     return payload
 
 
+def _manifest_claim_status(claim: Mapping[str, Any]) -> str:
+    if claim.get("status"):
+        return str(claim["status"])
+    # Frozen E1 inputs intentionally omit the post-review lifecycle status.
+    # Reconstruct the pre-decision state instead of leaking the historical outcome.
+    return "disputed"
+
+
+def _evidence_rows(input_payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    refs = input_payload.get("evidence_refs") or {}
+    if not isinstance(refs, Mapping):
+        return []
+    return [
+        {"derived_id": str(claim_id), **dict(item)}
+        for claim_id, items in refs.items()
+        if isinstance(items, list)
+        for item in items
+        if isinstance(item, Mapping)
+    ]
+
+
+def _coordinates_complete(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    slot = left.get("canonical_slot")
+    return bool(
+        slot
+        and slot == right.get("canonical_slot")
+        and left.get("namespace_key") == right.get("namespace_key")
+        and left.get("subject_entity_id")
+        and left.get("subject_entity_id") == right.get("subject_entity_id")
+        and left.get("qualifiers") == right.get("qualifiers")
+    )
+
+
+def _e1_docket(item: Mapping[str, Any]) -> dict[str, Any]:
+    source = cast(Mapping[str, Any], item["input"])
+    case = dict(cast(Mapping[str, Any], source.get("case") or {}))
+    raw_claims = [dict(claim) for claim in source.get("claims") or [] if isinstance(claim, Mapping)]
+    claims_by_id = {str(claim.get("id")): claim for claim in raw_claims}
+    endpoints: list[dict[str, Any]] = []
+    for side in ("left", "right"):
+        claim_id = str(case.get(f"{side}_claim_id") or "")
+        if claim_id not in claims_by_id:
+            raise ValueError(f"E1 case {item['case_id']} is missing {side} claim")
+        claim = dict(claims_by_id[claim_id])
+        claim["status"] = _manifest_claim_status(claim)
+        endpoints.append(claim)
+    evidence = _evidence_rows(source)
+    evidence_counts = Counter(str(row["derived_id"]) for row in evidence)
+    candidates = [dict(candidate) for candidate in source.get("candidates") or [] if isinstance(candidate, Mapping)]
+    if candidates:
+        for candidate in candidates:
+            member_ids = candidate.get("member_claim_ids") or candidate.get("claim_ids") or []
+            statuses = {
+                str(claim_id): _manifest_claim_status(claims_by_id[str(claim_id)])
+                for claim_id in member_ids
+                if str(claim_id) in claims_by_id
+            }
+            candidate["claim_statuses"] = statuses
+            candidate["evidence_count"] = sum(evidence_counts[claim_id] for claim_id in statuses)
+            candidate["terminal"] = bool(statuses) and not any(
+                status in {"active", "candidate", "disputed"} for status in statuses.values()
+            )
+    else:
+        candidates = [
+            {
+                "candidate_key": str(claim["id"]),
+                "representative_claim_id": str(claim["id"]),
+                "support_count": 1,
+                "evidence_count": evidence_counts[str(claim["id"])],
+                "terminal": claim["status"] not in {"active", "candidate", "disputed"},
+            }
+            for claim in endpoints
+        ]
+    case["group_native"] = bool(case.get("group_key") and source.get("candidates"))
+    context = {
+        "left_tip_id": endpoints[0]["id"],
+        "right_tip_id": endpoints[1]["id"],
+        "survivor_contested": False,
+        "schema_valid": bool(case.get("namespace_key") or endpoints[0].get("namespace_key")),
+        "evidence_readable": True,
+        "entity_type_mismatch": False,
+        "coordinates_complete": _coordinates_complete(*endpoints),
+        "equal_authority_first_hand_conflict": False,
+        "previous_reason": "l0_l1_insufficient",
+        "last_l2_policy_version": None,
+        "not_before": None,
+        "docket_oversized": False,
+        "nonexclusive_false_positive": endpoints[0].get("canonical_slot") != endpoints[1].get("canonical_slot"),
+    }
+    return {
+        "case_id": item["case_id"],
+        "case": case,
+        "claims": endpoints,
+        "candidates": candidates,
+        "evidence": evidence,
+        "context": context,
+    }
+
+
+def _prediction(case_id: str, decision: AutoDecision | None, fallback_rule: str) -> dict[str, Any]:
+    resolved = decision or AutoDecision("manual_required", None, 0.0, "L3", fallback_rule)
+    return {
+        "case_id": case_id,
+        "decision": resolved.decision,
+        "winner_candidate_key": resolved.winner_candidate_key,
+        "confidence": resolved.confidence,
+        "tier": resolved.tier,
+        "rule": resolved.rule,
+        "decisive_evidence_ids": list(resolved.evidence_ids),
+        "resolver_model": resolved.resolver_model,
+    }
+
+
+def _matches_gold(prediction: Mapping[str, Any], gold: Mapping[str, Any]) -> bool:
+    if prediction.get("decision") != gold.get("decision"):
+        return False
+    return gold.get("decision") != "select_candidate" or prediction.get("winner_candidate_key") == gold.get(
+        "winner_candidate_key"
+    )
+
+
+def _gold_invariant_conflicts(cases: Sequence[Mapping[str, Any]], dockets: Mapping[str, dict[str, Any]]) -> list[str]:
+    conflicts: list[str] = []
+    for item in cases:
+        case_id = str(item["case_id"])
+        gold = cast(Mapping[str, Any], item["gold"])
+        docket = dockets[case_id]
+        decision = gold.get("decision")
+        if gold.get("gold_invariant_status") == "gold_invariant_conflict":
+            conflicts.append(case_id)
+        elif docket["case"].get("group_native") and decision in {"coexist", "reject"}:
+            conflicts.append(case_id)
+        elif decision == "select_candidate" and str(gold.get("winner_candidate_key")) not in {
+            str(candidate.get("candidate_key")) for candidate in docket["candidates"]
+        }:
+            conflicts.append(case_id)
+    return sorted(set(conflicts))
+
+
+def _arm_report(
+    cases: Sequence[Mapping[str, Any]], predictions: list[dict[str, Any]], invariant_ids: list[str]
+) -> dict[str, Any]:
+    score = score_decisions(cases, predictions)
+    score["invariant_violations"] = len(invariant_ids)
+    score["gold_invariant_conflict_case_ids"] = invariant_ids
+    return {
+        "predictions": predictions,
+        "score": score,
+        "gate": evaluate_decision_gate(
+            score,
+            min_exact=67,
+            max_abstentions=3,
+            max_destructive=0,
+            max_invariant_violations=0,
+        ),
+    }
+
+
+def _write_e1_report(report: Mapping[str, Any], output_dir: str | Path) -> None:
+    root = Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    json_path = root / "e1_report.json"
+    md_path = root / "e1_report.md"
+    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    rows = ["| Arm | Exact | L3 | Destructive | Gate |", "|---|---:|---:|---:|---|"]
+    for name in ("A", "B", "C"):
+        arm = report["arms"][name]
+        score = arm["score"]
+        rows.append(
+            f"| {name} | {score['exact']}/70 | {score['abstentions']} | "
+            f"{len(score['destructive_error_case_ids'])} | {'PASS' if arm['gate']['passed'] else 'FAIL'} |"
+        )
+    c_rules = Counter(item["arms"]["C"]["rule"] for item in report["cases"])
+    mismatch_rules = Counter(item["arms"]["C"]["rule"] for item in report["cases"] if not item["exact"]["C"])
+    rows.extend(
+        [
+            "",
+            "## Failure analysis",
+            "",
+            f"- C rule counts: `{json.dumps(dict(c_rules), ensure_ascii=False, sort_keys=True)}`",
+            f"- C mismatch rules: `{json.dumps(dict(mismatch_rules), ensure_ascii=False, sort_keys=True)}`",
+            "- If C fails, keep `conflict.auto_mode=observe`; do not change preregistered thresholds.",
+            "",
+            "## 70-case replay",
+            "",
+            "| Case | Source | Gold | A | B | C | Tier | Rule | Evidence difference | Destructive |",
+            "|---|---|---|---|---|---|---|---|---|---|",
+        ]
+    )
+    for item in report["cases"]:
+        arms = item["arms"]
+        rows.append(
+            f"| {item['case_id']} | {item['source']} | {item['gold']['decision']} | "
+            f"{arms['A']['decision']} | {arms['B']['decision']} | {arms['C']['decision']} | "
+            f"{arms['C']['tier']} | {arms['C']['rule']} | "
+            f"gold unavailable / {','.join(arms['C']['decisive_evidence_ids']) or 'none'} | "
+            f"{'yes' if item['destructive'] else 'no'} |"
+        )
+    md_path.write_text("# E1 conflict automation gate\n\n" + "\n".join(rows) + "\n", encoding="utf-8")
+
+
+def run_e1_experiment(
+    manifest_path: str | Path,
+    output_dir: str | Path,
+    *,
+    l2_decider: E1L2Decider | None = None,
+    model_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run frozen true-L0, candidate-L1, and safe-L1 plus double-pass-L2 arms."""
+
+    manifest = load_manifest(manifest_path)
+    if manifest["experiment"] != "E1":
+        raise ValueError("run_e1_experiment requires the E1 manifest")
+    cases = cast(list[Mapping[str, Any]], manifest["cases"])
+    dockets = {str(item["case_id"]): _e1_docket(item) for item in cases}
+    invariant_ids = _gold_invariant_conflicts(cases, dockets)
+    a_predictions = [_prediction(case_id, decide_l0(docket), "l0_insufficient") for case_id, docket in dockets.items()]
+    policy_reports: dict[str, dict[str, Any]] = {}
+    policy_predictions: dict[str, list[dict[str, Any]]] = {}
+    for time_delta, confidence_delta in product((0, 300, 3_600), (0.10, 0.15, 0.20)):
+        key = f"t{time_delta}-c{confidence_delta:.2f}"
+        policy = L1Policy(time_delta, confidence_delta)
+        predictions = [
+            _prediction(case_id, decide_l0(docket) or decide_l1(docket, policy), "l1_insufficient")
+            for case_id, docket in dockets.items()
+        ]
+        policy_predictions[key] = predictions
+        policy_reports[key] = _arm_report(cases, predictions, invariant_ids)
+    selected_key = max(
+        policy_reports,
+        key=lambda key: (
+            not policy_reports[key]["score"]["destructive_error_case_ids"],
+            policy_reports[key]["score"]["exact"],
+            -policy_reports[key]["score"]["abstentions"],
+            int(key.split("-")[0][1:]),
+            float(key.split("c")[1]),
+        ),
+    )
+    b_predictions = policy_predictions[selected_key]
+    b_by_id = {row["case_id"]: row for row in b_predictions}
+    gold_by_id = {str(item["case_id"]): cast(Mapping[str, Any], item["gold"]) for item in cases}
+    rule_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in b_predictions:
+        if row["tier"] == "L1":
+            rule_rows.setdefault(str(row["rule"]), []).append(row)
+    enabled_rules = sorted(
+        rule
+        for rule, rows in rule_rows.items()
+        if all(_matches_gold(row, gold_by_id[str(row["case_id"])]) for row in rows)
+    )
+    if l2_decider is None:
+        from hl_mem.settings import Settings
+        from hl_mem.workers.conflict_judge import LocalConflictJudge
+
+        l2_decider = LocalConflictJudge.from_settings(Settings()).judge
+    c_predictions: list[dict[str, Any]] = []
+    for case_id, docket in dockets.items():
+        deterministic = decide_l0(docket)
+        selected_l1 = b_by_id[case_id]
+        if deterministic is not None:
+            decision = deterministic
+        elif selected_l1["tier"] == "L1" and selected_l1["rule"] in enabled_rules:
+            heuristic = decide_l1(
+                docket, L1Policy(int(selected_key.split("-")[0][1:]), float(selected_key.split("c")[1]))
+            )
+            decision = heuristic or AutoDecision("manual_required", None, 0.0, "L3", "selected_l1_no_longer_matches")
+        else:
+            admission = assess_l2_admission(
+                docket, "2026-08-25T00:00:00+00:00", max_candidates=8, policy_version="conflict-auto-v1"
+            )
+            if not admission.admitted:
+                decision = AutoDecision("manual_required", None, 0.0, "L3", admission.reason)
+            else:
+                try:
+                    decision = l2_decider(docket)
+                except Exception as error:
+                    decision = AutoDecision("manual_required", None, 0.0, "L3", f"judge_failure:{type(error).__name__}")
+        c_predictions.append(_prediction(case_id, decision, "l2_unavailable"))
+    arms = {
+        "A": _arm_report(cases, a_predictions, invariant_ids),
+        "B": _arm_report(cases, b_predictions, invariant_ids),
+        "C": _arm_report(cases, c_predictions, invariant_ids),
+    }
+    indexed = {name: {row["case_id"]: row for row in arm["predictions"]} for name, arm in arms.items()}
+    destructive = set(arms["C"]["score"]["destructive_error_case_ids"])
+    case_rows = [
+        {
+            "case_id": item["case_id"],
+            "source": item["source"],
+            "gold": item["gold"],
+            "arms": {name: indexed[name][item["case_id"]] for name in ("A", "B", "C")},
+            "exact": {
+                name: _matches_gold(indexed[name][item["case_id"]], cast(Mapping[str, Any], item["gold"]))
+                for name in ("A", "B", "C")
+            },
+            "destructive": item["case_id"] in destructive,
+            "evidence_difference": {
+                "gold": "not present in frozen label",
+                "auto": indexed["C"][item["case_id"]]["decisive_evidence_ids"],
+            },
+        }
+        for item in cases
+    ]
+    report: dict[str, Any] = {
+        "schema_version": "v030-e1-report-v1",
+        "manifest_sha256": manifest["manifest_sha256"],
+        "thresholds": {"min_exact": 67, "max_l3": 3, "max_destructive": 0, "max_invariants": 0},
+        "selected_l1_policy": selected_key,
+        "l1_selection_rule": "zero-destructive-first, exact-desc, abstention-asc, conservative-tie-break",
+        "enabled_l1_rules_for_c": enabled_rules,
+        "candidate_l1_policies": policy_reports,
+        "model": dict(model_metadata or {}),
+        "model_calls": list(getattr(getattr(l2_decider, "__self__", None), "audit_records", [])),
+        "arms": arms,
+        "cases": case_rows,
+    }
+    _write_e1_report(report, output_dir)
+    return report
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("validate", "baseline"))
+    parser.add_argument("phase", choices=("validate", "baseline", "e1"))
     parser.add_argument("--manifest-dir", type=Path, required=True)
     parser.add_argument("--database", type=Path)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--recall-baseline", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--arm", default="A")
+    parser.add_argument("--qwen-base-url", default="http://127.0.0.1:8090/v1")
+    parser.add_argument("--qwen-model", default="Qwen3.8-27B-UD-IQ4_XS.gguf")
+    parser.add_argument("--model-file", type=Path)
+    parser.add_argument("--model-sha256")
+    parser.add_argument("--llama-build")
     args = parser.parse_args(argv)
     if args.phase == "validate":
         result = validate_manifest_directory(args.manifest_dir)
-    else:
+    elif args.phase == "baseline":
         required = (args.database, args.config, args.recall_baseline, args.output_dir)
         if any(path is None for path in required):
             parser.error("baseline requires --database, --config, --recall-baseline and --output-dir")
@@ -168,6 +505,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output_dir,
             arm=args.arm,
         )
+    else:
+        if args.output_dir is None:
+            parser.error("e1 requires --output-dir")
+        from hl_mem.settings import Settings
+        from hl_mem.workers.conflict_judge import LocalConflictJudge
+
+        judge = LocalConflictJudge.from_settings(
+            Settings(maintenance_judge_base_url=args.qwen_base_url, maintenance_judge_model=args.qwen_model)
+        )
+        metadata = asdict(judge.runner.config)
+        metadata["llama_build"] = args.llama_build
+        metadata["model_file_sha256"] = args.model_sha256
+        if args.model_file is not None:
+            metadata["model_file"] = str(args.model_file)
+            metadata["model_file_sha256"] = _file_sha256(args.model_file)
+        report = run_e1_experiment(
+            args.manifest_dir / "e1.json",
+            args.output_dir,
+            l2_decider=judge.judge,
+            model_metadata=metadata,
+        )
+        result = {
+            "phase": "e1",
+            "selected_l1_policy": report["selected_l1_policy"],
+            "gates": {name: arm["gate"] for name, arm in report["arms"].items()},
+            "output_dir": str(args.output_dir),
+        }
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

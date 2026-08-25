@@ -42,7 +42,7 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.conflict_writer_yield_ms == 25
     assert settings.conflict_auto_resolve_max_candidates == 8
     assert settings.maintenance_judge_base_url == "http://127.0.0.1:8090/v1"
-    assert settings.maintenance_judge_model == "qwen3.8-27b-ud-iq4-xs"
+    assert settings.maintenance_judge_model == "Qwen3.8-27B-UD-IQ4_XS.gguf"
     assert settings.operational_cleanup_enabled is True
     assert settings.operational_batch_size == 2_000
     assert settings.expired_cleanup_mode == "observe"
