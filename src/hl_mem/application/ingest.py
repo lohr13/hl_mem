@@ -370,6 +370,7 @@ class IngestService:
         relation_discovery_mode: str = "off",
         index_text_mode: IndexTextMode = "natural",
         source_events: Sequence[dict[str, Any]] | None = None,
+        price_target_mode: str | None = None,
     ) -> StoreClaimResult:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
@@ -401,6 +402,30 @@ class IngestService:
         connection.execute("BEGIN IMMEDIATE")
         try:
             entity_service, subject_resolution = EntityResolutionService.prepare_ingest(connection, claim, now)
+            configured = getattr(connection, "hl_mem_settings", None)
+            target_mode = price_target_mode or getattr(configured, "price_target_mode", "observe")
+            target_resolution = entity_service.resolve_instrument_target(namespace, str(claim.get("value") or ""))
+            target_enforced = bool(
+                target_mode == "enforce"
+                and target_resolution.outcome == "resolved"
+                and target_resolution.alias_version is not None
+            )
+            if target_enforced:
+                claim["canonical_target_entity_id"] = target_resolution.canonical_entity_id
+            audit_events.append(
+                (
+                    ("ingest", "instrument_target", "applied" if target_enforced else target_resolution.outcome),
+                    {
+                        "event_id": event["id"],
+                        "claim_id": claim["id"],
+                        "detail": {
+                            "mode": target_mode,
+                            "canonical_target_entity_id": target_resolution.canonical_entity_id,
+                            "source": target_resolution.source,
+                        },
+                    },
+                )
+            )
             started = time.perf_counter_ns()
             exact, existing = _find_resolution(claims, claim)
             IngestService._record_fact_hash_check(
@@ -502,6 +527,8 @@ class IngestService:
             IngestService._converge_superseded_members(claims, claim, now, resolution)
             _link_source_events(evidence, claim["id"], evidence_events, commit=False)
             entity_service.link_subject(claim["id"], subject_resolution)
+            if target_enforced:
+                entity_service.link_target(claim["id"], target_resolution)
             connection.commit()
         except Exception:
             connection.rollback()

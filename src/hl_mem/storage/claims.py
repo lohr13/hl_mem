@@ -404,13 +404,18 @@ class ClaimRepository:
 
         if limit < 1:
             raise ValueError("temporal candidate limit must be positive")
-        identity = tuple(
-            claim.get(field) for field in ("namespace_key", "subject_entity_id", "predicate", "canonical_attribute")
+        target = claim.get("canonical_target_entity_id")
+        identity_fields = (
+            ("namespace_key", "canonical_target_entity_id", "predicate", "canonical_attribute")
+            if target is not None
+            else ("namespace_key", "subject_entity_id", "predicate", "canonical_attribute")
         )
+        identity = tuple(claim.get(field) for field in identity_fields)
         if any(value is None for value in identity):
             return []
+        identity_column = "canonical_target_entity_id" if target is not None else "subject_entity_id"
         rows = self.connection.execute(
-            "SELECT * FROM claims WHERE namespace_key=? AND subject_entity_id=? AND predicate=? "
+            f"SELECT * FROM claims WHERE namespace_key=? AND {identity_column}=? AND predicate=? "
             "AND canonical_attribute=? AND status='active' ORDER BY valid_from DESC,recorded_from DESC,id DESC LIMIT ?",
             (*identity, limit),
         ).fetchall()

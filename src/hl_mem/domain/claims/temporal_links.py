@@ -140,18 +140,19 @@ def _evaluate_price_series(
             f"price_measure_differs:{old_axis}:{new_axis}",
         )
 
-    subject_relation = _price_subject_relation(existing, new)
+    target_mode = bool(existing.get("canonical_target_entity_id") or new.get("canonical_target_entity_id"))
+    subject_relation = _price_target_relation(existing, new) if target_mode else _price_subject_relation(existing, new)
     if subject_relation == "different":
         return TemporalLinkDecision(
             "distinct_series",
             f"{TEMPORAL_LINK_RULE_VERSION}:series-coordinate",
-            "price_subject_differs",
+            "price_target_differs" if target_mode else "price_subject_differs",
         )
     if subject_relation == "missing":
         return TemporalLinkDecision(
             "uncertain",
             f"{TEMPORAL_LINK_RULE_VERSION}:snapshot-coordinate",
-            "price_subject_missing",
+            "price_target_missing" if target_mode else "price_subject_missing",
         )
     if old_axis not in _SNAPSHOT_PRICE_AXES:
         return None
@@ -189,8 +190,11 @@ def _evaluate_price_series(
 def _guard(existing: dict[str, Any], new: dict[str, Any]) -> TemporalLinkDecision | None:
     if new.get("assertion_kind") != "observation":
         return TemporalLinkDecision("not_applicable", None, "new_assertion_kind_not_observation")
-    identity_fields = ("namespace_key", "subject_entity_id", "predicate", "canonical_attribute")
+    identity_fields = ("namespace_key", "predicate", "canonical_attribute")
     if any(existing.get(field) != new.get(field) for field in identity_fields):
+        return TemporalLinkDecision("not_applicable", None, "series_identity_mismatch")
+    target_mode = bool(existing.get("canonical_target_entity_id") or new.get("canonical_target_entity_id"))
+    if not target_mode and existing.get("subject_entity_id") != new.get("subject_entity_id"):
         return TemporalLinkDecision("not_applicable", None, "series_identity_mismatch")
     attribute = str(new.get("canonical_attribute") or "")
     if attribute in _DENIED_MULTI_VALUE_ATTRIBUTES:
@@ -254,6 +258,16 @@ def _price_subject_relation(existing: dict[str, Any], new: dict[str, Any]) -> Li
         return "missing"
     one_sided_entities = old_entities or new_entities
     return "missing" if one_sided_entities and subject not in one_sided_entities else "same"
+
+
+def _price_target_relation(existing: dict[str, Any], new: dict[str, Any]) -> Literal["same", "different", "missing"]:
+    """Compare only persisted typed targets; one-sided projection is never a wildcard."""
+
+    old_target = str(existing.get("canonical_target_entity_id") or "").strip()
+    new_target = str(new.get("canonical_target_entity_id") or "").strip()
+    if not old_target or not new_target:
+        return "missing"
+    return "same" if old_target == new_target else "different"
 
 
 def _explicit_price_subjects(value: Any) -> frozenset[str]:

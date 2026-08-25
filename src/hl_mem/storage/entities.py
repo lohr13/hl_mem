@@ -22,6 +22,7 @@ from hl_mem.domain.entity_coordinates import (
     validate_canonical_entity_id,
     validate_entity_role_binding,
 )
+from hl_mem.domain.instruments import InstrumentReference
 from hl_mem.lifecycle import assert_transition
 from hl_mem.storage._shared import encode_json
 from hl_mem.storage.claims import ClaimRepository
@@ -311,6 +312,32 @@ class EntityRepository:
         except EntityCoordinateError:
             return "type_mismatch", normalized, None
         return ("mapping" if resolved else "no_proof"), normalized, resolved
+
+    def instrument_references(
+        self, *, namespace_key: str = "default", limit: int = 512
+    ) -> tuple[InstrumentReference, ...]:
+        """Return bounded active instrument aliases for pure target resolution."""
+
+        if limit < 1:
+            raise ValueError("instrument reference limit must be positive")
+        rows = self.connection.execute(
+            "SELECT entity.id,entity.canonical_key,alias.alias_normalized,alias.version "
+            "FROM canonical_entities AS entity JOIN entity_aliases AS alias "
+            "ON alias.namespace_key=entity.namespace_key AND alias.canonical_entity_id=entity.id "
+            "WHERE entity.namespace_key=? AND entity.entity_type='instrument' AND entity.status='active' "
+            "AND alias.entity_type='instrument' AND alias.valid_to IS NULL "
+            "ORDER BY entity.id,alias.alias_normalized LIMIT ?",
+            (namespace_key, limit + 1),
+        ).fetchall()
+        if len(rows) > limit:
+            return ()
+        grouped: dict[tuple[str, str], list[tuple[str, int]]] = {}
+        for row in rows:
+            grouped.setdefault((str(row[0]), str(row[1])), []).append((str(row[2]), int(row[3])))
+        return tuple(
+            InstrumentReference(entity_id, canonical_key, tuple(aliases))
+            for (entity_id, canonical_key), aliases in grouped.items()
+        )
 
     def seed_builtins(self, namespace_key: str = "default", *, now: str) -> tuple[int, int]:
         """Idempotently seed builtins through the same create and resolve-ready rows."""

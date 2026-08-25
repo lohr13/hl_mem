@@ -13,6 +13,7 @@ from typing import Any, Literal, cast
 
 from pydantic import ValidationError as PydanticValidationError
 
+from hl_mem.domain.action_coordinates import project_action_qualifiers
 from hl_mem.domain.claims.attributes import (
     _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS,
     ALLOWED_TOPIC_TAGS,
@@ -1094,6 +1095,7 @@ class LLMExtractor:
             candidate.value,
             candidate.evidence_quote,
         )
+        qualifiers = project_action_qualifiers(candidate.value, qualifiers, is_plan=candidate.kind == "plan")
         canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
         relation_qualifiers: dict[str, Any] = {}
         relation_reason = "not_provided"
@@ -1783,6 +1785,11 @@ class LLMExtractor:
             },
         )
         predicate = projected_predicate
+        qualifiers = project_action_qualifiers(
+            value,
+            qualifiers,
+            is_plan=canonical_attribute.startswith("plan.") or predicate == "计划",
+        )
         volatility = item.get("volatility", "stable")
         scope = item.get("scope", "permanent")
         scope = scope if scope in {"temporal", "permanent"} else "permanent"

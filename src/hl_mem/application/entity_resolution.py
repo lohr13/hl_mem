@@ -6,6 +6,7 @@ from typing import Any, Self
 
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.entity_coordinates import EntityCoordinateError
+from hl_mem.domain.instruments import InstrumentTarget, resolve_instrument_target
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.entities import EntityRepository, v4_entity_conflict_key
 
@@ -43,6 +44,9 @@ class EntityResolutionService:
             return SubjectResolution(outcome, normalized, resolved.canonical_entity_id, resolved.alias_version)
         return SubjectResolution(outcome, normalized)
 
+    def resolve_instrument_target(self, namespace_key: str, value: str) -> InstrumentTarget:
+        return resolve_instrument_target(value, self.entities.instrument_references(namespace_key=namespace_key))
+
     def _proof_id(self, claim_id: str) -> str:
         proof = self.connection.execute(
             "SELECT id FROM evidence_links WHERE derived_type='claim' AND derived_id=? "
@@ -60,6 +64,23 @@ class EntityResolutionService:
             claim_id,
             resolution.canonical_entity_id,
             "subject",
+            mention_text=resolution.mention,
+            alias_version=resolution.alias_version,
+            proof_id=self._proof_id(claim_id),
+        )
+
+    def link_target(self, claim_id: str, resolution: InstrumentTarget) -> None:
+        if (
+            resolution.outcome != "resolved"
+            or resolution.canonical_entity_id is None
+            or resolution.mention is None
+            or resolution.alias_version is None
+        ):
+            return
+        self.entities.link_claim(
+            claim_id,
+            resolution.canonical_entity_id,
+            "target",
             mention_text=resolution.mention,
             alias_version=resolution.alias_version,
             proof_id=self._proof_id(claim_id),

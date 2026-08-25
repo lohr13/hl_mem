@@ -359,6 +359,70 @@ def test_untrusted_new_assertion_kind_cannot_authorize_temporal_link(assertion_k
     assert evaluate_temporal_link(old, new).outcome == "not_applicable"
 
 
+def test_canonical_price_target_is_the_series_identity() -> None:
+    old = _claim(
+        "贵州茅台 8月24日收盘价为 1500 元",
+        claim_id="old-target",
+        valid_from="2026-08-24T08:00:00+00:00",
+        assertion_kind="observation",
+    )
+    new = _claim(
+        "贵州茅台 8月25日收盘价为 1510 元",
+        claim_id="new-target",
+        valid_from="2026-08-25T08:00:00+00:00",
+        assertion_kind="observation",
+    )
+    old["subject_entity_id"] = "价格记录A"
+    new["subject_entity_id"] = "价格记录B"
+    old["canonical_target_entity_id"] = "instrument:CN:SH:600519"
+    new["canonical_target_entity_id"] = "instrument:CN:SH:600519"
+
+    decision = evaluate_temporal_link(old, new)
+
+    assert (decision.outcome, decision.rationale) == ("snapshot_advance", "snapshot_coordinate_advanced")
+
+
+def test_different_canonical_price_targets_are_distinct_series() -> None:
+    old = _claim(
+        "8月24日收盘价为 10 元",
+        claim_id="old-different-target",
+        valid_from="2026-08-24T08:00:00+00:00",
+        assertion_kind="observation",
+    )
+    new = _claim(
+        "8月25日收盘价为 11 元",
+        claim_id="new-different-target",
+        valid_from="2026-08-25T08:00:00+00:00",
+        assertion_kind="observation",
+    )
+    old["canonical_target_entity_id"] = "instrument:CN:SH:600519"
+    new["canonical_target_entity_id"] = "instrument:CN:SZ:000001"
+
+    decision = evaluate_temporal_link(old, new)
+
+    assert (decision.outcome, decision.rationale) == ("distinct_series", "price_target_differs")
+
+
+def test_one_sided_canonical_price_target_fails_closed() -> None:
+    old = _claim(
+        "8月24日收盘价为 10 元",
+        claim_id="old-missing-target",
+        valid_from="2026-08-24T08:00:00+00:00",
+        assertion_kind="observation",
+    )
+    new = _claim(
+        "8月25日收盘价为 11 元",
+        claim_id="new-missing-target",
+        valid_from="2026-08-25T08:00:00+00:00",
+        assertion_kind="observation",
+    )
+    new["canonical_target_entity_id"] = "instrument:CN:SZ:000001"
+
+    decision = evaluate_temporal_link(old, new)
+
+    assert (decision.outcome, decision.rationale) == ("uncertain", "price_target_missing")
+
+
 @pytest.mark.parametrize("attribute", ["config.path", "config.network"])
 def test_nonexclusive_operational_attributes_are_never_temporally_linked(attribute: str) -> None:
     old = _claim(
