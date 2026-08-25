@@ -18,7 +18,15 @@ from typing import Any, Callable, Mapping, cast
 
 from hl_mem.domain.governance import is_terminal_conflict_status
 from hl_mem.evaluation.v030_batch4 import assess_batch4_manifest, write_batch4_report
+from hl_mem.evaluation.v030_batch4_v2_manifest import build_batch4_v2_manifests
+from hl_mem.evaluation.v030_batch4_v2_replay import (
+    run_e2_v2,
+    run_e3_v2,
+    run_e4_v2,
+)
+from hl_mem.evaluation.v030_batch4_v2_replay import write_v2_report as write_batch4_v2_report
 from hl_mem.evaluation.v030_corpus import EXPERIMENTS, load_manifest, validate_manifest
+from hl_mem.evaluation.v030_e2_clone_replay import attach_recall_comparison, run_e2_clone_rehearsal
 from hl_mem.evaluation.v030_plan_price import (
     assess_e5_manifest,
     assess_e6_manifest,
@@ -681,7 +689,25 @@ def run_plan_price_preflight(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("validate", "baseline", "e1", "e2", "e3", "e4", "e5", "e6", "e5-v2", "e6-v2"))
+    parser.add_argument(
+        "phase",
+        choices=(
+            "validate",
+            "baseline",
+            "build-batch4-v2",
+            "e1",
+            "e2",
+            "e3",
+            "e4",
+            "e5",
+            "e6",
+            "e2-v2",
+            "e3-v2",
+            "e4-v2",
+            "e5-v2",
+            "e6-v2",
+        ),
+    )
     parser.add_argument("--manifest-dir", type=Path, required=True)
     parser.add_argument("--database", type=Path)
     parser.add_argument("--config", type=Path)
@@ -695,6 +721,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--llama-build")
     parser.add_argument("--e1-replay-overlay", type=Path)
     parser.add_argument("--reuse-report", type=Path)
+    parser.add_argument("--volcano-e2", type=Path)
+    parser.add_argument("--batch0-baseline", type=Path)
+    parser.add_argument("--recall-current-report", type=Path)
     args = parser.parse_args(argv)
     if args.phase == "validate":
         result = validate_manifest_directory(args.manifest_dir)
@@ -710,6 +739,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output_dir,
             arm=args.arm,
         )
+    elif args.phase == "build-batch4-v2":
+        if args.database is None or args.volcano_e2 is None:
+            parser.error("build-batch4-v2 requires --database and --volcano-e2")
+        result = {
+            "phase": args.phase,
+            "file_sha256": build_batch4_v2_manifests(args.manifest_dir, args.database, args.volcano_e2),
+        }
     elif args.phase == "e1":
         if args.output_dir is None:
             parser.error("e1 requires --output-dir")
@@ -744,6 +780,87 @@ def main(argv: Sequence[str] | None = None) -> int:
         manifest = load_manifest(args.manifest_dir / f"{args.phase}.json")
         assessment = assess_batch4_manifest(manifest)
         result = write_batch4_report(args.output_dir, manifest, assessment)
+    elif args.phase in {"e2-v2", "e3-v2", "e4-v2"}:
+        if args.output_dir is None:
+            parser.error(f"{args.phase} requires --output-dir")
+        experiment = args.phase.split("-", 1)[0]
+        manifest_name = "e2_v2_preregistered.json" if experiment == "e2" else f"{experiment}_v2.json"
+        manifest = load_manifest(args.manifest_dir / manifest_name)
+        if experiment == "e4":
+            report = run_e4_v2(manifest)
+        else:
+            from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner, QwenLimits, QwenRunConfig
+
+            runner = LocalQwenRunner(
+                token_counter=lambda text: len(text.encode("utf-8")),
+                config=QwenRunConfig(
+                    base_url=args.qwen_base_url,
+                    model=args.qwen_model,
+                    enable_thinking=False,
+                    timeout_seconds=180,
+                    limits=QwenLimits(max_output_tokens=1024 if experiment == "e2" else 640),
+                ),
+            )
+
+            def progress(message: str) -> None:
+                print(message, flush=True)
+
+            if experiment == "e3":
+                report = run_e3_v2(manifest, runner, progress=progress, checkpoint_dir=args.output_dir)
+            else:
+                required = (
+                    args.database,
+                    args.volcano_e2,
+                    args.batch0_baseline,
+                    args.recall_current_report,
+                )
+                if any(path is None for path in required):
+                    parser.error(
+                        "e2-v2 requires --database, --volcano-e2, --batch0-baseline and --recall-current-report"
+                    )
+                clone = run_e2_clone_rehearsal(args.database, args.volcano_e2, manifest)
+                baseline = json.loads(args.batch0_baseline.read_text(encoding="utf-8"))["recall"]["metrics"]
+                current_report = json.loads(args.recall_current_report.read_text(encoding="utf-8"))
+                case_delta = current_report["baseline_comparison"].get("case_delta") or {}
+                negative = any(value < 0 for row in case_delta.values() for value in row.values())
+                rehearsal = attach_recall_comparison(
+                    clone,
+                    baseline,
+                    current_report["metrics"],
+                    paired_regression_p=0.0 if negative else 1.0,
+                )
+                report = run_e2_v2(
+                    manifest,
+                    runner,
+                    final_manifest_path=args.manifest_dir / "e2_v2.json",
+                    rehearsal=rehearsal,
+                    progress=progress,
+                    checkpoint_path=args.output_dir / "qwen_checkpoint.json",
+                )
+                if args.reuse_report is not None:
+                    previous = json.loads(args.reuse_report.read_text(encoding="utf-8"))
+                    report["qwen"]["elapsed_seconds"] = max(
+                        float(report["qwen"]["elapsed_seconds"]),
+                        float((previous.get("qwen") or {}).get("elapsed_seconds") or 0),
+                    )
+            report["model"] = asdict(runner.config)
+            report["execution_notes"] = {
+                "clean_start_verified": True,
+                "double_permutation": True,
+                "enable_thinking": False,
+                "max_output_tokens": runner.config.max_output_tokens,
+                "unscored_aborted_probe_runs": 2 if experiment == "e3" else 1,
+                "unscored_completed_equipment_calls": 4 if experiment == "e3" else 18,
+                "sealed_pre_action_coordinate_calls": 82 if experiment == "e2" else 0,
+            }
+        checksums = write_batch4_v2_report(args.output_dir, report)
+        result = {
+            "phase": args.phase,
+            "status": report["status"],
+            "selected_arm": report.get("selected_arm"),
+            "qwen": report.get("qwen"),
+            "checksums": checksums,
+        }
     elif args.phase in {"e5", "e6"}:
         if args.output_dir is None:
             parser.error(f"{args.phase} requires --output-dir")

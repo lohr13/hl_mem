@@ -25,11 +25,21 @@ _RESULT_KEYS = frozenset(
         "decisive_evidence_ids",
         "evidence_ids",
         "protected_atoms",
+        "predictions",
         "rationale_code",
         "summary",
         "winner_candidate_key",
     }
 )
+_PREDICTION_KEYS = frozenset({"case_id", "confidence", "decision", "importance", "lesson_signal", "retention"})
+_PREDICTION_ALIASES = {
+    "c": "confidence",
+    "d": "decision",
+    "i": "importance",
+    "id": "case_id",
+    "r": "retention",
+    "s": "lesson_signal",
+}
 _FIELD_ALIASES = {
     "ambiguities": "ambiguity_flags",
     "evidence_ids": "decisive_evidence_ids",
@@ -127,11 +137,26 @@ def _safe_response(value: Mapping[str, Any], *, map_aliases: bool) -> dict[str, 
         for alias, canonical in _FIELD_ALIASES.items():
             if canonical not in normalized and alias in normalized:
                 normalized[canonical] = normalized[alias]
-    return {
+    safe = {
         key: copy.deepcopy(item)
         for key, item in normalized.items()
-        if key in _RESULT_KEYS and (not map_aliases or key not in _FIELD_ALIASES)
+        if key in _RESULT_KEYS and key != "predictions" and (not map_aliases or key not in _FIELD_ALIASES)
     }
+    predictions = normalized.get("predictions")
+    if (
+        isinstance(predictions, list)
+        and len(predictions) <= 64
+        and all(isinstance(item, Mapping) for item in predictions)
+    ):
+        safe["predictions"] = []
+        for prediction in predictions:
+            normalized_prediction = {
+                _PREDICTION_ALIASES.get(str(key), str(key)): copy.deepcopy(item) for key, item in prediction.items()
+            }
+            safe["predictions"].append(
+                {key: item for key, item in normalized_prediction.items() if key in _PREDICTION_KEYS}
+            )
+    return safe
 
 
 def _extract_json_object(content: str) -> Mapping[str, Any]:

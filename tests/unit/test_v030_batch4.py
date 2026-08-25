@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 from hl_mem.evaluation.v030_batch4 import assess_batch4_manifest, write_batch4_report
@@ -98,3 +100,59 @@ def test_e2_null_coordinate_values_are_never_eligible() -> None:
 
     assert assessment["counts"]["eligible_pairs"] == 0
     assert "missing_entity_proof_cases" in assessment["blockers"]
+
+
+def test_v2_derivers_replace_placeholders_with_scored_contracts() -> None:
+    module = importlib.import_module("hl_mem.evaluation.v030_batch4_v2_manifest")
+    e2_case = _manifest("E2")["cases"][0]
+    for claim in e2_case["input"]["claims"]:
+        claim.update({"subject_entity_id": "same", "predicate": "fact", "value": "publish release", "qualifiers": {}})
+    e2 = module.derive_e2_case(e2_case, {"judge_confidence": 0.99})
+    e3_case = _manifest("E3")["cases"][0]
+    e3_case["category"] = "correction"
+    e3 = module.derive_e3_case(e3_case)
+    e4 = module.derive_e4_case("unique_alias", 0, "project:hl_mem", ["claim-1"])
+
+    assert e2["input"]["coordinate_proof"]["kind"] in {"typed_alias", "legacy_same_subject"}
+    assert e2["input"]["claims"][0]["qualifiers"]["action_family"] == "publish"
+    assert "????" not in e3["input"]["text"]
+    assert e4["gold"]["entity_ids"] == ["project:hl_mem"]
+    assert e4["gold"]["relevant_claim_ids"] == ["claim-1"]
+
+
+def test_v2_e2_hard_validator_overrides_semantic_votes() -> None:
+    replay = importlib.import_module("hl_mem.evaluation.v030_batch4_v2_replay")
+    case = {
+        "case_id": "unsafe",
+        "input": {"historical_decision": "equivalent", "hard_validator": {"safe": False}},
+    }
+
+    frozen = replay.freeze_e2_gold(case, {"decision": "equivalent", "confidence": 1.0})
+
+    assert frozen["gold"]["decision"] == "distinct"
+    assert frozen["gold"]["gold_status"] == "blind_frozen"
+
+
+def test_v2_e4_behavior_pass_cannot_override_synthetic_evidence_cap() -> None:
+    replay = importlib.import_module("hl_mem.evaluation.v030_batch4_v2_replay")
+    manifest = {
+        "source_audit": {"synthetic_query_ratio": 1.0},
+        "preregistration": {"synthetic_ratio_max": 0.5},
+    }
+
+    gate = replay.e4_release_gate(manifest, behavior_passed=True)
+
+    assert gate == {"passed": False, "failure": "synthetic_ratio_over_preregistered_cap"}
+
+
+def test_v2_volcano_pair_adapter_fills_current_required_columns() -> None:
+    clone = importlib.import_module("hl_mem.evaluation.v030_e2_clone_replay")
+    source = {"left_claim_id": "left", "right_claim_id": "right", "reviewed_at": "2026-08-25T00:00:00Z"}
+
+    values = clone.prepare_export_values(
+        "dedup_pairs", source, {"left_claim_id", "right_claim_id", "pair_key", "namespace_key", "created_at"}
+    )
+
+    assert values["pair_key"]
+    assert values["namespace_key"] == "default"
+    assert values["created_at"] == source["reviewed_at"]

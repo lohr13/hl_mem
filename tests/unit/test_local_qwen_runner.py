@@ -281,3 +281,37 @@ def test_cards_that_still_do_not_fit_final_docket_fail_as_infrastructure_error()
 
     assert captured.value.reason == "oversized_docket"
     assert len(transport.calls) == 2
+
+
+def test_runner_preserves_only_bounded_batch_predictions() -> None:
+    response = {
+        "decision": "batch",
+        "confidence": 1.0,
+        "predictions": [{"case_id": "c1", "decision": "equivalent", "confidence": 0.98, "thinking": "drop"}],
+    }
+    runner = LocalQwenRunner(transport=lambda _url, _payload: response, token_counter=_declared_tokens)
+
+    result = runner.run_case(_case(_token_cost=1))
+
+    assert result["decisions"][0]["predictions"] == [{"case_id": "c1", "decision": "equivalent", "confidence": 0.98}]
+
+
+def test_runner_expands_registered_compact_prediction_keys() -> None:
+    response = {
+        "decision": "batch",
+        "confidence": 1.0,
+        "predictions": [{"id": "c1", "i": "high", "s": "explicit_correction", "r": "temporal", "c": 0.9}],
+    }
+    runner = LocalQwenRunner(transport=lambda _url, _payload: response, token_counter=_declared_tokens)
+
+    result = runner.run_case(_case(_token_cost=1))
+
+    assert result["decisions"][0]["predictions"] == [
+        {
+            "case_id": "c1",
+            "importance": "high",
+            "lesson_signal": "explicit_correction",
+            "retention": "temporal",
+            "confidence": 0.9,
+        }
+    ]
