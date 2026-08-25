@@ -41,3 +41,21 @@ def test_plan_outcome_unique_key_and_status_checks_are_declared(tmp_path: Path) 
     assert "UNIQUE (plan_claim_id, result_claim_id, outcome_type, policy_version)" in sql
     assert "complete','cancel','replace','partial" in sql
     assert "candidate','observed','applied','ambiguous','rejected','rolled_back" in sql
+
+
+def test_existing_052_database_applies_053_once_on_reopen(tmp_path: Path) -> None:
+    path = tmp_path / "upgrade-053.db"
+    database = Database(path)
+    connection = database.open()
+    connection.execute("DROP TABLE plan_outcomes")
+    connection.execute("DELETE FROM schema_migrations WHERE version='053_plan_fulfillment'")
+    connection.commit()
+    database.close()
+
+    upgraded = Database(path).open()
+
+    assert (
+        upgraded.execute("SELECT count(*) FROM schema_migrations WHERE version='053_plan_fulfillment'").fetchone()[0]
+        == 1
+    )
+    assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []

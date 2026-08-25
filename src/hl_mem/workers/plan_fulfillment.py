@@ -126,7 +126,8 @@ def enqueue_plan_reconciliation_scan(
                             "policy_version": PLAN_FULFILLMENT_POLICY_VERSION,
                         },
                         "idempotency_key": (
-                            f"reconcile_plan_result:{result_id}:" f"{PLAN_FULFILLMENT_POLICY_VERSION}:{fingerprint}"
+                            f"reconcile_plan_result:{result_id}:"
+                            f"{PLAN_FULFILLMENT_POLICY_VERSION}:{fingerprint}:{mode}"
                         ),
                         "status": "pending",
                         "run_after": now,

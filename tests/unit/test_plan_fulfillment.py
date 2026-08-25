@@ -406,11 +406,13 @@ def test_bounded_maintenance_scan_does_not_requeue_same_fingerprint(tmp_path: Pa
 
     first = enqueue_plan_reconciliation_scan(connection, "2026-08-25T10:01:00+00:00", mode="audit", limit=1)
     second = enqueue_plan_reconciliation_scan(connection, "2026-08-25T10:02:00+00:00", mode="audit", limit=1)
+    promoted = enqueue_plan_reconciliation_scan(connection, "2026-08-25T10:03:00+00:00", mode="enforce", limit=1)
 
     assert (first["scanned"], first["enqueued"]) == (1, 1)
     assert (second["scanned"], second["enqueued"]) == (1, 0)
-    payload = connection.execute("SELECT payload_json FROM jobs WHERE job_type='reconcile_plan_result'").fetchone()[0]
-    assert result_id in payload
+    assert (promoted["scanned"], promoted["enqueued"]) == (1, 1)
+    payloads = connection.execute("SELECT payload_json FROM jobs WHERE job_type='reconcile_plan_result'").fetchall()
+    assert all(result_id in row[0] for row in payloads)
 
 
 def test_rollback_fails_closed_after_plan_state_changes(tmp_path: Path) -> None:
