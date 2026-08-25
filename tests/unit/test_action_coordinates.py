@@ -47,6 +47,13 @@ def test_projects_cancel_and_replacement_phases() -> None:
     assert replaced["assertion_phase"] == "replacement"
 
 
+def test_projects_direct_english_replace_as_replacement() -> None:
+    replaced = project_action_qualifiers("replace buy 200 shares NASDAQ:T01", {}, is_plan=False)
+
+    assert replaced["action_family"] == "open"
+    assert replaced["assertion_phase"] == "replacement"
+
+
 def test_coordinate_requires_complete_protected_fields() -> None:
     claim = {
         "namespace_key": "default",

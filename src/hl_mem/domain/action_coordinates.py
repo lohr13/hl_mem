@@ -24,7 +24,7 @@ _ACTION_FAMILIES: tuple[tuple[ActionFamily, re.Pattern[str]], ...] = (
     ("fix", re.compile(r"(?:修复|fix|repair)", re.IGNORECASE)),
 )
 _CANCELLATION = re.compile(r"(?:取消|撤销|不再执行|cancel|abort)", re.IGNORECASE)
-_REPLACEMENT = re.compile(r"(?:改为|替换为|取代|replace(?:d)?\s+by|instead)", re.IGNORECASE)
+_REPLACEMENT = re.compile(r"(?:改为|替换为|取代|\breplace(?:d)?\b|instead)", re.IGNORECASE)
 _EXECUTION = re.compile(r"(?:已|已经|完成|执行|成交|filled|completed|executed)", re.IGNORECASE)
 _ALL_QUANTITY = re.compile(r"(?:全部|全仓|清仓|卖光|all)", re.IGNORECASE)
 _QUANTITY = re.compile(
