@@ -472,6 +472,12 @@ def _age_seconds(oldest: str | None, now: str) -> float | None:
         return None
 
 
+def _application_mode(mode: str, tier: str) -> str:
+    if mode == "enforce" or (mode == "l0_only" and tier == "L0"):
+        return "enforce"
+    return "observe"
+
+
 def auto_resolve_conflicts(
     connection: Any,
     now: str,
@@ -489,8 +495,8 @@ def auto_resolve_conflicts(
 
     if mode == "off":
         return {"eligible": 0, "scanned": 0, "changed": 0, "resolved": 0, "l2_queued": 0}
-    if mode not in {"observe", "enforce"}:
-        raise ValueError("mode must be off, observe, or enforce")
+    if mode not in {"observe", "enforce", "l0_only"}:
+        raise ValueError("mode must be off, observe, enforce, or l0_only")
     if not 1 <= max_cases <= 1_000 or not 1 <= max_elapsed_ms <= 10_000:
         raise ValueError("invalid bounded conflict maintenance budget")
     if not 1 <= failure_backoff_seconds <= 86_400:
@@ -524,6 +530,7 @@ def auto_resolve_conflicts(
                     stats["deferred"] += 1
                     continue
                 decision = AutoDecision("manual_required", None, 0.0, "L3", admission.reason)
+            application_mode = _application_mode(mode, str(decision.tier))
             result = apply_auto_conflict_decision(
                 connection,
                 str(selected["case_id"]),
@@ -531,13 +538,13 @@ def auto_resolve_conflicts(
                 expected_revision=int(docket["case"].get("revision") or 0),
                 expected_fingerprint=fingerprint,
                 policy_version=policy_version,
-                mode=mode,
+                mode=application_mode,
                 now=now,
             )
             if decision.decision == "manual_required":
                 stats["manual_stable"] += 1
                 stats["deferred"] += 1
-            elif mode == "enforce":
+            elif application_mode == "enforce":
                 stats["changed"] += 1
                 stats["resolved"] += 1
         except Exception as error:

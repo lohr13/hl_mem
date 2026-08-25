@@ -74,6 +74,10 @@ def test_settings_without_config_enable_injection_governance_by_default() -> Non
     assert settings.freshness_annotation_mode == "render"
 
 
+def test_conflict_l0_only_mode_is_a_valid_configuration() -> None:
+    replace(Settings.for_test(), conflict_auto_mode="l0_only").validate()
+
+
 def test_settings_contract_includes_bypass_and_recall_fields() -> None:
     settings = Settings()
 

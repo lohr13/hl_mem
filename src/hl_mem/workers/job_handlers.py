@@ -109,11 +109,12 @@ def _handle_resolve_conflict_llm(worker: Worker, job: dict[str, Any]) -> dict[st
     from hl_mem.workers.conflict_judge import run_conflict_llm_job
 
     payload = job.get("payload") or json.loads(job["payload_json"] or "{}")
+    mode = "observe" if worker.settings.conflict_auto_mode == "l0_only" else worker.settings.conflict_auto_mode
     return run_conflict_llm_job(
         worker.connection,
         payload,
         components.make_conflict_judge(worker.settings),
-        mode=worker.settings.conflict_auto_mode,
+        mode=mode,
         now=utc_now(),
     )
 

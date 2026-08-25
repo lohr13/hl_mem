@@ -36,7 +36,7 @@ ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
 IndexTextMode = Literal["legacy", "value_only", "natural", "answerable"]
 FtsLanguage = Literal["auto", "zh", "en"]
-ConflictAutoMode = Literal["off", "observe", "enforce"]
+ConflictAutoMode = Literal["off", "observe", "enforce", "l0_only"]
 
 
 class VectorBackend(StrEnum):
@@ -75,8 +75,8 @@ def _toml_field(default: Any, path: str) -> Any:
 
 
 def _validate_conflict_automation(settings: "Settings") -> None:
-    if settings.conflict_auto_mode not in {"off", "observe", "enforce"}:
-        raise ConfigurationError("conflict.auto_mode must be 'off', 'observe', or 'enforce'")
+    if settings.conflict_auto_mode not in {"off", "observe", "enforce", "l0_only"}:
+        raise ConfigurationError("conflict.auto_mode must be 'off', 'observe', 'enforce', or 'l0_only'")
     if settings.conflict_l1_min_time_delta_seconds not in {0, 300, 3_600}:
         raise ConfigurationError("conflict.l1_min_time_delta_seconds must be 0, 300, or 3600")
     if settings.conflict_l1_min_confidence_delta not in {0.10, 0.15, 0.20}:

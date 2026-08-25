@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,7 @@ from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.auto_resolve_conflicts import AutoDecision, L1Policy, auto_resolve_conflicts
 from hl_mem.workers.conflict_judge import LocalConflictJudge, run_conflict_llm_job
+from hl_mem.workers import job_handlers
 from hl_mem.workers.job_handlers import JOB_HANDLERS
 
 NOW = "2026-08-25T08:00:00+00:00"
@@ -106,6 +108,63 @@ def test_llm_job_runs_outside_transaction_and_observe_does_not_change_claims(tmp
         "disputed",
     ]
     assert connection.execute("SELECT status FROM governance_actions").fetchone()[0] == "observed"
+
+
+def test_l0_only_applies_l0_decisions(tmp_path: Path) -> None:
+    connection = Database(tmp_path / "l0-only-l0.db").open()
+    _manual_pair(connection, left_authority="high")
+
+    result = auto_resolve_conflicts(connection, NOW, mode="l0_only", l1_policy=L1Policy(300, 0.1))
+
+    assert result["resolved"] == 1
+    assert [row[0] for row in connection.execute("SELECT status FROM claims ORDER BY id")] == [
+        "active",
+        "superseded",
+    ]
+    assert tuple(connection.execute("SELECT tier,status FROM governance_actions").fetchone()) == ("L0", "applied")
+
+
+def test_l0_only_observes_l1_decisions(tmp_path: Path) -> None:
+    connection = Database(tmp_path / "l0-only-l1.db").open()
+    _manual_pair(connection)
+    connection.execute(
+        "UPDATE claims SET valid_from=?,confidence=? WHERE id='left'",
+        ("2026-08-25T07:00:00+00:00", 0.95),
+    )
+    connection.execute(
+        "UPDATE claims SET valid_from=? WHERE id='right'",
+        ("2026-08-25T06:00:00+00:00",),
+    )
+    connection.commit()
+
+    result = auto_resolve_conflicts(connection, NOW, mode="l0_only", l1_policy=L1Policy(300, 0.1))
+
+    assert result["resolved"] == 0
+    assert [row[0] for row in connection.execute("SELECT status FROM claims ORDER BY id")] == [
+        "disputed",
+        "disputed",
+    ]
+    assert tuple(connection.execute("SELECT tier,status FROM governance_actions").fetchone()) == ("L1", "observed")
+
+
+def test_l0_only_dispatches_admitted_l2_jobs_as_observe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = Database(tmp_path / "l0-only-l2.db").open()
+    _manual_pair(connection)
+    payload = _queued_payload(connection)
+    monkeypatch.setattr(job_handlers.components, "make_conflict_judge", lambda _settings: _FixedJudge(connection))
+    worker = SimpleNamespace(
+        connection=connection,
+        settings=replace(Settings.for_test(), conflict_auto_mode="l0_only"),
+    )
+
+    result = JOB_HANDLERS["resolve_conflict_llm"](worker, {"payload": payload})
+
+    assert result["status"] == "observed"
+    assert [row[0] for row in connection.execute("SELECT status FROM claims ORDER BY id")] == [
+        "disputed",
+        "disputed",
+    ]
+    assert tuple(connection.execute("SELECT tier,status FROM governance_actions").fetchone()) == ("L2", "observed")
 
 
 def test_llm_job_stale_revision_performs_zero_writes(tmp_path: Path) -> None:
