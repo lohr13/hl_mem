@@ -22,10 +22,11 @@ OpenAPI documentation is available at `/docs` while the service is running.
 - `tenant_id` is a deprecated compatibility alias for `namespace`; clients should send `namespace`, and conflicting values
   are rejected. Neither field provides SaaS multi-tenant isolation, RBAC, billing isolation, or per-tenant keys.
 - Recall can filter both valid time (`as_of`) and recorded time (`known_as_of`).
-- `/healthz` is an async liveness endpoint. It reports version, static daemon/plugin/wire compatibility evidence, effective settings, component state, in-memory metrics,
-  and `conflict_open_count`; the conflict count reuses the application lifecycle SQLite connection and includes unresolved
-  `pending`, `auto_resolved`, and `manual_required` cases. The endpoint does not call an external provider or query
-  historical LLM spans.
+- `/healthz` is an async liveness endpoint. It reports version, static daemon/plugin/wire compatibility evidence, effective
+  settings, component state, in-memory metrics, `conflict_open_count`, `conflict_counts_by_status`,
+  `manual_required_count`, and `oldest_manual_required_age_seconds`. The conflict snapshot reuses the application
+  lifecycle SQLite connection. Hermes uses only the residual `manual_required` count for its bounded notice; it does not
+  treat every pending/open case as manual. The endpoint does not call an external provider or query historical LLM spans.
 - Every HTTP request emits `request_started` and `request_finished` INFO records with method, path, status, and duration;
   a caller-supplied `X-Request-ID` is sanitized and included when present.
 
@@ -33,7 +34,7 @@ OpenAPI documentation is available at `/docs` while the service is running.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/healthz` | Check liveness, version, settings, in-memory metrics, and unresolved conflict count |
+| `GET` | `/healthz` | Check liveness, version, settings, metrics, and unresolved/manual conflict backlog |
 | `POST` | `/v1/events` | Idempotently ingest an event and enqueue its extraction job |
 | `POST` | `/v1/events/batch` | Atomically ingest 1-4 events and enqueue their extraction jobs |
 | `POST` | `/v1/extract/dry-run` | Extract candidate claims and token usage without persisting memory data |

@@ -2,7 +2,7 @@
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.29.3](https://img.shields.io/badge/version-0.29.3-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.31.0](https://img.shields.io/badge/version-0.31.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -290,6 +290,34 @@ hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
 ```
 
+### 升级到 v0.31.0
+
+v0.31.0 新增 typed canonical entity、价格 canonical target、plan fulfillment、治理动作账本以及带 slot 的
+跨 subject dedup 审计。发布默认只开启已通过冻结门禁的破坏性行为：plan fulfillment 与价格 target 为
+`enforce`，冲突自动化为 `l0_only`；dedup 继续 `audit_only=true`，查询实体约束和 lesson signal 继续
+`observe`。Hermes 默认只在 session 首次或残留人工冲突计数变化时提示一次。
+
+生产运行不依赖常驻 LLM 判官。`[maintenance_judge]` 是纯可选配置，只用于用户自行回放、自验并显式选择的
+L2 路径；默认 `l0_only` 不调用它。所有自动修改均记录输入指纹和治理动作，紧急回退可分别设置：
+
+```toml
+[conflict]
+auto_mode = "observe"
+
+[plan]
+fulfillment_mode = "observe"
+
+[price]
+target_mode = "observe"
+
+[hermes]
+manual_conflict_notice = false
+```
+
+升级会按顺序应用 migration 050–054。升级前停止 API、Worker 和其他写入者，并把主库、WAL 已 checkpoint 的
+副本与 tombstone sidecar 作为一组备份。新表和 nullable 列为 additive，但旧二进制不了解新治理语义，升级后不得
+回滚旧二进制继续写库。
+
 ### 升级到 v0.29.3
 
 v0.29.3 不需要 schema migration，也没有配置或 REST/MCP API 破坏。升级后，价格/计量类 temporal 判定会按
@@ -371,9 +399,9 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.29.3，共 49 个不可变、仅向前执行的 SQL Migration。migration 049 在确认数据库内无
-view/trigger 消费者后移除 legacy `claims_tags_fts`；外部查询无法由 SQLite schema 证明，升级前必须完成全机
-v0.29.0+ 门槛核验并结束旧二进制回滚窗口。
+当前基线为 v0.31.0，共 54 个不可变、仅向前执行的 SQL Migration。migration 050–054 依次增加治理动作账本、
+冲突自动策略、typed canonical entity、plan fulfillment 和带 slot 的跨 subject dedup 审计字段；全部是仅向前的
+additive 升级。升级前仍须停止写入者并备份主库与 tombstone sidecar，旧二进制不得再打开已升级数据库。
 
 ## 文档
 

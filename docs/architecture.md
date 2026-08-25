@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.29.3
-- Updated: 2026-08-21
+- Document baseline: v0.31.0
+- Updated: 2026-08-25
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -63,7 +63,9 @@ src/hl_mem/
 │   ├── answerability.py      # Shared supported/hard/soft abstention semantics
 │   ├── context_packet.py     # Context Packet v1 assembly and exposure materialization
 │   ├── deletion.py           # Fail-closed physical deletion closure and tombstone replay
+│   ├── entity_resolution.py  # Typed canonical-entity projection and rekey orchestration
 │   ├── ingest.py             # IngestService and atomic Claim write path
+│   ├── plan_fulfillment.py   # Result-to-plan reconciliation and governance CAS
 │   ├── recall.py             # RecallService orchestration and context packing
 │   ├── forget.py             # Explicit-forget adapter over DeletionService
 │   └── restore.py            # Restore replay orchestration before database visibility
@@ -71,8 +73,13 @@ src/hl_mem/
 │   └── vector.py             # Pure cosine-similarity math
 ├── domain/
 │   ├── claims/               # Claim model, conflict, dedup, retention, slot/tag query logic
+│   ├── action_coordinates.py # Local plan/trade action-family coordinates
 │   ├── content.py            # Multimodal content protocol
 │   ├── entity.py             # Entity normalization
+│   ├── entity_coordinates.py # Typed canonical entities and versioned alias proofs
+│   ├── governance.py         # Decision envelope, fingerprints, and rollback checks
+│   ├── instruments.py        # Deterministic instrument target extraction
+│   ├── plan_fulfillment.py   # Plan coordinates and outcome rules
 │   ├── recall.py             # Recall intents and domain rules
 │   ├── relations.py          # Memory relationship model
 │   └── temporal.py           # Dual-time visibility
@@ -96,6 +103,7 @@ src/hl_mem/
 ├── observability/            # Audit events and persistent LLM call spans
 ├── recall/
 │   ├── observation.py        # Derived-memory assembly
+│   ├── entity_query.py       # Query mention resolution and observe/enforce constraints
 │   ├── ranking.py            # Multi-factor ranking
 │   ├── relation_expansion.py # One-hop relation expansion
 │   ├── reranker.py           # Optional reranking (model configured via TOML)
@@ -107,17 +115,22 @@ src/hl_mem/
 │   ├── claims.py             # Claim repository
 │   ├── database.py           # Connection management and migration runner
 │   ├── events.py             # Immutable Event repository
+│   ├── entities.py           # Canonical entity, alias, relation, and Claim-link repository
 │   ├── evidence.py           # Evidence links
 │   ├── experience.py         # Episode/Trace/Policy repository
 │   ├── jobs.py               # Durable job queue
+│   ├── governance.py         # Reversible governance action ledger
+│   ├── plan_fulfillments.py  # Plan outcomes and deterministic candidate access
 │   ├── relation_proposals.py # Auditable relation candidates
 │   ├── tombstones.py         # Independent versioned deletion-ledger adapter
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 49 immutable SQL migrations (001-049)
+│   └── migrations/           # 54 immutable SQL migrations (001-054)
 ├── workers/
 │   ├── worker.py             # Job leasing, progress, heartbeat, maintenance loop
+│   ├── auto_resolve_conflicts.py # Bounded L0/L2 conflict orchestration
+│   ├── conflict_judge.py     # Optional loopback-only structured judge client
 │   ├── job_handlers.py       # Job handlers, registry, and dispatch boundary
 │   ├── integrity.py          # Bounded dangling-reference reporting
 │   ├── ttl.py                # Importance-aware expiry
@@ -157,6 +170,11 @@ Claims carry `valid_from`/`valid_to` for business validity and `recorded_from`/`
 This supports both “what was true then?” and “what did the system know then?” Evidence links connect Claims to source
 Events. Derivations retain source relations and become stale when a source Claim is withdrawn.
 
+Typed canonical entities provide stable coordinates for `person`, `agent`, `device`, `environment`, `instrument`,
+`project`, and `topic`. Versioned aliases resolve to exactly one same-type canonical entity and retain their proof;
+`topic` cannot become a Claim subject. Claim links record subject, actor, target, device, environment, project, and about
+roles. Missing proof or a cross-type collision remains unresolved instead of falling back to string equality.
+
 Classification combines a controlled operational slot with open topic tags. Slots drive conflict, retention, and
 preference behavior; tags improve discovery without becoming hard schema.
 
@@ -181,7 +199,8 @@ Client
   → compact seven-field LLM extraction with speaker, turn, source_event_indices and temporal anchoring
   → deterministic JSON repair + compact/legacy schema validation + bounded retry
   → AdmissionPolicy (notability, evidence, secret, operational-snapshot checks)
-  → full-schema reconstruction (choice, qualifiers, time, entities, slot/tags)
+  → full-schema reconstruction (choice, qualifiers, time, entities, slot/tags, grounded lesson signal)
+  → typed entity/alias resolution and deterministic instrument-target extraction
   → subject guard / scope normalization / canonical predicate projection
   → index_text construction (legacy / value_only / natural / answerable)
   → fact_hash v2 exact deduplication
@@ -192,7 +211,7 @@ Client
   → best-match semantic candidate generation (domain constant 0.82)
   → entity normalization + slot/tags + retention/expiry calculation
   → embedding generation and one evidence link per declared source Event
-  → Claim commit
+  → Claim commit + idempotent plan-reconciliation job when the new Claim is a result candidate
 ```
 
 The Claim mutation sequence—status update, Claim insert, conflict-candidate attach/revision bump, supersede operation,
@@ -216,6 +235,11 @@ named-entity fidelity, one-off events, and enumerations. Prompt and extractor id
 evaluation manifests instead of being duplicated in this document. A raw structured response containing exactly the 20
 allowed Claims emits a `claim_limit_reached` audit warning because the model may have silently omitted additional facts;
 the schema limit itself remains unchanged.
+
+The released extractor prompt remains the pre-v0.31 prompt because the lesson-notability experiment was sealed. A
+deterministic post-processor can emit a grounded `lesson_signal`, but its default `observe` mode cannot promote scope or
+importance. Price target resolution is separately enforced only for exact qualified codes or unique typed instrument
+aliases; unresolved targets remain fail-closed.
 
 The bounded window has only two controls: count and maximum wait. An idle timer is intentionally absent because
 `sync_turn` already writes the user/assistant pair atomically; adding another debounce state would increase starvation and
@@ -253,6 +277,11 @@ Legacy trigram/raw tables remain only for the rollback window and are not querie
 Dense retrieval scans a configured candidate bound before scoring. Optional provider failures degrade to deterministic or
 original-query paths so the SQLite retrieval core remains available.
 
+Query entity resolution runs before the existing channels. In the released `observe` mode it records mention, proof,
+coverage, and the filtered shadow result but leaves the production candidate set wide. It adds no channel, boost, or
+ranking weight. A future `enforce` setting is allowed only after frozen production-shaped coverage evidence passes its
+gate; ambiguous or multi-entity queries always remain wide in v0.31.
+
 `memory_relations` has its own valid-time interval, independent of each endpoint Claim. New edges start at creation;
 existing terminal-transition paths close connected edges when a Claim becomes retracted, superseded, or expired. Every
 relation-expansion hop checks the edge interval and both endpoint Claims for namespace, status, valid-time, and recorded-time
@@ -274,8 +303,11 @@ The write path applies progressively more expensive checks: bounded JSON `fact_h
 all candidates for `(namespace, group_key, generation)`; the legacy left/right columns are compatibility representatives,
 not pairwise storage. Attaching a candidate and incrementing `revision` is atomic with Claim insertion. Automatic
 maintenance consumes a persistent dirty queue, processes only the current active generation under count/time budgets and
-per-case backoff, folds every candidate through terminal/supersede chains, and auto-closes terminal or single-survivor
-cases. A stable `manual_required` case is not scanned or updated again until a trigger marks it dirty. Review returns the
+per-case backoff, and uses the shared governance ledger plus revision/fingerprint CAS for every mutation. The v0.31
+release default is `conflict.auto_mode="l0_only"`: only the sealed 37/37 deterministic L0 rules may mutate Claims. L1 is
+disabled. The optional `[maintenance_judge]` client is not a production dependency and is never called in the default
+mode; users may run the packaged E1 replay equipment before explicitly enabling an L2 path. A stable
+`manual_required` case is not scanned or updated again until a trigger marks it dirty. Review returns the
 generation, revision, and complete candidate set; select/reject requires `expected_revision`, with stale requests failing
 409 before mutation. Candidate counts above the configured auto threshold remain manual. The schema reserves generation
 boundaries for v0.29. When a group already has a terminal generation, an exact reassertion of its active winner only adds
@@ -298,23 +330,34 @@ deterministic branches implemented in `src/hl_mem/domain/claims/temporal_links.p
   rationale includes the evaluator reason, such as `snapshot_coordinate_equal`, `price_replacement_not_explicit`, or
   `snapshot_order_mixed`.
 
-`config.path`, `config.network`, and every non-exclusive operational slot remain denied. Proven convergence reuses the
-existing atomic supersede transaction; ambiguity reuses the pair-style manual case. No LLM call, general latest-wins
-classifier, schema migration, or configuration switch is added.
+For price Claims, the series coordinate uses `(axis, canonical_target_entity_id, snapshot_date)`. Exact qualified codes
+and unique typed aliases are enforced by default; a missing target, ambiguous market, currency/unit mismatch, or mixed
+date remains `uncertain`. `config.path`, `config.network`, and every non-exclusive operational slot remain denied. Proven
+convergence reuses the existing atomic supersede transaction; ambiguity reuses the pair-style manual case. No general
+latest-wins classifier is added.
 
 Near-copy control deliberately shares one conservative predicate across ingestion, maintenance, and recall. It requires
 compatible namespace, predicate, canonical slot/attribute, qualifiers, and validity; high cosine and lexical near-copy
 agreement must also preserve the order and multiplicity of protected numbers, versions, dates/weekdays, paths, polarity,
 relative day periods, quoted values, obvious proper names, and entity mentions in the Claim value. Cross-subject folding
 is limited to a value-verified `user` to `user's <entity>` projection; arbitrary people are never merged. Ingestion may
-reuse an existing same-subject Claim and add evidence. Maintenance only reviews an existing,
-bounded `dedup_pairs` candidate set and records a deterministic `equivalent` edge; it never scans all Claim pairs, calls an
-LLM, deletes a Claim, or supersedes one. Deferred candidates rotate by `reviewed_at` so one unsafe high-similarity pair
+reuse an existing same-subject Claim and add evidence. Maintenance reviews a bounded `dedup_pairs` candidate set,
+including the slot-aware cross-subject branch whose governing typed entity has explicit proof. Deferred candidates rotate
+by `reviewed_at` so one unsafe high-similarity pair
 cannot starve the queue. Recall rechecks those deterministic edges inside its existing candidate bound and
 applies the same predicate dynamically within that bound when a cross-subject near-copy has no persisted edge. It keeps
 the highest-ranked representative, exposes folded member IDs, and unions evidence in memory. Pairs that fail any guard
-remain independently retrievable. The older optional cross-subject LLM audit worker remains separate, and deterministic near-copy decisions are
-excluded from its physical apply path.
+remain independently retrievable. The physical survivor/evidence/supersede path exists behind typed-entity and
+protected-atom guards, but `dedup.audit_only=true` remains the release default because E2 was sealed; no v0.31 default
+applies an audited pair.
+
+Plan fulfillment remains a Claim lifecycle projection rather than a task system. A result Claim is matched only to one
+logical plan group with the same typed target, action family, direction, Decimal quantity/unit, account, and valid-time
+window. Complete, cancel, and replace close only the plan's `valid_to`; partial outcomes accumulate exactly and close the
+plan only when quantity conservation reaches the planned amount. `recorded_to`, Claim status, and `superseded_by_id` are
+unchanged. Outcomes, explanatory relations, and governance actions are written atomically. E5's deterministic arm passed
+all 143 frozen scenarios, so `plan.fulfillment_mode="enforce"` is the released default; incomplete or non-unique
+coordinates abstain.
 
 Retention is a pure function of scope and importance. Ephemeral memories expire; temporal and permanent memories decay on
 different schedules; access and sufficiently supported helpful feedback can extend useful life within configured caps.
@@ -394,7 +437,7 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 49 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 54 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used
@@ -403,8 +446,10 @@ mutually exclusive conflict group on any INSERT or UPDATE path, migration 042 ad
 migration 043 binds the main database to its deletion-ledger identity, and migration 044 adds valid-time windows to relation
 edges and closes them on terminal Claim transitions. Migration 045 adds group candidates, generation/revision, a persistent
 review queue/cursor, and dirty triggers; migration 046 adds bounded-retention indexes and retires historical below-floor
-pending dedup candidates. They run automatically on first v0.28.9 open; migration 045 does not adjudicate historical
-conflicts. The optional `sqlite_vec.py` data migration owns the dimension-specific
+pending dedup candidates. Migrations 047–049 add assertion kind and dedup injection provenance before removing the guarded
+legacy tags FTS table. Migrations 050–054 add the governance action ledger, conflict policy versioning, typed canonical
+entities and Claim links, plan outcomes, and slot-aware dedup strategy metadata. They run automatically on first open;
+schema migration never adjudicates conflicts, applies dedup pairs, or closes plans. The optional `sqlite_vec.py` data migration owns the dimension-specific
 derived vector table; the default remains exact `sqlite_scan`.
 
 Backup and restore are whole-database operations:

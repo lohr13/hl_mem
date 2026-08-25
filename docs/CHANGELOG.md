@@ -1,5 +1,54 @@
 # HL-Mem 变更记录
 
+## v0.31.0（2026-08-25）
+
+### 新能力
+
+- 新增 typed canonical entity、版本化 alias/entity relation/Claim link 与热路径 subject/target 坐标。类型不同的
+  `person`、`agent`、`device`、`environment`、`instrument`、`project`、`topic` 不自动合并；无显式 proof 时继续
+  使用隔离的 legacy 坐标。
+- 新增治理动作账本、输入 fingerprint、短事务 CAS 和有条件 rollback，供 conflict、dedup 和 plan mutation 共用；
+  三个领域仍保留各自的 case/outcome 枚举和状态账本。
+- plan fulfillment 支持 complete/cancel/replace/partial，严格匹配 typed target、action、direction、Decimal
+  quantity/unit、account 和 valid-time window。关闭只写 `valid_to`，不改 `recorded_to`、Claim status 或
+  `superseded_by_id`。
+- 价格序列增加 `(axis, canonical_target_entity_id, snapshot_date)` 坐标；qualified code 与唯一 typed alias
+  可确定性解析，缺 target、跨市场歧义、币种或单位变化继续 fail-closed。
+- 冲突维护增加 L0–L3 分层、policy-version 重扫和可选 loopback `[maintenance_judge]`。本发布只启用 L0；生产
+  零常驻 LLM 依赖。随包评测装备可供用户在自己的冻结语料上自验后再显式选择 L2。
+- dedup 增加 typed governing entity + slot bucket 的跨 subject 候选及 protected-atom apply gate；查询增加实体
+  mention/proof/coverage shadow trace；提取后处理增加 grounded `lesson_signal`。三者发布默认均保持非破坏模式。
+- `/healthz` 暴露 residual `manual_required` 计数与最老年龄；Hermes 插件 2.1.0 在同一 session 首次或计数变化时
+  最多提示一次，不把 pending/open 案冒充人工案，health 失败不注入旧计数。
+
+### 发版决议与诚实披露
+
+- **E1 SEALED×2**：全量自动化未过门禁，L1 全禁用，L2 不作为默认生产路径。仅 L0 sealed 集达到
+  **37/37 precision、危险反向 0**，因此 `conflict.auto_mode="l0_only"`。
+- **E5 PASS（A 臂）**：143 个场景中 macro-F1、complete/cancel/replace/partial/ambiguous recall、partial 数量守恒
+  均为 **1.0**，错误关闭 **0**，因此 `plan.fulfillment_mode="enforce"`。
+- **E6 PASS（B 臂）**：120 条、58 个 instrument，exact target precision **1.0**、coverage **0.90**、
+  series decision accuracy **1.0**、missing→uncertain **1.0**、跨 target supersede **0**，因此
+  `price.target_mode="enforce"`。
+- **E2 SEALED_v2**：自动 dedup 证据未过，`dedup.audit_only=true` 保持；已审 equivalent 不在升级时批量应用。
+- **E3 SEALED_v2**：新 notability prompt 不替换旧 prompt，`extraction.lesson_signal_mode="observe"` 保持。
+- **E4 行为过、证据不足并封存**：冻结查询全部来自 snapshot-derived synthetic，不能证明 production-shaped
+  link coverage，`recall.entity_constraint_mode="observe"` 保持，不对发布候选做硬过滤。
+
+### 配置、迁移与回滚
+
+- migration 050–054 依次增加 governance ledger、conflict policy、typed entities、plan fulfillment 和 slot dedup
+  metadata；历史 001–049 未修改。REST/MCP major 不变，OpenAPI 仅反映新增 health 字段和发布版本；Hermes
+  plugin minor 从 2.0.0 升至 2.1.0，daemon/context/plugin contract major 均不变。
+- 冲突自动化回滚：设 `conflict.auto_mode="observe"` 或 `off`，停止新的 L0 mutation；已应用动作只能通过当前行
+  仍匹配 after fingerprint 的 governance rollback 恢复。
+- plan 回滚：设 `plan.fulfillment_mode="observe"` 或 `off` 停止新关链；已关闭 plan 按 outcome/action CAS 回滚，
+  有后续 outcome 时拒绝覆盖并生成审计案。
+- 价格回滚：设 `price.target_mode="observe"` 或 `off`；已由 target 触发的状态变化按对应 action CAS 回滚，不以
+  清空 target 列代替历史修复。
+- dedup、lesson signal 与查询实体约束分别以 `dedup.audit_only=true`、`extraction.lesson_signal_mode="observe"`、
+  `recall.entity_constraint_mode="observe"` 保持旧行为；Hermes 提示可设 `hermes.manual_conflict_notice=false` 关闭。
+
 ## 未发布：v0.30.0 状态实验收档（2026-08-22）
 
 - 状态坐标闭环在反复使用同一份 400-bundle dev 集完成 B2、P1、I1、Z1–Z5 和生产接线后取得 dev 13/13，

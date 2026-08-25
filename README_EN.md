@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.29.3](https://img.shields.io/badge/version-0.29.3-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.31.0](https://img.shields.io/badge/version-0.31.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -200,6 +200,36 @@ python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-r
   --export-expanded-fixture var/eval/v0291-injection-fixture.jsonl
 ```
 
+### Upgrading to v0.31.0
+
+v0.31.0 adds typed canonical entities, canonical price targets, plan fulfillment, the governance action ledger, and
+slot-aware cross-subject dedup auditing. Only destructive behaviors that passed their frozen gates are enabled by default:
+plan fulfillment and price targets use `enforce`, while conflict automation is restricted to `l0_only`. Dedup remains
+`audit_only=true`; query entity constraints and lesson signals remain in `observe`. Hermes emits at most one residual
+manual-conflict notice on first use or when the count changes within a session.
+
+Production has no resident LLM-judge dependency. `[maintenance_judge]` is optional equipment for user-run replay and an
+explicitly enabled L2 path; the default `l0_only` mode never calls it. Each automated mutation records its input fingerprint
+and governance action. These independent emergency overrides return the new paths to non-mutating modes:
+
+```toml
+[conflict]
+auto_mode = "observe"
+
+[plan]
+fulfillment_mode = "observe"
+
+[price]
+target_mode = "observe"
+
+[hermes]
+manual_conflict_notice = false
+```
+
+The upgrade applies migrations 050–054 in order. Stop the API, workers, and all other writers first, and back up the
+checkpointed primary database together with its tombstone sidecar. The schema additions are additive, but old binaries do
+not understand the new governance semantics and must not resume writes after the upgrade.
+
 ### Upgrading to v0.29.3
 
 v0.29.3 requires no schema migration and introduces no configuration or breaking REST/MCP API change. Price and
@@ -285,9 +315,10 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.29.3 with 49 immutable, forward-only migrations. Migration 049 removes the legacy
-`claims_tags_fts` only after checking database views/triggers. SQLite cannot prove the absence of external query
-consumers, so every node must be on v0.29.0+ and the old-binary rollback window must be closed before upgrading.
+The current baseline is v0.31.0 with 54 immutable, forward-only migrations. Migrations 050–054 add the governance action
+ledger, conflict automation policy, typed canonical entities, plan fulfillment, and slot-aware cross-subject dedup audit
+fields. Stop all writers and back up both the primary database and tombstone sidecar before upgrading; old binaries must
+not reopen an upgraded database.
 
 ## Documentation
 

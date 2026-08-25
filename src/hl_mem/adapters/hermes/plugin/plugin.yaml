@@ -1,5 +1,5 @@
 name: hl_mem
-version: 2.0.0
+version: 2.1.0
 description: 'hl_mem local-first memory with Experience channel'
 pip_dependencies: []
 requires_env: []
