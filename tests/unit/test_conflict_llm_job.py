@@ -90,8 +90,8 @@ class _FixedJudge:
         return AutoDecision("keep_left", "left", 0.95, "L2", "qwen_consistent", ("evidence-left",), "qwen")
 
 
-def _queued_payload(connection) -> dict[str, object]:
-    auto_resolve_conflicts(connection, NOW, mode="observe", l1_policy=L1Policy(300, 0.1))
+def _queued_payload(connection, *, mode: str = "observe") -> dict[str, object]:
+    auto_resolve_conflicts(connection, NOW, mode=mode, l1_policy=L1Policy(300, 0.1))
     return json.loads(connection.execute("SELECT payload_json FROM jobs").fetchone()[0])
 
 
@@ -150,11 +150,11 @@ def test_l0_only_observes_l1_decisions(tmp_path: Path) -> None:
 def test_l0_only_dispatches_admitted_l2_jobs_as_observe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     connection = Database(tmp_path / "l0-only-l2.db").open()
     _manual_pair(connection)
-    payload = _queued_payload(connection)
+    payload = _queued_payload(connection, mode="l0_only")
     monkeypatch.setattr(job_handlers.components, "make_conflict_judge", lambda _settings: _FixedJudge(connection))
     worker = SimpleNamespace(
         connection=connection,
-        settings=replace(Settings.for_test(), conflict_auto_mode="l0_only"),
+        settings=replace(Settings.for_test(), conflict_auto_mode="enforce"),
     )
 
     result = JOB_HANDLERS["resolve_conflict_llm"](worker, {"payload": payload})

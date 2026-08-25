@@ -404,6 +404,7 @@ def _enqueue_l2(
     fingerprint: str,
     now: str,
     policy_version: str,
+    application_mode: str,
 ) -> bool:
     case = docket["case"]
     key = f"resolve_conflict_llm:{case['id']}:{fingerprint}:{policy_version}"
@@ -418,6 +419,7 @@ def _enqueue_l2(
                     "revision": int(case.get("revision") or 0),
                     "input_fingerprint": fingerprint,
                     "policy_version": policy_version,
+                    "application_mode": application_mode,
                 },
                 "idempotency_key": key,
                 "status": "pending",
@@ -525,7 +527,16 @@ def auto_resolve_conflicts(
                     policy_version=policy_version,
                 )
                 if admission.admitted:
-                    stats["l2_queued"] += int(_enqueue_l2(connection, docket, fingerprint, now, policy_version))
+                    stats["l2_queued"] += int(
+                        _enqueue_l2(
+                            connection,
+                            docket,
+                            fingerprint,
+                            now,
+                            policy_version,
+                            _application_mode(mode, "L2"),
+                        )
+                    )
                     stats["manual_stable"] += 1
                     stats["deferred"] += 1
                     continue
