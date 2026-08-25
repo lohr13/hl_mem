@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from hl_mem.adapters.hermes.conflict_notice import ManualConflictNotice
 from hl_mem.adapters.hermes.episode_mapper import EpisodeMapper
 from hl_mem.adapters.hermes.http_client import HLMemHttpClient
 from hl_mem.adapters.hermes.prefetch import PrefetchCache
@@ -175,6 +176,10 @@ class HLMemProvider:
         self._pending_injections: deque[_PendingInjection] = deque()
         self._session_turns: dict[str, int] = {}
         self._recall_tool_calls = 0
+        self._conflict_notice = ManualConflictNotice(
+            self.enabled and resolved_settings.hermes_manual_conflict_notice,
+            resolved_settings.hermes_prefetch_cache_ttl_seconds,
+        )
         self._delivery_health: dict[str, int | str | None] = {
             "deliveries": 0,
             "bundle_misses": 0,
@@ -322,8 +327,11 @@ class HLMemProvider:
 
     def system_prompt_block(self) -> str:
         """返回注入 Hermes 系统提示词的记忆状态。"""
+        notice = self._conflict_notice.render(
+            self._client, self._can_call, self._on_success, self._on_failure, self._session_id
+        )
         consecutive_failures = int(self._prefetch_cache.health()["consecutive_failures"] or 0)
-        if self.state != "closed" or consecutive_failures >= 3:
+        if self._conflict_notice.failed or self.state != "closed" or consecutive_failures >= 3:
             return (
                 "# hl_mem Memory\n"
                 "Status: Degraded.\n"
@@ -332,13 +340,14 @@ class HLMemProvider:
                 "Do not treat a missing result as proof that no history exists.\n"
                 "Retry only after the memory service recovers."
             )
-        return (
+        healthy = (
             "# hl_mem Memory\n"
             "Status: healthy — passive memory injection and the read-only hl_mem_recall tool are available.\n"
             "Use hl_mem_recall before deployment/upgrade/operations, when environment surprises appear, or when prior "
             "decisions matter.\n"
             "Skip it when the memories already injected into this conversation are sufficient."
         )
+        return healthy.replace("\n", f"\n{notice}\n", 1) if notice else healthy
 
     def initialize(self, session_id: str | None = None, **kwargs: Any) -> None:
         """初始化健康状态，或保存 Hermes 提供的会话上下文。"""

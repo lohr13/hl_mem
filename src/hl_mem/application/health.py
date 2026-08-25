@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sqlite3
+from datetime import datetime, timezone
+from typing import TypedDict
+
 from hl_mem.monitoring.metrics import (
     DEFAULT_ADMISSION_METRICS,
     DEFAULT_PROVIDER_METRICS,
@@ -20,6 +24,45 @@ from hl_mem.recall.freshness_annotation import (
     FreshnessAnnotationMode,
 )
 from hl_mem.recall.injection import injection_governance_snapshot
+
+
+class ConflictBacklogSnapshot(TypedDict):
+    conflict_counts_by_status: dict[str, int]
+    manual_required_count: int
+    oldest_manual_required_age_seconds: int
+
+
+def conflict_backlog_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    now: datetime | None = None,
+) -> ConflictBacklogSnapshot:
+    """Return only unresolved conflict counts and the oldest residual manual age."""
+
+    rows = connection.execute(
+        "SELECT status,COUNT(*) AS count,MIN(created_at) AS oldest FROM conflict_cases "
+        "WHERE status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL GROUP BY status"
+    ).fetchall()
+    counts = {status: 0 for status in ("pending", "auto_resolved", "manual_required")}
+    oldest_manual = None
+    for row in rows:
+        counts[str(row["status"])] = int(row["count"])
+        if row["status"] == "manual_required":
+            oldest_manual = row["oldest"]
+    age = 0
+    if oldest_manual:
+        try:
+            created = datetime.fromisoformat(str(oldest_manual).replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age = max(0, int(((now or datetime.now(timezone.utc)) - created).total_seconds()))
+        except ValueError:
+            age = 0
+    return {
+        "conflict_counts_by_status": counts,
+        "manual_required_count": counts["manual_required"],
+        "oldest_manual_required_age_seconds": age,
+    }
 
 
 def monitoring_snapshot(

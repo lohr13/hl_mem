@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 204
+    assert len(fields(Settings)) == 206
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -89,6 +89,7 @@ def test_settings_contract_includes_bypass_and_recall_fields() -> None:
     assert settings.hermes_url == "http://127.0.0.1:8200"
     assert settings.hermes_timeout == 30
     assert settings.hermes_on_demand_recall_timeout_seconds == 8.0
+    assert settings.hermes_manual_conflict_notice is True
     assert settings.hermes_home is None
     assert settings.entity_aliases_path is None
     assert settings.database_pool_size == 8

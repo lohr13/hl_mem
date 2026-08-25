@@ -264,15 +264,11 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         from hl_mem.application.conflict_repairs import count_dangling_conflicts
-        from hl_mem.application.health import monitoring_snapshot
+        from hl_mem.application.health import conflict_backlog_snapshot, monitoring_snapshot
 
         connection = database.connection or database.open_worker()
-        conflict_open_count = int(
-            connection.execute(
-                "SELECT COUNT(*) FROM conflict_cases "
-                "WHERE status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL"
-            ).fetchone()[0]
-        )
+        conflict_backlog = conflict_backlog_snapshot(connection)
+        conflict_open_count = sum(conflict_backlog["conflict_counts_by_status"].values())
         conflict_dangling = count_dangling_conflicts(connection)
         return {
             "status": "ok",
@@ -280,6 +276,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             "compatibility": compatibility_manifest(),
             "vector_backend": str(settings.vector_backend),
             "conflict_open_count": conflict_open_count,
+            **conflict_backlog,
             "conflict_dangling": conflict_dangling,
             "embedder": "fake" if isinstance(embedder, FakeEmbedder) else "real",
             "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),

@@ -13,6 +13,7 @@ from hl_mem.evaluation.extraction_ab import (
     extraction_contract_snapshot,
 )
 from hl_mem.ingest.chunking import ChunkingPolicy
+from hl_mem.ingest.lesson_signals import classify_lesson_signal
 from hl_mem.ingest.llm_extractor import (
     LANGUAGE_ROUTER_VERSION,
     LLM_EXTRACTOR_VERSION,
@@ -95,6 +96,42 @@ def _compact_choice_claim(*, subject: str, value: str, evidence_quote: str) -> s
         },
         ensure_ascii=False,
     )
+
+
+def test_grounded_lesson_signal_promotes_importance_but_not_time_bounded_scope() -> None:
+    value = "From now on, we must verify backups before every migration; deadline 2026-08-26."
+    response = json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": "user",
+                    "value": value,
+                    "kind": "fact",
+                    "confidence": 1.0,
+                    "notability": "low",
+                    "evidence_quote": value,
+                }
+            ],
+            "should_memorize": True,
+        }
+    )
+
+    observe_claim = LLMExtractor(_FakeLLMClient(response), ChunkingPolicy(10_000, 0, 2)).extract(value)[0]
+    assert observe_claim.importance == 0.3
+    assert "lesson_signal" not in observe_claim.qualifiers
+
+    claim = LLMExtractor(
+        _FakeLLMClient(response),
+        ChunkingPolicy(10_000, 0, 2),
+        lesson_signal_mode="enforce",
+    ).extract(
+        value
+    )[0]
+
+    assert claim.importance == 0.9
+    assert claim.qualifiers["lesson_signal"] == "persistent_must"
+    assert claim.scope == "temporal"
+    assert classify_lesson_signal("This was a lesson and a pitfall.", "This was a lesson and a pitfall.") == "none"
 
 
 def test_compact_model_slot_does_not_forge_task_from_generic_subject() -> None:

@@ -40,6 +40,7 @@ ConflictAutoMode = Literal["off", "observe", "enforce", "l0_only"]
 PriceTargetMode = Literal["off", "audit", "observe", "enforce"]
 PlanFulfillmentMode = Literal["off", "audit", "observe", "enforce"]
 EntityConstraintMode = Literal["off", "observe", "enforce"]
+LessonSignalMode = Literal["off", "observe", "enforce"]
 
 
 class VectorBackend(StrEnum):
@@ -80,6 +81,8 @@ def _toml_field(default: Any, path: str) -> Any:
 def _validate_runtime_modes(settings: "Settings") -> None:
     if settings.entity_constraint_mode not in {"off", "observe", "enforce"}:
         raise ConfigurationError("recall.entity_constraint_mode must be 'off', 'observe', or 'enforce'")
+    if settings.lesson_signal_mode not in {"off", "observe", "enforce"}:
+        raise ConfigurationError("extraction.lesson_signal_mode must be 'off', 'observe', or 'enforce'")
     if settings.conflict_auto_mode not in {"off", "observe", "enforce", "l0_only"}:
         raise ConfigurationError("conflict.auto_mode must be 'off', 'observe', 'enforce', or 'l0_only'")
     if settings.conflict_l1_min_time_delta_seconds not in {0, 300, 3_600}:
@@ -329,23 +332,12 @@ class Settings:
     hermes_enabled: bool = field(default=False, metadata={"toml": "hermes.enabled"})
     hermes_url: str = field(default="http://127.0.0.1:8200", metadata={"toml": "hermes.url"})
     hermes_timeout: int = field(default=30, metadata={"toml": "hermes.timeout"})
-    hermes_on_demand_recall_timeout_seconds: float = field(
-        default=8.0,
-        metadata={"toml": "hermes.on_demand_recall_timeout_seconds"},
-    )
+    hermes_on_demand_recall_timeout_seconds: float = _toml_field(8.0, "hermes.on_demand_recall_timeout_seconds")
+    hermes_manual_conflict_notice: bool = _toml_field(True, "hermes.manual_conflict_notice")
     hermes_home: str | None = field(default=None, metadata={"toml": "hermes.home"})
-    hermes_circuit_failure_threshold: int = field(
-        default=5,
-        metadata={"toml": "hermes.circuit_failure_threshold"},
-    )
-    hermes_circuit_open_seconds: float = field(
-        default=60.0,
-        metadata={"toml": "hermes.circuit_open_seconds"},
-    )
-    hermes_prefetch_cache_ttl_seconds: float = field(
-        default=300.0,
-        metadata={"toml": "hermes.prefetch_cache_ttl_seconds"},
-    )
+    hermes_circuit_failure_threshold: int = _toml_field(5, "hermes.circuit_failure_threshold")
+    hermes_circuit_open_seconds: float = _toml_field(60.0, "hermes.circuit_open_seconds")
+    hermes_prefetch_cache_ttl_seconds: float = _toml_field(300.0, "hermes.prefetch_cache_ttl_seconds")
     policy_induction_lookback_days: int = field(
         default=7,
         metadata={"toml": "worker.policy_induction_lookback_days"},
@@ -360,6 +352,7 @@ class Settings:
         default="off",
         metadata={"toml": "extraction.verification_mode"},
     )
+    lesson_signal_mode: LessonSignalMode = _toml_field("observe", "extraction.lesson_signal_mode")
     llm_api_key: str | None = field(
         default=None,
         repr=False,
@@ -684,8 +677,8 @@ class Settings:
             raise ConfigurationError("recall vector scan limit must be positive")
         if not isinstance(self.recall_dense_enabled, bool):
             raise ConfigurationError("recall dense enabled must be a boolean")
-        if not isinstance(self.hermes_enabled, bool):
-            raise ConfigurationError("hermes enabled must be a boolean")
+        if not isinstance(self.hermes_enabled, bool) or not isinstance(self.hermes_manual_conflict_notice, bool):
+            raise ConfigurationError("hermes enabled and manual conflict notice must be booleans")
         if self.hermes_timeout < 1:
             raise ConfigurationError("hermes timeout must be positive")
         if self.hermes_on_demand_recall_timeout_seconds <= 0:
@@ -1042,8 +1035,10 @@ class Settings:
             "vector_backend": self.vector_backend,
             "vector_batch_size": self.vector_batch_size,
             "hermes_on_demand_recall_timeout_seconds": self.hermes_on_demand_recall_timeout_seconds,
+            "hermes_manual_conflict_notice": self.hermes_manual_conflict_notice,
             "extract_pre_filter": self.extract_pre_filter,
             "verification_mode": self.verification_mode,
+            "lesson_signal_mode": self.lesson_signal_mode,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,

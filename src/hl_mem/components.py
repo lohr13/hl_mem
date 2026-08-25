@@ -238,6 +238,7 @@ def make_extractor(
         structured_mode=structured_mode,
         verifier=verifier,
         verification_mode=settings.verification_mode,
+        lesson_signal_mode=settings.lesson_signal_mode,
     )
 
 

@@ -52,6 +52,7 @@ from hl_mem.llm.types import (
 )
 from hl_mem.observability.audit import current_audit
 
+from . import lesson_signals
 from .admission import (
     ALNUM_SECRET_RE,
     LOW_VALUE_HEALTH_STATES,
@@ -576,6 +577,7 @@ def _postprocess_rules_fingerprint(
         "compact_kind_map": _KIND_MAP,
         "compact_kind_topic_tag": _KIND_TOPIC_TAG,
         "notability_importance": _NOTABILITY_IMPORTANCE,
+        "lesson_signals": lesson_signals.lesson_signal_rules_fingerprint(),
         "relative_time": relative_time_rules_fingerprint(),
         "english_system_prompt": ENGLISH_SYSTEM_PROMPT,
         "language_router_version": language_router_version,
@@ -755,6 +757,7 @@ class LLMExtractor:
         structured_mode: StructuredOutputMode = StructuredOutputMode.JSON_SCHEMA,
         verifier: EntailmentVerifier | None = None,
         verification_mode: Literal["off", "audit", "enforce"] = "off",
+        lesson_signal_mode: Literal["off", "observe", "enforce"] = "observe",
         verification_claim_threshold: int = 5,
         verification_empty_text_threshold: int = 1_000,
     ) -> None:
@@ -771,6 +774,7 @@ class LLMExtractor:
             raise ValueError("verification thresholds must be non-negative")
         self.verifier = verifier
         self.verification_mode = verification_mode
+        self.lesson_signal_mode = lesson_signals.validate_lesson_signal_mode(lesson_signal_mode)
         self.verification_claim_threshold = verification_claim_threshold
         self.verification_empty_text_threshold = verification_empty_text_threshold
         self.last_usage_tokens = 0
@@ -917,14 +921,12 @@ class LLMExtractor:
         should_verify = self.verification_mode == "enforce" or len(claims) > self.verification_claim_threshold
         if not should_verify:
             return claims
-
         try:
             results = self.verifier.verify_batch(claims, source_text)
         except Exception as error:
             self._record_verifier_usage()
             self._emit_verification_failure(error, len(claims))
             return claims
-
         self._record_verifier_usage()
         try:
             if len(results) != len(claims):
@@ -1055,7 +1057,10 @@ class LLMExtractor:
             )
         except (KeyError, TypeError, ValueError):
             return None
-
+        lesson_signal, enforce_lesson_signal = lesson_signals.evaluate_lesson_signal(
+            candidate.value, candidate.evidence_quote, self.lesson_signal_mode
+        )
+        candidate = replace(candidate, notability="high") if enforce_lesson_signal else candidate
         decision = admit_claim(candidate, source_text)
         episodic = decision.memory_layer == "episodic"
         current_audit().emit(
@@ -1078,7 +1083,6 @@ class LLMExtractor:
             }:
                 self._secret_rejections[decision.reason] = self._secret_rejections.get(decision.reason, 0) + 1
             return None
-
         predicate, canonical_attribute, scope, volatility = _KIND_MAP[candidate.kind]
         if episodic:
             scope = "temporal"
@@ -1095,6 +1099,7 @@ class LLMExtractor:
             candidate.value,
             candidate.evidence_quote,
         )
+        qualifiers.update({"lesson_signal": lesson_signal} if enforce_lesson_signal else {})
         qualifiers = project_action_qualifiers(candidate.value, qualifiers, is_plan=candidate.kind == "plan")
         canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
         relation_qualifiers: dict[str, Any] = {}
@@ -1165,7 +1170,6 @@ class LLMExtractor:
             return {}, "not_provided"
         if not normalized_action or not normalized_object:
             return {}, "partial_relation_metadata"
-
         normalized_value = unicodedata.normalize("NFC", value)
         normalized_evidence = unicodedata.normalize("NFC", evidence_quote)
         checks = (
@@ -1653,7 +1657,6 @@ class LLMExtractor:
                     "allowed_values": ["valid JSON object matching the supplied schema"],
                 }
             ]
-
         details: list[dict[str, Any]] = []
         for item in error.errors():
             path = ".".join(str(part) for part in item["loc"])
@@ -1827,8 +1830,8 @@ class LLMExtractor:
         )
 
     def _system_prompt_for_language(self, language: Literal["zh", "en"]) -> str:
-        """返回当前产品 compact 契约的语言 prompt；评测子类可冻结旧契约。"""
-        return ENGLISH_SYSTEM_PROMPT if language == "en" else SYSTEM_PROMPT
+        prompt = ENGLISH_SYSTEM_PROMPT if language == "en" else SYSTEM_PROMPT
+        return lesson_signals.lesson_notability_prompt(prompt, language, self.lesson_signal_mode)
 
     def _response_json_schema(self) -> dict[str, Any]:
         """返回当前产品 compact 响应 schema；评测子类可冻结旧契约。"""

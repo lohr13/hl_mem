@@ -258,6 +258,28 @@ def test_system_prompt_block_explains_healthy_hybrid_memory_usage() -> None:
     assert "environment surprises" in provider.system_prompt_block()
 
 
+def test_manual_conflict_notice_is_once_per_session_then_only_on_count_change(monkeypatch) -> None:
+    provider = HLMemProvider(settings=Settings(hermes_enabled=True, hermes_manual_conflict_notice=True))
+    counts = iter((2, 3))
+    monkeypatch.setattr(
+        provider._client,
+        "get",
+        lambda _path: JsonResponse({"manual_required_count": next(counts)}),
+    )
+    provider.initialize("session-1")
+
+    assert "2 个低置信真两难冲突" in provider.system_prompt_block()
+    assert "低置信真两难冲突" not in provider.system_prompt_block()
+    provider._conflict_notice.expires_at = 0.0
+    assert "3 个低置信真两难冲突" in provider.system_prompt_block()
+
+    provider._conflict_notice.expires_at = 0.0
+    monkeypatch.setattr(provider._client, "get", lambda _path: (_ for _ in ()).throw(httpx.ReadTimeout("down")))
+    degraded = provider.system_prompt_block()
+    assert "Degraded." in degraded
+    assert "3 个低置信真两难冲突" not in degraded
+
+
 def test_summarize_observation_detects_strong_error_signals() -> None:
     assert _summarize_observation('{"exit_code": 0, "output": "completed"}').startswith("[success]")
     assert _summarize_observation('{"exit_code": 1, "output": "stopped"}').startswith("[error]")

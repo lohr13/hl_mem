@@ -174,6 +174,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `extraction.chunk_overlap_turns` | 整数 | `2` | >= 0 | `extraction_chunk_overlap_turns` |
 | `extraction.chunk_target_chars` | 整数 | `12000` | >= 1 | `extraction_chunk_target_chars` |
 | `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
+| `extraction.lesson_signal_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `lesson_signal_mode` |
 | `extraction.mode` | 字符串 | `"fake"` | `fake`、`real`、`llm` | `extractor_mode` |
 | `extraction.pre_filter` | 布尔值 | `false` | `true`、`false` | `extract_pre_filter` |
 | `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
@@ -192,6 +193,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `hermes.circuit_open_seconds` | 数值 | `60.0` | > 0 | `hermes_circuit_open_seconds` |
 | `hermes.enabled` | 布尔值 | `false` | `true`、`false` | `hermes_enabled` |
 | `hermes.home` | 字符串 | 未设置 | 非空字符串；可省略 | `hermes_home` |
+| `hermes.manual_conflict_notice` | 布尔值 | `true` | `true`、`false` | `hermes_manual_conflict_notice` |
 | `hermes.on_demand_recall_timeout_seconds` | 数值 | `8.0` | > 0 | `hermes_on_demand_recall_timeout_seconds` |
 | `hermes.prefetch_cache_ttl_seconds` | 数值 | `300.0` | > 0 | `hermes_prefetch_cache_ttl_seconds` |
 | `hermes.timeout` | 整数 | `30` | >= 1 | `hermes_timeout` |
@@ -235,6 +237,33 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |
 | `llm.timeout` | 数值 | `90.0` | > 0 | `llm_timeout` |
 
+### `[maintenance_judge]`
+
+`[maintenance_judge]` 是可选的冲突 backlog 判官配置，不属于摄取 LLM。生产发布配置使用
+`conflict.auto_mode = "l0_only"`，不配置本段时没有常驻 AI 旁听或生产 LLM 依赖；模糊案保留为
+`manual_required`，可由 Hermes 的一次性提示暴露。
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `maintenance_judge.base_url` | 字符串 | `"http://127.0.0.1:8090/v1"` | loopback OpenAI-compatible `/v1` 端点 | `maintenance_judge_base_url` |
+| `maintenance_judge.model` | 字符串 | `"Qwen3.8-27B-UD-IQ4_XS.gguf"` | 端点提供的模型名 | `maintenance_judge_model` |
+| `maintenance_judge.prompt_version` | 字符串 | `"conflict-auto-v1"` | 非空版本标识 | `maintenance_judge_prompt_version` |
+| `maintenance_judge.tokenizer_identity` | 字符串 | `"qwen3.8-gguf-embedded"` | 非空 tokenizer 标识 | `maintenance_judge_tokenizer_identity` |
+| `maintenance_judge.timeout_seconds` | 数值 | `90.0` | > 0 | `maintenance_judge_timeout_seconds` |
+
+端点可以承载任意 OpenAI-compatible 判官和更强模型；非本机服务应先通过 loopback-only 网关暴露，避免维护
+进程直接依赖公网地址。需要定时裁决 backlog 时，先用随包 E1 装备对冻结 70 案自验：
+
+```powershell
+.venv/Scripts/python.exe scripts/run_v030_experiments.py e1 `
+  --manifest-dir ~/hl_mem_docs/evaluations/v030/manifests `
+  --output-dir ~/hl_mem_docs/evaluations/v030/e1-user-replay `
+  --e1-replay-overlay ~/hl_mem_docs/evaluations/v030/manifests/e1_replay_overlay_v2.json
+```
+
+只有用户自己的 replay 达到预注册门禁且逐案报告可审计后，才由用户自行把 L2 调度切到 enforce；配置本段本身
+不会启用 L1 或 L2。L1 保持禁用，紧急回滚直接恢复 `conflict.auto_mode = "l0_only"`。
+
 ### `[recall]`
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
@@ -244,6 +273,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `recall.dedup_threshold` | 数值 | `0.95` | 0.0 - 1.0；0 关闭折叠 | `recall_dedup_threshold` |
 | `recall.default_limit` | 整数 | `5` | 1 - 100 | `recall_default_limit` |
 | `recall.dense_enabled` | 布尔值 | `true` | `true`、`false` | `recall_dense_enabled` |
+| `recall.entity_constraint_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `entity_constraint_mode` |
 | `recall.echo_pending_max_seconds` | 整数 | `7200` | >= 60 | `echo_pending_max_seconds` |
 | `recall.echo_pending_review_enabled` | 布尔值 | `false` | `true`、`false` | `echo_pending_review_enabled` |
 | `recall.echo_pending_similarity_threshold` | 数值 | `0.95` | 0.0 - 1.0 | `echo_pending_similarity_threshold` |

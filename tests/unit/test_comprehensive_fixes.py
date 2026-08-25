@@ -194,6 +194,9 @@ def test_health_reports_open_conflict_count(tmp_path) -> None:
         after = client.get("/healthz").json()
 
     assert after["conflict_open_count"] == before["conflict_open_count"] + 1
+    assert after["manual_required_count"] == before["manual_required_count"] + 1
+    assert after["conflict_counts_by_status"]["manual_required"] >= 1
+    assert after["oldest_manual_required_age_seconds"] > 0
 
 
 def test_health_reports_dangling_conflict_categories(tmp_path) -> None:
