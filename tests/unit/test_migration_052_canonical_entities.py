@@ -553,7 +553,7 @@ def test_non_nfkc_raw_alias_cannot_prove_claim_link_even_when_mention_matches(tm
         )
 
 
-def test_entity_history_rows_reject_raw_delete_without_dangling_proof(tmp_path: Path) -> None:
+def test_alias_relation_history_is_immutable_while_claim_link_cascades_with_proof(tmp_path: Path) -> None:
     connection = Database(tmp_path / "history-delete.db").open()
     _insert_entity(connection, "agent:local_pony", "agent", "local_pony")
     _insert_entity(connection, "device:user_local_pc", "device", "user_local_pc")
@@ -569,12 +569,14 @@ def test_entity_history_rows_reject_raw_delete_without_dangling_proof(tmp_path: 
     for table, predicate, message in (
         ("entity_aliases", "id='alias'", "entity alias history is immutable"),
         ("entity_relations", "id='relation'", "entity relation history is immutable"),
-        ("claim_entity_links", "claim_id='claim'", "claim entity link history is immutable"),
     ):
         with pytest.raises(sqlite3.IntegrityError, match=message):
             connection.execute(f"DELETE FROM {table} WHERE {predicate}")
-    with pytest.raises(sqlite3.IntegrityError, match="claim entity link history is immutable"):
-        connection.execute("DELETE FROM claims WHERE id='claim'")
+    connection.execute("DELETE FROM evidence_links WHERE id='claim-proof'")
+    assert connection.execute("SELECT 1 FROM claim_entity_links").fetchone() is None
+    _insert_claim_link(connection, "claim-two", "agent:local_pony", "pony")
+    connection.execute("DELETE FROM claims WHERE id='claim-two'")
+    assert connection.execute("SELECT 1 FROM claim_entity_links").fetchone() is None
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 

@@ -40,7 +40,7 @@ _PRE_GUARD_DATA_MIGRATIONS = (
 )
 
 
-def _register_entity_functions(connection: sqlite3.Connection) -> None:
+def register_entity_sqlite_functions(connection: sqlite3.Connection) -> None:
     connection.create_function("hl_mem_normalize_alias", 1, normalize_typed_alias, deterministic=True)
 
 
@@ -92,7 +92,7 @@ class Database:
         )
         connection.hl_mem_settings = self.settings
         connection.row_factory = sqlite3.Row
-        _register_entity_functions(connection)
+        register_entity_sqlite_functions(connection)
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
         try:
@@ -123,7 +123,7 @@ class Database:
         )
         connection.hl_mem_settings = self.settings
         connection.row_factory = sqlite3.Row
-        _register_entity_functions(connection)
+        register_entity_sqlite_functions(connection)
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
@@ -150,7 +150,7 @@ class Database:
             )
             connection.hl_mem_settings = self.settings
             connection.row_factory = sqlite3.Row
-            _register_entity_functions(connection)
+            register_entity_sqlite_functions(connection)
             try:
                 if connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 0:
                     has_tables = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone()

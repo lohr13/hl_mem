@@ -19,6 +19,7 @@ from hl_mem.storage.backup import (
     validate_backup,
 )
 from hl_mem.storage.database import Database
+from hl_mem.storage.entities import EntityRepository
 from hl_mem.storage.tombstones import TombstoneLedger, default_tombstone_ledger_path
 
 
@@ -169,6 +170,43 @@ def test_restore_requires_confirmation_and_preserves_existing_target(tmp_path: P
     assert result["target"] == str(target.resolve())
     assert result["integrity"] == "ok"
     assert _counts(target) == (1, 1)
+
+
+def test_backup_validate_restore_preserves_typed_alias_and_claim_link(tmp_path: Path) -> None:
+    source = tmp_path / "source.db"
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "target.db"
+    _seed_database(source, event_id="source-event", claim_id="source-claim")
+    database = Database(source)
+    connection = database.open()
+    entities = EntityRepository(connection)
+    entities.create_entity("agent:local_pony", "agent", "local_pony", "Local Pony", now="2026-01-01")
+    alias = entities.create_alias(" ＰＯＮＹ ", "agent", "agent:local_pony", "user_explicit", valid_from="2026-01-01")
+    entities.link_claim(
+        "source-claim",
+        "agent:local_pony",
+        "actor",
+        mention_text="ＰＯＮＹ",
+        resolution_confidence=1.0,
+        alias_version=alias["version"],
+        proof_id="link-source-claim-source-event",
+    )
+    connection.commit()
+    database.close()
+
+    manifest = backup_database(source, backup)
+    assert validate_backup(backup, manifest)["integrity"] == "ok"
+    _copy_restore_ledger(source, target)
+    assert restore_database(backup, manifest, target)["integrity"] == "ok"
+
+    restored_database = Database(target)
+    restored = restored_database.open()
+    assert restored.execute("SELECT alias_normalized FROM entity_aliases").fetchone()[0] == "pony"
+    assert tuple(
+        restored.execute("SELECT claim_id,canonical_entity_id,mention_text FROM claim_entity_links").fetchone()
+    ) == ("source-claim", "agent:local_pony", "pony")
+    assert restored.execute("PRAGMA foreign_key_check").fetchall() == []
+    restored_database.close()
 
 
 @pytest.mark.parametrize("tamper", ["manifest", "backup"])

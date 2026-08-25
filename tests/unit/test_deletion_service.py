@@ -9,6 +9,7 @@ import pytest
 from hl_mem.application.deletion import DeletionRejectedError, DeletionService
 from hl_mem.application.forget import ForgetService
 from hl_mem.storage.database import Database
+from hl_mem.storage.entities import EntityRepository
 from hl_mem.storage.tombstones import TOMBSTONE_SCHEMA_VERSION, TombstoneLedger
 from hl_mem.workers.repair_active_claims import audit_active_claims
 
@@ -90,6 +91,37 @@ def test_p0_delete_closure_preserves_only_shared_events(
     if shared_event:
         assert connection.execute("SELECT 1 FROM claims WHERE id='other'").fetchone() is not None
     assert TombstoneLedger(ledger_path, create=False).count() == 1
+
+
+def test_delete_claim_removes_entity_link_projection_and_proof(deletion_store) -> None:
+    connection, ledger_path = deletion_store
+    _insert_event(connection, "event-target")
+    _insert_claim(connection, "target", "active")
+    _link_event(connection, "target", "event-target")
+    entities = EntityRepository(connection)
+    entities.create_entity("agent:local_pony", "agent", "local_pony", "Local Pony", now=NOW)
+    alias = entities.create_alias(" ＰＯＮＹ ", "agent", "agent:local_pony", "user_explicit", valid_from=NOW)
+    entities.link_claim(
+        "target",
+        "agent:local_pony",
+        "actor",
+        mention_text="ＰＯＮＹ",
+        resolution_confidence=1.0,
+        alias_version=alias["version"],
+        proof_id="link-target-event-target",
+    )
+    connection.commit()
+
+    result = _service(connection, ledger_path).delete_claim("target")
+
+    assert result.deleted is True
+    assert connection.execute("SELECT 1 FROM claims WHERE id='target'").fetchone() is None
+    assert connection.execute("SELECT 1 FROM claim_entity_links").fetchone() is None
+    assert connection.execute("SELECT 1 FROM evidence_links").fetchone() is None
+    assert connection.execute("SELECT 1 FROM events WHERE id='event-target'").fetchone() is None
+    assert connection.execute("SELECT 1 FROM canonical_entities").fetchone() is not None
+    assert connection.execute("SELECT 1 FROM entity_aliases").fetchone() is not None
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 @pytest.mark.parametrize("status", P0_STATUSES)

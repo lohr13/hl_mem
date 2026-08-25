@@ -103,7 +103,7 @@ CREATE TABLE claim_entity_links (
     proof_id TEXT NOT NULL,
     PRIMARY KEY (claim_id, canonical_entity_id, role),
     FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE,
-    FOREIGN KEY (proof_id) REFERENCES evidence_links(id)
+    FOREIGN KEY (proof_id) REFERENCES evidence_links(id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_claim_entity_links_entity ON claim_entity_links(canonical_entity_id, role, claim_id);
@@ -138,8 +138,6 @@ BEGIN
 END;
 
 CREATE TRIGGER claim_entity_links_immutable BEFORE UPDATE ON claim_entity_links
-BEGIN SELECT RAISE(ABORT, 'claim entity link history is immutable'); END;
-CREATE TRIGGER claim_entity_links_delete_immutable BEFORE DELETE ON claim_entity_links
 BEGIN SELECT RAISE(ABORT, 'claim entity link history is immutable'); END;
 CREATE TRIGGER linked_claim_namespace_immutable BEFORE UPDATE OF namespace_key ON claims
 WHEN OLD.namespace_key IS NOT NEW.namespace_key

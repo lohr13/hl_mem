@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from hl_mem.storage.database import register_entity_sqlite_functions
 from hl_mem.storage.tombstones import (
     TOMBSTONE_SCHEMA_VERSION,
     TombstoneLedger,
@@ -37,9 +38,15 @@ def _resolved(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()
 
 
+def _connection(database: str | Path, *, timeout: float = 5.0, uri: bool = False) -> sqlite3.Connection:
+    connection = sqlite3.connect(database, timeout=timeout, uri=uri)
+    register_entity_sqlite_functions(connection)
+    return connection
+
+
 def _readonly_connection(path: Path, *, immutable: bool = False) -> sqlite3.Connection:
     query = "mode=ro&immutable=1" if immutable else "mode=ro"
-    return sqlite3.connect(f"{path.as_uri()}?{query}", uri=True)
+    return _connection(f"{path.as_uri()}?{query}", uri=True)
 
 
 def _assert_no_sidecars(path: Path, role: str) -> None:
@@ -98,7 +105,7 @@ def _read_ledger_binding(connection: sqlite3.Connection, *, role: str) -> tuple[
 
 def _ensure_backup_ledger(source: Path) -> tuple[str, int]:
     """Bind an empty ledger before the first backup so future deletes remain provable."""
-    connection = sqlite3.connect(source, timeout=5.0)
+    connection = _connection(source, timeout=5.0)
     ledger_path = default_tombstone_ledger_path(source)
     try:
         connection.execute("PRAGMA busy_timeout=5000")
@@ -263,7 +270,7 @@ def backup_database(source_path: str | Path, backup_path: str | Path) -> Path:
     try:
         with (
             closing(_readonly_connection(source)) as source_connection,
-            closing(sqlite3.connect(temporary)) as target_connection,
+            closing(_connection(temporary)) as target_connection,
         ):
             source_connection.backup(target_connection)
             _integrity_check(target_connection)
@@ -320,7 +327,7 @@ def _restore_database_atomically(
         try:
             with (
                 closing(_readonly_connection(backup, immutable=True)) as source_connection,
-                closing(sqlite3.connect(temporary)) as target_connection,
+                closing(_connection(temporary)) as target_connection,
             ):
                 target_connection.row_factory = sqlite3.Row
                 source_connection.backup(target_connection)
