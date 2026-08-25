@@ -23,6 +23,13 @@ from hl_mem.evaluation.v030_plan_price import (
     assess_e6_manifest,
     write_sealed_report,
 )
+from hl_mem.evaluation.v030_plan_price_manifest import instrument_references
+from hl_mem.evaluation.v030_plan_price_replay import (
+    load_v2_manifest,
+    run_e5_v2,
+    run_e6_v2,
+    write_v2_report,
+)
 from hl_mem.evaluation.v030_scorers import evaluate_decision_gate, score_decisions
 from hl_mem.workers.auto_resolve_conflicts import (
     AutoDecision,
@@ -673,7 +680,7 @@ def run_plan_price_preflight(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("validate", "baseline", "e1", "e5", "e6"))
+    parser.add_argument("phase", choices=("validate", "baseline", "e1", "e5", "e6", "e5-v2", "e6-v2"))
     parser.add_argument("--manifest-dir", type=Path, required=True)
     parser.add_argument("--database", type=Path)
     parser.add_argument("--config", type=Path)
@@ -686,6 +693,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--model-sha256")
     parser.add_argument("--llama-build")
     parser.add_argument("--e1-replay-overlay", type=Path)
+    parser.add_argument("--reuse-report", type=Path)
     args = parser.parse_args(argv)
     if args.phase == "validate":
         result = validate_manifest_directory(args.manifest_dir)
@@ -729,13 +737,73 @@ def main(argv: Sequence[str] | None = None) -> int:
             "gates": {name: arm["gate"] for name, arm in report["arms"].items()},
             "output_dir": str(args.output_dir),
         }
-    else:
+    elif args.phase in {"e5", "e6"}:
         if args.output_dir is None:
             parser.error(f"{args.phase} requires --output-dir")
         result = run_plan_price_preflight(
             args.manifest_dir / f"{args.phase}.json",
             args.output_dir,
         )
+    else:
+        if args.output_dir is None:
+            parser.error(f"{args.phase} requires --output-dir")
+        from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner, QwenLimits, QwenRunConfig
+
+        experiment = args.phase.split("-", 1)[0]
+        manifest = load_v2_manifest(args.manifest_dir / f"{experiment}_v2.json")
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        waiting = {
+            "schema_version": f"v030-{experiment}-waiting-qwen-v2",
+            "status": "WAITING_QWEN",
+            "manifest_sha256": manifest["manifest_sha256"],
+        }
+        (args.output_dir / "waiting_qwen.json").write_text(
+            json.dumps(waiting, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        runner = LocalQwenRunner(
+            token_counter=lambda text: len(text.encode("utf-8")),
+            config=QwenRunConfig(
+                base_url=args.qwen_base_url,
+                model=args.qwen_model,
+                enable_thinking=False,
+                timeout_seconds=60,
+                limits=QwenLimits(max_output_tokens=128),
+            ),
+        )
+
+        def progress(message: str) -> None:
+            print(message, flush=True)
+
+        reuse_report = (
+            json.loads(args.reuse_report.read_text(encoding="utf-8")) if args.reuse_report is not None else None
+        )
+        report = (
+            run_e5_v2(manifest, runner, progress=progress, reuse_report=reuse_report)
+            if experiment == "e5"
+            else run_e6_v2(manifest, runner, instrument_references(), progress=progress)
+        )
+        report["execution_history"] = [
+            "authenticated_manifest",
+            "preflight_v2_passed",
+            "WAITING_QWEN",
+            "qwen_replay_completed",
+        ]
+        report["model"] = asdict(runner.config)
+        if args.reuse_report is not None:
+            report["reuse_source"] = {
+                "path": str(args.reuse_report),
+                "sha256": _file_sha256(args.reuse_report),
+                "rule": "both candidate-order request SHA256 values must match",
+            }
+        checksums = write_v2_report(args.output_dir, report)
+        result = {
+            "phase": args.phase,
+            "status": report["status"],
+            "selected_arm": report["selected_arm"],
+            "qwen": report["qwen"],
+            "checksums": checksums,
+            "output_dir": str(args.output_dir),
+        }
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

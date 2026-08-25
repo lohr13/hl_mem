@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hl_mem.domain.instruments import InstrumentReference
+from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner
 from hl_mem.evaluation.v030_plan_price_corpus import (
     assess_e5_v2_manifest,
     assess_e6_v2_manifest,
@@ -8,6 +9,13 @@ from hl_mem.evaluation.v030_plan_price_corpus import (
     derive_e6_pair,
 )
 from hl_mem.evaluation.v030_plan_price_manifest import synthetic_e6_cases
+from hl_mem.evaluation.v030_plan_price_replay import (
+    deterministic_e5_decision,
+    qwen_e5_docket,
+    request_hashes_for_docket,
+    score_e5_predictions,
+    score_e6_predictions,
+)
 
 
 def _reference(entity_id: str = "instrument:01", ticker: str = "T01") -> InstrumentReference:
@@ -174,3 +182,154 @@ def test_e6_synthetic_fill_preserves_52_instruments_and_ten_percent_missing() ->
         == 12
     )
     assert all(case["gold"]["decision"] == "uncertain" for case in cases[:12])
+
+
+def test_deterministic_e5_decision_enforces_protected_coordinates() -> None:
+    plan = {
+        "action_family": "open",
+        "assertion_phase": "plan",
+        "canonical_target_entity_id": "instrument:test",
+        "direction": "long",
+        "quantity_mode": "exact",
+        "quantity": "100.0",
+        "unit": "share",
+        "account": "A",
+    }
+    result = {**plan, "assertion_phase": "execution", "quantity": "40"}
+
+    assert deterministic_e5_decision({"input": {"plan": plan, "result": result}}) == "partial"
+    assert deterministic_e5_decision({"input": {"plan": plan, "result": {**result, "quantity": "101"}}}) == "ambiguous"
+    assert deterministic_e5_decision({"input": {"plan": plan, "result": {**result, "account": "B"}}}) == "ambiguous"
+    assert deterministic_e5_decision({"input": {"plan": plan, "result": {**result, "negated": True}}}) == "ambiguous"
+
+
+def test_qwen_e5_docket_is_gold_free_and_order_permutable() -> None:
+    case = {
+        "case_id": "e5:test",
+        "input": {
+            "plan": {"text": "plan to buy 100 units NASDAQ:T01", "quantity": "100"},
+            "result": {"text": "executed buy 40 units NASDAQ:T01", "quantity": "40"},
+        },
+        "gold": {"decision": "partial"},
+    }
+
+    docket = qwen_e5_docket(case)
+
+    assert "gold" not in str(docket).casefold()
+    assert [item["candidate_key"] for item in docket["candidates"]] == ["plan", "result"]
+    assert docket["case_id"] == "e5:test"
+
+
+def test_qwen_v2_docket_completes_two_permuted_fake_calls() -> None:
+    snapshots = []
+
+    def transport(_url: str, payload: dict) -> dict:
+        snapshots.append(payload)
+        return {"decision": "partial", "confidence": 0.99}
+
+    runner = LocalQwenRunner(token_counter=lambda text: len(text) // 4, transport=transport)
+    docket = qwen_e5_docket(
+        {
+            "case_id": "e5:fake",
+            "input": {
+                "plan": {"text": "plan to buy 100 units NASDAQ:T01", "quantity": "100"},
+                "result": {"text": "executed buy 40 units NASDAQ:T01", "quantity": "40"},
+            },
+            "gold": {"decision": "partial"},
+        }
+    )
+
+    result = runner.run_case(docket)
+
+    assert result["consistent"] is True
+    assert result["call_count"] == 2
+    assert len(snapshots) == 2
+    assert all(snapshot["chat_template_kwargs"] == {"enable_thinking": False} for snapshot in snapshots)
+    first = snapshots[0]["messages"][1]["content"]
+    second = snapshots[1]["messages"][1]["content"]
+    assert first.index('"candidate_key":"plan"') < first.index('"candidate_key":"result"')
+    assert second.index('"candidate_key":"result"') < second.index('"candidate_key":"plan"')
+
+
+def test_qwen_request_hashes_allow_only_exact_docket_reuse() -> None:
+    runner = LocalQwenRunner(
+        token_counter=lambda text: len(text.encode("utf-8")),
+        transport=lambda _url, _payload: {"decision": "partial", "confidence": 0.99},
+    )
+    docket = {
+        "case_id": "reuse",
+        "instruction": "classify",
+        "candidates": [{"candidate_key": "plan"}, {"candidate_key": "result"}],
+        "evidence": [],
+    }
+
+    original = request_hashes_for_docket(docket, runner)
+    changed = request_hashes_for_docket({**docket, "instruction": "changed"}, runner)
+
+    assert len(original) == 2
+    assert original != changed
+
+
+def test_e5_scorer_enforces_all_preregistered_gates() -> None:
+    outcomes = ["complete"] * 35 + ["cancel"] * 25 + ["replace"] * 25 + ["partial"] * 30 + ["ambiguous"] * 25
+    cases = [
+        {
+            "case_id": f"e5:{index}",
+            "input": {
+                "plan": {"quantity_mode": "exact", "quantity": "100", "unit": "share"},
+                "result": {
+                    "quantity_mode": "exact",
+                    "quantity": "50" if outcome == "partial" else "100",
+                    "unit": "share",
+                },
+            },
+            "gold": {"decision": outcome},
+        }
+        for index, outcome in enumerate(outcomes)
+    ]
+    predictions = [{"case_id": case["case_id"], "decision": case["gold"]["decision"]} for case in cases]
+
+    score = score_e5_predictions(cases, predictions)
+
+    assert score["gate"]["passed"] is True
+    assert score["metrics"]["macro_f1"] == 1.0
+    assert score["metrics"]["partial_quantity_conservation"] == 1.0
+    assert score["metrics"]["error_closures"] == 0
+
+
+def test_e6_scorer_counts_target_coverage_and_cross_target_supersede() -> None:
+    cases = [
+        {
+            "case_id": "cross",
+            "risk_tags": ["cross_target"],
+            "input": {
+                "left": {"canonical_target_entity_id": "instrument:A"},
+                "right": {"canonical_target_entity_id": "instrument:B"},
+            },
+            "gold": {"decision": "distinct_series"},
+        },
+        {
+            "case_id": "missing",
+            "input": {
+                "left": {"canonical_target_entity_id": None},
+                "right": {"canonical_target_entity_id": None},
+            },
+            "gold": {"decision": "uncertain"},
+        },
+    ]
+    predictions = [
+        {
+            "case_id": "cross",
+            "decision": "snapshot_advance",
+            "left_target": "instrument:A",
+            "right_target": "instrument:A",
+        },
+        {"case_id": "missing", "decision": "uncertain", "left_target": None, "right_target": None},
+    ]
+
+    score = score_e6_predictions(cases, predictions)
+
+    assert score["metrics"]["exact_target_precision"] == 0.5
+    assert score["metrics"]["target_coverage"] == 0.5
+    assert score["metrics"]["cross_target_supersede"] == 1
+    assert score["metrics"]["missing_to_uncertain"] == 1.0
