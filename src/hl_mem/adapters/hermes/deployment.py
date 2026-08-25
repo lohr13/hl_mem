@@ -76,6 +76,11 @@ def _copy_plugin(target_dir: Path) -> None:
             raise RuntimeError(f"Verification failed after copying {name} to {destination}")
 
 
+def _print_restart_requirement() -> None:
+    print("Required: restart every running Hermes gateway/CLI process that imported hl_mem.")
+    print("Do not validate a new hl_mem.toml against a process that imported an older editable checkout.")
+
+
 def deploy_plugin(
     action: DeploymentAction,
     hermes_home: str | Path | None = None,
@@ -113,6 +118,8 @@ def print_deployment_result(result: DeploymentResult) -> None:
         else:
             backup = result.backup_dir if result.backup_dir is not None else "not required"
         print(f"Backup: {backup}")
+    if not result.dry_run:
+        _print_restart_requirement()
 
 
 def script_main(argv: Sequence[str] | None = None) -> int:
@@ -141,6 +148,7 @@ def script_main(argv: Sequence[str] | None = None) -> int:
         print(f"Target (absolute): {target_dir}")
         print(f"Backup: {result.backup_dir if result.backup_dir else 'not required'}")
         print("Verification: source and installed files match")
+        _print_restart_requirement()
         return 0
     except Exception as error:
         print(f"Installation failed: {error}", file=sys.stderr)

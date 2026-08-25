@@ -1,10 +1,10 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.31.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.31.1 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
-v0.31.0 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
+v0.31.1 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
 
 ## 合并版发版决议
 
@@ -30,8 +30,9 @@ v0.31.0 的受限 assertion 门控没有配置键；存量 `unknown` 只可观�
 
 ## 加载规则
 
-- 默认读取当前工作目录的 `hl_mem.toml`；文件缺失、TOML 语法错误、未知表、未知键或类型错误都会阻止启动。
-- `.env` 也是相对当前工作目录读取，但可以缺失。进程环境中的同名密钥覆盖 `.env`。
+- 通用 CLI/server 默认读取当前工作目录的 `hl_mem.toml`；Hermes 插件固定读取 `<HERMES_HOME>/hl_mem.toml`，不依赖宿主进程 CWD。文件缺失、TOML 语法错误、未知表、未知键或类型错误都会阻止启动。
+- 通用 CLI/server 的 `.env` 默认相对当前工作目录读取；Hermes 插件固定读取 `<HERMES_HOME>/.env`。`.env` 可以缺失，进程环境中的同名密钥覆盖它。
+- 相对 `database.path` 以配置文件 symlink 的真实目标目录为基准；异平台绝对路径会阻止启动，不会被当成相对路径创建影子数据库。
 - 除四个密钥外，环境变量不参与配置；所有 `HL_MEM_*` 变量均被忽略。
 - TOML 使用原生类型；仅允许数组转换为 tuple、字符串转换为枚举。密钥不得写入 TOML。
 - 可从 [`config.example.toml`](../config.example.toml) 复制常用配置；该示例显式启用真实能力，推荐值不等于代码默认值。
@@ -147,6 +148,10 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `database.busy_timeout_seconds` | 整数 | `30` | >= 1 | `database_busy_timeout_seconds` |
 | `database.path` | 字符串 | `"var/hl_mem.db"` | 任意字符串 | `database_path` |
 | `database.pool_size` | 整数 | `8` | >= 1 | `database_pool_size` |
+
+`database.path` 的相对值以配置文件 symlink 的真实目标目录为基准，而不是进程当前目录。建议使用
+`path = "var/hl_mem.db"` 保持跨平台可移植；Windows drive/UNC 绝对路径只允许在 Windows，POSIX
+绝对路径只允许在 POSIX，异平台绝对路径会在启动前 fail-fast。
 
 ### `[decay]`
 
