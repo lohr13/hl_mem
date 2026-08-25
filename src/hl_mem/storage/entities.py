@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 from typing import Any, Literal, cast
 
+from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.domain.entity import typed_builtin_seeds
 from hl_mem.domain.entity_coordinates import (
@@ -21,14 +22,18 @@ from hl_mem.domain.entity_coordinates import (
     validate_canonical_entity_id,
     validate_entity_role_binding,
 )
+from hl_mem.lifecycle import assert_transition
+from hl_mem.storage._shared import encode_json
+from hl_mem.storage.claims import ClaimRepository
 
 AliasSourceKind = Literal["builtin", "config_explicit", "user_explicit", "migration_exact"]
 
 _ALIAS_SOURCE_KINDS = frozenset({"builtin", "config_explicit", "user_explicit", "migration_exact"})
 _RELATIONS = frozenset({"runs_on", "owned_by", "operates_in", "part_of", "about"})
+_REKEY_IDENTITY_FIELDS = "id namespace_key status subject_entity_id canonical_slot".split()
 
 
-def v4_entity_conflict_key(claim: Any, canonical_id: str) -> str | None:
+def v4_entity_conflict_key(claim: Any, canonical_id: str | None) -> str | None:
     qualifiers = claim.get("qualifiers") if isinstance(claim, dict) else json.loads(claim["qualifiers_json"] or "{}")
     return compute_conflict_key(
         str(claim["namespace_key"]),
@@ -55,8 +60,68 @@ class EntityRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
-    @staticmethod
-    def _entity_type(entity_type: str) -> EntityType:
+    def cas_rekey_canonical_subject(
+        self,
+        claims: ClaimRepository,
+        expected: dict[str, Any],
+        canonical_entity_id: str,
+        conflict_key: str | None,
+        changed_at: str,
+    ) -> str:
+        namespace = str(expected["namespace_key"])
+        collision = bool(
+            expected.get("status") in {"active", "candidate", "disputed"}
+            and is_mutually_exclusive_attribute(expected.get("canonical_slot"))
+            and conflict_key
+            and self.connection.execute(
+                "SELECT 1 FROM claims WHERE id<>? AND namespace_key=? AND conflict_key=? "
+                "AND status IN ('active','candidate','disputed') LIMIT 1",
+                (expected["id"], namespace, conflict_key),
+            ).fetchone()
+        )
+        if collision and expected["status"] != "disputed":
+            assert_transition(str(expected["status"]), "disputed")
+        status_sql = ",status='disputed'" if collision else ""
+        identity = tuple(expected.get(field) for field in _REKEY_IDENTITY_FIELDS)
+        cursor = self.connection.execute(
+            "UPDATE claims SET subject_canonical_entity_id=?,conflict_key=?,conflict_key_version=4"
+            f"{status_sql} WHERE id=? AND namespace_key=? "
+            "AND status=? AND subject_entity_id IS ? "
+            "AND canonical_slot IS ? AND json(qualifiers_json)=json(?) AND subject_canonical_entity_id IS NULL "
+            "AND conflict_key IS ? AND conflict_key_version=?",
+            (
+                canonical_entity_id,
+                conflict_key,
+                *identity,
+                encode_json(expected.get("qualifiers") or {}, sort_keys=True),
+                expected.get("conflict_key"),
+                expected.get("conflict_key_version"),
+            ),
+        )
+        if cursor.rowcount == 0:
+            return "stale"
+        rows = self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? AND conflict_key=? AND status IN ('active','candidate','disputed')",
+            (namespace, conflict_key),
+        ).fetchall()
+        members = claims._decode_rows(rows)
+        if collision:
+            for member in members:
+                if member["status"] in {"active", "candidate"}:
+                    assert_transition(str(member["status"]), "disputed")
+                    claims.update_status(str(member["id"]), "disputed", commit=False)
+                    member["status"] = "disputed"
+            claims.ensure_group_conflict_case(
+                members,
+                created_at=changed_at,
+                decision="uncertain",
+                rationale="entity_rekey_collision",
+                commit=False,
+            )
+            return "quarantined"
+        return "updated"
+
+    def _entity_type(self, entity_type: str) -> EntityType:
         if entity_type not in ENTITY_TYPES:
             raise EntityCoordinateError(f"unsupported entity type: {entity_type}")
         return cast(EntityType, entity_type)

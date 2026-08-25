@@ -374,6 +374,13 @@ def test_rekey_collision_uses_existing_group_conflict_pipeline(tmp_path: Path) -
     right = _store(connection, "operator", "9090")
     repository = ClaimRepository(connection)
     left_claim = repository.get_claim(str(left.claim_id))
+    repository.update_status(str(left.claim_id), "disputed")
+    copied_columns = [row["name"] for row in connection.execute("PRAGMA table_info(claims)") if row["name"] != "id"]
+    connection.execute(
+        f"INSERT INTO claims(id,{','.join(copied_columns)}) "
+        f"SELECT ?,{','.join(copied_columns)} FROM claims WHERE id=?",
+        ("zzzz-equivalent-left", left.claim_id),
+    )
     assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 0
     entities.create_alias("operator", "person", "person:user", "user_explicit", valid_from=NOW)
     connection.execute(
@@ -394,6 +401,10 @@ def test_rekey_collision_uses_existing_group_conflict_pipeline(tmp_path: Path) -
     assert {row["status"] for row in repository.find_by_conflict_key(left_claim["conflict_key"])} == {"disputed"}
     case = connection.execute("SELECT group_key,rationale FROM conflict_cases").fetchone()
     assert tuple(case) == (left_claim["conflict_key"], "entity_rekey_collision")
+    representative = connection.execute(
+        "SELECT representative_claim_id FROM conflict_case_candidates WHERE canonical_value_json='\"8080\"'"
+    ).fetchone()[0]
+    assert representative == left.claim_id
     assert service.rekey_claim(str(right.claim_id), service.claim_fingerprint(right_before), changed_at=NOW) == "stale"
 
 

@@ -96,6 +96,11 @@ class _IngestResolution:
     semantic_candidate_similarity: float | None = None
 
 
+def _flush_audit_events(audit: Any, events: list[tuple[tuple[Any, ...], dict[str, Any]]]) -> None:
+    for args, kwargs in events:
+        audit.emit(*args, **kwargs)
+
+
 def _episodic_retention_anchor(
     recorded_from: str,
     *,
@@ -392,27 +397,10 @@ class IngestService:
         namespace = claim["namespace_key"]
         audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
-        def emit_audit_events() -> None:
-            for args, kwargs in audit_events:
-                audit.emit(*args, **kwargs)
-
         result_id = claim["id"]
         connection.execute("BEGIN IMMEDIATE")
         try:
-            entity_service = EntityResolutionService(connection)
-            entity_service.entities.seed_builtins(namespace, now=now)
-            subject_resolution = entity_service.resolve_subject(namespace, str(claim["subject_entity_id"]))
-            claim["subject_canonical_entity_id"] = subject_resolution.canonical_entity_id
-            claim["conflict_key"] = compute_conflict_key(
-                namespace,
-                str(claim["subject_entity_id"]),
-                str(claim["predicate"]),
-                claim.get("canonical_slot"),
-                qualifiers,
-                version=4,
-                subject_canonical_entity_id=subject_resolution.canonical_entity_id,
-            )
-            entity_service.rekey_applicable_v3_claims(claim, subject_resolution, changed_at=now)
+            entity_service, subject_resolution = EntityResolutionService.prepare_ingest(connection, claim, now)
             started = time.perf_counter_ns()
             exact, existing = _find_resolution(claims, claim)
             IngestService._record_fact_hash_check(
@@ -436,10 +424,10 @@ class IngestService:
                 )
                 if exact_result.reason == "exact_duplicate_dirty_group":
                     connection.commit()
-                    emit_audit_events()
+                    _flush_audit_events(audit, audit_events)
                     return exact_result
                 connection.commit()
-                emit_audit_events()
+                _flush_audit_events(audit, audit_events)
                 return exact_result
             resolution: _IngestResolution | None
             if existing:
@@ -457,7 +445,7 @@ class IngestService:
                 )
                 if resolution.conflict_entails is not None:
                     connection.commit()
-                    emit_audit_events()
+                    _flush_audit_events(audit, audit_events)
                     return resolution.conflict_entails
             else:
                 resolution = IngestService._resolve_temporal_candidate_branch(
@@ -480,11 +468,11 @@ class IngestService:
                     )
                 if resolution.temporal_entails is not None:
                     connection.commit()
-                    emit_audit_events()
+                    _flush_audit_events(audit, audit_events)
                     return resolution.temporal_entails
                 if resolution.semantic_duplicate is not None:
                     connection.commit()
-                    emit_audit_events()
+                    _flush_audit_events(audit, audit_events)
                     return resolution.semantic_duplicate
 
             inserted = _persist_resolution(claims, claim)
@@ -494,7 +482,7 @@ class IngestService:
                     _link_source_events(evidence, winner["id"], evidence_events, commit=False)
                     result_id = winner["id"]
                 connection.commit()
-                emit_audit_events()
+                _flush_audit_events(audit, audit_events)
                 return StoreClaimResult(result_id, "stored", "concurrent_duplicate")
 
             if (
@@ -518,7 +506,7 @@ class IngestService:
         except Exception:
             connection.rollback()
             raise
-        emit_audit_events()
+        _flush_audit_events(audit, audit_events)
         if relation_discovery_mode != "off":
             JobRepository(connection).insert_job(
                 {

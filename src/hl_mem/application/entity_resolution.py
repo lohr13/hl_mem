@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.entity_coordinates import EntityCoordinateError
@@ -25,6 +25,17 @@ class EntityResolutionService:
         self.connection = connection
         self.entities = EntityRepository(connection)
         self.claims = ClaimRepository(connection)
+
+    @classmethod
+    def prepare_ingest(cls, db: sqlite3.Connection, claim: dict[str, Any], now: str) -> tuple[Self, SubjectResolution]:
+        service = cls(db)
+        namespace = str(claim["namespace_key"])
+        service.entities.seed_builtins(namespace, now=now)
+        resolution = service.resolve_subject(namespace, str(claim["subject_entity_id"]))
+        claim["subject_canonical_entity_id"] = resolution.canonical_entity_id
+        claim["conflict_key"] = v4_entity_conflict_key(claim, resolution.canonical_entity_id)
+        service.rekey_applicable_v3_claims(claim, resolution, changed_at=now)
+        return service, resolution
 
     def resolve_subject(self, namespace_key: str, mention: str) -> SubjectResolution:
         outcome, normalized, resolved = self.entities.resolve_subject_alias(mention, namespace_key=namespace_key)
@@ -54,8 +65,7 @@ class EntityResolutionService:
             proof_id=self._proof_id(claim_id),
         )
 
-    @staticmethod
-    def claim_fingerprint(claim: dict[str, Any]) -> tuple[Any, ...]:
+    def claim_fingerprint(self, claim: dict[str, Any]) -> tuple[Any, ...]:
         return tuple(claim.get(field) for field in _REKEY_FIELDS.split())
 
     def rekey_claim(
@@ -75,8 +85,8 @@ class EntityResolutionService:
                 raise EntityCoordinateError(f"claim has no active alias proof: {claim_id}")
             conflict_key = v4_entity_conflict_key(claim, resolution.canonical_entity_id)
             self._proof_id(claim_id)
-            outcome = self.claims._cas_rekey_canonical_subject(
-                claim, resolution.canonical_entity_id, conflict_key, changed_at
+            outcome = self.entities.cas_rekey_canonical_subject(
+                self.claims, claim, resolution.canonical_entity_id, conflict_key, changed_at
             )
             if outcome != "stale":
                 self.link_subject(claim_id, resolution)

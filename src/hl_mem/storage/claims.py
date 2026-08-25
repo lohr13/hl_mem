@@ -34,7 +34,6 @@ from hl_mem.storage.sqlite_vec import SQLiteVecVectorBackend
 
 _CURRENT_STATUS_SQL = "('active','superseded','expired')"
 _HISTORICAL_STATUS_SQL = "('active','archived','superseded','expired')"
-_REKEY_IDENTITY_FIELDS = "id namespace_key status subject_entity_id canonical_slot".split()
 
 
 def _recall_statuses_sql(intent: RecallIntent) -> str:
@@ -290,66 +289,6 @@ class ClaimRepository:
                 (scope, importance, canonical_slot, expires_at, conflict_key, claim_id),
             )
         return cursor.rowcount == 1
-
-    def _cas_rekey_canonical_subject(
-        self,
-        expected: dict[str, Any],
-        canonical_entity_id: str,
-        conflict_key: str | None,
-        changed_at: str,
-    ) -> str:
-        collision = bool(
-            expected.get("status") in {"active", "candidate", "disputed"}
-            and is_mutually_exclusive_attribute(expected.get("canonical_slot"))
-            and conflict_key
-            and self.connection.execute(
-                "SELECT 1 FROM claims WHERE id<>? AND namespace_key=? AND conflict_key=? "
-                "AND status IN ('active','candidate','disputed') LIMIT 1",
-                (expected["id"], expected["namespace_key"], conflict_key),
-            ).fetchone()
-        )
-        if collision and expected["status"] != "disputed":
-            assert_transition(str(expected["status"]), "disputed")
-        status_sql = ",status='disputed'" if collision else ""
-        identity = tuple(expected.get(field) for field in _REKEY_IDENTITY_FIELDS)
-        cursor = self.connection.execute(
-            "UPDATE claims SET subject_canonical_entity_id=?,conflict_key=?,conflict_key_version=4"
-            f"{status_sql} WHERE id=? AND namespace_key=? "
-            "AND status=? AND subject_entity_id IS ? "
-            "AND canonical_slot IS ? AND json(qualifiers_json)=json(?) AND subject_canonical_entity_id IS NULL "
-            "AND conflict_key IS ? AND conflict_key_version=?",
-            (
-                canonical_entity_id,
-                conflict_key,
-                *identity,
-                encode_json(expected.get("qualifiers") or {}, sort_keys=True),
-                expected.get("conflict_key"),
-                expected.get("conflict_key_version"),
-            ),
-        )
-        if cursor.rowcount == 0:
-            return "stale"
-        rows = self.connection.execute(
-            "SELECT * FROM claims WHERE namespace_key=? AND conflict_key=? "
-            "AND status IN ('active','candidate','disputed')",
-            (expected["namespace_key"], conflict_key),
-        ).fetchall()
-        members = self._decode_rows(rows)
-        if collision:
-            for member in members:
-                if member["status"] in {"active", "candidate"}:
-                    assert_transition(str(member["status"]), "disputed")
-                    self.update_status(str(member["id"]), "disputed", commit=False)
-                    member["status"] = "disputed"
-            self.ensure_group_conflict_case(
-                members,
-                created_at=changed_at,
-                decision="uncertain",
-                rationale="entity_rekey_collision",
-                commit=False,
-            )
-            return "quarantined"
-        return "updated"
 
     def find_active_for_dedup(
         self,
