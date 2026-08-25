@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, cast
 
 from hl_mem.domain.governance import is_terminal_conflict_status
+from hl_mem.evaluation.v030_batch4 import assess_batch4_manifest, write_batch4_report
 from hl_mem.evaluation.v030_corpus import EXPERIMENTS, load_manifest, validate_manifest
 from hl_mem.evaluation.v030_plan_price import (
     assess_e5_manifest,
@@ -680,7 +681,7 @@ def run_plan_price_preflight(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("validate", "baseline", "e1", "e5", "e6", "e5-v2", "e6-v2"))
+    parser.add_argument("phase", choices=("validate", "baseline", "e1", "e2", "e3", "e4", "e5", "e6", "e5-v2", "e6-v2"))
     parser.add_argument("--manifest-dir", type=Path, required=True)
     parser.add_argument("--database", type=Path)
     parser.add_argument("--config", type=Path)
@@ -737,6 +738,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "gates": {name: arm["gate"] for name, arm in report["arms"].items()},
             "output_dir": str(args.output_dir),
         }
+    elif args.phase in {"e2", "e3", "e4"}:
+        if args.output_dir is None:
+            parser.error(f"{args.phase} requires --output-dir")
+        manifest = load_manifest(args.manifest_dir / f"{args.phase}.json")
+        assessment = assess_batch4_manifest(manifest)
+        result = write_batch4_report(args.output_dir, manifest, assessment)
     elif args.phase in {"e5", "e6"}:
         if args.output_dir is None:
             parser.error(f"{args.phase} requires --output-dir")
