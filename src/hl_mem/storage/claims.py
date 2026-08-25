@@ -316,7 +316,7 @@ class ClaimRepository:
             "UPDATE claims SET subject_canonical_entity_id=?,conflict_key=?,conflict_key_version=4"
             f"{status_sql} WHERE id=? AND namespace_key=? "
             "AND status=? AND subject_entity_id IS ? "
-            "AND canonical_slot IS ? AND qualifiers_json=? AND subject_canonical_entity_id IS NULL "
+            "AND canonical_slot IS ? AND json(qualifiers_json)=json(?) AND subject_canonical_entity_id IS NULL "
             "AND conflict_key IS ? AND conflict_key_version=?",
             (
                 canonical_entity_id,

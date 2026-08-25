@@ -323,6 +323,48 @@ def test_application_rekey_stale_status_fingerprint_has_no_projection_write(tmp_
     )
 
 
+def test_application_rekey_accepts_equivalent_qualifier_json_whitespace(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    stored = _store(connection, "legacy operator")
+    EntityRepository(connection).create_alias(
+        "legacy operator", "person", "person:user", "user_explicit", valid_from=NOW
+    )
+    service = EntityResolutionService(connection)
+    before = service.claims.get_claim(str(stored.claim_id))
+    connection.execute(
+        'UPDATE claims SET qualifiers_json=\'{ "service" : "api" }\' WHERE id=?',
+        (stored.claim_id,),
+    )
+    connection.commit()
+
+    outcome = service.rekey_claim(str(stored.claim_id), service.claim_fingerprint(before), changed_at=NOW)
+
+    assert outcome == "updated"
+    after = service.claims.get_claim(str(stored.claim_id))
+    assert after["subject_canonical_entity_id"] == "person:user"
+    assert after["qualifiers"] == {"service": "api"}
+
+
+def test_application_rekey_rejects_different_qualifier_json(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    stored = _store(connection, "legacy operator")
+    EntityRepository(connection).create_alias(
+        "legacy operator", "person", "person:user", "user_explicit", valid_from=NOW
+    )
+    service = EntityResolutionService(connection)
+    before = service.claims.get_claim(str(stored.claim_id))
+    connection.execute(
+        'UPDATE claims SET qualifiers_json=\'{"service":"web"}\' WHERE id=?',
+        (stored.claim_id,),
+    )
+    connection.commit()
+
+    outcome = service.rekey_claim(str(stored.claim_id), service.claim_fingerprint(before), changed_at=NOW)
+
+    assert outcome == "stale"
+    assert service.claims.get_claim(str(stored.claim_id))["subject_canonical_entity_id"] is None
+
+
 def test_rekey_collision_uses_existing_group_conflict_pipeline(tmp_path: Path) -> None:
     connection = _connection(tmp_path)
     entities = EntityRepository(connection)
