@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import inspect
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+from hl_mem.application.entity_resolution import EntityResolutionService
 from hl_mem.application.ingest import IngestService
 from hl_mem.domain.claims.conflicts import compute_conflict_key
+from hl_mem.domain.entity_coordinates import EntityCoordinateError
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.storage.claims import ClaimRepository
@@ -39,6 +43,26 @@ def _store(connection, subject: str, value: str = "8080"):
         NOW,
         FakeEmbedder(8),
     )
+
+
+def _downgrade_to_v3(connection, claim_id: str) -> dict:
+    repository = ClaimRepository(connection)
+    claim = repository.get_claim(claim_id)
+    key = compute_conflict_key(
+        claim["namespace_key"],
+        claim["subject_entity_id"],
+        claim["predicate"],
+        claim["canonical_slot"],
+        claim["qualifiers"],
+        version=3,
+    )
+    connection.execute("DELETE FROM claim_entity_links WHERE claim_id=?", (claim_id,))
+    connection.execute(
+        "UPDATE claims SET subject_canonical_entity_id=NULL,conflict_key=?,conflict_key_version=3 " "WHERE id=?",
+        (key, claim_id),
+    )
+    connection.commit()
+    return repository.get_claim(claim_id)
 
 
 def test_ingest_dual_writes_typed_subject_and_claim_link_in_one_transaction(tmp_path: Path) -> None:
@@ -131,6 +155,115 @@ def test_conflict_key_v4_separates_typed_and_tagged_legacy_coordinates() -> None
     assert compute_conflict_key(*common, version=3) == compute_conflict_key(*common)
 
 
+def test_ingest_rekeys_same_subject_v3_before_v4_conflict_resolution(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    existing = _store(connection, "user", "8080")
+    _downgrade_to_v3(connection, str(existing.claim_id))
+
+    incoming = _store(connection, "user", "9090")
+
+    rows = connection.execute(
+        "SELECT status,conflict_key_version,subject_canonical_entity_id FROM claims ORDER BY id"
+    ).fetchall()
+    assert incoming.claim_id is not None
+    assert sum(row["status"] == "active" for row in rows) <= 1
+    assert {row["conflict_key_version"] for row in rows} == {4}
+    assert {row["subject_canonical_entity_id"] for row in rows} == {"person:user"}
+    assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 1
+
+
+def test_ingest_rekeys_v3_explicit_alias_into_same_typed_group(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    _store(connection, "user", "seed")
+    connection.execute("DELETE FROM claims")
+    EntityRepository(connection).create_alias("operator", "person", "person:user", "user_explicit", valid_from=NOW)
+    connection.commit()
+    existing = _store(connection, "operator", "8080")
+    _downgrade_to_v3(connection, str(existing.claim_id))
+
+    _store(connection, "user", "9090")
+
+    rows = connection.execute("SELECT status,conflict_key FROM claims").fetchall()
+    assert sum(row["status"] == "active" for row in rows) <= 1
+    assert len({row["conflict_key"] for row in rows}) == 1
+
+
+def test_ingest_fails_closed_when_legacy_rekey_has_no_evidence(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    existing = _store(connection, "user", "8080")
+    before = _downgrade_to_v3(connection, str(existing.claim_id))
+    connection.execute("DELETE FROM evidence_links WHERE derived_id=?", (existing.claim_id,))
+    connection.commit()
+
+    with pytest.raises(EntityCoordinateError, match="evidence proof"):
+        _store(connection, "user", "9090")
+
+    after = ClaimRepository(connection).get_claim(str(existing.claim_id))
+    assert (after["status"], after["conflict_key"], after["conflict_key_version"]) == (
+        before["status"],
+        before["conflict_key"],
+        3,
+    )
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
+
+
+def test_ingest_fails_closed_when_applicable_v3_rekey_overflows(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    entities = EntityRepository(connection)
+    entities.seed_builtins(now=NOW)
+    for index in range(17):
+        subject = f"operator-{index:02d}"
+        entities.create_alias(subject, "person", "person:user", "user_explicit", valid_from=NOW)
+        key = compute_conflict_key("default", subject, "configures", "config.port", {"service": "api"}, version=3)
+        connection.execute(
+            "INSERT INTO claims(id,namespace_key,subject_entity_id,predicate,value_json,qualifiers_json,"
+            "canonical_slot,conflict_key,conflict_key_version,recorded_from,status) "
+            "VALUES (?, 'default', ?, 'configures', ?, '{\"service\": \"api\"}', "
+            "'config.port', ?, 3, ?, 'active')",
+            (f"legacy-{index:02d}", subject, json.dumps(str(8000 + index)), key, NOW),
+        )
+        connection.execute(
+            "INSERT INTO evidence_links(id,derived_type,derived_id,evidence_type,evidence_id,relation) "
+            "VALUES (?, 'claim', ?, 'event', ?, 'derived_from')",
+            (f"proof-{index:02d}", f"legacy-{index:02d}", f"event-{index:02d}"),
+        )
+    connection.commit()
+
+    with pytest.raises(EntityCoordinateError, match="rekey overflow"):
+        _store(connection, "user", "9090")
+
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 17
+    assert connection.execute("SELECT count(*) FROM claims WHERE conflict_key_version=3").fetchone()[0] == 17
+
+
+def test_application_rekey_api_does_not_accept_canonical_id_or_conflict_key() -> None:
+    parameters = inspect.signature(EntityResolutionService.rekey_claim).parameters
+    assert "canonical_entity_id" not in parameters
+    assert "conflict_key" not in parameters
+
+
+def test_application_rekey_stale_status_fingerprint_has_no_projection_write(tmp_path: Path) -> None:
+    connection = _connection(tmp_path)
+    stored = _store(connection, "legacy operator")
+    entities = EntityRepository(connection)
+    entities.create_alias("legacy operator", "person", "person:user", "user_explicit", valid_from=NOW)
+    connection.commit()
+    service = EntityResolutionService(connection)
+    before = service.claims.get_claim(str(stored.claim_id))
+    expected = service.claim_fingerprint(before)
+    connection.execute("UPDATE claims SET status='disputed' WHERE id=?", (stored.claim_id,))
+    connection.commit()
+
+    assert service.rekey_claim(str(stored.claim_id), expected, changed_at=NOW) == "stale"
+    after = service.claims.get_claim(str(stored.claim_id))
+    assert after["subject_canonical_entity_id"] is None
+    assert after["conflict_key"] == before["conflict_key"]
+    assert (
+        connection.execute("SELECT count(*) FROM claim_entity_links WHERE claim_id=?", (stored.claim_id,)).fetchone()[0]
+        == 0
+    )
+
+
 def test_rekey_collision_uses_existing_group_conflict_pipeline(tmp_path: Path) -> None:
     connection = _connection(tmp_path)
     entities = EntityRepository(connection)
@@ -147,13 +280,12 @@ def test_rekey_collision_uses_existing_group_conflict_pipeline(tmp_path: Path) -
         ("legacy-right", right.claim_id),
     )
     connection.commit()
+    right_before = repository.get_claim(str(right.claim_id))
+    service = EntityResolutionService(connection)
 
-    outcome = repository.rekey_canonical_subject(
+    outcome = service.rekey_claim(
         str(right.claim_id),
-        "person:user",
-        str(left_claim["conflict_key"]),
-        expected_conflict_key="legacy-right",
-        expected_version=3,
+        service.claim_fingerprint(right_before),
         changed_at=NOW,
     )
 
@@ -161,17 +293,7 @@ def test_rekey_collision_uses_existing_group_conflict_pipeline(tmp_path: Path) -
     assert {row["status"] for row in repository.find_by_conflict_key(left_claim["conflict_key"])} == {"disputed"}
     case = connection.execute("SELECT group_key,rationale FROM conflict_cases").fetchone()
     assert tuple(case) == (left_claim["conflict_key"], "entity_rekey_collision")
-    assert (
-        repository.rekey_canonical_subject(
-            str(right.claim_id),
-            "person:user",
-            str(left_claim["conflict_key"]),
-            expected_conflict_key="legacy-right",
-            expected_version=3,
-            changed_at=NOW,
-        )
-        == "stale"
-    )
+    assert service.rekey_claim(str(right.claim_id), service.claim_fingerprint(right_before), changed_at=NOW) == "stale"
 
 
 def test_rekey_can_join_a_caller_transaction_and_roll_back(tmp_path: Path) -> None:
@@ -181,14 +303,15 @@ def test_rekey_can_join_a_caller_transaction_and_roll_back(tmp_path: Path) -> No
     stored = _store(connection, "legacy operator")
     repository = ClaimRepository(connection)
     before = repository.get_claim(str(stored.claim_id))
+    entities = EntityRepository(connection)
+    entities.create_alias("legacy operator", "person", "person:user", "user_explicit", valid_from=NOW)
+    connection.commit()
+    service = EntityResolutionService(connection)
     connection.execute("BEGIN IMMEDIATE")
 
-    outcome = repository.rekey_canonical_subject(
+    outcome = service.rekey_claim(
         str(stored.claim_id),
-        "person:user",
-        "replacement-v4-key",
-        expected_conflict_key=before["conflict_key"],
-        expected_version=4,
+        service.claim_fingerprint(before),
         changed_at=NOW,
         commit=False,
     )
@@ -212,14 +335,12 @@ def test_collision_rekey_rollback_restores_claims_and_removes_case(tmp_path: Pat
     right_before = repository.get_claim(str(right.claim_id))
     entities.create_alias("operator", "person", "person:user", "user_explicit", valid_from=NOW)
     connection.commit()
+    service = EntityResolutionService(connection)
     connection.execute("BEGIN IMMEDIATE")
 
-    outcome = repository.rekey_canonical_subject(
+    outcome = service.rekey_claim(
         str(right.claim_id),
-        "person:user",
-        left_before["conflict_key"],
-        expected_conflict_key=right_before["conflict_key"],
-        expected_version=4,
+        service.claim_fingerprint(right_before),
         changed_at=NOW,
         commit=False,
     )
@@ -228,7 +349,7 @@ def test_collision_rekey_rollback_restores_claims_and_removes_case(tmp_path: Pat
     connection.rollback()
 
     assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 0
-    assert repository.get_claim(str(left.claim_id))["status"] == "active"
+    assert repository.get_claim(str(left.claim_id)) == left_before
     right_after = repository.get_claim(str(right.claim_id))
     assert right_after["status"] == "active"
     assert right_after["conflict_key"] == right_before["conflict_key"]
@@ -251,19 +372,17 @@ def test_collision_rekey_failure_rolls_back_partial_mutations(tmp_path: Path) ->
         "BEGIN SELECT RAISE(ABORT, 'forced entity rekey failure'); END"
     )
     connection.commit()
+    service = EntityResolutionService(connection)
 
     with pytest.raises(sqlite3.IntegrityError, match="forced entity rekey failure"):
-        repository.rekey_canonical_subject(
+        service.rekey_claim(
             str(right.claim_id),
-            "person:user",
-            left_before["conflict_key"],
-            expected_conflict_key=right_before["conflict_key"],
-            expected_version=4,
+            service.claim_fingerprint(right_before),
             changed_at=NOW,
         )
 
     assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 0
-    assert repository.get_claim(str(left.claim_id))["status"] == "active"
+    assert repository.get_claim(str(left.claim_id)) == left_before
     right_after = repository.get_claim(str(right.claim_id))
     assert right_after["status"] == "active"
     assert right_after["conflict_key"] == right_before["conflict_key"]

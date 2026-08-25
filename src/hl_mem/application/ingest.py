@@ -412,6 +412,7 @@ class IngestService:
                 version=4,
                 subject_canonical_entity_id=subject_resolution.canonical_entity_id,
             )
+            entity_service.rekey_applicable_v3_claims(claim, subject_resolution, changed_at=now)
             started = time.perf_counter_ns()
             exact, existing = _find_resolution(claims, claim)
             IngestService._record_fact_hash_check(

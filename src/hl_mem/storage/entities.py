@@ -294,7 +294,7 @@ class EntityRepository:
         role: str,
         *,
         mention_text: str,
-        resolution_confidence: float,
+        resolution_confidence: float = 1.0,
         alias_version: int | None = None,
         proof_id: str | None = None,
     ) -> dict[str, Any]:
@@ -303,10 +303,17 @@ class EntityRepository:
             raise EntityCoordinateError(f"claim does not exist: {claim_id}")
         namespace_key = str(claim[0])
         target = self._canonical_entity(canonical_entity_id, namespace_key)
+        if target["status"] != "active":
+            raise EntityTypeMismatchError("claim entity target must be active")
         validate_entity_role_binding(str(target["entity_type"]), role)
         if alias_version is None or proof_id is None:
             raise EntityTypeMismatchError("claim entity links require alias version and evidence proof")
         normalized_mention = normalize_typed_alias(mention_text)
+        active = self.active_aliases(normalized_mention, namespace_key=namespace_key)
+        if not any(
+            item.canonical_entity_id == canonical_entity_id and item.version == alias_version for item in active
+        ):
+            raise EntityTypeMismatchError("claim entity alias must be active")
         payload = {
             "claim_id": claim_id,
             "canonical_entity_id": canonical_entity_id,

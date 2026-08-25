@@ -77,9 +77,7 @@ def test_builtin_seeding_preserves_exact_ids_in_each_namespace(tmp_path: Path) -
     second = repository.seed_builtins("tenant-b", now=NOW)
 
     assert first == second
-    assert connection.execute(
-        "SELECT count(*) FROM canonical_entities WHERE id='person:user'"
-    ).fetchone()[0] == 2
+    assert connection.execute("SELECT count(*) FROM canonical_entities WHERE id='person:user'").fetchone()[0] == 2
     assert repository.resolve_alias("我", namespace_key="tenant-a").canonical_entity_id == "person:user"
     assert repository.resolve_alias("我", namespace_key="tenant-b").canonical_entity_id == "person:user"
 
@@ -121,8 +119,7 @@ def test_alias_close_then_create_progresses_version_without_rewriting_history(tm
     second = repository.create_alias("小马", "agent", "agent:second", "user_explicit", valid_from=LATER)
 
     rows = connection.execute(
-        "SELECT canonical_entity_id,version,valid_to FROM entity_aliases "
-        "WHERE alias_normalized=? ORDER BY version",
+        "SELECT canonical_entity_id,version,valid_to FROM entity_aliases " "WHERE alias_normalized=? ORDER BY version",
         ("小马",),
     ).fetchall()
     assert first["version"] == 1
@@ -136,9 +133,7 @@ def test_alias_close_then_create_progresses_version_without_rewriting_history(tm
 def test_alias_chain_and_cycle_targets_are_rejected(tmp_path: Path) -> None:
     repository, _ = _repository(tmp_path)
     repository.create_entity("agent:local_pony", "agent", "local_pony", "本地小马", now=NOW)
-    alias = repository.create_alias(
-        "本地小马", "agent", "agent:local_pony", "user_explicit", valid_from=NOW
-    )
+    alias = repository.create_alias("本地小马", "agent", "agent:local_pony", "user_explicit", valid_from=NOW)
 
     with pytest.raises(UnknownCanonicalEntityError):
         repository.create_alias("小马", "agent", alias["id"], "user_explicit", valid_from=NOW)
@@ -169,9 +164,7 @@ def test_malformed_raw_alias_candidate_fails_closed_in_repository_lookup(tmp_pat
 
 def test_alias_and_relation_source_events_must_share_namespace(tmp_path: Path) -> None:
     repository, connection = _repository(tmp_path)
-    repository.create_entity(
-        "agent:local_pony", "agent", "local_pony", "本地小马", namespace_key="tenant-a", now=NOW
-    )
+    repository.create_entity("agent:local_pony", "agent", "local_pony", "本地小马", namespace_key="tenant-a", now=NOW)
     repository.create_entity(
         "device:user_local_pc",
         "device",
@@ -210,14 +203,10 @@ def test_entity_alias_relation_and_claim_link_enforce_typed_foreign_keys(tmp_pat
     repository.create_entity("device:user_local_pc", "device", "user_local_pc", "用户本地电脑", now=NOW)
     repository.create_entity("environment:local_runtime", "environment", "local_runtime", "本地环境", now=NOW)
     repository.create_entity("topic:memory", "topic", "memory", "Memory", now=NOW)
-    repository.create_alias(
-        "本地环境", "environment", "environment:local_runtime", "builtin", valid_from=NOW
-    )
+    repository.create_alias("本地环境", "environment", "environment:local_runtime", "builtin", valid_from=NOW)
 
     with pytest.raises(EntityTypeMismatchError):
-        repository.create_alias(
-            "本地小马", "environment", "agent:local_pony", "user_explicit", valid_from=NOW
-        )
+        repository.create_alias("本地小马", "environment", "agent:local_pony", "user_explicit", valid_from=NOW)
     relation = repository.create_relation(
         "agent:local_pony",
         "device:user_local_pc",
@@ -365,3 +354,50 @@ def test_repository_does_not_commit_callers_existing_transaction(tmp_path: Path)
 
     assert connection.execute("SELECT 1 FROM canonical_entities WHERE id='agent:rollback'").fetchone() is None
     assert connection.execute("SELECT 1 FROM entity_aliases WHERE alias_normalized='rollback'").fetchone() is None
+
+
+def test_claim_link_rejects_closed_alias_and_retired_target(tmp_path: Path) -> None:
+    repository, connection = _repository(tmp_path)
+    repository.create_entity("agent:pony", "agent", "pony", "Pony", now=NOW)
+    repository.create_alias("pony", "agent", "agent:pony", "user_explicit", valid_from=NOW)
+    for claim_id in ("closed", "retired"):
+        _insert_claim(connection, claim_id)
+        _insert_proof(connection, f"proof-{claim_id}", claim_id)
+
+    repository.close_alias("pony", "agent", valid_to=LATER)
+    with pytest.raises(EntityTypeMismatchError):
+        repository.link_claim(
+            "closed",
+            "agent:pony",
+            "subject",
+            mention_text="pony",
+            resolution_confidence=1.0,
+            alias_version=1,
+            proof_id="proof-closed",
+        )
+    repository.create_alias("pony", "agent", "agent:pony", "user_explicit", valid_from=LATER)
+    connection.execute("UPDATE canonical_entities SET status='retired' WHERE id='agent:pony'")
+    with pytest.raises(EntityTypeMismatchError):
+        repository.link_claim(
+            "retired",
+            "agent:pony",
+            "subject",
+            mention_text="pony",
+            resolution_confidence=1.0,
+            alias_version=2,
+            proof_id="proof-retired",
+        )
+
+
+def test_raw_claim_link_insert_rejects_closed_alias(tmp_path: Path) -> None:
+    repository, connection = _repository(tmp_path)
+    repository.create_entity("agent:pony", "agent", "pony", "Pony", now=NOW)
+    repository.create_alias("pony", "agent", "agent:pony", "user_explicit", valid_from=NOW)
+    repository.close_alias("pony", "agent", valid_to=LATER)
+    _insert_claim(connection)
+    _insert_proof(connection, "proof-1", "claim-1")
+
+    with pytest.raises(sqlite3.IntegrityError, match="alias or evidence proof mismatch"):
+        connection.execute(
+            "INSERT INTO claim_entity_links VALUES " "('claim-1','agent:pony','subject','pony',1.0,1,'proof-1')"
+        )

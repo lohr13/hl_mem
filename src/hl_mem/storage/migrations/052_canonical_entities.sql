@@ -119,10 +119,10 @@ WHEN NOT EXISTS (
     JOIN entity_aliases AS alias
       ON alias.namespace_key = claim.namespace_key AND alias.entity_type = entity.entity_type
      AND alias.canonical_entity_id = entity.id AND alias.alias_normalized = NEW.mention_text
-     AND alias.version = NEW.alias_version
+     AND alias.version = NEW.alias_version AND alias.valid_to IS NULL
     JOIN evidence_links AS proof
       ON proof.id = NEW.proof_id AND proof.derived_type = 'claim' AND proof.derived_id = NEW.claim_id
-    WHERE claim.id = NEW.claim_id
+    WHERE claim.id = NEW.claim_id AND entity.status = 'active'
       AND (
           (NEW.role = 'subject' AND entity.entity_type IN ('person','agent','device','environment','instrument','project'))
           OR (NEW.role = 'actor' AND entity.entity_type IN ('person','agent'))
