@@ -119,14 +119,8 @@ class Settings:
         default="compatible",
         metadata={"toml": "embedding.api_mode"},
     )
-    embedding_text_type: EmbeddingTextType = field(
-        default=None,
-        metadata={"toml": "embedding.text_type"},
-    )
-    embedding_connect_timeout: float = field(
-        default=5.0,
-        metadata={"toml": "embedding.connect_timeout"},
-    )
+    embedding_text_type: EmbeddingTextType = _toml_field(None, "embedding.text_type")
+    embedding_connect_timeout: float = _toml_field(5.0, "embedding.connect_timeout")
     embedding_read_timeout: float = field(default=30.0, metadata={"toml": "embedding.read_timeout"})
     embedding_max_attempts: int = field(default=3, metadata={"toml": "embedding.max_attempts"})
     index_text_mode: IndexTextMode = field(default="natural", metadata={"toml": "index.text_mode"})
@@ -155,10 +149,7 @@ class Settings:
         default="off",
         metadata={"toml": "relation.expansion_mode"},
     )
-    relation_expansion_max_depth: int = field(
-        default=1,
-        metadata={"toml": "relation.expansion_max_depth"},
-    )
+    relation_expansion_max_depth: int = _toml_field(1, "relation.expansion_max_depth")
     # relation_discovery: audit 只记录候选 proposal，不自动写入关系边
     relation_discovery_mode: RelationDiscoveryMode = field(
         default="off",

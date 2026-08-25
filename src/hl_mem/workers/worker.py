@@ -51,12 +51,10 @@ from hl_mem.workers.deferred import (
 )
 from hl_mem.workers.history_cleanup import HistoryCleanupPolicy, cleanup_operational_history
 from hl_mem.workers.induce_policies import enqueue_daily_policy_induction
-from hl_mem.workers.job_handlers import (
-    dispatch_job,
-)
+from hl_mem.workers.job_handlers import dispatch_job
 from hl_mem.workers.job_handlers import purge_retained_events_for_namespaces as _purge_retained_events
 from hl_mem.workers.mental_models import DerivedMemoryMaintainer
-from hl_mem.workers.plan_fulfillment import enqueue_plan_reconciliation_scan
+from hl_mem.workers.plan_fulfillment import plan_maintenance_items
 from hl_mem.workers.scheduling import (
     enqueue_daily_job,
 )
@@ -425,20 +423,7 @@ class Worker:
                 if self.settings.conflict_auto_resolve_enabled and self.settings.conflict_auto_mode != "off"
                 else []
             ),
-            *(
-                [
-                    (
-                        "enqueue_plan_reconciliation_scan",
-                        lambda: enqueue_plan_reconciliation_scan(
-                            self.connection,
-                            maintenance_now,
-                            mode=self.settings.plan_fulfillment_mode,
-                        ),
-                    )
-                ]
-                if self.settings.plan_fulfillment_mode != "off"
-                else []
-            ),
+            *plan_maintenance_items(self.connection, maintenance_now, self.settings.plan_fulfillment_mode),
             (
                 "purge_retained_events",
                 lambda: _purge_retained_events(self.connection, cutoff),

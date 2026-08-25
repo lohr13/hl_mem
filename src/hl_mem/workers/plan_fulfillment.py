@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 from hl_mem.domain.governance import snapshot_fingerprint
 from hl_mem.domain.plan_fulfillment import PLAN_FULFILLMENT_POLICY_VERSION
@@ -13,6 +13,17 @@ from hl_mem.storage.jobs import JobRepository
 from hl_mem.storage.plan_fulfillments import PlanFulfillmentRepository
 
 _CURSOR_TASK = "plan_fulfillment_scan"
+
+
+def plan_maintenance_items(connection: sqlite3.Connection, now: str, mode: str) -> list[tuple[str, Callable[[], Any]]]:
+    if mode == "off":
+        return []
+    return [
+        (
+            "enqueue_plan_reconciliation_scan",
+            lambda: enqueue_plan_reconciliation_scan(connection, now, mode=mode),
+        )
+    ]
 
 
 def enqueue_plan_result(
