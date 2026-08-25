@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
+from types import SimpleNamespace
 
+from hl_mem.application.recall import _QueryExpansionSession
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.recall.entity_query import filter_entity_candidates, resolve_query_entity
 from hl_mem.recall.staged_pipeline import RecallConfig, hybrid_claims
@@ -140,3 +142,26 @@ def test_entity_constraint_filters_existing_channels_only_in_enforce_mode() -> N
     assert {item["id"] for item in observed} == {"other", "pony-claim"}
     assert observe_trace.trace.entity_filter_mode == "observe"
     assert observe_trace.trace.entity_filtered_count == 1
+
+
+def test_low_confidence_entity_rewrites_original_without_extra_rrf_channels() -> None:
+    connection = _connection()
+    connection.execute("DELETE FROM claim_entity_links")
+    recall = SimpleNamespace(
+        request=SimpleNamespace(query="pony settings", namespace="default"),
+        tracer=_tracer(),
+    )
+    service = SimpleNamespace(
+        connection=connection,
+        embedder=None,
+        settings=SimpleNamespace(
+            entity_constraint_mode="enforce",
+            query_expansion_total_timeout_seconds=1.0,
+            recall_dense_enabled=False,
+        ),
+    )
+
+    expansion = _QueryExpansionSession(service, recall)
+
+    assert len(expansion.weighted_queries) == 1
+    assert expansion.weighted_queries[0].text == "pony settings Local Pony"

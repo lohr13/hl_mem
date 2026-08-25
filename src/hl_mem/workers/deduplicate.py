@@ -21,6 +21,7 @@ from hl_mem.domain.governance import DecisionEnvelope, snapshot_fingerprint
 from hl_mem.llm.client import LLMClient
 from hl_mem.protocols import EmbedderProtocol
 from hl_mem.storage.claims import ClaimRepository
+from hl_mem.storage.dedup_candidates import active_entity_proof_key
 from hl_mem.storage.governance import GovernanceActionRepository
 from hl_mem.workers.dedup_judge import DedupJudge
 from hl_mem.workers.scheduling import enqueue_daily_job
@@ -134,8 +135,11 @@ def deduplicate_claims(
 
         typed_strategy = pair.get("candidate_strategy") == "slot_cross_subject_v1"
         structural = dedup_structural_gate(left, right, allow_cross_subject=typed_strategy)
+        proof_valid = not typed_strategy or active_entity_proof_key(connection, left, right, namespace) == pair.get(
+            "entity_proof_id"
+        )
         deterministic = Deduplicator._deterministic_check(left, right)
-        if typed_strategy and not structural.safe:
+        if typed_strategy and (not structural.safe or not proof_valid):
             deterministic = "distinct"
         elif typed_strategy and Deduplicator._canonical_claim(left) == Deduplicator._canonical_claim(right):
             deterministic = "equivalent"
@@ -147,9 +151,13 @@ def deduplicate_claims(
             judge_model: str | None = llm_client.model
         else:
             reason = (
-                f"structural_gate:{structural.reason}"
-                if typed_strategy and not structural.safe
-                else "deterministic_safety_gate"
+                "entity_proof_stale"
+                if typed_strategy and not proof_valid
+                else (
+                    f"structural_gate:{structural.reason}"
+                    if typed_strategy and not structural.safe
+                    else "deterministic_safety_gate"
+                )
             )
             decision, confidence = deterministic, 1.0
             judge_model = None
@@ -163,7 +171,7 @@ def deduplicate_claims(
                 reason,
                 judge_model,
                 reviewed_at,
-                int(typed_strategy and structural.safe),
+                int(typed_strategy and structural.safe and proof_valid),
                 pair["id"],
             ),
         )
@@ -312,7 +320,7 @@ def _apply_equivalent_pair(
     try:
         pair = connection.execute(
             "SELECT decision,judge_confidence,judge_reason,policy_version,applied_at,"
-            "candidate_strategy,auto_apply_eligible FROM dedup_pairs WHERE id=?",
+            "candidate_strategy,entity_proof_id,auto_apply_eligible FROM dedup_pairs WHERE id=?",
             (pair_id,),
         ).fetchone()
         repository = ClaimRepository(connection)
@@ -324,6 +332,23 @@ def _apply_equivalent_pair(
             return False
         typed_strategy = pair["candidate_strategy"] == "slot_cross_subject_v1"
         structural = dedup_structural_gate(current_left, current_right, allow_cross_subject=typed_strategy)
+        proof_valid = (
+            not typed_strategy
+            or active_entity_proof_key(
+                connection,
+                current_left,
+                current_right,
+                str(current_left.get("namespace_key") or "default"),
+            )
+            == pair["entity_proof_id"]
+        )
+        if not proof_valid:
+            connection.execute(
+                "UPDATE dedup_pairs SET auto_apply_eligible=0,judge_reason='entity_proof_stale' WHERE id=?",
+                (pair_id,),
+            )
+            connection.commit()
+            return False
         stale = (
             pair["decision"] != "equivalent"
             or float(pair["judge_confidence"] or 0.0) < min_confidence

@@ -10,36 +10,72 @@ from pathlib import Path
 from typing import Any, Mapping, cast
 
 _PLACEHOLDER_RE = re.compile(r"^\?+\s+[a-z_]+\s+\d+$", re.IGNORECASE)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+_APPROVED_GOLD = {
+    "E2": frozenset({"blind_frozen", "manually_frozen"}),
+    "E3": frozenset({"rule_frozen_synthetic", "manually_frozen"}),
+    "E4": frozenset({"manual_frozen"}),
+}
 
 
 def _cases(manifest: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [case for case in manifest.get("cases") or [] if isinstance(case, Mapping)]
 
 
+def _input(case: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = case.get("input")
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _claims(case: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    raw = _input(case).get("claims")
+    return [claim for claim in raw if isinstance(claim, Mapping)] if isinstance(raw, list) else []
+
+
+def _gold(case: Mapping[str, Any]) -> Mapping[str, Any]:
+    value = case.get("gold")
+    return value if isinstance(value, Mapping) else {}
+
+
+def _valid_sha256(value: Any) -> bool:
+    return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
+
+
+def _approved_gold(case: Mapping[str, Any], experiment: str) -> bool:
+    return str(_gold(case).get("gold_status") or "") in _APPROVED_GOLD[experiment]
+
+
+def _typed_pair_complete(case: Mapping[str, Any]) -> bool:
+    claims = _claims(case)
+    required = {"canonical_slot", "canonical_attribute", "assertion_kind", "entity_proof_id"}
+    return len(claims) == 2 and all(
+        isinstance(claim, Mapping)
+        and required <= set(claim)
+        and (claim.get("subject_canonical_entity_id") or claim.get("canonical_target_entity_id"))
+        for claim in claims
+    )
+
+
 def _assess_e2(manifest: Mapping[str, Any]) -> dict[str, Any]:
     cases = _cases(manifest)
-    claims = [claim for case in cases for claim in (case.get("input") or {}).get("claims") or []]
+    claims = [claim for case in cases for claim in _claims(case)]
     missing_typed = sum(
         not (claim.get("subject_canonical_entity_id") or claim.get("canonical_target_entity_id")) for claim in claims
     )
-    unfrozen = sum(
-        str((case.get("gold") or {}).get("gold_status") or "").startswith("historical_decision") for case in cases
-    )
+    unfrozen = sum(str(_gold(case).get("gold_status") or "").startswith("historical_decision") for case in cases)
     missing_blind = sum(not case.get("blind_judgment") for case in cases)
-    source_audit = manifest.get("source_audit") or {}
+    source_audit = manifest.get("source_audit")
+    source_audit = source_audit if isinstance(source_audit, Mapping) else {}
     counts = {
         "cases": len(cases),
-        "eligible_pairs": sum(
-            all(
-                claim.get("subject_canonical_entity_id") or claim.get("canonical_target_entity_id")
-                for claim in (case.get("input") or {}).get("claims") or []
-            )
-            for case in cases
-        ),
+        "eligible_pairs": sum(_typed_pair_complete(case) for case in cases),
+        "invalid_pair_shape_cases": sum(len(_claims(case)) != 2 for case in cases),
         "missing_typed_coordinate_claims": missing_typed,
-        "unfrozen_gold_cases": unfrozen,
+        "missing_entity_proof_cases": sum(not _typed_pair_complete(case) for case in cases),
+        "unapproved_gold_cases": sum(not _approved_gold(case, "E2") for case in cases),
+        "historical_gold_cases": unfrozen,
         "missing_blind_judgment_cases": missing_blind,
-        "missing_clone_recall_metrics": int(not source_audit.get("clone_recall_metrics_sha256")),
+        "invalid_clone_recall_metrics": int(not _valid_sha256(source_audit.get("clone_recall_metrics_sha256"))),
         "below_minimum_cases": max(0, 406 - len(cases)),
     }
     blockers = [name for name, value in counts.items() if name not in {"cases", "eligible_pairs"} and value]
@@ -48,19 +84,28 @@ def _assess_e2(manifest: Mapping[str, Any]) -> dict[str, Any]:
 
 def _assess_e3(manifest: Mapping[str, Any]) -> dict[str, Any]:
     cases = _cases(manifest)
-    audit = manifest.get("source_audit") or {}
+    audit = manifest.get("source_audit")
+    audit = audit if isinstance(audit, Mapping) else {}
     counts = {
         "cases": len(cases),
         "placeholder_text_cases": sum(
-            bool(_PLACEHOLDER_RE.fullmatch(str((case.get("input") or {}).get("text") or ""))) for case in cases
+            bool(_PLACEHOLDER_RE.fullmatch(str(_input(case).get("text") or ""))) for case in cases
         ),
-        "existing_extraction_set_pending": int(audit.get("existing_extraction_set") == "PENDING_LINK"),
+        "invalid_existing_extraction_set": int(
+            not _valid_sha256(audit.get("existing_extraction_set_sha256") or audit.get("existing_extraction_set"))
+        ),
+        "unapproved_gold_cases": sum(not _approved_gold(case, "E3") for case in cases),
         "production_examples": int(audit.get("production_examples") or 0),
         "below_minimum_cases": max(0, 240 - len(cases)),
     }
     blockers = [
         name
-        for name in ("placeholder_text_cases", "existing_extraction_set_pending", "below_minimum_cases")
+        for name in (
+            "placeholder_text_cases",
+            "invalid_existing_extraction_set",
+            "unapproved_gold_cases",
+            "below_minimum_cases",
+        )
         if counts[name]
     ]
     if counts["production_examples"] == 0:
@@ -70,16 +115,18 @@ def _assess_e3(manifest: Mapping[str, Any]) -> dict[str, Any]:
 
 def _assess_e4(manifest: Mapping[str, Any]) -> dict[str, Any]:
     cases = _cases(manifest)
-    audit = manifest.get("source_audit") or {}
+    audit = manifest.get("source_audit")
+    audit = audit if isinstance(audit, Mapping) else {}
     counts = {
         "cases": len(cases),
         "placeholder_query_cases": sum(
-            bool(_PLACEHOLDER_RE.fullmatch(str((case.get("input") or {}).get("query") or ""))) for case in cases
+            bool(_PLACEHOLDER_RE.fullmatch(str(_input(case).get("query") or ""))) for case in cases
         ),
-        "pending_gold_cases": sum(
-            (case.get("gold") or {}).get("gold_status") == "pending_manual_freeze" for case in cases
+        "pending_gold_cases": sum(_gold(case).get("gold_status") == "pending_manual_freeze" for case in cases),
+        "unapproved_gold_cases": sum(not _approved_gold(case, "E4") for case in cases),
+        "invalid_production_query_log": int(
+            not _valid_sha256(audit.get("production_query_log_sha256") or audit.get("production_query_log"))
         ),
-        "production_query_log_missing": int(audit.get("production_query_log") == "NOT_PROVIDED"),
         "below_minimum_cases": max(0, 240 - len(cases)),
     }
     blockers = [name for name, value in counts.items() if name != "cases" and value]

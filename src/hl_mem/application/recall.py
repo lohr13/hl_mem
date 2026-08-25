@@ -389,8 +389,8 @@ class _QueryExpansionSession:
         )
         self.entity_plan.record(self.tracer.trace)
         if service.settings.entity_constraint_mode == "enforce" and self.entity_plan.rewrite:
-            self.weighted_queries.append(WeightedQuery(self.entity_plan.rewrite, "entity_alias", 1.0))
-            self.query_blobs.append(
+            self.weighted_queries[0] = WeightedQuery(self.entity_plan.rewrite, "original", 1.0)
+            self.query_blobs[0] = (
                 embed_query(service.embedder, self.entity_plan.rewrite)
                 if service.settings.recall_dense_enabled
                 else b""

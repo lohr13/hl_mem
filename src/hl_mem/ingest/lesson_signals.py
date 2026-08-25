@@ -60,18 +60,32 @@ _SIGNAL_PATTERNS: tuple[tuple[LessonSignal, re.Pattern[str]], ...] = (
         ),
     ),
 )
+_CLAUSE_SPLIT_RE = re.compile(r"[;；。.!?\n]+")
+_CONTENT_TOKEN_RE = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]", re.IGNORECASE)
+
+
+def _clause_supports_value(clause: str, value: str) -> bool:
+    normalized_clause = unicodedata.normalize("NFKC", clause).casefold().strip()
+    normalized_value = unicodedata.normalize("NFKC", value).casefold().strip()
+    if not normalized_clause or not normalized_value:
+        return False
+    if normalized_clause in normalized_value or normalized_value in normalized_clause:
+        return True
+    clause_tokens = set(_CONTENT_TOKEN_RE.findall(normalized_clause))
+    value_tokens = set(_CONTENT_TOKEN_RE.findall(normalized_value))
+    return bool(value_tokens) and len(clause_tokens & value_tokens) / len(value_tokens) >= 0.6
 
 
 def classify_lesson_signal(value: str, evidence_quote: str) -> LessonSignal:
     """Classify only an explicit signal present in the grounded evidence quote."""
 
-    del value  # Admission separately proves that this evidence supports the public claim value.
     evidence = unicodedata.normalize("NFKC", evidence_quote).strip()
     if not evidence:
         return "none"
-    for signal, pattern in _SIGNAL_PATTERNS:
-        if pattern.search(evidence):
-            return signal
+    for clause in filter(None, _CLAUSE_SPLIT_RE.split(evidence)):
+        for signal, pattern in _SIGNAL_PATTERNS:
+            if pattern.search(clause) and _clause_supports_value(clause, value):
+                return signal
     return "none"
 
 

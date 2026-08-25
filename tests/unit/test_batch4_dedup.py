@@ -180,3 +180,18 @@ def test_auto_apply_selects_authoritative_survivor_and_rolls_back_exact_links(tm
     assert connection.execute("SELECT status FROM governance_actions WHERE id=?", (action["id"],)).fetchone()[0] == (
         "rolled_back"
     )
+
+
+def test_auto_apply_rejects_entity_proof_closed_after_review(tmp_path) -> None:
+    connection, claims, embedder = _slot_fixture(tmp_path)
+    reviewed = deduplicate_claims(connection, _EquivalentClient(), embedder, audit_only=True)
+    assert reviewed["equivalent"] == 1
+    connection.execute("UPDATE entity_aliases SET valid_to='2026-08-25T00:30:00+00:00'")
+    connection.commit()
+
+    applied = deduplicate_claims(connection, _EquivalentClient(), embedder, audit_only=False)
+
+    assert applied["applied"] == 0
+    assert claims.get_claim("left")["status"] == "active"
+    assert claims.get_claim("right")["status"] == "active"
+    assert connection.execute("SELECT auto_apply_eligible FROM dedup_pairs").fetchone()[0] == 0

@@ -55,3 +55,27 @@ def test_batch4_preflight_seals_unscorable_corpora(tmp_path, experiment: str, bl
     assert all(arm["scored_cases"] == 0 for arm in report["arms"].values())
     assert (tmp_path / "SEALED_FAILED").exists()
     assert (tmp_path / "waiting_qwen.json").exists() is (experiment == "E3")
+
+
+@pytest.mark.parametrize(
+    ("experiment", "expected"),
+    [
+        ("E2", {"invalid_pair_shape_cases", "unapproved_gold_cases", "invalid_clone_recall_metrics"}),
+        ("E3", {"invalid_existing_extraction_set", "unapproved_gold_cases"}),
+        ("E4", {"invalid_production_query_log", "unapproved_gold_cases"}),
+    ],
+)
+def test_batch4_preflight_requires_explicit_gold_and_provenance(experiment: str, expected: set[str]) -> None:
+    manifest = _manifest(experiment)
+    manifest["source_audit"] = {"production_examples": 1, "clone_recall_metrics_sha256": "not-a-sha"}
+    manifest["cases"][0]["input"] = {
+        "text": "real grounded example",
+        "query": "real entity query",
+        "claims": [{"subject_canonical_entity_id": "agent:pony"}],
+    }
+    manifest["cases"][0]["gold"] = {"gold_status": "missing_or_unapproved"}
+    manifest["cases"][0]["blind_judgment"] = {"decision": "equivalent"}
+
+    assessment = assess_batch4_manifest(manifest)
+
+    assert expected <= set(assessment["blockers"])
