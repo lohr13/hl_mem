@@ -110,8 +110,14 @@ class DecisionEnvelope:
 
 
 _AUTHORITY = {"low": 1, "medium": 2, "high": 3}
-_TERMINAL = frozenset({"expired", "retracted", "archived"})
+_TERMINAL = frozenset({"superseded", "expired", "rejected", "rolled_back"})
 _LIVING = frozenset({"active", "candidate", "disputed"})
+
+
+def is_terminal_conflict_status(status: Any) -> bool:
+    """Return whether a claim status is safe for deterministic lifecycle removal."""
+
+    return str(status or "") in _TERMINAL
 
 
 @dataclass(frozen=True)
@@ -258,8 +264,8 @@ def decide_l0(docket: Mapping[str, Any]) -> AutoDecision | None:
             return None
         return None
 
-    left_terminal = left.get("status") in _TERMINAL
-    right_terminal = right.get("status") in _TERMINAL
+    left_terminal = is_terminal_conflict_status(left.get("status"))
+    right_terminal = is_terminal_conflict_status(right.get("status"))
     if left_terminal and right_terminal:
         return AutoDecision("obsolete", None, 1.0, "L0", "lifecycle_single_survivor")
     if left_terminal != right_terminal and not context.get("survivor_contested"):
@@ -414,8 +420,8 @@ def assess_l2_admission(
         return L2Admission(False, "candidate_overflow")
     if context.get("entity_type_mismatch"):
         return L2Admission(False, "entity_type_mismatch")
-    if not context.get("coordinates_complete") or any(_is_plan(claim) for claim in claims):
-        return L2Admission(False, "coordinate_incomplete")
+    if any(_is_plan(claim) for claim in claims):
+        return L2Admission(False, "plan_not_allowed")
     if not context.get("evidence_readable"):
         return L2Admission(False, "evidence_damaged")
     if context.get("docket_oversized"):

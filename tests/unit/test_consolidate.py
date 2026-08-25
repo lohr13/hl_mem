@@ -338,7 +338,7 @@ def test_auto_resolve_marks_two_terminal_endpoints_obsolete(tmp_path) -> None:
     _claim(connection, "left", [1.0, 0.0])
     _claim(connection, "right", [0.8, 0.6])
     assert repository.update_status("left", "expired")
-    assert repository.update_status("right", "retracted")
+    assert repository.update_status("right", "expired")
     _conflict_case(connection, "case", "left", "right", status="manual_required")
     resolved_at = "2026-01-03T04:05:06+00:00"
 

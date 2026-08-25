@@ -10,7 +10,6 @@ from typing import Any, Callable
 
 from hl_mem.application.conflict_invariants import assert_global_conflict_postconditions
 from hl_mem.application.conflicts import (
-    NONTERMINAL_CLAIM_STATUSES,
     ResolutionService,
     StaleConflictDecision,
     _follow_tip,
@@ -24,6 +23,7 @@ from hl_mem.domain.governance import (
     assess_l2_admission,
     decide_l0,
     decide_l1,
+    is_terminal_conflict_status,
     snapshot_fingerprint,
     validate_l2_result,
 )
@@ -112,14 +112,16 @@ def load_conflict_docket(connection: sqlite3.Connection, case_id: str) -> dict[s
                 "representative_claim_id": claim_id,
                 "support_count": 1,
                 "evidence_count": counts[claim_id],
-                "terminal": claim.get("status") not in NONTERMINAL_CLAIM_STATUSES,
+                "terminal": is_terminal_conflict_status(claim.get("status")),
             }
             for claim_id, claim in zip(claim_ids, (left, right), strict=True)
         ]
     else:
         for candidate in candidates:
             statuses = candidate.get("claim_statuses") or {}
-            candidate["terminal"] = not any(status in NONTERMINAL_CLAIM_STATUSES for status in statuses.values())
+            candidate["terminal"] = bool(statuses) and all(
+                is_terminal_conflict_status(status) for status in statuses.values()
+            )
     case["group_native"] = group_native
     other_open = connection.execute(
         "SELECT 1 FROM conflict_cases WHERE id<>? AND status IN ('pending','auto_resolved','manual_required') "

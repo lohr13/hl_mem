@@ -16,8 +16,11 @@ from hl_mem.evaluation.v030_corpus import (
     write_manifest,
 )
 from hl_mem.workers.auto_resolve_conflicts import AutoDecision
-from scripts.run_v030_experiments import main as run_experiments
-from scripts.run_v030_experiments import run_baseline, run_e1_experiment
+from scripts import run_v030_experiments as experiment_runner
+
+run_baseline = experiment_runner.run_baseline
+run_e1_experiment = experiment_runner.run_e1_experiment
+run_experiments = experiment_runner.main
 
 
 def _case(case_id: str, *, source: str, category: str, decision: str = "keep_left", **extra: object) -> dict:
@@ -329,3 +332,91 @@ def test_e1_orchestrator_runs_three_arms_without_leaking_gold(tmp_path: Path) ->
     assert report["arms"]["C"]["gate"]["passed"] is True
     assert len(report["cases"]) == 70
     assert all((tmp_path / "out" / name).is_file() for name in ("e1_report.json", "e1_report.md"))
+
+
+@pytest.mark.parametrize(
+    ("claim", "expected"),
+    [
+        (
+            {"pre_decision_status": "disputed", "status_at_decision": "active", "status": "expired"},
+            "disputed",
+        ),
+        ({"status_at_decision": "disputed", "status": "superseded"}, "disputed"),
+        ({"status": "active"}, "active"),
+        ({}, "disputed"),
+    ],
+)
+def test_e1_replay_status_prefers_explicit_pre_decision_snapshot(claim: dict[str, str], expected: str) -> None:
+    assert experiment_runner._manifest_claim_status(claim) == expected
+
+
+@pytest.mark.parametrize(
+    ("status", "terminal"),
+    [
+        ("superseded", True),
+        ("expired", True),
+        ("rejected", True),
+        ("rolled_back", True),
+        ("disputed", False),
+        ("retracted", False),
+        ("archived", False),
+    ],
+)
+def test_e1_replay_uses_the_registered_lifecycle_terminal_set(status: str, terminal: bool) -> None:
+    item = {
+        "case_id": "case-terminal-contract",
+        "input": {
+            "case": {
+                "id": "case-terminal-contract",
+                "left_claim_id": "left",
+                "right_claim_id": "right",
+                "namespace_key": "default",
+            },
+            "claims": [
+                {"id": "left", "status": status, "namespace_key": "default"},
+                {"id": "right", "status": "disputed", "namespace_key": "default"},
+            ],
+        },
+    }
+
+    docket = experiment_runner._e1_docket(item)
+
+    assert docket["candidates"][0]["terminal"] is terminal
+
+
+def test_e1_v2_overlay_is_authenticated_and_keeps_gold_conflicts_explicit(tmp_path: Path) -> None:
+    manifest = _manifest("E1")
+    target = manifest["cases"][0]
+    target["input"] = {"claims": [{"id": "left", "status": "superseded"}]}
+    manifest = build_manifest(
+        "E1",
+        manifest["cases"],
+        source_snapshots=manifest["source_snapshots"],
+        source_audit=manifest["source_audit"],
+    )
+    base_path = tmp_path / "e1.json"
+    write_manifest(base_path, manifest)
+    overlay_path = tmp_path / "e1_v2.json"
+    overlay_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v030-e1-replay-overlay-v2",
+                "base_manifest_sha256": manifest["manifest_sha256"],
+                "cases": [
+                    {
+                        "case_id": target["case_id"],
+                        "claim_status_overrides": {"left": {"pre_decision_status": "disputed"}},
+                    }
+                ],
+                "gold_invariant_conflicts": ["local-unreconstructable"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    replay = experiment_runner.load_e1_replay_manifest(base_path, overlay_path)
+
+    claim = replay["cases"][0]["input"]["claims"][0]
+    assert claim["pre_decision_status"] == "disputed"
+    assert replay["gold_invariant_conflicts"] == ["local-unreconstructable"]
+    assert replay["replay_overlay_sha256"] == hashlib.sha256(overlay_path.read_bytes()).hexdigest()

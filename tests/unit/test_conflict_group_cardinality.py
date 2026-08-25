@@ -254,7 +254,7 @@ def test_group_closes_when_only_one_current_candidate_remains(tmp_path: Path) ->
     members = [_claim(repository, f"claim-{index}", str(index)) for index in range(3)]
     result = _ensure(repository, members)
     connection.execute(
-        "UPDATE claims SET status='retracted',valid_to=?,recorded_to=? WHERE id IN ('claim-0','claim-1')",
+        "UPDATE claims SET status='expired',valid_to=?,recorded_to=? WHERE id IN ('claim-0','claim-1')",
         (NOW, NOW),
     )
     connection.commit()

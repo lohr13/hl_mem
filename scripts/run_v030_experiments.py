@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import sqlite3
@@ -15,6 +16,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Callable, Mapping, cast
 
+from hl_mem.domain.governance import is_terminal_conflict_status
 from hl_mem.evaluation.v030_corpus import EXPERIMENTS, load_manifest, validate_manifest
 from hl_mem.evaluation.v030_scorers import evaluate_decision_gate, score_decisions
 from hl_mem.workers.auto_resolve_conflicts import (
@@ -55,6 +57,49 @@ def _file_sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def load_e1_replay_manifest(base_path: str | Path, overlay_path: str | Path) -> dict[str, Any]:
+    """Apply an authenticated replay-only status overlay without mutating the frozen base."""
+
+    base = load_manifest(base_path)
+    overlay_file = Path(overlay_path)
+    overlay = json.loads(overlay_file.read_text(encoding="utf-8"))
+    if not isinstance(overlay, Mapping) or overlay.get("schema_version") != "v030-e1-replay-overlay-v2":
+        raise ValueError("E1 replay overlay schema is invalid")
+    if overlay.get("base_manifest_sha256") != base.get("manifest_sha256"):
+        raise ValueError("E1 replay overlay base manifest hash mismatch")
+    replay = copy.deepcopy(base)
+    cases = {str(item["case_id"]): item for item in replay["cases"]}
+    seen: set[str] = set()
+    for row in overlay.get("cases") or []:
+        if not isinstance(row, Mapping):
+            raise ValueError("E1 replay overlay case must be an object")
+        case_id = str(row.get("case_id") or "")
+        if case_id in seen or case_id not in cases:
+            raise ValueError(f"E1 replay overlay has duplicate or unknown case: {case_id}")
+        seen.add(case_id)
+        claims = {
+            str(claim.get("id")): claim
+            for claim in (cases[case_id].get("input") or {}).get("claims") or []
+            if isinstance(claim, dict)
+        }
+        overrides = row.get("claim_status_overrides") or {}
+        if not isinstance(overrides, Mapping):
+            raise ValueError(f"E1 replay status overrides must be an object: {case_id}")
+        for claim_id, values in overrides.items():
+            if str(claim_id) not in claims or not isinstance(values, Mapping):
+                raise ValueError(f"E1 replay overlay has unknown claim: {case_id}/{claim_id}")
+            if set(values) - {"pre_decision_status", "status_at_decision"}:
+                raise ValueError(f"E1 replay overlay has unsupported status fields: {case_id}/{claim_id}")
+            claims[str(claim_id)].update({str(key): str(value) for key, value in values.items() if str(value)})
+    conflicts = overlay.get("gold_invariant_conflicts") or []
+    if not isinstance(conflicts, list):
+        raise ValueError("E1 replay gold_invariant_conflicts must be a list")
+    replay["gold_invariant_conflicts"] = sorted({str(case_id) for case_id in conflicts})
+    replay["replay_overlay_sha256"] = _file_sha256(overlay_file)
+    replay["replay_schema_version"] = str(overlay["schema_version"])
+    return replay
 
 
 def _current_l0_counts(manifest: dict[str, Any]) -> dict[str, object]:
@@ -157,8 +202,9 @@ def run_baseline(
 
 
 def _manifest_claim_status(claim: Mapping[str, Any]) -> str:
-    if claim.get("status"):
-        return str(claim["status"])
+    for field in ("pre_decision_status", "status_at_decision", "status"):
+        if claim.get(field):
+            return str(claim[field])
     # Frozen E1 inputs intentionally omit the post-review lifecycle status.
     # Reconstruct the pre-decision state instead of leaking the historical outcome.
     return "disputed"
@@ -215,8 +261,8 @@ def _e1_docket(item: Mapping[str, Any]) -> dict[str, Any]:
             }
             candidate["claim_statuses"] = statuses
             candidate["evidence_count"] = sum(evidence_counts[claim_id] for claim_id in statuses)
-            candidate["terminal"] = bool(statuses) and not any(
-                status in {"active", "candidate", "disputed"} for status in statuses.values()
+            candidate["terminal"] = bool(statuses) and all(
+                is_terminal_conflict_status(status) for status in statuses.values()
             )
     else:
         candidates = [
@@ -225,7 +271,7 @@ def _e1_docket(item: Mapping[str, Any]) -> dict[str, Any]:
                 "representative_claim_id": str(claim["id"]),
                 "support_count": 1,
                 "evidence_count": evidence_counts[str(claim["id"])],
-                "terminal": claim["status"] not in {"active", "candidate", "disputed"},
+                "terminal": is_terminal_conflict_status(claim["status"]),
             }
             for claim in endpoints
         ]

@@ -30,6 +30,14 @@ _RESULT_KEYS = frozenset(
         "winner_candidate_key",
     }
 )
+_FIELD_ALIASES = {
+    "ambiguities": "ambiguity_flags",
+    "evidence_ids": "decisive_evidence_ids",
+    "rationale": "rationale_code",
+    "winner": "winner_candidate_key",
+    "winner_key": "winner_candidate_key",
+}
+_MAX_RESPONSE_CHARS = 32_768
 
 
 class UnsafeModelPayload(ValueError):
@@ -113,8 +121,53 @@ def _assert_no_cot(value: Any, path: str = "$") -> None:
             _assert_no_cot(item, f"{path}[{index}]")
 
 
-def _safe_response(value: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: copy.deepcopy(item) for key, item in value.items() if key in _RESULT_KEYS}
+def _safe_response(value: Mapping[str, Any], *, map_aliases: bool) -> dict[str, Any]:
+    normalized = dict(value)
+    if map_aliases:
+        for alias, canonical in _FIELD_ALIASES.items():
+            if canonical not in normalized and alias in normalized:
+                normalized[canonical] = normalized[alias]
+    return {
+        key: copy.deepcopy(item)
+        for key, item in normalized.items()
+        if key in _RESULT_KEYS and (not map_aliases or key not in _FIELD_ALIASES)
+    }
+
+
+def _extract_json_object(content: str) -> Mapping[str, Any]:
+    if len(content) > _MAX_RESPONSE_CHARS:
+        raise ModelResponseError("local qwen structured response exceeds bounded output")
+    start = content.find("{")
+    if start < 0:
+        raise ModelResponseError("local qwen structured response has no JSON object")
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(content)):
+        character = content[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+        elif character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    value = json.loads(content[start : index + 1])
+                except json.JSONDecodeError as error:
+                    raise ModelResponseError("local qwen JSON object is malformed") from error
+                if not isinstance(value, Mapping):
+                    raise ModelResponseError("local qwen structured content must be an object")
+                return value
+    raise ModelResponseError("local qwen JSON object is incomplete")
 
 
 class LocalQwenRunner:
@@ -140,17 +193,22 @@ class LocalQwenRunner:
             raise ModelResponseError("local qwen response root must be an object")
         return value
 
-    def _decode_response(self, raw: Mapping[str, Any]) -> dict[str, Any]:
+    def _decode_response(self, raw: Mapping[str, Any], *, map_aliases: bool) -> dict[str, Any]:
         if "choices" not in raw:
-            return _safe_response(raw)
+            return _safe_response(raw, map_aliases=map_aliases)
         try:
             content = raw["choices"][0]["message"]["content"]
-            value = json.loads(content)
-        except (IndexError, KeyError, TypeError, json.JSONDecodeError) as error:
+        except (IndexError, KeyError, TypeError) as error:
             raise ModelResponseError("local qwen structured response is malformed") from error
+        if not isinstance(content, str):
+            raise ModelResponseError("local qwen structured content must be text")
+        try:
+            value = json.loads(content)
+        except json.JSONDecodeError:
+            value = _extract_json_object(content)
         if not isinstance(value, Mapping):
             raise ModelResponseError("local qwen structured content must be an object")
-        return _safe_response(value)
+        return _safe_response(value, map_aliases=map_aliases)
 
     @staticmethod
     def _message(task: str, input_payload: Mapping[str, Any]) -> str:
@@ -161,7 +219,14 @@ class LocalQwenRunner:
     def _input_tokens(self, task: str, input_payload: Mapping[str, Any]) -> int:
         return int(self.token_counter(self._message(task, input_payload)))
 
-    def _call(self, task: str, input_payload: Mapping[str, Any], token_limit: int) -> dict[str, Any]:
+    def _call(
+        self,
+        task: str,
+        input_payload: Mapping[str, Any],
+        token_limit: int,
+        *,
+        allow_format_repair: bool = True,
+    ) -> dict[str, Any]:
         tokens = self._input_tokens(task, input_payload)
         if tokens > token_limit:
             raise OversizedDocket(f"{task} input exceeds {token_limit} tokens")
@@ -187,7 +252,33 @@ class LocalQwenRunner:
         }
         self.payload_snapshots.append(copy.deepcopy(request))
         endpoint = f"{self.config.base_url.rstrip('/')}/chat/completions"
-        return self._decode_response(self.transport(endpoint, request))
+        raw = self.transport(endpoint, request)
+        try:
+            decoded = self._decode_response(raw, map_aliases=task != "evidence_card")
+            if task != "evidence_card" and (
+                not isinstance(decoded.get("decision"), str) or not isinstance(decoded.get("confidence"), (int, float))
+            ):
+                raise ModelResponseError("local qwen structured response lacks decision or confidence")
+            return decoded
+        except ModelResponseError:
+            if not allow_format_repair or task == "format_repair":
+                raise
+            try:
+                malformed = raw["choices"][0]["message"]["content"]
+            except (IndexError, KeyError, TypeError) as error:
+                raise ModelResponseError("local qwen response cannot be repaired") from error
+            if not isinstance(malformed, str) or len(malformed) > _MAX_RESPONSE_CHARS:
+                raise ModelResponseError("local qwen response cannot be repaired")
+            return self._call(
+                "format_repair",
+                {
+                    "instruction": "Preserve every decision value; repair JSON syntax and registered field names only.",
+                    "malformed_output": malformed,
+                    "required_fields": ["decision", "confidence"],
+                },
+                token_limit,
+                allow_format_repair=False,
+            )
 
     def _chunks(self, case_id: str, evidence: Sequence[Mapping[str, Any]]) -> list[list[Mapping[str, Any]]]:
         chunks: list[list[Mapping[str, Any]]] = []

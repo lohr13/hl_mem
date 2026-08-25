@@ -8,6 +8,7 @@ import pytest
 
 from hl_mem.evaluation.local_qwen_runner import (
     LocalQwenRunner,
+    ModelResponseError,
     OversizedDocket,
     QwenRunConfig,
     UnsafeModelPayload,
@@ -172,6 +173,95 @@ def test_order_disagreement_is_returned_as_manual_required() -> None:
     assert result["consistent"] is False
     assert result["decision"] == "manual_required"
     assert result["failure_reason"] == "candidate_order_disagreement"
+
+
+def _openai_response(content: str) -> dict[str, object]:
+    return {
+        "id": "chatcmpl-fixture",
+        "object": "chat.completion",
+        "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": content}}],
+    }
+
+
+def test_runner_extracts_fenced_json_without_changing_decision_values() -> None:
+    content = """prefix\n```json
+{"decision":"keep_left","winner_candidate_key":"a","confidence":0.97,"rationale_code":"fixture"}
+```\nsuffix"""
+    runner = LocalQwenRunner(
+        transport=lambda _url, _payload: _openai_response(content),
+        token_counter=_declared_tokens,
+    )
+
+    result = runner.run_case(_case(_token_cost=1))
+
+    assert result["decision"] == "keep_left"
+    assert result["winner_candidate_key"] == "a"
+    assert result["call_count"] == 2
+
+
+def test_runner_maps_only_registered_field_aliases() -> None:
+    content = json.dumps(
+        {
+            "decision": "keep_right",
+            "winner_key": "b",
+            "confidence": 0.96,
+            "rationale": "fixture_alias",
+            "evidence_ids": ["e-1"],
+            "ambiguities": [],
+        }
+    )
+    runner = LocalQwenRunner(
+        transport=lambda _url, _payload: _openai_response(content),
+        token_counter=_declared_tokens,
+    )
+
+    result = runner.run_case(_case(_token_cost=1))
+
+    assert result["decisions"][0] == {
+        "decision": "keep_right",
+        "winner_candidate_key": "b",
+        "confidence": 0.96,
+        "rationale_code": "fixture_alias",
+        "decisive_evidence_ids": ["e-1"],
+        "ambiguity_flags": [],
+    }
+
+
+def test_runner_retries_malformed_structure_once_as_format_repair() -> None:
+    tasks: list[str] = []
+
+    def repair_transport(_url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        body = json.loads(payload["messages"][-1]["content"])
+        tasks.append(body["task"])
+        if body["task"] == "decision":
+            return _openai_response("not-json")
+        return _openai_response(
+            '{"decision":"keep_left","winner_candidate_key":"a","confidence":0.95,"rationale_code":"repaired"}'
+        )
+
+    runner = LocalQwenRunner(transport=repair_transport, token_counter=_declared_tokens)
+
+    result = runner.run_case(_case(_token_cost=1))
+
+    assert tasks == ["decision", "format_repair", "decision_verify"]
+    assert result["decision"] == "keep_left"
+    assert result["call_count"] == 3
+
+
+def test_runner_stops_after_one_failed_format_repair() -> None:
+    tasks: list[str] = []
+
+    def malformed_transport(_url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        body = json.loads(payload["messages"][-1]["content"])
+        tasks.append(body["task"])
+        return _openai_response("still-not-json")
+
+    runner = LocalQwenRunner(transport=malformed_transport, token_counter=_declared_tokens)
+
+    with pytest.raises(ModelResponseError):
+        runner.run_case(_case(_token_cost=1))
+
+    assert tasks == ["decision", "format_repair"]
 
 
 def test_cards_that_still_do_not_fit_final_docket_fail_as_infrastructure_error() -> None:

@@ -85,7 +85,7 @@ def _docket() -> dict[str, object]:
     ("mutate", "decision", "rule"),
     [
         (lambda d: d["context"].update(left_tip_id="tip", right_tip_id="tip"), "obsolete", "chain_endpoint_converged"),
-        (lambda d: d["claims"][0].update(status="retracted"), "keep_right", "lifecycle_single_survivor"),
+        (lambda d: d["claims"][0].update(status="superseded"), "keep_right", "lifecycle_single_survivor"),
         (lambda d: d["claims"][1].update(value="8080"), "keep_left", "exact_candidate"),
         (
             lambda d: (
@@ -113,6 +113,25 @@ def test_l0_rules_run_in_fixed_order(mutate, decision: str, rule: str) -> None:
     result = decide_l0(docket)
 
     assert (result.decision, result.rule, result.tier) == (decision, rule, "L0")
+
+
+@pytest.mark.parametrize("status", ["superseded", "expired", "rejected", "rolled_back"])
+def test_l0_lifecycle_uses_only_the_four_registered_terminal_statuses(status: str) -> None:
+    docket = _docket()
+    docket["claims"][0]["status"] = status
+
+    result = decide_l0(docket)
+
+    assert result is not None
+    assert (result.decision, result.rule) == ("keep_right", "lifecycle_single_survivor")
+
+
+@pytest.mark.parametrize("status", ["disputed", "retracted", "archived"])
+def test_l0_does_not_treat_unregistered_or_disputed_status_as_terminal(status: str) -> None:
+    docket = _docket()
+    docket["claims"][0]["status"] = status
+
+    assert decide_l0(docket) is None
 
 
 @pytest.mark.parametrize(
@@ -168,7 +187,7 @@ def test_l1_refuses_hard_safety_gaps(mutation) -> None:
         (lambda d: d["context"].update(previous_reason=None), "missing_prior_insufficiency"),
         (lambda d: d.update(candidates=d["candidates"][:1]), "fewer_than_two_living_candidates"),
         (lambda d: d["case"].update(overflow=1), "candidate_overflow"),
-        (lambda d: d["context"].update(coordinates_complete=False), "coordinate_incomplete"),
+        (lambda d: d["context"].update(entity_type_mismatch=True), "entity_type_mismatch"),
         (lambda d: d["context"].update(evidence_readable=False), "evidence_damaged"),
         (lambda d: d["context"].update(last_l2_policy_version="conflict-auto-v1"), "already_judged_current_input"),
         (lambda d: d["context"].update(schema_valid=False), "schema_invalid"),
@@ -181,6 +200,26 @@ def test_l2_admission_is_fail_closed_for_each_condition(mutation, reason: str) -
     result = assess_l2_admission(docket, NOW, max_candidates=8, policy_version="conflict-auto-v1")
 
     assert (result.admitted, result.reason) == (False, reason)
+
+
+def test_l2_admits_a_slotless_pair_when_claims_and_evidence_are_complete() -> None:
+    docket = _docket()
+    docket["context"]["coordinates_complete"] = False
+    docket["claims"][0]["canonical_slot"] = None
+    docket["claims"][1]["canonical_slot"] = None
+
+    result = assess_l2_admission(docket, NOW, max_candidates=8, policy_version="conflict-auto-v1")
+
+    assert (result.admitted, result.reason) == (True, "admitted")
+
+
+def test_l2_rejects_plan_without_calling_it_a_coordinate_failure() -> None:
+    docket = _docket()
+    docket["claims"][0]["assertion_kind"] = "plan"
+
+    result = assess_l2_admission(docket, NOW, max_candidates=8, policy_version="conflict-auto-v1")
+
+    assert (result.admitted, result.reason) == (False, "plan_not_allowed")
 
 
 @pytest.mark.parametrize(
