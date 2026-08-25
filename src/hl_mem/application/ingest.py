@@ -48,6 +48,7 @@ from hl_mem.domain.entity import (
     isolated_subject_id,
     normalize_entity_id,
 )
+from hl_mem.domain.plan_fulfillment import is_result_claim
 from hl_mem.errors import ConflictError, ValidationError
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.lifecycle import assert_transition
@@ -529,6 +530,11 @@ class IngestService:
             entity_service.link_subject(claim["id"], subject_resolution)
             if target_enforced:
                 entity_service.link_target(claim["id"], target_resolution)
+            plan_mode = getattr(configured, "plan_fulfillment_mode", "audit")
+            if plan_mode != "off" and is_result_claim(claim):
+                from hl_mem.workers.plan_fulfillment import enqueue_plan_result
+
+                enqueue_plan_result(connection, result_id, now, commit=False)
             connection.commit()
         except Exception:
             connection.rollback()

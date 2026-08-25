@@ -38,6 +38,7 @@ IndexTextMode = Literal["legacy", "value_only", "natural", "answerable"]
 FtsLanguage = Literal["auto", "zh", "en"]
 ConflictAutoMode = Literal["off", "observe", "enforce", "l0_only"]
 PriceTargetMode = Literal["off", "audit", "observe", "enforce"]
+PlanFulfillmentMode = Literal["off", "audit", "observe", "enforce"]
 
 
 class VectorBackend(StrEnum):
@@ -101,6 +102,7 @@ class Settings:
     )
     entity_aliases_path: str | None = field(default=None, metadata={"toml": "entity.aliases_path"})
     price_target_mode: PriceTargetMode = field(default="observe", metadata={"toml": "price.target_mode"})
+    plan_fulfillment_mode: PlanFulfillmentMode = field(default="audit", metadata={"toml": "plan.fulfillment_mode"})
     embedder_mode: EmbedderMode = field(default="fake", metadata={"toml": "embedding.mode"})
     embedding_dim: int = field(default=2048, metadata={"toml": "embedding.dim"})
     embedding_api_key: str | None = field(
@@ -685,6 +687,8 @@ class Settings:
             raise ConfigurationError("entity aliases path must not be empty")
         if self.price_target_mode not in {"off", "audit", "observe", "enforce"}:
             raise ConfigurationError("price.target_mode must be 'off', 'audit', 'observe', or 'enforce'")
+        if self.plan_fulfillment_mode not in {"off", "audit", "observe", "enforce"}:
+            raise ConfigurationError("plan.fulfillment_mode must be 'off', 'audit', 'observe', or 'enforce'")
         if self.recall_default_limit < 1 or self.recall_default_limit > 100:
             raise ConfigurationError("recall default limit must be between 1 and 100")
         if self.recall_vector_scan_limit < 1:
@@ -984,6 +988,7 @@ class Settings:
             "embedding_api_mode": self.embedding_api_mode,
             "embedding_text_type": self.embedding_text_type,
             "price_target_mode": self.price_target_mode,
+            "plan_fulfillment_mode": self.plan_fulfillment_mode,
             "index_text_mode": self.index_text_mode,
             "index_backfill_batch_size": self.index_backfill_batch_size,
             "index_backfill_max_attempts": self.index_backfill_max_attempts,

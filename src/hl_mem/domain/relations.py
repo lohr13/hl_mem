@@ -20,6 +20,19 @@ class RelationType(StrEnum):
     FOLLOWS = "follows"
     ABOUT = "about"
     CONTRADICTS = "contradicts"
+    FULFILLED_BY = "fulfilled_by"
+    PARTIALLY_FULFILLED_BY = "partially_fulfilled_by"
+    CANCELLED_BY = "cancelled_by"
+    REPLACED_BY = "replaced_by"
+
+
+EXPANDABLE_RELATION_TYPES = (
+    RelationType.SUMMARIZES,
+    RelationType.SUPPORTS,
+    RelationType.FOLLOWS,
+    RelationType.ABOUT,
+    RelationType.CONTRADICTS,
+)
 
 
 def add_relation(
@@ -183,7 +196,7 @@ def walk_relation_graph(
     seeds = list(dict.fromkeys(seed_ids))
     if not seeds:
         return []
-    relations = [RelationType(value).value for value in (allowed_relations or list(RelationType))]
+    relations = [RelationType(value).value for value in (allowed_relations or EXPANDABLE_RELATION_TYPES)]
     if not relations:
         return []
     seed_placeholders = ",".join("?" for _ in seeds)

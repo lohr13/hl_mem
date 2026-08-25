@@ -120,6 +120,15 @@ def _handle_resolve_conflict_llm(worker: Worker, job: dict[str, Any]) -> dict[st
     )
 
 
+def _handle_reconcile_plan_result(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
+    from hl_mem.application.plan_fulfillment import PlanFulfillmentService
+
+    payload = job.get("payload") or json.loads(job["payload_json"] or "{}")
+    return PlanFulfillmentService(worker.connection, mode=worker.settings.plan_fulfillment_mode).reconcile(
+        str(payload["result_claim_id"]), now=utc_now()
+    )
+
+
 def _handle_induce_policies(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     payload = json.loads(job.get("payload_json") or "{}")
     return induce_policies(
@@ -242,6 +251,7 @@ JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {
     "rebuild_usefulness": _handle_rebuild_usefulness,
     "consolidate_conflicts": _handle_consolidate,
     "resolve_conflict_llm": _handle_resolve_conflict_llm,
+    "reconcile_plan_result": _handle_reconcile_plan_result,
     "deduplicate_claims": _handle_deduplicate,
     "discover_relations": _handle_discover_relations,
     "induce_policies": _handle_induce_policies,

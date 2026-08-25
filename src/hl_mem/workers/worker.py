@@ -56,6 +56,7 @@ from hl_mem.workers.job_handlers import (
 )
 from hl_mem.workers.job_handlers import purge_retained_events_for_namespaces as _purge_retained_events
 from hl_mem.workers.mental_models import DerivedMemoryMaintainer
+from hl_mem.workers.plan_fulfillment import enqueue_plan_reconciliation_scan
 from hl_mem.workers.scheduling import (
     enqueue_daily_job,
 )
@@ -422,6 +423,20 @@ class Worker:
                     )
                 ]
                 if self.settings.conflict_auto_resolve_enabled and self.settings.conflict_auto_mode != "off"
+                else []
+            ),
+            *(
+                [
+                    (
+                        "enqueue_plan_reconciliation_scan",
+                        lambda: enqueue_plan_reconciliation_scan(
+                            self.connection,
+                            maintenance_now,
+                            mode=self.settings.plan_fulfillment_mode,
+                        ),
+                    )
+                ]
+                if self.settings.plan_fulfillment_mode != "off"
                 else []
             ),
             (

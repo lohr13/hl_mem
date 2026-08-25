@@ -155,7 +155,7 @@ def _quantity_from_qualifiers(qualifiers: Mapping[str, Any]) -> QuantityCoordina
     return QuantityCoordinate("exact", amount, unit)
 
 
-def coordinate_from_claim(claim: Mapping[str, Any]) -> PlanCoordinate | None:
+def coordinate_from_claim(claim: Mapping[str, Any], *, allow_unknown_quantity: bool = False) -> PlanCoordinate | None:
     """Build one strict coordinate or fail closed when a protected field is incomplete."""
 
     qualifiers = claim.get("qualifiers")
@@ -168,6 +168,8 @@ def coordinate_from_claim(claim: Mapping[str, Any]) -> PlanCoordinate | None:
     phase = str(qualifiers.get("assertion_phase") or "")
     window_start = str(claim.get("occurred_start") or claim.get("valid_from") or "").strip()
     quantity = _quantity_from_qualifiers(qualifiers)
+    if quantity is None and allow_unknown_quantity and qualifiers.get("quantity_mode") == "unknown":
+        quantity = QuantityCoordinate("unknown", None, None)
     if (
         not namespace
         or not target

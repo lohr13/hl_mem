@@ -10,7 +10,7 @@ from typing import Any
 
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.conflicts import compute_claim_pair_key
-from hl_mem.domain.relations import RelationType
+from hl_mem.domain.relations import EXPANDABLE_RELATION_TYPES
 from hl_mem.lifecycle import assert_transition
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import (
@@ -23,7 +23,7 @@ from hl_mem.protocols import ClaimRow, RelationDiscoveryProtocol, RelationPropos
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.relation_proposals import RelationProposalRepository
 
-ALLOWED_RELATIONS = frozenset(item.value for item in RelationType)
+ALLOWED_RELATIONS = frozenset(item.value for item in EXPANDABLE_RELATION_TYPES)
 AUTO_RELATIONS = frozenset({"about", "follows", "supports"})
 
 RELATION_DISCOVERY_OUTPUT_SCHEMA: dict[str, Any] = {
