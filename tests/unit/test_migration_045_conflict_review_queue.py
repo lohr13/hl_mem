@@ -109,7 +109,7 @@ def test_migration_045_creates_group_candidate_and_review_schema(tmp_path: Path)
     assert connection.execute("SELECT 1 FROM schema_migrations WHERE version='045_conflict_review_queue'").fetchone()
 
 
-def test_migration_045_seeds_only_unsettled_review_work(tmp_path: Path) -> None:
+def test_later_policy_upgrade_requeues_manual_left_clean_by_migration_045(tmp_path: Path) -> None:
     path = tmp_path / "upgrade.db"
     legacy = _pre_045_database(path)
     for prefix, slot, key in (
@@ -136,10 +136,10 @@ def test_migration_045_seeds_only_unsettled_review_work(tmp_path: Path) -> None:
         }
 
         assert set(rows) == {"manual", "pending"}
-        assert rows["manual"]["dirty_at"] is None
-        assert rows["manual"]["dirty_reason"] == "migration_manual_clean"
+        assert rows["manual"]["dirty_at"] is not None
+        assert rows["manual"]["dirty_reason"] == "v030_policy_upgrade"
         assert rows["pending"]["dirty_at"] is not None
-        assert rows["pending"]["dirty_reason"] == "migration_open_case"
+        assert rows["pending"]["dirty_reason"] == "v030_policy_upgrade"
     finally:
         database.close()
 

@@ -19,6 +19,39 @@ from hl_mem.storage.claims import ClaimRepository
 OPEN_CASE_STATUSES = ("pending", "auto_resolved", "manual_required")
 NONTERMINAL_CLAIM_STATUSES = frozenset({"active", "candidate", "disputed"})
 SUPPORTED_DECISIONS = frozenset({"keep_left", "keep_right", "coexist", "reject"})
+CONFLICT_AUTO_POLICY_VERSION = "conflict-auto-v1"
+
+
+def upgrade_conflict_auto_policy(
+    connection: sqlite3.Connection,
+    now: str,
+    policy_version: str = CONFLICT_AUTO_POLICY_VERSION,
+) -> int:
+    """把尚未经过当前策略的 open case 一次性重新置 dirty。"""
+
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        inserted = connection.execute(
+            "INSERT OR IGNORE INTO conflict_review_state("
+            "case_id,dirty_at,dirty_reason,policy_version) "
+            "SELECT id,?,'v030_policy_upgrade',? FROM conflict_cases "
+            "WHERE status IN ('pending','auto_resolved','manual_required') AND resolved_at IS NULL",
+            (now, policy_version),
+        ).rowcount
+        updated = connection.execute(
+            "UPDATE conflict_review_state SET dirty_at=?,dirty_reason='v030_policy_upgrade',"
+            "not_before=NULL,attempt_count=0,last_error=NULL,policy_version=? "
+            "WHERE COALESCE(policy_version,'')<>? AND case_id IN ("
+            "SELECT id FROM conflict_cases WHERE status IN ('pending','auto_resolved','manual_required') "
+            "AND resolved_at IS NULL)",
+            (now, policy_version, policy_version),
+        ).rowcount
+        connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    return int(inserted) + int(updated)
 
 
 class ResolutionService:
