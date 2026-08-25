@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Sequence, cast
 
-from hl_mem.core.vector import batch_cosine_similarity, cosine_similarity
+from hl_mem.core.vector import batch_cosine_similarity
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.claims.claim import build_index_text
 from hl_mem.domain.claims.conflicts import (
@@ -30,6 +30,10 @@ from hl_mem.storage._shared import (
     row_to_dict,
 )
 from hl_mem.storage.candidate_materializer import materialize_candidates
+from hl_mem.storage.dedup_candidates import (
+    find_legacy_cross_subject_candidates,
+    find_slot_cross_subject_candidates,
+)
 from hl_mem.storage.sqlite_vec import SQLiteVecVectorBackend
 
 _CURRENT_STATUS_SQL = "('active','superseded','expired')"
@@ -331,7 +335,6 @@ class ClaimRepository:
         threshold: float = 0.92,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
-        """发现同 predicate、不同 subject 的无 slot 高相似 Claim 对。"""
         if not 0.0 <= threshold <= 1.0:
             raise ValueError("dedup threshold must be between 0 and 1")
         if limit < 1:
@@ -343,20 +346,22 @@ class ClaimRepository:
             (namespace, limit),
         ).fetchall()
         del embedder  # 候选发现只使用已存向量，禁止日常扫描触发远程 embedding。
-        claims = list(reversed(self._decode_rows(rows)))
-        groups: dict[str, list[dict[str, Any]]] = {}
-        for claim in claims:
-            groups.setdefault(str(claim["predicate"]), []).append(claim)
-        candidates: list[dict[str, Any]] = []
-        for predicate_claims in groups.values():
-            for left_index, left in enumerate(predicate_claims):
-                for right in predicate_claims[left_index + 1 :]:
-                    if left.get("subject_entity_id") == right.get("subject_entity_id"):
-                        continue
-                    similarity = cosine_similarity(left["embedding_dense"], right["embedding_dense"])
-                    if similarity < threshold:
-                        continue
-                    candidates.append({"left": left, "right": right, "similarity": similarity})
+        candidates = find_legacy_cross_subject_candidates(list(reversed(self._decode_rows(rows))), threshold)
+        slot_rows = self.connection.execute(
+            "SELECT * FROM claims WHERE namespace_key=? AND status='active' "
+            "AND canonical_slot IS NOT NULL AND embedding_dense IS NOT NULL "
+            "AND (subject_canonical_entity_id IS NOT NULL OR canonical_target_entity_id IS NOT NULL) "
+            "ORDER BY recorded_from DESC,id DESC LIMIT ?",
+            (namespace, limit),
+        ).fetchall()
+        candidates.extend(
+            find_slot_cross_subject_candidates(
+                self.connection,
+                list(reversed(self._decode_rows(slot_rows))),
+                namespace,
+                threshold,
+            )
+        )
         candidates.sort(
             key=lambda pair: (
                 -pair["similarity"],
@@ -364,7 +369,7 @@ class ClaimRepository:
                 pair["right"]["id"],
             )
         )
-        return candidates
+        return candidates[:limit]
 
     def find_by_conflict_key(self, conflict_key: str | None) -> list[dict[str, Any]]:
         """按冲突键返回仍参与解析的候选 Claim。"""

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, Protocol
@@ -86,6 +87,111 @@ _PROTECTED_WORDS = {
     "wouldn't",
 }
 _GENERIC_CAPITALIZED_WORDS = {"a", "an", "i", "the", "this", "that", "user"}
+_PROTECTED_QUALIFIERS = frozenset(
+    {
+        "account",
+        "action_family",
+        "assertion_phase",
+        "currency",
+        "date",
+        "direction",
+        "quantity",
+        "quantity_mode",
+        "quantity_unit",
+        "snapshot_date",
+        "unit",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DedupSafety:
+    safe: bool
+    reason: str
+
+
+def governing_canonical_entity_id(claim: dict[str, Any]) -> str | None:
+    """Return the typed entity that governs one dedup coordinate."""
+
+    target = claim.get("canonical_target_entity_id")
+    subject = claim.get("subject_canonical_entity_id")
+    value = target if target is not None else subject
+    return str(value) if value else None
+
+
+def dedup_slot_bucket_key(claim: dict[str, Any]) -> str | None:
+    """Hash the strict slot coordinate used only by the typed cross-subject branch."""
+
+    slot = claim.get("canonical_slot")
+    attribute = claim.get("canonical_attribute")
+    entity_id = governing_canonical_entity_id(claim)
+    if not isinstance(slot, str) or not slot or not attribute or not entity_id:
+        return None
+    payload = [
+        claim.get("namespace_key", "default"),
+        slot,
+        attribute,
+        slot_qualifier_key(slot, claim.get("qualifiers")),
+        entity_id,
+        claim.get("assertion_kind") or "unknown",
+    ]
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def dedup_structural_gate(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    *,
+    allow_cross_subject: bool = False,
+) -> DedupSafety:
+    """Reject unsafe merges before confidence or semantic judgement is consulted."""
+
+    if left.get("status", "active") != "active" or right.get("status", "active") != "active":
+        return DedupSafety(False, "claim_not_active")
+    if str(left.get("namespace_key", "default")) != str(right.get("namespace_key", "default")):
+        return DedupSafety(False, "namespace_mismatch")
+    left_subject = normalize_entity_id(left.get("subject_entity_id"))
+    right_subject = normalize_entity_id(right.get("subject_entity_id"))
+    left_entity = governing_canonical_entity_id(left)
+    right_entity = governing_canonical_entity_id(right)
+    if left_entity != right_entity:
+        return DedupSafety(False, "typed_entity_mismatch")
+    if left_subject != right_subject and (not allow_cross_subject or left_entity is None):
+        return DedupSafety(False, "subject_mismatch_without_typed_proof")
+    if left.get("canonical_slot") != right.get("canonical_slot"):
+        return DedupSafety(False, "slot_mismatch")
+    if left.get("canonical_attribute") != right.get("canonical_attribute"):
+        return DedupSafety(False, "attribute_mismatch")
+    if left.get("canonical_attribute") in {"identity.name", "memory.explicit"}:
+        return DedupSafety(False, "protected_attribute")
+    if (left.get("assertion_kind") or "unknown") != (right.get("assertion_kind") or "unknown"):
+        return DedupSafety(False, "assertion_kind_mismatch")
+    slot = left.get("canonical_slot")
+    if slot:
+        if slot_qualifier_key(str(slot), left.get("qualifiers")) != slot_qualifier_key(
+            str(slot), right.get("qualifiers")
+        ):
+            return DedupSafety(False, "coordinate_qualifier_mismatch")
+    elif normalize_predicate(str(left.get("predicate") or "")) != normalize_predicate(
+        str(right.get("predicate") or "")
+    ):
+        return DedupSafety(False, "predicate_mismatch")
+    left_qualifiers = left.get("qualifiers") or {}
+    right_qualifiers = right.get("qualifiers") or {}
+    if not isinstance(left_qualifiers, dict) or not isinstance(right_qualifiers, dict):
+        return DedupSafety(False, "invalid_qualifiers")
+    protected_keys = _PROTECTED_QUALIFIERS & (left_qualifiers.keys() | right_qualifiers.keys())
+    if any(left_qualifiers.get(key) != right_qualifiers.get(key) for key in protected_keys):
+        return DedupSafety(False, "protected_qualifier_mismatch")
+    left_value, right_value = left.get("value"), right.get("value")
+    if not isinstance(left_value, str) or not isinstance(right_value, str):
+        return DedupSafety(False, "non_text_value")
+    if _protected_atoms(left_value) != _protected_atoms(right_value):
+        return DedupSafety(False, "protected_atom_mismatch")
+    if not _valid_intervals_overlap(left, right):
+        return DedupSafety(False, "valid_time_disjoint")
+    return DedupSafety(True, "safe")
 
 
 def compute_dedup_pair_key(left_claim_id: str, right_claim_id: str) -> str:
