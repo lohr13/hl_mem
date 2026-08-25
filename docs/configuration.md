@@ -17,6 +17,12 @@ v0.31.0 的受限 assertion 门控没有配置键；存量 `unknown` 只可观�
   Wilson 95% 下界至少 96%、结构违规为 0 且 recall 无显著退化。
 - `extraction.lesson_signal_mode="observe"`：E3 v2 封存，继续使用旧 notability prompt；新 prompt 只有在目标信号、
   high precision、诱饵误报、误 permanent 和一般提取覆盖全部过线后才能替换。
+  **此开关的作用（供用户自行判断是否开启）**：设为 `"enforce"` 后，提取器会识别"用户纠正 / 可复用防错规则 /
+  曾导致高成本失败的教训 / 『以后必须/禁止』类持久指令"四类信号并提高其 importance——效果是这类记忆在召回
+  排序和 TTL 中获得更高权重（"记教训比记事实值钱"场景）。离线评测：目标信号 recall 95%、high precision 100%、
+  诱饵误报 0、误转 permanent 0（合成语料）；未过的门禁仅为判分模型双序一致性，属评测装备限制而非信号质量缺陷。
+  该改动只影响新提取 claim 的重要性打分，非破坏性、可随时改回 `"observe"` 回滚。如果你的 agent 使用场景中
+  纠错/防错类记忆的价值密度高（运维、交易纪律、协作规范等），建议开启。
 - `recall.entity_constraint_mode="observe"`：E4 行为门禁通过，但冻结查询 100% 为 snapshot-derived synthetic，证据
   等级不足；取得满足预注册真实查询占比的语料前不启用 hard filter。
 - `hermes.manual_conflict_notice=true`：只提示 residual `manual_required_count`，同一会话首次或计数变化时显示；
