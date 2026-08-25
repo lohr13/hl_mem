@@ -42,6 +42,7 @@ from hl_mem.protocols import (
     embed_query,
 )
 from hl_mem.recall.echo_suppression import EchoRequest, EchoSuppressionPolicy
+from hl_mem.recall.entity_query import plan_query_entity
 from hl_mem.recall.freshness_annotation import (
     DEFAULT_FRESHNESS_ANNOTATION_METRICS,
     FreshnessAnnotationPolicy,
@@ -118,27 +119,6 @@ class EnrichedSelection:
 
 
 _LowRecallExpander = Callable[[int, int], tuple[list[WeightedQuery], list[bytes]]]
-
-
-def _freshness_policy(settings: Settings) -> FreshnessAnnotationPolicy:
-    return FreshnessAnnotationPolicy(mode=settings.freshness_annotation_mode)
-
-
-def _freshness_request(
-    injection_context: InjectionContext,
-    intent: RecallIntent,
-    as_of: str | None,
-    known_as_of: str | None,
-) -> FreshnessRequest:
-    return FreshnessRequest(
-        delivery_purpose=injection_context.delivery_purpose,
-        intent=intent.value,
-        as_of=as_of,
-        known_as_of=known_as_of,
-        rendering_now=injection_context.rendering_now,
-        experiment_variant=injection_context.experiment_variant,
-        policy_version=dict(injection_context.policy_versions)["freshness"],
-    )
 
 
 def _freshness_item(memory_type: str, item_id: str, text: str, metadata: Mapping[str, Any]) -> FreshnessItem:
@@ -404,6 +384,17 @@ class _QueryExpansionSession:
         self.query_blobs = [
             embed_query(service.embedder, request.query) if service.settings.recall_dense_enabled else b""
         ]
+        self.entity_plan = plan_query_entity(
+            service.connection, request.query, request.namespace, service.settings.entity_constraint_mode
+        )
+        self.entity_plan.record(self.tracer.trace)
+        if service.settings.entity_constraint_mode == "enforce" and self.entity_plan.rewrite:
+            self.weighted_queries.append(WeightedQuery(self.entity_plan.rewrite, "entity_alias", 1.0))
+            self.query_blobs.append(
+                embed_query(service.embedder, self.entity_plan.rewrite)
+                if service.settings.recall_dense_enabled
+                else b""
+            )
         self.low_recall_expander: _LowRecallExpander | None = None
 
     def prepare(self) -> _QueryExpansionSession:
@@ -628,7 +619,7 @@ class RecallService:
         expansion: _QueryExpansionSession,
     ) -> list[dict[str, Any]]:
         request = session.request
-        expansion_enabled = self.query_expander is not None and self.settings.query_expansion_mode != "off"
+        expansion_enabled = len(expansion.weighted_queries) > 1
         return hybrid_claims(
             ClaimRepository(
                 self.connection,
@@ -658,6 +649,8 @@ class RecallService:
                 dedup_candidate_limit=self.settings.recall_dedup_candidate_limit,
                 feedback_min_samples=self.settings.feedback_min_samples,
                 decay_model=self.settings.decay_model,
+                entity_constraint_mode=self.settings.entity_constraint_mode,
+                entity_filter_id=expansion.entity_plan.resolution.filter_entity_id,
             ),
             relation_connection=self.connection,
             relation_config=self.relation_config,
@@ -848,12 +841,15 @@ class RecallService:
             bundle = _freshness_pack_bundle(
                 retrieval_bundle,
                 freshness_items,
-                policy=_freshness_policy(self.settings),
-                request=_freshness_request(
-                    session.injection_context,
-                    session.selected_intent,
-                    request.as_of,
-                    request.known_as_of,
+                policy=FreshnessAnnotationPolicy(mode=self.settings.freshness_annotation_mode),
+                request=FreshnessRequest(
+                    delivery_purpose=session.injection_context.delivery_purpose,
+                    intent=session.selected_intent.value,
+                    as_of=request.as_of,
+                    known_as_of=request.known_as_of,
+                    rendering_now=session.injection_context.rendering_now,
+                    experiment_variant=session.injection_context.experiment_variant,
+                    policy_version=dict(session.injection_context.policy_versions)["freshness"],
                 ),
                 token_budget=budget,
                 tracer=session.tracer,

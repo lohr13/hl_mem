@@ -18,6 +18,7 @@ from hl_mem.application.context_packet import (
 )
 from hl_mem.domain.recall import RecallIntent
 from hl_mem.experience.service import ExperienceService
+from hl_mem.recall.freshness_annotation import FreshnessAnnotationPolicy, FreshnessRequest
 from hl_mem.recall.procedure_pipeline import MemoryCandidate
 from hl_mem.recall.trace import ExperienceCandidateTrace, SearchTracer
 from hl_mem.settings import Settings
@@ -148,13 +149,16 @@ class ProcedureRecallFlow:
             claim_candidates=claim_candidates,
         )
         budget = self.request.token_budget or self.service.settings.packed_context_token_budget
-        freshness_request = recall_module._freshness_request(
-            self.injection_context,
-            self.intent,
-            self.request.as_of,
-            self.request.known_as_of,
+        freshness_request = FreshnessRequest(
+            delivery_purpose=self.injection_context.delivery_purpose,
+            intent=self.intent.value,
+            as_of=self.request.as_of,
+            known_as_of=self.request.known_as_of,
+            rendering_now=self.injection_context.rendering_now,
+            experiment_variant=self.injection_context.experiment_variant,
+            policy_version=dict(self.injection_context.policy_versions)["freshness"],
         )
-        freshness_evaluation = recall_module._freshness_policy(self.service.settings).evaluate(
+        freshness_evaluation = FreshnessAnnotationPolicy(mode=self.service.settings.freshness_annotation_mode).evaluate(
             [
                 recall_module._freshness_item(
                     item.memory_type,

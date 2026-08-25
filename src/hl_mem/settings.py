@@ -39,6 +39,7 @@ FtsLanguage = Literal["auto", "zh", "en"]
 ConflictAutoMode = Literal["off", "observe", "enforce", "l0_only"]
 PriceTargetMode = Literal["off", "audit", "observe", "enforce"]
 PlanFulfillmentMode = Literal["off", "audit", "observe", "enforce"]
+EntityConstraintMode = Literal["off", "observe", "enforce"]
 
 
 class VectorBackend(StrEnum):
@@ -76,7 +77,9 @@ def _toml_field(default: Any, path: str) -> Any:
     return field(default=default, metadata={"toml": path})
 
 
-def _validate_conflict_automation(settings: "Settings") -> None:
+def _validate_runtime_modes(settings: "Settings") -> None:
+    if settings.entity_constraint_mode not in {"off", "observe", "enforce"}:
+        raise ConfigurationError("recall.entity_constraint_mode must be 'off', 'observe', or 'enforce'")
     if settings.conflict_auto_mode not in {"off", "observe", "enforce", "l0_only"}:
         raise ConfigurationError("conflict.auto_mode must be 'off', 'observe', 'enforce', or 'l0_only'")
     if settings.conflict_l1_min_time_delta_seconds not in {0, 300, 3_600}:
@@ -175,16 +178,11 @@ class Settings:
     fts_language: FtsLanguage = field(default="auto", metadata={"toml": "recall.fts_language"})
     recall_vector_scan_limit: int = field(default=200, metadata={"toml": "recall.vector_scan_limit"})
     recall_dense_enabled: bool = field(default=True, metadata={"toml": "recall.dense_enabled"})
-    packed_context_token_budget: int = field(
-        default=2000,
-        metadata={"toml": "recall.packed_context_token_budget"},
-    )
+    packed_context_token_budget: int = _toml_field(2000, "recall.packed_context_token_budget")
     recall_candidate_floor: int = field(default=50, metadata={"toml": "recall.candidate_floor"})
+    entity_constraint_mode: EntityConstraintMode = _toml_field("observe", "recall.entity_constraint_mode")
     recall_dedup_threshold: float = field(default=0.95, metadata={"toml": "recall.dedup_threshold"})
-    recall_dedup_candidate_limit: int = field(
-        default=100,
-        metadata={"toml": "recall.dedup_candidate_limit"},
-    )
+    recall_dedup_candidate_limit: int = _toml_field(100, "recall.dedup_candidate_limit")
     echo_suppression_mode: EchoSuppressionMode = field(
         default="enforce",
         metadata={"toml": "recall.echo_suppression_mode"},
@@ -898,7 +896,7 @@ class Settings:
             raise ConfigurationError("worker.job_lease_minutes must be positive")
         if not 1 <= self.conflict_maintenance_max_cases <= 1_000:
             raise ConfigurationError("worker.conflict_maintenance_max_cases must be between 1 and 1000")
-        _validate_conflict_automation(self)
+        _validate_runtime_modes(self)
         if not 50 <= self.conflict_maintenance_budget_ms <= 10_000:
             raise ConfigurationError("worker.conflict_maintenance_budget_ms must be between 50 and 10000")
         if not 1 <= self.conflict_failure_backoff_seconds <= 86_400:
@@ -1001,6 +999,7 @@ class Settings:
             "fts_language": self.fts_language,
             "recall_vector_scan_limit": self.recall_vector_scan_limit,
             "recall_dense_enabled": self.recall_dense_enabled,
+            "entity_constraint_mode": self.entity_constraint_mode,
             "echo_suppression_mode": self.echo_suppression_mode,
             "echo_session_window_seconds": self.echo_session_window_seconds,
             "echo_pending_review_enabled": self.echo_pending_review_enabled,

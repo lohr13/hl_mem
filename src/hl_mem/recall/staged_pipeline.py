@@ -26,11 +26,13 @@ from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.domain.temporal import claim_is_visible
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import RerankerProtocol, WeightedQuery
+from hl_mem.recall.candidate_channels import ChannelRequest, collect_query_channels
 from hl_mem.recall.echo_suppression import (
     DEFAULT_ECHO_SUPPRESSION_METRICS,
     EchoRequest,
     EchoSuppressionPolicy,
 )
+from hl_mem.recall.entity_query import apply_entity_constraint
 from hl_mem.recall.ranking import (
     DEFAULT_WEIGHTS,
     blend_reranker_score,
@@ -73,6 +75,8 @@ class RecallConfig:
     dedup_candidate_limit: int = 100
     feedback_min_samples: int = field(default_factory=lambda: Settings().feedback_min_samples)
     decay_model: str = "legacy_linear"
+    entity_constraint_mode: str = "off"
+    entity_filter_id: str | None = None
 
 
 @dataclass
@@ -329,45 +333,29 @@ def _collect_candidates(
     query_channels: list[tuple[str, list[dict[str, Any]], float, float]] = []
     fts_us = 0
     dense_us = 0
+    entity_filtered_ids: set[str] = set()
+    channel_request = ChannelRequest(
+        candidate_limit,
+        reference,
+        selected_intent,
+        known_as_of,
+        namespace,
+        config.dense_enabled,
+        config.entity_constraint_mode,
+        config.entity_filter_id,
+    )
 
     def collect_query(item: WeightedQuery, blob: bytes, index: int) -> None:
         nonlocal fts_us, dense_us
-        label = "original" if index == 0 else f"expansion_{index}"
-        started = time.perf_counter_ns()
-        fts_results = [
-            dict(claim)
-            for claim in repo.search_claims_fts(
-                item.text,
-                candidate_limit,
-                reference,
-                selected_intent,
-                known_as_of,
-                namespace=namespace,
-            )
-        ]
-        fts_us += (time.perf_counter_ns() - started) // 1000
-        query_channels.append((f"{label}:fts", fts_results, item.weight, 1.0))
-        dense_results: list[dict[str, Any]] = []
-        if config.dense_enabled:
-            started = time.perf_counter_ns()
-            dense_results = [
-                dict(claim)
-                for claim in repo.search_claims_vector(
-                    blob,
-                    candidate_limit,
-                    reference,
-                    selected_intent,
-                    known_as_of,
-                    namespace=namespace,
-                )
-            ]
-            dense_us += (time.perf_counter_ns() - started) // 1000
-            query_channels.append((f"{label}:dense", dense_results, item.weight, 1.0))
+        collected = collect_query_channels(repo, item, blob, index, channel_request)
+        query_channels.extend(collected.channels)
+        fts_us += collected.fts_us
+        dense_us += collected.dense_us
+        entity_filtered_ids.update(collected.filtered_ids)
         if tracer is not None:
             legacy = weighted_queries is None
-            tracer.record_channel("fts" if legacy and index == 0 else f"{label}:fts", fts_results)
-            if config.dense_enabled:
-                tracer.record_channel("dense" if legacy and index == 0 else f"{label}:dense", dense_results)
+            for name, results, _, _ in collected.channels:
+                tracer.record_channel(name.split(":")[-1] if legacy and index == 0 else name, results)
 
     collect_query(queries[0], blobs[0], 0)
     original_visible_count = len(
@@ -411,6 +399,14 @@ def _collect_candidates(
             selected_intent,
             known_as_of,
         )
+        constrained = apply_entity_constraint(
+            getattr(repo, "connection", None),
+            tag_results,
+            config.entity_constraint_mode,
+            config.entity_filter_id,
+        )
+        tag_results = constrained.items
+        entity_filtered_ids.update(constrained.filtered_ids)
         tag_us = (time.perf_counter_ns() - started) // 1000
         if tracer is not None:
             tracer.trace.phases.tag_us = tag_us
@@ -418,6 +414,9 @@ def _collect_candidates(
     if tracer is not None:
         tracer.trace.query_tags = query_tags
         tracer.trace.query_slot_hints = query_slot_hints
+        if config.entity_filter_id is not None:
+            tracer.trace.entity_filter_mode = config.entity_constraint_mode
+            tracer.trace.entity_filtered_count = len(entity_filtered_ids)
         tracer.trace.tag_boost_applied = bool(effective_tag_boost_enabled and query_tags)
         tracer.trace.tag_channel_applied = bool(effective_tag_channel_enabled and query_tags and tag_results)
 

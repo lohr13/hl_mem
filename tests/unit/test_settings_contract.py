@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 203
+    assert len(fields(Settings)) == 204
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -105,9 +105,11 @@ def test_settings_contract_includes_bypass_and_recall_fields() -> None:
     assert settings.recall_default_limit == 5
     assert settings.recall_vector_scan_limit == 200
     assert settings.recall_dense_enabled is True
+    assert settings.entity_constraint_mode == "observe"
     assert settings.snapshot()["recall_default_limit"] == 5
     assert settings.snapshot()["recall_vector_scan_limit"] == 200
     assert settings.snapshot()["recall_dense_enabled"] is True
+    assert settings.snapshot()["entity_constraint_mode"] == "observe"
     assert RecallInput(query="memory").limit is None
 
 
@@ -133,6 +135,7 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"llm_provider": "invalid"}, "llm.provider"),
         ({"relation_expansion_mode": "invalid"}, "relation.expansion_mode"),
         ({"relevance_gate_mode": "invalid"}, "recall.relevance_gate_mode"),
+        ({"entity_constraint_mode": "invalid"}, "recall.entity_constraint_mode"),
         ({"query_context_mode": "invalid"}, "recall.query_context_mode"),
         ({"echo_suppression_mode": "invalid"}, "recall.echo_suppression_mode"),
         ({"echo_session_window_seconds": 59}, "recall.echo_session_window_seconds"),

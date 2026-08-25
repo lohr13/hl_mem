@@ -109,6 +109,11 @@ class SearchTrace:
     truncated: bool = False
     query_tags: list[str] = field(default_factory=list)
     query_slot_hints: list[str] = field(default_factory=list)
+    entity_mentions: list[str] = field(default_factory=list)
+    entity_resolution: dict[str, object] = field(default_factory=dict)
+    entity_proof_ids: list[str] = field(default_factory=list)
+    entity_filter_mode: str = "off"
+    entity_filtered_count: int = 0
     slot_boost_applied: bool = False
     tag_boost_applied: bool = False
     tag_channel_applied: bool = False
