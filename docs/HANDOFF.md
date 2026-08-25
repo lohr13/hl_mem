@@ -5,7 +5,7 @@
 ## 当前状态
 
 - **分支**：`batch5-v0310-release`
-- **版本**：v0.31.0
+- **版本**：v0.31.1
 - **阶段**：发版层 5.1–5.3 已完成；等待 Hermes 终验
 - **发布状态**：无 push、无 tag、无 PyPI 发布；v0.30.0 撤回轮保持未发布记录
 - **服务**：FastAPI 默认监听 8200；非敏感配置只从工作目录 `hl_mem.toml` 读取
@@ -13,7 +13,7 @@
 - **Schema**：54 migrations（SQL 001–054），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
-## v0.31.0 发版默认
+## v0.31.1 发版默认
 
 | 能力 | 默认 | 决议依据 |
 |---|---|---|
