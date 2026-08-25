@@ -195,3 +195,22 @@ def test_auto_apply_rejects_entity_proof_closed_after_review(tmp_path) -> None:
     assert claims.get_claim("left")["status"] == "active"
     assert claims.get_claim("right")["status"] == "active"
     assert connection.execute("SELECT auto_apply_eligible FROM dedup_pairs").fetchone()[0] == 0
+
+
+def test_same_subject_safe_pair_is_auto_apply_eligible() -> None:
+    claim = {
+        "subject_entity_id": "same",
+        "subject_canonical_entity_id": None,
+        "namespace_key": "default",
+        "status": "active",
+        "canonical_slot": None,
+        "canonical_attribute": "fact.other",
+        "assertion_kind": "unknown",
+        "predicate": "fact",
+        "qualifiers": {},
+        "value": "same fact",
+        "valid_from": "2026-08-25T00:00:00+00:00",
+        "valid_to": None,
+    }
+
+    assert dedup_domain.dedup_auto_apply_eligible(claim, claim, typed_strategy=False, proof_valid=True)

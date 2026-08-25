@@ -194,6 +194,22 @@ def dedup_structural_gate(
     return DedupSafety(True, "safe")
 
 
+def dedup_auto_apply_eligible(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    *,
+    typed_strategy: bool,
+    proof_valid: bool,
+) -> bool:
+    """Allow structurally safe same-subject pairs or explicitly proved typed projections."""
+
+    structural = dedup_structural_gate(left, right, allow_cross_subject=typed_strategy)
+    same_subject = normalize_entity_id(left.get("subject_entity_id")) == normalize_entity_id(
+        right.get("subject_entity_id")
+    )
+    return structural.safe and (same_subject or (typed_strategy and proof_valid))
+
+
 def compute_dedup_pair_key(left_claim_id: str, right_claim_id: str) -> str:
     """Return the stable, order-independent key used by ``dedup_pairs``."""
     ordered = "\x1f".join(sorted((left_claim_id, right_claim_id)))

@@ -14,6 +14,7 @@ from hl_mem.domain.claims.dedup import (
     DETERMINISTIC_NEAR_COPY_REASON,
     Deduplicator,
     compute_dedup_pair_key,
+    dedup_auto_apply_eligible,
     dedup_structural_gate,
     is_safe_near_duplicate,
 )
@@ -138,6 +139,9 @@ def deduplicate_claims(
         proof_valid = not typed_strategy or active_entity_proof_key(connection, left, right, namespace) == pair.get(
             "entity_proof_id"
         )
+        auto_apply_eligible = dedup_auto_apply_eligible(
+            left, right, typed_strategy=typed_strategy, proof_valid=proof_valid
+        )
         deterministic = Deduplicator._deterministic_check(left, right)
         if typed_strategy and (not structural.safe or not proof_valid):
             deterministic = "distinct"
@@ -171,7 +175,7 @@ def deduplicate_claims(
                 reason,
                 judge_model,
                 reviewed_at,
-                int(typed_strategy and structural.safe and proof_valid),
+                int(auto_apply_eligible),
                 pair["id"],
             ),
         )
