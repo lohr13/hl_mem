@@ -17,6 +17,7 @@ from hl_mem.domain.claims.attributes import (
     validate_slot_instance,
 )
 from hl_mem.domain.constants import PREDICATE_PREFERENCE, PREDICATE_STATE
+from hl_mem.domain.entity_coordinates import validate_canonical_entity_id
 
 EXCLUSIVE_QUALIFIERS = {"scope", "context", "environment", "project", "channel"}
 
@@ -123,21 +124,32 @@ def compute_conflict_key(
     qualifiers: dict[str, Any] | None,
     *,
     version: int = 3,
+    subject_canonical_entity_id: str | None = None,
 ) -> str | None:
-    """按 operational slot instance 计算 v3 冲突键；无有效 slot 时不生成键。"""
-    if version != 3:
-        raise ValueError("compute_conflict_key only supports version 3")
+    """计算 v3 legacy 或 v4 typed/tagged-legacy operational 冲突键。"""
+    if version not in {3, 4}:
+        raise ValueError("compute_conflict_key only supports versions 3 and 4")
     slot = validate_slot_instance(canonical_slot, qualifiers)
     if slot is None:
         return None
     canonical_namespace = unicodedata.normalize("NFKC", namespace).strip().casefold()
     canonical_subject = re.sub(r"\s+", "", unicodedata.normalize("NFKC", subject)).casefold()
+    if subject_canonical_entity_id is not None:
+        validate_canonical_entity_id(subject_canonical_entity_id)
     del predicate  # v3 由 slot 唯一决定冲突语义，predicate 不再隔离同一事实。
     raw = json.dumps(
         [
-            "v3",
+            f"v{version}",
             canonical_namespace,
-            canonical_subject,
+            (
+                canonical_subject
+                if version == 3
+                else (
+                    ["typed", subject_canonical_entity_id]
+                    if subject_canonical_entity_id is not None
+                    else ["legacy", canonical_subject]
+                )
+            ),
             slot,
             coordinate_qualifier_key(slot, qualifiers),
         ],

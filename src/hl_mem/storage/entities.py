@@ -235,6 +235,9 @@ class EntityRepository:
             )
         entity_count = self.connection.total_changes - before
         for alias_seed in seeds.aliases:
+            active = self.active_aliases(alias_seed.alias, namespace_key=namespace_key)
+            if any(item.entity_type == alias_seed.entity_type for item in active):
+                continue
             self.create_alias(
                 alias_seed.alias,
                 alias_seed.entity_type,

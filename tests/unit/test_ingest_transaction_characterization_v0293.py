@@ -154,17 +154,23 @@ def test_new_claim_commits_all_writes_before_flushing_audit_buffer(tmp_path: Any
     )
 
     assert result.reason == "inserted"
-    assert timeline == [
-        "BEGIN",
-        "INSERT:claims",
-        "INSERT:claims_fts_v2",
-        "INSERT:claims_tags_fts_v2",
-        "INSERT:evidence_links",
+    assert timeline[0] == "BEGIN"
+    assert timeline[-4:] == [
         "COMMIT",
         "AUDIT:dedup:fact_hash_checked:new",
         "AUDIT:conflict:not_applicable:no_existing",
         "AUDIT:dedup:semantic_checked:new",
     ]
+    for write in (
+        "INSERT:canonical_entities",
+        "INSERT:entity_aliases",
+        "INSERT:claims",
+        "INSERT:claims_fts_v2",
+        "INSERT:claims_tags_fts_v2",
+        "INSERT:evidence_links",
+        "INSERT:claim_entity_links",
+    ):
+        assert write in timeline[1 : timeline.index("COMMIT")]
     _assert_audit_after_commit(timeline)
     database.close()
 
@@ -341,14 +347,19 @@ def test_failed_write_rolls_back_and_discards_buffered_audit(tmp_path: Any) -> N
                 FakeEmbedder(8),
             )
 
-    assert timeline == [
-        "BEGIN",
+    assert timeline[0] == "BEGIN" and timeline[-1] == "ROLLBACK"
+    assert "COMMIT" not in timeline
+    for write in (
+        "INSERT:canonical_entities",
+        "INSERT:entity_aliases",
         "INSERT:claims",
         "INSERT:claims_fts_v2",
         "INSERT:claims_tags_fts_v2",
         "INSERT:evidence_links",
-        "ROLLBACK",
-    ]
+    ):
+        assert write in timeline
     assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM canonical_entities").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM entity_aliases").fetchone()[0] == 0
     assert not any(event.startswith("AUDIT:") for event in timeline)
     database.close()

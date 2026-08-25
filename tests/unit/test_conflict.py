@@ -29,7 +29,7 @@ def test_conflict_key_keeps_nonexclusive_configuration_slots_separate() -> None:
 
 
 def test_conflict_key_rejects_unsupported_version() -> None:
-    with pytest.raises(ValueError, match="version 3"):
+    with pytest.raises(ValueError, match="versions 3 and 4"):
         compute_conflict_key("default", "用户", "偏好", "preference.ui_theme", {}, version=2)
 
 

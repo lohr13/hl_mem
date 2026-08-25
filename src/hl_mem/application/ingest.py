@@ -21,6 +21,7 @@ from hl_mem.application._ingest_resolution import (
     _resolve_conflict_group,
     _resolve_temporal_candidates,
 )
+from hl_mem.application.entity_resolution import EntityResolutionService
 from hl_mem.config import INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import (
@@ -398,6 +399,19 @@ class IngestService:
         result_id = claim["id"]
         connection.execute("BEGIN IMMEDIATE")
         try:
+            entity_service = EntityResolutionService(connection)
+            entity_service.entities.seed_builtins(namespace, now=now)
+            subject_resolution = entity_service.resolve_subject(namespace, str(claim["subject_entity_id"]))
+            claim["subject_canonical_entity_id"] = subject_resolution.canonical_entity_id
+            claim["conflict_key"] = compute_conflict_key(
+                namespace,
+                str(claim["subject_entity_id"]),
+                str(claim["predicate"]),
+                claim.get("canonical_slot"),
+                qualifiers,
+                version=4,
+                subject_canonical_entity_id=subject_resolution.canonical_entity_id,
+            )
             started = time.perf_counter_ns()
             exact, existing = _find_resolution(claims, claim)
             IngestService._record_fact_hash_check(
@@ -498,6 +512,7 @@ class IngestService:
             IngestService._quarantine_resolution(claims, claim, now, resolution)
             IngestService._converge_superseded_members(claims, claim, now, resolution)
             _link_source_events(evidence, claim["id"], evidence_events, commit=False)
+            entity_service.link_subject(claim["id"], subject_resolution)
             connection.commit()
         except Exception:
             connection.rollback()
@@ -995,8 +1010,9 @@ def _build_claim_drafts(
             predicate,
             canonical_slot,
             qualifiers,
+            version=4,
         ),
-        "conflict_key_version": 3,
+        "conflict_key_version": 4,
         "legacy_conflict_key": compute_legacy_conflict_key(namespace, subject, predicate, qualifiers),
         "valid_from": observed_at,
         "recorded_from": recorded_from,

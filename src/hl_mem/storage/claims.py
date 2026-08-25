@@ -290,6 +290,83 @@ class ClaimRepository:
             )
         return cursor.rowcount == 1
 
+    def rekey_canonical_subject(
+        self,
+        claim_id: str,
+        canonical_entity_id: str,
+        conflict_key: str | None,
+        *,
+        expected_conflict_key: str | None,
+        expected_version: int,
+        changed_at: str,
+        commit: bool = True,
+    ) -> str:
+        """CAS-project a subject and quarantine any resulting exclusive collision."""
+
+        try:
+            outcome = self._rekey_canonical_subject(
+                claim_id,
+                canonical_entity_id,
+                conflict_key,
+                expected_conflict_key,
+                expected_version,
+                changed_at,
+            )
+        except Exception:
+            if commit and self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+        if commit:
+            self.connection.commit()
+        return outcome
+
+    def _rekey_canonical_subject(
+        self,
+        claim_id: str,
+        canonical_entity_id: str,
+        conflict_key: str | None,
+        expected_conflict_key: str | None,
+        expected_version: int,
+        changed_at: str,
+    ) -> str:
+
+        current = self.get_claim(claim_id)
+        collision = bool(
+            current
+            and current.get("status") in {"active", "candidate", "disputed"}
+            and is_mutually_exclusive_attribute(current.get("canonical_slot"))
+            and conflict_key
+            and self.connection.execute(
+                "SELECT 1 FROM claims WHERE id<>? AND namespace_key=? AND conflict_key=? "
+                "AND status IN ('active','candidate','disputed') LIMIT 1",
+                (claim_id, current["namespace_key"], conflict_key),
+            ).fetchone()
+        )
+        status_sql = ",status='disputed'" if collision else ""
+        cursor = self.connection.execute(
+            "UPDATE claims SET subject_canonical_entity_id=?,conflict_key=?,conflict_key_version=4"
+            f"{status_sql} WHERE id=? AND subject_canonical_entity_id IS NULL "
+            "AND conflict_key IS ? AND conflict_key_version=?",
+            (canonical_entity_id, conflict_key, claim_id, expected_conflict_key, expected_version),
+        )
+        if cursor.rowcount == 0:
+            return "stale"
+        members = self.find_by_conflict_key(conflict_key)
+        if collision and len(members) > 1 and is_mutually_exclusive_attribute(members[0].get("canonical_slot")):
+            for member in members:
+                if member["status"] in {"active", "candidate"}:
+                    self.update_status(str(member["id"]), "disputed", commit=False)
+                    member["status"] = "disputed"
+            self.ensure_group_conflict_case(
+                members,
+                created_at=changed_at,
+                decision="uncertain",
+                rationale="entity_rekey_collision",
+                commit=False,
+            )
+            return "quarantined"
+        return "updated"
+
     def find_active_for_dedup(
         self,
         namespace: str,
