@@ -1,0 +1,94 @@
+{
+  "arms": {
+    "A": {
+      "automatic_edge_precision": {
+        "denominator": 0,
+        "numerator": 0
+      },
+      "counterexample_false_supersede": {
+        "denominator": 400,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "cross_coordinate_auto_action": {
+        "denominator": 160,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "eligible_recall": {
+        "denominator": 400,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "equivalent_revision_growth_zero": {
+        "denominator": 80,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "historical_direction_accuracy": {
+        "denominator": 80,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "real_cohort_stale_reduction": {
+        "denominator": 128,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "records": 800
+    },
+    "B": {
+      "automatic_edge_precision": {
+        "denominator": 320,
+        "numerator": 320,
+        "value": 1.0
+      },
+      "counterexample_false_supersede": {
+        "denominator": 400,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "cross_coordinate_auto_action": {
+        "denominator": 160,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "eligible_recall": {
+        "denominator": 400,
+        "numerator": 400,
+        "value": 1.0
+      },
+      "equivalent_revision_growth_zero": {
+        "denominator": 80,
+        "numerator": 80,
+        "value": 1.0
+      },
+      "historical_direction_accuracy": {
+        "denominator": 80,
+        "numerator": 80,
+        "value": 1.0
+      },
+      "real_cohort_stale_reduction": {
+        "denominator": 128,
+        "numerator": 128,
+        "value": 1.0
+      },
+      "records": 800
+    }
+  },
+  "deterministic_replay": {
+    "A": [
+      "2990c431401c8dfc8d089c01e6f34db22cdfeca8148b6172964e10795e398ca5",
+      "2990c431401c8dfc8d089c01e6f34db22cdfeca8148b6172964e10795e398ca5",
+      "2990c431401c8dfc8d089c01e6f34db22cdfeca8148b6172964e10795e398ca5"
+    ],
+    "B": [
+      "8ffa0747e7c52d1dbe46b36c170a3d1ea61a2e67ce127ab86b573a88f5839253",
+      "8ffa0747e7c52d1dbe46b36c170a3d1ea61a2e67ce127ab86b573a88f5839253",
+      "8ffa0747e7c52d1dbe46b36c170a3d1ea61a2e67ce127ab86b573a88f5839253"
+    ]
+  },
+  "hermes_validator_sha256": "746e0e43bcaddae4ad2e182426bbc42ecae8b6976d389742a89cddcc0576e64a",
+  "manifest_sha256": "25be3ca732d5def5feab03e100012bdac8c54918eec1852ad047cb2eb768cca8",
+  "rule_commit": "c1a1774fb7c98086f6ff2335bf5abb04dff44d6f"
+}
