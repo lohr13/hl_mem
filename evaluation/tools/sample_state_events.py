@@ -17,6 +17,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True, help="destination JSONL for irreversible seed structures")
     parser.add_argument("--limit", type=int, default=200)
     parser.add_argument("--recorded-after")
+    parser.add_argument("--recorded-before")
     parser.add_argument("--seed", default="v0300-state-counterexamples-v1")
     arguments = parser.parse_args(argv)
 
@@ -24,6 +25,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         arguments.source_db,
         limit=arguments.limit,
         recorded_after=arguments.recorded_after,
+        recorded_before=arguments.recorded_before,
         seed=arguments.seed,
     )
     write_redacted_seeds(arguments.output, seeds)

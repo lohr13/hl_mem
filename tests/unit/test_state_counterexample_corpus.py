@@ -161,6 +161,29 @@ def test_real_sampler_recorded_after_proves_post_freeze_context_pool(tmp_path: P
     assert replacement[-1]["seed_id"] == "real-059"
 
 
+def test_real_sampler_supports_an_exclusive_recorded_time_window(tmp_path: Path) -> None:
+    source = tmp_path / "source.db"
+    _source_database(source, count=260)
+
+    bounded = sample_redacted_seeds(
+        source,
+        limit=20,
+        recorded_after="2026-08-21T16:00:00Z",
+        recorded_before="2026-08-21T17:30:00Z",
+        seed="v300-calibration-window",
+    )
+
+    assert len(bounded) == 20
+    with pytest.raises(ValueError, match="0 eligible events; 1 required"):
+        sample_redacted_seeds(
+            source,
+            limit=1,
+            recorded_after="2026-08-21T17:30:00Z",
+            recorded_before="2026-08-21T18:00:00Z",
+            seed="v300-empty-window",
+        )
+
+
 def test_generator_freezes_exact_protocol_quotas_and_separates_gold(tmp_path: Path) -> None:
     manifest = generate_corpus([_seed(index) for index in range(200)], tmp_path)
 

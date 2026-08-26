@@ -1,0 +1,196 @@
+{
+  "adr_commit": "a1a16c9d315c0360221f30892b566cad2a58d28a",
+  "burned_r1_r5_assets_read": false,
+  "equipment": {
+    "builder": {
+      "path": "evaluation/tools/v0300_latest_wins_corpus.py",
+      "sha256": "b2d9242c0921a861f87b03a36a0ecd493870c9c8cf082596add0086d2b5b06b1"
+    },
+    "context_pools": {
+      "calibration": {
+        "path": "Temp/v300_batch2_gold_review_20260826/context_pool_calibration.jsonl",
+        "records": 120,
+        "sha256": "b5385ba402cf3e9e3b8251c8b837d21d2770bf809b812dd412d0526b77e86746"
+      },
+      "validation_a": {
+        "path": "Temp/v300_batch2_gold_review_20260826/context_pool_validation_a.jsonl",
+        "records": 160,
+        "sha256": "a3b369144c0192e544e0b02faf86c1b5b5a69472d873bf99154f6fdc2bfbd9bd"
+      },
+      "validation_b": {
+        "path": "Temp/v300_batch2_gold_review_20260826/context_pool_validation_b.jsonl",
+        "records": 160,
+        "sha256": "5174581decb9f48b4dc1ecf187ef99b0f51261c8bed205bcb6439662a3bb1611"
+      }
+    },
+    "generation_config": {
+      "path": "Temp/v300_batch2_gold_review_20260826/generation_config.json",
+      "sha256": "13f856d13177b31d1be60f948a7591e2b6cacd85c1f114f94f5197c6e2f682c2"
+    },
+    "review_packager": {
+      "path": "Temp/v300_batch2_gold_review_20260826/build_review_package.py",
+      "sha256": "f31b969008650e875e685e96441d175046b7eef199519465d9af078bab291975"
+    },
+    "sampler": {
+      "path": "src/hl_mem/evaluation/state_counterexample_corpus.py",
+      "sha256": "ceae2a15ebabb5ca255293e1ca30f8191e8e1c59843cbd2f74bded13e1198d1d"
+    },
+    "sampler_cli": {
+      "path": "evaluation/tools/sample_state_events.py",
+      "sha256": "fdf0e1e6cfcba6579fbe5cb44d7daed6b3b5edb0c5d9f87e5a6600fda55ebf7f"
+    }
+  },
+  "gold_self_check": {
+    "bundle_ids_match": true,
+    "gold_schema_valid": true,
+    "quotas_valid": true,
+    "source_ratios_valid": true
+  },
+  "non_overlap_proof": {
+    "bundle_id_overlap": 0,
+    "context_source_hash_overlap": 0,
+    "controlled_record_fingerprint_overlap": 0,
+    "generation_ids_unique": true,
+    "template_families_unique": true,
+    "time_windows_overlap": 0,
+    "variant_salts_unique": true
+  },
+  "profiles": {
+    "calibration": {
+      "bundles": 300,
+      "context_pool_sha256": "96bce45800cc8a7935c2e8fe826087ab4e67d6abf2ff6091026be83b16d76b72",
+      "files": {
+        "corpus": {
+          "path": "v300_latest_wins_calibration_corpus.jsonl",
+          "records": 300,
+          "sha256": "45ef6c9a4c73c654cfb5fe7a20fa0eb9c1689e7fd990b6fa3c0706c14e43cbe6"
+        },
+        "gold": {
+          "path": "v300_latest_wins_calibration_gold.jsonl",
+          "records": 300,
+          "sha256": "44a4ed5bace5edfca40a36a436d5678f2190fe6219400c8cc75bca1083985153"
+        }
+      },
+      "generation_id": "v300-restart-calibration-20260826-a1a16c9",
+      "name": "calibration",
+      "quotas": {
+        "cross_coordinate_isolation": 60,
+        "duplicate_or_corroborate": 30,
+        "fail_closed_boundary": 30,
+        "late_arriving_predecessor": 30,
+        "newer_current_version": 60,
+        "newer_rollback": 30,
+        "non_current_context": 60
+      },
+      "real_structure_ratio": 0.4,
+      "recorded_after_exclusive": "2026-07-20T23:59:59Z",
+      "recorded_before_exclusive": "2026-08-09T00:00:00Z",
+      "sources": {
+        "real_deidentified": 120,
+        "synthetic_adversarial": 180
+      },
+      "template_family": "calibration_mixed_v1",
+      "variant_salt": "v300-calibration-b848ccf5-c845-4325-bfff-a5a84857a592"
+    },
+    "validation_a": {
+      "bundles": 400,
+      "context_pool_sha256": "7e72670800eb521f684336e99f01555c836ea7e2061148319808d28c67ead066",
+      "files": {
+        "corpus": {
+          "path": "v300_latest_wins_validation_a_corpus.jsonl",
+          "records": 400,
+          "sha256": "58227149dc6e89bb2c1f30a8db3600bc033cae83dd3492bd11022724b6daebb7"
+        },
+        "gold": {
+          "path": "v300_latest_wins_validation_a_gold.jsonl",
+          "records": 400,
+          "sha256": "3056b8d943b62e988aa3450a2f7ec5074a139975774ad2b5640de212167b9dc0"
+        }
+      },
+      "generation_id": "v300-restart-validation-a-20260826-a1a16c9",
+      "name": "validation_a",
+      "quotas": {
+        "cross_coordinate_isolation": 80,
+        "duplicate_or_corroborate": 40,
+        "fail_closed_boundary": 40,
+        "late_arriving_predecessor": 40,
+        "newer_current_version": 80,
+        "newer_rollback": 40,
+        "non_current_context": 80
+      },
+      "real_structure_ratio": 0.4,
+      "recorded_after_exclusive": "2026-08-09T00:00:00Z",
+      "recorded_before_exclusive": "2026-08-17T00:00:00Z",
+      "sources": {
+        "real_deidentified": 160,
+        "synthetic_adversarial": 240
+      },
+      "template_family": "validation_zh_ops_v1",
+      "variant_salt": "v300-validation-a-f194edfa-d8f0-4a68-920f-2d1b565060c2"
+    },
+    "validation_b": {
+      "bundles": 400,
+      "context_pool_sha256": "854de721fe8d882f66103570fbdd06fd50e7ae08952395db0e1fd43e110d01b6",
+      "files": {
+        "corpus": {
+          "path": "v300_latest_wins_validation_b_corpus.jsonl",
+          "records": 400,
+          "sha256": "c3beaa222fda12f4ba6473a294d17ba22957c922e2da5aae6d9dff6a24b4d9b2"
+        },
+        "gold": {
+          "path": "v300_latest_wins_validation_b_gold.jsonl",
+          "records": 400,
+          "sha256": "1b3acfc6eea8a7238e6c19da7556cf729688796670783ff4c7754bba1abe1a10"
+        }
+      },
+      "generation_id": "v300-restart-validation-b-20260826-a1a16c9",
+      "name": "validation_b",
+      "quotas": {
+        "cross_coordinate_isolation": 80,
+        "duplicate_or_corroborate": 40,
+        "fail_closed_boundary": 40,
+        "late_arriving_predecessor": 40,
+        "newer_current_version": 80,
+        "newer_rollback": 40,
+        "non_current_context": 80
+      },
+      "real_structure_ratio": 0.4,
+      "recorded_after_exclusive": "2026-08-17T00:00:00Z",
+      "recorded_before_exclusive": "2026-08-27T00:00:00Z",
+      "sources": {
+        "real_deidentified": 160,
+        "synthetic_adversarial": 240
+      },
+      "template_family": "validation_en_release_v1",
+      "variant_salt": "v300-validation-b-cb868db1-a13a-485e-a602-366c6c2e476d"
+    }
+  },
+  "protocol": "adr-0004-config-version-latest-wins-corpus-v1",
+  "review": {
+    "boundary_records": 550,
+    "files": {
+      "boundary_cases": {
+        "path": "boundary_cases.jsonl",
+        "sha256": "af84bd67581864444699fc1be3dfa488f80e8f85740d85c1c65bff74e8dc85f1"
+      },
+      "full_structural_summary": {
+        "path": "full_structural_summary.json",
+        "sha256": "45156b2a87be88665693837ae9dbc76238ee33bf626714e09fe5dd3dadeee610"
+      },
+      "readme": {
+        "path": "README.md",
+        "sha256": "1518eebf1c1cb0a3951d98c070a649e1804d354718466c123a9b376c582b493c"
+      },
+      "sample_index": {
+        "path": "sample_index.jsonl",
+        "sha256": "f74cac8dd9d1712e7605afec9ddb5dcbf00f5630ff2b12fd9cfc05800fdd0658"
+      }
+    },
+    "package": "v300_batch2_gold_review_20260826",
+    "required_reviewer": "Hermes",
+    "sample_records": 42,
+    "status": "pending"
+  },
+  "schema_version": 1,
+  "seal_status": "pending_hermes_review"
+}
