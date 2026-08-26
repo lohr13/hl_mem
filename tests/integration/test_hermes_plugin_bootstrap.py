@@ -115,7 +115,7 @@ def test_missing_hermes_config_logs_safe_diagnostics_and_reraises(
     assert expected_config in caplog.text
     assert str(source_tree.resolve()) in caplog.text
     assert str(hermes_home.resolve()) in caplog.text
-    assert "hl_mem_version=0.31.1" in caplog.text
+    assert "hl_mem_version=0.32.0" in caplog.text
     assert "Traceback (most recent call last)" in caplog.text
     assert secret not in caplog.text
 

@@ -1,5 +1,32 @@
 # HL-Mem 变更记录
 
+## v0.32.0（2026-08-26）
+
+### `config.version` 确定性关链
+
+- 按 [ADR-0004](adr/0004-config-version-deterministic-latest-wins.md) 新增 `config.version` 确定性 latest-wins：
+  exact coordinate、可信 event time、来源权威与固定 currentness proof 合同全部满足时，才判定 duplicate、
+  corroborates、supersedes 或 historical predecessor；灰区保持并存可见，不新建人工必办队列。
+- 新增 `state.latest_wins_mode=off|observe|enforce` 与 `state.latest_wins_slots` 双开关。代码默认 `observe`，只记录
+  版本化建议而不改 Claim；当前 slot 白名单仅含 `config.version`。
+- 新增 `hl-mem report-version --namespace <namespace> --subject <owner>` 确定性版本探针。版本只读当前包
+  `hl_mem.__version__`，owner 必须唯一解析；事件与 Claim 直接投影，零 LLM，失败时 fail-closed。
+
+### 冻结评测依据
+
+- validation A/B 是两份独立的 400 案冻结集。B 臂 exact **800/800（100%）**、eligible recall
+  **320/320（100%）**、自动 edge precision **320/320（100%）**；危险误关链 **0**、反例误关 **0/400**、
+  跨坐标动作 **0/160**、historical predecessor 方向 **80/80**。
+- A（off）基线 exact **20%**、eligible recall **0%**。正式评分只运行一次、零补考；冻结 manifest SHA-256
+  前缀为 `25be3ca7`，Hermes 已用预注册独立脚本重算一致。
+
+### 历史与回滚
+
+- 本能力是 v0.30.0 状态行为在 commit `3a80601` 撤回后的窄范围重启：只授权单 slot、结构化探针与确定性规则，
+  不恢复通用状态 prompt/canonicalizer，也不让 LLM 取得生产关链权限；冻结协议全文以 ADR-0004 为准。
+- 紧急停止新建议和新动作只需设置 `state.latest_wins_mode = "off"`。已经落地的误链必须通过补偿 revision 修复，
+  不删除历史 Claim 或证据。
+
 ## v0.31.1（2026-08-26）
 
 ### Hermes 注入链路与配置安全

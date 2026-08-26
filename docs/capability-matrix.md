@@ -1,6 +1,6 @@
 # HL-Mem 能力成熟度矩阵
 
-> 基线：v0.31.1。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
+> 基线：v0.32.0。默认模式取自 `Settings` 的静态默认值；部署通过 `hl_mem.toml` 显式覆盖。`audit`/`observe` 表示会记录数据但不自动改变核心结果或生命周期。
 
 ## 成熟度定义
 
@@ -26,6 +26,7 @@
 | Event 幂等摄入与证据链 | stable | `on` | 否 | 是 | 写入或约束失败时事务回滚并返回具体错误 | 保持跨版本事务、幂等、并发和证据完整性回归 |
 | Claim assertion 门控 | beta | `unknown`（legacy） | 否 | 是 | unknown 只可观测，不授权 supersede 或过滤注入 | 新写入分类精度和时间关链生产回放持续满足门禁 |
 | 确定性时间关链 | beta | `temporal-v1` 窄规则 | 否 | 是 | 仅 observation 的原子状态/显式价格更正可自动；非互斥 slot 保持共存；灰区转人工 pair case | 固定 14 条 correct 保持 precision 1.0，合法共存误接链持续为 0 |
+| `config.version` latest-wins | beta | `observe` | 否 | 是，仅 audit；`enforce` 才关链 | 仅可信 `report-version` proof 与 exact coordinate 可授权；灰区并存可见且不建人工队列；`off` 停止新建议和动作 | ADR-0004 两份独立 400 案保持 exact 800/800、eligible 320/320、危险误关链和跨坐标动作均为 0 |
 | Typed canonical entity | stable | 写入解析 `on` | 否 | 是 | 无 proof、跨类型同名或多 active alias 时保持 nullable legacy 坐标；不做跨类型合并 | agent/device/environment 跨类型误合并持续为 0，alias 版本、rekey collision 和旧 reader 兼容受回归保护 |
 | 价格 canonical target | stable | `enforce` | 否 | 是 | 只接受 qualified code 或唯一 typed alias；target/date/币种/单位缺失时保持 `uncertain` | E6 B 臂 120+ price case 达到 target precision 100%、跨 target supersede 0、missing→uncertain 100% |
 | Plan fulfillment | stable | `enforce` | 可选本地 judge 关闭 | 是 | 坐标不全、多逻辑组、overfill 或单位变化时 abstain；只关闭 valid time | E5 确定性 A 臂 143/143，四类 recall、macro-F1、数量守恒均 1.0，错误关闭 0 |

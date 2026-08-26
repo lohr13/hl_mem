@@ -1,25 +1,26 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-25
+> 最后更新：2026-08-26
 
 ## 当前状态
 
-- **分支**：`batch5-v0310-release`
-- **版本**：v0.31.1
-- **阶段**：发版层 5.1–5.3 已完成；等待 Hermes 终验
-- **发布状态**：无 push、无 tag、无 PyPI 发布；v0.30.0 撤回轮保持未发布记录
+- **分支**：`main`
+- **版本**：v0.32.0
+- **阶段**：批 6a 发版准备；等待 Hermes push
+- **发布状态**：本地 commit，未 push、未打 tag、未部署
 - **服务**：FastAPI 默认监听 8200；非敏感配置只从工作目录 `hl_mem.toml` 读取
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：54 migrations（SQL 001–054），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
-## v0.31.1 发版默认
+## v0.32.0 发版默认
 
 | 能力 | 默认 | 决议依据 |
 |---|---|---|
 | 冲突自动化 | `conflict.auto_mode="l0_only"` | E1 两轮 SEALED；只保留 sealed 集 37/37、危险反向 0 的 L0 |
 | Plan fulfillment | `plan.fulfillment_mode="enforce"` | E5 A 臂 143 场景满分，错误关闭 0 |
 | 价格 target | `price.target_mode="enforce"` | E6 B 臂 precision/series accuracy 1.0，coverage 0.90，跨 target supersede 0 |
+| 版本状态关链 | `state.latest_wins_mode="observe"` | ADR-0004 两份独立冻结集：800/800 exact、危险误关链 0；显式切 enforce 前保持只观察 |
 | Dedup apply | `dedup.audit_only=true` | E2 SEALED_v2，不批量应用历史 equivalent |
 | Lesson signal | `extraction.lesson_signal_mode="observe"` | E3 SEALED_v2，旧 notability prompt 保持 |
 | 查询实体约束 | `recall.entity_constraint_mode="observe"` | E4 行为过但证据全为 synthetic，production-shaped coverage 不足 |
@@ -38,6 +39,8 @@ L2，须先用随包 E1 回放装备在自己的冻结语料上自验并显式�
   结果/关系/governance action 同事务写入。
 - 价格序列以 `(axis, canonical_target_entity_id, snapshot_date)` 定位；qualified code 与唯一 typed alias 可 enforce，
   target/date/币种/单位不完整继续 `uncertain`。
+- `config.version` latest-wins 只接受可信 `status_report_v1` currentness proof；默认 observe，灰区并存且不建人工队列。
+  `hl-mem report-version` 从包版本构造确定性事件与 Claim，不调用 LLM；`state.latest_wins_mode="off"` 可停止新建议和动作。
 - conflict、dedup、plan 共享输入 fingerprint、短事务 CAS、governance ledger 和有条件 rollback，但不共享领域决策枚举。
 - `l0_only` 运行时只调用 L0；L1 不进入维护路径，未命中 L0 的案稳定转 `manual_required` 且不建 L2 job。即使
   jobs 表残留旧 L2 job，handler 也会在构造 judge 前返回 skipped。
