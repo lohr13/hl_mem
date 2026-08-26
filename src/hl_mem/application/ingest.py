@@ -22,6 +22,8 @@ from hl_mem.application._ingest_resolution import (
     _resolve_temporal_candidates,
 )
 from hl_mem.application.ingest_coordinates import IngestCoordinateProjection
+from hl_mem.application.ingest_evidence import link_source_events as _link_source_events
+from hl_mem.application.latest_wins import begin_latest_wins, finish_latest_wins
 from hl_mem.config import INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import (
@@ -55,6 +57,7 @@ from hl_mem.monitoring.metrics import DEFAULT_ADMISSION_METRICS, AdmissionMetric
 from hl_mem.observability.audit import current_audit
 from hl_mem.protocols import EmbedderProtocol, ExtractorProtocol
 from hl_mem.settings import Settings
+from hl_mem.state_latest_wins import CurrentnessProof
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import EvidenceRepository
@@ -99,6 +102,17 @@ class _IngestResolution:
 def _flush_audit_events(audit: Any, events: list[tuple[tuple[Any, ...], dict[str, Any]]]) -> None:
     for args, kwargs in events:
         audit.emit(*args, **kwargs)
+
+
+def _commit_store_result(
+    connection: sqlite3.Connection,
+    audit: Any,
+    audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]],
+    result: StoreClaimResult,
+) -> StoreClaimResult:
+    connection.commit()
+    _flush_audit_events(audit, audit_events)
+    return result
 
 
 def _episodic_retention_anchor(
@@ -371,6 +385,8 @@ class IngestService:
         index_text_mode: IndexTextMode = "natural",
         source_events: Sequence[dict[str, Any]] | None = None,
         price_target_mode: str | None = None,
+        currentness_proof: CurrentnessProof | None = None,
+        _trusted_projector_slot: str | None = None,
     ) -> StoreClaimResult:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
@@ -385,14 +401,10 @@ class IngestService:
             authority,
             effective_policy,
             index_text_mode,
+            _trusted_projector_slot,
         )
         if isinstance(draft, StoreClaimResult):
-            IngestService._emit_rejected_claim(
-                audit,
-                draft,
-                event,
-                extracted,
-            )
+            IngestService._emit_rejected_claim(audit, draft, event, extracted)
             return draft
         claim, qualifiers = draft.claim, draft.qualifiers
         namespace = claim["namespace_key"]
@@ -403,6 +415,16 @@ class IngestService:
         try:
             projection = IngestCoordinateProjection.prepare(connection, claim, now, price_target_mode, str(event["id"]))
             audit_events.append(projection.audit_event)
+            latest_wins, early_latest_wins = begin_latest_wins(
+                connection, claim, evidence_events, currentness_proof, audit_events
+            )
+            if early_latest_wins:
+                return _commit_store_result(
+                    connection,
+                    audit,
+                    audit_events,
+                    StoreClaimResult(early_latest_wins[0], "stored", early_latest_wins[1]),
+                )
             started = time.perf_counter_ns()
             exact, existing = _find_resolution(claims, claim)
             IngestService._record_fact_hash_check(
@@ -412,6 +434,8 @@ class IngestService:
                 exact,
                 started,
             )
+            if latest_wins is not None:
+                exact, existing = None, []
             if exact:
                 exact_result = IngestService._resolve_exact_duplicate(
                     claims,
@@ -424,13 +448,7 @@ class IngestService:
                     event["id"],
                     audit_events,
                 )
-                if exact_result.reason == "exact_duplicate_dirty_group":
-                    connection.commit()
-                    _flush_audit_events(audit, audit_events)
-                    return exact_result
-                connection.commit()
-                _flush_audit_events(audit, audit_events)
-                return exact_result
+                return _commit_store_result(connection, audit, audit_events, exact_result)
             resolution: _IngestResolution | None
             if existing:
                 resolution = IngestService._resolve_conflict_candidates(
@@ -446,9 +464,7 @@ class IngestService:
                     audit_events,
                 )
                 if resolution.conflict_entails is not None:
-                    connection.commit()
-                    _flush_audit_events(audit, audit_events)
-                    return resolution.conflict_entails
+                    return _commit_store_result(connection, audit, audit_events, resolution.conflict_entails)
             else:
                 resolution = IngestService._resolve_temporal_candidate_branch(
                     claims,
@@ -469,23 +485,19 @@ class IngestService:
                         audit_events,
                     )
                 if resolution.temporal_entails is not None:
-                    connection.commit()
-                    _flush_audit_events(audit, audit_events)
-                    return resolution.temporal_entails
+                    return _commit_store_result(connection, audit, audit_events, resolution.temporal_entails)
                 if resolution.semantic_duplicate is not None:
-                    connection.commit()
-                    _flush_audit_events(audit, audit_events)
-                    return resolution.semantic_duplicate
+                    return _commit_store_result(connection, audit, audit_events, resolution.semantic_duplicate)
 
             inserted = _persist_resolution(claims, claim)
             if not inserted:
                 winner = claims.find_by_fact_hash(namespace, claim["fact_hash"])
                 if winner:
-                    _link_source_events(evidence, winner["id"], evidence_events, commit=False)
+                    _link_source_events(evidence, winner["id"], evidence_events)
                     result_id = winner["id"]
-                connection.commit()
-                _flush_audit_events(audit, audit_events)
-                return StoreClaimResult(result_id, "stored", "concurrent_duplicate")
+                return _commit_store_result(
+                    connection, audit, audit_events, StoreClaimResult(result_id, "stored", "concurrent_duplicate")
+                )
 
             if (
                 resolution.semantic_candidate_id is not None
@@ -502,7 +514,8 @@ class IngestService:
 
             IngestService._quarantine_resolution(claims, claim, now, resolution)
             IngestService._converge_superseded_members(claims, claim, now, resolution)
-            _link_source_events(evidence, claim["id"], evidence_events, commit=False)
+            _link_source_events(evidence, claim["id"], evidence_events)
+            finish_latest_wins(latest_wins, claims, claim, now, audit_events)
             projection.persist_and_queue(result_id, now)
             connection.commit()
         except Exception:
@@ -617,7 +630,7 @@ class IngestService:
             else None
         )
         if group_resolution is not None and group_resolution.outcome != "entails":
-            _link_source_events(evidence, exact["id"], evidence_events, commit=False)
+            _link_source_events(evidence, exact["id"], evidence_events)
             _quarantine_conflict_group(
                 claims,
                 exact_group,
@@ -645,7 +658,7 @@ class IngestService:
         result_id = (
             _converge_entailed_group(claims, group_resolution, now) if group_resolution is not None else exact["id"]
         )
-        _link_source_events(evidence, result_id, evidence_events, commit=False)
+        _link_source_events(evidence, result_id, evidence_events)
         return StoreClaimResult(result_id, "stored", "exact_duplicate")
 
     @staticmethod
@@ -692,7 +705,7 @@ class IngestService:
         )
         if resolution == "entails" and not reopen_after_terminal:
             result_id = _converge_entailed_group(claims, group_resolution, now)
-            _link_source_events(evidence, result_id, evidence_events, commit=False)
+            _link_source_events(evidence, result_id, evidence_events)
             return _IngestResolution(conflict_entails=StoreClaimResult(result_id, "stored", "entailed"))
         if reopen_after_terminal:
             claim["status"] = "disputed"
@@ -743,7 +756,7 @@ class IngestService:
             )
             if temporal_resolution.outcome == "entails":
                 result_id = str(temporal_resolution.representative["id"])
-                _link_source_events(evidence, result_id, evidence_events, commit=False)
+                _link_source_events(evidence, result_id, evidence_events)
                 return _IngestResolution(temporal_entails=StoreClaimResult(result_id, "stored", "temporal_entails"))
             if temporal_resolution.outcome in {"state_change", "snapshot_advance"}:
                 claim["status"] = "candidate"
@@ -806,7 +819,7 @@ class IngestService:
             )
         )
         if duplicate_id and not is_semantic_candidate:
-            _link_source_events(evidence, duplicate_id, evidence_events, commit=False)
+            _link_source_events(evidence, duplicate_id, evidence_events)
             return _IngestResolution(semantic_duplicate=StoreClaimResult(duplicate_id, "stored", "semantic_duplicate"))
         if duplicate_id and is_semantic_candidate:
             candidate = claims.get_claim(duplicate_id)
@@ -871,6 +884,12 @@ class IngestService:
                 raise ConflictError(f"new state-change claim disappeared during ingest: {claim['id']}")
 
 
+def _slot(value: str | None, q: dict[str, Any], trusted: str | None) -> str | None:
+    if value == trusted == "config.version":
+        return value
+    return validate_slot_instance(value, q)
+
+
 def _build_claim_drafts(
     extracted: ExtractedClaim,
     event: dict[str, Any],
@@ -879,6 +898,7 @@ def _build_claim_drafts(
     authority: str | None,
     policy: TTLPolicy,
     index_text_mode: IndexTextMode,
+    trusted_projector_slot: str | None,
 ) -> _ClaimDraft | StoreClaimResult:
     """阶段 1：规范化提取结果、计算 TTL 并生成 claim 草稿。"""
     # Claim 的实体、去重与冲突身份由 (namespace_key, subject_entity_id) 共同确定。
@@ -927,7 +947,7 @@ def _build_claim_drafts(
             },
         )
     requested_slot = getattr(extracted, "canonical_slot", None)
-    canonical_slot = validate_slot_instance(requested_slot, qualifiers)
+    canonical_slot = _slot(requested_slot, qualifiers, trusted_projector_slot)
     if requested_slot and canonical_slot is None:
         current_audit().emit(
             "ingest",
@@ -1052,69 +1072,3 @@ def _insert_pending_dedup_pair(
         id_factory=new_id,
         settings_factory=Settings,
     )
-
-
-def _link_event(repo: EvidenceRepository, claim_id: str, event_id: str, commit: bool = False) -> None:
-    exists = repo.connection.execute(
-        "SELECT 1 FROM evidence_links WHERE derived_type='claim' AND derived_id=? "
-        "AND evidence_type='event' AND evidence_id=? AND relation='derived_from' LIMIT 1",
-        (claim_id, event_id),
-    ).fetchone()
-    if exists is None:
-        repo.add_link(
-            {
-                "id": new_id(),
-                "derived_type": "claim",
-                "derived_id": claim_id,
-                "evidence_type": "event",
-                "evidence_id": event_id,
-                "relation": "derived_from",
-                "weight": 1.0,
-            },
-            commit=commit,
-        )
-    elif commit:
-        repo.connection.commit()
-
-
-def _link_source_events(
-    repo: EvidenceRepository,
-    claim_id: str,
-    events: Sequence[dict[str, Any]],
-    *,
-    commit: bool = False,
-) -> None:
-    """稳定去重并链接 claim 的全部原始 Event 与图片派生证据。"""
-    seen: set[str] = set()
-    for event in events:
-        event_id = str(event["id"])
-        if event_id in seen:
-            continue
-        seen.add(event_id)
-        _link_event(repo, claim_id, event_id, commit=False)
-        _link_image_descriptions(repo, claim_id, event, commit=False)
-    if commit:
-        repo.connection.commit()
-
-
-def _link_image_descriptions(
-    repo: EvidenceRepository,
-    claim_id: str,
-    event: dict[str, Any],
-    *,
-    commit: bool = False,
-) -> None:
-    """把图片描述派生事件作为 supports 证据链接到 Claim。"""
-    for description_event_id in event.get("_image_description_event_ids", []):
-        repo.add_link(
-            {
-                "id": new_id(),
-                "derived_type": "claim",
-                "derived_id": claim_id,
-                "evidence_type": "event",
-                "evidence_id": description_event_id,
-                "relation": "supports",
-                "weight": 1.0,
-            },
-            commit=commit,
-        )

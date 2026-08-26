@@ -136,6 +136,11 @@ target_mode = "enforce"
 # E5 A 臂通过：严格确定性坐标匹配可关闭 plan valid time。
 fulfillment_mode = "enforce"
 
+[state]
+# ADR-0004 默认仅审计 config.version 的确定性 latest-wins 建议；发布门禁通过前不改 claim 状态。
+latest_wins_mode = "observe"
+latest_wins_slots = ["config.version"]
+
 [relation]
 discovery_mode = "off"
 

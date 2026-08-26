@@ -31,6 +31,7 @@ from hl_mem.application.dedup_backlog import (
 )
 from hl_mem.application.expired_cleanup import cleanup_expired_claims, inspect_expired_claims
 from hl_mem.application.restore import restore_database
+from hl_mem.application.version_report import report_version_cli
 from hl_mem.components import make_embedder
 from hl_mem.config_loader import load_settings
 from hl_mem.daily_cli import add_daily_commands, handle_daily_command
@@ -568,6 +569,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     evaluation.add_argument("--limit", type=int)
     evaluation.add_argument("--keep-db", action="store_true")
+    version_report = commands.add_parser("report-version")
+    version_report.add_argument("--namespace", default="default")
+    version_report.add_argument("--subject", required=True)
     backfill = commands.add_parser("backfill-index-text")
     backfill.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     backfill.add_argument("--dry-run", action="store_true")
@@ -612,6 +616,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     settings = load_settings(args.config, args.env_file)
     if args.db is not None:
         settings = replace(settings, database_path=str(args.db))
+    if args.command == "report-version":
+        return print(report_version_cli(settings, args.namespace, args.subject))
     if args.command == "server":
         if not 1 <= args.port <= 65535:
             parser.error("--port must be between 1 and 65535")

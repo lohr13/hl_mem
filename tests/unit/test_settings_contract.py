@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 206
+    assert len(fields(Settings)) == 208
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
@@ -45,6 +45,8 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.maintenance_judge_model == "Qwen3.8-27B-UD-IQ4_XS.gguf"
     assert settings.price_target_mode == "enforce"
     assert settings.plan_fulfillment_mode == "enforce"
+    assert settings.latest_wins_mode == "observe"
+    assert settings.latest_wins_slots == ("config.version",)
     assert settings.operational_cleanup_enabled is True
     assert settings.operational_batch_size == 2_000
     assert settings.expired_cleanup_mode == "observe"
@@ -60,6 +62,8 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.snapshot()["conflict_maintenance_max_cases"] == 50
     assert settings.snapshot()["price_target_mode"] == "enforce"
     assert settings.snapshot()["plan_fulfillment_mode"] == "enforce"
+    assert settings.snapshot()["latest_wins_mode"] == "observe"
+    assert settings.snapshot()["latest_wins_slots"] == ("config.version",)
     assert settings.snapshot()["operational_batch_size"] == 2_000
     assert settings.echo_suppression_mode == "enforce"
     assert settings.echo_session_window_seconds == 1800

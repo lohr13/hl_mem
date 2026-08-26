@@ -123,6 +123,10 @@ vector_backend = "sqlite_scan"
 
 [retention]
 decay_min_confidence = 0.1
+
+[state]
+latest_wins_mode = "enforce"
+latest_wins_slots = ["config.version"]
 """,
     )
 
@@ -136,6 +140,18 @@ decay_min_confidence = 0.1
     assert settings.relevance_intents == ("current_state", "preference")
     assert settings.vector_backend is VectorBackend.SQLITE_SCAN
     assert settings.decay_min_confidence == 0.1
+    assert settings.latest_wins_mode == "enforce"
+    assert settings.latest_wins_slots == ("config.version",)
+
+
+def test_latest_wins_toml_cannot_authorize_a_slot_outside_the_code_allowlist(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "invalid-state.toml",
+        '[state]\nlatest_wins_slots = ["config.version", "config.other"]\n' '[recall]\nquery_expansion_mode = "off"\n',
+    )
+
+    with pytest.raises(ConfigurationError, match=r"state\.latest_wins_slots.*config\.version"):
+        load_settings(config_path, tmp_path / ".env", environ={})
 
 
 @pytest.mark.parametrize(

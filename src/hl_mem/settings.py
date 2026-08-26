@@ -109,6 +109,10 @@ class Settings:
     entity_aliases_path: str | None = field(default=None, metadata={"toml": "entity.aliases_path"})
     price_target_mode: PriceTargetMode = field(default="enforce", metadata={"toml": "price.target_mode"})
     plan_fulfillment_mode: PlanFulfillmentMode = field(default="enforce", metadata={"toml": "plan.fulfillment_mode"})
+    latest_wins_mode: Literal["off", "observe", "enforce"] = _toml_field("observe", "state.latest_wins_mode")
+    latest_wins_slots: tuple[Literal["config.version"], ...] = _toml_field(
+        ("config.version",), "state.latest_wins_slots"
+    )
     embedder_mode: EmbedderMode = field(default="fake", metadata={"toml": "embedding.mode"})
     embedding_dim: int = field(default=2048, metadata={"toml": "embedding.dim"})
     embedding_api_key: str | None = field(
@@ -971,6 +975,8 @@ class Settings:
             "embedding_text_type": self.embedding_text_type,
             "price_target_mode": self.price_target_mode,
             "plan_fulfillment_mode": self.plan_fulfillment_mode,
+            "latest_wins_mode": self.latest_wins_mode,
+            "latest_wins_slots": self.latest_wins_slots,
             "index_text_mode": self.index_text_mode,
             "index_backfill_batch_size": self.index_backfill_batch_size,
             "index_backfill_max_attempts": self.index_backfill_max_attempts,
