@@ -308,17 +308,6 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 `enforce` 只允许唯一逻辑计划组的严格坐标匹配；complete/cancel/replace 只关闭 `valid_to`，partial 使用 Decimal
 累计。任何坐标缺失、多组匹配、超量或单位变化都不关闭计划。
 
-### `[state]`
-
-| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
-|---|---|---|---|---|
-| `state.latest_wins_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `latest_wins_mode` |
-| `state.latest_wins_slots` | 字符串数组 | `["config.version"]` | 代码白名单内的 slot；当前仅 `config.version` | `latest_wins_slots` |
-
-`observe` 只记录版本化建议，不改变 claim 或 conflict case；`off` 连建议也不生成。只有冻结门禁通过并显式切到
-`enforce` 后，才允许 `config.version` 的确定性 duplicate/corroborates/supersedes/predecessor 动作。灰区保持并存，
-不创建新的人工必办队列。两个键共同构成 kill switch，配置不能授权代码白名单外的 slot。
-
 ### `[price]`
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
@@ -466,6 +455,17 @@ Pending dedup pairs below the current `dedup.threshold` can be reported read-onl
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
 | `server.max_request_body` | 整数 | `2097152` | 任意整数 | `max_request_body` |
+
+### `[state]`
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `state.latest_wins_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `latest_wins_mode` |
+| `state.latest_wins_slots` | 字符串 数组 | `["config.version"]` | 代码白名单内的 slot；当前仅 `config.version` | `latest_wins_slots` |
+
+`[state]` 控制白名单状态 slot 的确定性 latest-wins 关链；当前仅支持 `config.version`。默认 `observe` 只记录
+建议，不改变 claim 或 conflict case；设置 `latest_wins_mode = "off"` 可完全关闭建议和动作。`enforce` 只执行
+已通过冻结门禁的确定性动作，灰区仍保持并存。
 
 ### `[worker]`
 

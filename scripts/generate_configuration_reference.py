@@ -32,6 +32,7 @@ CONSTRAINTS = {
     "relation.discovery_max_proposals": ">= 1",
     "relation.auto_apply_confidence": "0.0 - 1.0",
     "relation.conflict_confidence": "0.0 - 1.0",
+    "state.latest_wins_slots": "代码白名单内的 slot；当前仅 `config.version`",
     "recall.default_limit": "1 - 100",
     "recall.vector_scan_limit": ">= 1",
     "recall.packed_context_token_budget": ">= 1",
@@ -203,6 +204,12 @@ TABLE_NOTES = {
         "",
         "Reranker 的具体型号通过 `reranker.model` 配置；API 密钥由 `RERANKER_API_KEY` 提供。升级时以当前 `Settings` 或部署",
         "TOML 为准，活文档不固定具体型号。",
+    ],
+    "state": [
+        "",
+        "`[state]` 控制白名单状态 slot 的确定性 latest-wins 关链；当前仅支持 `config.version`。默认 `observe` 只记录",
+        '建议，不改变 claim 或 conflict case；设置 `latest_wins_mode = "off"` 可完全关闭建议和动作。`enforce` 只执行',
+        "已通过冻结门禁的确定性动作，灰区仍保持并存。",
     ],
     "worker": [
         "",
