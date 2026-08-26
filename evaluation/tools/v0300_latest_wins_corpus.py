@@ -127,13 +127,15 @@ def _build_case(
     proof = None
     if proof_valid:
         proof = {
-            "schema": "status_report_v1",
-            "producer": "hl-mem-cli",
-            "package": "hl-mem",
-            "version": new_value,
+            "schema_version": "status_report_v1",
+            "producer_contract": "hl_mem.report-version-v1",
+            "package": "hl_mem",
+            "runtime_version": new_value,
             "namespace": incoming_coordinate["namespace"],
-            "subject": incoming_coordinate["canonical_subject"],
-            "subject_proof": {"alias_table_version": "v1", "owner_id": incoming_coordinate["canonical_subject"]},
+            "subject_proof": {
+                "canonical_entity_id": incoming_coordinate["canonical_subject"],
+                "alias_version": 1,
+            },
             "observed_at": _iso(new_time),
         }
     corpus = {

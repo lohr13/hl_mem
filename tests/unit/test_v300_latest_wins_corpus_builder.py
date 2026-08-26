@@ -246,34 +246,36 @@ def test_validation_relation_counts_and_bundle_identifiers_are_frozen(tmp_path: 
 
 def test_currentness_proof_uses_the_fixed_status_report_contract(tmp_path: Path) -> None:
     _manifest, output, _review = _generate(tmp_path)
-    corpus = _jsonl(output / "v300_latest_wins_validation_a_corpus.jsonl")
-    eligible = [row for row in corpus if row["scenario"] in {"newer_current_version", "newer_rollback"}]
+    corpus = [
+        row
+        for profile in ("calibration", "validation_a", "validation_b")
+        for row in _jsonl(output / f"v300_latest_wins_{profile}_corpus.jsonl")
+    ]
+    proof_rows = [row for row in corpus if row["currentness_proof"] is not None]
 
-    assert len(eligible) == 120
-    for row in eligible:
+    assert len(proof_rows) == 880
+    for row in proof_rows:
         proof = row["currentness_proof"]
         incoming = row["incoming_claim"]
         coordinate = incoming["coordinate"]
         assert set(proof) == {
-            "schema",
-            "producer",
+            "schema_version",
+            "producer_contract",
             "package",
-            "version",
+            "runtime_version",
             "namespace",
-            "subject",
             "subject_proof",
             "observed_at",
         }
-        assert proof["schema"] == "status_report_v1"
-        assert proof["producer"] == "hl-mem-cli"
-        assert proof["package"] == "hl-mem"
-        assert proof["version"] == incoming["value"]
+        assert proof["schema_version"] == "status_report_v1"
+        assert proof["producer_contract"] == "hl_mem.report-version-v1"
+        assert proof["package"] == "hl_mem"
+        assert proof["runtime_version"] == incoming["value"]
         assert proof["namespace"] == coordinate["namespace"]
-        assert proof["subject"] == coordinate["canonical_subject"]
         assert proof["observed_at"] == incoming["event_time"]
         assert proof["subject_proof"] == {
-            "alias_table_version": "v1",
-            "owner_id": coordinate["canonical_subject"],
+            "canonical_entity_id": coordinate["canonical_subject"],
+            "alias_version": 1,
         }
 
 

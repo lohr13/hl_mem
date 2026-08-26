@@ -315,15 +315,14 @@ def _calibration_claim(raw: dict[str, Any]) -> VersionClaim:
 def _calibration_proof(raw: dict[str, Any] | None) -> CurrentnessProof | None:
     if raw is None:
         return None
-    # Batch-2 corpus is a structural fixture, not the production event wire shape.
     return CurrentnessProof(
-        schema_version=raw["schema"],
-        producer_contract="hl_mem.report-version-v1" if raw["producer"] == "hl-mem-cli" else raw["producer"],
-        package="hl_mem" if raw["package"] == "hl-mem" else raw["package"],
-        runtime_version=raw["version"],
+        schema_version=raw["schema_version"],
+        producer_contract=raw["producer_contract"],
+        package=raw["package"],
+        runtime_version=raw["runtime_version"],
         namespace=raw["namespace"],
-        canonical_entity_id=raw["subject_proof"]["owner_id"],
-        alias_version=1 if raw["subject_proof"]["alias_table_version"] == "v1" else 0,
+        canonical_entity_id=raw["subject_proof"]["canonical_entity_id"],
+        alias_version=raw["subject_proof"]["alias_version"],
         observed_at=raw["observed_at"],
         producer_and_owner_verified=True,
     )

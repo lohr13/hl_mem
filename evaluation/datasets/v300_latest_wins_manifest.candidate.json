@@ -4,7 +4,7 @@
   "equipment": {
     "builder": {
       "path": "evaluation/tools/v0300_latest_wins_corpus.py",
-      "sha256": "5f7d15dee9951ee66f10d5aa3a3507a9f5a8ebb3dadde49f50177878c33ab8f3"
+      "sha256": "3085f76227ddcdd5a07be8870be818918d39fca40498f18f223e6f1629a4ac40"
     },
     "context_pools": {
       "calibration": {
@@ -29,7 +29,7 @@
     },
     "review_packager": {
       "path": "Temp/v300_batch2_gold_review_20260826/build_review_package.py",
-      "sha256": "19cec3fb6eabe60e6c8e4c9caac5e441867f56811edd0e8c2711a280ed266829"
+      "sha256": "3f726a0c99f9979ba7cbd912126603f252c8472e8056ec12157e3b87bca48b83"
     },
     "sampler": {
       "path": "src/hl_mem/evaluation/state_counterexample_corpus.py",
@@ -42,6 +42,7 @@
   },
   "gold_self_check": {
     "bundle_ids_match": true,
+    "currentness_proof_contract_matches_adr_0004": true,
     "gold_schema_valid": true,
     "quotas_valid": true,
     "source_ratios_valid": true,
@@ -64,7 +65,7 @@
         "corpus": {
           "path": "v300_latest_wins_calibration_corpus.jsonl",
           "records": 300,
-          "sha256": "45ef6c9a4c73c654cfb5fe7a20fa0eb9c1689e7fd990b6fa3c0706c14e43cbe6"
+          "sha256": "fa51c629637b506561999e3dc4e7ba2f8babfa8b5758257c8b5ea6d9bedf625e"
         },
         "gold": {
           "path": "v300_latest_wins_calibration_gold.jsonl",
@@ -100,7 +101,7 @@
         "corpus": {
           "path": "v300_latest_wins_validation_a_corpus.jsonl",
           "records": 400,
-          "sha256": "58227149dc6e89bb2c1f30a8db3600bc033cae83dd3492bd11022724b6daebb7"
+          "sha256": "c9591c98f283434442418d5605cadf85596bc7379d87c2517a0b6db31892659b"
         },
         "gold": {
           "path": "v300_latest_wins_validation_a_gold.jsonl",
@@ -136,7 +137,7 @@
         "corpus": {
           "path": "v300_latest_wins_validation_b_corpus.jsonl",
           "records": 400,
-          "sha256": "c3beaa222fda12f4ba6473a294d17ba22957c922e2da5aae6d9dff6a24b4d9b2"
+          "sha256": "b1850b9c55bb5d2bdb78a3bccbd9a35f26f222a96f9990a457a587e8f77bde87"
         },
         "gold": {
           "path": "v300_latest_wins_validation_b_gold.jsonl",
@@ -172,11 +173,11 @@
     "files": {
       "boundary_cases": {
         "path": "boundary_cases.jsonl",
-        "sha256": "85246a422317f145b99e15359f03e06df9154db51a70e2a4193c287b3382f97d"
+        "sha256": "848fc8d4face92f94eb6f35e98cba37c651da1c36058155dc8789ce5208b0237"
       },
       "full_structural_summary": {
         "path": "full_structural_summary.json",
-        "sha256": "b4497acba3bc5addfd28772e200d7c6b3981941b7152410ee1550a5e486bcd1a"
+        "sha256": "171e23024fc10b089ad17ece49f574f8946e2cde83c7bf9d76d3ecbceb0bedc5"
       },
       "readme": {
         "path": "README.md",
@@ -184,7 +185,7 @@
       },
       "sample_index": {
         "path": "sample_index.jsonl",
-        "sha256": "487afab1e7ff6e917d1d620a9eae90ce3deedf99be5e27f592aed12c811d6ea4"
+        "sha256": "813e51c244d58e36113235832002b96e645e8084e22bb8e74afa3ff68bc6903a"
       }
     },
     "package": "v300_batch2_gold_review_20260826",
