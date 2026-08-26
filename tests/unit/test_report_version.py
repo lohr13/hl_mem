@@ -13,12 +13,37 @@ from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 
 
+def _write_no_key_config(path: Path, database_path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            (
+                "[database]",
+                f'path = "{database_path.as_posix()}"',
+                "[extraction]",
+                'mode = "fake"',
+                "[embedding]",
+                'mode = "fake"',
+                "[reranker]",
+                'mode = "off"',
+                "[image_describer]",
+                'mode = "off"',
+                "[recall]",
+                'query_expansion_mode = "off"',
+                "[relation]",
+                'discovery_mode = "off"',
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_report_version_cli_stores_fixed_event_and_claim_without_llm_job(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     database_path = tmp_path / "probe.db"
     config = tmp_path / "hl_mem.toml"
-    config.write_text(f'[database]\npath = "{database_path.as_posix()}"\n', encoding="utf-8")
+    _write_no_key_config(config, database_path)
 
     main(["--config", str(config), "report-version", "--namespace", "default", "--subject", "HL-Mem"])
 
@@ -97,7 +122,7 @@ def test_report_version_is_idempotent_per_version_and_rollback_creates_new_occur
 @pytest.mark.parametrize("forged", [("--version", "9.9.9"), ("--producer-contract", "fake-v1")])
 def test_cli_exposes_no_free_version_or_producer_argument(tmp_path: Path, forged: tuple[str, str]) -> None:
     config = tmp_path / "hl_mem.toml"
-    config.write_text('[database]\npath = "memory.db"\n', encoding="utf-8")
+    _write_no_key_config(config, tmp_path / "memory.db")
 
     with pytest.raises(SystemExit) as caught:
         main(["--config", str(config), "report-version", "--subject", "HL-Mem", *forged])
