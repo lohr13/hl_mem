@@ -39,7 +39,7 @@ _SUBTYPES = {
 _RELATIONS = {
     "newer_current_version": "supersedes_existing",
     "newer_rollback": "supersedes_existing",
-    "late_arriving_predecessor": "predecessor",
+    "late_arriving_predecessor": "historical_predecessor",
     "cross_coordinate_isolation": "compatible",
     "non_current_context": "needs_review",
     "fail_closed_boundary": "needs_review",

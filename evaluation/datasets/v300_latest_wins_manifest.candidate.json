@@ -4,7 +4,7 @@
   "equipment": {
     "builder": {
       "path": "evaluation/tools/v0300_latest_wins_corpus.py",
-      "sha256": "b2d9242c0921a861f87b03a36a0ecd493870c9c8cf082596add0086d2b5b06b1"
+      "sha256": "5f7d15dee9951ee66f10d5aa3a3507a9f5a8ebb3dadde49f50177878c33ab8f3"
     },
     "context_pools": {
       "calibration": {
@@ -29,7 +29,7 @@
     },
     "review_packager": {
       "path": "Temp/v300_batch2_gold_review_20260826/build_review_package.py",
-      "sha256": "f31b969008650e875e685e96441d175046b7eef199519465d9af078bab291975"
+      "sha256": "19cec3fb6eabe60e6c8e4c9caac5e441867f56811edd0e8c2711a280ed266829"
     },
     "sampler": {
       "path": "src/hl_mem/evaluation/state_counterexample_corpus.py",
@@ -44,7 +44,8 @@
     "bundle_ids_match": true,
     "gold_schema_valid": true,
     "quotas_valid": true,
-    "source_ratios_valid": true
+    "source_ratios_valid": true,
+    "temporal_relation_enum_matches_adr_0004": true
   },
   "non_overlap_proof": {
     "bundle_id_overlap": 0,
@@ -68,7 +69,7 @@
         "gold": {
           "path": "v300_latest_wins_calibration_gold.jsonl",
           "records": 300,
-          "sha256": "44a4ed5bace5edfca40a36a436d5678f2190fe6219400c8cc75bca1083985153"
+          "sha256": "9cd034f0c07f0dc6015413eeaa845f9e57f56fe3d1d69950972e0c5ab7644dd9"
         }
       },
       "generation_id": "v300-restart-calibration-20260826-a1a16c9",
@@ -104,7 +105,7 @@
         "gold": {
           "path": "v300_latest_wins_validation_a_gold.jsonl",
           "records": 400,
-          "sha256": "3056b8d943b62e988aa3450a2f7ec5074a139975774ad2b5640de212167b9dc0"
+          "sha256": "1e0b0400ce0222da1ce2213983551e05ba01686a67747f11cef246ff951acbe9"
         }
       },
       "generation_id": "v300-restart-validation-a-20260826-a1a16c9",
@@ -140,7 +141,7 @@
         "gold": {
           "path": "v300_latest_wins_validation_b_gold.jsonl",
           "records": 400,
-          "sha256": "1b3acfc6eea8a7238e6c19da7556cf729688796670783ff4c7754bba1abe1a10"
+          "sha256": "c7c26ebae12f4f30154317ac06130ede68aeec242e65bfbc53841163ed4d4bfc"
         }
       },
       "generation_id": "v300-restart-validation-b-20260826-a1a16c9",
@@ -171,11 +172,11 @@
     "files": {
       "boundary_cases": {
         "path": "boundary_cases.jsonl",
-        "sha256": "af84bd67581864444699fc1be3dfa488f80e8f85740d85c1c65bff74e8dc85f1"
+        "sha256": "85246a422317f145b99e15359f03e06df9154db51a70e2a4193c287b3382f97d"
       },
       "full_structural_summary": {
         "path": "full_structural_summary.json",
-        "sha256": "45156b2a87be88665693837ae9dbc76238ee33bf626714e09fe5dd3dadeee610"
+        "sha256": "b4497acba3bc5addfd28772e200d7c6b3981941b7152410ee1550a5e486bcd1a"
       },
       "readme": {
         "path": "README.md",
@@ -183,7 +184,7 @@
       },
       "sample_index": {
         "path": "sample_index.jsonl",
-        "sha256": "f74cac8dd9d1712e7605afec9ddb5dcbf00f5630ff2b12fd9cfc05800fdd0658"
+        "sha256": "487afab1e7ff6e917d1d620a9eae90ce3deedf99be5e27f592aed12c811d6ea4"
       }
     },
     "package": "v300_batch2_gold_review_20260826",

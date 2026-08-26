@@ -137,7 +137,7 @@ def test_gold_is_structure_only_and_covers_all_six_temporal_relations(tmp_path: 
         "duplicate",
         "corroborates",
         "supersedes_existing",
-        "predecessor",
+        "historical_predecessor",
         "compatible",
         "needs_review",
     }
@@ -154,7 +154,7 @@ def test_structural_cases_encode_direction_isolation_and_fail_closed_inputs(tmp_
     predecessor = next(row for row in rows if row["scenario"] == "late_arriving_predecessor")
     assert predecessor["incoming_claim"]["event_time"] < predecessor["existing_claim"]["event_time"]
     assert predecessor["incoming_claim"]["recorded_at"] > predecessor["existing_claim"]["recorded_at"]
-    assert gold[predecessor["bundle_id"]]["expected_temporal_relation"] == "predecessor"
+    assert gold[predecessor["bundle_id"]]["expected_temporal_relation"] == "historical_predecessor"
     duplicate = next(
         row for row in rows if row["scenario"] == "duplicate_or_corroborate" and row["subtype"] == "duplicate"
     )
@@ -232,7 +232,7 @@ def test_validation_relation_counts_and_bundle_identifiers_are_frozen(tmp_path: 
         gold = _jsonl(output / f"v300_latest_wins_{profile}_gold.jsonl")
         assert Counter(row["expected_temporal_relation"] for row in gold) == {
             "supersedes_existing": 120,
-            "predecessor": 40,
+            "historical_predecessor": 40,
             "duplicate": 20,
             "corroborates": 20,
             "compatible": 80,
