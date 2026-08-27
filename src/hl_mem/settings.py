@@ -373,6 +373,7 @@ class Settings:
         metadata={"toml": "llm.structured_mode"},
     )
     enable_llm_thinking: bool = field(default=False, metadata={"toml": "llm.enable_thinking"})
+    llm_max_tokens: int | None = field(default=None, metadata={"toml": "llm.max_tokens"})
     llm_timeout: float = field(default=90.0, metadata={"toml": "llm.timeout"})
     llm_max_attempts: int = field(default=3, metadata={"toml": "llm.max_attempts"})
     llm_schema_retries: int = field(default=2, metadata={"toml": "llm.schema_retries"})
@@ -747,6 +748,8 @@ class Settings:
             raise ConfigurationError("llm.structured_mode must be 'auto', 'json_object', or 'json_schema'")
         if not isinstance(self.enable_llm_thinking, bool):
             raise ConfigurationError("llm.enable_thinking must be a boolean")
+        if self.llm_max_tokens is not None and (type(self.llm_max_tokens) is not int or self.llm_max_tokens <= 0):
+            raise ConfigurationError("llm.max_tokens must be a positive integer")
         if self.relation_expansion_mode not in {"off", "on"}:
             raise ConfigurationError("relation.expansion_mode must be 'off' or 'on'")
         if self.relation_expansion_max_depth < 1:

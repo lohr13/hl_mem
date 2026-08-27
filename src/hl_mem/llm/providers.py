@@ -20,6 +20,9 @@ class OpenAICompatibleProvider:
     name = "openai_compatible"
     capabilities = LLMCapabilities(json_object=True, json_schema_strict=True)
 
+    def __init__(self, *, max_tokens: int | None = None) -> None:
+        self.max_tokens = max_tokens
+
     def build_payload(
         self,
         model: str,
@@ -31,6 +34,8 @@ class OpenAICompatibleProvider:
             "model": model,
             "messages": [{"role": message.role, "content": message.content} for message in request.messages],
         }
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
         spec = request.structured_output
         if spec is None:
             return payload
@@ -77,7 +82,8 @@ class DashScopeProvider(OpenAICompatibleProvider):
     name = "dashscope"
     capabilities = LLMCapabilities(json_object=True, json_schema_strict=False)
 
-    def __init__(self, *, enable_thinking: bool = False) -> None:
+    def __init__(self, *, enable_thinking: bool = False, max_tokens: int | None = None) -> None:
+        super().__init__(max_tokens=max_tokens)
         self.enable_thinking = enable_thinking
 
     def build_payload(self, model: str, request: LLMRequest, mode: StructuredOutputMode) -> dict[str, Any]:

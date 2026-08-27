@@ -1,5 +1,6 @@
 import httpx
 
+from hl_mem.components import make_llm_client
 from hl_mem.llm.providers import (
     DashScopeProvider,
     OpenAICompatibleProvider,
@@ -11,6 +12,7 @@ from hl_mem.llm.types import (
     StructuredOutputMode,
     StructuredOutputSpec,
 )
+from hl_mem.settings import Settings
 
 
 def _request() -> LLMRequest:
@@ -33,6 +35,26 @@ def test_openai_compatible_provider_builds_strict_schema_payload() -> None:
     assert payload["response_format"]["json_schema"]["strict"] is True
 
 
+def test_openai_compatible_provider_omits_max_tokens_by_default() -> None:
+    payload = OpenAICompatibleProvider().build_payload(
+        "model",
+        _request(),
+        StructuredOutputMode.JSON_OBJECT,
+    )
+
+    assert "max_tokens" not in payload
+
+
+def test_openai_compatible_provider_includes_configured_max_tokens() -> None:
+    payload = OpenAICompatibleProvider(max_tokens=4000).build_payload(
+        "model",
+        _request(),
+        StructuredOutputMode.JSON_OBJECT,
+    )
+
+    assert payload["max_tokens"] == 4000
+
+
 def test_dashscope_and_zhipu_default_to_json_object_capability() -> None:
     assert DashScopeProvider().capabilities.json_schema_strict is False
     assert ZhipuProvider().capabilities.json_schema_strict is False
@@ -50,14 +72,35 @@ def test_dashscope_provider_disables_thinking_in_payload_by_default() -> None:
 
 
 def test_dashscope_provider_can_enable_thinking_in_payload() -> None:
-    payload = DashScopeProvider(enable_thinking=True).build_payload(
+    payload = DashScopeProvider(enable_thinking=True, max_tokens=4000).build_payload(
         "qwen3.7-plus",
         _request(),
         StructuredOutputMode.JSON_OBJECT,
     )
 
     assert payload["enable_thinking"] is True
+    assert payload["max_tokens"] == 4000
     assert "extra_body" not in payload
+
+
+def test_make_llm_client_applies_max_tokens_to_zhipu_without_thinking_fields() -> None:
+    client = make_llm_client(
+        Settings(
+            llm_api_key="test-key",
+            llm_provider="zhipu",
+            llm_max_tokens=4000,
+        )
+    )
+
+    payload = client.provider.build_payload(
+        "glm-5.3-flash",
+        _request(),
+        StructuredOutputMode.JSON_OBJECT,
+    )
+
+    assert payload["max_tokens"] == 4000
+    assert "enable_thinking" not in payload
+    assert "thinking" not in payload
 
 
 def test_provider_parses_response_metadata() -> None:

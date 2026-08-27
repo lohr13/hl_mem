@@ -109,9 +109,9 @@ def make_llm_client(
     if provider_type is None:
         raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
     provider = (
-        DashScopeProvider(enable_thinking=settings.enable_llm_thinking)
+        DashScopeProvider(enable_thinking=settings.enable_llm_thinking, max_tokens=settings.llm_max_tokens)
         if provider_type is DashScopeProvider
-        else provider_type()
+        else provider_type(max_tokens=settings.llm_max_tokens)
     )
     normalized_model = model.strip() if model is not None else None
     return LLMClient(

@@ -266,6 +266,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.base_url` | 字符串 | `"https://coding.dashscope.aliyuncs.com/v1"` | 任意字符串 | `llm_base_url` |
 | `llm.enable_thinking` | 布尔值 | `false` | `true`、`false` | `enable_llm_thinking` |
 | `llm.max_attempts` | 整数 | `3` | >= 1 | `llm_max_attempts` |
+| `llm.max_tokens` | 可选整数 | 未配置（`None`） | 正整数；输出上限保险丝，截断可能导致 JSON 不完整（`finish=length`），结构化提取将“快速失败”并由上层重试/降级 | `llm_max_tokens` |
 | `llm.model` | 字符串 | `"qwen3.7-plus"` | 非空字符串 | `llm_model` |
 | `llm.provider` | 字符串 | `"dashscope"` | `dashscope`、`zhipu`、`openai_compatible` | `llm_provider` |
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |

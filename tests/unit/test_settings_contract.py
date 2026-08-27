@@ -13,8 +13,9 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 210
+    assert len(fields(Settings)) == 211
     assert settings.llm_model == "qwen3.7-plus"
+    assert settings.llm_max_tokens is None
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
     assert settings.extractor_mode == "fake"
@@ -142,6 +143,7 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"feedback_lifecycle_mode": "invalid"}, "retention.feedback_lifecycle_mode"),
         ({"feedback_min_samples": 0}, "recall.feedback_min_samples"),
         ({"llm_provider": "invalid"}, "llm.provider"),
+        ({"llm_max_tokens": 0}, "llm.max_tokens"),
         ({"relation_expansion_mode": "invalid"}, "relation.expansion_mode"),
         ({"relevance_gate_mode": "invalid"}, "recall.relevance_gate_mode"),
         ({"entity_constraint_mode": "invalid"}, "recall.entity_constraint_mode"),
@@ -176,3 +178,9 @@ def test_validation_errors_reference_toml_paths(changes: dict[str, object], toml
     message = str(caught.value)
     assert toml_path in message
     assert "HL_MEM_" not in message
+
+
+@pytest.mark.parametrize("value", [-1, "4000", True])
+def test_llm_max_tokens_rejects_negative_or_non_integer_values(value: object) -> None:
+    with pytest.raises(ConfigurationError, match=r"llm\.max_tokens"):
+        replace(Settings.for_test(), llm_max_tokens=value).validate()  # type: ignore[arg-type]
