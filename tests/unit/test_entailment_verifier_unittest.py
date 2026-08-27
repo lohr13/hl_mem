@@ -302,7 +302,7 @@ class EntailmentSettingsTests(unittest.TestCase):
     def test_settings_adds_disabled_verification_mode(self) -> None:
         settings = Settings()
 
-        self.assertEqual(len(fields(Settings)), 209)
+        self.assertEqual(len(fields(Settings)), 210)
         self.assertEqual(settings.verification_mode, "off")
         self.assertEqual(settings.snapshot()["verification_mode"], "off")
 
@@ -339,6 +339,20 @@ class EntailmentSettingsTests(unittest.TestCase):
             extractor = make_extractor(settings)
 
         self.assertTrue(extractor.soft_split_enabled)
+
+    def test_component_factory_wires_delta_repair_flag_to_extractor(self) -> None:
+        client = _SequenceClient([])
+        settings = replace(
+            Settings.for_test(),
+            extractor_mode="llm",
+            llm_api_key="test-key",
+            extraction_delta_repair_enabled=True,
+        )
+
+        with patch("hl_mem.components.make_llm_client", return_value=client):
+            extractor = make_extractor(settings)
+
+        self.assertTrue(extractor.delta_repair_enabled)
 
 
 if __name__ == "__main__":

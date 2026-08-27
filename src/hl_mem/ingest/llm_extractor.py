@@ -747,6 +747,26 @@ class _ChunkExtractionOutcome:
     raw_claim_count: int
 
 
+DELTA_REPAIR_SYSTEM_PROMPTS: dict[Literal["zh", "en"], str] = {
+    "zh": """你是记忆事实增量修复器。只补提取已接受列表尚未覆盖的原子事实。
+
+严格遵守响应 JSON Schema，只输出 JSON，不要输出解释、Markdown 或额外字段。
+- 事实只能来自 <repair_source>，<covered_claims> 仅用于判重。
+- 与 covered_claims 语义相同、近义改写、包含关系或仅措辞不同的事实都视为已覆盖，禁止输出。
+- 每条 claim 只表达一个原子事实，并保留原文中的主体、专名、数值、单位和 evidence_quote。
+- 没有新事实时返回 {"claims":[],"should_memorize":false}。
+- 最多输出 20 条新 claim。""",
+    "en": """You repair gaps in atomic memory extraction. Emit only facts not covered by the accepted list.
+
+Follow the response JSON Schema exactly. Return JSON only, with no explanation, Markdown, or extra fields.
+- Facts must come only from <repair_source>; <covered_claims> is only for duplicate avoidance.
+- Semantically equivalent facts, paraphrases, containment, and wording-only variants are already covered and forbidden.
+- Each claim states one atomic fact and preserves source subjects, names, numbers, units, and evidence_quote.
+- If there are no new facts, return {"claims":[],"should_memorize":false}.
+- Return at most 20 new claims.""",
+}
+
+
 class LLMExtractor:
     """通过统一 LLMClient 执行结构化事实提取。"""
 
@@ -763,6 +783,7 @@ class LLMExtractor:
         schema_retries: int = 2,
         structured_mode: StructuredOutputMode = StructuredOutputMode.JSON_SCHEMA,
         soft_split_enabled: bool = False,
+        delta_repair_enabled: bool = False,
         verifier: EntailmentVerifier | None = None,
         verification_mode: Literal["off", "audit", "enforce"] = "off",
         lesson_signal_mode: Literal["off", "observe", "enforce"] = "observe",
@@ -776,6 +797,7 @@ class LLMExtractor:
             raise ValueError("schema_retries must be non-negative")
         self.structured_mode = structured_mode
         self.soft_split_enabled = soft_split_enabled
+        self.delta_repair_enabled = delta_repair_enabled
         self.chunking_policy = chunking_policy
         if verification_mode not in {"off", "audit", "enforce"}:
             raise ValueError("verification_mode must be 'off', 'audit', or 'enforce'")
@@ -890,7 +912,7 @@ class LLMExtractor:
                         "source_length": len(chunk.text),
                     },
                 )
-                return claims
+                return self._apply_delta_repair(chunk, event_context, claims)
             split = bisect_extraction_chunk(chunk)
             if split is None:
                 current_audit().emit(
@@ -994,6 +1016,82 @@ class LLMExtractor:
                     ),
                 ]
             )
+
+    def _apply_delta_repair(
+        self,
+        chunk: ExtractionChunk,
+        event_context: dict[str, Any],
+        residual_claims: list[ExtractedClaim],
+    ) -> list[ExtractedClaim]:
+        """对 residual 子块最多补提一次；任意失败都保留已有 claims。"""
+        if not self.delta_repair_enabled:
+            return residual_claims
+        base_detail: dict[str, Any] = {
+            "residual_claim_count": len(residual_claims),
+            "repair_new_count": 0,
+            "merged_total": len(residual_claims),
+            "net_new_after_repair": 0,
+            "duplicates_removed": 0,
+            "chunk_index": chunk.index,
+            "start_unit": chunk.start_unit,
+            "end_unit": chunk.end_unit,
+            "source_length": len(chunk.text),
+        }
+        try:
+            outcome = self._extract_one_chunk(
+                chunk,
+                event_context,
+                repair_covered_claims=residual_claims,
+            )
+            repair_claims = outcome.claims
+            if self.verifier is not None and self.verification_mode != "off":
+                repair_claims = self._verify_extracted_claims(
+                    _postprocess_extracted_claims(repair_claims),
+                    chunk.text,
+                )
+            merged = self._merge_chunk_claims([residual_claims, repair_claims])
+            current_audit().emit(
+                "extract",
+                "possible_under_extraction",
+                "delta_repair_applied",
+                detail={
+                    **base_detail,
+                    "repair_new_count": len(repair_claims),
+                    "merged_total": len(merged),
+                    "net_new_after_repair": len(merged) - len(residual_claims),
+                    "duplicates_removed": len(residual_claims) + len(repair_claims) - len(merged),
+                    "repair_status": "success",
+                },
+            )
+            if outcome.compact_soft_saturated:
+                current_audit().emit(
+                    "extract",
+                    "possible_under_extraction",
+                    "claim_limit_residual_after_repair",
+                    detail={
+                        "claim_count": outcome.raw_claim_count,
+                        "schema_limit": 20,
+                        "accepted_claim_count": len(repair_claims),
+                        "chunk_index": chunk.index,
+                        "start_unit": chunk.start_unit,
+                        "end_unit": chunk.end_unit,
+                        "source_length": len(chunk.text),
+                    },
+                )
+            return merged
+        except Exception as error:
+            current_audit().emit(
+                "extract",
+                "possible_under_extraction",
+                "delta_repair_applied",
+                detail={
+                    **base_detail,
+                    "repair_status": "failed",
+                    "error_class": type(error).__name__,
+                    "error": str(error).replace("\n", " ")[:256],
+                },
+            )
+            return residual_claims
 
     def _verify_extracted_claims(
         self,
@@ -1344,16 +1442,28 @@ class LLMExtractor:
         self,
         chunk: ExtractionChunk,
         event_context: dict[str, Any],
+        *,
+        repair_covered_claims: list[ExtractedClaim] | None = None,
     ) -> _ChunkExtractionOutcome:
         """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
         prompt_context = {key: value for key, value in event_context.items() if not key.startswith("_")}
         context = json.dumps(prompt_context, ensure_ascii=False)
         occurred_at = str(event_context.get("occurred_at", "未知"))
         language = detect_extraction_language(chunk.text)
-        result = self._request_chunk(chunk, context, occurred_at, language)
+        result = (
+            self._request_delta_repair(
+                chunk,
+                context,
+                occurred_at,
+                language,
+                repair_covered_claims,
+            )
+            if repair_covered_claims is not None
+            else self._request_chunk(chunk, context, occurred_at, language)
+        )
         compact_response = isinstance(result, CompactExtractionResponseSchema)
         compact_soft_saturated = compact_response and len(result.claims) == 20
-        if compact_soft_saturated:
+        if compact_soft_saturated and repair_covered_claims is None:
             current_audit().emit(
                 "extract",
                 "possible_under_extraction",
@@ -1452,6 +1562,92 @@ class LLMExtractor:
             )
         )
         return _ChunkExtractionOutcome(retained, compact_soft_saturated, len(result.claims))
+
+    def _request_delta_repair(
+        self,
+        chunk: ExtractionChunk,
+        context: str,
+        occurred_at: str,
+        language: Literal["zh", "en"],
+        covered_claims: list[ExtractedClaim],
+    ) -> CompactExtractionResponseSchema:
+        """执行唯一一轮 compact delta repair，不做内容级重试。"""
+        covered_lines = "\n".join(
+            f"{index}. {self._compact_repair_text(claim.subject)} | {self._compact_repair_text(str(claim.value))}"
+            for index, claim in enumerate(covered_claims, start=1)
+        )
+        if language == "en":
+            user_prompt = (
+                f"Event occurred at: {occurred_at}\n"
+                f"Event context (not evidence): {context}\n"
+                "<repair_source>\n"
+                f"{chunk.text}\n"
+                "</repair_source>\n"
+                "<covered_claims>\n"
+                f"{covered_lines}\n"
+                "</covered_claims>\n"
+                "Extract only new atomic facts not covered by the list above. Do not repeat covered facts."
+            )
+        else:
+            user_prompt = (
+                f"事件发生时间 occurred_at：{occurred_at}\n"
+                f"事件上下文（不可作为证据）：{context}\n"
+                "<repair_source>\n"
+                f"{chunk.text}\n"
+                "</repair_source>\n"
+                "<covered_claims>\n"
+                f"{covered_lines}\n"
+                "</covered_claims>\n"
+                "只提取上述列表未覆盖的新原子事实，禁止复述。"
+            )
+        request = LLMRequest(
+            messages=[
+                LLMMessage(role="system", content=DELTA_REPAIR_SYSTEM_PROMPTS[language]),
+                LLMMessage(role="user", content=user_prompt),
+            ],
+            structured_output=StructuredOutputSpec(
+                name="delta_repair_response",
+                schema=self._response_json_schema(),
+                preferred_mode=self.structured_mode,
+            ),
+        )
+        response = self.llm_client.complete(request)
+        self._llm_call_count += 1
+        self.last_usage_tokens += response.usage_total_tokens
+        self.last_input_tokens += response.input_tokens or 0
+        self.last_output_tokens += response.output_tokens or 0
+        if response.finish_reason in {"length", "max_tokens"}:
+            raise LLMOutputTruncatedError(
+                f"LLM delta repair output truncated: provider={self.llm_client.provider.name}, model={self.model}"
+            )
+        try:
+            raw = self._parse_json(response.content)
+            repaired = repair_extraction_json(
+                raw,
+                provider=self.llm_client.provider.name,
+                model=self.model,
+            )
+            self._repair_count += self._count_repairs(raw, repaired)
+            if not self._uses_compact_schema(repaired):
+                raise ValueError("delta repair response must use compact schema")
+            claims = repaired.get("claims")
+            if isinstance(claims, list):
+                for claim in claims:
+                    if isinstance(claim, dict):
+                        claim.setdefault("action", None)
+                        claim.setdefault("object", None)
+            return CompactExtractionResponseSchema.model_validate(repaired)
+        except (PydanticValidationError, ValueError) as error:
+            raise LLMSchemaValidationError(
+                "LLM delta repair response does not contain valid compact JSON: "
+                f"provider={self.llm_client.provider.name}, model={self.model}, "
+                f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
+            ) from error
+
+    @staticmethod
+    def _compact_repair_text(value: str) -> str:
+        """把已接受 claim 压成单行，避免扩大 repair prompt。"""
+        return " ".join(value.split())
 
     @staticmethod
     def _source_mapping(

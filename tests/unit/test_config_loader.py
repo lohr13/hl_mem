@@ -81,6 +81,18 @@ def test_extraction_soft_split_flag_loads_from_toml_and_defaults_off(tmp_path: P
     assert settings.extraction_soft_split_enabled is True
 
 
+def test_extraction_delta_repair_flag_loads_from_toml_and_defaults_off(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "delta-repair.toml",
+        "[extraction]\ndelta_repair_enabled = true\n" "[recall]\nquery_expansion_mode = 'off'\n",
+    )
+
+    settings = load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert Settings().extraction_delta_repair_enabled is False
+    assert settings.extraction_delta_repair_enabled is True
+
+
 def test_old_config_without_lifecycle_keys_adopts_v027_defaults(tmp_path: Path) -> None:
     config_path = _write(
         tmp_path / "old.toml",

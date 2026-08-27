@@ -28,14 +28,17 @@ class _SequenceClient:
     provider = _Provider()
     model = "test-model"
 
-    def __init__(self, responses: list[LLMResponse]) -> None:
+    def __init__(self, responses: list[LLMResponse | Exception]) -> None:
         self.responses = responses
         self.requests: list[LLMRequest] = []
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         """记录请求并返回下一个预设响应。"""
         self.requests.append(request)
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class _RecordingAudit:
@@ -91,6 +94,12 @@ def _full_response(values: list[str]) -> str:
         },
         ensure_ascii=False,
     )
+
+
+def _balanced_two_paragraph_source(left_values: list[str], right_values: list[str]) -> str:
+    left = "\n".join(left_values)
+    right = "\n".join(right_values)
+    return left + "\n\n" + right + ("x" * max(0, len(left) - len(right)))
 
 
 def test_short_text_uses_single_chunk() -> None:
@@ -205,12 +214,14 @@ def test_soft_split_preserves_root_merges_children_and_does_not_recurse_on_resid
     audit = _RecordingAudit()
 
     with audit_scope(audit):
-        claims = LLMExtractor(
+        extractor = LLMExtractor(
             client,
             ChunkingPolicy(10_000, 0, 3),
             soft_split_enabled=True,
-        ).extract("\n".join(left_values + right_values))
+        )
+        claims = extractor.extract("\n".join(left_values + right_values))
 
+    assert extractor.delta_repair_enabled is False
     assert len(client.requests) == 3
     assert [claim.value for claim in claims[:20]] == root_values
     assert {claim.value for claim in claims} == set(left_values + right_values)
@@ -231,6 +242,149 @@ def test_soft_split_preserves_root_merges_children_and_does_not_recurse_on_resid
         "end_unit": 1,
         "source_length": len("\n".join(left_values + right_values)),
     }
+    assert "delta_repair_applied" not in outcomes
+
+
+def test_delta_repair_runs_once_for_residual_and_merges_only_new_claims() -> None:
+    """残余子块只补一轮，并在既有五元组 merge 后报告真实净新增。"""
+    left_values = [f"User recorded left item {index:02d}" for index in range(21)]
+    right_values = [f"User recorded right item {index:02d}" for index in range(4)]
+    root_values = left_values[:16] + right_values
+    client = _SequenceClient(
+        [
+            LLMResponse(_compact_response(root_values), "stop", 10),
+            LLMResponse(_compact_response(left_values[:20]), "stop", 11),
+            LLMResponse(_compact_response([left_values[0], left_values[20]]), "stop", 12),
+            LLMResponse(_compact_response(right_values), "stop", 13),
+        ]
+    )
+    audit = _RecordingAudit()
+    source = _balanced_two_paragraph_source(left_values, right_values)
+
+    with audit_scope(audit):
+        claims = LLMExtractor(
+            client,
+            ChunkingPolicy(10_000, 0, 3),
+            soft_split_enabled=True,
+            delta_repair_enabled=True,
+        ).extract(source)
+
+    assert len(client.requests) == 4
+    assert {claim.value for claim in claims} == set(left_values + right_values)
+    repair_prompt = client.requests[2].messages[1].content
+    assert left_values[20] in repair_prompt
+    assert f"1. user | {left_values[0]}" in repair_prompt
+    assert "Extract only new atomic facts not covered by the list above" in repair_prompt
+    outcomes = [event[2] for event in audit.events]
+    assert outcomes.count("claim_limit_residual_after_split") == 1
+    assert outcomes.count("delta_repair_applied") == 1
+    repair_detail = next(event[3] for event in audit.events if event[2] == "delta_repair_applied")
+    assert repair_detail == {
+        "residual_claim_count": 20,
+        "repair_new_count": 2,
+        "merged_total": 21,
+        "net_new_after_repair": 1,
+        "duplicates_removed": 1,
+        "chunk_index": 0,
+        "start_unit": 0,
+        "end_unit": 1,
+        "source_length": len("\n".join(left_values) + "\n\n"),
+        "repair_status": "success",
+    }
+
+
+def test_delta_repair_empty_response_stops_after_one_request() -> None:
+    """合法空 repair 响应立即停止，保留软拆分已有 claims。"""
+    left_values = [f"User recorded left item {index:02d}" for index in range(20)]
+    right_values = ["User recorded right item"]
+    root_values = left_values[:19] + right_values
+    empty_response = json.dumps({"claims": [], "should_memorize": False})
+    client = _SequenceClient(
+        [
+            LLMResponse(_compact_response(root_values), "stop", 10),
+            LLMResponse(_compact_response(left_values), "stop", 11),
+            LLMResponse(empty_response, "stop", 12),
+            LLMResponse(_compact_response(right_values), "stop", 13),
+        ]
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claims = LLMExtractor(
+            client,
+            ChunkingPolicy(10_000, 0, 3),
+            soft_split_enabled=True,
+            delta_repair_enabled=True,
+        ).extract(_balanced_two_paragraph_source(left_values, right_values))
+
+    assert len(client.requests) == 4
+    assert {claim.value for claim in claims} == set(left_values + right_values)
+    repair_detail = next(event[3] for event in audit.events if event[2] == "delta_repair_applied")
+    assert repair_detail["repair_new_count"] == 0
+    assert repair_detail["net_new_after_repair"] == 0
+    assert not [event for event in audit.events if event[2] == "claim_limit_residual_after_repair"]
+
+
+def test_delta_repair_saturation_emits_residual_without_recursing() -> None:
+    """repair 再次返回 20 条时仅审计，不发第二轮请求。"""
+    left_values = [f"User recorded left item {index:02d}" for index in range(40)]
+    right_values = ["User recorded right item"]
+    root_values = left_values[:19] + right_values
+    client = _SequenceClient(
+        [
+            LLMResponse(_compact_response(root_values), "stop", 10),
+            LLMResponse(_compact_response(left_values[:20]), "stop", 11),
+            LLMResponse(_compact_response(left_values[20:]), "stop", 12),
+            LLMResponse(_compact_response(right_values), "stop", 13),
+        ]
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        LLMExtractor(
+            client,
+            ChunkingPolicy(10_000, 0, 3),
+            soft_split_enabled=True,
+            delta_repair_enabled=True,
+        ).extract(_balanced_two_paragraph_source(left_values, right_values))
+
+    assert len(client.requests) == 4
+    residual = [event for event in audit.events if event[2] == "claim_limit_residual_after_repair"]
+    assert len(residual) == 1
+    assert residual[0][3]["claim_count"] == 20
+    assert [event[2] for event in audit.events].count("delta_repair_applied") == 1
+
+
+def test_delta_repair_failure_preserves_residual_claims_and_continues() -> None:
+    """repair 调用失败必须 fail-open，右子块仍继续提取且根 claims 不丢。"""
+    left_values = [f"User recorded left item {index:02d}" for index in range(20)]
+    right_values = ["User recorded right item"]
+    root_values = left_values[:19] + right_values
+    client = _SequenceClient(
+        [
+            LLMResponse(_compact_response(root_values), "stop", 10),
+            LLMResponse(_compact_response(left_values), "stop", 11),
+            RuntimeError("repair unavailable"),
+            LLMResponse(_compact_response(right_values), "stop", 13),
+        ]
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claims = LLMExtractor(
+            client,
+            ChunkingPolicy(10_000, 0, 3),
+            soft_split_enabled=True,
+            delta_repair_enabled=True,
+        ).extract(_balanced_two_paragraph_source(left_values, right_values))
+
+    assert len(client.requests) == 4
+    assert {claim.value for claim in claims} == set(left_values + right_values)
+    repair_detail = next(event[3] for event in audit.events if event[2] == "delta_repair_applied")
+    assert repair_detail["repair_status"] == "failed"
+    assert repair_detail["repair_new_count"] == 0
+    assert repair_detail["net_new_after_repair"] == 0
+    assert repair_detail["error_class"] == "RuntimeError"
 
 
 def test_hard_recovery_inside_soft_child_does_not_reset_one_level_guard() -> None:
