@@ -1,0 +1,197 @@
+{
+  "protocol_id": "softsplit_ab_20260827_v2",
+  "scored_at": "2026-08-27T11:07:22.014832+00:00",
+  "overall": "FAIL",
+  "corpus": {
+    "expected_case_count": 83,
+    "observed_case_count": 83,
+    "missing_case_count": 0,
+    "duplicate_case_ids": [],
+    "complete": true
+  },
+  "classification": {
+    "case_counts": {
+      "success": 47,
+      "runner_error": 4,
+      "replay_drift": 17,
+      "api_error": 8,
+      "protocol_deviation": 7
+    },
+    "control_root_not_compact_exact_20_count": 22,
+    "control_root_not_compact_exact_20_overlapping_api_error_count": 5
+  },
+  "diagnostics": {
+    "residual_saturation": {
+      "successful_case_count": 47,
+      "cases_with_residual": 39,
+      "case_rate": 0.8297872340425532,
+      "residual_event_count": 48
+    }
+  },
+  "gates": {
+    "effective_output": {
+      "status": "PASS",
+      "median_net_new_after_split": 18.0,
+      "cases_net_new_at_least_2": 53,
+      "fraction_net_new_at_least_2": 0.6385542168674698,
+      "thresholds": {
+        "median_min": 3,
+        "fraction_min": 0.5
+      },
+      "successful_cases": {
+        "case_count": 47,
+        "median_net_new_after_split": 28.0,
+        "cases_net_new_at_least_2": 47,
+        "fraction_net_new_at_least_2": 1.0
+      }
+    },
+    "duplicate_pollution": {
+      "status": "PASS",
+      "control_duplicate_rate": 0.0007722007722007722,
+      "treatment_duplicate_rate": 0.013518733101583623,
+      "delta_pp": 1.274653,
+      "threshold_delta_pp_max": 5.0,
+      "control": {
+        "claim_count": 1295,
+        "duplicate_count": 1
+      },
+      "treatment": {
+        "claim_count": 2589,
+        "duplicate_count": 35
+      },
+      "metrics_complete": true,
+      "scored_case_count": 79,
+      "excluded_runner_error_count": 4,
+      "successful_case_medians": {
+        "control_duplicate_rate": 0.0,
+        "treatment_duplicate_rate": 0.0
+      }
+    },
+    "transport_failure": {
+      "status": "FAIL",
+      "observed_treatment_requests": 214,
+      "non_cache_treatment_request_count": 135,
+      "cached_treatment_request_count": 79,
+      "transport_failure_count": 5,
+      "failure_rate": 0.037037037037037035,
+      "threshold_max": 0.02,
+      "metrics_complete": true,
+      "excluded_runner_error_count": 4,
+      "all_arms": {
+        "observed_request_count": 300,
+        "non_cache_request_count": 221,
+        "transport_failure_count": 10
+      },
+      "by_category": {
+        "success": {
+          "case_count": 47,
+          "control_non_cache_requests": 47,
+          "treatment_non_cache_requests": 94,
+          "control_transport_failures": 0,
+          "treatment_transport_failures": 0,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 0
+        },
+        "runner_error": {
+          "case_count": 4,
+          "control_non_cache_requests": 0,
+          "treatment_non_cache_requests": 0,
+          "control_transport_failures": 0,
+          "treatment_transport_failures": 0,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 0
+        },
+        "replay_drift": {
+          "case_count": 17,
+          "control_non_cache_requests": 18,
+          "treatment_non_cache_requests": 0,
+          "control_transport_failures": 0,
+          "treatment_transport_failures": 0,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 0
+        },
+        "api_error": {
+          "case_count": 8,
+          "control_non_cache_requests": 13,
+          "treatment_non_cache_requests": 13,
+          "control_transport_failures": 5,
+          "treatment_transport_failures": 5,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 1
+        },
+        "protocol_deviation": {
+          "case_count": 7,
+          "control_non_cache_requests": 8,
+          "treatment_non_cache_requests": 28,
+          "control_transport_failures": 0,
+          "treatment_transport_failures": 0,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 0
+        }
+      }
+    },
+    "extraction_quality_failure": {
+      "status": "PASS",
+      "observed_treatment_requests": 214,
+      "non_cache_treatment_request_count": 135,
+      "cached_treatment_request_count": 79,
+      "extraction_failure_count": 1,
+      "failure_rate": 0.007407407407407408,
+      "threshold_max": 0.05,
+      "metrics_complete": true,
+      "excluded_runner_error_count": 4,
+      "all_arms": {
+        "observed_request_count": 300,
+        "non_cache_request_count": 221,
+        "extraction_failure_count": 1
+      },
+      "by_category": {
+        "success": {
+          "case_count": 47,
+          "control_non_cache_requests": 47,
+          "treatment_non_cache_requests": 94,
+          "control_transport_failures": 0,
+          "treatment_transport_failures": 0,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 0
+        },
+        "runner_error": {
+          "case_count": 4,
+          "control_non_cache_requests": 0,
+          "treatment_non_cache_requests": 0,
+          "control_transport_failures": 0,
+          "treatment_transport_failures": 0,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 0
+        },
+        "replay_drift": {
+          "case_count": 17,
+          "control_non_cache_requests": 18,
+          "treatment_non_cache_requests": 0,
+          "control_transport_failures": 0,
+          "treatment_transport_failures": 0,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 0
+        },
+        "api_error": {
+          "case_count": 8,
+          "control_non_cache_requests": 13,
+          "treatment_non_cache_requests": 13,
+          "control_transport_failures": 5,
+          "treatment_transport_failures": 5,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 1
+        },
+        "protocol_deviation": {
+          "case_count": 7,
+          "control_non_cache_requests": 8,
+          "treatment_non_cache_requests": 28,
+          "control_transport_failures": 0,
+          "treatment_transport_failures": 0,
+          "control_extraction_failures": 0,
+          "treatment_extraction_failures": 0
+        }
+      }
+    }
+  }
+}

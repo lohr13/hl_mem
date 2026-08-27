@@ -288,8 +288,16 @@ def test_runner_replays_control_root_and_records_three_treatment_requests() -> N
     }
 
 
-def _request(status: str = "success") -> dict[str, Any]:
-    return {"status": status, "cache_hit": False}
+def _request(
+    status: str = "success",
+    *,
+    error_class: str | None = None,
+    cache_hit: bool = False,
+) -> dict[str, Any]:
+    request: dict[str, Any] = {"status": status, "cache_hit": cache_hit}
+    if error_class is not None:
+        request["error"] = {"class": error_class, "message": "test error"}
+    return request
 
 
 def _score_record(index: int, *, net_new: int, duplicate_delta_pp: float, failed: int = 0) -> dict[str, Any]:
@@ -297,7 +305,13 @@ def _score_record(index: int, *, net_new: int, duplicate_delta_pp: float, failed
     control_duplicates = 5
     treatment_claims = 100
     treatment_duplicates = round(control_duplicates + duplicate_delta_pp)
-    treatment_requests = [_request("error" if request_index < failed else "success") for request_index in range(3)]
+    treatment_requests = [
+        _request(
+            "error" if request_index < failed else "success",
+            error_class="HTTPStatusError" if request_index < failed else None,
+        )
+        for request_index in range(3)
+    ]
     return {
         "case_id": f"case-{index:02d}",
         "status": "failed" if failed else "success",
@@ -323,20 +337,21 @@ def _score_record(index: int, *, net_new: int, duplicate_delta_pp: float, failed
     }
 
 
-def test_scorer_applies_all_three_frozen_gates() -> None:
+def test_scorer_applies_all_v2_frozen_gates() -> None:
     scorer = _load_module("score_results")
     passing = [
         _score_record(index, net_new=4 if index < 18 else 3, duplicate_delta_pp=4, failed=0) for index in range(34)
     ]
-    passing[0]["treatment"]["requests"][0]["status"] = "error"
-    passing[0]["treatment"]["requests"][1]["status"] = "error"
+    passing[0]["treatment"]["requests"][0] = _request("error", error_class="HTTPStatusError")
+    passing[0]["treatment"]["requests"][1] = _request("error", error_class="ConnectError")
 
     report = scorer.score_records(passing, expected_case_count=34)
 
     assert report["overall"] == "PASS"
     assert report["gates"]["effective_output"]["status"] == "PASS"
     assert report["gates"]["duplicate_pollution"]["delta_pp"] == 4.0
-    assert report["gates"]["request_failure"]["failure_rate"] < 0.02
+    assert report["gates"]["transport_failure"]["failure_rate"] < 0.02
+    assert report["gates"]["extraction_quality_failure"]["failure_rate"] == 0.0
 
     failing = [
         _score_record(index, net_new=0, duplicate_delta_pp=6, failed=3 if index == 0 else 0) for index in range(34)
@@ -345,7 +360,8 @@ def test_scorer_applies_all_three_frozen_gates() -> None:
 
     assert failing_report["overall"] == "FAIL"
     assert failing_report["gates"]["duplicate_pollution"]["status"] == "FAIL"
-    assert failing_report["gates"]["request_failure"]["status"] == "FAIL"
+    assert failing_report["gates"]["transport_failure"]["status"] == "FAIL"
+    assert failing_report["gates"]["extraction_quality_failure"]["status"] == "PASS"
 
 
 def test_scorer_classifies_failures_without_charging_unissued_drift_requests() -> None:
@@ -372,7 +388,7 @@ def test_scorer_classifies_failures_without_charging_unissued_drift_requests() -
     )
     replay_drift["treatment"]["requests"] = [_request()]
     api_error = _score_record(3, net_new=0, duplicate_delta_pp=0, failed=1)
-    api_error["treatment"]["requests"] = [_request("error")]
+    api_error["treatment"]["requests"] = [_request("error", error_class="HTTPStatusError")]
     protocol_deviation = _score_record(4, net_new=3, duplicate_delta_pp=0)
     protocol_deviation.update(status="failed", failure_reasons=["treatment_request_count_not_3"])
     protocol_deviation["treatment"]["requests"] = [_request() for _ in range(5)]
@@ -394,10 +410,13 @@ def test_scorer_classifies_failures_without_charging_unissued_drift_requests() -
     assert duplicate_gate["metrics_complete"] is True
     assert duplicate_gate["scored_case_count"] == 4
     assert duplicate_gate["excluded_runner_error_count"] == 1
-    failure_gate = report["gates"]["request_failure"]
-    assert failure_gate["observed_treatment_requests"] == 10
-    assert failure_gate["failed_request_count"] == 1
-    assert failure_gate["failure_rate"] == 0.1
+    transport_gate = report["gates"]["transport_failure"]
+    assert transport_gate["non_cache_treatment_request_count"] == 10
+    assert transport_gate["transport_failure_count"] == 1
+    assert transport_gate["failure_rate"] == 0.1
+    quality_gate = report["gates"]["extraction_quality_failure"]
+    assert quality_gate["extraction_failure_count"] == 0
+    assert quality_gate["failure_rate"] == 0.0
     assert report["diagnostics"]["residual_saturation"] == {
         "successful_case_count": 1,
         "cases_with_residual": 1,
@@ -419,9 +438,38 @@ def test_scorer_counts_schema_validation_as_one_treatment_failure_unit() -> None
     report = scorer.score_records([record], expected_case_count=1)
 
     assert report["classification"]["case_counts"]["api_error"] == 1
-    failure_gate = report["gates"]["request_failure"]
-    assert failure_gate["observed_treatment_requests"] == 4
-    assert failure_gate["failed_request_count"] == 0
-    assert failure_gate["extraction_failure_count"] == 1
-    assert failure_gate["failure_units"] == 1
-    assert failure_gate["failure_rate"] == 0.25
+    transport_gate = report["gates"]["transport_failure"]
+    assert transport_gate["non_cache_treatment_request_count"] == 4
+    assert transport_gate["transport_failure_count"] == 0
+    assert transport_gate["failure_rate"] == 0.0
+    quality_gate = report["gates"]["extraction_quality_failure"]
+    assert quality_gate["non_cache_treatment_request_count"] == 4
+    assert quality_gate["extraction_failure_count"] == 1
+    assert quality_gate["failure_rate"] == 0.25
+
+
+def test_scorer_counts_mixed_transport_and_schema_failures_separately() -> None:
+    scorer = _load_module("score_results")
+    record = _score_record(0, net_new=4, duplicate_delta_pp=0)
+    record.update(status="failed", failure_reasons=["treatment_error"])
+    record["treatment"]["requests"] = [
+        _request("success", cache_hit=True),
+        _request("error", error_class="httpx.ConnectTimeout"),
+        _request(),
+    ]
+    record["treatment"]["error"] = {
+        "class": "LLMOutputTruncatedError",
+        "message": "child response was truncated",
+    }
+
+    report = scorer.score_records([record], expected_case_count=1)
+
+    transport_gate = report["gates"]["transport_failure"]
+    assert transport_gate["non_cache_treatment_request_count"] == 2
+    assert transport_gate["cached_treatment_request_count"] == 1
+    assert transport_gate["transport_failure_count"] == 1
+    assert transport_gate["failure_rate"] == 0.5
+    quality_gate = report["gates"]["extraction_quality_failure"]
+    assert quality_gate["non_cache_treatment_request_count"] == 2
+    assert quality_gate["extraction_failure_count"] == 1
+    assert quality_gate["failure_rate"] == 0.5

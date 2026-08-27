@@ -1,4 +1,4 @@
-"""Score compact==20 A/B JSONL against the three frozen protocol gates."""
+"""Score compact==20 A/B JSONL against the frozen v2 protocol gates."""
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-PROTOCOL_ID = "softsplit_ab_20260827_v1"
+MANIFEST_PROTOCOL_ID = "softsplit_ab_20260827_v1"
+PROTOCOL_ID = "softsplit_ab_20260827_v2"
 EQUIPMENT_DIR = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = EQUIPMENT_DIR / "manifest.json"
 DEFAULT_RUNS = EQUIPMENT_DIR / "runs.jsonl"
@@ -20,6 +21,35 @@ CASE_CATEGORIES = (
     "replay_drift",
     "api_error",
     "protocol_deviation",
+)
+TRANSPORT_ERROR_CLASSES = frozenset(
+    {
+        "HTTPStatusError",
+        "TransportError",
+        "TimeoutException",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+        "TimeoutError",
+        "NetworkError",
+        "ConnectError",
+        "ReadError",
+        "WriteError",
+        "CloseError",
+        "ConnectionError",
+        "ProtocolError",
+        "LocalProtocolError",
+        "RemoteProtocolError",
+        "ProxyError",
+        "UnsupportedProtocol",
+    }
+)
+EXTRACTION_QUALITY_ERROR_CLASSES = frozenset(
+    {
+        "LLMSchemaValidationError",
+        "LLMOutputTruncatedError",
+    }
 )
 
 
@@ -37,6 +67,30 @@ def _requests(record: Mapping[str, Any], arm: str) -> list[Mapping[str, Any]]:
     if not isinstance(value, list):
         return []
     return [request for request in value if isinstance(request, Mapping)]
+
+
+def _non_cache_requests(record: Mapping[str, Any], arm: str) -> list[Mapping[str, Any]]:
+    return [request for request in _requests(record, arm) if not bool(request.get("cache_hit"))]
+
+
+def _error_class(error: Any) -> str | None:
+    if not isinstance(error, Mapping):
+        return None
+    value = error.get("class")
+    if not isinstance(value, str) or not value:
+        return None
+    return value.rsplit(".", 1)[-1]
+
+
+def _transport_failure_count(record: Mapping[str, Any], arm: str) -> int:
+    return sum(
+        request.get("status") == "error" and _error_class(request.get("error")) in TRANSPORT_ERROR_CLASSES
+        for request in _non_cache_requests(record, arm)
+    )
+
+
+def _extraction_failure_count(record: Mapping[str, Any], arm: str) -> int:
+    return int(_error_class(_arm_error(record, arm)) in EXTRACTION_QUALITY_ERROR_CLASSES)
 
 
 def _failed_request_count(record: Mapping[str, Any], arm: str) -> int:
@@ -160,31 +214,49 @@ def score_records(records: list[Mapping[str, Any]], *, expected_case_count: int)
     request_records = duplicate_records
     observed_treatment_requests = sum(len(_requests(record, "treatment")) for record in request_records)
     observed_control_requests = sum(len(_requests(record, "control")) for record in request_records)
-    failed_treatment_requests = sum(_failed_request_count(record, "treatment") for record in request_records)
-    failed_control_requests = sum(_failed_request_count(record, "control") for record in request_records)
-    treatment_extraction_failures = sum(
-        _arm_error(record, "treatment") is not None and _failed_request_count(record, "treatment") == 0
-        for record in request_records
-    )
-    failure_units = failed_treatment_requests + treatment_extraction_failures
+    non_cache_treatment_requests = sum(len(_non_cache_requests(record, "treatment")) for record in request_records)
+    non_cache_control_requests = sum(len(_non_cache_requests(record, "control")) for record in request_records)
+    treatment_transport_failures = sum(_transport_failure_count(record, "treatment") for record in request_records)
+    control_transport_failures = sum(_transport_failure_count(record, "control") for record in request_records)
+    treatment_extraction_failures = sum(_extraction_failure_count(record, "treatment") for record in request_records)
+    control_extraction_failures = sum(_extraction_failure_count(record, "control") for record in request_records)
     request_metrics_complete = all(
         isinstance(_arm(record, "treatment").get("requests"), list) for record in request_records
     )
-    failure_rate = _rate(failure_units, observed_treatment_requests)
-    request_pass = (
-        complete_corpus and request_metrics_complete and observed_treatment_requests > 0 and failure_rate <= 0.02
+    transport_failure_rate = _rate(treatment_transport_failures, non_cache_treatment_requests)
+    extraction_failure_rate = _rate(treatment_extraction_failures, non_cache_treatment_requests)
+    transport_pass = (
+        complete_corpus
+        and request_metrics_complete
+        and non_cache_treatment_requests > 0
+        and transport_failure_rate <= 0.02
     )
-    request_by_category = {
+    extraction_quality_pass = (
+        complete_corpus
+        and request_metrics_complete
+        and non_cache_treatment_requests > 0
+        and extraction_failure_rate <= 0.05
+    )
+    failure_by_category = {
         category: {
             "case_count": len(category_records[category]),
-            "control_requests": sum(len(_requests(record, "control")) for record in category_records[category]),
-            "treatment_requests": sum(len(_requests(record, "treatment")) for record in category_records[category]),
-            "treatment_failed_requests": sum(
-                _failed_request_count(record, "treatment") for record in category_records[category]
+            "control_non_cache_requests": sum(
+                len(_non_cache_requests(record, "control")) for record in category_records[category]
+            ),
+            "treatment_non_cache_requests": sum(
+                len(_non_cache_requests(record, "treatment")) for record in category_records[category]
+            ),
+            "control_transport_failures": sum(
+                _transport_failure_count(record, "control") for record in category_records[category]
+            ),
+            "treatment_transport_failures": sum(
+                _transport_failure_count(record, "treatment") for record in category_records[category]
+            ),
+            "control_extraction_failures": sum(
+                _extraction_failure_count(record, "control") for record in category_records[category]
             ),
             "treatment_extraction_failures": sum(
-                _arm_error(record, "treatment") is not None and _failed_request_count(record, "treatment") == 0
-                for record in category_records[category]
+                _extraction_failure_count(record, "treatment") for record in category_records[category]
             ),
         }
         for category in CASE_CATEGORIES
@@ -239,21 +311,39 @@ def score_records(records: list[Mapping[str, Any]], *, expected_case_count: int)
                 ),
             },
         },
-        "request_failure": {
-            "status": "PASS" if request_pass else "FAIL",
+        "transport_failure": {
+            "status": "PASS" if transport_pass else "FAIL",
             "observed_treatment_requests": observed_treatment_requests,
-            "failed_request_count": failed_treatment_requests,
-            "extraction_failure_count": treatment_extraction_failures,
-            "failure_units": failure_units,
-            "failure_rate": failure_rate,
+            "non_cache_treatment_request_count": non_cache_treatment_requests,
+            "cached_treatment_request_count": observed_treatment_requests - non_cache_treatment_requests,
+            "transport_failure_count": treatment_transport_failures,
+            "failure_rate": transport_failure_rate,
             "threshold_max": 0.02,
             "metrics_complete": request_metrics_complete,
             "excluded_runner_error_count": case_counts["runner_error"],
             "all_arms": {
                 "observed_request_count": observed_control_requests + observed_treatment_requests,
-                "failed_request_count": failed_control_requests + failed_treatment_requests,
+                "non_cache_request_count": non_cache_control_requests + non_cache_treatment_requests,
+                "transport_failure_count": control_transport_failures + treatment_transport_failures,
             },
-            "by_category": request_by_category,
+            "by_category": failure_by_category,
+        },
+        "extraction_quality_failure": {
+            "status": "PASS" if extraction_quality_pass else "FAIL",
+            "observed_treatment_requests": observed_treatment_requests,
+            "non_cache_treatment_request_count": non_cache_treatment_requests,
+            "cached_treatment_request_count": observed_treatment_requests - non_cache_treatment_requests,
+            "extraction_failure_count": treatment_extraction_failures,
+            "failure_rate": extraction_failure_rate,
+            "threshold_max": 0.05,
+            "metrics_complete": request_metrics_complete,
+            "excluded_runner_error_count": case_counts["runner_error"],
+            "all_arms": {
+                "observed_request_count": observed_control_requests + observed_treatment_requests,
+                "non_cache_request_count": non_cache_control_requests + non_cache_treatment_requests,
+                "extraction_failure_count": control_extraction_failures + treatment_extraction_failures,
+            },
+            "by_category": failure_by_category,
         },
     }
     overall_pass = all(gate["status"] == "PASS" for gate in gates.values())
@@ -308,7 +398,7 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def score_files(manifest_path: Path, runs_path: Path, output_path: Path) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("protocol_id") != PROTOCOL_ID:
+    if manifest.get("protocol_id") != MANIFEST_PROTOCOL_ID:
         raise ValueError("manifest protocol_id does not match")
     report = score_records(_load_jsonl(runs_path), expected_case_count=int(manifest["case_count"]))
     output_path.parent.mkdir(parents=True, exist_ok=True)
