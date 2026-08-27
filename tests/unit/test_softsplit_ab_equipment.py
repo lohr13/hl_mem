@@ -247,6 +247,12 @@ def _response(values: list[str]) -> LLMResponse:
     )
 
 
+def _balanced_source(left_values: list[str], right_values: list[str]) -> str:
+    left = "\n".join(left_values)
+    right = "\n".join(right_values)
+    return left + "\n\n" + right + ("x" * max(0, len(left) - len(right)))
+
+
 def test_runner_replays_control_root_and_records_three_treatment_requests() -> None:
     runner = _load_module("run_ab")
     left = [f"left fact {index:02d}" for index in range(20)]
@@ -259,11 +265,12 @@ def test_runner_replays_control_root_and_records_three_treatment_requests() -> N
         ]
     )
 
-    def extractor_factory(client, soft_split_enabled: bool):
+    def extractor_factory(client, soft_split_enabled: bool, delta_repair_enabled: bool = False):
         return LLMExtractor(
             client,
             ChunkingPolicy(12_000, 0, 3),
             soft_split_enabled=soft_split_enabled,
+            delta_repair_enabled=delta_repair_enabled,
         )
 
     record = runner.run_extraction_pair(
@@ -286,6 +293,58 @@ def test_runner_replays_control_root_and_records_three_treatment_requests() -> N
         "failed_count": 0,
         "failed_or_missing_count": 0,
     }
+
+
+def test_runner_delta_repair_mode_runs_only_real_treatment_requests() -> None:
+    runner = _load_module("run_ab")
+    left = [f"left repair fact {index:02d}" for index in range(21)]
+    right = [f"right repair fact {index:02d}" for index in range(4)]
+    root = left[:16] + right
+    client = _SequenceClient(
+        [
+            _response(root),
+            _response(left[:20]),
+            _response([left[20]]),
+            _response(right),
+        ]
+    )
+
+    def extractor_factory(client, soft_split_enabled: bool, delta_repair_enabled: bool = False):
+        return LLMExtractor(
+            client,
+            ChunkingPolicy(12_000, 0, 3),
+            soft_split_enabled=soft_split_enabled,
+            delta_repair_enabled=delta_repair_enabled,
+        )
+
+    record = runner.run_delta_repair_case(
+        "case-repair",
+        _balanced_source(left, right),
+        {"occurred_at": "2026-08-20T00:00:00Z"},
+        client_factory=lambda: client,
+        extractor_factory=extractor_factory,
+        embedder=_ConstantEmbedder(),
+    )
+
+    assert "control" not in record
+    assert record["protocol_id"] == "softsplit_ab_20260827_v3"
+    assert record["status"] == "success"
+    assert len(record["treatment"]["requests"]) == 4
+    assert all(request["cache_hit"] is False for request in record["treatment"]["requests"])
+    assert record["comparison"] == {
+        "treatment_soft_split_applied": True,
+        "delta_repair_applied_count": 1,
+        "net_new_after_repair": 1,
+        "residual_after_repair_count": 0,
+    }
+
+
+def test_runner_parser_accepts_delta_repair_switch() -> None:
+    runner = _load_module("run_ab")
+
+    args = runner._parser().parse_args(["--delta-repair"])
+
+    assert args.delta_repair is True
 
 
 def _request(
@@ -473,3 +532,110 @@ def test_scorer_counts_mixed_transport_and_schema_failures_separately() -> None:
     assert quality_gate["non_cache_treatment_request_count"] == 2
     assert quality_gate["extraction_failure_count"] == 1
     assert quality_gate["failure_rate"] == 0.5
+
+
+def _v3_baseline_record(index: int, *, duplicate_count: int = 5) -> dict[str, Any]:
+    return {
+        "case_id": f"case-v3-{index}",
+        "status": "success",
+        "failure_reasons": [],
+        "treatment": {
+            "audit_events": [{"outcome": "claim_limit_residual_after_split", "detail": {}}],
+            "duplicate_profile": {
+                "claim_count": 100,
+                "duplicate_count": duplicate_count,
+            },
+        },
+    }
+
+
+def _v3_treatment_record(
+    index: int,
+    *,
+    net_new: int,
+    duplicate_count: int = 9,
+    request_count: int = 25,
+) -> dict[str, Any]:
+    return {
+        "case_id": f"case-v3-{index}",
+        "status": "success",
+        "failure_reasons": [],
+        "treatment": {
+            "error": None,
+            "requests": [_request() for _ in range(request_count)],
+            "audit_events": [
+                {
+                    "outcome": "delta_repair_applied",
+                    "detail": {
+                        "repair_status": "success",
+                        "net_new_after_repair": net_new,
+                    },
+                }
+            ],
+            "duplicate_profile": {
+                "claim_count": 100,
+                "duplicate_count": duplicate_count,
+            },
+        },
+    }
+
+
+def test_v3_scorer_passes_all_four_frozen_gates() -> None:
+    scorer = _load_module("score_results")
+    baseline = [_v3_baseline_record(index) for index in range(4)]
+    treatment = [_v3_treatment_record(index, net_new=net_new) for index, net_new in enumerate([4, 3, 3, 0])]
+    treatment[0]["treatment"]["requests"][0] = _request(
+        "error",
+        error_class="HTTPStatusError",
+    )
+
+    report = scorer.score_v3_records(treatment, baseline, expected_case_count=4)
+
+    assert report["overall"] == "PASS"
+    assert report["gates"]["repair_benefit"]["status"] == "PASS"
+    assert report["gates"]["repair_benefit"]["median_net_new_after_repair"] == 3.0
+    assert report["gates"]["repair_benefit"]["fraction_net_new_at_least_2"] == 0.75
+    assert report["gates"]["duplicate_pollution"]["status"] == "PASS"
+    assert report["gates"]["duplicate_pollution"]["delta_pp"] == 4.0
+    assert report["gates"]["transport_failure"]["status"] == "PASS"
+    assert report["gates"]["transport_failure"]["failure_rate"] == 0.01
+    assert report["gates"]["extraction_quality_failure"]["status"] == "PASS"
+    assert report["gates"]["extraction_quality_failure"]["failure_rate"] == 0.0
+
+
+def test_v3_scorer_fails_each_gate_without_changing_thresholds() -> None:
+    scorer = _load_module("score_results")
+    baseline = [_v3_baseline_record(index) for index in range(4)]
+    treatment = [_v3_treatment_record(index, net_new=1, duplicate_count=11) for index in range(4)]
+    for request_index in range(3):
+        treatment[0]["treatment"]["requests"][request_index] = _request(
+            "error",
+            error_class="ConnectTimeout",
+        )
+    treatment[0]["treatment"]["audit_events"][0]["detail"] = {
+        "repair_status": "failed",
+        "error_class": "LLMSchemaValidationError",
+        "net_new_after_repair": 0,
+    }
+
+    report = scorer.score_v3_records(treatment, baseline, expected_case_count=4)
+
+    assert report["overall"] == "FAIL"
+    assert report["gates"]["repair_benefit"]["status"] == "FAIL"
+    assert report["gates"]["duplicate_pollution"]["status"] == "FAIL"
+    assert report["gates"]["duplicate_pollution"]["delta_pp"] == 6.0
+    assert report["gates"]["transport_failure"]["status"] == "FAIL"
+    assert report["gates"]["transport_failure"]["failure_rate"] == 0.03
+    quality_gate = report["gates"]["extraction_quality_failure"]
+    assert quality_gate["status"] == "FAIL"
+    assert quality_gate["extraction_failure_count"] == 1
+    assert quality_gate["repair_request_count"] == 4
+    assert quality_gate["failure_rate"] == 0.25
+
+
+def test_v3_scorer_parser_accepts_baseline_runs() -> None:
+    scorer = _load_module("score_results")
+
+    args = scorer._parser().parse_args(["--baseline-runs", "baseline.jsonl"])
+
+    assert args.baseline_runs == Path("baseline.jsonl")

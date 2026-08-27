@@ -36,6 +36,7 @@ from hl_mem.settings import Settings  # noqa: E402
 from hl_mem.storage.migrations.fact_hash_v2 import compute_fact_hash_v2  # noqa: E402
 
 PROTOCOL_ID = "softsplit_ab_20260827_v1"
+DELTA_REPAIR_PROTOCOL_ID = "softsplit_ab_20260827_v3"
 MODEL = "qwen3.7-plus"
 PROVIDER = "dashscope"
 BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"
@@ -189,13 +190,14 @@ def _run_arm(
     content: dict[str, Any] | str,
     context: dict[str, Any],
     client: _RecordingCachingClient,
-    extractor_factory: Callable[[Any, bool], Any],
+    extractor_factory: Callable[[Any, bool, bool], Any],
     *,
     soft_split_enabled: bool,
+    delta_repair_enabled: bool,
     expected_request_count: int,
 ) -> dict[str, Any]:
     audit = _RecordingAudit()
-    extractor = extractor_factory(client, soft_split_enabled)
+    extractor = extractor_factory(client, soft_split_enabled, delta_repair_enabled)
     claims: list[Any] = []
     error: dict[str, str] | None = None
     with audit_scope(audit):
@@ -299,7 +301,7 @@ def run_extraction_pair(
     context: dict[str, Any],
     *,
     client_factory: Callable[[], Any],
-    extractor_factory: Callable[[Any, bool], Any],
+    extractor_factory: Callable[[Any, bool, bool], Any],
     embedder: Any,
     semantic_threshold: float = 0.92,
 ) -> dict[str, Any]:
@@ -312,6 +314,7 @@ def run_extraction_pair(
         control_client,
         extractor_factory,
         soft_split_enabled=False,
+        delta_repair_enabled=False,
         expected_request_count=1,
     )
     treatment_client = _RecordingCachingClient(client_factory(), cache, replay=True)
@@ -321,6 +324,7 @@ def run_extraction_pair(
         treatment_client,
         extractor_factory,
         soft_split_enabled=True,
+        delta_repair_enabled=False,
         expected_request_count=3,
     )
     occurred_at = str(context.get("occurred_at") or "2026-08-27T00:00:00Z")
@@ -389,6 +393,81 @@ def run_extraction_pair(
     }
 
 
+def run_delta_repair_case(
+    case_id: str,
+    content: dict[str, Any] | str,
+    context: dict[str, Any],
+    *,
+    client_factory: Callable[[], Any],
+    extractor_factory: Callable[[Any, bool, bool], Any],
+    embedder: Any,
+    semantic_threshold: float = 0.92,
+) -> dict[str, Any]:
+    """Run only the real P0+P1 arm; v3 scoring loads its P0 baseline separately."""
+    treatment_client = _RecordingCachingClient(client_factory(), _ResponseCache(), replay=False)
+    treatment = _run_arm(
+        content,
+        context,
+        treatment_client,
+        extractor_factory,
+        soft_split_enabled=True,
+        delta_repair_enabled=True,
+        expected_request_count=0,
+    )
+    audit_events = treatment["audit_events"]
+    split_applied = _has_audit_outcome(treatment, "claim_limit_split_applied")
+    repair_events = [event for event in audit_events if event.get("outcome") == "delta_repair_applied"]
+    residual_after_repair = sum(event.get("outcome") == "claim_limit_residual_after_repair" for event in audit_events)
+    expected_requests = 1 + (2 if split_applied else 0) + len(repair_events)
+    treatment["request_summary"] = _request_summary(treatment["requests"], expected_requests)
+    occurred_at = str(context.get("occurred_at") or "2026-08-27T00:00:00Z")
+    profile_error: dict[str, str] | None = None
+    try:
+        treatment["duplicate_profile"] = duplicate_profile(
+            treatment["claims"],
+            embedder,
+            occurred_at=occurred_at,
+            semantic_threshold=semantic_threshold,
+        )
+    except Exception as error:
+        profile_error = {"class": type(error).__name__, "message": str(error)[:500]}
+        treatment["duplicate_profile"] = {
+            "claim_count": 0,
+            "exact_duplicate_count": 0,
+            "semantic_near_duplicate_count": 0,
+            "duplicate_count": 0,
+            "duplicate_rate": 0.0,
+            "error": profile_error,
+        }
+    protocol_errors: list[str] = []
+    if treatment["error"] is not None:
+        protocol_errors.append("treatment_error")
+    if not _has_audit_outcome(treatment, "claim_limit_reached"):
+        protocol_errors.append("treatment_root_not_compact_exact_20")
+    if not split_applied:
+        protocol_errors.append("treatment_soft_split_not_applied")
+    if treatment["request_summary"]["observed_count"] != expected_requests:
+        protocol_errors.append("treatment_request_count_mismatch")
+    if profile_error is not None:
+        protocol_errors.append("duplicate_profile_error")
+    return {
+        "protocol_id": DELTA_REPAIR_PROTOCOL_ID,
+        "case_id": case_id,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "status": "success" if not protocol_errors else "failed",
+        "failure_reasons": protocol_errors,
+        "treatment": treatment,
+        "comparison": {
+            "treatment_soft_split_applied": split_applied,
+            "delta_repair_applied_count": len(repair_events),
+            "net_new_after_repair": sum(
+                max(0, int(event.get("detail", {}).get("net_new_after_repair", 0))) for event in repair_events
+            ),
+            "residual_after_repair_count": residual_after_repair,
+        },
+    }
+
+
 def _open_read_only(database_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(f"{database_path.resolve().as_uri()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
@@ -452,14 +531,14 @@ def _load_case_payload(database_path: Path, case: Mapping[str, Any]) -> tuple[di
     )
 
 
-def _extractor_factory(settings: Settings) -> Callable[[Any, bool], LLMExtractor]:
+def _extractor_factory(settings: Settings) -> Callable[[Any, bool, bool], LLMExtractor]:
     structured_mode = (
         StructuredOutputMode.JSON_OBJECT
         if settings.llm_structured_mode == "json_object"
         else StructuredOutputMode.JSON_SCHEMA
     )
 
-    def build(client: Any, soft_split_enabled: bool) -> LLMExtractor:
+    def build(client: Any, soft_split_enabled: bool, delta_repair_enabled: bool) -> LLMExtractor:
         return LLMExtractor(
             client,
             ChunkingPolicy(
@@ -470,6 +549,7 @@ def _extractor_factory(settings: Settings) -> Callable[[Any, bool], LLMExtractor
             schema_retries=settings.llm_schema_retries,
             structured_mode=structured_mode,
             soft_split_enabled=soft_split_enabled,
+            delta_repair_enabled=delta_repair_enabled,
             verifier=None,
             verification_mode="off",
             lesson_signal_mode=settings.lesson_signal_mode,
@@ -500,6 +580,7 @@ def run_manifest(
     *,
     database_path: Path | None = None,
     concurrency: int = 8,
+    delta_repair: bool = False,
 ) -> dict[str, int]:
     if not 1 <= concurrency <= 8:
         raise ValueError("concurrency must be between 1 and 8")
@@ -522,7 +603,8 @@ def run_manifest(
         case_id = str(case["case_id"])
         try:
             content, context = _load_case_payload(resolved_database, case)
-            record = run_extraction_pair(
+            run_case = run_delta_repair_case if delta_repair else run_extraction_pair
+            record = run_case(
                 case_id,
                 content,
                 context,
@@ -533,7 +615,7 @@ def run_manifest(
             )
         except Exception as error:
             record = {
-                "protocol_id": PROTOCOL_ID,
+                "protocol_id": DELTA_REPAIR_PROTOCOL_ID if delta_repair else PROTOCOL_ID,
                 "case_id": case_id,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "status": "failed",
@@ -548,6 +630,7 @@ def run_manifest(
             "max_concurrency": concurrency,
             "embedding_model": settings.embedding_model,
             "dedup_threshold": settings.dedup_threshold,
+            "delta_repair_enabled": delta_repair,
         }
         return record
 
@@ -571,22 +654,34 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
     parser.add_argument("--concurrency", type=int, default=8)
+    parser.add_argument("--delta-repair", action="store_true")
     return parser
 
 
 def main() -> int:
     args = _parser().parse_args()
     loaded = load_settings(args.config, args.env_file)
-    settings = replace(
-        loaded,
-        extractor_mode="llm",
-        verification_mode="off",
-        llm_provider=PROVIDER,
-        llm_model=MODEL,
-        llm_base_url=BASE_URL,
-        enable_llm_thinking=False,
-        extraction_soft_split_enabled=False,
-    )
+    if args.delta_repair:
+        settings = replace(
+            loaded,
+            extractor_mode="llm",
+            verification_mode="off",
+            enable_llm_thinking=False,
+            extraction_soft_split_enabled=True,
+            extraction_delta_repair_enabled=True,
+        )
+    else:
+        settings = replace(
+            loaded,
+            extractor_mode="llm",
+            verification_mode="off",
+            llm_provider=PROVIDER,
+            llm_model=MODEL,
+            llm_base_url=BASE_URL,
+            enable_llm_thinking=False,
+            extraction_soft_split_enabled=False,
+            extraction_delta_repair_enabled=False,
+        )
     settings.validate()
     result = run_manifest(
         args.manifest,
@@ -594,6 +689,7 @@ def main() -> int:
         settings,
         database_path=args.database,
         concurrency=args.concurrency,
+        delta_repair=args.delta_repair,
     )
     print(json.dumps(result, ensure_ascii=False))
     return 0
