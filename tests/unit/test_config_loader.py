@@ -69,6 +69,18 @@ def test_hermes_on_demand_recall_timeout_loads_from_toml(tmp_path: Path) -> None
     assert settings.hermes_on_demand_recall_timeout_seconds == 6.5
 
 
+def test_extraction_soft_split_flag_loads_from_toml_and_defaults_off(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "soft-split.toml",
+        "[extraction]\nsoft_split_enabled = true\n" "[recall]\nquery_expansion_mode = 'off'\n",
+    )
+
+    settings = load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert Settings().extraction_soft_split_enabled is False
+    assert settings.extraction_soft_split_enabled is True
+
+
 def test_old_config_without_lifecycle_keys_adopts_v027_defaults(tmp_path: Path) -> None:
     config_path = _write(
         tmp_path / "old.toml",

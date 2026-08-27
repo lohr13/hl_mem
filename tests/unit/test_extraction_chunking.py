@@ -14,6 +14,7 @@ from hl_mem.ingest.chunking import (
 )
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.types import LLMRequest, LLMResponse
+from hl_mem.observability.audit import audit_scope
 
 
 class _SequenceClient:
@@ -35,6 +36,61 @@ class _SequenceClient:
         """记录请求并返回下一个预设响应。"""
         self.requests.append(request)
         return self.responses.pop(0)
+
+
+class _RecordingAudit:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, str, dict[str, object]]] = []
+
+    def emit(self, phase, action, outcome, *, detail=None, **_dimensions):
+        self.events.append((phase, action, outcome, detail or {}))
+        return True
+
+
+def _compact_fact(value: str) -> dict[str, object]:
+    return {
+        "subject": "user",
+        "value": value,
+        "kind": "fact",
+        "confidence": 1.0,
+        "notability": "high",
+        "evidence_quote": value,
+        "source_event_indices": [0],
+    }
+
+
+def _compact_response(values: list[str]) -> str:
+    return json.dumps(
+        {"claims": [_compact_fact(value) for value in values], "should_memorize": True},
+        ensure_ascii=False,
+    )
+
+
+def _full_response(values: list[str]) -> str:
+    return json.dumps(
+        {
+            "claims": [
+                {
+                    "subject": "user",
+                    "predicate": "记录",
+                    "canonical_attribute": "custom.unknown",
+                    "value": value,
+                    "qualifiers": {},
+                    "confidence": 1.0,
+                    "volatility": "stable",
+                    "reason": "explicit statement",
+                    "scope": "permanent",
+                    "importance": 0.8,
+                    "source_event_indices": [0],
+                }
+                for value in values
+            ],
+            "entities": [],
+            "should_memorize": True,
+            "sensitivity": "normal",
+        },
+        ensure_ascii=False,
+    )
 
 
 def test_short_text_uses_single_chunk() -> None:
@@ -118,6 +174,108 @@ def test_text_prefers_paragraph_boundaries_and_can_be_bisected() -> None:
     assert len(chunks) >= 2
     assert split is not None
     assert split[0].text + split[1].text == chunks[0].text
+
+
+def test_exact_compact_limit_keeps_single_request_when_soft_split_is_disabled() -> None:
+    """默认关闭必须保持 compact==20 的现有单请求行为。"""
+    values = [f"User recorded baseline item {index:02d}" for index in range(20)]
+    client = _SequenceClient([LLMResponse(_compact_response(values), "stop", 10)])
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claims = LLMExtractor(client, ChunkingPolicy(10_000, 0, 3)).extract("\n".join(values))
+
+    assert len(client.requests) == 1
+    assert {claim.value for claim in claims} == set(values)
+    assert [event[2] for event in audit.events if event[1] == "possible_under_extraction"] == ["claim_limit_reached"]
+
+
+def test_soft_split_preserves_root_merges_children_and_does_not_recurse_on_residual() -> None:
+    """软触发只拆一层，保留根结果并用既有 merge 去重。"""
+    left_values = [f"User recorded left item {index:02d}" for index in range(20)]
+    right_values = [f"User recorded right item {index:02d}" for index in range(20)]
+    root_values = left_values[:10] + right_values[:10]
+    client = _SequenceClient(
+        [
+            LLMResponse(_compact_response(root_values), "stop", 10),
+            LLMResponse(_compact_response(left_values), "stop", 11),
+            LLMResponse(_compact_response(right_values), "stop", 12),
+        ]
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claims = LLMExtractor(
+            client,
+            ChunkingPolicy(10_000, 0, 3),
+            soft_split_enabled=True,
+        ).extract("\n".join(left_values + right_values))
+
+    assert len(client.requests) == 3
+    assert [claim.value for claim in claims[:20]] == root_values
+    assert {claim.value for claim in claims} == set(left_values + right_values)
+    outcomes = [event[2] for event in audit.events]
+    assert outcomes.count("claim_limit_residual_after_split") == 2
+    assert outcomes.count("claim_limit_split_applied") == 1
+    split_detail = next(event[3] for event in audit.events if event[2] == "claim_limit_split_applied")
+    assert split_detail == {
+        "claim_count_before_split": 20,
+        "root_unique_claim_count": 20,
+        "left_claim_count": 20,
+        "right_claim_count": 20,
+        "merged_claim_count": 40,
+        "net_new_after_split": 20,
+        "duplicates_removed": 20,
+        "chunk_index": 0,
+        "start_unit": 0,
+        "end_unit": 1,
+        "source_length": len("\n".join(left_values + right_values)),
+    }
+
+
+def test_hard_recovery_inside_soft_child_does_not_reset_one_level_guard() -> None:
+    """软拆子块即使发生硬截断恢复，也不能在更深层再次软拆。"""
+    root_values = [f"User recorded root item {index:02d}" for index in range(20)]
+    residual_values = [f"User recorded residual item {index:02d}" for index in range(20)]
+    client = _SequenceClient(
+        [
+            LLMResponse(_compact_response(root_values), "stop", 10),
+            LLMResponse('{"claims":[', "length", 11),
+            LLMResponse(_compact_response(residual_values), "stop", 12),
+            LLMResponse(_compact_response(["User recorded left tail"]), "stop", 13),
+            LLMResponse(_compact_response(["User recorded right half"]), "stop", 14),
+        ]
+    )
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        LLMExtractor(
+            client,
+            ChunkingPolicy(10_000, 0, 3),
+            soft_split_enabled=True,
+        ).extract("first paragraph\n\nsecond paragraph\n\nthird paragraph\n\nfourth paragraph")
+
+    assert len(client.requests) == 5
+    assert [event[2] for event in audit.events].count("claim_limit_residual_after_split") == 1
+    assert [event[2] for event in audit.events].count("claim_limit_split_applied") == 1
+
+
+def test_full_schema_exact_twenty_does_not_trigger_soft_split_or_limit_audit() -> None:
+    """完整响应没有 20 条上限，恰好 20 条不得误触发 compact 恢复。"""
+    values = [f"User recorded legacy item {index:02d}" for index in range(20)]
+    client = _SequenceClient([LLMResponse(_full_response(values), "stop", 10)])
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        claims = LLMExtractor(
+            client,
+            ChunkingPolicy(10_000, 0, 3),
+            soft_split_enabled=True,
+        ).extract("\n".join(values))
+
+    assert len(client.requests) == 1
+    assert len(claims) == 20
+    assert not [event for event in audit.events if event[2].startswith("claim_limit_")]
 
 
 def test_truncated_output_is_bisected_and_usage_is_accumulated() -> None:

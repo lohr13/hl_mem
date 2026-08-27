@@ -13,12 +13,13 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 208
+    assert len(fields(Settings)) == 209
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
     assert settings.extractor_mode == "fake"
     assert settings.verification_mode == "off"
+    assert settings.extraction_soft_split_enabled is False
     assert settings.embedder_mode == "fake"
     assert settings.embedding_api_mode == "compatible"
     assert settings.reranker_mode == "off"
@@ -60,6 +61,7 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.feedback_unlabeled_days == 90
     assert settings.dedup_max_pending_pairs == 10_000
     assert settings.snapshot()["conflict_maintenance_max_cases"] == 50
+    assert settings.snapshot()["extraction_soft_split_enabled"] is False
     assert settings.snapshot()["price_target_mode"] == "enforce"
     assert settings.snapshot()["plan_fulfillment_mode"] == "enforce"
     assert settings.snapshot()["latest_wins_mode"] == "observe"

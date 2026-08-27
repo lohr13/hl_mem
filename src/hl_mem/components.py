@@ -236,6 +236,7 @@ def make_extractor(
         ),
         schema_retries=settings.llm_schema_retries,
         structured_mode=structured_mode,
+        soft_split_enabled=settings.extraction_soft_split_enabled,
         verifier=verifier,
         verification_mode=settings.verification_mode,
         lesson_signal_mode=settings.lesson_signal_mode,

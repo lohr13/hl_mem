@@ -302,7 +302,7 @@ class EntailmentSettingsTests(unittest.TestCase):
     def test_settings_adds_disabled_verification_mode(self) -> None:
         settings = Settings()
 
-        self.assertEqual(len(fields(Settings)), 208)
+        self.assertEqual(len(fields(Settings)), 209)
         self.assertEqual(settings.verification_mode, "off")
         self.assertEqual(settings.snapshot()["verification_mode"], "off")
 
@@ -325,6 +325,20 @@ class EntailmentSettingsTests(unittest.TestCase):
         self.assertEqual(extractor.verification_mode, "audit")
         self.assertIs(extractor.llm_client, client)
         self.assertIs(extractor.verifier.llm_client, client)
+
+    def test_component_factory_wires_soft_split_flag_to_extractor(self) -> None:
+        client = _SequenceClient([])
+        settings = replace(
+            Settings.for_test(),
+            extractor_mode="llm",
+            llm_api_key="test-key",
+            extraction_soft_split_enabled=True,
+        )
+
+        with patch("hl_mem.components.make_llm_client", return_value=client):
+            extractor = make_extractor(settings)
+
+        self.assertTrue(extractor.soft_split_enabled)
 
 
 if __name__ == "__main__":

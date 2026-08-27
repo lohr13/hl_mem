@@ -8,7 +8,7 @@ import logging
 import re
 import unicodedata
 from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal, cast
 
 from pydantic import ValidationError as PydanticValidationError
@@ -740,6 +740,13 @@ def _postprocess_extracted_claims(claims: list[ExtractedClaim]) -> list[Extracte
     return retained
 
 
+@dataclass(frozen=True)
+class _ChunkExtractionOutcome:
+    claims: list[ExtractedClaim]
+    compact_soft_saturated: bool
+    raw_claim_count: int
+
+
 class LLMExtractor:
     """通过统一 LLMClient 执行结构化事实提取。"""
 
@@ -755,6 +762,7 @@ class LLMExtractor:
         *,
         schema_retries: int = 2,
         structured_mode: StructuredOutputMode = StructuredOutputMode.JSON_SCHEMA,
+        soft_split_enabled: bool = False,
         verifier: EntailmentVerifier | None = None,
         verification_mode: Literal["off", "audit", "enforce"] = "off",
         lesson_signal_mode: Literal["off", "observe", "enforce"] = "observe",
@@ -767,6 +775,7 @@ class LLMExtractor:
         if self.schema_retries < 0:
             raise ValueError("schema_retries must be non-negative")
         self.structured_mode = structured_mode
+        self.soft_split_enabled = soft_split_enabled
         self.chunking_policy = chunking_policy
         if verification_mode not in {"off", "audit", "enforce"}:
             raise ValueError("verification_mode must be 'off', 'audit', or 'enforce'")
@@ -857,13 +866,82 @@ class LLMExtractor:
         chunk: ExtractionChunk,
         event_context: dict[str, Any],
         depth: int,
+        soft_split_applied: bool = False,
     ) -> list[ExtractedClaim]:
         """提取单块；输出截断或 claim 数超限时按策略递归二分。"""
         try:
-            claims = self._extract_one_chunk(chunk, event_context)
-            if self.verifier is None or self.verification_mode == "off":
+            outcome = self._extract_one_chunk(chunk, event_context)
+            claims = outcome.claims
+            if self.verifier is not None and self.verification_mode != "off":
+                claims = self._verify_extracted_claims(_postprocess_extracted_claims(claims), chunk.text)
+            if not self.soft_split_enabled or not outcome.compact_soft_saturated:
                 return claims
-            return self._verify_extracted_claims(_postprocess_extracted_claims(claims), chunk.text)
+            if soft_split_applied:
+                current_audit().emit(
+                    "extract",
+                    "possible_under_extraction",
+                    "claim_limit_residual_after_split",
+                    detail={
+                        "claim_count": outcome.raw_claim_count,
+                        "schema_limit": 20,
+                        "chunk_index": chunk.index,
+                        "start_unit": chunk.start_unit,
+                        "end_unit": chunk.end_unit,
+                        "source_length": len(chunk.text),
+                    },
+                )
+                return claims
+            split = bisect_extraction_chunk(chunk)
+            if split is None:
+                current_audit().emit(
+                    "extract",
+                    "possible_under_extraction",
+                    "claim_limit_residual_after_split",
+                    detail={
+                        "claim_count": outcome.raw_claim_count,
+                        "schema_limit": 20,
+                        "chunk_index": chunk.index,
+                        "start_unit": chunk.start_unit,
+                        "end_unit": chunk.end_unit,
+                        "source_length": len(chunk.text),
+                        "reason": "split_unavailable",
+                    },
+                )
+                return claims
+            left, right = split
+            left_claims = self._extract_chunk_with_auto_split(
+                left,
+                event_context,
+                depth,
+                soft_split_applied=True,
+            )
+            right_claims = self._extract_chunk_with_auto_split(
+                right,
+                event_context,
+                depth,
+                soft_split_applied=True,
+            )
+            root_claims = self._merge_chunk_claims([claims])
+            merged = self._merge_chunk_claims([claims, left_claims, right_claims])
+            current_audit().emit(
+                "extract",
+                "possible_under_extraction",
+                "claim_limit_split_applied",
+                detail={
+                    "claim_count_before_split": outcome.raw_claim_count,
+                    "root_unique_claim_count": len(root_claims),
+                    "left_claim_count": len(left_claims),
+                    "right_claim_count": len(right_claims),
+                    "merged_claim_count": len(merged),
+                    "net_new_after_split": len(merged) - len(root_claims),
+                    "duplicates_removed": len(claims) + len(left_claims) + len(right_claims) - len(merged),
+                    "chunk_index": chunk.index,
+                    "start_unit": chunk.start_unit,
+                    "end_unit": chunk.end_unit,
+                    "source_length": len(chunk.text),
+                },
+            )
+            return merged
         except LLMOutputTruncatedError as error:
             split = bisect_extraction_chunk(chunk)
             if depth >= self.chunking_policy.max_split_depth or split is None:
@@ -875,8 +953,18 @@ class LLMExtractor:
             left, right = split
             return self._merge_chunk_claims(
                 [
-                    self._extract_chunk_with_auto_split(left, event_context, depth + 1),
-                    self._extract_chunk_with_auto_split(right, event_context, depth + 1),
+                    self._extract_chunk_with_auto_split(
+                        left,
+                        event_context,
+                        depth + 1,
+                        soft_split_applied=soft_split_applied,
+                    ),
+                    self._extract_chunk_with_auto_split(
+                        right,
+                        event_context,
+                        depth + 1,
+                        soft_split_applied=soft_split_applied,
+                    ),
                 ]
             )
         except LLMSchemaValidationError as error:
@@ -892,8 +980,18 @@ class LLMExtractor:
             left, right = split
             return self._merge_chunk_claims(
                 [
-                    self._extract_chunk_with_auto_split(left, event_context, depth + 1),
-                    self._extract_chunk_with_auto_split(right, event_context, depth + 1),
+                    self._extract_chunk_with_auto_split(
+                        left,
+                        event_context,
+                        depth + 1,
+                        soft_split_applied=soft_split_applied,
+                    ),
+                    self._extract_chunk_with_auto_split(
+                        right,
+                        event_context,
+                        depth + 1,
+                        soft_split_applied=soft_split_applied,
+                    ),
                 ]
             )
 
@@ -1246,14 +1344,16 @@ class LLMExtractor:
         self,
         chunk: ExtractionChunk,
         event_context: dict[str, Any],
-    ) -> list[ExtractedClaim]:
+    ) -> _ChunkExtractionOutcome:
         """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
         prompt_context = {key: value for key, value in event_context.items() if not key.startswith("_")}
         context = json.dumps(prompt_context, ensure_ascii=False)
         occurred_at = str(event_context.get("occurred_at", "未知"))
         language = detect_extraction_language(chunk.text)
         result = self._request_chunk(chunk, context, occurred_at, language)
-        if len(result.claims) == 20:
+        compact_response = isinstance(result, CompactExtractionResponseSchema)
+        compact_soft_saturated = compact_response and len(result.claims) == 20
+        if compact_soft_saturated:
             current_audit().emit(
                 "extract",
                 "possible_under_extraction",
@@ -1269,7 +1369,7 @@ class LLMExtractor:
             )
         if not result.should_memorize and not result.claims:
             self._memorize_decisions.append((False, "should_memorize=false"))
-            return []
+            return _ChunkExtractionOutcome([], False, 0)
         if not result.should_memorize:
             current_audit().emit(
                 "extract",
@@ -1281,7 +1381,6 @@ class LLMExtractor:
         source_kind = str(event_context.get("source_kind") or event_context.get("category") or "")
         if re.search(r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)", chunk.text):
             source_kind = "quoted_report"
-        compact_response = isinstance(result, CompactExtractionResponseSchema)
         for item in result.claims:
             raw_claim = item.model_dump()
             source_mapping = self._source_mapping(
@@ -1352,7 +1451,7 @@ class LLMExtractor:
                 "；".join(reasons) if retained else "postprocess_rejected",
             )
         )
-        return retained
+        return _ChunkExtractionOutcome(retained, compact_soft_saturated, len(result.claims))
 
     @staticmethod
     def _source_mapping(

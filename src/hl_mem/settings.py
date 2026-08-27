@@ -414,6 +414,7 @@ class Settings:
     extraction_chunk_target_chars: int = _toml_field(12000, "extraction.chunk_target_chars")
     extraction_chunk_overlap_turns: int = _toml_field(2, "extraction.chunk_overlap_turns")
     extraction_max_split_depth: int = _toml_field(3, "extraction.max_split_depth")
+    extraction_soft_split_enabled: bool = _toml_field(False, "extraction.soft_split_enabled")
     # Higher limits amortize LLM call cost across more same-session Events,
     # while smaller limits reduce extraction latency and per-call payload size.
     extraction_batch_max_events: int = _toml_field(5, "extraction.batch_max_events")
@@ -1055,6 +1056,7 @@ class Settings:
             "extraction_chunk_target_chars": self.extraction_chunk_target_chars,
             "extraction_chunk_overlap_turns": self.extraction_chunk_overlap_turns,
             "extraction_max_split_depth": self.extraction_max_split_depth,
+            "extraction_soft_split_enabled": self.extraction_soft_split_enabled,
             "extraction_batch_max_events": self.extraction_batch_max_events,
             "extraction_batch_max_wait_seconds": self.extraction_batch_max_wait_seconds,
             "conflict_auto_resolve_enabled": self.conflict_auto_resolve_enabled,
