@@ -1,0 +1,123 @@
+{
+  "protocol_id": "softsplit_ab_20260827_v1",
+  "scored_at": "2026-08-27T04:18:06.578156+00:00",
+  "overall": "FAIL",
+  "corpus": {
+    "expected_case_count": 83,
+    "observed_case_count": 83,
+    "missing_case_count": 0,
+    "duplicate_case_ids": [],
+    "complete": true
+  },
+  "classification": {
+    "case_counts": {
+      "success": 47,
+      "runner_error": 4,
+      "replay_drift": 17,
+      "api_error": 8,
+      "protocol_deviation": 7
+    },
+    "control_root_not_compact_exact_20_count": 22,
+    "control_root_not_compact_exact_20_overlapping_api_error_count": 5
+  },
+  "diagnostics": {
+    "residual_saturation": {
+      "successful_case_count": 47,
+      "cases_with_residual": 39,
+      "case_rate": 0.8297872340425532,
+      "residual_event_count": 48
+    }
+  },
+  "gates": {
+    "effective_output": {
+      "status": "PASS",
+      "median_net_new_after_split": 18.0,
+      "cases_net_new_at_least_2": 53,
+      "fraction_net_new_at_least_2": 0.6385542168674698,
+      "thresholds": {
+        "median_min": 3,
+        "fraction_min": 0.5
+      },
+      "successful_cases": {
+        "case_count": 47,
+        "median_net_new_after_split": 28.0,
+        "cases_net_new_at_least_2": 47,
+        "fraction_net_new_at_least_2": 1.0
+      }
+    },
+    "duplicate_pollution": {
+      "status": "PASS",
+      "control_duplicate_rate": 0.0007722007722007722,
+      "treatment_duplicate_rate": 0.013518733101583623,
+      "delta_pp": 1.274653,
+      "threshold_delta_pp_max": 5.0,
+      "control": {
+        "claim_count": 1295,
+        "duplicate_count": 1
+      },
+      "treatment": {
+        "claim_count": 2589,
+        "duplicate_count": 35
+      },
+      "metrics_complete": true,
+      "scored_case_count": 79,
+      "excluded_runner_error_count": 4,
+      "successful_case_medians": {
+        "control_duplicate_rate": 0.0,
+        "treatment_duplicate_rate": 0.0
+      }
+    },
+    "request_failure": {
+      "status": "FAIL",
+      "observed_treatment_requests": 214,
+      "failed_request_count": 5,
+      "extraction_failure_count": 1,
+      "failure_units": 6,
+      "failure_rate": 0.028037383177570093,
+      "threshold_max": 0.02,
+      "metrics_complete": true,
+      "excluded_runner_error_count": 4,
+      "all_arms": {
+        "observed_request_count": 300,
+        "failed_request_count": 10
+      },
+      "by_category": {
+        "success": {
+          "case_count": 47,
+          "control_requests": 47,
+          "treatment_requests": 141,
+          "treatment_failed_requests": 0,
+          "treatment_extraction_failures": 0
+        },
+        "runner_error": {
+          "case_count": 4,
+          "control_requests": 0,
+          "treatment_requests": 0,
+          "treatment_failed_requests": 0,
+          "treatment_extraction_failures": 0
+        },
+        "replay_drift": {
+          "case_count": 17,
+          "control_requests": 18,
+          "treatment_requests": 18,
+          "treatment_failed_requests": 0,
+          "treatment_extraction_failures": 0
+        },
+        "api_error": {
+          "case_count": 8,
+          "control_requests": 13,
+          "treatment_requests": 19,
+          "treatment_failed_requests": 5,
+          "treatment_extraction_failures": 1
+        },
+        "protocol_deviation": {
+          "case_count": 7,
+          "control_requests": 8,
+          "treatment_requests": 36,
+          "treatment_failed_requests": 0,
+          "treatment_extraction_failures": 0
+        }
+      }
+    }
+  }
+}

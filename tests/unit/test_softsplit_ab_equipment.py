@@ -288,30 +288,35 @@ def test_runner_replays_control_root_and_records_three_treatment_requests() -> N
     }
 
 
+def _request(status: str = "success") -> dict[str, Any]:
+    return {"status": status, "cache_hit": False}
+
+
 def _score_record(index: int, *, net_new: int, duplicate_delta_pp: float, failed: int = 0) -> dict[str, Any]:
     control_claims = 100
     control_duplicates = 5
     treatment_claims = 100
     treatment_duplicates = round(control_duplicates + duplicate_delta_pp)
+    treatment_requests = [_request("error" if request_index < failed else "success") for request_index in range(3)]
     return {
         "case_id": f"case-{index:02d}",
         "status": "failed" if failed else "success",
+        "failure_reasons": ["treatment_error"] if failed else [],
         "control": {
+            "error": None,
+            "requests": [_request()],
             "duplicate_profile": {
                 "claim_count": control_claims,
                 "duplicate_count": control_duplicates,
-            }
+            },
         },
         "treatment": {
+            "error": {"class": "HTTPStatusError", "message": "rate limited"} if failed else None,
+            "requests": treatment_requests,
+            "audit_events": [],
             "duplicate_profile": {
                 "claim_count": treatment_claims,
                 "duplicate_count": treatment_duplicates,
-            },
-            "request_summary": {
-                "expected_count": 3,
-                "observed_count": 3,
-                "failed_count": failed,
-                "failed_or_missing_count": failed,
             },
         },
         "comparison": {"net_new_after_split": net_new},
@@ -323,8 +328,8 @@ def test_scorer_applies_all_three_frozen_gates() -> None:
     passing = [
         _score_record(index, net_new=4 if index < 18 else 3, duplicate_delta_pp=4, failed=0) for index in range(34)
     ]
-    passing[0]["treatment"]["request_summary"]["failed_count"] = 2
-    passing[0]["treatment"]["request_summary"]["failed_or_missing_count"] = 2
+    passing[0]["treatment"]["requests"][0]["status"] = "error"
+    passing[0]["treatment"]["requests"][1]["status"] = "error"
 
     report = scorer.score_records(passing, expected_case_count=34)
 
@@ -341,3 +346,82 @@ def test_scorer_applies_all_three_frozen_gates() -> None:
     assert failing_report["overall"] == "FAIL"
     assert failing_report["gates"]["duplicate_pollution"]["status"] == "FAIL"
     assert failing_report["gates"]["request_failure"]["status"] == "FAIL"
+
+
+def test_scorer_classifies_failures_without_charging_unissued_drift_requests() -> None:
+    scorer = _load_module("score_results")
+    success = _score_record(0, net_new=4, duplicate_delta_pp=0)
+    success["treatment"]["audit_events"] = [
+        {"outcome": "claim_limit_residual_after_split"},
+        {"outcome": "claim_limit_residual_after_split"},
+    ]
+    runner_error = {
+        "case_id": "case-01",
+        "status": "failed",
+        "failure_reasons": ["runner_error"],
+        "error": {"class": "ValueError", "message": "source event is missing"},
+    }
+    replay_drift = _score_record(2, net_new=0, duplicate_delta_pp=0)
+    replay_drift.update(
+        status="failed",
+        failure_reasons=[
+            "control_root_not_compact_exact_20",
+            "treatment_soft_split_not_applied",
+            "treatment_request_count_not_3",
+        ],
+    )
+    replay_drift["treatment"]["requests"] = [_request()]
+    api_error = _score_record(3, net_new=0, duplicate_delta_pp=0, failed=1)
+    api_error["treatment"]["requests"] = [_request("error")]
+    protocol_deviation = _score_record(4, net_new=3, duplicate_delta_pp=0)
+    protocol_deviation.update(status="failed", failure_reasons=["treatment_request_count_not_3"])
+    protocol_deviation["treatment"]["requests"] = [_request() for _ in range(5)]
+
+    report = scorer.score_records(
+        [success, runner_error, replay_drift, api_error, protocol_deviation],
+        expected_case_count=5,
+    )
+
+    assert report["classification"]["case_counts"] == {
+        "success": 1,
+        "runner_error": 1,
+        "replay_drift": 1,
+        "api_error": 1,
+        "protocol_deviation": 1,
+    }
+    duplicate_gate = report["gates"]["duplicate_pollution"]
+    assert duplicate_gate["status"] == "PASS"
+    assert duplicate_gate["metrics_complete"] is True
+    assert duplicate_gate["scored_case_count"] == 4
+    assert duplicate_gate["excluded_runner_error_count"] == 1
+    failure_gate = report["gates"]["request_failure"]
+    assert failure_gate["observed_treatment_requests"] == 10
+    assert failure_gate["failed_request_count"] == 1
+    assert failure_gate["failure_rate"] == 0.1
+    assert report["diagnostics"]["residual_saturation"] == {
+        "successful_case_count": 1,
+        "cases_with_residual": 1,
+        "case_rate": 1.0,
+        "residual_event_count": 2,
+    }
+
+
+def test_scorer_counts_schema_validation_as_one_treatment_failure_unit() -> None:
+    scorer = _load_module("score_results")
+    record = _score_record(0, net_new=0, duplicate_delta_pp=0)
+    record.update(status="failed", failure_reasons=["treatment_error"])
+    record["treatment"]["requests"] = [_request() for _ in range(4)]
+    record["treatment"]["error"] = {
+        "class": "LLMSchemaValidationError",
+        "message": "claims remain over limit after auto split",
+    }
+
+    report = scorer.score_records([record], expected_case_count=1)
+
+    assert report["classification"]["case_counts"]["api_error"] == 1
+    failure_gate = report["gates"]["request_failure"]
+    assert failure_gate["observed_treatment_requests"] == 4
+    assert failure_gate["failed_request_count"] == 0
+    assert failure_gate["extraction_failure_count"] == 1
+    assert failure_gate["failure_units"] == 1
+    assert failure_gate["failure_rate"] == 0.25

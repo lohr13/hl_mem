@@ -14,10 +14,57 @@ EQUIPMENT_DIR = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = EQUIPMENT_DIR / "manifest.json"
 DEFAULT_RUNS = EQUIPMENT_DIR / "runs.jsonl"
 DEFAULT_OUTPUT = EQUIPMENT_DIR / "score.json"
+CASE_CATEGORIES = (
+    "success",
+    "runner_error",
+    "replay_drift",
+    "api_error",
+    "protocol_deviation",
+)
 
 
 def _rate(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
+
+
+def _arm(record: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+    value = record.get(name)
+    return value if isinstance(value, Mapping) else {}
+
+
+def _requests(record: Mapping[str, Any], arm: str) -> list[Mapping[str, Any]]:
+    value = _arm(record, arm).get("requests")
+    if not isinstance(value, list):
+        return []
+    return [request for request in value if isinstance(request, Mapping)]
+
+
+def _failed_request_count(record: Mapping[str, Any], arm: str) -> int:
+    return sum(request.get("status") == "error" for request in _requests(record, arm))
+
+
+def _arm_error(record: Mapping[str, Any], arm: str) -> Mapping[str, Any] | None:
+    value = _arm(record, arm).get("error")
+    return value if isinstance(value, Mapping) else None
+
+
+def classify_record(record: Mapping[str, Any]) -> str:
+    """Assign one mutually exclusive attribution category to a run case."""
+    reasons_value = record.get("failure_reasons")
+    reasons = set(reasons_value) if isinstance(reasons_value, list) else set()
+    if "runner_error" in reasons:
+        return "runner_error"
+    has_api_or_extraction_error = any(
+        _arm_error(record, arm) is not None or _failed_request_count(record, arm) > 0
+        for arm in ("control", "treatment")
+    )
+    if has_api_or_extraction_error:
+        return "api_error"
+    if "control_root_not_compact_exact_20" in reasons:
+        return "replay_drift"
+    if record.get("status") != "success" or reasons:
+        return "protocol_deviation"
+    return "success"
 
 
 def _duplicate_totals(records: list[Mapping[str, Any]], arm: str) -> tuple[int, int, bool]:
@@ -37,6 +84,16 @@ def _duplicate_totals(records: list[Mapping[str, Any]], arm: str) -> tuple[int, 
     return claims, duplicates, complete
 
 
+def _duplicate_rate_for_record(record: Mapping[str, Any], arm: str) -> float | None:
+    profile = _arm(record, arm).get("duplicate_profile")
+    if not isinstance(profile, Mapping) or profile.get("error"):
+        return None
+    try:
+        return _rate(int(profile["duplicate_count"]), int(profile["claim_count"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def score_records(records: list[Mapping[str, Any]], *, expected_case_count: int) -> dict[str, Any]:
     if expected_case_count < 1:
         raise ValueError("expected_case_count must be positive")
@@ -52,6 +109,12 @@ def score_records(records: list[Mapping[str, Any]], *, expected_case_count: int)
     observed = list(by_case.values())
     missing_case_count = max(0, expected_case_count - len(observed))
     complete_corpus = len(observed) == expected_case_count and not duplicate_case_ids
+    categories = {str(record["case_id"]): classify_record(record) for record in observed}
+    category_records = {
+        category: [record for record in observed if categories[str(record["case_id"])] == category]
+        for category in CASE_CATEGORIES
+    }
+    case_counts = {category: len(category_records[category]) for category in CASE_CATEGORIES}
 
     net_new_values: list[int] = []
     for record in observed:
@@ -64,9 +127,14 @@ def score_records(records: list[Mapping[str, Any]], *, expected_case_count: int)
     cases_at_least_two = sum(value >= 2 for value in net_new_values)
     fraction_at_least_two = _rate(cases_at_least_two, expected_case_count)
     effective_pass = complete_corpus and median_net_new >= 3 and fraction_at_least_two >= 0.5
+    successful_net_new = [
+        max(0, int(record.get("comparison", {}).get("net_new_after_split", 0)))
+        for record in category_records["success"]
+    ]
 
-    control_claims, control_duplicates, control_complete = _duplicate_totals(observed, "control")
-    treatment_claims, treatment_duplicates, treatment_complete = _duplicate_totals(observed, "treatment")
+    duplicate_records = [record for record in observed if categories[str(record["case_id"])] != "runner_error"]
+    control_claims, control_duplicates, control_complete = _duplicate_totals(duplicate_records, "control")
+    treatment_claims, treatment_duplicates, treatment_complete = _duplicate_totals(duplicate_records, "treatment")
     control_duplicate_rate = _rate(control_duplicates, control_claims)
     treatment_duplicate_rate = _rate(treatment_duplicates, treatment_claims)
     duplicate_delta_pp = (treatment_duplicate_rate - control_duplicate_rate) * 100
@@ -78,24 +146,59 @@ def score_records(records: list[Mapping[str, Any]], *, expected_case_count: int)
         and treatment_claims > 0
         and duplicate_delta_pp <= 5.0
     )
+    successful_control_rates = [
+        rate
+        for record in category_records["success"]
+        if (rate := _duplicate_rate_for_record(record, "control")) is not None
+    ]
+    successful_treatment_rates = [
+        rate
+        for record in category_records["success"]
+        if (rate := _duplicate_rate_for_record(record, "treatment")) is not None
+    ]
 
-    expected_treatment_requests = expected_case_count * 3
-    failed_or_missing_requests = missing_case_count * 3
-    request_metrics_complete = True
-    for record in observed:
-        treatment = record.get("treatment")
-        summary = treatment.get("request_summary") if isinstance(treatment, Mapping) else None
-        if not isinstance(summary, Mapping):
-            failed_or_missing_requests += 3
-            request_metrics_complete = False
-            continue
-        try:
-            failed_or_missing_requests += int(summary["failed_or_missing_count"])
-        except (KeyError, TypeError, ValueError):
-            failed_or_missing_requests += 3
-            request_metrics_complete = False
-    failure_rate = _rate(failed_or_missing_requests, expected_treatment_requests)
-    request_pass = complete_corpus and request_metrics_complete and failure_rate <= 0.02
+    request_records = duplicate_records
+    observed_treatment_requests = sum(len(_requests(record, "treatment")) for record in request_records)
+    observed_control_requests = sum(len(_requests(record, "control")) for record in request_records)
+    failed_treatment_requests = sum(_failed_request_count(record, "treatment") for record in request_records)
+    failed_control_requests = sum(_failed_request_count(record, "control") for record in request_records)
+    treatment_extraction_failures = sum(
+        _arm_error(record, "treatment") is not None and _failed_request_count(record, "treatment") == 0
+        for record in request_records
+    )
+    failure_units = failed_treatment_requests + treatment_extraction_failures
+    request_metrics_complete = all(
+        isinstance(_arm(record, "treatment").get("requests"), list) for record in request_records
+    )
+    failure_rate = _rate(failure_units, observed_treatment_requests)
+    request_pass = (
+        complete_corpus and request_metrics_complete and observed_treatment_requests > 0 and failure_rate <= 0.02
+    )
+    request_by_category = {
+        category: {
+            "case_count": len(category_records[category]),
+            "control_requests": sum(len(_requests(record, "control")) for record in category_records[category]),
+            "treatment_requests": sum(len(_requests(record, "treatment")) for record in category_records[category]),
+            "treatment_failed_requests": sum(
+                _failed_request_count(record, "treatment") for record in category_records[category]
+            ),
+            "treatment_extraction_failures": sum(
+                _arm_error(record, "treatment") is not None and _failed_request_count(record, "treatment") == 0
+                for record in category_records[category]
+            ),
+        }
+        for category in CASE_CATEGORIES
+    }
+
+    successful_residual_counts = [
+        sum(
+            event.get("outcome") == "claim_limit_residual_after_split"
+            for event in _arm(record, "treatment").get("audit_events", [])
+            if isinstance(event, Mapping)
+        )
+        for record in category_records["success"]
+    ]
+    cases_with_residual = sum(count > 0 for count in successful_residual_counts)
 
     gates = {
         "effective_output": {
@@ -104,6 +207,17 @@ def score_records(records: list[Mapping[str, Any]], *, expected_case_count: int)
             "cases_net_new_at_least_2": cases_at_least_two,
             "fraction_net_new_at_least_2": fraction_at_least_two,
             "thresholds": {"median_min": 3, "fraction_min": 0.5},
+            "successful_cases": {
+                "case_count": len(successful_net_new),
+                "median_net_new_after_split": (
+                    float(statistics.median(successful_net_new)) if successful_net_new else 0.0
+                ),
+                "cases_net_new_at_least_2": sum(value >= 2 for value in successful_net_new),
+                "fraction_net_new_at_least_2": _rate(
+                    sum(value >= 2 for value in successful_net_new),
+                    len(successful_net_new),
+                ),
+            },
         },
         "duplicate_pollution": {
             "status": "PASS" if duplicate_pass else "FAIL",
@@ -114,14 +228,32 @@ def score_records(records: list[Mapping[str, Any]], *, expected_case_count: int)
             "control": {"claim_count": control_claims, "duplicate_count": control_duplicates},
             "treatment": {"claim_count": treatment_claims, "duplicate_count": treatment_duplicates},
             "metrics_complete": control_complete and treatment_complete,
+            "scored_case_count": len(duplicate_records),
+            "excluded_runner_error_count": case_counts["runner_error"],
+            "successful_case_medians": {
+                "control_duplicate_rate": (
+                    float(statistics.median(successful_control_rates)) if successful_control_rates else 0.0
+                ),
+                "treatment_duplicate_rate": (
+                    float(statistics.median(successful_treatment_rates)) if successful_treatment_rates else 0.0
+                ),
+            },
         },
         "request_failure": {
             "status": "PASS" if request_pass else "FAIL",
-            "failed_or_missing_requests": failed_or_missing_requests,
-            "expected_treatment_requests": expected_treatment_requests,
+            "observed_treatment_requests": observed_treatment_requests,
+            "failed_request_count": failed_treatment_requests,
+            "extraction_failure_count": treatment_extraction_failures,
+            "failure_units": failure_units,
             "failure_rate": failure_rate,
             "threshold_max": 0.02,
             "metrics_complete": request_metrics_complete,
+            "excluded_runner_error_count": case_counts["runner_error"],
+            "all_arms": {
+                "observed_request_count": observed_control_requests + observed_treatment_requests,
+                "failed_request_count": failed_control_requests + failed_treatment_requests,
+            },
+            "by_category": request_by_category,
         },
     }
     overall_pass = all(gate["status"] == "PASS" for gate in gates.values())
@@ -135,6 +267,25 @@ def score_records(records: list[Mapping[str, Any]], *, expected_case_count: int)
             "missing_case_count": missing_case_count,
             "duplicate_case_ids": sorted(set(duplicate_case_ids)),
             "complete": complete_corpus,
+        },
+        "classification": {
+            "case_counts": case_counts,
+            "control_root_not_compact_exact_20_count": sum(
+                "control_root_not_compact_exact_20" in set(record.get("failure_reasons") or []) for record in observed
+            ),
+            "control_root_not_compact_exact_20_overlapping_api_error_count": sum(
+                categories[str(record["case_id"])] == "api_error"
+                and "control_root_not_compact_exact_20" in set(record.get("failure_reasons") or [])
+                for record in observed
+            ),
+        },
+        "diagnostics": {
+            "residual_saturation": {
+                "successful_case_count": len(successful_residual_counts),
+                "cases_with_residual": cases_with_residual,
+                "case_rate": _rate(cases_with_residual, len(successful_residual_counts)),
+                "residual_event_count": sum(successful_residual_counts),
+            }
         },
         "gates": gates,
     }
