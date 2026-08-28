@@ -70,7 +70,9 @@ def _is_deterministic_version_probe(connection: Any, claim: dict[str, Any]) -> b
         if not isinstance(content, dict):
             continue
         proof = content.get("subject_proof")
-        alias_version = proof.get("alias_version") if isinstance(proof, dict) else None
+        if not isinstance(proof, dict):
+            continue
+        alias_version = proof.get("alias_version")
         if (
             row["tenant_id"] == claim.get("namespace_key")
             and row["event_type"] == "status_report"

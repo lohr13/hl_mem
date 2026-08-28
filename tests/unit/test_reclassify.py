@@ -100,9 +100,7 @@ def test_reclassify_skips_deterministic_version_probe(tmp_path, monkeypatch) -> 
 
     monkeypatch.setattr(
         "hl_mem.workers.reclassify.classify_batch",
-        lambda _client, claims: [
-            {"id": claim["id"], "scope": "permanent", "importance": 0.7} for claim in claims
-        ],
+        lambda _client, claims: [{"id": claim["id"], "scope": "permanent", "importance": 0.7} for claim in claims],
     )
 
     result = reclassify_claims(connection, object(), 5)
@@ -137,9 +135,7 @@ def test_reclassify_does_not_protect_unproven_version_observation(tmp_path, monk
     )
     monkeypatch.setattr(
         "hl_mem.workers.reclassify.classify_batch",
-        lambda _client, claims: [
-            {"id": claim["id"], "scope": "permanent", "importance": 0.7} for claim in claims
-        ],
+        lambda _client, claims: [{"id": claim["id"], "scope": "permanent", "importance": 0.7} for claim in claims],
     )
 
     result = reclassify_claims(connection, object(), 5)
@@ -161,9 +157,7 @@ def test_reclassify_treats_non_object_probe_event_content_as_unproven(tmp_path, 
     connection.execute("UPDATE events SET content_json='[]' WHERE id=?", (report["event_id"],))
     monkeypatch.setattr(
         "hl_mem.workers.reclassify.classify_batch",
-        lambda _client, claims: [
-            {"id": claim["id"], "scope": "permanent", "importance": 0.7} for claim in claims
-        ],
+        lambda _client, claims: [{"id": claim["id"], "scope": "permanent", "importance": 0.7} for claim in claims],
     )
 
     result = reclassify_claims(connection, object(), 5)

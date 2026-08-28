@@ -46,6 +46,28 @@ def register_entity_sqlite_functions(connection: sqlite3.Connection) -> None:
     connection.create_function("hl_mem_audit_dimension", 1, current_audit_dimension)
 
 
+def register_claim_mutation_audit_context(connection: sqlite3.Connection) -> None:
+    """Bridge process-local audit dimensions into portable persistent triggers."""
+    dimensions = (
+        "trace_id",
+        "tenant_id",
+        "event_id",
+        "related_claim_id",
+        "query_id",
+        "job_id",
+        "claim_mutation_source",
+    )
+    columns = ",".join(dimensions)
+    values = ",".join(f"hl_mem_audit_dimension('{name}')" for name in dimensions)
+    for operation in ("UPDATE", "DELETE"):
+        connection.execute(
+            f"CREATE TEMP TRIGGER IF NOT EXISTS hl_mem_claim_mutation_context_{operation.lower()} "
+            f"BEFORE {operation} ON main.claims BEGIN "
+            f"INSERT OR REPLACE INTO claim_mutation_audit_context(singleton,{columns}) "
+            f"VALUES (1,{values}); END"
+        )
+
+
 def default_database_path(settings: Settings | None = None) -> Path:
     """返回 Settings 中声明的数据库路径。"""
     return Path((settings or Settings()).database_path)
@@ -95,6 +117,7 @@ class Database:
         connection.hl_mem_settings = self.settings
         connection.row_factory = sqlite3.Row
         register_entity_sqlite_functions(connection)
+        register_claim_mutation_audit_context(connection)
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
         try:

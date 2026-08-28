@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from hl_mem.application.deletion import DeletionService
 from hl_mem.observability.audit import audit_scope
@@ -36,9 +37,7 @@ def test_claim_update_and_delete_are_audited_at_database_boundary(tmp_path) -> N
         related_claim_id="related-claim",
         claim_mutation_source="reclassify_claims",
     ):
-        connection.execute(
-            "UPDATE claims SET canonical_slot='config.version',importance=0.7 WHERE id='claim'"
-        )
+        connection.execute("UPDATE claims SET canonical_slot='config.version',importance=0.7 WHERE id='claim'")
     connection.execute("DELETE FROM claims WHERE id='claim'")
 
     rows = connection.execute(
@@ -82,15 +81,21 @@ def test_claim_mutation_audit_rolls_back_with_the_claim_change(tmp_path) -> None
 
     connection.execute("BEGIN IMMEDIATE")
     connection.execute("UPDATE claims SET status='archived' WHERE id='claim'")
-    assert connection.execute(
-        "SELECT count(*) FROM audit_log WHERE phase='claim_mutation' AND claim_id='claim'"
-    ).fetchone()[0] == 1
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM audit_log WHERE phase='claim_mutation' AND claim_id='claim'"
+        ).fetchone()[0]
+        == 1
+    )
     connection.rollback()
 
     assert connection.execute("SELECT status FROM claims WHERE id='claim'").fetchone()[0] == "active"
-    assert connection.execute(
-        "SELECT count(*) FROM audit_log WHERE phase='claim_mutation' AND claim_id='claim'"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM audit_log WHERE phase='claim_mutation' AND claim_id='claim'"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_physical_deletion_audit_identifies_the_entry_path(tmp_path) -> None:
@@ -103,9 +108,30 @@ def test_physical_deletion_audit_identifies_the_entry_path(tmp_path) -> None:
     ).delete_claim("claim")
 
     row = connection.execute(
-        "SELECT detail_json FROM audit_log "
-        "WHERE phase='claim_mutation' AND action='deleted' AND claim_id='claim'"
+        "SELECT detail_json FROM audit_log " "WHERE phase='claim_mutation' AND action='deleted' AND claim_id='claim'"
     ).fetchone()
     assert result.deleted is True
     assert row is not None
     assert json.loads(row["detail_json"])["source"] == "delete_claim"
+
+
+def test_raw_sqlite_connection_can_update_and_delete_claims(tmp_path) -> None:
+    path = tmp_path / "raw-sqlite-claim-mutation.db"
+    database = Database(path)
+    connection = database.open()
+    _insert_claim(connection)
+    connection.commit()
+    database.close()
+
+    raw_connection = sqlite3.connect(path)
+    try:
+        raw_connection.execute("UPDATE claims SET importance=0.7 WHERE id='claim'")
+        raw_connection.execute("DELETE FROM claims WHERE id='claim'")
+        actions = raw_connection.execute(
+            "SELECT action FROM audit_log " "WHERE phase='claim_mutation' AND claim_id='claim' ORDER BY id"
+        ).fetchall()
+        raw_connection.commit()
+    finally:
+        raw_connection.close()
+
+    assert actions == [("updated",), ("deleted",)]

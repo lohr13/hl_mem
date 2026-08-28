@@ -145,9 +145,9 @@ def test_apply_refuses_target_endpoint_used_by_another_open_case(tmp_path: Path)
     assert connection.execute("SELECT status FROM claims WHERE id='disputed'").fetchone()[0] == "disputed"
 
 
-def test_apply_closes_invalid_cases_restores_only_disputed_and_writes_one_audit(tmp_path: Path) -> None:
+def test_apply_closes_invalid_cases_restores_only_disputed_and_writes_expected_audits(tmp_path: Path) -> None:
     connection = _small_fixture(tmp_path / "apply.db")
-    audit_before = connection.execute("SELECT count(*) FROM audit_log").fetchone()[0]
+    audit_before = connection.execute("SELECT coalesce(max(id),0) FROM audit_log").fetchone()[0]
 
     result = repair_invalid_conflict_groups(connection, expected_count=2, repaired_at=NOW)
 
@@ -168,7 +168,14 @@ def test_apply_closes_invalid_cases_restores_only_disputed_and_writes_one_audit(
         connection.execute("SELECT count(*) FROM conflict_review_state WHERE case_id LIKE 'invalid-%'").fetchone()[0]
         == 0
     )
-    assert connection.execute("SELECT count(*) FROM audit_log").fetchone()[0] == audit_before + 1
+    audit_rows = connection.execute(
+        "SELECT phase,action,outcome,claim_id FROM audit_log WHERE id>? ORDER BY id",
+        (audit_before,),
+    ).fetchall()
+    assert [tuple(row) for row in audit_rows] == [
+        ("claim_mutation", "updated", "applied", "disputed"),
+        ("maintenance", "repair_invalid_conflict_groups", "success", None),
+    ]
     assert inspect_invalid_conflict_groups(connection)["candidate_case_count"] == 0
 
 
