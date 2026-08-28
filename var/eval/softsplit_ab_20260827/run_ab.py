@@ -646,6 +646,23 @@ def run_manifest(
     return {"manifest_cases": len(cases), "already_completed": len(completed), "written": written}
 
 
+def _configure_non_delta_settings(loaded: Settings, *, respect_llm_config: bool) -> Settings:
+    overrides: dict[str, Any] = {
+        "extractor_mode": "llm",
+        "verification_mode": "off",
+        "enable_llm_thinking": False,
+        "extraction_soft_split_enabled": False,
+        "extraction_delta_repair_enabled": False,
+    }
+    if not respect_llm_config:
+        overrides.update(
+            llm_provider=PROVIDER,
+            llm_model=MODEL,
+            llm_base_url=BASE_URL,
+        )
+    return replace(loaded, **overrides)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -655,6 +672,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--delta-repair", action="store_true")
+    parser.add_argument("--respect-llm-config", action="store_true")
     return parser
 
 
@@ -671,18 +689,16 @@ def main() -> int:
             extraction_delta_repair_enabled=True,
         )
     else:
-        settings = replace(
+        settings = _configure_non_delta_settings(
             loaded,
-            extractor_mode="llm",
-            verification_mode="off",
-            llm_provider=PROVIDER,
-            llm_model=MODEL,
-            llm_base_url=BASE_URL,
-            enable_llm_thinking=False,
-            extraction_soft_split_enabled=False,
-            extraction_delta_repair_enabled=False,
+            respect_llm_config=args.respect_llm_config,
         )
     settings.validate()
+    if args.respect_llm_config and not args.delta_repair:
+        print(
+            f"LLM configuration: provider={settings.llm_provider} "
+            f"model={settings.llm_model} base_url={settings.llm_base_url}"
+        )
     result = run_manifest(
         args.manifest,
         args.output,
