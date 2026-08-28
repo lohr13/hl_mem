@@ -26,7 +26,7 @@ from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.ingest.pre_filter import ExtractionPreFilter
 from hl_mem.monitoring.worker import DEFAULT_WORKER_RUNTIME, WorkerRuntimeState
-from hl_mem.observability.audit import AuditLogger, NullAuditLogger, audit_scope
+from hl_mem.observability.audit import AuditLogger, audit_scope
 from hl_mem.settings import Settings, is_placeholder_secret, parse_daily_cron
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
@@ -198,10 +198,8 @@ class Worker:
         )
         if audit_logger is not None:
             self.audit = audit_logger
-        elif self.settings.extract_pre_filter:
-            self.audit = AuditLogger(self.db_path)
         else:
-            self.audit = NullAuditLogger()
+            self.audit = AuditLogger(self.db_path, enabled=self.settings.extract_pre_filter)
         self.consolidator = consolidator
         self.relation_discoverer = relation_discoverer
         self.worker_runtime = worker_runtime

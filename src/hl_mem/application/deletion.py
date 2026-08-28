@@ -10,6 +10,7 @@ from typing import Any
 
 from hl_mem.application.conflicts import OPEN_CASE_STATUSES
 from hl_mem.errors import ConflictError, NotFoundError
+from hl_mem.observability.audit import audit_scope
 from hl_mem.recall.recall_pipeline import stale_observations
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.tombstones import (
@@ -80,11 +81,13 @@ class DeletionService:
         self.ledger_path = Path(ledger_path).expanduser().resolve() if ledger_path else None
 
     def delete_claim(self, claim_id: str) -> DeletionResult:
-        return self._delete_claim(claim_id, allow_expired=False, require_no_evidence_consumers=False)
+        with audit_scope(claim_mutation_source="delete_claim"):
+            return self._delete_claim(claim_id, allow_expired=False, require_no_evidence_consumers=False)
 
     def delete_expired_claim(self, claim_id: str) -> DeletionResult:
         """Delete one expired Claim only after proving it has no downstream evidence consumers."""
-        return self._delete_claim(claim_id, allow_expired=True, require_no_evidence_consumers=True)
+        with audit_scope(claim_mutation_source="delete_expired_claim"):
+            return self._delete_claim(claim_id, allow_expired=True, require_no_evidence_consumers=True)
 
     def _delete_claim(
         self,
@@ -185,7 +188,12 @@ class DeletionService:
         rejections: dict[str, str] = {}
         for archived_claim_id in claim_ids:
             try:
-                self.delete_claim(archived_claim_id)
+                with audit_scope(claim_mutation_source="cleanup_archived"):
+                    self._delete_claim(
+                        archived_claim_id,
+                        allow_expired=False,
+                        require_no_evidence_consumers=False,
+                    )
                 deleted += 1
             except DeletionRejectedError as error:
                 rejections[archived_claim_id] = error.reason
@@ -214,7 +222,8 @@ class DeletionService:
                 ).fetchone()
                 if exists is None:
                     continue
-                self._delete_closure(claim_id, ())
+                with audit_scope(claim_mutation_source="tombstone_replay"):
+                    self._delete_closure(claim_id, ())
                 claims_removed += 1
 
             events_removed = 0

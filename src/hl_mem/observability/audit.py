@@ -15,6 +15,17 @@ from typing import Any, Iterator, Mapping
 
 audit_context: ContextVar[dict[str, Any]] = ContextVar("audit_context", default={})
 _audit_logger: ContextVar[Any] = ContextVar("audit_logger", default=None)
+_SQLITE_AUDIT_DIMENSIONS = frozenset(
+    {
+        "trace_id",
+        "tenant_id",
+        "event_id",
+        "related_claim_id",
+        "query_id",
+        "job_id",
+        "claim_mutation_source",
+    }
+)
 
 
 def _now() -> str:
@@ -186,8 +197,6 @@ class AuditLogger:
 
         if retention_days < 1 or batch_size < 1:
             raise ValueError("audit retention days and batch size must be positive")
-        if not self.enabled:
-            return {"deleted": 0, "remaining_expired": 0, "complete": True, "skipped": True}
         today = datetime.now(timezone.utc).date().isoformat()
         if self._last_cleanup_date == today:
             return {"deleted": 0, "remaining_expired": 0, "complete": True, "skipped": True}
@@ -288,6 +297,14 @@ _NULL_AUDIT = NullAuditLogger()
 
 def current_audit() -> AuditLogger | NullAuditLogger:
     return _audit_logger.get() or _NULL_AUDIT
+
+
+def current_audit_dimension(name: str) -> str | None:
+    """Expose an allow-listed audit dimension to SQLite mutation triggers."""
+    if name not in _SQLITE_AUDIT_DIMENSIONS:
+        return None
+    value = audit_context.get().get(name)
+    return None if value is None else str(value)
 
 
 @contextmanager

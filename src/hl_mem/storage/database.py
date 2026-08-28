@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterator
 
 from hl_mem.domain.entity_coordinates import normalize_typed_alias
+from hl_mem.observability.audit import current_audit_dimension
 from hl_mem.settings import Settings, VectorBackend
 from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
 from hl_mem.storage.migrations.backfill_conflict_key_v3 import backfill_conflict_keys_v3
@@ -42,6 +43,7 @@ _PRE_GUARD_DATA_MIGRATIONS = (
 
 def register_entity_sqlite_functions(connection: sqlite3.Connection) -> None:
     connection.create_function("hl_mem_normalize_alias", 1, normalize_typed_alias, deterministic=True)
+    connection.create_function("hl_mem_audit_dimension", 1, current_audit_dimension)
 
 
 def default_database_path(settings: Settings | None = None) -> Path:

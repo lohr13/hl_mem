@@ -95,3 +95,20 @@ def test_audit_cleanup_is_bounded_until_expired_backlog_is_drained(tmp_path) -> 
     assert fourth == {"deleted": 0, "remaining_expired": 0, "complete": True, "skipped": True}
     assert connection.execute("SELECT trace_id FROM audit_log").fetchone()[0] == "fresh"
     audit.close()
+
+
+def test_audit_cleanup_remains_active_when_event_emission_is_disabled(tmp_path) -> None:
+    path = tmp_path / "disabled-emission-cleanup.db"
+    connection = Database(path).open()
+    connection.execute(
+        "INSERT INTO audit_log(occurred_at,phase,action,outcome,trace_id,detail_json) "
+        "VALUES ('2025-01-01T00:00:00+00:00','test','test','success','old','{}')"
+    )
+    connection.commit()
+    audit = AuditLogger(path, enabled=False)
+
+    result = audit.cleanup(30, batch_size=2)
+
+    assert result == {"deleted": 1, "remaining_expired": 0, "complete": True, "skipped": False}
+    assert connection.execute("SELECT count(*) FROM audit_log").fetchone()[0] == 0
+    audit.close()

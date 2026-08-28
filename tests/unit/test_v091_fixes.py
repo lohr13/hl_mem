@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -16,7 +17,12 @@ from hl_mem.recall.staged_pipeline import _is_preference_claim
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
-from hl_mem.storage.migrations.backfill_claim_slots_v1 import backfill_claim_slots_v1
+from hl_mem.storage.migrations.backfill_claim_slots_v1 import (
+    backfill_claim_slots_v1,
+)
+from hl_mem.storage.migrations.backfill_claim_slots_v1 import (
+    main as backfill_claim_slots_main,
+)
 from hl_mem.storage.migrations.backfill_conflict_key_v3 import (
     DATA_MIGRATION_VERSION,
     backfill_conflict_keys_v3,
@@ -146,6 +152,37 @@ def test_slot_backfill_force_update_resyncs_v2_tags_without_legacy_trigger(tmp_p
         connection.execute("SELECT 1 FROM sqlite_schema WHERE name IN ('claims_tags_fts','claims_tags_au')").fetchone()
         is None
     )
+
+
+def test_slot_backfill_cli_registers_claim_mutation_audit_function(tmp_path, capsys) -> None:
+    path = tmp_path / "slot-backfill-cli.db"
+    database = Database(path)
+    connection = database.open()
+    assert ClaimRepository(connection).insert_claim(
+        {
+            "id": "legacy-slot",
+            "namespace_key": "default",
+            "subject_entity_id": "gateway",
+            "predicate": "配置",
+            "canonical_attribute": "config.port",
+            "canonical_slot": None,
+            "topic_tags_json": None,
+            "qualifiers": {"service": "api"},
+            "recorded_from": "2026-01-01T00:00:00+00:00",
+            "status": "active",
+        }
+    )
+    database.close()
+
+    assert backfill_claim_slots_main(["--db", str(path), "--apply"]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    verified = Database(path).open()
+    assert output["applied"] == 1
+    assert ClaimRepository(verified).get_claim("legacy-slot")["canonical_slot"] == "config.port"
+    assert verified.execute(
+        "SELECT 1 FROM audit_log WHERE phase='claim_mutation' AND claim_id='legacy-slot'"
+    ).fetchone()
 
 
 def test_expires_backfill_scope_cas_does_not_overwrite_permanent_claim(

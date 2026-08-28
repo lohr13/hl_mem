@@ -13,7 +13,7 @@ from typing import Any
 
 from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS, validate_slot_instance
 from hl_mem.domain.claims.conflicts import compute_conflict_key
-from hl_mem.storage.database import default_database_path
+from hl_mem.storage.database import default_database_path, register_entity_sqlite_functions
 from hl_mem.storage.tokenized_fts import sync_claim_tokenized_fts_v2
 
 
@@ -165,6 +165,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     connection = sqlite3.connect(args.db)
     connection.row_factory = sqlite3.Row
+    register_entity_sqlite_functions(connection)
     try:
         stats = backfill_claim_slots_v1(
             connection,

@@ -106,10 +106,9 @@ def test_migration_041_allows_non_group_update_on_historical_dirty_group(tmp_pat
         _claim(repository, "first", value="8080", status="active")
         _claim(repository, "second", value="8081", status="active")
 
-    baseline = connection.total_changes
-    connection.execute("UPDATE claims SET access_count=access_count+1 WHERE id='first'")
+    cursor = connection.execute("UPDATE claims SET access_count=access_count+1 WHERE id='first'")
 
-    assert connection.total_changes - baseline == 1
+    assert cursor.rowcount == 1
     assert repository.get_claim("first")["access_count"] == 1
 
 
@@ -212,8 +211,7 @@ def test_migration_041_repairs_registered_trigger_with_stale_definition(tmp_path
         "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='claims_active_exclusive_guard_update'"
     ).fetchone()[0]
     repaired.execute("INSERT INTO claims(id,status,recorded_from) VALUES('claim','active','2026-08-15T00:00:00+00:00')")
-    baseline = repaired.total_changes
-    repaired.execute("UPDATE claims SET access_count=access_count+1 WHERE id='claim'")
+    cursor = repaired.execute("UPDATE claims SET access_count=access_count+1 WHERE id='claim'")
 
     assert "BEFORE UPDATE OF status, namespace_key, conflict_key, canonical_slot ON claims" in trigger_sql
-    assert repaired.total_changes - baseline == 1
+    assert cursor.rowcount == 1
