@@ -13,11 +13,12 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 211
+    assert len(fields(Settings)) == 212
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_max_tokens is None
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
+    assert settings.llm_thinking_control == "auto"
     assert settings.extractor_mode == "fake"
     assert settings.verification_mode == "off"
     assert settings.extraction_soft_split_enabled is False
@@ -143,6 +144,7 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"feedback_lifecycle_mode": "invalid"}, "retention.feedback_lifecycle_mode"),
         ({"feedback_min_samples": 0}, "recall.feedback_min_samples"),
         ({"llm_provider": "invalid"}, "llm.provider"),
+        ({"llm_thinking_control": "invalid"}, "llm.thinking_control"),
         ({"llm_max_tokens": 0}, "llm.max_tokens"),
         ({"relation_expansion_mode": "invalid"}, "relation.expansion_mode"),
         ({"relevance_gate_mode": "invalid"}, "recall.relevance_gate_mode"),

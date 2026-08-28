@@ -160,6 +160,14 @@ TABLE_NOTES = {
         "该角色后，应以同一最终配置重建存量 Claim 向量，避免查询与文档向量混用不同表示约定。sparse/instruct 变体仅用于",
         "显式 benchmark 配置，生产默认关闭。",
     ],
+    "llm": [
+        "",
+        '`llm.thinking_control = "auto"` 保持 provider 现有请求格式：DashScope 发送顶层 `enable_thinking`，',
+        'Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 `llm.provider = "openai_compatible"` 且',
+        '`llm.thinking_control = "chat_template_kwargs"` 时，客户端发送嵌套的',
+        "`chat_template_kwargs = {enable_thinking = ...}`，直接使用 `json_object` 结构化输出，并仅剥离 JSON 前的空",
+        "`<think>...</think>` 块。该兼容模式面向 llama.cpp 等本地 OpenAI-compatible 端点。",
+    ],
     "extraction": [
         "",
         "Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_max_events` 时立即提取，否则最多等待",

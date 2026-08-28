@@ -273,7 +273,14 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.provider` | 字符串 | `"dashscope"` | `dashscope`、`zhipu`、`openai_compatible` | `llm_provider` |
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |
+| `llm.thinking_control` | 字符串 | `"auto"` | `auto`、`chat_template_kwargs` | `llm_thinking_control` |
 | `llm.timeout` | 数值 | `90.0` | > 0 | `llm_timeout` |
+
+`llm.thinking_control = "auto"` 保持 provider 现有请求格式：DashScope 发送顶层 `enable_thinking`，
+Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 `llm.provider = "openai_compatible"` 且
+`llm.thinking_control = "chat_template_kwargs"` 时，客户端发送嵌套的
+`chat_template_kwargs = {enable_thinking = ...}`，直接使用 `json_object` 结构化输出，并仅剥离 JSON 前的空
+`<think>...</think>` 块。该兼容模式面向 llama.cpp 等本地 OpenAI-compatible 端点。
 
 ### `[maintenance_judge]`
 

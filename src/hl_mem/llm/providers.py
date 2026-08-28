@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -20,8 +20,18 @@ class OpenAICompatibleProvider:
     name = "openai_compatible"
     capabilities = LLMCapabilities(json_object=True, json_schema_strict=True)
 
-    def __init__(self, *, max_tokens: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        max_tokens: int | None = None,
+        enable_thinking: bool = False,
+        thinking_control: Literal["auto", "chat_template_kwargs"] = "auto",
+    ) -> None:
         self.max_tokens = max_tokens
+        self.enable_thinking = enable_thinking
+        self.thinking_control = thinking_control
+        if thinking_control == "chat_template_kwargs":
+            self.capabilities = LLMCapabilities(json_object=True, json_schema_strict=False)
 
     def build_payload(
         self,
@@ -36,6 +46,8 @@ class OpenAICompatibleProvider:
         }
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
+        if self.thinking_control == "chat_template_kwargs":
+            payload["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
         spec = request.structured_output
         if spec is None:
             return payload
@@ -57,8 +69,11 @@ class OpenAICompatibleProvider:
         choice = payload["choices"][0]
         usage = payload.get("usage") or {}
         prompt_details = usage.get("prompt_tokens_details") or {}
+        content = choice["message"]["content"]
+        if self.thinking_control == "chat_template_kwargs":
+            content = self._strip_leading_empty_think_block(content)
         return LLMResponse(
-            content=choice["message"]["content"],
+            content=content,
             finish_reason=choice.get("finish_reason"),
             usage_total_tokens=int(usage.get("total_tokens", 0)),
             raw_request_id=payload.get("id") or payload.get("request_id"),
@@ -66,6 +81,19 @@ class OpenAICompatibleProvider:
             output_tokens=usage.get("completion_tokens"),
             cached_tokens=prompt_details.get("cached_tokens"),
         )
+
+    @staticmethod
+    def _strip_leading_empty_think_block(content: str) -> str:
+        """仅剥离位于 JSON 前的空 think 块。"""
+        opening_tag = "<think>"
+        closing_tag = "</think>"
+        if not content.startswith(opening_tag):
+            return content
+        closing_index = content.find(closing_tag, len(opening_tag))
+        if closing_index < 0 or content[len(opening_tag) : closing_index].strip():
+            return content
+        remainder = content[closing_index + len(closing_tag) :].lstrip()
+        return remainder if remainder.startswith("{") else content
 
     def is_structured_mode_unsupported(self, error: httpx.HTTPStatusError) -> bool:
         """判断 400/422 是否明确表示 strict structured output 不受支持。"""

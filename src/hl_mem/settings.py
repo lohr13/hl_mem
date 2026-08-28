@@ -22,6 +22,7 @@ ExtractorMode = Literal["fake", "real", "llm"]
 VerificationMode = Literal["off", "audit", "enforce"]
 LLMProvider = Literal["dashscope", "zhipu", "openai_compatible"]
 StructuredOutputModeName = Literal["auto", "json_object", "json_schema"]
+LLMThinkingControl = Literal["auto", "chat_template_kwargs"]
 QueryExpansionMode = Literal["off", "auto", "always"]
 QueryContextMode = Literal["off", "coreference"]
 ProcedureRecallMode = Literal["off", "keyword", "auto"]
@@ -373,6 +374,10 @@ class Settings:
         metadata={"toml": "llm.structured_mode"},
     )
     enable_llm_thinking: bool = field(default=False, metadata={"toml": "llm.enable_thinking"})
+    llm_thinking_control: LLMThinkingControl = field(
+        default="auto",
+        metadata={"toml": "llm.thinking_control"},
+    )
     llm_max_tokens: int | None = field(default=None, metadata={"toml": "llm.max_tokens"})
     llm_timeout: float = field(default=90.0, metadata={"toml": "llm.timeout"})
     llm_max_attempts: int = field(default=3, metadata={"toml": "llm.max_attempts"})
@@ -748,6 +753,8 @@ class Settings:
             raise ConfigurationError("llm.structured_mode must be 'auto', 'json_object', or 'json_schema'")
         if not isinstance(self.enable_llm_thinking, bool):
             raise ConfigurationError("llm.enable_thinking must be a boolean")
+        if self.llm_thinking_control not in {"auto", "chat_template_kwargs"}:
+            raise ConfigurationError("llm.thinking_control must be 'auto' or 'chat_template_kwargs'")
         if self.llm_max_tokens is not None and (type(self.llm_max_tokens) is not int or self.llm_max_tokens <= 0):
             raise ConfigurationError("llm.max_tokens must be a positive integer")
         if self.relation_expansion_mode not in {"off", "on"}:
@@ -1054,6 +1061,7 @@ class Settings:
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,
             "enable_llm_thinking": self.enable_llm_thinking,
+            "llm_thinking_control": self.llm_thinking_control,
             "image_describer_mode": self.image_describer_mode,
             "image_describer_provider": self.image_describer_provider,
             "image_describer_model": self.image_describer_model,

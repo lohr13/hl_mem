@@ -44,6 +44,7 @@ def test_old_toml_without_llm_max_tokens_keeps_default(tmp_path: Path) -> None:
     settings = load_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.llm_max_tokens is None
+    assert settings.llm_thinking_control == "auto"
 
 
 def test_llm_max_tokens_loads_from_toml(tmp_path: Path) -> None:
@@ -55,6 +56,17 @@ def test_llm_max_tokens_loads_from_toml(tmp_path: Path) -> None:
     settings = load_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.llm_max_tokens == 4000
+
+
+def test_llm_thinking_control_loads_from_toml(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "thinking-control.toml",
+        '[llm]\nthinking_control = "chat_template_kwargs"\n' '[recall]\nquery_expansion_mode = "off"\n',
+    )
+
+    settings = load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert settings.llm_thinking_control == "chat_template_kwargs"
 
 
 def test_release_example_config_matches_approved_modes() -> None:

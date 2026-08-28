@@ -80,6 +80,28 @@ def test_strict_capable_provider_receives_json_schema(monkeypatch) -> None:
     assert captured["response_format"]["type"] == "json_schema"
 
 
+def test_chat_template_thinking_control_selects_json_object(monkeypatch) -> None:
+    captured: dict = {}
+
+    def post(*args, **kwargs):
+        captured.update(kwargs["json"])
+        return Response({"choices": [{"message": {"content": "{}"}}]})
+
+    monkeypatch.setattr(httpx, "post", post)
+    client = LLMClient(
+        "key",
+        "https://example.test/v1",
+        "model",
+        OpenAICompatibleProvider(thinking_control="chat_template_kwargs"),
+        httpx.Timeout(10),
+        3,
+    )
+
+    client.complete(_request())
+
+    assert captured["response_format"] == {"type": "json_object"}
+
+
 def test_client_records_success_span(tmp_path, monkeypatch) -> None:
     """LLMClient 成功返回时应写入调用账本。"""
     monkeypatch.setattr(
