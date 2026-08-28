@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hl_mem.application.version_report import report_version
 from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.storage.claims import ClaimRepository
@@ -87,3 +88,87 @@ def test_reclassify_guard_skips_active_claim_that_would_collide_with_exclusive_g
     assert moving["conflict_key"] == "stale-key"
     assert moving["scope"] == "permanent"
     assert moving["importance"] == 0.5
+
+
+def test_reclassify_skips_deterministic_version_probe(tmp_path, monkeypatch) -> None:
+    connection = Database(tmp_path / "version-probe.db").open()
+    report = report_version(connection, namespace="default", subject="HL-Mem")
+    claim_id = connection.execute(
+        "SELECT derived_id FROM evidence_links WHERE evidence_type='event' AND evidence_id=?",
+        (report["event_id"],),
+    ).fetchone()[0]
+
+    monkeypatch.setattr(
+        "hl_mem.workers.reclassify.classify_batch",
+        lambda _client, claims: [
+            {"id": claim["id"], "scope": "permanent", "importance": 0.7} for claim in claims
+        ],
+    )
+
+    result = reclassify_claims(connection, object(), 5)
+
+    claim = ClaimRepository(connection).get_claim(claim_id)
+    assert result["eligible"] == 0
+    assert claim is not None
+    assert claim["canonical_slot"] == "config.version"
+    assert claim["importance"] == 0.5
+
+
+def test_reclassify_does_not_protect_unproven_version_observation(tmp_path, monkeypatch) -> None:
+    connection = Database(tmp_path / "unproven-version-observation.db").open()
+    repository = ClaimRepository(connection)
+    assert repository.insert_claim(
+        {
+            "id": "unproven-version-observation",
+            "namespace_key": "default",
+            "recorded_from": NOW,
+            "observed_at": NOW,
+            "status": "active",
+            "subject_entity_id": "hl_mem",
+            "predicate": "配置",
+            "value": "0.32.0",
+            "canonical_attribute": "config.version",
+            "canonical_slot": "config.version",
+            "assertion_kind": "observation",
+            "source_authority": "high",
+            "scope": "permanent",
+            "importance": 0.5,
+        }
+    )
+    monkeypatch.setattr(
+        "hl_mem.workers.reclassify.classify_batch",
+        lambda _client, claims: [
+            {"id": claim["id"], "scope": "permanent", "importance": 0.7} for claim in claims
+        ],
+    )
+
+    result = reclassify_claims(connection, object(), 5)
+
+    claim = repository.get_claim("unproven-version-observation")
+    assert result["eligible"] == 1
+    assert claim is not None
+    assert claim["canonical_slot"] is None
+    assert claim["importance"] == 0.7
+
+
+def test_reclassify_treats_non_object_probe_event_content_as_unproven(tmp_path, monkeypatch) -> None:
+    connection = Database(tmp_path / "non-object-probe-event.db").open()
+    report = report_version(connection, namespace="default", subject="HL-Mem")
+    claim_id = connection.execute(
+        "SELECT derived_id FROM evidence_links WHERE evidence_type='event' AND evidence_id=?",
+        (report["event_id"],),
+    ).fetchone()[0]
+    connection.execute("UPDATE events SET content_json='[]' WHERE id=?", (report["event_id"],))
+    monkeypatch.setattr(
+        "hl_mem.workers.reclassify.classify_batch",
+        lambda _client, claims: [
+            {"id": claim["id"], "scope": "permanent", "importance": 0.7} for claim in claims
+        ],
+    )
+
+    result = reclassify_claims(connection, object(), 5)
+
+    claim = ClaimRepository(connection).get_claim(claim_id)
+    assert result["eligible"] == 1
+    assert claim is not None
+    assert claim["canonical_slot"] is None

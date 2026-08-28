@@ -44,6 +44,52 @@ def _text(claim: dict[str, Any]) -> str:
     return f"{claim.get('subject_entity_id') or ''} {claim.get('predicate') or ''} {value or ''}".strip()
 
 
+def _is_deterministic_version_probe(connection: Any, claim: dict[str, Any]) -> bool:
+    """Keep only provenance-backed report-version projections outside LLM rewrites."""
+    if not (
+        claim.get("canonical_slot") == "config.version"
+        and claim.get("canonical_attribute") == "config.version"
+        and claim.get("assertion_kind") == "observation"
+        and claim.get("source_authority") == "high"
+        and isinstance(claim.get("subject_canonical_entity_id"), str)
+    ):
+        return False
+    rows = connection.execute(
+        "SELECT event.tenant_id,event.event_type,event.actor_type,event.occurred_at,event.content_json "
+        "FROM evidence_links AS link JOIN events AS event "
+        "ON event.id=link.evidence_id AND link.evidence_type='event' "
+        "WHERE link.derived_type='claim' AND link.derived_id=? "
+        "AND link.relation IN ('derived_from','supports')",
+        (claim["id"],),
+    ).fetchall()
+    for row in rows:
+        try:
+            content = json.loads(str(row["content_json"]))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(content, dict):
+            continue
+        proof = content.get("subject_proof")
+        alias_version = proof.get("alias_version") if isinstance(proof, dict) else None
+        if (
+            row["tenant_id"] == claim.get("namespace_key")
+            and row["event_type"] == "status_report"
+            and row["actor_type"] == "tool"
+            and content.get("schema_version") == "status_report_v1"
+            and content.get("producer_contract") == "hl_mem.report-version-v1"
+            and content.get("package") == "hl_mem"
+            and content.get("runtime_version") == claim.get("value")
+            and content.get("namespace") == claim.get("namespace_key")
+            and content.get("observed_at") == row["occurred_at"]
+            and proof.get("canonical_entity_id") == claim.get("subject_canonical_entity_id")
+            and isinstance(alias_version, int)
+            and not isinstance(alias_version, bool)
+            and alias_version >= 1
+        ):
+            return True
+    return False
+
+
 def classify_batch(llm_client: LLMClient, claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """通过统一 LLMClient 批量重分类记忆。"""
     response = llm_client.complete(
@@ -155,6 +201,7 @@ def reclassify_claims(
         if row.get("status") != "expired"
         and row.get("scope", "permanent") == "permanent"
         and float(row.get("importance", 0.5)) == 0.5
+        and not _is_deterministic_version_probe(connection, row)
     ]
     updated = 0
     guarded = 0
