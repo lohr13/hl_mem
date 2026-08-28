@@ -117,12 +117,14 @@ class Database:
         connection.hl_mem_settings = self.settings
         connection.row_factory = sqlite3.Row
         register_entity_sqlite_functions(connection)
-        register_claim_mutation_audit_context(connection)
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
         try:
             if VectorBackend(self.settings.vector_backend) is VectorBackend.SQLITE_VEC:
                 load_sqlite_vec_extension(connection)
+            if self.path == ":memory:":
+                self._migrate(connection)
+            register_claim_mutation_audit_context(connection)
         except Exception:
             connection.close()
             raise
