@@ -78,6 +78,7 @@ CONSTRAINTS = {
     "hermes.on_demand_recall_timeout_seconds": "> 0",
     "hermes.prefetch_cache_ttl_seconds": "> 0",
     "llm.model": "非空字符串",
+    "llm.max_tokens": "正整数；输出上限保险丝，截断可能导致 JSON 不完整（`finish=length`），结构化提取将“快速失败”并由上层重试/降级",
     "llm.timeout": "> 0",
     "llm.max_attempts": ">= 1",
     "llm.schema_retries": ">= 0",

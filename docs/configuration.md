@@ -208,10 +208,12 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `extraction.batch_max_wait_seconds` | 数值 | `120.0` | >= 0 | `extraction_batch_max_wait_seconds` |
 | `extraction.chunk_overlap_turns` | 整数 | `2` | >= 0 | `extraction_chunk_overlap_turns` |
 | `extraction.chunk_target_chars` | 整数 | `12000` | >= 1 | `extraction_chunk_target_chars` |
+| `extraction.delta_repair_enabled` | 布尔值 | `false` | `true`、`false` | `extraction_delta_repair_enabled` |
 | `extraction.lesson_signal_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `lesson_signal_mode` |
 | `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
 | `extraction.mode` | 字符串 | `"fake"` | `fake`、`real`、`llm` | `extractor_mode` |
 | `extraction.pre_filter` | 布尔值 | `false` | `true`、`false` | `extract_pre_filter` |
+| `extraction.soft_split_enabled` | 布尔值 | `false` | `true`、`false` | `extraction_soft_split_enabled` |
 | `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
 
 Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_max_events` 时立即提取，否则最多等待
@@ -266,7 +268,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.base_url` | 字符串 | `"https://coding.dashscope.aliyuncs.com/v1"` | 任意字符串 | `llm_base_url` |
 | `llm.enable_thinking` | 布尔值 | `false` | `true`、`false` | `enable_llm_thinking` |
 | `llm.max_attempts` | 整数 | `3` | >= 1 | `llm_max_attempts` |
-| `llm.max_tokens` | 可选整数 | 未配置（`None`） | 正整数；输出上限保险丝，截断可能导致 JSON 不完整（`finish=length`），结构化提取将“快速失败”并由上层重试/降级 | `llm_max_tokens` |
+| `llm.max_tokens` | 整数 | 未设置 | 正整数；输出上限保险丝，截断可能导致 JSON 不完整（`finish=length`），结构化提取将“快速失败”并由上层重试/降级 | `llm_max_tokens` |
 | `llm.model` | 字符串 | `"qwen3.7-plus"` | 非空字符串 | `llm_model` |
 | `llm.provider` | 字符串 | `"dashscope"` | `dashscope`、`zhipu`、`openai_compatible` | `llm_provider` |
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
