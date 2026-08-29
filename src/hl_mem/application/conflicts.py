@@ -2,31 +2,33 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from hl_mem.application.conflict_audit import CONFLICT_HUMAN_POLICY_VERSION, ConflictAuditWriter
 from hl_mem.application.conflict_invariants import (
     assert_conflict_case_postconditions,
     assert_conflict_postconditions,
     assert_no_orphan_disputed_claims,
 )
-from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
-from hl_mem.domain.governance import (
-    CONFLICT_AUTO_POLICY_VERSION,
-    DecisionEnvelope,
-    snapshot_fingerprint,
+from hl_mem.application.conflict_queries import (
+    OPEN_CASE_STATUSES,
+    ConflictQueryService,
 )
+from hl_mem.application.conflict_queries import follow_claim_tip as _follow_tip
+from hl_mem.application.conflict_queries import (
+    load_conflict_case,
+)
+from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
+from hl_mem.domain.governance import CONFLICT_AUTO_POLICY_VERSION
 from hl_mem.errors import ConflictResolutionError
 from hl_mem.lifecycle import assert_transition
 from hl_mem.storage.claims import ClaimRepository
-from hl_mem.storage.governance import GovernanceActionRepository, upgrade_conflict_auto_policy
+from hl_mem.storage.governance import upgrade_conflict_auto_policy
 
-OPEN_CASE_STATUSES = ("pending", "auto_resolved", "manual_required")
 NONTERMINAL_CLAIM_STATUSES = frozenset({"active", "candidate", "disputed"})
 SUPPORTED_DECISIONS = frozenset({"keep_left", "keep_right", "coexist", "reject"})
-CONFLICT_HUMAN_POLICY_VERSION = "conflict-human-resolution-v1"
 DEFAULT_HUMAN_RESOLVER = "agent:hermes-local"
 __all__ = [
     "CONFLICT_AUTO_POLICY_VERSION",
@@ -40,24 +42,6 @@ __all__ = [
 
 class StaleConflictDecision(ConflictResolutionError):
     """裁决期间 case revision 或输入指纹已经变化。"""
-
-
-def _follow_tip(repository: ClaimRepository, claim_id: str) -> dict[str, Any] | None:
-    visited: set[str] = set()
-    current_id = claim_id
-    for _ in range(33):
-        if current_id in visited:
-            return None
-        visited.add(current_id)
-        claim = repository.get_claim(current_id)
-        if claim is None:
-            return None
-        if claim.get("status") != "superseded":
-            return claim
-        current_id = str(claim.get("superseded_by_id") or "")
-        if not current_id:
-            return None
-    return None
 
 
 class ResolutionService:
@@ -87,7 +71,7 @@ class ResolutionService:
         if owns_transaction:
             self.connection.execute("BEGIN IMMEDIATE")
         try:
-            case = self._load_case(case_id)
+            case = load_conflict_case(self.connection, case_id)
             if not (local_postconditions and expected_revision is None):
                 self._assert_expected_revision(case, expected_revision)
             before_revision = int(case.get("revision") or 0)
@@ -162,7 +146,7 @@ class ResolutionService:
                     "SELECT revision,status FROM conflict_cases WHERE id=?",
                     (case_id,),
                 ).fetchone()
-                self._record_human_action(
+                ConflictAuditWriter(self.connection).record_human_action(
                     case_id=case_id,
                     decision=decision,
                     candidate_key=None,
@@ -203,7 +187,7 @@ class ResolutionService:
 
         if decision not in {"keep_left", "keep_right"}:
             raise ConflictResolutionError(f"unsupported followed-tip decision: {decision}")
-        case = self._load_case(case_id)
+        case = load_conflict_case(self.connection, case_id)
         if case.get("group_key") is not None:
             raise ConflictResolutionError(f"followed-tip pair unexpectedly has a group key: {case_id}")
         repository = ClaimRepository(self.connection)
@@ -227,61 +211,7 @@ class ResolutionService:
     def review(self, case_id: str) -> dict[str, Any]:
         """返回一个 revision 快照及其全部 canonical candidates。"""
 
-        case = self._load_case(case_id)
-        rows = self.connection.execute(
-            "SELECT candidate_key,canonical_value_json,representative_claim_id,support_count,"
-            "first_seen_at,last_seen_at FROM conflict_case_candidates "
-            "WHERE case_id=? ORDER BY candidate_key",
-            (case_id,),
-        ).fetchall()
-        candidates: list[dict[str, Any]] = []
-        for row in rows:
-            member_rows = self.connection.execute(
-                "SELECT members.claim_id,claims.status,claims.source_authority "
-                "FROM conflict_candidate_members AS members "
-                "JOIN claims ON claims.id=members.claim_id "
-                "WHERE members.case_id=? AND members.candidate_key=? ORDER BY members.claim_id",
-                (case_id, row["candidate_key"]),
-            ).fetchall()
-            claim_ids = [str(member["claim_id"]) for member in member_rows]
-            evidence_count = 0
-            if claim_ids:
-                placeholders = ",".join("?" for _ in claim_ids)
-                evidence_count = int(
-                    self.connection.execute(
-                        "SELECT count(*) FROM evidence_links WHERE derived_type='claim' "
-                        f"AND derived_id IN ({placeholders})",
-                        claim_ids,
-                    ).fetchone()[0]
-                )
-            try:
-                canonical_value = json.loads(str(row["canonical_value_json"]))
-            except json.JSONDecodeError:
-                canonical_value = row["canonical_value_json"]
-            candidates.append(
-                {
-                    "candidate_key": str(row["candidate_key"]),
-                    "canonical_value": canonical_value,
-                    "representative_claim_id": str(row["representative_claim_id"]),
-                    "support_count": int(row["support_count"]),
-                    "evidence_count": evidence_count,
-                    "first_seen_at": str(row["first_seen_at"]),
-                    "last_seen_at": str(row["last_seen_at"]),
-                    "claim_ids": claim_ids,
-                    "claim_statuses": {str(member["claim_id"]): str(member["status"]) for member in member_rows},
-                }
-            )
-        return {
-            "case_id": str(case["id"]),
-            "namespace": case.get("namespace_key"),
-            "group_key": case.get("group_key"),
-            "generation": int(case.get("generation") or 1),
-            "revision": int(case.get("revision") or 0),
-            "status": str(case["status"]),
-            "overflow": bool(case.get("overflow")),
-            "candidate_count": len(candidates),
-            "candidates": candidates,
-        }
+        return ConflictQueryService(self.connection).review(case_id)
 
     def resolve_group(
         self,
@@ -306,7 +236,7 @@ class ResolutionService:
         if owns_transaction:
             self.connection.execute("BEGIN IMMEDIATE")
         try:
-            case = self._load_case(case_id)
+            case = load_conflict_case(self.connection, case_id)
             if case.get("group_key") is None or case.get("namespace_key") is None:
                 raise ConflictResolutionError(f"conflict case is not group-native: {case_id}")
             self._assert_expected_revision(case, expected_revision)
@@ -400,7 +330,7 @@ class ResolutionService:
                 (case_id,),
             ).fetchone()
             if effective_resolver is not None and not terminal_replay:
-                self._record_human_action(
+                ConflictAuditWriter(self.connection).record_human_action(
                     case_id=case_id,
                     decision=action,
                     candidate_key=candidate_key,
@@ -449,70 +379,6 @@ class ResolutionService:
         if len(normalized) > 200:
             raise ConflictResolutionError("resolver must not exceed 200 characters")
         return normalized
-
-    def _record_human_action(
-        self,
-        *,
-        case_id: str,
-        decision: str,
-        candidate_key: str | None,
-        rationale: str | None,
-        resolver: str,
-        before_revision: int,
-        after_revision: int,
-        before_status: str,
-        after_status: str,
-        timestamp: str,
-    ) -> None:
-        action = {
-            "case_id": case_id,
-            "decision": decision,
-            "candidate_key": candidate_key,
-            "rationale": rationale,
-            "resolver": resolver,
-        }
-        envelope = DecisionEnvelope(
-            domain="conflict",
-            subject_ref=case_id,
-            input_fingerprint=snapshot_fingerprint(
-                {
-                    **action,
-                    "case_status": before_status,
-                    "revision": before_revision,
-                }
-            ),
-            policy_version=CONFLICT_HUMAN_POLICY_VERSION,
-            tier="human",
-            decision=decision,
-            confidence=None,
-            resolution_rule=rationale or "manual_resolution",
-            resolver_model=resolver,
-        )
-        GovernanceActionRepository(self.connection).record(
-            envelope,
-            before={
-                **action,
-                "case_status": before_status,
-                "revision": before_revision,
-            },
-            after={
-                **action,
-                "case_status": after_status,
-                "revision": after_revision,
-            },
-            status="applied",
-            created_at=timestamp,
-            applied_at=timestamp,
-        )
-
-    def _load_case(self, case_id: str) -> dict[str, Any]:
-        row = self.connection.execute("SELECT * FROM conflict_cases WHERE id=?", (case_id,)).fetchone()
-        if row is None:
-            raise ConflictResolutionError(f"conflict case not found: {case_id}")
-        case = dict(row)
-        if case["status"] not in {*OPEN_CASE_STATUSES, "resolved", "rejected"}:
-            raise ConflictResolutionError(f"unsupported conflict case status: {case['status']}")
-        return case
 
     def _idempotent_terminal_result(
         self,

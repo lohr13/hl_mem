@@ -353,16 +353,11 @@ def repair_dangling_conflicts(
     try:
         connection = database.open()
         cases = inspect_dangling_conflicts(connection)
-        applied = (
-            apply_dangling_conflict_repair(connection, source="cli")
-            if apply
-            else {"deleted_count": 0, "deleted_case_ids": []}
-        )
-        return {
-            "dry_run": not apply,
-            "cases": cases,
-            **applied,
-        }
+        if apply:
+            applied = apply_dangling_conflict_repair(connection, source="cli")
+        else:
+            applied = {"deleted_count": 0, "deleted_case_ids": []}
+        return {"dry_run": not apply, "cases": cases, **applied}
     finally:
         database.close()
 
@@ -375,7 +370,6 @@ def repair_invalid_conflict_groups(
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """默认只预览旧 ingest 形成的非互斥 open groups；apply 必须提供预期数量。"""
-
     database = Database(database_path, settings=settings)
     try:
         connection = database.open()
@@ -498,6 +492,24 @@ def cleanup_expired_history(
         database.close()
 
 
+def _add_conflicts_parser(commands: Any) -> None:
+    conflicts = commands.add_parser("conflicts")
+    conflicts.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    conflict_commands = conflicts.add_subparsers(dest="conflict_command", required=True)
+    conflict_commands.add_parser("list")
+    resolve = conflict_commands.add_parser("resolve")
+    resolve.add_argument("case_id")
+    resolve.add_argument("decision", choices=("keep_left", "keep_right", "coexist", "reject"))
+    resolve.add_argument("--rationale")
+    resolve.add_argument("--expected-revision", type=int, required=True)
+    resolve.add_argument("--resolver", default=DEFAULT_HUMAN_RESOLVER)
+    repair_dangling = conflict_commands.add_parser("repair-dangling")
+    repair_dangling.add_argument("--apply", action="store_true")
+    repair_invalid = conflict_commands.add_parser("repair-invalid-groups")
+    repair_invalid.add_argument("--apply", action="store_true")
+    repair_invalid.add_argument("--expected-count", type=int)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """运行导入或导出管理命令。"""
     parser = argparse.ArgumentParser(prog="hl-mem")
@@ -531,21 +543,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     restore.add_argument("--manifest", type=Path, required=True)
     restore.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     restore.add_argument("--confirm-overwrite", action="store_true")
-    conflicts = commands.add_parser("conflicts")
-    conflicts.add_argument("--db", type=Path, default=argparse.SUPPRESS)
-    conflict_commands = conflicts.add_subparsers(dest="conflict_command", required=True)
-    conflict_commands.add_parser("list")
-    resolve = conflict_commands.add_parser("resolve")
-    resolve.add_argument("case_id")
-    resolve.add_argument("decision", choices=("keep_left", "keep_right", "coexist", "reject"))
-    resolve.add_argument("--rationale")
-    resolve.add_argument("--expected-revision", type=int, required=True)
-    resolve.add_argument("--resolver", default=DEFAULT_HUMAN_RESOLVER)
-    repair_dangling = conflict_commands.add_parser("repair-dangling")
-    repair_dangling.add_argument("--apply", action="store_true")
-    repair_invalid = conflict_commands.add_parser("repair-invalid-groups")
-    repair_invalid.add_argument("--apply", action="store_true")
-    repair_invalid.add_argument("--expected-count", type=int)
+    _add_conflicts_parser(commands)
     dedup = commands.add_parser("dedup")
     dedup.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     dedup_commands = dedup.add_subparsers(dest="dedup_command", required=True)

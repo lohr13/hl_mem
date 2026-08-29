@@ -8,10 +8,10 @@ from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
-from hl_mem.application.conflicts import OPEN_CASE_STATUSES
-from hl_mem.errors import NotFoundError, ValidationError
+from hl_mem.errors import ConflictResolutionError, NotFoundError, ValidationError
 from hl_mem.storage.claims import ClaimRepository
 
+OPEN_CASE_STATUSES = ("pending", "auto_resolved", "manual_required")
 MAX_EVIDENCE_PER_CLAIM = 5
 MAX_EVENT_CONTENT_CHARS = 500
 MAX_DOSSIER_RESPONSE_BYTES = 1024 * 1024
@@ -22,12 +22,103 @@ class ConflictDossierTooLargeError(Exception):
     """冲突案卷超过固定 REST 响应上限。"""
 
 
+def follow_claim_tip(repository: ClaimRepository, claim_id: str) -> dict[str, Any] | None:
+    """沿 supersession chain 返回当前 claim tip。"""
+
+    visited: set[str] = set()
+    current_id = claim_id
+    for _ in range(33):
+        if current_id in visited:
+            return None
+        visited.add(current_id)
+        claim = repository.get_claim(current_id)
+        if claim is None:
+            return None
+        if claim.get("status") != "superseded":
+            return claim
+        current_id = str(claim.get("superseded_by_id") or "")
+        if not current_id:
+            return None
+    return None
+
+
+def load_conflict_case(connection: sqlite3.Connection, case_id: str) -> dict[str, Any]:
+    """加载 ResolutionService 支持的冲突状态。"""
+
+    row = connection.execute("SELECT * FROM conflict_cases WHERE id=?", (case_id,)).fetchone()
+    if row is None:
+        raise ConflictResolutionError(f"conflict case not found: {case_id}")
+    case = dict(row)
+    if case["status"] not in {*OPEN_CASE_STATUSES, "resolved", "rejected"}:
+        raise ConflictResolutionError(f"unsupported conflict case status: {case['status']}")
+    return case
+
+
 class ConflictQueryService:
     """组装冲突案卷和可分页的未闭合 case 列表。"""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
         self.claims = ClaimRepository(connection)
+
+    def review(self, case_id: str) -> dict[str, Any]:
+        """返回一个 revision 快照及其全部 canonical candidates。"""
+
+        case = load_conflict_case(self.connection, case_id)
+        rows = self.connection.execute(
+            "SELECT candidate_key,canonical_value_json,representative_claim_id,support_count,"
+            "first_seen_at,last_seen_at FROM conflict_case_candidates "
+            "WHERE case_id=? ORDER BY candidate_key",
+            (case_id,),
+        ).fetchall()
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            member_rows = self.connection.execute(
+                "SELECT members.claim_id,claims.status,claims.source_authority "
+                "FROM conflict_candidate_members AS members "
+                "JOIN claims ON claims.id=members.claim_id "
+                "WHERE members.case_id=? AND members.candidate_key=? ORDER BY members.claim_id",
+                (case_id, row["candidate_key"]),
+            ).fetchall()
+            claim_ids = [str(member["claim_id"]) for member in member_rows]
+            evidence_count = 0
+            if claim_ids:
+                placeholders = ",".join("?" for _ in claim_ids)
+                evidence_count = int(
+                    self.connection.execute(
+                        "SELECT count(*) FROM evidence_links WHERE derived_type='claim' "
+                        f"AND derived_id IN ({placeholders})",
+                        claim_ids,
+                    ).fetchone()[0]
+                )
+            try:
+                canonical_value = json.loads(str(row["canonical_value_json"]))
+            except json.JSONDecodeError:
+                canonical_value = row["canonical_value_json"]
+            candidates.append(
+                {
+                    "candidate_key": str(row["candidate_key"]),
+                    "canonical_value": canonical_value,
+                    "representative_claim_id": str(row["representative_claim_id"]),
+                    "support_count": int(row["support_count"]),
+                    "evidence_count": evidence_count,
+                    "first_seen_at": str(row["first_seen_at"]),
+                    "last_seen_at": str(row["last_seen_at"]),
+                    "claim_ids": claim_ids,
+                    "claim_statuses": {str(member["claim_id"]): str(member["status"]) for member in member_rows},
+                }
+            )
+        return {
+            "case_id": str(case["id"]),
+            "namespace": case.get("namespace_key"),
+            "group_key": case.get("group_key"),
+            "generation": int(case.get("generation") or 1),
+            "revision": int(case.get("revision") or 0),
+            "status": str(case["status"]),
+            "overflow": bool(case.get("overflow")),
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+        }
 
     def dossier(self, case_id: str) -> dict[str, Any]:
         """返回 pair/group 共用的完整裁决案卷。"""
