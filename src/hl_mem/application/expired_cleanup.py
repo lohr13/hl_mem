@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from hl_mem.application.conflicts import OPEN_CASE_STATUSES
+from hl_mem.application.conflict_queries import OPEN_CASE_STATUSES
 from hl_mem.application.deletion import DeletionRejectedError, DeletionService
 from hl_mem.errors import ConflictError
 

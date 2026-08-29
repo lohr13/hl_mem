@@ -15,9 +15,9 @@ from hl_mem.application.conflict_invariants import (
 from hl_mem.application.conflict_queries import (
     OPEN_CASE_STATUSES,
     ConflictQueryService,
+    follow_claim_tip,
     load_conflict_case,
 )
-from hl_mem.application.conflict_queries import follow_claim_tip as _follow_tip
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.governance import CONFLICT_AUTO_POLICY_VERSION
 from hl_mem.errors import ConflictResolutionError
@@ -32,10 +32,8 @@ __all__ = [
     "CONFLICT_AUTO_POLICY_VERSION",
     "CONFLICT_HUMAN_POLICY_VERSION",
     "DEFAULT_HUMAN_RESOLVER",
-    "OPEN_CASE_STATUSES",
     "ResolutionService",
     "StaleConflictDecision",
-    "_follow_tip",
     "upgrade_conflict_auto_policy",
 ]
 
@@ -191,8 +189,8 @@ class ResolutionService:
         if case.get("group_key") is not None:
             raise ConflictResolutionError(f"followed-tip pair unexpectedly has a group key: {case_id}")
         repository = ClaimRepository(self.connection)
-        left = _follow_tip(repository, str(case["left_claim_id"]))
-        right = _follow_tip(repository, str(case["right_claim_id"]))
+        left = follow_claim_tip(repository, str(case["left_claim_id"]))
+        right = follow_claim_tip(repository, str(case["right_claim_id"]))
         if left is None or right is None or winner_id not in {left["id"], right["id"]}:
             raise ConflictResolutionError(f"followed conflict endpoint changed: {case_id}")
         self._converge_winner([left, right], winner_id, resolved_at)

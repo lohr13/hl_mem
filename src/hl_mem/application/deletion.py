@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from hl_mem.application.conflicts import OPEN_CASE_STATUSES
+from hl_mem.application.conflict_queries import OPEN_CASE_STATUSES
 from hl_mem.errors import ConflictError, NotFoundError
 from hl_mem.observability.audit import audit_scope
 from hl_mem.recall.recall_pipeline import stale_observations

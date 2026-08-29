@@ -9,10 +9,10 @@ from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from hl_mem.application.conflict_invariants import assert_global_conflict_postconditions
+from hl_mem.application.conflict_queries import follow_claim_tip
 from hl_mem.application.conflicts import (
     ResolutionService,
     StaleConflictDecision,
-    _follow_tip,
 )
 from hl_mem.domain.claims.conflicts import coordinate_qualifier_key
 from hl_mem.domain.governance import (
@@ -89,8 +89,8 @@ def load_conflict_docket(connection: sqlite3.Connection, case_id: str) -> dict[s
         raise ConflictResolutionError(f"conflict case not found: {case_id}")
     case = dict(row)
     repository = ClaimRepository(connection)
-    left = _follow_tip(repository, str(case["left_claim_id"]))
-    right = _follow_tip(repository, str(case["right_claim_id"]))
+    left = follow_claim_tip(repository, str(case["left_claim_id"]))
+    right = follow_claim_tip(repository, str(case["right_claim_id"]))
     if left is None or right is None:
         raise ConflictResolutionError(f"conflict case has invalid endpoints: {case_id}")
     claim_ids = [str(left["id"]), str(right["id"])]
