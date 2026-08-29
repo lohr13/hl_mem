@@ -449,6 +449,7 @@ def generate() -> str:
     ]
     secret_requirements = {
         "LLM_API_KEY": "extraction 非 fake、query expansion 非 off 或 relation discovery 非 off",
+        "QUERY_EXPANSION_API_KEY": "可选；配置 recall.query_expansion_provider/base_url 时必填",
         "EMBEDDING_API_KEY": "embedding.mode = real",
         "RERANKER_API_KEY": "reranker.mode = on 或 real",
         "IMAGE_API_KEY": "image_describer.mode = on",

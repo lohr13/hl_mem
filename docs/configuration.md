@@ -114,6 +114,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `EMBEDDING_API_KEY` | `embedding_api_key` | embedding.mode = real |
 | `IMAGE_API_KEY` | `image_describer_api_key` | image_describer.mode = on |
 | `LLM_API_KEY` | `llm_api_key` | extraction 非 fake、query expansion 非 off 或 relation discovery 非 off |
+| `QUERY_EXPANSION_API_KEY` | `query_expansion_api_key` | 可选；配置 recall.query_expansion_provider/base_url 时必填 |
 | `RERANKER_API_KEY` | `reranker_api_key` | reranker.mode = on 或 real |
 
 空值和常见占位值（如 `xxx`、`changeme`、`<key>`）不能用于已启用的真实组件；图片密钥不回退到 LLM 密钥。
@@ -362,14 +363,16 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 | `recall.query_context_max_events` | 整数 | `5` | > 0 | `query_context_max_events` |
 | `recall.query_context_mode` | 字符串 | `"off"` | `off`、`coreference` | `query_context_mode` |
 | `recall.query_context_token_budget` | 整数 | `256` | > 0 | `query_context_token_budget` |
+| `recall.query_expansion_base_url` | 字符串 | 未设置 | 字符串；可省略 | `query_expansion_base_url` |
 | `recall.query_expansion_candidate_floor` | 整数 | `8` | > 0 | `query_expansion_candidate_floor` |
 | `recall.query_expansion_max` | 整数 | `2` | 0 - 2 | `query_expansion_max` |
 | `recall.query_expansion_max_concurrency` | 整数 | `4` | > 0 | `query_expansion_max_concurrency` |
 | `recall.query_expansion_mode` | 字符串 | `"auto"` | `off`、`auto`、`always` | `query_expansion_mode` |
 | `recall.query_expansion_model` | 字符串 | 未设置 | 字符串；可省略 | `query_expansion_model` |
-| `recall.query_expansion_timeout_seconds` | 数值 | `5.0` | > 0 | `query_expansion_timeout_seconds` |
+| `recall.query_expansion_provider` | 字符串 | 未设置 | 字符串；可省略 | `query_expansion_provider` |
+| `recall.query_expansion_timeout_seconds` | 数值 | `15.0` | > 0 | `query_expansion_timeout_seconds` |
 | `recall.query_expansion_token_ceiling` | 整数 | `256` | > 0 | `query_expansion_token_ceiling` |
-| `recall.query_expansion_total_timeout_seconds` | 数值 | `6.0` | > 0 | `query_expansion_total_timeout_seconds` |
+| `recall.query_expansion_total_timeout_seconds` | 数值 | `16.0` | > 0 | `query_expansion_total_timeout_seconds` |
 | `recall.relevance_dense_floor` | 数值 | `0.3` | 0.0 - 1.0 | `relevance_dense_floor` |
 | `recall.relevance_gate_mode` | 字符串 | `"off"` | `off`、`observe`、`enforce` | `relevance_gate_mode` |
 | `recall.relevance_intents` | 字符串 数组 | `["current_state"]` | 非空数组；元素为 current_state、preference、historical、tool、procedure | `relevance_intents` |
