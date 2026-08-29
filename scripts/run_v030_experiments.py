@@ -16,7 +16,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Callable, Mapping, cast
 
-from hl_mem.domain.governance import is_terminal_conflict_status
+from hl_mem.domain.governance import L1Policy, decide_l1, is_terminal_conflict_status
 from hl_mem.evaluation.v030_batch4 import assess_batch4_manifest, write_batch4_report
 from hl_mem.evaluation.v030_batch4_v2_manifest import build_batch4_v2_manifests
 from hl_mem.evaluation.v030_batch4_v2_replay import (
@@ -42,10 +42,8 @@ from hl_mem.evaluation.v030_plan_price_replay import (
 from hl_mem.evaluation.v030_scorers import evaluate_decision_gate, score_decisions
 from hl_mem.workers.auto_resolve_conflicts import (
     AutoDecision,
-    L1Policy,
     assess_l2_admission,
     decide_l0,
-    decide_l1,
 )
 
 E1L2Decider = Callable[[dict[str, Any]], AutoDecision]

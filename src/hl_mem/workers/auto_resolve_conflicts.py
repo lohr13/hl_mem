@@ -19,10 +19,8 @@ from hl_mem.domain.governance import (
     CONFLICT_AUTO_POLICY_VERSION,
     AutoDecision,
     DecisionEnvelope,
-    L1Policy,
     assess_l2_admission,
     decide_l0,
-    decide_l1,
     is_terminal_conflict_status,
     snapshot_fingerprint,
     validate_l2_result,
@@ -38,12 +36,10 @@ from hl_mem.storage.jobs import JobRepository
 
 __all__ = [
     "AutoDecision",
-    "L1Policy",
     "StaleConflictDecision",
     "assess_l2_admission",
     "auto_resolve_conflicts",
     "decide_l0",
-    "decide_l1",
     "validate_l2_result",
 ]
 
@@ -488,7 +484,6 @@ def auto_resolve_conflicts(
     max_elapsed_ms: int = 1_000,
     failure_backoff_seconds: int = 300,
     mode: str = "enforce",
-    l1_policy: L1Policy | None = None,
     max_candidates: int = 8,
     policy_version: str = CONFLICT_AUTO_POLICY_VERSION,
     monotonic: Callable[[], float] = time.monotonic,

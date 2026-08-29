@@ -14,7 +14,7 @@ from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers import job_handlers
-from hl_mem.workers.auto_resolve_conflicts import AutoDecision, L1Policy, auto_resolve_conflicts
+from hl_mem.workers.auto_resolve_conflicts import AutoDecision, auto_resolve_conflicts
 from hl_mem.workers.conflict_judge import LocalConflictJudge, run_conflict_llm_job
 from hl_mem.workers.job_handlers import JOB_HANDLERS
 
@@ -60,13 +60,13 @@ def test_maintenance_queues_one_idempotent_l2_job_without_calling_model(tmp_path
     connection = Database(tmp_path / "queue.db").open()
     _manual_pair(connection)
 
-    first = auto_resolve_conflicts(connection, NOW, mode="observe", l1_policy=L1Policy(300, 0.1))
+    first = auto_resolve_conflicts(connection, NOW, mode="observe")
     connection.execute(
         "UPDATE conflict_review_state SET dirty_at=?,dirty_reason='test_requeue' WHERE case_id='case-1'",
         (NOW,),
     )
     connection.commit()
-    second = auto_resolve_conflicts(connection, NOW, mode="observe", l1_policy=L1Policy(300, 0.1))
+    second = auto_resolve_conflicts(connection, NOW, mode="observe")
 
     row = connection.execute("SELECT job_type,payload_json FROM jobs").fetchone()
     assert first["l2_queued"] == 1
@@ -91,7 +91,7 @@ class _FixedJudge:
 
 
 def _queued_payload(connection, *, mode: str = "observe") -> dict[str, object]:
-    auto_resolve_conflicts(connection, NOW, mode=mode, l1_policy=L1Policy(300, 0.1))
+    auto_resolve_conflicts(connection, NOW, mode=mode)
     return json.loads(connection.execute("SELECT payload_json FROM jobs").fetchone()[0])
 
 
@@ -114,7 +114,7 @@ def test_l0_only_applies_l0_decisions(tmp_path: Path) -> None:
     connection = Database(tmp_path / "l0-only-l0.db").open()
     _manual_pair(connection, left_authority="high")
 
-    result = auto_resolve_conflicts(connection, NOW, mode="l0_only", l1_policy=L1Policy(300, 0.1))
+    result = auto_resolve_conflicts(connection, NOW, mode="l0_only")
 
     assert result["resolved"] == 1
     assert [row[0] for row in connection.execute("SELECT status FROM claims ORDER BY id")] == [
@@ -137,7 +137,7 @@ def test_l0_only_defers_l1_candidate_without_running_l1(tmp_path: Path) -> None:
     )
     connection.commit()
 
-    result = auto_resolve_conflicts(connection, NOW, mode="l0_only", l1_policy=L1Policy(300, 0.1))
+    result = auto_resolve_conflicts(connection, NOW, mode="l0_only")
 
     assert result["resolved"] == 0
     assert [row[0] for row in connection.execute("SELECT status FROM claims ORDER BY id")] == [
@@ -156,7 +156,7 @@ def test_l0_only_defers_l1_candidate_without_running_l1(tmp_path: Path) -> None:
 def test_l0_only_does_not_dispatch_admitted_l2_job(tmp_path: Path) -> None:
     connection = Database(tmp_path / "l0-only-l2.db").open()
     _manual_pair(connection)
-    result = auto_resolve_conflicts(connection, NOW, mode="l0_only", l1_policy=L1Policy(300, 0.1))
+    result = auto_resolve_conflicts(connection, NOW, mode="l0_only")
 
     assert result["l2_queued"] == 0
     assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
@@ -185,7 +185,7 @@ def test_enforce_skips_l1_and_dispatches_l2_job(tmp_path: Path) -> None:
     )
     connection.commit()
 
-    result = auto_resolve_conflicts(connection, NOW, mode="enforce", l1_policy=L1Policy(300, 0.1))
+    result = auto_resolve_conflicts(connection, NOW, mode="enforce")
 
     assert result["resolved"] == 0
     assert result["l2_queued"] == 1

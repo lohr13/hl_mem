@@ -31,7 +31,7 @@ from hl_mem.settings import Settings, is_placeholder_secret, parse_daily_cron
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
-from hl_mem.workers.auto_resolve_conflicts import L1Policy, auto_resolve_conflicts
+from hl_mem.workers.auto_resolve_conflicts import auto_resolve_conflicts
 from hl_mem.workers.consolidate import (
     ConflictConsolidator,
     LLMConflictJudge,
@@ -302,12 +302,6 @@ class Worker:
         if self.database is not None:
             self.database.close()
 
-    def _conflict_l1_policy(self) -> L1Policy:
-        return L1Policy(
-            self.settings.conflict_l1_min_time_delta_seconds,
-            self.settings.conflict_l1_min_confidence_delta,
-        )
-
     def _run_maintenance(self) -> None:
         """执行一轮 TTL、衰减、派生记忆、保留策略和定时任务维护。"""
         maintenance_now = _now()
@@ -413,7 +407,6 @@ class Worker:
                             max_elapsed_ms=self.settings.conflict_maintenance_budget_ms,
                             failure_backoff_seconds=self.settings.conflict_failure_backoff_seconds,
                             mode=self.settings.conflict_auto_mode,
-                            l1_policy=self._conflict_l1_policy(),
                             max_candidates=self.settings.conflict_auto_resolve_max_candidates,
                         ),
                     )

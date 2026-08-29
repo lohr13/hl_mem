@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 216
+    assert len(fields(Settings)) == 214
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_reasoning_effort is None
     assert settings.llm_max_tokens is None
@@ -42,8 +42,6 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.daily_token_limit == 500_000
     assert settings.conflict_auto_resolve_enabled is True
     assert settings.conflict_auto_mode == "l0_only"
-    assert settings.conflict_l1_min_time_delta_seconds == 300
-    assert settings.conflict_l1_min_confidence_delta == 0.15
     assert settings.conflict_maintenance_max_cases == 50
     assert settings.conflict_maintenance_budget_ms == 1_000
     assert settings.conflict_failure_backoff_seconds == 300

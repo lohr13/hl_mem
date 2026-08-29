@@ -86,10 +86,6 @@ def _validate_runtime_modes(settings: "Settings") -> None:
         raise ConfigurationError("extraction.lesson_signal_mode must be 'off', 'observe', or 'enforce'")
     if settings.conflict_auto_mode not in {"off", "observe", "enforce", "l0_only"}:
         raise ConfigurationError("conflict.auto_mode must be 'off', 'observe', 'enforce', or 'l0_only'")
-    if settings.conflict_l1_min_time_delta_seconds not in {0, 300, 3_600}:
-        raise ConfigurationError("conflict.l1_min_time_delta_seconds must be 0, 300, or 3600")
-    if settings.conflict_l1_min_confidence_delta not in {0.10, 0.15, 0.20}:
-        raise ConfigurationError("conflict.l1_min_confidence_delta must be 0.10, 0.15, or 0.20")
     judge_host = (urlparse(settings.maintenance_judge_base_url).hostname or "").casefold()
     if judge_host not in {"127.0.0.1", "::1", "localhost"}:
         raise ConfigurationError("maintenance_judge.base_url must use loopback")
@@ -449,8 +445,6 @@ class Settings:
     worker_maintenance_interval: float = _toml_field(600.0, "worker.maintenance_interval")
     conflict_auto_resolve_enabled: bool = _toml_field(True, "worker.conflict_auto_resolve_enabled")
     conflict_auto_mode: ConflictAutoMode = _toml_field("l0_only", "conflict.auto_mode")
-    conflict_l1_min_time_delta_seconds: int = _toml_field(300, "conflict.l1_min_time_delta_seconds")
-    conflict_l1_min_confidence_delta: float = _toml_field(0.15, "conflict.l1_min_confidence_delta")
     conflict_maintenance_max_cases: int = _toml_field(50, "worker.conflict_maintenance_max_cases")
     conflict_maintenance_budget_ms: int = _toml_field(1_000, "worker.conflict_maintenance_budget_ms")
     conflict_failure_backoff_seconds: int = _toml_field(300, "worker.conflict_failure_backoff_seconds")
@@ -1134,8 +1128,6 @@ class Settings:
             "extraction_batch_max_wait_seconds": self.extraction_batch_max_wait_seconds,
             "conflict_auto_resolve_enabled": self.conflict_auto_resolve_enabled,
             "conflict_auto_mode": self.conflict_auto_mode,
-            "conflict_l1_min_time_delta_seconds": self.conflict_l1_min_time_delta_seconds,
-            "conflict_l1_min_confidence_delta": self.conflict_l1_min_confidence_delta,
             "conflict_maintenance_max_cases": self.conflict_maintenance_max_cases,
             "conflict_maintenance_budget_ms": self.conflict_maintenance_budget_ms,
             "conflict_failure_backoff_seconds": self.conflict_failure_backoff_seconds,

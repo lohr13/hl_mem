@@ -139,8 +139,6 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
 | `conflict.auto_mode` | 字符串 | `"l0_only"` | `off`、`observe`、`enforce`、`l0_only` | `conflict_auto_mode` |
-| `conflict.l1_min_confidence_delta` | 数值 | `0.15` | `0.10`、`0.15`、`0.20` | `conflict_l1_min_confidence_delta` |
-| `conflict.l1_min_time_delta_seconds` | 整数 | `300` | `0`、`300`、`3600` | `conflict_l1_min_time_delta_seconds` |
 
 ### `[database]`
 

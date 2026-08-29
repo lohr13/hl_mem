@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from hl_mem.domain.governance import L1Policy, decide_l1
 from hl_mem.workers.auto_resolve_conflicts import (
-    L1Policy,
     assess_l2_admission,
     decide_l0,
-    decide_l1,
     validate_l2_result,
 )
 
