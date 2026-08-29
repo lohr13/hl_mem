@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -377,6 +377,36 @@ class ConflictResolutionOutput(BaseModel):
     candidate_key: str
     winner_id: str | None = None
     resolved_at: str | None = None
+
+
+class PairConflictResolutionInput(BaseModel):
+    """基于审核 revision/fingerprint 的 pair 裁决。"""
+
+    action: Literal["keep_left", "keep_right", "coexist", "reject"]
+    expected_revision: int = Field(ge=0)
+    expected_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    rationale: str | None = Field(default=None, max_length=5000)
+    resolver: str = Field(default=DEFAULT_HUMAN_RESOLVER, min_length=1, max_length=200)
+
+
+class PairConflictResolutionOutput(BaseModel):
+    """pair 裁决的稳定 REST 投影。"""
+
+    case_id: str
+    generation: int = Field(ge=1)
+    revision: int = Field(ge=0)
+    status: str
+    decision: Literal["keep_left", "keep_right", "coexist", "reject"]
+    winner_id: str | None = None
+    resolved_at: str | None = None
+    closed_case_ids: list[str] = Field(default_factory=list)
+
+
+ConflictResolutionRequest = Annotated[
+    ConflictResolutionInput | PairConflictResolutionInput,
+    Field(discriminator="action"),
+]
+ConflictResolutionResult = ConflictResolutionOutput | PairConflictResolutionOutput
 
 
 class ErrorOutput(BaseModel):

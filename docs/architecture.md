@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.35.1
+- Document baseline: v0.36.0
 - Updated: 2026-08-29
 - Deployment baseline: local-first, SQLite-first
 
@@ -306,10 +306,13 @@ per-case backoff, and uses the shared governance ledger plus revision/fingerprin
 release default is `conflict.auto_mode="l0_only"`: only the sealed 37/37 deterministic L0 rules may mutate Claims. L1 is
 disabled, and gray cases become `manual_required`; `off` is the only non-mutating conflict mode. The retired
 `observe`/`enforce` values and built-in judge configuration fail closed during startup. A stable `manual_required` case is
-not scanned or updated again until a trigger marks it dirty. Review returns the
-generation, revision, and complete candidate set; select/reject requires `expected_revision`, with stale requests failing
-409 before mutation. Candidate counts above the configured auto threshold remain manual. The schema reserves generation
-boundaries for v0.29. When a group already has a terminal generation, an exact reassertion of its active winner only adds
+not scanned or updated again until a trigger marks it dirty. Review and dossier expose the resolved supersession tips and
+their complete lineages. Delegated pair/group writes share revision plus v2 fingerprint CAS; either stale value fails 409
+before mutation, and every successful action is written exactly once to the governance ledger. Pair actions are
+`keep_left`, `keep_right`, `coexist`, and `reject`; group actions remain `select_candidate` and destructive
+`reject_candidate`, with the latter requiring explicit retraction confirmation. Terminal rationale is immutable.
+Candidate counts above the configured auto threshold remain manual. When a group already has a terminal generation, an
+exact reassertion of its active winner only adds
 evidence; a different current value creates the next manual-review generation without mutating the terminal case. This
 bounded reopen path deliberately adds no pagination, cooling, split/reclassification, rollup, compression, or cold
 storage behavior.

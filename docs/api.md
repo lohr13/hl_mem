@@ -1,6 +1,6 @@
 # HL-Mem REST API
 
-HL-Mem exposes a FastAPI application with 19 routes. From a working directory containing the required `hl_mem.toml`,
+HL-Mem exposes a FastAPI application with 24 route operations. From a working directory containing the required `hl_mem.toml`,
 start the service with `uv run python start_server.py`; the default address is `http://127.0.0.1:8200`. Interactive
 OpenAPI documentation is available at `/docs` while the service is running.
 
@@ -52,8 +52,10 @@ OpenAPI documentation is available at `/docs` while the service is running.
 | `GET` | `/v1/policies` | List induced Policies by status |
 | `GET` | `/v1/jobs` | Return job counts and queue contents |
 | `GET` | `/v1/stats` | Return event, claim, token, and pending-job counts |
-| `GET` | `/v1/conflicts/{case_id}` | Review one conflict case with generation, revision, and all candidates |
-| `POST` | `/v1/conflicts/{case_id}/resolve` | Select or reject candidates with an optimistic `expected_revision` guard |
+| `GET` | `/v1/conflicts` | Page through open pair/group conflict cases by status |
+| `GET` | `/v1/conflicts/{case_id}` | Review one conflict case with revision, v2 fingerprint, and group candidates |
+| `GET` | `/v1/conflicts/{case_id}/dossier` | Read the full pair/group dossier with tips, lineages, bitemporal fields, and evidence |
+| `POST` | `/v1/conflicts/{case_id}/resolve` | Resolve a pair or group case with revision/fingerprint CAS |
 
 ## Core Requests
 
@@ -160,20 +162,27 @@ exposure batch cannot be accepted, those identifiers are omitted rather than ret
 
 ### Review and resolve conflicts
 
-`GET /v1/conflicts/{case_id}` returns one group snapshot with `generation`, `revision`, `status`, `overflow`, and every
-canonical candidate. Each candidate includes its stable `candidate_key`, canonical value, representative Claim, support
-and evidence counts, timestamps, member Claim IDs, and their current statuses.
+`GET /v1/conflicts` pages through open cases. A `null` `group_key` identifies a pair case; a non-null value identifies a
+group case. `GET /v1/conflicts/{case_id}` returns a compact snapshot with `generation`, `revision`, v2 `fingerprint`,
+`status`, `overflow`, and every group candidate. Each candidate includes its stable `candidate_key`, canonical value,
+representative Claim and tip, support and evidence counts, timestamps, member Claim IDs, and their current statuses.
 
 `GET /v1/conflicts/{case_id}/dossier` returns the pair/group adjudication dossier. Every Claim detail includes the full
-text, `qualifiers`, authority, confidence, `valid_from`/`valid_to`, `recorded_from`/`recorded_to`, and linked source-event
-evidence.
+value, `qualifiers`, authority, confidence, `valid_from`/`valid_to`, `recorded_from`/`recorded_to`, and linked source-event
+evidence. The current left/right tips and their complete supersession lineages are both present, so process history is not
+lost. Dossiers larger than the fixed 1 MiB response budget return `413`.
 
-`POST /v1/conflicts/{case_id}/resolve` accepts `action` (`select_candidate` or `reject_candidate`), `candidate_key`, the
-snapshot's `expected_revision`, and an optional rationale. `reject_candidate` is destructive: it retracts every Claim in
-the selected candidate and therefore requires `confirm_retraction=true`; omission or `false` fails closed. The confirmation
-does not apply to `select_candidate` or pair resolution. A revision or active-generation mismatch returns `409` before any
-Claim, candidate, case, or audit mutation. Clients should fetch a fresh snapshot and make a new decision; they must not
-blindly retry a stale request. Other manual actions and generation advancement are reserved for v0.29.
+`POST /v1/conflicts/{case_id}/resolve` is an action-discriminated pair/group union. Pair actions are exactly
+`keep_left`, `keep_right`, `coexist`, and `reject`; the body also carries `expected_revision`, optional
+`expected_fingerprint`, optional rationale, and resolver identity. Group actions remain exactly `select_candidate` and
+`reject_candidate` and additionally require the current `candidate_key`. `reject_candidate` is destructive: it retracts
+every Claim in the selected candidate and therefore requires `confirm_retraction=true`; omission or `false` fails closed
+with `422`. The confirmation does not apply to `select_candidate` or any pair action.
+
+A stale revision or supplied fingerprint returns `409` before any Claim, candidate, case, or audit mutation. Clients
+should send both CAS values from the same dossier, then fetch a fresh dossier and make a new decision after a `409`;
+they must not blindly retry a stale request. Terminal case rationale is immutable. See the bilingual
+[delegation host guide](delegation.en.md) for polling bounds, adjudication principles, and Linux scheduling examples.
 
 ## Experience Requests
 
@@ -190,5 +199,6 @@ idempotent `retract` or `replace` action. Replacement also requires `corrected_t
 ## Source of Truth
 
 Pydantic request/response contracts are defined in [`src/hl_mem/api/schemas.py`](../src/hl_mem/api/schemas.py), and route
-behavior is defined in [`src/hl_mem/api/server.py`](../src/hl_mem/api/server.py). The generated OpenAPI schema is the most
+behavior is defined in [`src/hl_mem/api/server.py`](../src/hl_mem/api/server.py) plus the focused route modules such as
+[`src/hl_mem/api/conflict_routes.py`](../src/hl_mem/api/conflict_routes.py). The generated OpenAPI schema is the most
 precise machine-readable reference.

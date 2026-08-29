@@ -4,16 +4,16 @@
 
 ## 当前状态
 
-- **分支**：`main`
-- **版本**：v0.35.1
-- **阶段**：v0.35.1 发版准备；等待用户验收后 push/tag
-- **发布状态**：本地 commit，未 push、未打 tag、未部署
+- **分支**：`codex/v0360-b4-pair-rest-host-docs`
+- **版本**：v0.36.0
+- **阶段**：v0.36.0 B4 发版准备；等待用户验收后 push/tag
+- **发布状态**：B1–B3 已提交，B4 本地实施并通过门禁；未 push、未打 tag、未部署
 - **服务**：FastAPI 默认监听 8200；非敏感配置只从工作目录 `hl_mem.toml` 读取
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
 - **Schema**：57 migrations（SQL 001–057），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
-## v0.33.0 发版默认
+## v0.36.0 发版默认
 
 | 能力 | 默认 | 决议依据 |
 |---|---|---|
@@ -56,6 +56,11 @@
 - conflict、dedup、plan 共享输入 fingerprint、短事务 CAS、governance ledger 和有条件 rollback，但不共享领域决策枚举。
 - `l0_only` 运行时只调用 L0；L1 不进入维护路径，未命中 L0 的案稳定转 `manual_required` 且不建判官 job。
   migration 057 一次性退役残留 job，活动 handler 注册表不再接受该 job 类型。
+- conflict review/dossier、winner 与 fingerprint v2 统一解析 supersession tip，同时展示完整 lineage；revision 与
+  fingerprint 任一 stale 均在 mutation/audit 前返回 `409`，终态 rationale 不可改写。
+- delegation REST 写面同时支持 pair `{keep_left, keep_right, coexist, reject}` 与既有 group
+  `{select_candidate, reject_candidate}`；group 破坏性撤回仍要求 `confirm_retraction=true`。中英双语宿主指南给出
+  有界轮询、CAS 重拉、默认禁 group 自动撤回和 Linux systemd/cron 接线。
 - query entity filter 只运行 observe shadow，不增加通道、boost 或 weight；lesson signal 只记录 qualifier/audit，不改变
   importance/scope。
 - `/healthz` 提供 residual `manual_required` 计数与年龄，Hermes plugin 2.1.0 提供 session 级 no-spam 提示；
@@ -94,14 +99,13 @@
 
 ## 下一步
 
-Windows 发版预检已通过：Black 检查 584 个仓库文件、isort 检查 593 个 tracked Python 路径、Ruff、mypy
-（233 个 source files）、docs consistency、OpenAPI 与 MCP snapshot 均为绿。全量 unit suite 使用移除
-`PYTHONPATH` 的 `.venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short`，结果为
-**2369 passed、1 skipped、110 subtests passed**，无 deselect 或业务测试豁免。
+Windows B4 发版预检已通过：Black 检查 592 个仓库文件，isort、Ruff、mypy（236 个 source files）、docs
+consistency（v0.36.0 / 57 migrations）、OpenAPI、MCP snapshot 与 complexity ratchet 均为绿。冲突相关 targeted
+suite 覆盖 B1–B4、migration 057 与 CLI 管理面，结果为 **154 passed**。本批按约束未跑全量 pytest；全量回归由
+GitHub Actions 验证。
 
-本机现有未跟踪 `Temp/`、被忽略的 `.worktrees/` 与 ignored/untracked `var/` probe 脚本会被全目录格式工具看见；
-发版门禁按 Git tracked scope 复验，未修改、删除或纳入这些本机文件。isort 仅机械修正 3 个 tracked 文件的
-import/空行，其中包含两份随本批提交的 `var/eval/prompt_density_ab_20260829/` 终验脚本。
+OpenAPI 与配置参考都在 b4 worktree 内以显式 `PYTHONPATH=src` 重生成，避免导入主仓安装路径造成假绿。本批未
+修改、删除或纳入主仓既有未跟踪文件。
 
 下一步由用户验收本分支与发版证据；验收后手动 push/tag，再进入正常三机部署。本 worktree 不 push、不打 tag、
 不修改部署机 `.env`/`hl_mem.toml`。
@@ -111,6 +115,8 @@ import/空行，其中包含两份随本批提交的 `var/eval/prompt_density_ab
 - [Architecture](architecture.md)
 - [Configuration](configuration.md)
 - [REST API](api.md)
+- [Delegation 宿主集成（中文）](delegation.md)
+- [Delegation host integration (English)](delegation.en.md)
 - [Capability matrix](capability-matrix.md)
 - [Compatibility policy](compatibility.md)
 - [Changelog](CHANGELOG.md)

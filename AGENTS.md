@@ -4,7 +4,7 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v0.35.1（2026-08-30）**
+**当前版本：v0.36.0（2026-08-30）**
 
 ## 技术栈
 
@@ -24,7 +24,7 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 ```
 src/hl_mem/
 ├── api/                    # FastAPI 适配层
-│   ├── server.py              # REST API (19 routes)
+│   ├── server.py              # REST API (24 route operations)
 │   └── schemas.py             # Pydantic DTO
 ├── application/            # 共享应用服务
 │   ├── ingest.py              # IngestService

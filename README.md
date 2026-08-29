@@ -2,7 +2,7 @@
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.35.1](https://img.shields.io/badge/version-0.35.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.36.0](https://img.shields.io/badge/version-0.36.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -296,6 +296,9 @@ hlmem backfill-index-text --mode natural
 升级会应用仅向前的 migration 057：把遗留的非终态 `resolve_conflict_llm` job 标为 `dead`、清除租约，并把
 关联开放案重新标为 dirty，使其回到确定性 L0 或 `manual_required` 路径；既有 `succeeded`/`dead` 历史保持不变。
 内置冲突判官及其配置面已退役，`conflict.auto_mode` 仅接受 `l0_only` 与 `off`；旧值会在启动时 fail-closed。
+升级启动前必须从 `hl_mem.toml` 删除整个 `[maintenance_judge]` 段，并把旧 `observe`/`enforce` 值改为
+`l0_only` 或 `off`。冲突终态 rationale 改为不可改写；delegation 写端点现同时支持 pair 四词表和既有 group
+词表，并建议宿主始终携带同一 dossier 的 revision 与 v2 fingerprint。
 
 ### 升级到 v0.33.0
 
@@ -425,7 +428,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.35.1，共 57 个不可变、仅向前执行的 SQL Migration。migration 055–056 增加 Claim mutation 审计账本
+当前基线为 v0.36.0，共 57 个不可变、仅向前执行的 SQL Migration。migration 055–056 增加 Claim mutation 审计账本
 触发器与可移植审计上下文；migration 057 退役遗留的非终态冲突判官 job，并重新排队其关联开放案。升级前仍须
 停止写入者并备份主库与 tombstone sidecar，旧二进制不得再打开已升级数据库。
 
@@ -437,6 +440,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 | [配置参考](docs/configuration.md) | TOML 键、默认值、允许值与密钥边界 |
 | [架构](docs/architecture.md) | 分层、模块、写入/召回管线、存储和生命周期 |
 | [API](docs/api.md) | REST 端点和请求约定 |
+| [Delegation 宿主集成](docs/delegation.md) | pair/group 冲突轮询、裁决原则与 Linux 宿主示例 |
 | [MCP](docs/mcp.md) | stdio 启动参数、Codex/Claude/Cursor 配置与工具错误语义 |
 | [兼容性策略](docs/compatibility.md) | 版本和公共契约保证 |
 | [能力矩阵](docs/capability-matrix.md) | 成熟度、默认值和验证证据 |

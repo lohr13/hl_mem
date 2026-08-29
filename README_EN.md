@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.35.1](https://img.shields.io/badge/version-0.35.1-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.36.0](https://img.shields.io/badge/version-0.36.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -208,6 +208,10 @@ The forward-only migration 057 retires non-terminal `resolve_conflict_llm` jobs 
 linked open cases dirty so they return to deterministic L0 processing or `manual_required`. Existing `succeeded` and
 `dead` history is unchanged. The built-in conflict judge and its configuration surface are retired;
 `conflict.auto_mode` now accepts only `l0_only` and `off`, and old values fail closed during startup.
+Before the upgraded service starts, remove the entire `[maintenance_judge]` section from `hl_mem.toml` and replace old
+`observe`/`enforce` values with `l0_only` or `off`. Terminal conflict rationale is now immutable. The delegation write
+endpoint supports the four pair actions alongside the existing group vocabulary, and hosts should send the revision and
+v2 fingerprint from the same dossier.
 
 ### Upgrading to v0.33.0
 
@@ -346,7 +350,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.35.1 with 57 immutable, forward-only migrations. Migrations 055–056 add Claim-mutation audit triggers
+The current baseline is v0.36.0 with 57 immutable, forward-only migrations. Migrations 055–056 add Claim-mutation audit triggers
 and portable audit context; migration 057 retires non-terminal legacy conflict-judge jobs and requeues their linked open
 cases. Stop all writers and back up both the primary database and tombstone sidecar before upgrading; old binaries must
 not reopen an upgraded database.
@@ -359,6 +363,7 @@ not reopen an upgraded database.
 | [Configuration reference](docs/configuration.md) | TOML keys, defaults, allowed values, and secret boundary |
 | [Architecture](docs/architecture.md) | Layers, modules, pipelines, storage, and lifecycle |
 | [API reference](docs/api.md) | REST endpoints and request conventions |
+| [Delegation host integration](docs/delegation.en.md) | Pair/group polling, adjudication rules, and a Linux host example |
 | [MCP guide](docs/mcp.md) | stdio arguments, Codex/Claude/Cursor setup, and tool-error behavior |
 | [Compatibility policy](docs/compatibility.md) | Versioning and public contract guarantees |
 | [Capability matrix](docs/capability-matrix.md) | Maturity, defaults, and evidence |

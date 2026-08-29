@@ -11,10 +11,11 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from hl_mem.api.schemas import (
     ConflictCaseListOutput,
     ConflictDossierOutput,
-    ConflictResolutionInput,
-    ConflictResolutionOutput,
+    ConflictResolutionRequest,
+    ConflictResolutionResult,
     ConflictReviewOutput,
     ErrorOutput,
+    PairConflictResolutionInput,
 )
 from hl_mem.application.conflict_queries import ConflictDossierTooLargeError, ConflictQueryService
 from hl_mem.application.conflicts import ResolutionService
@@ -51,7 +52,7 @@ def add_conflict_routes(
         case_id: str,
         connection: sqlite3.Connection = Depends(get_read_connection),
     ) -> dict[str, Any]:
-        """返回 group-native case 的完整候选 revision 快照。"""
+        """返回 pair/group case 的 revision/fingerprint 快照。"""
 
         return ResolutionService(connection).review(case_id)
 
@@ -79,17 +80,27 @@ def add_conflict_routes(
 
     @app.post(
         "/v1/conflicts/{case_id}/resolve",
-        response_model=ConflictResolutionOutput,
+        response_model=ConflictResolutionResult,
         responses={409: {"description": "Stale conflict revision or state conflict"}},
     )
-    def resolve_group_conflict(
+    def resolve_conflict(
         case_id: str,
-        payload: ConflictResolutionInput,
+        payload: ConflictResolutionRequest,
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
-        """仅在 expected_revision 仍匹配时执行候选选择或拒绝。"""
+        """按 action 词表判别 pair/group，并执行 revision/fingerprint CAS。"""
 
-        return ResolutionService(connection).resolve_group(
+        service = ResolutionService(connection)
+        if isinstance(payload, PairConflictResolutionInput):
+            return service.resolve_pair(
+                case_id,
+                payload.action,
+                expected_revision=payload.expected_revision,
+                expected_fingerprint=payload.expected_fingerprint,
+                rationale=payload.rationale,
+                resolver=payload.resolver,
+            )
+        return service.resolve_group(
             case_id,
             payload.action,
             candidate_key=payload.candidate_key,

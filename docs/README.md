@@ -16,6 +16,7 @@
 ## 当前参考
 
 - [REST API](api.md)
+- Delegation host integration: [中文](delegation.md) / [English](delegation.en.md)
 - [MCP stdio](mcp.md)
 - [Configuration](configuration.md)
 - [Compatibility policy](compatibility.md)

@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## v0.36.0（2026-08-30）
+
+### 内置冲突 L2 退役
+
+- 删除 conflict L2 judge 的 admission、enqueue、模型调用与 apply 生产链；确定性 L0 自动收敛继续保留，未命中案直接进入
+  `manual_required`，`l0_only` 与三处人工桥不变。
+- migration 057 将遗留非终态 `resolve_conflict_llm` job 标为 `dead`、清除 lease，并重新 dirty 关联开放案；既有
+  `succeeded`/`dead` 历史不改，migration 只向前执行。
+- 删除 `[maintenance_judge]` 配置面及隐式本地 8090 默认；`conflict.auto_mode` 仅接受 `off`/`l0_only`。
+
+### Delegation 写面与 CAS
+
+- `POST /v1/conflicts/{id}/resolve` 新增 pair 词表 `keep_left`、`keep_right`、`coexist`、`reject`，并保留 group
+  `select_candidate`/`reject_candidate` 契约和破坏性确认要求。
+- dossier、winner 与 fingerprint v2 统一跟随 supersession tip，同时保留完整 lineage 和 valid/recorded 过程信息；
+  revision 与可选 fingerprint 任一 stale 均在 mutation/audit 前返回 `409`。
+- 终态 conflict rationale 不可改写；pair/group winner 均返回 tip ID。新增中英双语宿主集成指南，覆盖有界轮询、
+  action 分支、CAS 重拉与 Linux cron/systemd 接线边界。
+
+### Breaking changes 与升级要求
+
+- **Breaking：**`[maintenance_judge]` 已删除，旧配置会以未知 section fail-closed；升级前必须从 `hl_mem.toml`
+  删除整段，并把旧 `conflict.auto_mode="observe"|"enforce"` 改为 `off` 或 `l0_only`。
+- **Breaking：**终态 rationale immutable；宿主不得用终态重放修改理由，应在首次裁决前生成最终 rationale。
+- 本版保持 57 个 SQL migration；升级前停止全部写入者，并一致备份 checkpoint 后的主库、WAL 相关状态与
+  tombstone sidecar。旧二进制不得重新打开已升级数据库继续写入。
+
 ## v0.35.1（2026-08-30）
 
 ### 冲突候选撤回安全闭环

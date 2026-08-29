@@ -2267,6 +2267,134 @@
         "title": "MemorySaveOutput",
         "type": "object"
       },
+      "PairConflictResolutionInput": {
+        "description": "基于审核 revision/fingerprint 的 pair 裁决。",
+        "properties": {
+          "action": {
+            "enum": [
+              "keep_left",
+              "keep_right",
+              "coexist",
+              "reject"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "expected_fingerprint": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Fingerprint"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          },
+          "resolver": {
+            "default": "agent:hermes-local",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Resolver",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "expected_revision"
+        ],
+        "title": "PairConflictResolutionInput",
+        "type": "object"
+      },
+      "PairConflictResolutionOutput": {
+        "description": "pair 裁决的稳定 REST 投影。",
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "closed_case_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Closed Case Ids",
+            "type": "array"
+          },
+          "decision": {
+            "enum": [
+              "keep_left",
+              "keep_right",
+              "coexist",
+              "reject"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "winner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winner Id"
+          }
+        },
+        "required": [
+          "case_id",
+          "generation",
+          "revision",
+          "status",
+          "decision"
+        ],
+        "title": "PairConflictResolutionOutput",
+        "type": "object"
+      },
       "RecallInput": {
         "description": "记忆召回请求。",
         "properties": {
@@ -2610,7 +2738,7 @@
   },
   "info": {
     "title": "HL-Mem",
-    "version": "0.35.1"
+    "version": "0.36.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2706,7 +2834,7 @@
     },
     "/v1/conflicts/{case_id}": {
       "get": {
-        "description": "返回 group-native case 的完整候选 revision 快照。",
+        "description": "返回 pair/group case 的 revision/fingerprint 快照。",
         "operationId": "review_conflict_v1_conflicts__case_id__get",
         "parameters": [
           {
@@ -2806,8 +2934,8 @@
     },
     "/v1/conflicts/{case_id}/resolve": {
       "post": {
-        "description": "仅在 expected_revision 仍匹配时执行候选选择或拒绝。",
-        "operationId": "resolve_group_conflict_v1_conflicts__case_id__resolve_post",
+        "description": "按 action 词表判别 pair/group，并执行 revision/fingerprint CAS。",
+        "operationId": "resolve_conflict_v1_conflicts__case_id__resolve_post",
         "parameters": [
           {
             "in": "path",
@@ -2823,7 +2951,26 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ConflictResolutionInput"
+                "discriminator": {
+                  "mapping": {
+                    "coexist": "#/components/schemas/PairConflictResolutionInput",
+                    "keep_left": "#/components/schemas/PairConflictResolutionInput",
+                    "keep_right": "#/components/schemas/PairConflictResolutionInput",
+                    "reject": "#/components/schemas/PairConflictResolutionInput",
+                    "reject_candidate": "#/components/schemas/ConflictResolutionInput",
+                    "select_candidate": "#/components/schemas/ConflictResolutionInput"
+                  },
+                  "propertyName": "action"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ConflictResolutionInput"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PairConflictResolutionInput"
+                  }
+                ],
+                "title": "Payload"
               }
             }
           },
@@ -2834,7 +2981,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConflictResolutionOutput"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ConflictResolutionOutput"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PairConflictResolutionOutput"
+                    }
+                  ],
+                  "title": "Response Resolve Conflict V1 Conflicts  Case Id  Resolve Post"
                 }
               }
             },
@@ -2854,7 +3009,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Resolve Group Conflict"
+        "summary": "Resolve Conflict"
       }
     },
     "/v1/consolidate": {
