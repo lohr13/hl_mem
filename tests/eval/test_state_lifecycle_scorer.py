@@ -279,7 +279,8 @@ def test_score_uses_structured_coordinates_and_real_edges_only(tmp_path: Path) -
         "recallable": 3,
         "rate": 1.0,
     }
-    assert report["diagnostics"]["audit_rows"] == 1
+    # Claim mutation audit trigger (055/056) appends an audit row for the UPDATE above.
+    assert report["diagnostics"]["audit_rows"] == 2
 
 
 def test_compares_two_database_snapshots_with_numeric_deltas(tmp_path: Path) -> None:
