@@ -751,6 +751,20 @@ class _ChunkExtractionOutcome:
     raw_claim_count: int
 
 
+@dataclass(frozen=True)
+class ExtractionModes:
+    verification_mode: Literal["off", "audit", "enforce"] = "off"
+    lesson_signal_mode: Literal["off", "observe", "enforce"] = "observe"
+    verification_claim_threshold: int = 5
+    verification_empty_text_threshold: int = 1_000
+
+
+def _resolve_extraction_modes(modes: ExtractionModes | None, legacy_modes: dict[str, Any]) -> ExtractionModes:
+    if modes is not None and legacy_modes:
+        raise TypeError("modes cannot be combined with legacy extraction mode keywords")
+    return modes or ExtractionModes(**legacy_modes)
+
+
 DELTA_REPAIR_SYSTEM_PROMPTS: dict[Literal["zh", "en"], str] = {
     "zh": """你是记忆事实增量修复器。只补提取已接受列表尚未覆盖的原子事实。
 
@@ -789,10 +803,8 @@ class LLMExtractor:
         soft_split_enabled: bool = False,
         delta_repair_enabled: bool = False,
         verifier: EntailmentVerifier | None = None,
-        verification_mode: Literal["off", "audit", "enforce"] = "off",
-        lesson_signal_mode: Literal["off", "observe", "enforce"] = "observe",
-        verification_claim_threshold: int = 5,
-        verification_empty_text_threshold: int = 1_000,
+        modes: ExtractionModes | None = None,
+        **legacy_modes: Any,
     ) -> None:
         self.llm_client = llm_client
         self.model = llm_client.model
@@ -803,15 +815,16 @@ class LLMExtractor:
         self.soft_split_enabled = soft_split_enabled
         self.delta_repair_enabled = delta_repair_enabled
         self.chunking_policy = chunking_policy
-        if verification_mode not in {"off", "audit", "enforce"}:
+        modes = _resolve_extraction_modes(modes, legacy_modes)
+        if modes.verification_mode not in {"off", "audit", "enforce"}:
             raise ValueError("verification_mode must be 'off', 'audit', or 'enforce'")
-        if verification_claim_threshold < 0 or verification_empty_text_threshold < 0:
+        if modes.verification_claim_threshold < 0 or modes.verification_empty_text_threshold < 0:
             raise ValueError("verification thresholds must be non-negative")
         self.verifier = verifier
-        self.verification_mode = verification_mode
-        self.lesson_signal_mode = lesson_signals.validate_lesson_signal_mode(lesson_signal_mode)
-        self.verification_claim_threshold = verification_claim_threshold
-        self.verification_empty_text_threshold = verification_empty_text_threshold
+        self.verification_mode = modes.verification_mode
+        self.lesson_signal_mode = lesson_signals.validate_lesson_signal_mode(modes.lesson_signal_mode)
+        self.verification_claim_threshold = modes.verification_claim_threshold
+        self.verification_empty_text_threshold = modes.verification_empty_text_threshold
         self.last_usage_tokens = 0
         self.last_input_tokens = 0
         self.last_output_tokens = 0

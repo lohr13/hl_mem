@@ -25,7 +25,7 @@ from hl_mem.config_loader import load_settings  # noqa: E402
 from hl_mem.core.vector import cosine_similarity  # noqa: E402
 from hl_mem.domain.claims.dedup import is_safe_near_duplicate  # noqa: E402
 from hl_mem.ingest.chunking import ChunkingPolicy  # noqa: E402
-from hl_mem.ingest.llm_extractor import LLMExtractor  # noqa: E402
+from hl_mem.ingest.llm_extractor import ExtractionModes, LLMExtractor  # noqa: E402
 from hl_mem.llm.types import (  # noqa: E402
     LLMRequest,
     LLMResponse,
@@ -551,8 +551,10 @@ def _extractor_factory(settings: Settings) -> Callable[[Any, bool, bool], LLMExt
             soft_split_enabled=soft_split_enabled,
             delta_repair_enabled=delta_repair_enabled,
             verifier=None,
-            verification_mode="off",
-            lesson_signal_mode=settings.lesson_signal_mode,
+            modes=ExtractionModes(
+                verification_mode="off",
+                lesson_signal_mode=settings.lesson_signal_mode,
+            ),
         )
 
     return build

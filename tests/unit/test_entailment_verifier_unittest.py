@@ -15,7 +15,7 @@ from hl_mem.components import make_extractor
 from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.extractors import ExtractedClaim
-from hl_mem.ingest.llm_extractor import LLMExtractor
+from hl_mem.ingest.llm_extractor import ExtractionModes, LLMExtractor
 from hl_mem.ingest.verifier import EntailmentVerifier
 from hl_mem.llm.types import LLMRequest, LLMResponse
 from hl_mem.observability.audit import audit_scope
@@ -197,7 +197,7 @@ class EntailmentVerifierTests(unittest.TestCase):
             client,
             ChunkingPolicy(10_000, 0, 2),
             verifier=verifier,
-            verification_mode="audit",
+            modes=ExtractionModes(verification_mode="audit"),
         )
         audit = _RecordingAudit()
 
@@ -235,7 +235,7 @@ class EntailmentVerifierTests(unittest.TestCase):
             client,
             ChunkingPolicy(10_000, 0, 2),
             verifier=EntailmentVerifier(client),
-            verification_mode="enforce",
+            modes=ExtractionModes(verification_mode="enforce"),
         )
 
         claims = extractor.extract(_extraction_source(1))
@@ -249,7 +249,7 @@ class EntailmentVerifierTests(unittest.TestCase):
             client,
             ChunkingPolicy(10_000, 0, 2),
             verifier=_FailingVerifier(),
-            verification_mode="audit",
+            modes=ExtractionModes(verification_mode="audit"),
         )
         audit = _RecordingAudit()
 
@@ -267,7 +267,7 @@ class EntailmentVerifierTests(unittest.TestCase):
             client,
             ChunkingPolicy(10_000, 0, 2),
             verifier=_ShortVerifier(),
-            verification_mode="audit",
+            modes=ExtractionModes(verification_mode="audit"),
         )
         audit = _RecordingAudit()
 
@@ -284,8 +284,10 @@ class EntailmentVerifierTests(unittest.TestCase):
             client,
             ChunkingPolicy(10_000, 0, 2),
             verifier=_FailingVerifier(),
-            verification_mode="audit",
-            verification_empty_text_threshold=10,
+            modes=ExtractionModes(
+                verification_mode="audit",
+                verification_empty_text_threshold=10,
+            ),
         )
         audit = _RecordingAudit()
 

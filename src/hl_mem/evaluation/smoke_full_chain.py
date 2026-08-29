@@ -26,7 +26,7 @@ from hl_mem.evaluation.state_product_adapter import BoundProductEvidence, bind_p
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.ingest.extractors import ExtractedClaim
-from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION, LLMExtractor
+from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION, ExtractionModes, LLMExtractor
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import LLMRequest, LLMResponse, StructuredOutputMode
 from hl_mem.storage.claims import ClaimRepository
@@ -142,7 +142,7 @@ def _extract(scenario: _Scenario) -> tuple[list[ExtractedClaim], list[BoundProdu
         ChunkingPolicy(target_chars=12_000, overlap_turns=2, max_split_depth=2),
         schema_retries=0,
         structured_mode=StructuredOutputMode.JSON_OBJECT,
-        verification_mode="off",
+        modes=ExtractionModes(verification_mode="off"),
     )
     source_events = [
         {

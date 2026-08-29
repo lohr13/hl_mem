@@ -14,7 +14,7 @@ from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.embedder import Embedder, FakeEmbedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.image_describer import DashScopeImageDescriber
-from hl_mem.ingest.llm_extractor import LLMExtractor
+from hl_mem.ingest.llm_extractor import ExtractionModes, LLMExtractor
 from hl_mem.ingest.verifier import EntailmentVerifier
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.providers import (
@@ -253,8 +253,10 @@ def make_extractor(
         soft_split_enabled=settings.extraction_soft_split_enabled,
         delta_repair_enabled=settings.extraction_delta_repair_enabled,
         verifier=verifier,
-        verification_mode=settings.verification_mode,
-        lesson_signal_mode=settings.lesson_signal_mode,
+        modes=ExtractionModes(
+            verification_mode=settings.verification_mode,
+            lesson_signal_mode=settings.lesson_signal_mode,
+        ),
     )
 
 

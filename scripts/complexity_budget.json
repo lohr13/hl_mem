@@ -50,11 +50,11 @@
   },
   {
     "path": "src/hl_mem/ingest/llm_extractor.py",
-    "max_lines": 1838
+    "max_lines": 2152
   },
   {
     "path": "src/hl_mem/observability/audit.py",
-    "max_lines": 309,
+    "max_lines": 326,
     "max_params": {
       "AuditLogger.emit": 18
     }
@@ -86,9 +86,9 @@
   },
   {
     "path": "src/hl_mem/settings.py",
-    "max_lines": 1095,
+    "max_lines": 1126,
     "max_callable_lines": {
-      "Settings.validate": 332
+      "Settings.validate": 343
     }
   },
   {

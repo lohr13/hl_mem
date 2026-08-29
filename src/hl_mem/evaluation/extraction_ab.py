@@ -14,6 +14,7 @@ from hl_mem.ingest.llm_extractor import (
     LEGACY_SYSTEM_PROMPT,
     SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT,
     SOURCE_BOUNDED_RAO_SYSTEM_PROMPT,
+    ExtractionModes,
     LLMExtractor,
     compute_prompt_hash,
 )
@@ -126,5 +127,5 @@ def make_extraction_arm_extractor(
         schema_retries=settings.llm_schema_retries,
         structured_mode=structured_mode,
         verifier=verifier,
-        verification_mode=settings.verification_mode,
+        modes=ExtractionModes(verification_mode=settings.verification_mode),
     )

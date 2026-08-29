@@ -21,6 +21,7 @@ from hl_mem.ingest.llm_extractor import (
     SOURCE_BOUNDED_RAO_ENGLISH_SYSTEM_PROMPT,
     SOURCE_BOUNDED_RAO_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
+    ExtractionModes,
     LLMExtractor,
     compute_prompt_hash,
 )
@@ -123,16 +124,30 @@ def test_grounded_lesson_signal_promotes_importance_but_not_time_bounded_scope()
     claim = LLMExtractor(
         _FakeLLMClient(response),
         ChunkingPolicy(10_000, 0, 2),
-        lesson_signal_mode="enforce",
-    ).extract(
-        value
-    )[0]
+        modes=ExtractionModes(lesson_signal_mode="enforce"),
+    ).extract(value)[0]
 
     assert claim.importance == 0.9
     assert claim.qualifiers["lesson_signal"] == "persistent_must"
     assert claim.scope == "temporal"
     assert classify_lesson_signal("This was a lesson and a pitfall.", "This was a lesson and a pitfall.") == "none"
     assert classify_lesson_signal("Use blue theme", "A costly failure caused data loss, use blue theme") == "none"
+
+
+def test_legacy_extraction_mode_keywords_remain_supported() -> None:
+    extractor = LLMExtractor(
+        _FakeLLMClient('{"claims":[],"should_memorize":false}'),
+        ChunkingPolicy(10_000, 0, 2),
+        verification_mode="audit",
+        lesson_signal_mode="enforce",
+        verification_claim_threshold=7,
+        verification_empty_text_threshold=17,
+    )
+
+    assert extractor.verification_mode == "audit"
+    assert extractor.lesson_signal_mode == "enforce"
+    assert extractor.verification_claim_threshold == 7
+    assert extractor.verification_empty_text_threshold == 17
 
 
 def test_compact_model_slot_does_not_forge_task_from_generic_subject() -> None:
