@@ -27,7 +27,6 @@ from hl_mem.api.schemas import (
     DryRunExtractionInput,
     EpisodeInput,
     EpisodeUpdate,
-    ErrorOutput,
     EventBatchInput,
     EventInput,
     FeedbackInput,
