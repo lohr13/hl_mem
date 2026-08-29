@@ -1,5 +1,71 @@
 # HL-Mem 变更记录
 
+## Unreleased
+
+## v0.33.0（2026-08-29）
+
+### 提取触顶软拆分与实验装备
+
+- 新增 `extraction.soft_split_enabled`，在紧凑提取结果命中 schema 上限时提供二分重提取与去重合并；只有同时启用
+  `extraction.delta_repair_enabled`，且首次二分后的子块仍命中上限时，才会懒触发一次残余增量修复。两项开关默认
+  均为 `false`，单独启用 delta repair 不增加调用，能力随版提供但不启用。
+- 配套 A/B runner、冻结语料导出、四门评分和审计事件。现有轻量模型代际实验未命中触顶条件，因此本版只保留
+  懒触发能力，不把实验路径提升为默认生产行为。
+
+### LLM 输出上限保险丝
+
+- 新增可选 `llm.max_tokens`，统一传入 DashScope、Zhipu 和 OpenAI-compatible 请求，防止异常长输出无界占用时间与
+  token。默认未设置，保持 provider 既有上限；若响应以 `finish_reason=length` 截断并破坏 JSON，结构化提取会快速失败，
+  交由既有重试/降级链路处理。
+
+### latest-wins 完整性与 Claim mutation 审计
+
+- reclassify 现在识别并保护带完整 `status_report_v1` 证据链的 `config.version` 确定性探针，避免 LLM 重分类改写其
+  currentness proof 坐标；legacy backfill 的独立连接也注册必要的 SQLite 函数。
+- migration 055–056 在数据库边界为每次 Claim UPDATE/DELETE 写入 `claim_mutation_audit_v1`，记录变更字段、来源与
+  trace/event/query/job 维度；056 将上下文桥接改为可移植的持久表 + 每连接 TEMP trigger，并在单次 mutation 后清空。
+- 空库首次启动改为先完成 migration，再注册 Claim 审计上下文 trigger，避免表尚未创建时初始化失败。当前 schema
+  基线为 56 个不可变、仅向前执行的 SQL migration（001–056）。
+
+### A/B provider 配置忠实度
+
+- `var/eval/softsplit_ab_20260827/run_ab.py` 新增 `--respect-llm-config`；显式使用后，非 delta arm 会保留 TOML 中的
+  LLM provider/model/base URL，不再被 runner 的历史固定值张冠李戴。默认不带参数时仍保持冻结实验的旧配置，保证
+  已有结果可复现。
+
+### llama.cpp thinking 方言
+
+- 新增 `llm.thinking_control="auto"|"chat_template_kwargs"`。默认 `auto` 保持各 provider 既有请求格式；仅对
+  OpenAI-compatible 显式选择 `chat_template_kwargs` 时，才把 `enable_thinking` 放入 llama.cpp 使用的嵌套字段，并
+  兼容剥离 JSON 前的空 `<think>...</think>` 块。
+
+### 提取密度与 Zhipu 低推理强度
+
+- compact 中英文 prompt 改为“覆盖优先”：先扫描全文，再输出所有有证据、可独立回答的原子事实；高密度长文开放
+  12–30 条协议，同时明确禁止为了凑数而重复、碎片化、概括填充或虚构。响应 schema 的 `maxItems` 从 20 提升到 30。
+- 新增可选 `llm.reasoning_effort=low|high|max`，只在显式配置时透传给 Zhipu，其他 provider 与未配置部署不变。
+- Zhipu coding 线路 `effort=low` 的 20 案终验中，单案延迟从此前 200–900 秒量级降至 P50 **21.7 秒**；
+  **15/20** 个密集案产出至少 12 条，抽审虚构 Claim 为 **0**。密度与 gold coverage 的扩展门仍未全部通过，因此
+  软拆分/增量修复继续默认关闭。
+
+### Behavior changes
+
+- 默认提取行为会使用新的 coverage-first prompt，并允许单 chunk 最多返回 30 条 Claim；短文本仍允许 0–少量，
+  AdmissionPolicy、证据校验与去重链路不变。
+- 数据库升级后，所有 Claim UPDATE/DELETE 会追加审计行，审计存储量会随访问刷新、维护和删除操作增长；业务 mutation
+  与审计写入保持同一 SQLite 事务。
+- `extraction.soft_split_enabled`、`extraction.delta_repair_enabled`、`llm.max_tokens` 与 `llm.reasoning_effort` 均不因升级
+  自动启用；`llm.thinking_control` 默认为 `auto`。REST/MCP 业务契约 major 不变，OpenAPI 仅同步服务版本，MCP 工具
+  schema 无业务字段变化，`/healthz.version` 自动跟随 `hl_mem.__version__`。
+
+### 回滚与配置提示
+
+- 保持或恢复保守行为时，确认 `extraction.soft_split_enabled=false`、`extraction.delta_repair_enabled=false`，并将
+  `llm.thinking_control="auto"`；若不需要输出保险丝或 Zhipu 推理强度覆盖，删除 `llm.max_tokens` 与
+  `llm.reasoning_effort` 配置项即可。发布准备不会改写任何部署机的 `.env` 或 `hl_mem.toml`。
+- 新 prompt 与 30 条上限没有运行时回滚键。若必须整体回退到 v0.32.0，应停止全部写入者并恢复升级前的主库与
+  tombstone sidecar 一致备份；不得让旧二进制继续写已经应用 migration 055–056 的数据库。
+
 ## v0.32.0（2026-08-26）
 
 ### `config.version` 确定性关链
@@ -1041,16 +1107,6 @@ Rewrote SYSTEM_PROMPT with structured 10-section design based on industry resear
 
 ### Dependencies
 - Added numpy>=2.0
-
-## Unreleased
-
-### Fixed
-
-- 行为兼容修正：未设置 `HL_MEM_QUERY_EXPANSION_MODE` 时现在与 `Settings` 默认值一致为 `off`；需要旧隐式行为的部署可显式设置为 `auto`。
-
-### Added
-
-- 新增默认关闭的会话感知指代查询改写，并按 namespace/session 隔离读取最小文本上下文。
 
 ## v0.16.1 — 2026-07-28
 

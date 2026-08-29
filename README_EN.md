@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.32.0](https://img.shields.io/badge/version-0.32.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.33.0](https://img.shields.io/badge/version-0.33.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -202,6 +202,19 @@ python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-r
   --export-expanded-fixture var/eval/v0291-injection-fixture.jsonl
 ```
 
+### Upgrading to v0.33.0
+
+v0.33.0 enables the coverage-first extraction prompt by default and raises the per-chunk Claim limit to 30; saturation
+soft-splitting and residual repair remain disabled. `extraction.delta_repair_enabled` is lazy and effective only when
+`extraction.soft_split_enabled` is also enabled and a child remains saturated at 30 Claims after the first split; enabling
+delta repair alone adds no extraction call. To preserve provider defaults, omit `llm.max_tokens` and
+`llm.reasoning_effort`, and keep `llm.thinking_control = "auto"`.
+
+The upgrade applies migrations 055–056 in order, adding database-boundary auditing and portable audit context for Claim
+UPDATE/DELETE operations. Stop the API, workers, and all other writers first, and back up the checkpointed primary database
+together with its tombstone sidecar. Both migrations are forward-only; old binaries do not understand the new audit
+semantics and must not resume writes after the upgrade.
+
 ### Upgrading to v0.31.1
 
 v0.31.1 fixes Hermes configuration discovery and shadow-database path hazards. Before upgrading, use a fresh process to
@@ -326,10 +339,9 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.32.0 with 54 immutable, forward-only migrations. Migrations 050–054 add the governance action
-ledger, conflict automation policy, typed canonical entities, plan fulfillment, and slot-aware cross-subject dedup audit
-fields. Stop all writers and back up both the primary database and tombstone sidecar before upgrading; old binaries must
-not reopen an upgraded database.
+The current baseline is v0.33.0 with 56 immutable, forward-only migrations. Migrations 055–056 add Claim-mutation audit
+triggers and portable audit context. Stop all writers and back up both the primary database and tombstone sidecar before
+upgrading; old binaries must not reopen an upgraded database.
 
 ## Documentation
 

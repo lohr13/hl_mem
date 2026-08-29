@@ -1,10 +1,10 @@
 # HL-Mem 配置参考
 
-HL-Mem 0.32.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
+HL-Mem 0.33.0 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
-v0.32.0 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
+v0.33.0 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
 
 ## 合并版发版决议
 
@@ -221,6 +221,8 @@ Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_
 user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并；Claim 仍分别链接实际来源 Event。
 默认值偏向降低提取调用成本：增大批量上限或等待时间有利于合并更多相邻 Event、摊薄 LLM 调用成本，
 但会增加低流量 session 的提取延迟；需要低延迟时可调小这两个值。
+`extraction.delta_repair_enabled` 只有同时启用 `extraction.soft_split_enabled`，且首次二分后的子块仍命中
+30 条 schema 上限时才懒触发一次；单独启用 delta repair 不增加提取调用。两项开关默认均为 `false`。
 
 ### `[hermes]`
 

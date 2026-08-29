@@ -177,6 +177,8 @@ TABLE_NOTES = {
         "user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并；Claim 仍分别链接实际来源 Event。",
         "默认值偏向降低提取调用成本：增大批量上限或等待时间有利于合并更多相邻 Event、摊薄 LLM 调用成本，",
         "但会增加低流量 session 的提取延迟；需要低延迟时可调小这两个值。",
+        "`extraction.delta_repair_enabled` 只有同时启用 `extraction.soft_split_enabled`，且首次二分后的子块仍命中",
+        "30 条 schema 上限时才懒触发一次；单独启用 delta repair 不增加提取调用。两项开关默认均为 `false`。",
     ],
     "index": [
         "",

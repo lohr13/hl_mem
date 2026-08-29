@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v0.32.0
-- Updated: 2026-08-26
+- Document baseline: v0.33.0
+- Updated: 2026-08-29
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -126,7 +126,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 54 immutable SQL migrations (001-054)
+│   └── migrations/           # 56 immutable SQL migrations (001-056)
 ├── workers/
 │   ├── worker.py             # Job leasing, progress, heartbeat, maintenance loop
 │   ├── auto_resolve_conflicts.py # Bounded L0/L2 conflict orchestration
@@ -437,7 +437,7 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 54 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 56 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used
@@ -448,7 +448,8 @@ edges and closes them on terminal Claim transitions. Migration 045 adds group ca
 review queue/cursor, and dirty triggers; migration 046 adds bounded-retention indexes and retires historical below-floor
 pending dedup candidates. Migrations 047–049 add assertion kind and dedup injection provenance before removing the guarded
 legacy tags FTS table. Migrations 050–054 add the governance action ledger, conflict policy versioning, typed canonical
-entities and Claim links, plan outcomes, and slot-aware dedup strategy metadata. They run automatically on first open;
+entities and Claim links, plan outcomes, and slot-aware dedup strategy metadata. Migrations 055–056 add portable
+database-boundary auditing for Claim UPDATE/DELETE mutations. They run automatically on first open;
 schema migration never adjudicates conflicts, applies dedup pairs, or closes plans. The optional `sqlite_vec.py` data migration owns the dimension-specific
 derived vector table; the default remains exact `sqlite_scan`.
 

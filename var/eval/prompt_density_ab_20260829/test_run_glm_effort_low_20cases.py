@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT = Path(__file__).with_name("run_glm_effort_low_20cases.py")
 
 

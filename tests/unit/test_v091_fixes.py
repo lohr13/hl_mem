@@ -20,9 +20,7 @@ from hl_mem.storage.database import Database
 from hl_mem.storage.migrations.backfill_claim_slots_v1 import (
     backfill_claim_slots_v1,
 )
-from hl_mem.storage.migrations.backfill_claim_slots_v1 import (
-    main as backfill_claim_slots_main,
-)
+from hl_mem.storage.migrations.backfill_claim_slots_v1 import main as backfill_claim_slots_main
 from hl_mem.storage.migrations.backfill_conflict_key_v3 import (
     DATA_MIGRATION_VERSION,
     backfill_conflict_keys_v3,
