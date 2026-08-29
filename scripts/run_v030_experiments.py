@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from itertools import product
 from pathlib import Path
-from typing import Any, Callable, Mapping, cast
+from typing import Any, Mapping, cast
 
 from hl_mem.domain.governance import L1Policy, decide_l1, is_terminal_conflict_status
 from hl_mem.evaluation.v030_batch4 import assess_batch4_manifest, write_batch4_report
@@ -40,13 +40,7 @@ from hl_mem.evaluation.v030_plan_price_replay import (
     write_v2_report,
 )
 from hl_mem.evaluation.v030_scorers import evaluate_decision_gate, score_decisions
-from hl_mem.workers.auto_resolve_conflicts import (
-    AutoDecision,
-    assess_l2_admission,
-    decide_l0,
-)
-
-E1L2Decider = Callable[[dict[str, Any]], AutoDecision]
+from hl_mem.workers.auto_resolve_conflicts import AutoDecision, decide_l0
 
 
 def validate_manifest_directory(manifest_dir: str | Path) -> dict[str, object]:
@@ -299,15 +293,8 @@ def _e1_docket(item: Mapping[str, Any]) -> dict[str, Any]:
         "left_tip_id": endpoints[0]["id"],
         "right_tip_id": endpoints[1]["id"],
         "survivor_contested": False,
-        "schema_valid": bool(case.get("namespace_key") or endpoints[0].get("namespace_key")),
-        "evidence_readable": True,
         "entity_type_mismatch": False,
         "coordinates_complete": _coordinates_complete(*endpoints),
-        "equal_authority_first_hand_conflict": False,
-        "previous_reason": "l0_l1_insufficient",
-        "last_l2_policy_version": None,
-        "not_before": None,
-        "docket_oversized": False,
         "nonexclusive_false_positive": endpoints[0].get("canonical_slot") != endpoints[1].get("canonical_slot"),
     }
     return {
@@ -398,16 +385,16 @@ def _remaining_gaps(
     case_rows: Sequence[Mapping[str, Any]],
     invariant_ids: Sequence[str],
 ) -> dict[str, Any]:
-    c_arm = arms["C"]
-    c_score = cast(Mapping[str, Any], c_arm["score"])
+    b_arm = arms["B"]
+    b_score = cast(Mapping[str, Any], b_arm["score"])
     l3_cases: dict[str, list[str]] = {}
     semantic_cases: dict[str, list[str]] = {}
     for item in case_rows:
-        prediction = cast(Mapping[str, Any], cast(Mapping[str, Any], item["arms"])["C"])
+        prediction = cast(Mapping[str, Any], cast(Mapping[str, Any], item["arms"])["B"])
         rule = str(prediction["rule"])
         if prediction["tier"] == "L3" or prediction["decision"] == "manual_required":
             l3_cases.setdefault(rule, []).append(str(item["case_id"]))
-        elif not cast(Mapping[str, Any], item["exact"])["C"]:
+        elif not cast(Mapping[str, Any], item["exact"])["B"]:
             semantic_cases.setdefault(rule, []).append(str(item["case_id"]))
     b_destructive_ids = set(cast(Mapping[str, Any], arms["B"]["score"])["destructive_error_case_ids"])
     b_destructive_rules: dict[str, list[str]] = {}
@@ -416,12 +403,12 @@ def _remaining_gaps(
             continue
         prediction = cast(Mapping[str, Any], cast(Mapping[str, Any], item["arms"])["B"])
         b_destructive_rules.setdefault(str(prediction["rule"]), []).append(str(item["case_id"]))
-    passed = bool(cast(Mapping[str, Any], c_arm["gate"])["passed"])
+    passed = bool(cast(Mapping[str, Any], b_arm["gate"])["passed"])
     return {
         "gate_deficits": {
-            "exact_below_67": max(0, 67 - int(c_score["exact"])),
-            "l3_above_3": max(0, int(c_score["abstentions"]) - 3),
-            "destructive_errors": len(c_score["destructive_error_case_ids"]),
+            "exact_below_67": max(0, 67 - int(b_score["exact"])),
+            "l3_above_3": max(0, int(b_score["abstentions"]) - 3),
+            "destructive_errors": len(b_score["destructive_error_case_ids"]),
             "gold_invariant_conflicts": len(invariant_ids),
         },
         "l3_defer_cases_by_reason": dict(sorted(l3_cases.items())),
@@ -439,15 +426,15 @@ def _write_e1_report(report: Mapping[str, Any], output_dir: str | Path, *, versi
     md_path = root / f"e1_report{suffix}.md"
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     rows = ["| Arm | Exact | L3 | Destructive | Gate |", "|---|---:|---:|---:|---|"]
-    for name in ("A", "B", "C"):
+    for name in ("A", "B"):
         arm = report["arms"][name]
         score = arm["score"]
         rows.append(
             f"| {name} | {score['exact']}/70 | {score['abstentions']} | "
             f"{len(score['destructive_error_case_ids'])} | {'PASS' if arm['gate']['passed'] else 'FAIL'} |"
         )
-    c_rules = Counter(item["arms"]["C"]["rule"] for item in report["cases"])
-    mismatch_rules = Counter(item["arms"]["C"]["rule"] for item in report["cases"] if not item["exact"]["C"])
+    b_rules = Counter(item["arms"]["B"]["rule"] for item in report["cases"])
+    mismatch_rules = Counter(item["arms"]["B"]["rule"] for item in report["cases"] if not item["exact"]["B"])
     invariant_summary = cast(Mapping[str, Any], report["gold_invariant_conflicts"])
     rows.extend(
         [
@@ -462,14 +449,14 @@ def _write_e1_report(report: Mapping[str, Any], output_dir: str | Path, *, versi
             *(
                 f"- {name}: tiers=`{json.dumps(report['arms'][name]['tier_distribution'], sort_keys=True)}`; "
                 f"L3=`{json.dumps(report['arms'][name]['l3_reason_distribution'], sort_keys=True)}`"
-                for name in ("A", "B", "C")
+                for name in ("A", "B")
             ),
             "",
             "## Mismatch analysis",
             "",
-            f"- C rule counts: `{json.dumps(dict(c_rules), ensure_ascii=False, sort_keys=True)}`",
-            f"- C mismatch rules: `{json.dumps(dict(mismatch_rules), ensure_ascii=False, sort_keys=True)}`",
-            f"- C mismatch cases: `{json.dumps(report['arms']['C']['mismatch_case_ids'], ensure_ascii=False)}`",
+            f"- B rule counts: `{json.dumps(dict(b_rules), ensure_ascii=False, sort_keys=True)}`",
+            f"- B mismatch rules: `{json.dumps(dict(mismatch_rules), ensure_ascii=False, sort_keys=True)}`",
+            f"- B mismatch cases: `{json.dumps(report['arms']['B']['mismatch_case_ids'], ensure_ascii=False)}`",
             "",
             "## Remaining gaps",
             "",
@@ -477,17 +464,17 @@ def _write_e1_report(report: Mapping[str, Any], output_dir: str | Path, *, versi
             "",
             "## 70-case replay",
             "",
-            "| Case | Source | Gold | A | B | C | Tier | Rule | Evidence difference | Destructive |",
-            "|---|---|---|---|---|---|---|---|---|---|",
+            "| Case | Source | Gold | A | B | Tier | Rule | Evidence difference | Destructive |",
+            "|---|---|---|---|---|---|---|---|---|",
         ]
     )
     for item in report["cases"]:
         arms = item["arms"]
         rows.append(
             f"| {item['case_id']} | {item['source']} | {item['gold']['decision']} | "
-            f"{arms['A']['decision']} | {arms['B']['decision']} | {arms['C']['decision']} | "
-            f"{arms['C']['tier']} | {arms['C']['rule']} | "
-            f"gold unavailable / {','.join(arms['C']['decisive_evidence_ids']) or 'none'} | "
+            f"{arms['A']['decision']} | {arms['B']['decision']} | "
+            f"{arms['B']['tier']} | {arms['B']['rule']} | "
+            f"gold unavailable / {','.join(arms['B']['decisive_evidence_ids']) or 'none'} | "
             f"{'yes' if item['destructive'] else 'no'} |"
         )
     recommendation = cast(Mapping[str, Any], report["enforce_recommendation"])
@@ -500,14 +487,12 @@ def _write_e1_report(report: Mapping[str, Any], output_dir: str | Path, *, versi
             f"- Current batch mode: `{recommendation['current_batch_mode']}`",
             f"- Release mode: `{recommendation['release_mode']}`",
             f"- L1 policy: `{recommendation['selected_l1_policy']}`",
-            f"- L1 rules: `{json.dumps(recommendation['enabled_l1_rules'], ensure_ascii=False)}`",
-            f"- L2 confidence floor: `{recommendation['l2_confidence_floor']}`",
         ]
     )
     title = "# E1 conflict automation gate v2" if version == "v2" else "# E1 conflict automation gate"
     md_path.write_text(title + "\n\n" + "\n".join(rows) + "\n", encoding="utf-8")
     if version == "v2":
-        passed = bool(report["arms"]["C"]["gate"]["passed"])
+        passed = bool(report["arms"]["B"]["gate"]["passed"])
         seal_path = root / ("E1_V2_PASSED" if passed else "SEALED_FAILED_v2")
         seal_path.write_text(
             f"status={'PASS' if passed else 'SEALED_FAILED'}\n"
@@ -526,11 +511,9 @@ def run_e1_experiment(
     manifest_path: str | Path,
     output_dir: str | Path,
     *,
-    l2_decider: E1L2Decider | None = None,
-    model_metadata: Mapping[str, Any] | None = None,
     replay_overlay_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Run frozen true-L0, candidate-L1, and safe-L1 plus double-pass-L2 arms."""
+    """Run frozen true-L0 and candidate-L1 arms."""
 
     version = "v2" if replay_overlay_path is not None else "v1"
     manifest = (
@@ -568,71 +551,31 @@ def run_e1_experiment(
         ),
     )
     b_predictions = policy_predictions[selected_key]
-    b_by_id = {row["case_id"]: row for row in b_predictions}
-    gold_by_id = {str(item["case_id"]): cast(Mapping[str, Any], item["gold"]) for item in cases}
-    rule_rows: dict[str, list[dict[str, Any]]] = {}
-    for row in b_predictions:
-        if row["tier"] == "L1":
-            rule_rows.setdefault(str(row["rule"]), []).append(row)
-    enabled_rules = sorted(
-        rule
-        for rule, rows in rule_rows.items()
-        if all(_matches_gold(row, gold_by_id[str(row["case_id"])]) for row in rows)
-    )
-    if l2_decider is None:
-        from hl_mem.settings import Settings
-        from hl_mem.workers.conflict_judge import LocalConflictJudge
-
-        l2_decider = LocalConflictJudge.from_settings(Settings()).judge
-    c_predictions: list[dict[str, Any]] = []
-    for case_id, docket in dockets.items():
-        deterministic = decide_l0(docket)
-        selected_l1 = b_by_id[case_id]
-        if deterministic is not None:
-            decision = deterministic
-        elif selected_l1["tier"] == "L1" and selected_l1["rule"] in enabled_rules:
-            heuristic = decide_l1(
-                docket, L1Policy(int(selected_key.split("-")[0][1:]), float(selected_key.split("c")[1]))
-            )
-            decision = heuristic or AutoDecision("manual_required", None, 0.0, "L3", "selected_l1_no_longer_matches")
-        else:
-            admission = assess_l2_admission(
-                docket, "2026-08-25T00:00:00+00:00", max_candidates=8, policy_version="conflict-auto-v1"
-            )
-            if not admission.admitted:
-                decision = AutoDecision("manual_required", None, 0.0, "L3", admission.reason)
-            else:
-                try:
-                    decision = l2_decider(docket)
-                except Exception as error:
-                    decision = AutoDecision("manual_required", None, 0.0, "L3", f"judge_failure:{type(error).__name__}")
-        c_predictions.append(_prediction(case_id, decision, "l2_unavailable"))
     arms = {
         "A": _arm_report(cases, a_predictions, invariant_ids),
         "B": _arm_report(cases, b_predictions, invariant_ids),
-        "C": _arm_report(cases, c_predictions, invariant_ids),
     }
     indexed = {name: {row["case_id"]: row for row in arm["predictions"]} for name, arm in arms.items()}
-    destructive = set(arms["C"]["score"]["destructive_error_case_ids"])
+    destructive = set(arms["B"]["score"]["destructive_error_case_ids"])
     case_rows = [
         {
             "case_id": item["case_id"],
             "source": item["source"],
             "gold": item["gold"],
-            "arms": {name: indexed[name][item["case_id"]] for name in ("A", "B", "C")},
+            "arms": {name: indexed[name][item["case_id"]] for name in ("A", "B")},
             "exact": {
                 name: _matches_gold(indexed[name][item["case_id"]], cast(Mapping[str, Any], item["gold"]))
-                for name in ("A", "B", "C")
+                for name in ("A", "B")
             },
             "destructive": item["case_id"] in destructive,
             "evidence_difference": {
                 "gold": "not present in frozen label",
-                "auto": indexed["C"][item["case_id"]]["decisive_evidence_ids"],
+                "auto": indexed["B"][item["case_id"]]["decisive_evidence_ids"],
             },
         }
         for item in cases
     ]
-    c_passed = bool(arms["C"]["gate"]["passed"])
+    b_passed = bool(arms["B"]["gate"]["passed"])
     report: dict[str, Any] = {
         "schema_version": f"v030-e1-report-{version}",
         "manifest_sha256": manifest["manifest_sha256"],
@@ -641,17 +584,12 @@ def run_e1_experiment(
         "thresholds": {"min_exact": 67, "max_l3": 3, "max_destructive": 0, "max_invariants": 0},
         "selected_l1_policy": selected_key,
         "l1_selection_rule": "zero-destructive-first, exact-desc, abstention-asc, conservative-tie-break",
-        "enabled_l1_rules_for_c": enabled_rules,
         "candidate_l1_policies": policy_reports,
-        "model": dict(model_metadata or {}),
-        "model_calls": list(getattr(getattr(l2_decider, "__self__", None), "audit_records", [])),
         "enforce_recommendation": {
-            "decision": "recommend_enforce_at_release" if c_passed else "keep_observe",
+            "decision": "recommend_enforce_at_release" if b_passed else "keep_observe",
             "current_batch_mode": "observe",
-            "release_mode": "enforce" if c_passed else "observe",
+            "release_mode": "enforce" if b_passed else "observe",
             "selected_l1_policy": selected_key,
-            "enabled_l1_rules": enabled_rules,
-            "l2_confidence_floor": 0.90,
         },
         "remaining_gaps": _remaining_gaps(arms, case_rows, invariant_ids),
         "arms": arms,
@@ -747,23 +685,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.phase == "e1":
         if args.output_dir is None:
             parser.error("e1 requires --output-dir")
-        from hl_mem.settings import Settings
-        from hl_mem.workers.conflict_judge import LocalConflictJudge
-
-        judge = LocalConflictJudge.from_settings(
-            Settings(maintenance_judge_base_url=args.qwen_base_url, maintenance_judge_model=args.qwen_model)
-        )
-        metadata = asdict(judge.runner.config)
-        metadata["llama_build"] = args.llama_build
-        metadata["model_file_sha256"] = args.model_sha256
-        if args.model_file is not None:
-            metadata["model_file"] = str(args.model_file)
-            metadata["model_file_sha256"] = _file_sha256(args.model_file)
         report = run_e1_experiment(
             args.manifest_dir / "e1.json",
             args.output_dir,
-            l2_decider=judge.judge,
-            model_metadata=metadata,
             replay_overlay_path=args.e1_replay_overlay,
         )
         result = {

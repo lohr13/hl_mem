@@ -168,7 +168,7 @@ def test_worker_repairs_dangling_before_auto_resolve_and_stops_failure_accumulat
 
     worker._run_maintenance_item(
         "auto_resolve_conflicts",
-        lambda: worker_module.auto_resolve_conflicts(connection, NOW, mode="l0_only"),
+        lambda: worker_module.auto_resolve_conflicts(connection, NOW),
     )
     assert runtime.snapshot()["failure_counts"] == {"auto_resolve_conflicts": 1}
 

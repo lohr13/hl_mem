@@ -15,7 +15,6 @@ from hl_mem.evaluation.v030_corpus import (
     validate_manifest,
     write_manifest,
 )
-from hl_mem.workers.auto_resolve_conflicts import AutoDecision
 from scripts import run_v030_experiments as experiment_runner
 
 run_baseline = experiment_runner.run_baseline
@@ -324,24 +323,20 @@ def _e1_orchestrator_fixture(tmp_path: Path) -> tuple[Path, dict[str, dict[str, 
     return manifest_path, expected
 
 
-def test_e1_orchestrator_runs_three_arms_without_leaking_gold(tmp_path: Path) -> None:
-    manifest_path, expected = _e1_orchestrator_fixture(tmp_path)
+def test_e1_orchestrator_runs_l0_and_l1_arms_without_l2(tmp_path: Path) -> None:
+    manifest_path, _expected = _e1_orchestrator_fixture(tmp_path)
 
-    def perfect_l2(docket: dict[str, object]) -> AutoDecision:
-        assert "gold" not in json.dumps(docket)
-        gold = expected[docket["case"]["id"]]  # type: ignore[index]
-        winner = gold.get("winner_candidate_key")
-        return AutoDecision(str(gold["decision"]), str(winner) if winner else None, 0.99, "L2", "fixture")
+    report = run_e1_experiment(manifest_path, tmp_path / "out")
 
-    report = run_e1_experiment(manifest_path, tmp_path / "out", l2_decider=perfect_l2)
-
-    assert report["arms"]["C"]["gate"]["passed"] is True
+    assert set(report["arms"]) == {"A", "B"}
+    assert all(prediction["tier"] != "L2" for arm in report["arms"].values() for prediction in arm["predictions"])
+    assert "model_calls" not in report
     assert len(report["cases"]) == 70
     assert all((tmp_path / "out" / name).is_file() for name in ("e1_report.json", "e1_report.md"))
 
 
 def test_e1_v2_report_is_versioned_sealed_and_summarizes_invariant_conflicts(tmp_path: Path) -> None:
-    manifest_path, expected = _e1_orchestrator_fixture(tmp_path)
+    manifest_path, _expected = _e1_orchestrator_fixture(tmp_path)
     manifest = load_manifest(manifest_path)
     first_case_id = str(manifest["cases"][0]["case_id"])
     overlay_path = tmp_path / "e1_v2.json"
@@ -357,24 +352,18 @@ def test_e1_v2_report_is_versioned_sealed_and_summarizes_invariant_conflicts(tmp
         encoding="utf-8",
     )
 
-    def perfect_l2(docket: dict[str, object]) -> AutoDecision:
-        gold = expected[docket["case"]["id"]]  # type: ignore[index]
-        winner = gold.get("winner_candidate_key")
-        return AutoDecision(str(gold["decision"]), str(winner) if winner else None, 0.99, "L2", "fixture")
-
     output_dir = tmp_path / "out"
     report = run_e1_experiment(
         manifest_path,
         output_dir,
-        l2_decider=perfect_l2,
         replay_overlay_path=overlay_path,
     )
 
     assert report["schema_version"] == "v030-e1-report-v2"
     assert report["gold_invariant_conflicts"] == {"count": 1, "case_ids": [first_case_id]}
-    assert report["arms"]["C"]["gate"]["passed"] is False
-    assert report["arms"]["C"]["tier_distribution"]
-    assert "l3_reason_distribution" in report["arms"]["C"]
+    assert report["arms"]["B"]["gate"]["passed"] is False
+    assert report["arms"]["B"]["tier_distribution"]
+    assert "l3_reason_distribution" in report["arms"]["B"]
     assert report["remaining_gaps"]["gate_deficits"]["gold_invariant_conflicts"] == 1
     assert report["remaining_gaps"]["next_action"] == "keep_observe_and_preregister_any_followup"
     assert (output_dir / "e1_report.json").exists() is False

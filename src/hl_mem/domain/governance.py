@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.claims.conflicts import coordinate_qualifier_key
@@ -145,12 +145,6 @@ class L1Policy:
             raise ValueError("min_time_delta_seconds must be an E1 preregistered value")
         if self.min_confidence_delta not in {0.10, 0.15, 0.20}:
             raise ValueError("min_confidence_delta must be an E1 preregistered value")
-
-
-@dataclass(frozen=True)
-class L2Admission:
-    admitted: bool
-    reason: str
 
 
 def _claims(docket: Mapping[str, Any]) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
@@ -396,100 +390,3 @@ def decide_l1(docket: Mapping[str, Any], policy: L1Policy) -> AutoDecision | Non
                     rule="group_support_dominance",
                 )
     return None
-
-
-def assess_l2_admission(
-    docket: Mapping[str, Any],
-    now: str,
-    *,
-    max_candidates: int,
-    policy_version: str,
-) -> L2Admission:
-    """以稳定 reason 表达七组 L2 准入条件。"""
-
-    context = _context(docket)
-    case = _case(docket)
-    claims = list(docket.get("claims") or [])
-    candidates = list(docket.get("candidates") or [])
-    if not context.get("previous_reason"):
-        return L2Admission(False, "missing_prior_insufficiency")
-    living_candidates = [candidate for candidate in candidates if not candidate.get("terminal")]
-    if len(living_candidates) < 2:
-        return L2Admission(False, "fewer_than_two_living_candidates")
-    if case.get("overflow") or len(candidates) > max_candidates:
-        return L2Admission(False, "candidate_overflow")
-    if context.get("entity_type_mismatch"):
-        return L2Admission(False, "entity_type_mismatch")
-    if any(_is_plan(claim) for claim in claims):
-        return L2Admission(False, "plan_not_allowed")
-    if not context.get("evidence_readable"):
-        return L2Admission(False, "evidence_damaged")
-    if context.get("docket_oversized"):
-        return L2Admission(False, "oversized_docket")
-    if context.get("last_l2_policy_version") == policy_version:
-        return L2Admission(False, "already_judged_current_input")
-    not_before = _parse_time(context.get("not_before"))
-    current = _parse_time(now)
-    if not_before and current and not_before > current:
-        return L2Admission(False, "not_before_pending")
-    if not context.get("schema_valid"):
-        return L2Admission(False, "schema_invalid")
-    return L2Admission(True, "admitted")
-
-
-def _decisive_evidence(result: Mapping[str, Any]) -> tuple[str, ...]:
-    decisions = result.get("decisions") or []
-    if not isinstance(decisions, Sequence) or not decisions:
-        return ()
-    first = decisions[0]
-    if not isinstance(first, Mapping):
-        return ()
-    values = first.get("decisive_evidence_ids") or first.get("evidence_ids") or []
-    return tuple(str(value) for value in values if str(value).strip())
-
-
-def validate_l2_result(
-    docket: Mapping[str, Any],
-    result: Mapping[str, Any],
-    *,
-    confidence_floor: float,
-    rule_enabled: bool,
-    resolver_model: str | None = None,
-) -> AutoDecision:
-    """验证双遍输出；语义不足进入 L3，传输/JSON 异常由调用方退避。"""
-
-    context = _context(docket)
-    if context.get("docket_oversized"):
-        return AutoDecision("manual_required", None, 0.0, "L3", "oversized_docket")
-    if not result.get("consistent"):
-        return AutoDecision("manual_required", None, 0.0, "L3", "candidate_order_disagreement")
-    confidence = float(result.get("confidence") or 0.0)
-    if confidence < confidence_floor:
-        return AutoDecision("manual_required", None, confidence, "L3", "low_confidence")
-    if context.get("equal_authority_first_hand_conflict"):
-        return AutoDecision("manual_required", None, confidence, "L3", "equal_authority_counterevidence")
-    decision = str(result.get("decision") or "")
-    winner = result.get("winner_candidate_key")
-    candidate_keys = {str(candidate.get("candidate_key")) for candidate in docket.get("candidates") or []}
-    if decision in {"keep_left", "keep_right", "select_candidate"} and str(winner) not in candidate_keys:
-        return AutoDecision("manual_required", None, confidence, "L3", "winner_membership_violation")
-    left, right = _claims(docket)
-    if _exclusive_pair(left, right) and decision in {"coexist", "reject"}:
-        return AutoDecision("manual_required", None, confidence, "L3", "exclusive_group_violation")
-    if decision not in {"keep_left", "keep_right", "coexist", "reject", "select_candidate"}:
-        return AutoDecision("manual_required", None, confidence, "L3", "lifecycle_invariant_violation")
-    if not rule_enabled:
-        return AutoDecision("manual_required", None, confidence, "L3", "rule_not_enabled")
-    rationale = "qwen_consistent"
-    decisions = result.get("decisions") or []
-    if decisions and isinstance(decisions[0], Mapping):
-        rationale = str(decisions[0].get("rationale_code") or rationale)[:128]
-    return AutoDecision(
-        decision,
-        str(winner) if winner is not None else None,
-        confidence,
-        "L2",
-        rationale,
-        _decisive_evidence(result),
-        resolver_model,
-    )

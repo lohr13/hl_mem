@@ -105,20 +105,8 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _handle_resolve_conflict_llm(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    from hl_mem.workers.conflict_judge import run_conflict_llm_job
-
-    if worker.settings.conflict_auto_mode in {"off", "l0_only"}:
-        return {"status": "skipped", "reason": worker.settings.conflict_auto_mode}
-    payload = job.get("payload") or json.loads(job["payload_json"] or "{}")
-    mode = str(payload.get("application_mode") or worker.settings.conflict_auto_mode)
-    return run_conflict_llm_job(
-        worker.connection,
-        payload,
-        components.make_conflict_judge(worker.settings),
-        mode=mode,
-        now=utc_now(),
-    )
+def _handle_resolve_conflict_llm(_worker: Worker, _job: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "skipped", "reason": "retired_conflict_l2"}
 
 
 def _handle_reconcile_plan_result(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:

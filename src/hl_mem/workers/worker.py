@@ -406,8 +406,6 @@ class Worker:
                             max_cases=self.settings.conflict_maintenance_max_cases,
                             max_elapsed_ms=self.settings.conflict_maintenance_budget_ms,
                             failure_backoff_seconds=self.settings.conflict_failure_backoff_seconds,
-                            mode=self.settings.conflict_auto_mode,
-                            max_candidates=self.settings.conflict_auto_resolve_max_candidates,
                         ),
                     )
                 ]

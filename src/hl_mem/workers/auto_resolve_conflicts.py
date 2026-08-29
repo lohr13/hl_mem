@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 import time
-import uuid
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -19,28 +18,22 @@ from hl_mem.domain.governance import (
     CONFLICT_AUTO_POLICY_VERSION,
     AutoDecision,
     DecisionEnvelope,
-    assess_l2_admission,
     decide_l0,
     is_terminal_conflict_status,
     snapshot_fingerprint,
-    validate_l2_result,
 )
 from hl_mem.errors import ConflictResolutionError
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.governance import (
     GovernanceActionRepository,
-    GovernanceStatus,
     upgrade_conflict_auto_policy,
 )
-from hl_mem.storage.jobs import JobRepository
 
 __all__ = [
     "AutoDecision",
     "StaleConflictDecision",
-    "assess_l2_admission",
     "auto_resolve_conflicts",
     "decide_l0",
-    "validate_l2_result",
 ]
 
 
@@ -57,23 +50,14 @@ def _coordinates_complete(left: dict[str, Any], right: dict[str, Any]) -> bool:
     )
 
 
-def _claim_evidence(connection: sqlite3.Connection, claim_ids: list[str]) -> tuple[list[dict[str, Any]], bool]:
+def _claim_evidence(connection: sqlite3.Connection, claim_ids: list[str]) -> list[dict[str, Any]]:
     placeholders = ",".join("?" for _ in claim_ids)
     rows = connection.execute(
         "SELECT id,derived_id,evidence_type,evidence_id,relation,weight FROM evidence_links "
         f"WHERE derived_type='claim' AND derived_id IN ({placeholders}) ORDER BY id",
         claim_ids,
     ).fetchall()
-    evidence = [dict(row) for row in rows]
-    readable = True
-    for row in evidence:
-        table = "events" if row["evidence_type"] == "event" else "claims"
-        if (
-            row["evidence_type"] not in {"event", "claim"}
-            or connection.execute(f"SELECT 1 FROM {table} WHERE id=?", (row["evidence_id"],)).fetchone() is None
-        ):
-            readable = False
-    return evidence, readable
+    return [dict(row) for row in rows]
 
 
 def load_conflict_docket(connection: sqlite3.Connection, case_id: str) -> dict[str, Any]:
@@ -94,7 +78,7 @@ def load_conflict_docket(connection: sqlite3.Connection, case_id: str) -> dict[s
     if left is None or right is None:
         raise ConflictResolutionError(f"conflict case has invalid endpoints: {case_id}")
     claim_ids = [str(left["id"]), str(right["id"])]
-    evidence, evidence_readable = _claim_evidence(connection, claim_ids)
+    evidence = _claim_evidence(connection, claim_ids)
     review = ResolutionService(connection).review(case_id)
     candidates = review["candidates"]
     group_native = bool(case.get("group_key") and candidates)
@@ -128,15 +112,8 @@ def load_conflict_docket(connection: sqlite3.Connection, case_id: str) -> dict[s
         "left_tip_id": left["id"],
         "right_tip_id": right["id"],
         "survivor_contested": other_open is not None,
-        "schema_valid": bool(case.get("namespace_key") or left.get("namespace_key")),
-        "evidence_readable": evidence_readable,
         "entity_type_mismatch": False,
         "coordinates_complete": _coordinates_complete(left, right),
-        "equal_authority_first_hand_conflict": False,
-        "previous_reason": None,
-        "last_l2_policy_version": case.get("policy_version") if case.get("last_tier") in {"L2", "L3"} else None,
-        "not_before": case.get("not_before"),
-        "docket_oversized": False,
         "nonexclusive_false_positive": bool(
             left.get("canonical_slot") != right.get("canonical_slot")
             or (
@@ -201,13 +178,10 @@ def apply_auto_conflict_decision(
     expected_revision: int,
     expected_fingerprint: str,
     policy_version: str,
-    mode: str,
     now: str,
 ) -> dict[str, Any]:
     """重读 revision/fingerprint，并在单一短事务中应用 mutation 与 ledger。"""
 
-    if mode not in {"observe", "enforce"}:
-        raise ValueError("conflict auto application mode must be observe or enforce")
     connection.execute("BEGIN IMMEDIATE")
     try:
         docket = load_conflict_docket(connection, case_id)
@@ -229,7 +203,7 @@ def apply_auto_conflict_decision(
             resolver_model=decision.resolver_model,
             evidence_ids=tuple(decision.evidence_ids),
         )
-        if mode == "enforce" and decision.decision not in {"manual_required"}:
+        if decision.decision != "manual_required":
             if decision.decision == "obsolete":
                 cursor = connection.execute(
                     "UPDATE conflict_cases SET status='resolved',decision='obsolete',resolved_at=? "
@@ -272,7 +246,7 @@ def apply_auto_conflict_decision(
                         expected_revision=expected_revision if docket["case"].get("group_key") else None,
                         local_postconditions=True,
                     )
-        elif decision.decision == "manual_required":
+        else:
             connection.execute(
                 "UPDATE conflict_cases SET status='manual_required' WHERE id=? AND resolved_at IS NULL",
                 (case_id,),
@@ -303,21 +277,20 @@ def apply_auto_conflict_decision(
             ),
         )
         after = _mutation_snapshot(connection, case_id, claim_ids)
-        action_status: GovernanceStatus = "applied" if mode == "enforce" else "observed"
         GovernanceActionRepository(connection).record(
             envelope,
             before=before,
             after=after,
-            status=action_status,
+            status="applied",
             created_at=now,
-            applied_at=now if action_status == "applied" else None,
+            applied_at=now,
         )
         connection.commit()
     except Exception:
         if connection.in_transaction:
             connection.rollback()
         raise
-    return {"case_id": case_id, "status": action_status, "decision": decision.decision, "tier": decision.tier}
+    return {"case_id": case_id, "status": "applied", "decision": decision.decision, "tier": decision.tier}
 
 
 def _ready_rows(connection: Any, now: str, max_cases: int) -> tuple[list[Any], int, int, str | None]:
@@ -394,57 +367,6 @@ def _record_failure(connection: Any, selected: Any, now: str, error: Exception, 
         raise
 
 
-def _enqueue_l2(
-    connection: Any,
-    docket: dict[str, Any],
-    fingerprint: str,
-    now: str,
-    policy_version: str,
-    application_mode: str,
-) -> bool:
-    case = docket["case"]
-    key = f"resolve_conflict_llm:{case['id']}:{fingerprint}:{policy_version}"
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        inserted = JobRepository(connection).insert_job(
-            {
-                "id": uuid.uuid4().hex,
-                "job_type": "resolve_conflict_llm",
-                "payload": {
-                    "case_id": case["id"],
-                    "revision": int(case.get("revision") or 0),
-                    "input_fingerprint": fingerprint,
-                    "policy_version": policy_version,
-                    "application_mode": application_mode,
-                },
-                "idempotency_key": key,
-                "status": "pending",
-                "run_after": now,
-                "max_attempts": 3,
-                "created_at": now,
-                "updated_at": now,
-            },
-            commit=False,
-        )
-        connection.execute(
-            "UPDATE conflict_review_state SET dirty_at=NULL,dirty_reason='l2_queued',last_reviewed_at=?,"
-            "input_fingerprint=?,left_tip_id=?,right_tip_id=?,policy_version=? WHERE case_id=?",
-            (
-                now,
-                fingerprint,
-                docket["context"]["left_tip_id"],
-                docket["context"]["right_tip_id"],
-                policy_version,
-                case["id"],
-            ),
-        )
-        connection.commit()
-        return bool(inserted)
-    except Exception:
-        connection.rollback()
-        raise
-
-
 def _update_cursor(connection: Any, dirty_at: str, case_id: str, now: str) -> None:
     connection.execute(
         "INSERT INTO maintenance_cursors(task,cursor_time,cursor_id,updated_at) "
@@ -470,12 +392,6 @@ def _age_seconds(oldest: str | None, now: str) -> float | None:
         return None
 
 
-def _application_mode(mode: str, tier: str) -> str:
-    if mode == "enforce" or (mode == "l0_only" and tier == "L0"):
-        return "enforce"
-    return "observe"
-
-
 def auto_resolve_conflicts(
     connection: Any,
     now: str,
@@ -483,24 +399,18 @@ def auto_resolve_conflicts(
     max_cases: int = 50,
     max_elapsed_ms: int = 1_000,
     failure_backoff_seconds: int = 300,
-    mode: str = "enforce",
-    max_candidates: int = 8,
     policy_version: str = CONFLICT_AUTO_POLICY_VERSION,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
-    """有界消费 dirty case；L2 只入 job，不在 maintenance 调模型。"""
+    """有界消费 dirty case；确定性规则未命中时转人工裁决。"""
 
-    if mode == "off":
-        return {"eligible": 0, "scanned": 0, "changed": 0, "resolved": 0, "l2_queued": 0}
-    if mode not in {"observe", "enforce", "l0_only"}:
-        raise ValueError("mode must be off, observe, enforce, or l0_only")
     if not 1 <= max_cases <= 1_000 or not 1 <= max_elapsed_ms <= 10_000:
         raise ValueError("invalid bounded conflict maintenance budget")
     if not 1 <= failure_backoff_seconds <= 86_400:
         raise ValueError("failure_backoff_seconds must be between 1 and 86400")
     upgrade_conflict_auto_policy(connection, now, policy_version)
     rows, eligible, blocked, oldest = _ready_rows(connection, now, max_cases)
-    stats = {key: 0 for key in ("scanned", "changed", "resolved", "manual_stable", "deferred", "failed", "l2_queued")}
+    stats = {key: 0 for key in ("scanned", "changed", "resolved", "manual_stable", "deferred", "failed")}
     started = monotonic()
     last: tuple[str, str] | None = None
     for selected in rows:
@@ -513,52 +423,26 @@ def auto_resolve_conflicts(
             fingerprint = conflict_docket_fingerprint(docket)
             decision = decide_l0(docket)
             if decision is None:
-                if mode == "l0_only":
-                    decision = AutoDecision(
-                        "manual_required",
-                        None,
-                        0.0,
-                        "L3",
-                        "l0_only_manual_required",
-                    )
-                else:
-                    docket["context"]["previous_reason"] = "l0_insufficient"
-                    admission = assess_l2_admission(
-                        docket,
-                        now,
-                        max_candidates=max_candidates,
-                        policy_version=policy_version,
-                    )
-                    if admission.admitted:
-                        stats["l2_queued"] += int(
-                            _enqueue_l2(
-                                connection,
-                                docket,
-                                fingerprint,
-                                now,
-                                policy_version,
-                                _application_mode(mode, "L2"),
-                            )
-                        )
-                        stats["manual_stable"] += 1
-                        stats["deferred"] += 1
-                        continue
-                    decision = AutoDecision("manual_required", None, 0.0, "L3", admission.reason)
-            application_mode = _application_mode(mode, str(decision.tier))
-            result = apply_auto_conflict_decision(
+                decision = AutoDecision(
+                    "manual_required",
+                    None,
+                    0.0,
+                    "L3",
+                    "l0_only_manual_required",
+                )
+            apply_auto_conflict_decision(
                 connection,
                 str(selected["case_id"]),
                 decision,
                 expected_revision=int(docket["case"].get("revision") or 0),
                 expected_fingerprint=fingerprint,
                 policy_version=policy_version,
-                mode=application_mode,
                 now=now,
             )
             if decision.decision == "manual_required":
                 stats["manual_stable"] += 1
                 stats["deferred"] += 1
-            elif application_mode == "enforce":
+            else:
                 stats["changed"] += 1
                 stats["resolved"] += 1
         except Exception as error:

@@ -150,14 +150,6 @@ def make_llm_client(
     )
 
 
-def make_conflict_judge(settings: Settings) -> Any:
-    """构造独立 loopback maintenance judge，不复用提取模型配置。"""
-
-    from hl_mem.workers.conflict_judge import LocalConflictJudge
-
-    return LocalConflictJudge.from_settings(settings)
-
-
 def make_embedder(settings: Settings) -> EmbedderProtocol:
     """依据统一配置创建向量化组件。"""
     if settings.embedder_mode == "fake":
