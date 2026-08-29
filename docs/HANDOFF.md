@@ -5,8 +5,8 @@
 ## 当前状态
 
 - **分支**：`codex/v0360-b4-pair-rest-host-docs`
-- **版本**：v0.36.0
-- **阶段**：v0.36.0 B4 发版准备；等待用户验收后 push/tag
+- **版本**：v0.36.1
+- **阶段**：v0.36.1 patch 发版准备；等待用户验收后 push/tag
 - **发布状态**：B1–B3 已提交，B4 本地实施并通过门禁；未 push、未打 tag、未部署
 - **服务**：FastAPI 默认监听 8200；非敏感配置只从工作目录 `hl_mem.toml` 读取
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`

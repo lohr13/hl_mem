@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.36.0](https://img.shields.io/badge/version-0.36.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.36.1](https://img.shields.io/badge/version-0.36.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -350,7 +350,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.36.0 with 57 immutable, forward-only migrations. Migrations 055–056 add Claim-mutation audit triggers
+The current baseline is v0.36.1 with 57 immutable, forward-only migrations. Migrations 055–056 add Claim-mutation audit triggers
 and portable audit context; migration 057 retires non-terminal legacy conflict-judge jobs and requeues their linked open
 cases. Stop all writers and back up both the primary database and tombstone sidecar before upgrading; old binaries must
 not reopen an upgraded database.
