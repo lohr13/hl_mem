@@ -86,9 +86,9 @@
   },
   {
     "path": "src/hl_mem/settings.py",
-    "max_lines": 1126,
+    "max_lines": 1182,
     "max_callable_lines": {
-      "Settings.validate": 343
+      "Settings.validate": 349
     }
   },
   {

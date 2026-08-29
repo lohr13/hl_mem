@@ -266,6 +266,19 @@ class Settings:
         default=None,
         metadata={"toml": "recall.query_expansion_model"},
     )
+    query_expansion_provider: str | None = field(
+        default=None,
+        metadata={"toml": "recall.query_expansion_provider"},
+    )
+    query_expansion_base_url: str | None = field(
+        default=None,
+        metadata={"toml": "recall.query_expansion_base_url"},
+    )
+    query_expansion_api_key: str | None = field(
+        default=None,
+        repr=False,
+        metadata={"secret_env": "QUERY_EXPANSION_API_KEY"},
+    )
     query_expansion_max: int = field(default=2, metadata={"toml": "recall.query_expansion_max"})
     query_expansion_candidate_floor: int = field(
         default=8,
@@ -276,11 +289,11 @@ class Settings:
         metadata={"toml": "recall.query_expansion_token_ceiling"},
     )
     query_expansion_timeout_seconds: float = field(
-        default=5.0,
+        default=15.0,
         metadata={"toml": "recall.query_expansion_timeout_seconds"},
     )
     query_expansion_total_timeout_seconds: float = field(
-        default=6.0,
+        default=16.0,
         metadata={"toml": "recall.query_expansion_total_timeout_seconds"},
     )
     query_expansion_max_concurrency: int = field(
@@ -640,6 +653,37 @@ class Settings:
             image_describer_mode="off",
         )
 
+    def query_expansion_line_overrides(self) -> tuple[str, str, str] | None:
+        """返回完整的 QE 独立线路；全空时沿用主 LLM 线路。"""
+        values = (
+            self.query_expansion_provider,
+            self.query_expansion_base_url,
+            self.query_expansion_api_key,
+        )
+        if all(value is None for value in values):
+            return None
+        if self.query_expansion_provider is None:
+            raise ConfigurationError(
+                "recall.query_expansion_provider is required when configuring a custom query expansion line"
+            )
+        if self.query_expansion_provider not in {"dashscope", "zhipu", "openai_compatible"}:
+            raise ConfigurationError(
+                "recall.query_expansion_provider must be 'dashscope', 'zhipu', or 'openai_compatible'"
+            )
+        if self.query_expansion_base_url is None or not self.query_expansion_base_url.strip():
+            raise ConfigurationError(
+                "recall.query_expansion_base_url is required when configuring a custom query expansion line"
+            )
+        if self.query_expansion_api_key is None or not self.query_expansion_api_key.strip():
+            raise ConfigurationError(
+                "QUERY_EXPANSION_API_KEY is required when configuring a custom query expansion line"
+            )
+        return (
+            self.query_expansion_provider,
+            self.query_expansion_base_url,
+            self.query_expansion_api_key,
+        )
+
     def validate(self) -> None:
         """校验配置组合以及已启用组件的密钥。"""
         if self.fts_language not in {"auto", "zh", "en"}:
@@ -654,12 +698,19 @@ class Settings:
             VectorBackend(self.vector_backend)
         except ValueError as error:
             raise ConfigurationError("recall.vector_backend must be 'sqlite_scan' or 'sqlite_vec'") from error
+        query_expansion_line = self.query_expansion_line_overrides()
         required_secrets: dict[str, tuple[str | None, list[str]]] = {}
         llm_disable_modes: list[str] = []
         if self.extractor_mode != "fake":
             llm_disable_modes.append("extraction.mode='fake'")
         if self.query_expansion_mode != "off":
-            llm_disable_modes.append("recall.query_expansion_mode='off'")
+            if query_expansion_line is None:
+                llm_disable_modes.append("recall.query_expansion_mode='off'")
+            else:
+                required_secrets["QUERY_EXPANSION_API_KEY"] = (
+                    query_expansion_line[2],
+                    ["recall.query_expansion_mode='off'"],
+                )
         if self.relation_discovery_mode != "off":
             llm_disable_modes.append("relation.discovery_mode='off'")
         if llm_disable_modes:
@@ -1033,6 +1084,9 @@ class Settings:
             "tag_candidate_limit": self.tag_candidate_limit,
             "query_expansion_mode": self.query_expansion_mode,
             "query_expansion_model": self.query_expansion_model,
+            "query_expansion_provider": self.query_expansion_provider,
+            "query_expansion_base_url": self.query_expansion_base_url,
+            "query_expansion_api_key_configured": bool(self.query_expansion_api_key),
             "query_expansion_max": self.query_expansion_max,
             "query_expansion_candidate_floor": self.query_expansion_candidate_floor,
             "query_expansion_token_ceiling": self.query_expansion_token_ceiling,

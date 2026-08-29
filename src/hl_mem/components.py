@@ -89,48 +89,58 @@ def make_image_describer(settings: Settings) -> ImageDescriberProtocol | None:
     )
 
 
+def _make_llm_provider(settings: Settings, provider_name: str) -> OpenAICompatibleProvider:
+    """按 provider 名称构造与主线路参数一致的适配器。"""
+    provider_types: dict[str, type[OpenAICompatibleProvider]] = {
+        "dashscope": DashScopeProvider,
+        "zhipu": ZhipuProvider,
+        "openai_compatible": OpenAICompatibleProvider,
+    }
+    provider_type = provider_types.get(provider_name)
+    if provider_type is None:
+        raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
+    if provider_type is DashScopeProvider:
+        return DashScopeProvider(
+            enable_thinking=settings.enable_llm_thinking,
+            max_tokens=settings.llm_max_tokens,
+        )
+    if provider_type is OpenAICompatibleProvider:
+        return OpenAICompatibleProvider(
+            enable_thinking=settings.enable_llm_thinking,
+            thinking_control=settings.llm_thinking_control,
+            max_tokens=settings.llm_max_tokens,
+        )
+    if provider_type is ZhipuProvider:
+        return ZhipuProvider(
+            max_tokens=settings.llm_max_tokens,
+            reasoning_effort=settings.llm_reasoning_effort,
+        )
+    return provider_type(max_tokens=settings.llm_max_tokens)
+
+
 def make_llm_client(
     settings: Settings,
     connection: sqlite3.Connection | None = None,
     *,
     operation: str = "other",
     model: str | None = None,
+    provider_name: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
     span_recorder: Any = None,
 ) -> LLMClient:
     """依据统一配置创建 provider 无关的 LLM 客户端。"""
-    if not settings.llm_api_key:
+    resolved_api_key = api_key if api_key is not None else settings.llm_api_key
+    if not resolved_api_key:
         raise ConfigurationError("LLM_API_KEY is required")
-    provider_types = {
-        "dashscope": DashScopeProvider,
-        "zhipu": ZhipuProvider,
-        "openai_compatible": OpenAICompatibleProvider,
-    }
-    provider_type = provider_types.get(settings.llm_provider)
-    if provider_type is None:
-        raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
-    provider: OpenAICompatibleProvider
-    if provider_type is DashScopeProvider:
-        provider = DashScopeProvider(
-            enable_thinking=settings.enable_llm_thinking,
-            max_tokens=settings.llm_max_tokens,
-        )
-    elif provider_type is OpenAICompatibleProvider:
-        provider = OpenAICompatibleProvider(
-            enable_thinking=settings.enable_llm_thinking,
-            thinking_control=settings.llm_thinking_control,
-            max_tokens=settings.llm_max_tokens,
-        )
-    elif provider_type is ZhipuProvider:
-        provider = ZhipuProvider(
-            max_tokens=settings.llm_max_tokens,
-            reasoning_effort=settings.llm_reasoning_effort,
-        )
-    else:
-        provider = provider_type(max_tokens=settings.llm_max_tokens)
+    provider = _make_llm_provider(
+        settings,
+        provider_name if provider_name is not None else settings.llm_provider,
+    )
     normalized_model = model.strip() if model is not None else None
     return LLMClient(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
+        api_key=resolved_api_key,
+        base_url=base_url if base_url is not None else settings.llm_base_url,
         model=normalized_model or settings.llm_model,
         provider=provider,
         timeout=httpx.Timeout(settings.llm_timeout),
@@ -181,9 +191,17 @@ def make_query_expander(
     span_recorder: Any = None,
 ) -> QueryExpander | None:
     """按模式构造查询扩展器；关闭时不创建 LLM 客户端。"""
+    line_overrides = settings.query_expansion_line_overrides()
     if settings.query_expansion_mode == "off" or settings.query_expansion_max == 0:
         _record_component_health("query_expander", settings.query_expansion_mode, "off")
         return None
+    client_overrides: dict[str, Any] = {}
+    if line_overrides is not None:
+        client_overrides = {
+            "provider_name": line_overrides[0],
+            "base_url": line_overrides[1],
+            "api_key": line_overrides[2],
+        }
     result = QueryExpander(
         make_llm_client(
             settings,
@@ -191,6 +209,7 @@ def make_query_expander(
             operation="query_expansion",
             model=settings.query_expansion_model,
             span_recorder=span_recorder,
+            **client_overrides,
         ),
         max_concurrency=settings.query_expansion_max_concurrency,
     )

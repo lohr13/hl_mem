@@ -286,6 +286,26 @@ def test_dotenv_secrets_are_overridden_only_by_same_process_names(tmp_path: Path
     assert settings.database_path == str((tmp_path / "var" / "hl_mem.db").resolve())
 
 
+def test_query_expansion_line_loads_from_recall_and_generic_secret_env(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "config.toml",
+        "\n".join(
+            (
+                "[recall]",
+                'query_expansion_provider = "dashscope"',
+                'query_expansion_base_url = "https://qe.example.com/v1"',
+            )
+        ),
+    )
+    env_path = _write(tmp_path / ".env", "QUERY_EXPANSION_API_KEY=qe-secret")
+
+    settings = load_settings(config_path, env_path, environ={})
+
+    assert settings.query_expansion_provider == "dashscope"
+    assert settings.query_expansion_base_url == "https://qe.example.com/v1"
+    assert settings.query_expansion_api_key == "qe-secret"
+
+
 def test_relative_database_path_uses_real_config_target_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

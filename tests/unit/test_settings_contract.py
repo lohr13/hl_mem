@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 213
+    assert len(fields(Settings)) == 216
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_reasoning_effort is None
     assert settings.llm_max_tokens is None
@@ -30,8 +30,11 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.image_describer_mode == "off"
     assert settings.query_expansion_mode == "auto"
     assert settings.query_expansion_model is None
-    assert settings.query_expansion_timeout_seconds == 5.0
-    assert settings.query_expansion_total_timeout_seconds == 6.0
+    assert settings.query_expansion_provider is None
+    assert settings.query_expansion_base_url is None
+    assert settings.query_expansion_api_key is None
+    assert settings.query_expansion_timeout_seconds == 15.0
+    assert settings.query_expansion_total_timeout_seconds == 16.0
     assert settings.relation_discovery_mode == "off"
     assert settings.resurrection_mode == "auto"
     assert settings.decay_model == "activation_halflife"
@@ -80,6 +83,25 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.snapshot()["echo_suppression_mode"] == "enforce"
     assert settings.freshness_annotation_mode == "render"
     assert settings.snapshot()["freshness_annotation_mode"] == "render"
+    assert settings.snapshot()["query_expansion_provider"] is None
+    assert settings.snapshot()["query_expansion_base_url"] is None
+    assert settings.snapshot()["query_expansion_api_key_configured"] is False
+
+
+def test_settings_snapshot_reports_query_expansion_secret_without_exposing_it() -> None:
+    settings = replace(
+        Settings(),
+        query_expansion_provider="dashscope",
+        query_expansion_base_url="https://qe.example.com/v1",
+        query_expansion_api_key="qe-secret",
+    )
+
+    snapshot = settings.snapshot()
+
+    assert snapshot["query_expansion_provider"] == "dashscope"
+    assert snapshot["query_expansion_base_url"] == "https://qe.example.com/v1"
+    assert snapshot["query_expansion_api_key_configured"] is True
+    assert "qe-secret" not in repr(snapshot)
 
 
 def test_settings_without_config_enable_injection_governance_by_default() -> None:

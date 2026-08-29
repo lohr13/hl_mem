@@ -69,8 +69,12 @@ resurrection_min_term_coverage = 0.8
 packed_context_token_budget = 2000
 query_expansion_mode = "auto"
 query_expansion_model = "glm-4.7"
-query_expansion_timeout_seconds = 5.0
-query_expansion_total_timeout_seconds = 6.0
+# Leave both fields and QUERY_EXPANSION_API_KEY unset to inherit the [llm] line.
+# For an independent line, set both fields and add QUERY_EXPANSION_API_KEY to .env.
+# query_expansion_provider = "dashscope"
+# query_expansion_base_url = "https://coding.dashscope.aliyuncs.com/v1"
+query_expansion_timeout_seconds = 15.0
+query_expansion_total_timeout_seconds = 16.0
 tag_channel_enabled = false
 relevance_gate_mode = "observe"
 relevance_reranker_floor = 0.15
