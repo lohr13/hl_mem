@@ -126,11 +126,10 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 56 immutable SQL migrations (001-056)
+│   └── migrations/           # 57 immutable SQL migrations (001-057)
 ├── workers/
 │   ├── worker.py             # Job leasing, progress, heartbeat, maintenance loop
-│   ├── auto_resolve_conflicts.py # Bounded L0/L2 conflict orchestration
-│   ├── conflict_judge.py     # Optional loopback-only structured judge client
+│   ├── auto_resolve_conflicts.py # Bounded deterministic L0 conflict orchestration
 │   ├── job_handlers.py       # Job handlers, registry, and dispatch boundary
 │   ├── integrity.py          # Bounded dangling-reference reporting
 │   ├── ttl.py                # Importance-aware expiry
@@ -305,9 +304,9 @@ not pairwise storage. Attaching a candidate and incrementing `revision` is atomi
 maintenance consumes a persistent dirty queue, processes only the current active generation under count/time budgets and
 per-case backoff, and uses the shared governance ledger plus revision/fingerprint CAS for every mutation. The v0.31
 release default is `conflict.auto_mode="l0_only"`: only the sealed 37/37 deterministic L0 rules may mutate Claims. L1 is
-disabled. The optional `[maintenance_judge]` client is not a production dependency and is never called in the default
-mode; users may run the packaged E1 replay equipment before explicitly enabling an L2 path. A stable
-`manual_required` case is not scanned or updated again until a trigger marks it dirty. Review returns the
+disabled, and gray cases become `manual_required`; `off` is the only non-mutating conflict mode. The retired
+`observe`/`enforce` values and built-in judge configuration fail closed during startup. A stable `manual_required` case is
+not scanned or updated again until a trigger marks it dirty. Review returns the
 generation, revision, and complete candidate set; select/reject requires `expected_revision`, with stale requests failing
 409 before mutation. Candidate counts above the configured auto threshold remain manual. The schema reserves generation
 boundaries for v0.29. When a group already has a terminal generation, an exact reassertion of its active winner only adds
@@ -437,7 +436,7 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 56 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 57 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used
@@ -449,7 +448,8 @@ review queue/cursor, and dirty triggers; migration 046 adds bounded-retention in
 pending dedup candidates. Migrations 047–049 add assertion kind and dedup injection provenance before removing the guarded
 legacy tags FTS table. Migrations 050–054 add the governance action ledger, conflict policy versioning, typed canonical
 entities and Claim links, plan outcomes, and slot-aware dedup strategy metadata. Migrations 055–056 add portable
-database-boundary auditing for Claim UPDATE/DELETE mutations. They run automatically on first open;
+database-boundary auditing for Claim UPDATE/DELETE mutations. Migration 057 retires non-terminal legacy conflict-judge
+jobs, clears their leases, and marks linked open cases dirty without modifying succeeded/dead history. They run automatically on first open;
 schema migration never adjudicates conflicts, applies dedup pairs, or closes plans. The optional `sqlite_vec.py` data migration owns the dimension-specific
 derived vector table; the default remains exact `sqlite_scan`.
 

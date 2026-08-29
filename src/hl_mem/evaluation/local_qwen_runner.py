@@ -76,7 +76,7 @@ class QwenLimits:
 
 @dataclass(frozen=True)
 class QwenRunConfig:
-    base_url: str = "http://127.0.0.1:8090/v1"
+    base_url: str | None = None
     model: str = "qwen3.8-27b-ud-iq4-xs"
     source_dir: str = "D:/qwen38-local/"
     prompt_version: str = "v030-judge-v1"
@@ -87,9 +87,10 @@ class QwenRunConfig:
     limits: QwenLimits = field(default_factory=QwenLimits)
 
     def __post_init__(self) -> None:
-        host = (urlparse(self.base_url).hostname or "").casefold()
-        if host not in {"127.0.0.1", "::1", "localhost"}:
-            raise ValueError("local qwen base_url must use loopback")
+        if self.base_url is not None:
+            host = (urlparse(self.base_url).hostname or "").casefold()
+            if host not in {"127.0.0.1", "::1", "localhost"}:
+                raise ValueError("local qwen base_url must use loopback")
         if self.enable_thinking:
             raise ValueError("enable_thinking must remain false")
         if self.limits.max_card_calls + 2 > self.limits.max_calls:
@@ -206,6 +207,8 @@ class LocalQwenRunner:
         config: QwenRunConfig | None = None,
     ) -> None:
         self.config = config or QwenRunConfig()
+        if transport is None and self.config.base_url is None:
+            raise ValueError("local qwen base_url is required when using HTTP transport")
         self.token_counter = token_counter
         self.transport = transport or self._http_transport
         self.payload_snapshots: list[dict[str, Any]] = []
@@ -276,7 +279,8 @@ class LocalQwenRunner:
             },
         }
         self.payload_snapshots.append(copy.deepcopy(request))
-        endpoint = f"{self.config.base_url.rstrip('/')}/chat/completions"
+        base_url = self.config.base_url
+        endpoint = f"{base_url.rstrip('/')}/chat/completions" if base_url is not None else "/chat/completions"
         raw = self.transport(endpoint, request)
         try:
             decoded = self._decode_response(raw, map_aliases=task != "evidence_card")

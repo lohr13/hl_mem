@@ -104,6 +104,41 @@ def test_release_example_config_matches_approved_modes() -> None:
     assert settings.entity_constraint_mode == "observe"
 
 
+@pytest.mark.parametrize("retired_mode", ("observe", "enforce"))
+def test_retired_conflict_auto_modes_are_rejected_fail_closed(tmp_path: Path, retired_mode: str) -> None:
+    config_path = _write(
+        tmp_path / f"retired-{retired_mode}.toml",
+        f'[conflict]\nauto_mode = "{retired_mode}"\n',
+    )
+
+    with pytest.raises(ConfigurationError) as caught:
+        load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert str(caught.value) == f"{config_path}: conflict.auto_mode: expected one of 'off', 'l0_only'"
+
+
+def test_retired_maintenance_judge_table_is_rejected_fail_closed(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "retired-maintenance-judge.toml",
+        '[maintenance_judge]\nbase_url = "http://127.0.0.1:8090/v1"\n',
+    )
+
+    with pytest.raises(ConfigurationError) as caught:
+        load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert str(caught.value) == f"{config_path}: maintenance_judge: unknown TOML table"
+
+
+@pytest.mark.parametrize("active_mode", ("off", "l0_only"))
+def test_supported_conflict_auto_modes_still_load(tmp_path: Path, active_mode: str) -> None:
+    config_path = _write(
+        tmp_path / f"supported-{active_mode}.toml",
+        f'[conflict]\nauto_mode = "{active_mode}"\n[recall]\nquery_expansion_mode = "off"\n',
+    )
+
+    assert load_settings(config_path, tmp_path / ".env", environ={}).conflict_auto_mode == active_mode
+
+
 def test_hermes_on_demand_recall_timeout_loads_from_toml(tmp_path: Path) -> None:
     config_path = _write(
         tmp_path / "hermes-timeout.toml",

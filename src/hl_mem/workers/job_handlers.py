@@ -105,10 +105,6 @@ def _handle_consolidate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _handle_resolve_conflict_llm(_worker: Worker, _job: dict[str, Any]) -> dict[str, Any]:
-    return {"status": "skipped", "reason": "retired_conflict_l2"}
-
-
 def _handle_reconcile_plan_result(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     from hl_mem.application.plan_fulfillment import PlanFulfillmentService
 
@@ -239,7 +235,6 @@ JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {
     "decay_access": _handle_decay,
     "rebuild_usefulness": _handle_rebuild_usefulness,
     "consolidate_conflicts": _handle_consolidate,
-    "resolve_conflict_llm": _handle_resolve_conflict_llm,
     "reconcile_plan_result": _handle_reconcile_plan_result,
     "deduplicate_claims": _handle_deduplicate,
     "discover_relations": _handle_discover_relations,

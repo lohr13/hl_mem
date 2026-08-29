@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 214
+    assert len(fields(Settings)) == 209
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_reasoning_effort is None
     assert settings.llm_max_tokens is None
@@ -47,8 +47,7 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.conflict_failure_backoff_seconds == 300
     assert settings.conflict_writer_yield_ms == 25
     assert settings.conflict_auto_resolve_max_candidates == 8
-    assert settings.maintenance_judge_base_url == "http://127.0.0.1:8090/v1"
-    assert settings.maintenance_judge_model == "Qwen3.8-27B-UD-IQ4_XS.gguf"
+    assert not any(settings_field.name.startswith("maintenance_judge_") for settings_field in fields(Settings))
     assert settings.price_target_mode == "enforce"
     assert settings.plan_fulfillment_mode == "enforce"
     assert settings.latest_wins_mode == "observe"
@@ -111,6 +110,12 @@ def test_settings_without_config_enable_injection_governance_by_default() -> Non
 
 def test_conflict_l0_only_mode_is_a_valid_configuration() -> None:
     replace(Settings.for_test(), conflict_auto_mode="l0_only").validate()
+
+
+@pytest.mark.parametrize("retired_mode", ("observe", "enforce"))
+def test_retired_conflict_modes_fail_programmatic_validation(retired_mode: str) -> None:
+    with pytest.raises(ConfigurationError, match="conflict.auto_mode must be 'off' or 'l0_only'"):
+        replace(Settings.for_test(), conflict_auto_mode=retired_mode).validate()  # type: ignore[arg-type]
 
 
 def test_settings_contract_includes_bypass_and_recall_fields() -> None:

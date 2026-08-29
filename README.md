@@ -291,6 +291,12 @@ hlmem backfill-index-text --mode natural --dry-run
 hlmem backfill-index-text --mode natural
 ```
 
+### 升级到 v0.36.0
+
+升级会应用仅向前的 migration 057：把遗留的非终态 `resolve_conflict_llm` job 标为 `dead`、清除租约，并把
+关联开放案重新标为 dirty，使其回到确定性 L0 或 `manual_required` 路径；既有 `succeeded`/`dead` 历史保持不变。
+内置冲突判官及其配置面已退役，`conflict.auto_mode` 仅接受 `l0_only` 与 `off`；旧值会在启动时 fail-closed。
+
 ### 升级到 v0.33.0
 
 v0.33.0 默认启用新的 coverage-first 提取 prompt，并把单 chunk Claim 上限提高到 30；触顶软拆分和残余修复仍
@@ -317,12 +323,12 @@ v0.31.0 新增 typed canonical entity、价格 canonical target、plan fulfillme
 `enforce`，冲突自动化为 `l0_only`；dedup 继续 `audit_only=true`，查询实体约束和 lesson signal 继续
 `observe`。Hermes 默认只在 session 首次或残留人工冲突计数变化时提示一次。
 
-生产运行不依赖常驻 LLM 判官。`[maintenance_judge]` 是纯可选配置，只用于用户自行回放、自验并显式选择的
-L2 路径；默认 `l0_only` 不调用它。所有自动修改均记录输入指纹和治理动作，紧急回退可分别设置：
+生产运行不依赖内置冲突判官。`l0_only` 只执行确定性 L0，灰区案进入 `manual_required`。所有自动修改均记录
+输入指纹和治理动作，紧急回退可分别设置：
 
 ```toml
 [conflict]
-auto_mode = "observe"
+auto_mode = "off"
 
 [plan]
 fulfillment_mode = "observe"
@@ -419,9 +425,9 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.35.1，共 56 个不可变、仅向前执行的 SQL Migration。migration 055–056 增加 Claim mutation
-审计账本触发器与可移植审计上下文；全部是仅向前的 additive 升级。升级前仍须停止写入者并备份主库与
-tombstone sidecar，旧二进制不得再打开已升级数据库。
+当前基线为 v0.35.1，共 57 个不可变、仅向前执行的 SQL Migration。migration 055–056 增加 Claim mutation 审计账本
+触发器与可移植审计上下文；migration 057 退役遗留的非终态冲突判官 job，并重新排队其关联开放案。升级前仍须
+停止写入者并备份主库与 tombstone sidecar，旧二进制不得再打开已升级数据库。
 
 ## 文档
 

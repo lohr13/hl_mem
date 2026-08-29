@@ -57,7 +57,7 @@ def _case(**extra: object) -> dict[str, object]:
 def test_config_is_fixed_to_loopback_non_thinking_safety_envelope() -> None:
     config = QwenRunConfig()
 
-    assert config.base_url == "http://127.0.0.1:8090/v1"
+    assert config.base_url is None
     assert config.source_dir == "D:/qwen38-local/"
     assert config.prompt_version == "v030-judge-v1"
     assert config.tokenizer_identity == "qwen3.8-gguf-embedded"
@@ -73,6 +73,18 @@ def test_config_is_fixed_to_loopback_non_thinking_safety_envelope() -> None:
         QwenRunConfig(base_url="https://example.com/v1")
     with pytest.raises(ValueError, match="enable_thinking"):
         QwenRunConfig(enable_thinking=True)
+
+
+def test_http_transport_requires_an_explicit_base_url() -> None:
+    with pytest.raises(ValueError, match="base_url is required when using HTTP transport"):
+        LocalQwenRunner(token_counter=_declared_tokens)
+
+    runner = LocalQwenRunner(
+        token_counter=_declared_tokens,
+        config=QwenRunConfig(base_url="http://127.0.0.1:18090/v1"),
+    )
+
+    assert runner.config.base_url == "http://127.0.0.1:18090/v1"
 
 
 def test_runner_disables_thinking_and_reverses_candidate_order() -> None:

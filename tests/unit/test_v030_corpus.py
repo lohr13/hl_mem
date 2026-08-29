@@ -202,6 +202,28 @@ def test_experiment_orchestrator_validates_all_six_manifests(
     assert len(output["manifest_set_sha256"]) == 64
 
 
+def test_qwen_experiment_requires_explicit_http_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(experiment_runner, "load_manifest", lambda _path: {})
+
+    with pytest.raises(SystemExit) as caught:
+        run_experiments(
+            [
+                "e3-v2",
+                "--manifest-dir",
+                str(tmp_path),
+                "--output-dir",
+                str(tmp_path / "output"),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "e3-v2 requires --qwen-base-url" in capsys.readouterr().err
+
+
 def _baseline_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     manifest_dir = tmp_path / "manifests"
     manifest_dir.mkdir()

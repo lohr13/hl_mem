@@ -129,7 +129,7 @@ conflict_writer_yield_ms = 5
 conflict_auto_resolve_max_candidates = 8
 
 [conflict]
-# E1 两轮封存后只执行确定性 L0；L1/L2 不进入生产默认路径。
+# 只执行确定性 L0；未命中规则的灰区案进入 manual_required。
 auto_mode = "l0_only"
 
 [price]

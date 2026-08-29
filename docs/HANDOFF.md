@@ -1,6 +1,6 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-29
+> 最后更新：2026-08-30
 
 ## 当前状态
 
@@ -10,7 +10,7 @@
 - **发布状态**：本地 commit，未 push、未打 tag、未部署
 - **服务**：FastAPI 默认监听 8200；非敏感配置只从工作目录 `hl_mem.toml` 读取
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：56 migrations（SQL 001–056），只允许向前迁移
+- **Schema**：57 migrations（SQL 001–057），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
 ## v0.33.0 发版默认
@@ -31,13 +31,13 @@
 | 查询实体约束 | `recall.entity_constraint_mode="observe"` | E4 行为过但证据全为 synthetic，production-shaped coverage 不足 |
 | Hermes 人工冲突提醒 | `hermes.manual_conflict_notice=true` | 只读 health；同 session 首次或计数变化提示一次 |
 
-生产没有常驻 LLM 判官依赖。`[maintenance_judge]` 为纯可选配置；默认 `l0_only` 不调用它。若用户要启用
-L2，须先用随包 E1 回放装备在自己的冻结语料上自验并显式改配置。
+生产没有内置冲突判官依赖。默认 `l0_only` 只执行确定性 L0，灰区案进入 `manual_required`；紧急停用使用
+`conflict.auto_mode="off"`。旧 `observe`/`enforce` 值及已退役的判官配置表会在启动时 fail-closed。
 
 ## 已交付能力
 
-- migration 055–056 为每次 Claim UPDATE/DELETE 增加数据库边界审计，记录 changed fields 与调用来源；空库按
-  migration → 审计上下文 trigger 的顺序初始化，避免首次启动找不到 `claims` 表。
+- migration 055–056 为每次 Claim UPDATE/DELETE 增加数据库边界审计，记录 changed fields 与调用来源；migration
+  057 把遗留非终态冲突判官 job 标为 dead、清租约，并重新 dirty 其关联开放案；已终态历史不改。
 - reclassify 跳过证据完备的 `report-version` 确定性探针；legacy slot backfill 注册同一组 SQLite 函数。
 - compact 提取改为 coverage-first 的 12–30 条高密度协议，schema `maxItems=30`；Zhipu 可显式透传
   `reasoning_effort`，通用 provider 支持可选 `max_tokens` 保险丝与 llama.cpp thinking 方言。
@@ -54,8 +54,8 @@ L2，须先用随包 E1 回放装备在自己的冻结语料上自验并显式�
 - `config.version` latest-wins 只接受可信 `status_report_v1` currentness proof；默认 observe，灰区并存且不建人工队列。
   `hl-mem report-version` 从包版本构造确定性事件与 Claim，不调用 LLM；`state.latest_wins_mode="off"` 可停止新建议和动作。
 - conflict、dedup、plan 共享输入 fingerprint、短事务 CAS、governance ledger 和有条件 rollback，但不共享领域决策枚举。
-- `l0_only` 运行时只调用 L0；L1 不进入维护路径，未命中 L0 的案稳定转 `manual_required` 且不建 L2 job。即使
-  jobs 表残留旧 L2 job，handler 也会在构造 judge 前返回 skipped。
+- `l0_only` 运行时只调用 L0；L1 不进入维护路径，未命中 L0 的案稳定转 `manual_required` 且不建判官 job。
+  migration 057 一次性退役残留 job，活动 handler 注册表不再接受该 job 类型。
 - query entity filter 只运行 observe shadow，不增加通道、boost 或 weight；lesson signal 只记录 qualifier/audit，不改变
   importance/scope。
 - `/healthz` 提供 residual `manual_required` 计数与年龄，Hermes plugin 2.1.0 提供 session 级 no-spam 提示；
@@ -80,7 +80,7 @@ L2，须先用随包 E1 回放装备在自己的冻结语料上自验并显式�
 
 ## 回滚边界
 
-- 设置 `conflict.auto_mode="observe"|"off"`、`plan.fulfillment_mode="observe"|"off"`、
+- 设置 `conflict.auto_mode="off"`、`plan.fulfillment_mode="observe"|"off"`、
   `price.target_mode="observe"|"off"` 可停止新 mutation；已有动作必须由 governance action 在 after fingerprint
   仍匹配时回滚，不能直接清空新列或覆盖后续 outcome。
 - `dedup.audit_only=true`、`extraction.lesson_signal_mode="observe"`、

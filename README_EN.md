@@ -202,6 +202,13 @@ python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-r
   --export-expanded-fixture var/eval/v0291-injection-fixture.jsonl
 ```
 
+### Upgrading to v0.36.0
+
+The forward-only migration 057 retires non-terminal `resolve_conflict_llm` jobs as `dead`, clears their leases, and marks
+linked open cases dirty so they return to deterministic L0 processing or `manual_required`. Existing `succeeded` and
+`dead` history is unchanged. The built-in conflict judge and its configuration surface are retired;
+`conflict.auto_mode` now accepts only `l0_only` and `off`, and old values fail closed during startup.
+
 ### Upgrading to v0.33.0
 
 v0.33.0 enables the coverage-first extraction prompt by default and raises the per-chunk Claim limit to 30; saturation
@@ -232,13 +239,13 @@ plan fulfillment and price targets use `enforce`, while conflict automation is r
 `audit_only=true`; query entity constraints and lesson signals remain in `observe`. Hermes emits at most one residual
 manual-conflict notice on first use or when the count changes within a session.
 
-Production has no resident LLM-judge dependency. `[maintenance_judge]` is optional equipment for user-run replay and an
-explicitly enabled L2 path; the default `l0_only` mode never calls it. Each automated mutation records its input fingerprint
-and governance action. These independent emergency overrides return the new paths to non-mutating modes:
+Production has no built-in conflict-judge dependency. The `l0_only` mode applies deterministic L0 rules and routes gray
+cases to `manual_required`. Each automated mutation records its input fingerprint and governance action. These independent
+emergency overrides return the new paths to non-mutating modes:
 
 ```toml
 [conflict]
-auto_mode = "observe"
+auto_mode = "off"
 
 [plan]
 fulfillment_mode = "observe"
@@ -339,9 +346,10 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.35.1 with 56 immutable, forward-only migrations. Migrations 055–056 add Claim-mutation audit
-triggers and portable audit context. Stop all writers and back up both the primary database and tombstone sidecar before
-upgrading; old binaries must not reopen an upgraded database.
+The current baseline is v0.35.1 with 57 immutable, forward-only migrations. Migrations 055–056 add Claim-mutation audit triggers
+and portable audit context; migration 057 retires non-terminal legacy conflict-judge jobs and requeues their linked open
+cases. Stop all writers and back up both the primary database and tombstone sidecar before upgrading; old binaries must
+not reopen an upgraded database.
 
 ## Documentation
 

@@ -46,7 +46,7 @@
 | 双时间与作用域过滤 | stable | `on` | 否 | 是 | 不降级；非法时间/作用域明确失败 | 保持历史查询、可见性与并发回归 |
 | TTL / decay / archive | stable | `auto` | 否 | 是 | 单 Job 失败可重试，CAS/事务避免部分更新 | 保持扫描完整性、双时间和访问 bonus 回归 |
 | Near-copy / semantic dedup | beta | 确定性摄入复用与召回折叠 `on`；维护 `audit_only=true` | 仅可选 judge 是 | 摄入可追加 evidence；维护只写 pair/review；召回折叠不写库 | typed entity、protected atom、slot/quantity/phase 任一守卫失败即保留独立 Claim；E2 sealed 时禁止物理 apply | auto floor arm 须达到 precision 100%、Wilson 下界 ≥96%、硬守卫违规 0、回滚 100%，且 recall 无显著退化 |
-| 冲突处理 | stable | `l0_only` | 默认否；L2 可选 | 是 | 只执行 37/37 sealed 精确的确定性 L0；L1 禁用；灰区留 `manual_required`，可选 judge 不可用不阻断维护 | 未来 L2 enforce 必须由用户用随包 E1 回放装备自验，且危险反向选择为 0；CAS/ledger/rollback 不变量持续全绿 |
+| 冲突处理 | stable | `l0_only` | 否 | 是 | 只执行 37/37 sealed 精确的确定性 L0；L1 禁用；灰区留 `manual_required`；紧急停用设为 `off` | CAS/ledger/rollback 不变量持续全绿，人工裁决接口保持 fail-closed |
 | 删除完整性 | stable | `on` | 否 | 是，主库 + 独立 tombstone sidecar | forget/cleanup/restore 共用删除闭包；账本失败、状态歧义、manifest/ledger 错配时 fail-closed，不静默降级 | P0 状态/共享 Event/关系两端矩阵、幂等 replay、恢复中断续跑和三入口 dangling=0 持续全绿 |
 | Episode / Trace | stable | `on` | 否 | 是 | 不影响 Claim 主通道；非法状态转换明确失败 | 保持 API、状态机、reward 与 usefulness 回归 |
 | Policy / Procedure 归纳 | beta | `auto`（定时 Job） | 是 | 是 | 归纳失败保留 Episode，Job 可重试且不发布新策略 | 多 Episode 支撑、成功率、退役与审计指标达到阈值 |

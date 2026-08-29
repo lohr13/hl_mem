@@ -650,7 +650,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--recall-baseline", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--arm", default="A")
-    parser.add_argument("--qwen-base-url", default="http://127.0.0.1:8090/v1")
+    parser.add_argument("--qwen-base-url")
     parser.add_argument("--qwen-model", default="Qwen3.8-27B-UD-IQ4_XS.gguf")
     parser.add_argument("--model-file", type=Path)
     parser.add_argument("--model-sha256")
@@ -711,6 +711,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if experiment == "e4":
             report = run_e4_v2(manifest)
         else:
+            if args.qwen_base_url is None:
+                parser.error(f"{args.phase} requires --qwen-base-url")
             from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner, QwenLimits, QwenRunConfig
 
             runner = LocalQwenRunner(
@@ -793,6 +795,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         if args.output_dir is None:
             parser.error(f"{args.phase} requires --output-dir")
+        if args.qwen_base_url is None:
+            parser.error(f"{args.phase} requires --qwen-base-url")
         from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner, QwenLimits, QwenRunConfig
 
         experiment = args.phase.split("-", 1)[0]

@@ -6,7 +6,6 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.errors import ConfigurationError
@@ -37,7 +36,7 @@ ImageDescriberMode = Literal["off", "on"]
 ImageDescriberProvider = Literal["dashscope"]
 IndexTextMode = Literal["legacy", "value_only", "natural", "answerable"]
 FtsLanguage = Literal["auto", "zh", "en"]
-ConflictAutoMode = Literal["off", "observe", "enforce", "l0_only"]
+ConflictAutoMode = Literal["off", "l0_only"]
 PriceTargetMode = Literal["off", "audit", "observe", "enforce"]
 PlanFulfillmentMode = Literal["off", "audit", "observe", "enforce"]
 EntityConstraintMode = Literal["off", "observe", "enforce"]
@@ -84,13 +83,8 @@ def _validate_runtime_modes(settings: "Settings") -> None:
         raise ConfigurationError("recall.entity_constraint_mode must be 'off', 'observe', or 'enforce'")
     if settings.lesson_signal_mode not in {"off", "observe", "enforce"}:
         raise ConfigurationError("extraction.lesson_signal_mode must be 'off', 'observe', or 'enforce'")
-    if settings.conflict_auto_mode not in {"off", "observe", "enforce", "l0_only"}:
-        raise ConfigurationError("conflict.auto_mode must be 'off', 'observe', 'enforce', or 'l0_only'")
-    judge_host = (urlparse(settings.maintenance_judge_base_url).hostname or "").casefold()
-    if judge_host not in {"127.0.0.1", "::1", "localhost"}:
-        raise ConfigurationError("maintenance_judge.base_url must use loopback")
-    if settings.maintenance_judge_timeout_seconds <= 0:
-        raise ConfigurationError("maintenance_judge.timeout_seconds must be positive")
+    if settings.conflict_auto_mode not in {"off", "l0_only"}:
+        raise ConfigurationError("conflict.auto_mode must be 'off' or 'l0_only'")
 
 
 @dataclass(frozen=True)
@@ -456,13 +450,6 @@ class Settings:
         default=8,
         metadata={"toml": "worker.conflict_auto_resolve_max_candidates"},
     )
-    maintenance_judge_base_url: str = _toml_field("http://127.0.0.1:8090/v1", "maintenance_judge.base_url")
-    maintenance_judge_model: str = _toml_field("Qwen3.8-27B-UD-IQ4_XS.gguf", "maintenance_judge.model")
-    maintenance_judge_prompt_version: str = _toml_field("conflict-auto-v1", "maintenance_judge.prompt_version")
-    maintenance_judge_tokenizer_identity: str = _toml_field(
-        "qwen3.8-gguf-embedded", "maintenance_judge.tokenizer_identity"
-    )
-    maintenance_judge_timeout_seconds: float = _toml_field(90.0, "maintenance_judge.timeout_seconds")
     worker_job_lease_minutes: int = field(default=5, metadata={"toml": "worker.job_lease_minutes"})
     daily_token_limit: int = field(default=500000, metadata={"toml": "worker.daily_token_limit"})
     audit_retention_days: int = field(default=30, metadata={"toml": "worker.audit_retention_days"})
@@ -1128,11 +1115,6 @@ class Settings:
             "conflict_failure_backoff_seconds": self.conflict_failure_backoff_seconds,
             "conflict_writer_yield_ms": self.conflict_writer_yield_ms,
             "conflict_auto_resolve_max_candidates": self.conflict_auto_resolve_max_candidates,
-            "maintenance_judge_base_url": self.maintenance_judge_base_url,
-            "maintenance_judge_model": self.maintenance_judge_model,
-            "maintenance_judge_prompt_version": self.maintenance_judge_prompt_version,
-            "maintenance_judge_tokenizer_identity": self.maintenance_judge_tokenizer_identity,
-            "maintenance_judge_timeout_seconds": self.maintenance_judge_timeout_seconds,
             "operational_cleanup_enabled": self.operational_cleanup_enabled,
             "operational_batch_size": self.operational_batch_size,
             "job_succeeded_days": self.job_succeeded_days,

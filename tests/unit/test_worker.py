@@ -581,7 +581,7 @@ def test_maintenance_passes_conflict_budget_and_records_result(monkeypatch, tmp_
             conflict_maintenance_budget_ms=321,
             conflict_failure_backoff_seconds=45,
             conflict_writer_yield_ms=0,
-            conflict_auto_mode="observe",
+            conflict_auto_mode="l0_only",
         ),
         worker_runtime=runtime,
     )

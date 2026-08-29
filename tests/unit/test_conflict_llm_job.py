@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.auto_resolve_conflicts import auto_resolve_conflicts
@@ -93,20 +91,5 @@ def test_l0_decisive_case_still_applies(tmp_path: Path) -> None:
     assert tuple(connection.execute("SELECT tier,status FROM governance_actions").fetchone()) == ("L0", "applied")
 
 
-def test_retired_l2_job_handler_skips_without_runtime_dependencies(tmp_path: Path) -> None:
-    connection = Database(tmp_path / "retired-job.db").open()
-    worker = SimpleNamespace(connection=connection)
-
-    result = JOB_HANDLERS["resolve_conflict_llm"](
-        worker,
-        {"payload": {"case_id": "stale-case", "application_mode": "enforce"}},
-    )
-
-    assert result == {"status": "skipped", "reason": "retired_conflict_l2"}
-
-
-def test_maintenance_judge_configuration_remains_parseable_during_b1() -> None:
-    settings = Settings.for_test()
-
-    assert settings.conflict_auto_mode == "l0_only"
-    assert settings.maintenance_judge_base_url == "http://127.0.0.1:8090/v1"
+def test_retired_l2_job_handler_is_removed_from_active_registry() -> None:
+    assert "resolve_conflict_llm" not in JOB_HANDLERS

@@ -8,8 +8,7 @@ v0.35.1 的受限 assertion 门控没有配置键；存量 `unknown` 只可观�
 
 ## 合并版发版决议
 
-- `conflict.auto_mode="l0_only"`：E1 两轮均封存；生产仅执行确定性 L0，L1 禁用，L2 只保留为用户配置
-  `[maintenance_judge]` 后自行回放验证的可选能力。紧急停用可设为 `off`，只观察可设为 `observe`。
+- `conflict.auto_mode="l0_only"`：生产仅执行确定性 L0；灰区案进入 `manual_required`。紧急停用可设为 `off`。
 - `plan.fulfillment_mode="enforce"`：E5 A 臂严格确定性规则通过，错误关闭为 0；回滚开关为 `observe` 或 `off`。
 - `price.target_mode="enforce"`：E6 B 臂 exact code / typed alias 通过；缺 target、跨市场歧义、币种或单位不一致仍
   fail-closed。回滚开关为 `observe` 或 `off`。
@@ -138,7 +137,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
-| `conflict.auto_mode` | 字符串 | `"l0_only"` | `off`、`observe`、`enforce`、`l0_only` | `conflict_auto_mode` |
+| `conflict.auto_mode` | 字符串 | `"l0_only"` | `off`、`l0_only` | `conflict_auto_mode` |
 
 ### `[database]`
 
@@ -284,33 +283,6 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 `chat_template_kwargs = {enable_thinking = ...}`，直接使用 `json_object` 结构化输出，并仅剥离 JSON 前的空
 `<think>...</think>` 块。该兼容模式面向 llama.cpp 等本地 OpenAI-compatible 端点。
 `llm.reasoning_effort` 仅在显式配置时作为顶层字段发送给 Zhipu；默认未设置，不改变其他 provider 请求体。
-
-### `[maintenance_judge]`
-
-| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
-|---|---|---|---|---|
-| `maintenance_judge.base_url` | 字符串 | `"http://127.0.0.1:8090/v1"` | loopback OpenAI-compatible `/v1` 端点 | `maintenance_judge_base_url` |
-| `maintenance_judge.model` | 字符串 | `"Qwen3.8-27B-UD-IQ4_XS.gguf"` | 端点提供的模型名 | `maintenance_judge_model` |
-| `maintenance_judge.prompt_version` | 字符串 | `"conflict-auto-v1"` | 非空版本标识 | `maintenance_judge_prompt_version` |
-| `maintenance_judge.timeout_seconds` | 数值 | `90.0` | > 0 | `maintenance_judge_timeout_seconds` |
-| `maintenance_judge.tokenizer_identity` | 字符串 | `"qwen3.8-gguf-embedded"` | 非空 tokenizer 标识 | `maintenance_judge_tokenizer_identity` |
-
-`[maintenance_judge]` 是可选的冲突 backlog 判官配置，不属于摄取 LLM。生产发布配置使用
-`conflict.auto_mode = "l0_only"`，不配置本段时没有常驻 AI 旁听或生产 LLM 依赖；模糊案保留为
-`manual_required`，可由 Hermes 的一次性提示暴露。
-
-端点可以承载任意 OpenAI-compatible 判官和更强模型；非本机服务应先通过 loopback-only 网关暴露，避免维护
-进程直接依赖公网地址。需要定时裁决 backlog 时，先用随包 E1 装备对冻结 70 案自验：
-
-```powershell
-.venv/Scripts/python.exe scripts/run_v030_experiments.py e1 `
-  --manifest-dir ~/hl_mem_docs/evaluations/v030/manifests `
-  --output-dir ~/hl_mem_docs/evaluations/v030/e1-user-replay `
-  --e1-replay-overlay ~/hl_mem_docs/evaluations/v030/manifests/e1_replay_overlay_v2.json
-```
-
-只有用户自己的 replay 达到预注册门禁且逐案报告可审计后，才由用户自行把 L2 调度切到 enforce；配置本段本身
-不会启用 L1 或 L2。L1 保持禁用，紧急回滚直接恢复 `conflict.auto_mode = "l0_only"`。
 
 ### `[plan]`
 
