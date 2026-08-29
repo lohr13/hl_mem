@@ -15,11 +15,9 @@ from hl_mem.application.conflict_invariants import (
 from hl_mem.application.conflict_queries import (
     OPEN_CASE_STATUSES,
     ConflictQueryService,
-)
-from hl_mem.application.conflict_queries import follow_claim_tip as _follow_tip
-from hl_mem.application.conflict_queries import (
     load_conflict_case,
 )
+from hl_mem.application.conflict_queries import follow_claim_tip as _follow_tip
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.governance import CONFLICT_AUTO_POLICY_VERSION
 from hl_mem.errors import ConflictResolutionError
@@ -34,8 +32,10 @@ __all__ = [
     "CONFLICT_AUTO_POLICY_VERSION",
     "CONFLICT_HUMAN_POLICY_VERSION",
     "DEFAULT_HUMAN_RESOLVER",
+    "OPEN_CASE_STATUSES",
     "ResolutionService",
     "StaleConflictDecision",
+    "_follow_tip",
     "upgrade_conflict_auto_policy",
 ]
 
