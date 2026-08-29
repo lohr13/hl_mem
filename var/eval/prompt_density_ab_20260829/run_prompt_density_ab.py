@@ -197,20 +197,29 @@ def response_schema(arm: str) -> dict[str, Any]:
     return schema
 
 
-def build_payload(messages: Sequence[Mapping[str, str]], *, arm: str, language: str) -> dict[str, Any]:
+def build_payload(
+    messages: Sequence[Mapping[str, str]],
+    *,
+    arm: str,
+    language: str,
+    thinking_budget: int | None = None,
+) -> dict[str, Any]:
     schema = response_schema(arm)
     full_messages = [{"role": "system", "content": system_prompt(language, arm)}]
     full_messages.extend({"role": str(item["role"]), "content": str(item["content"])} for item in messages)
-    return {
+    payload = {
         "model": MODEL,
         "messages": full_messages,
-        "enable_thinking": ENABLE_THINKING,
+        "enable_thinking": ENABLE_THINKING or thinking_budget is not None,
         "max_tokens": MAX_TOKENS,
         "response_format": {
             "type": "json_schema",
             "json_schema": {"name": "extraction_response", "schema": schema, "strict": True},
         },
     }
+    if thinking_budget is not None:
+        payload["thinking_budget"] = thinking_budget
+    return payload
 
 
 class BudgetGuard:
@@ -820,10 +829,13 @@ def _execute_arm(
     case: Mapping[str, Any],
     runtime: Mapping[str, Any],
     arm: str,
+    thinking_budget: int | None = None,
 ) -> dict[str, Any]:
     case_id = str(case["case_id"])
     request_id = f"{case_id}:{arm}"
-    payload = build_payload(runtime["messages"], arm=arm, language=str(runtime["language"]))
+    payload = build_payload(
+        runtime["messages"], arm=arm, language=str(runtime["language"]), thinking_budget=thinking_budget
+    )
     worst_case = worst_case_request_cost(payload)
     base = {
         "protocol_id": PROTOCOL_ID,
@@ -851,6 +863,8 @@ def _execute_arm(
             "schema_sha256": sha256_text(canonical_json(response_schema(arm))),
         },
     }
+    if thinking_budget is not None:
+        base["configuration"].update({"enable_thinking": True, "thinking_budget": thinking_budget})
     if not budget.try_reserve(request_id, worst_case):
         return {
             **base,
