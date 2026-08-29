@@ -329,6 +329,396 @@
         "title": "ConflictCandidateOutput",
         "type": "object"
       },
+      "ConflictCaseListOutput": {
+        "description": "分页的未闭合冲突列表。",
+        "properties": {
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictCaseSummaryOutput"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ConflictCaseListOutput",
+        "type": "object"
+      },
+      "ConflictCaseSummaryOutput": {
+        "description": "未闭合冲突列表中的轮询摘要。",
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "group_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Key"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slot"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "status",
+          "created_at",
+          "namespace",
+          "revision"
+        ],
+        "title": "ConflictCaseSummaryOutput",
+        "type": "object"
+      },
+      "ConflictDossierCandidateOutput": {
+        "description": "group case 的 canonical candidate 及其全部成员 Claim。",
+        "properties": {
+          "candidate_key": {
+            "title": "Candidate Key",
+            "type": "string"
+          },
+          "canonical_value_json": {
+            "title": "Canonical Value Json",
+            "type": "string"
+          },
+          "member_claims": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictDossierClaimOutput"
+            },
+            "title": "Member Claims",
+            "type": "array"
+          },
+          "representative_claim_id": {
+            "title": "Representative Claim Id",
+            "type": "string"
+          },
+          "support_count": {
+            "minimum": 1.0,
+            "title": "Support Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_key",
+          "representative_claim_id",
+          "support_count",
+          "canonical_value_json"
+        ],
+        "title": "ConflictDossierCandidateOutput",
+        "type": "object"
+      },
+      "ConflictDossierClaimOutput": {
+        "description": "宿主 agent 裁决所需的完整 Claim 字段。",
+        "properties": {
+          "assertion_kind": {
+            "title": "Assertion Kind",
+            "type": "string"
+          },
+          "canonical_slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Slot"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "evidence_links": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictEvidenceOutput"
+            },
+            "title": "Evidence Links",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At"
+          },
+          "source_authority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Authority"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_entity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Entity Id"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "value",
+          "assertion_kind",
+          "status"
+        ],
+        "title": "ConflictDossierClaimOutput",
+        "type": "object"
+      },
+      "ConflictDossierOutput": {
+        "description": "pair/group 共用的宿主裁决案卷。",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictDossierCandidateOutput"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "group_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Key"
+          },
+          "left_claim": {
+            "$ref": "#/components/schemas/ConflictDossierClaimOutput"
+          },
+          "namespace_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace Key"
+          },
+          "overflow": {
+            "title": "Overflow",
+            "type": "boolean"
+          },
+          "pair_key": {
+            "title": "Pair Key",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "right_claim": {
+            "$ref": "#/components/schemas/ConflictDossierClaimOutput"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "pair_key",
+          "status",
+          "created_at",
+          "revision",
+          "overflow",
+          "left_claim",
+          "right_claim"
+        ],
+        "title": "ConflictDossierOutput",
+        "type": "object"
+      },
+      "ConflictEvidenceOutput": {
+        "description": "Claim 的有界证据链接及可用的来源事件摘要。",
+        "properties": {
+          "content_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Json"
+          },
+          "event_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Type"
+          },
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "evidence_type": {
+            "title": "Evidence Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "relation": {
+            "title": "Relation",
+            "type": "string"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          }
+        },
+        "required": [
+          "id",
+          "evidence_type",
+          "evidence_id",
+          "relation"
+        ],
+        "title": "ConflictEvidenceOutput",
+        "type": "object"
+      },
       "ConflictResolutionInput": {
         "description": "基于审核 revision 的组级候选操作。",
         "properties": {
@@ -867,6 +1257,20 @@
           }
         },
         "title": "EpisodeUpdate",
+        "type": "object"
+      },
+      "ErrorOutput": {
+        "description": "REST 错误响应。",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorOutput",
         "type": "object"
       },
       "EventBatchInput": {
@@ -2098,6 +2502,76 @@
         "summary": "Healthz"
       }
     },
+    "/v1/conflicts": {
+      "get": {
+        "description": "分页返回可供宿主 agent 轮询的未闭合冲突。",
+        "operationId": "list_open_conflicts_v1_conflicts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictCaseListOutput"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Open Conflicts"
+      }
+    },
     "/v1/conflicts/{case_id}": {
       "get": {
         "description": "返回 group-native case 的完整候选 revision 快照。",
@@ -2136,6 +2610,66 @@
           }
         },
         "summary": "Review Conflict"
+      }
+    },
+    "/v1/conflicts/{case_id}/dossier": {
+      "get": {
+        "description": "返回 pair/group 共用的完整裁决案卷。",
+        "operationId": "conflict_dossier_v1_conflicts__case_id__dossier_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictDossierOutput"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOutput"
+                }
+              }
+            },
+            "description": "Conflict case not found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOutput"
+                }
+              }
+            },
+            "description": "Conflict dossier response exceeds the fixed size limit"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Conflict Dossier"
       }
     },
     "/v1/conflicts/{case_id}/resolve": {

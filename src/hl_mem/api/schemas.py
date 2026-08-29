@@ -366,6 +366,89 @@ class ConflictResolutionOutput(BaseModel):
     resolved_at: str | None = None
 
 
+class ErrorOutput(BaseModel):
+    """REST 错误响应。"""
+
+    detail: str
+
+
+class ConflictEvidenceOutput(BaseModel):
+    """Claim 的有界证据链接及可用的来源事件摘要。"""
+
+    id: str
+    evidence_type: str
+    evidence_id: str
+    relation: str
+    weight: float | None = None
+    event_type: str | None = None
+    occurred_at: str | None = None
+    content_json: str | None = None
+
+
+class ConflictDossierClaimOutput(BaseModel):
+    """宿主 agent 裁决所需的完整 Claim 字段。"""
+
+    id: str
+    canonical_slot: str | None = None
+    value: Any
+    subject_entity_id: str | None = None
+    assertion_kind: str
+    confidence: float | None = None
+    source_authority: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    observed_at: str | None = None
+    status: str
+    evidence_links: list[ConflictEvidenceOutput] = Field(default_factory=list)
+
+
+class ConflictDossierCandidateOutput(BaseModel):
+    """group case 的 canonical candidate 及其全部成员 Claim。"""
+
+    candidate_key: str
+    representative_claim_id: str
+    support_count: int = Field(ge=1)
+    canonical_value_json: str
+    member_claims: list[ConflictDossierClaimOutput] = Field(default_factory=list)
+
+
+class ConflictDossierOutput(BaseModel):
+    """pair/group 共用的宿主裁决案卷。"""
+
+    case_id: str
+    pair_key: str
+    status: str
+    created_at: str
+    revision: int = Field(ge=0)
+    namespace_key: str | None = None
+    group_key: str | None = None
+    overflow: bool
+    left_claim: ConflictDossierClaimOutput
+    right_claim: ConflictDossierClaimOutput
+    candidates: list[ConflictDossierCandidateOutput] = Field(default_factory=list)
+
+
+class ConflictCaseSummaryOutput(BaseModel):
+    """未闭合冲突列表中的轮询摘要。"""
+
+    case_id: str
+    status: str
+    created_at: str
+    namespace: str
+    group_key: str | None = None
+    slot: str | None = None
+    revision: int = Field(ge=0)
+
+
+class ConflictCaseListOutput(BaseModel):
+    """分页的未闭合冲突列表。"""
+
+    cases: list[ConflictCaseSummaryOutput] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+
+
 class EpisodeInput(NamespaceInput):
     """创建 Episode 的请求。"""
 
