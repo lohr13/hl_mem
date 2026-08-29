@@ -1,0 +1,214 @@
+{
+  "overall_passed": false,
+  "expected_cases": 26,
+  "expected_arm_cases": 52,
+  "present_arm_cases": 52,
+  "missing_arm_cases": [],
+  "gates": [
+    {
+      "gate_id": "dense_12_claims",
+      "label": "B 臂高密度案 claim 数",
+      "measured": {
+        "qualifying_cases": 14,
+        "dense_cases": 20
+      },
+      "threshold": "20 案中至少 18 案 >=12 claims",
+      "passed": false
+    },
+    {
+      "gate_id": "latency_p50",
+      "label": "B 臂延迟 p50",
+      "measured": 15.287975549988914,
+      "threshold": "<=60s",
+      "passed": true
+    },
+    {
+      "gate_id": "latency_p95",
+      "label": "B 臂延迟 p95",
+      "measured": 31.47182259998226,
+      "threshold": "<=90s",
+      "passed": true
+    },
+    {
+      "gate_id": "requests_per_arm_case",
+      "label": "请求数/arm-case",
+      "measured": 1.0,
+      "threshold": "<=1.2",
+      "passed": true
+    },
+    {
+      "gate_id": "reasoning_tokens",
+      "label": "reasoning tokens",
+      "measured": {
+        "nonzero_records": 0,
+        "missing_arm_cases": 0
+      },
+      "threshold": "全部为 0",
+      "passed": true
+    },
+    {
+      "gate_id": "output_tokens_p95",
+      "label": "B 臂输出 tokens p95",
+      "measured": 3742.75,
+      "threshold": "<=4000",
+      "passed": true
+    },
+    {
+      "gate_id": "cost_mean",
+      "label": "B 臂平均成本/案",
+      "measured": 0.007351253846153845,
+      "threshold": "<=¥0.02",
+      "passed": true
+    },
+    {
+      "gate_id": "schema_success",
+      "label": "严格 schema 成功率",
+      "measured": 1.0,
+      "threshold": ">=95%",
+      "passed": true
+    },
+    {
+      "gate_id": "configuration_integrity",
+      "label": "运行记录配置冻结完整性",
+      "measured": {
+        "mismatch_count": 0,
+        "mismatches": []
+      },
+      "threshold": "52 arm-cases 全部与 manifest 配置一致",
+      "passed": true
+    },
+    {
+      "gate_id": "duplicate_rate",
+      "label": "B 臂案内重复率",
+      "measured": {
+        "duplicate_rate": 0.0,
+        "duplicates": 0,
+        "claims": 344
+      },
+      "threshold": "<=2%",
+      "passed": true
+    },
+    {
+      "gate_id": "key_fact_quality",
+      "label": "5 案关键事实覆盖与虚构",
+      "measured": {
+        "reviewed_cases": 5,
+        "covered": 27,
+        "total": 50,
+        "coverage": 0.54,
+        "hallucinated_claims": 0,
+        "details_valid": true,
+        "aggregate_consistent": true
+      },
+      "threshold": "5 案、coverage>=90%、hallucination=0",
+      "passed": false
+    },
+    {
+      "gate_id": "short_no_padding",
+      "label": "6 个短事件零凑数",
+      "measured": {
+        "reviewed_cases": 6,
+        "padding_claims": 0,
+        "details_valid": true,
+        "aggregate_consistent": true
+      },
+      "threshold": "6 案、padding=0",
+      "passed": true
+    },
+    {
+      "gate_id": "run_metadata_integrity",
+      "label": "运行 metadata 输入绑定",
+      "measured": {
+        "passed": true,
+        "mismatches": [],
+        "expected": {
+          "protocol_id": "prompt_density_ab_20260829_v1",
+          "manifest_sha256": "15b85acfedf0e4f4bdd5923b2369f0e23a54eb9ac1ea6b4d735283d72d3b5fc9",
+          "gold_definition_sha256": "983890fc12e76df71699031551ee622af2afa7449eda8ed5d7c9eec350661977"
+        }
+      },
+      "threshold": "metadata 存在且 protocol/manifest/gold 与本次判分输入一致",
+      "passed": true
+    },
+    {
+      "gate_id": "gold_freeze_integrity",
+      "label": "盲审 gold 冻结完整性",
+      "measured": {
+        "pre_run": "983890fc12e76df71699031551ee622af2afa7449eda8ed5d7c9eec350661977",
+        "score_time": "983890fc12e76df71699031551ee622af2afa7449eda8ed5d7c9eec350661977"
+      },
+      "threshold": "pre-run hash == score-time hash",
+      "passed": true
+    }
+  ],
+  "arms": {
+    "A": {
+      "expected_arm_cases": 26,
+      "present_arm_cases": 26,
+      "schema_valid_cases": 26,
+      "schema_success_rate": 1.0,
+      "latency_p50_seconds": 10.78050059999805,
+      "latency_p95_seconds": 23.269140800024616,
+      "claim_count_mean": 8.615384615384615,
+      "claim_count_p50": 8.0,
+      "output_tokens_p95": 2488.75,
+      "cost_total_cny": 0.14012739999999999,
+      "cost_mean_per_expected_case_cny": 0.005389515384615384,
+      "duplicate_count": 0,
+      "claim_total_for_duplicates": 224,
+      "duplicate_rate": 0.0
+    },
+    "B": {
+      "expected_arm_cases": 26,
+      "present_arm_cases": 26,
+      "schema_valid_cases": 26,
+      "schema_success_rate": 1.0,
+      "latency_p50_seconds": 15.287975549988914,
+      "latency_p95_seconds": 31.47182259998226,
+      "claim_count_mean": 13.23076923076923,
+      "claim_count_p50": 13.0,
+      "output_tokens_p95": 3742.75,
+      "cost_total_cny": 0.19113259999999999,
+      "cost_mean_per_expected_case_cny": 0.007351253846153845,
+      "duplicate_count": 0,
+      "claim_total_for_duplicates": 344,
+      "duplicate_rate": 0.0
+    }
+  },
+  "cost": {
+    "total_cny": 0.33126,
+    "A_cny": 0.14012739999999999,
+    "B_cny": 0.19113259999999999,
+    "pricing_basis": "provider usage × frozen official China (Beijing) list price"
+  },
+  "protocol_id": "prompt_density_ab_20260829_v1",
+  "scored_at": "2026-08-29T00:54:28.317556+00:00",
+  "manifest_sha256": "15b85acfedf0e4f4bdd5923b2369f0e23a54eb9ac1ea6b4d735283d72d3b5fc9",
+  "runs_sha256": "9a7874308005d9483dc87307c424492f4e1ff1892f6131849427ee2c5bce1319",
+  "manual_review_sha256": "ca8deebf2a079112cc25628c16ccf1ffb8f29a2c4cdbcca2cd3ff22151709513",
+  "gold_definition_sha256": "983890fc12e76df71699031551ee622af2afa7449eda8ed5d7c9eec350661977",
+  "run_metadata": {
+    "protocol_id": "prompt_density_ab_20260829_v1",
+    "updated_at": "2026-08-29T00:40:55.240218+00:00",
+    "manifest_sha256": "15b85acfedf0e4f4bdd5923b2369f0e23a54eb9ac1ea6b4d735283d72d3b5fc9",
+    "gold_definition_sha256": "983890fc12e76df71699031551ee622af2afa7449eda8ed5d7c9eec350661977",
+    "early_stop": {
+      "paired_cases": 10,
+      "b_cases_at_least_12_claims": 8,
+      "b_latency_p50_seconds": 18.100840950006386,
+      "passed": true,
+      "stop_reasons": []
+    },
+    "budget": {
+      "spent_cny": 0.3312599999999999,
+      "reserved_cny": 0,
+      "outstanding_requests": 0,
+      "soft_stop_reached": false,
+      "hard_limit_cny": 1.0
+    },
+    "stopped": false,
+    "stop_reason": null,
+    "completed_pair_count": 26
+  },
+  "run_metadata_sha256": "1ed58de53bc0353696afd877033303197388aeff89c7898c17256ffdfa91823b"
+}
