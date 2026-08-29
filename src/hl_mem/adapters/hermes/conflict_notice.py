@@ -11,6 +11,8 @@ from hl_mem.adapters.hermes.http_client import HLMemHttpClient
 
 logger = logging.getLogger(__name__)
 
+MAX_TRACKED_SESSIONS = 256
+
 
 class ManualConflictNotice:
     def __init__(self, enabled: bool, ttl_seconds: float) -> None:
@@ -43,9 +45,15 @@ class ManualConflictNotice:
         session = session_id or "<process>"
         previous = self._last_notified_by_session.get(session)
         self._last_notified_by_session[session] = count
+        if len(self._last_notified_by_session) > MAX_TRACKED_SESSIONS:
+            oldest_session = next(iter(self._last_notified_by_session))
+            del self._last_notified_by_session[oldest_session]
         if count <= 0 or previous == count:
             return None
         return f"hl_mem 仍有 {count} 个低置信真两难冲突未自动收敛；需要时可查看冲突列表。"
+
+    def forget_session(self, session_id: str) -> None:
+        self._last_notified_by_session.pop(session_id or "<process>", None)
 
     def _refresh(
         self,

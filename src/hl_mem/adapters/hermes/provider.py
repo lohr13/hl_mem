@@ -615,6 +615,7 @@ class HLMemProvider:
     ) -> None:
         """处理 Hermes 会话结束钩子。"""
         session_id = str(kwargs.get("session_id") or self._session_id)
+        self._conflict_notice.forget_session(session_id)
         self.flush_delivery_receipts(session_id=session_id)
         self._prefetch_cache.invalidate_session(session_id)
         with self._delivery_lock:
