@@ -304,7 +304,7 @@ class EntailmentSettingsTests(unittest.TestCase):
     def test_settings_adds_disabled_verification_mode(self) -> None:
         settings = Settings()
 
-        self.assertEqual(len(fields(Settings)), 216)
+        self.assertEqual(len(fields(Settings)), 214)
         self.assertEqual(settings.verification_mode, "off")
         self.assertEqual(settings.snapshot()["verification_mode"], "off")
 
