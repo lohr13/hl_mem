@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from hl_mem.application.answerability import Answerability
+from hl_mem.application.conflicts import DEFAULT_HUMAN_RESOLVER
 from hl_mem.domain.recall import RecallIntent
 from hl_mem.recall.injection import DEFAULT_POLICY_VERSIONS
 
@@ -351,6 +352,7 @@ class ConflictResolutionInput(BaseModel):
     candidate_key: str = Field(min_length=1, max_length=50000)
     expected_revision: int = Field(ge=0)
     rationale: str | None = Field(default=None, max_length=5000)
+    resolver: str = Field(default=DEFAULT_HUMAN_RESOLVER, min_length=1, max_length=200)
 
 
 class ConflictResolutionOutput(BaseModel):

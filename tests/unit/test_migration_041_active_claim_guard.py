@@ -128,7 +128,7 @@ def test_migration_041_allows_resolution_and_repair_legal_paths(tmp_path) -> Non
         }
     )
 
-    ResolutionService(connection).resolve("case", "keep_left", resolved_at=NOW)
+    ResolutionService(connection).resolve("case", "keep_left", resolved_at=NOW, expected_revision=0)
 
     assert repository.get_claim("left")["status"] == "active"
     assert repository.get_claim("right")["status"] == "superseded"

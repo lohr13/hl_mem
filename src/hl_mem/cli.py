@@ -24,7 +24,7 @@ from hl_mem.application.conflict_repairs import (
     inspect_dangling_conflicts,
 )
 from hl_mem.application.conflict_repairs import repair_dangling_conflicts as apply_dangling_conflict_repair
-from hl_mem.application.conflicts import ResolutionService
+from hl_mem.application.conflicts import DEFAULT_HUMAN_RESOLVER, ResolutionService
 from hl_mem.application.dedup_backlog import (
     drain_below_floor_pairs,
     inspect_below_floor_pairs,
@@ -325,6 +325,7 @@ def resolve_conflict(
     *,
     rationale: str | None = None,
     expected_revision: int | None = None,
+    resolver: str = DEFAULT_HUMAN_RESOLVER,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """通过组级应用服务收敛指定冲突案例。"""
@@ -335,6 +336,7 @@ def resolve_conflict(
             decision,
             rationale=rationale,
             expected_revision=expected_revision,
+            resolver=resolver,
         )
     finally:
         database.close()
@@ -537,7 +539,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     resolve.add_argument("case_id")
     resolve.add_argument("decision", choices=("keep_left", "keep_right", "coexist", "reject"))
     resolve.add_argument("--rationale")
-    resolve.add_argument("--expected-revision", type=int)
+    resolve.add_argument("--expected-revision", type=int, required=True)
+    resolve.add_argument("--resolver", default=DEFAULT_HUMAN_RESOLVER)
     repair_dangling = conflict_commands.add_parser("repair-dangling")
     repair_dangling.add_argument("--apply", action="store_true")
     repair_invalid = conflict_commands.add_parser("repair-invalid-groups")
@@ -722,6 +725,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 args.decision,
                 rationale=args.rationale,
                 expected_revision=args.expected_revision,
+                resolver=args.resolver,
                 settings=settings,
             )
         elif args.conflict_command == "repair-dangling":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -186,6 +187,8 @@ def test_reject_candidate_removes_only_that_candidate_and_keeps_case_open(tmp_pa
                 "action": "reject_candidate",
                 "candidate_key": '"8082"',
                 "expected_revision": review["revision"],
+                "rationale": "operator rejected stale port",
+                "resolver": "agent:rest-reviewer",
             },
         )
 
@@ -205,4 +208,66 @@ def test_reject_candidate_removes_only_that_candidate_and_keeps_case_open(tmp_pa
         ).fetchone()[0]
         == 2
     )
+    action = connection.execute("SELECT * FROM governance_actions WHERE subject_ref=?", (case_id,)).fetchone()
+    assert action is not None
+    assert (action["decision"], action["resolution_rule"], action["resolver_model"]) == (
+        "reject_candidate",
+        "operator rejected stale port",
+        "agent:rest-reviewer",
+    )
+    before = json.loads(action["before_json"])
+    after = json.loads(action["after_json"])
+    assert before["candidate_key"] == '"8082"'
+    assert before["rationale"] == "operator rejected stale port"
+    assert after["revision"] == review["revision"] + 1
+    assert after["revision"] > before["revision"]
     database.close()
+
+
+def test_terminal_group_resolution_retry_preserves_state_and_audit_count(tmp_path: Path) -> None:
+    path = tmp_path / "terminal-retry.db"
+    case_id, winner_key = _seed(path)
+    payload = {
+        "action": "select_candidate",
+        "candidate_key": winner_key,
+        "expected_revision": 2,
+        "rationale": "reviewed once",
+        "resolver": "agent:rest-reviewer",
+    }
+    with TestClient(server.create_app(path)) as client:
+        first = client.post(f"/v1/conflicts/{case_id}/resolve", json=payload)
+        assert first.status_code == 200
+        payload["expected_revision"] = first.json()["revision"]
+
+        database = Database(path)
+        connection = database.open()
+        before_case = tuple(
+            connection.execute(
+                "SELECT status,decision,rationale,resolved_at,revision FROM conflict_cases WHERE id=?",
+                (case_id,),
+            ).fetchone()
+        )
+        before_actions = connection.execute(
+            "SELECT count(*) FROM governance_actions WHERE subject_ref=?",
+            (case_id,),
+        ).fetchone()[0]
+        database.close()
+
+        retry = client.post(f"/v1/conflicts/{case_id}/resolve", json=payload)
+
+    assert retry.status_code == 200
+    database = Database(path)
+    connection = database.open()
+    after_case = tuple(
+        connection.execute(
+            "SELECT status,decision,rationale,resolved_at,revision FROM conflict_cases WHERE id=?",
+            (case_id,),
+        ).fetchone()
+    )
+    after_actions = connection.execute(
+        "SELECT count(*) FROM governance_actions WHERE subject_ref=?",
+        (case_id,),
+    ).fetchone()[0]
+    assert after_case == before_case
+    assert after_actions == before_actions == 1
+    connection.close()

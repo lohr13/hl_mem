@@ -220,7 +220,12 @@ def test_resolution_postcondition_violation_rolls_back_group_mutations(tmp_path)
     _insert_dangling_case(connection)
 
     with pytest.raises(ConflictResolutionError, match="dangling conflict reference"):
-        ResolutionService(connection).resolve("case", "keep_left", resolved_at=NOW)
+        ResolutionService(connection).resolve(
+            "case",
+            "keep_left",
+            resolved_at=NOW,
+            expected_revision=connection.execute("SELECT revision FROM conflict_cases WHERE id='case'").fetchone()[0],
+        )
 
     assert repository.get_claim("left")["status"] == "disputed"
     assert repository.get_claim("right")["status"] == "disputed"

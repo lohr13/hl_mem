@@ -128,7 +128,7 @@ def test_cli_keep_left_supersedes_loser_atomically(tmp_path) -> None:
     )
     _manual_conflict(repository)
 
-    result = resolve_conflict(path, "case", "keep_left")
+    result = resolve_conflict(path, "case", "keep_left", expected_revision=0)
 
     assert repository.get_claim("left")["status"] == "active"
     loser = repository.get_claim("right")
@@ -165,7 +165,7 @@ def test_cli_keep_left_does_not_mutate_terminal_loser(tmp_path) -> None:
     )
     _manual_conflict(repository)
 
-    resolve_conflict(path, "case", "keep_left")
+    resolve_conflict(path, "case", "keep_left", expected_revision=0)
 
     loser = repository.get_claim("right")
     assert (loser["status"], loser["superseded_by_id"], loser["valid_to"], loser["recorded_to"]) == (
@@ -209,6 +209,8 @@ def test_cli_resolve_passes_rationale_to_resolution_service(tmp_path, capsys, mo
             "keep_left",
             "--rationale",
             "人工确认 SQLite 是当前配置",
+            "--expected-revision",
+            "0",
         ]
     )
 

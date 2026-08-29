@@ -752,6 +752,13 @@
               }
             ],
             "title": "Rationale"
+          },
+          "resolver": {
+            "default": "agent:hermes-local",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Resolver",
+            "type": "string"
           }
         },
         "required": [

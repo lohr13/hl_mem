@@ -84,6 +84,10 @@ def _orphan_disputed_ids(connection) -> list[str]:
     return [str(row["id"]) for row in rows]
 
 
+def _revision(connection: sqlite3.Connection, case_id: str) -> int:
+    return int(connection.execute("SELECT revision FROM conflict_cases WHERE id=?", (case_id,)).fetchone()[0])
+
+
 def test_exclusive_group_rejects_coexist_with_remediation_reason(tmp_path) -> None:
     connection, repository = _exclusive_group(tmp_path)
 
@@ -91,7 +95,12 @@ def test_exclusive_group_rejects_coexist_with_remediation_reason(tmp_path) -> No
         ConflictResolutionError,
         match="应共存需先修正 slot/qualifier 使脱离同 conflict key",
     ):
-        ResolutionService(connection).resolve("case-left-right", "coexist", resolved_at=NOW)
+        ResolutionService(connection).resolve(
+            "case-left-right",
+            "coexist",
+            resolved_at=NOW,
+            expected_revision=_revision(connection, "case-left-right"),
+        )
 
     assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right", "third")} == {
         "candidate",
@@ -107,7 +116,12 @@ def test_exclusive_group_rejects_reject_with_remediation_reason(tmp_path) -> Non
         ConflictResolutionError,
         match="拒绝冲突需先修正 slot/qualifier 使脱离同 conflict key",
     ):
-        ResolutionService(connection).resolve("case-left-right", "reject", resolved_at=NOW)
+        ResolutionService(connection).resolve(
+            "case-left-right",
+            "reject",
+            resolved_at=NOW,
+            expected_revision=_revision(connection, "case-left-right"),
+        )
 
     assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right", "third")} == {
         "candidate",
@@ -119,7 +133,12 @@ def test_exclusive_group_rejects_reject_with_remediation_reason(tmp_path) -> Non
 def test_keep_left_converges_group_and_closes_every_overlapping_open_case(tmp_path) -> None:
     connection, repository = _exclusive_group(tmp_path)
 
-    result = ResolutionService(connection).resolve("case-left-right", "keep_left", resolved_at=NOW)
+    result = ResolutionService(connection).resolve(
+        "case-left-right",
+        "keep_left",
+        resolved_at=NOW,
+        expected_revision=_revision(connection, "case-left-right"),
+    )
 
     assert result["winner_id"] == "left"
     assert result["closed_case_ids"] == [
@@ -149,6 +168,7 @@ def test_keep_left_propagates_rationale_to_every_closed_group_case(tmp_path) -> 
         "keep_left",
         resolved_at=NOW,
         rationale="人工核对配置记录后保留 8080",
+        expected_revision=_revision(connection, "case-left-right"),
     )
 
     rows = connection.execute("SELECT id,rationale FROM conflict_cases ORDER BY id").fetchall()
@@ -162,7 +182,12 @@ def test_resolution_without_rationale_preserves_each_open_case_value(tmp_path) -
     connection.execute("UPDATE conflict_cases SET rationale='right-third evidence' WHERE id='case-right-third'")
     connection.commit()
 
-    ResolutionService(connection).resolve("case-left-right", "keep_left", resolved_at=NOW)
+    ResolutionService(connection).resolve(
+        "case-left-right",
+        "keep_left",
+        resolved_at=NOW,
+        expected_revision=_revision(connection, "case-left-right"),
+    )
 
     rows = connection.execute("SELECT id,rationale FROM conflict_cases ORDER BY id").fetchall()
     assert {row["id"]: row["rationale"] for row in rows} == {
@@ -180,9 +205,15 @@ def test_terminal_replay_without_rationale_preserves_group_values(tmp_path) -> N
         "keep_left",
         resolved_at=NOW,
         rationale="original rationale",
+        expected_revision=_revision(connection, "case-left-right"),
     )
 
-    service.resolve("case-left-right", "keep_left", resolved_at="later")
+    service.resolve(
+        "case-left-right",
+        "keep_left",
+        resolved_at="later",
+        expected_revision=_revision(connection, "case-left-right"),
+    )
 
     rows = connection.execute("SELECT rationale FROM conflict_cases").fetchall()
     assert {row["rationale"] for row in rows} == {"original rationale"}
@@ -196,6 +227,7 @@ def test_terminal_replay_with_matching_decision_replaces_group_rationale(tmp_pat
         "keep_left",
         resolved_at=NOW,
         rationale="original rationale",
+        expected_revision=_revision(connection, "case-left-right"),
     )
 
     service.resolve(
@@ -203,6 +235,7 @@ def test_terminal_replay_with_matching_decision_replaces_group_rationale(tmp_pat
         "keep_left",
         resolved_at="later",
         rationale="reviewed rationale",
+        expected_revision=_revision(connection, "case-left-right"),
     )
 
     rows = connection.execute("SELECT rationale FROM conflict_cases").fetchall()
@@ -217,6 +250,7 @@ def test_terminal_replay_with_different_decision_does_not_replace_rationale(tmp_
         "keep_left",
         resolved_at=NOW,
         rationale="original rationale",
+        expected_revision=_revision(connection, "case-left-right"),
     )
 
     with pytest.raises(ConflictResolutionError, match="different decision"):
@@ -225,6 +259,7 @@ def test_terminal_replay_with_different_decision_does_not_replace_rationale(tmp_
             "keep_right",
             resolved_at="later",
             rationale="must not be stored",
+            expected_revision=_revision(connection, "case-left-right"),
         )
 
     rows = connection.execute("SELECT rationale FROM conflict_cases").fetchall()
@@ -235,9 +270,19 @@ def test_terminal_replay_with_different_decision_does_not_replace_rationale(tmp_
 def test_group_winner_case_retry_returns_established_winner(tmp_path, retry_decision) -> None:
     connection, _ = _exclusive_group(tmp_path)
     service = ResolutionService(connection)
-    service.resolve("case-left-right", "keep_left", resolved_at=NOW)
+    service.resolve(
+        "case-left-right",
+        "keep_left",
+        resolved_at=NOW,
+        expected_revision=_revision(connection, "case-left-right"),
+    )
 
-    result = service.resolve("case-right-third", retry_decision, resolved_at="later")
+    result = service.resolve(
+        "case-right-third",
+        retry_decision,
+        resolved_at="later",
+        expected_revision=_revision(connection, "case-right-third"),
+    )
 
     assert result["status"] == "resolved"
     assert result["winner_id"] == "left"
@@ -259,6 +304,7 @@ def test_group_resolution_rolls_back_when_overlapping_case_close_fails(tmp_path)
             "keep_left",
             resolved_at=NOW,
             rationale="must roll back with the group",
+            expected_revision=_revision(connection, "case-left-right"),
         )
 
     assert {claim_id: repository.get_claim(claim_id)["status"] for claim_id in ("left", "right", "third")} == {
@@ -277,7 +323,12 @@ def test_nonexclusive_pair_can_coexist(tmp_path) -> None:
     _claim(repository, "right", value="beta", slot=None, conflict_key=None)
     _case(repository, "case", "left", "right")
 
-    result = ResolutionService(connection).resolve("case", "coexist", resolved_at=NOW)
+    result = ResolutionService(connection).resolve(
+        "case",
+        "coexist",
+        resolved_at=NOW,
+        expected_revision=_revision(connection, "case"),
+    )
 
     assert result["decision"] == "coexist"
     assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right")} == {"active"}
@@ -292,7 +343,12 @@ def test_nonexclusive_reject_restores_both_claims_and_leaves_no_orphans(tmp_path
     _claim(repository, "right", value="beta", slot=None, conflict_key=None)
     _case(repository, "case", "left", "right")
 
-    result = ResolutionService(connection).resolve("case", "reject", resolved_at=NOW)
+    result = ResolutionService(connection).resolve(
+        "case",
+        "reject",
+        resolved_at=NOW,
+        expected_revision=_revision(connection, "case"),
+    )
 
     assert result["status"] == "rejected"
     assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right")} == {"active"}
@@ -310,7 +366,12 @@ def test_reject_orphan_postcondition_violation_rolls_back(tmp_path) -> None:
     _case(repository, "case", "left", "right")
 
     with pytest.raises(ConflictResolutionError, match="orphan disputed claim: unrelated-orphan"):
-        ResolutionService(connection).resolve("case", "reject", resolved_at=NOW)
+        ResolutionService(connection).resolve(
+            "case",
+            "reject",
+            resolved_at=NOW,
+            expected_revision=_revision(connection, "case"),
+        )
 
     assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right")} == {"disputed"}
     assert connection.execute("SELECT status FROM conflict_cases WHERE id='case'").fetchone()[0] == "manual_required"

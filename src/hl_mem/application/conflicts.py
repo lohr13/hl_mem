@@ -13,17 +13,25 @@ from hl_mem.application.conflict_invariants import (
     assert_no_orphan_disputed_claims,
 )
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
-from hl_mem.domain.governance import CONFLICT_AUTO_POLICY_VERSION
+from hl_mem.domain.governance import (
+    CONFLICT_AUTO_POLICY_VERSION,
+    DecisionEnvelope,
+    snapshot_fingerprint,
+)
 from hl_mem.errors import ConflictResolutionError
 from hl_mem.lifecycle import assert_transition
 from hl_mem.storage.claims import ClaimRepository
-from hl_mem.storage.governance import upgrade_conflict_auto_policy
+from hl_mem.storage.governance import GovernanceActionRepository, upgrade_conflict_auto_policy
 
 OPEN_CASE_STATUSES = ("pending", "auto_resolved", "manual_required")
 NONTERMINAL_CLAIM_STATUSES = frozenset({"active", "candidate", "disputed"})
 SUPPORTED_DECISIONS = frozenset({"keep_left", "keep_right", "coexist", "reject"})
+CONFLICT_HUMAN_POLICY_VERSION = "conflict-human-resolution-v1"
+DEFAULT_HUMAN_RESOLVER = "agent:hermes-local"
 __all__ = [
     "CONFLICT_AUTO_POLICY_VERSION",
+    "CONFLICT_HUMAN_POLICY_VERSION",
+    "DEFAULT_HUMAN_RESOLVER",
     "ResolutionService",
     "StaleConflictDecision",
     "upgrade_conflict_auto_policy",
@@ -66,19 +74,24 @@ class ResolutionService:
         resolved_at: str | None = None,
         rationale: str | None = None,
         expected_revision: int | None = None,
+        resolver: str | None = None,
         local_postconditions: bool = False,
     ) -> dict[str, Any]:
         if decision not in SUPPORTED_DECISIONS:
             raise ConflictResolutionError(f"unsupported conflict decision: {decision}")
         timestamp = resolved_at or datetime.now(timezone.utc).isoformat()
+        action_at = timestamp
         effective_rationale = rationale if rationale and rationale.strip() else None
+        effective_resolver = self._normalize_resolver(resolver)
         owns_transaction = not self.connection.in_transaction
         if owns_transaction:
             self.connection.execute("BEGIN IMMEDIATE")
         try:
             case = self._load_case(case_id)
-            if case.get("group_key") is not None:
+            if not (local_postconditions and expected_revision is None):
                 self._assert_expected_revision(case, expected_revision)
+            before_revision = int(case.get("revision") or 0)
+            before_status = str(case["status"])
             left = self._load_claim(str(case["left_claim_id"]))
             right = self._load_claim(str(case["right_claim_id"]))
             exclusive_group = self._is_exclusive_group(left, right)
@@ -144,6 +157,23 @@ class ResolutionService:
                 )
             if decision == "reject" and not local_postconditions:
                 assert_no_orphan_disputed_claims(self.connection)
+            if effective_resolver is not None:
+                current = self.connection.execute(
+                    "SELECT revision,status FROM conflict_cases WHERE id=?",
+                    (case_id,),
+                ).fetchone()
+                self._record_human_action(
+                    case_id=case_id,
+                    decision=decision,
+                    candidate_key=None,
+                    rationale=effective_rationale,
+                    resolver=effective_resolver,
+                    before_revision=before_revision,
+                    after_revision=int(current["revision"]),
+                    before_status=before_status,
+                    after_status=str(current["status"]),
+                    timestamp=action_at,
+                )
             if owns_transaction:
                 self.connection.commit()
         except Exception:
@@ -262,6 +292,7 @@ class ResolutionService:
         expected_revision: int,
         resolved_at: str | None = None,
         rationale: str | None = None,
+        resolver: str | None = None,
         local_postconditions: bool = False,
     ) -> dict[str, Any]:
         """以乐观 revision guard 选择或拒绝一个 group candidate。"""
@@ -269,6 +300,8 @@ class ResolutionService:
         if action not in {"select_candidate", "reject_candidate"}:
             raise ConflictResolutionError(f"unsupported group conflict action: {action}")
         timestamp = resolved_at or datetime.now(timezone.utc).isoformat()
+        effective_rationale = rationale if rationale and rationale.strip() else None
+        effective_resolver = self._normalize_resolver(resolver)
         owns_transaction = not self.connection.in_transaction
         if owns_transaction:
             self.connection.execute("BEGIN IMMEDIATE")
@@ -277,6 +310,8 @@ class ResolutionService:
             if case.get("group_key") is None or case.get("namespace_key") is None:
                 raise ConflictResolutionError(f"conflict case is not group-native: {case_id}")
             self._assert_expected_revision(case, expected_revision)
+            before_revision = int(case.get("revision") or 0)
+            before_status = str(case["status"])
             candidate = self.connection.execute(
                 "SELECT * FROM conflict_case_candidates WHERE case_id=? AND candidate_key=?",
                 (case_id, candidate_key),
@@ -284,7 +319,27 @@ class ResolutionService:
             if candidate is None:
                 raise ConflictResolutionError(f"conflict candidate not found: {case_id}:{candidate_key}")
             winner_id: str | None = None
-            if action == "select_candidate":
+            terminal_replay = case["status"] in {"resolved", "rejected"}
+            if terminal_replay:
+                if (
+                    action != "select_candidate"
+                    or case["status"] != "resolved"
+                    or case.get("decision") != "select_candidate"
+                    or not case.get("resolved_at")
+                ):
+                    raise ConflictResolutionError(
+                        f"terminal conflict case has a different group decision: {case_id} ({case.get('decision')})"
+                    )
+                left = self._load_claim(str(case["left_claim_id"]))
+                right = self._load_claim(str(case["right_claim_id"]))
+                group_claims = self._load_group_claims(left, right, True)
+                winner_id = self._established_group_winner(case, group_claims)
+                if str(candidate["representative_claim_id"]) != winner_id:
+                    raise ConflictResolutionError(
+                        f"terminal conflict case has a different group winner: {case_id} ({winner_id})"
+                    )
+                status = "resolved"
+            elif action == "select_candidate":
                 winner_id = str(candidate["representative_claim_id"])
                 left = self._load_claim(str(case["left_claim_id"]))
                 right = self._load_claim(str(case["right_claim_id"]))
@@ -295,7 +350,7 @@ class ResolutionService:
                     "resolved",
                     "select_candidate",
                     timestamp,
-                    rationale,
+                    effective_rationale,
                 )
                 status = "resolved"
             else:
@@ -320,7 +375,9 @@ class ResolutionService:
                     if cursor.rowcount != 1:
                         raise ConflictResolutionError(f"conflict candidate member changed: {claim['id']}")
                 status = "manual_required"
-            if local_postconditions:
+            if terminal_replay:
+                pass
+            elif local_postconditions:
                 assert_conflict_case_postconditions(
                     self.connection,
                     case_id=case_id,
@@ -342,6 +399,19 @@ class ResolutionService:
                 "SELECT revision,status,resolved_at FROM conflict_cases WHERE id=?",
                 (case_id,),
             ).fetchone()
+            if effective_resolver is not None and not terminal_replay:
+                self._record_human_action(
+                    case_id=case_id,
+                    decision=action,
+                    candidate_key=candidate_key,
+                    rationale=effective_rationale,
+                    resolver=effective_resolver,
+                    before_revision=before_revision,
+                    after_revision=int(current["revision"]),
+                    before_status=before_status,
+                    after_status=str(current["status"]),
+                    timestamp=timestamp,
+                )
             if owns_transaction:
                 self.connection.commit()
         except Exception:
@@ -363,11 +433,77 @@ class ResolutionService:
     def _assert_expected_revision(case: dict[str, Any], expected_revision: int | None) -> None:
         current_revision = int(case.get("revision") or 0)
         if expected_revision is None:
-            raise ConflictResolutionError(f"expected_revision is required for group conflict case: {case['id']}")
+            raise ConflictResolutionError(f"expected_revision is required for conflict case: {case['id']}")
         if expected_revision != current_revision:
             raise ConflictResolutionError(
                 f"stale conflict revision: expected {expected_revision}, current {current_revision}"
             )
+
+    @staticmethod
+    def _normalize_resolver(resolver: str | None) -> str | None:
+        if resolver is None:
+            return None
+        normalized = resolver.strip()
+        if not normalized:
+            raise ConflictResolutionError("resolver must not be empty")
+        if len(normalized) > 200:
+            raise ConflictResolutionError("resolver must not exceed 200 characters")
+        return normalized
+
+    def _record_human_action(
+        self,
+        *,
+        case_id: str,
+        decision: str,
+        candidate_key: str | None,
+        rationale: str | None,
+        resolver: str,
+        before_revision: int,
+        after_revision: int,
+        before_status: str,
+        after_status: str,
+        timestamp: str,
+    ) -> None:
+        action = {
+            "case_id": case_id,
+            "decision": decision,
+            "candidate_key": candidate_key,
+            "rationale": rationale,
+            "resolver": resolver,
+        }
+        envelope = DecisionEnvelope(
+            domain="conflict",
+            subject_ref=case_id,
+            input_fingerprint=snapshot_fingerprint(
+                {
+                    **action,
+                    "case_status": before_status,
+                    "revision": before_revision,
+                }
+            ),
+            policy_version=CONFLICT_HUMAN_POLICY_VERSION,
+            tier="human",
+            decision=decision,
+            confidence=None,
+            resolution_rule=rationale or "manual_resolution",
+            resolver_model=resolver,
+        )
+        GovernanceActionRepository(self.connection).record(
+            envelope,
+            before={
+                **action,
+                "case_status": before_status,
+                "revision": before_revision,
+            },
+            after={
+                **action,
+                "case_status": after_status,
+                "revision": after_revision,
+            },
+            status="applied",
+            created_at=timestamp,
+            applied_at=timestamp,
+        )
 
     def _load_case(self, case_id: str) -> dict[str, Any]:
         row = self.connection.execute("SELECT * FROM conflict_cases WHERE id=?", (case_id,)).fetchone()

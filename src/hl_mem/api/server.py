@@ -361,6 +361,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             candidate_key=payload.candidate_key,
             expected_revision=payload.expected_revision,
             rationale=payload.rationale,
+            resolver=payload.resolver,
         )
 
     @app.post("/v1/events")
