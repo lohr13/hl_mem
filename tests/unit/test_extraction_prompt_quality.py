@@ -20,9 +20,29 @@ class ExtractionPromptQualityTest(unittest.TestCase):
             '"evidence_quote"',
             '"source_event_indices"',
             "confidence",
-            "max 20 claims per chunk",
+            "max 30 claims per chunk",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
+
+    def test_prompts_use_validated_density_arm_copy(self) -> None:
+        zh_lines = (
+            "- 覆盖优先：先逐项扫描全文，再输出所有有证据、可独立回答的原子事实；高密度长文通常应产出 12–30 条，不要在已有少量 claim 时提前停止。",
+            "- 数量由原文决定：短文可以只有 0–少量；禁止为接近 12 或 30 而重复、拆碎同一事实、概括填充或虚构。",
+        )
+        en_lines = (
+            "- Coverage first: scan the full source and emit every supported independently answerable atomic fact; a dense long source will often yield 12–30 claims, so do not stop after only a few.",
+            "- Let the source determine the count: a short source may yield zero or only a few; never repeat, fragment, pad, generalize, or invent facts to approach 12 or 30.",
+        )
+
+        for expected in zh_lines:
+            self.assertEqual(SYSTEM_PROMPT.count(expected), 1)
+        for expected in en_lines:
+            self.assertEqual(ENGLISH_SYSTEM_PROMPT.count(expected), 1)
+        self.assertIn(f"{zh_lines[1]}\n限制：", SYSTEM_PROMPT)
+        self.assertIn(f"{en_lines[1]}\nLimits:", ENGLISH_SYSTEM_PROMPT)
+        self.assertIn("Maximum 30 claims per chunk", ENGLISH_SYSTEM_PROMPT)
+        self.assertNotIn("max 20 claims per chunk", SYSTEM_PROMPT)
+        self.assertNotIn("Maximum 20 claims per chunk", ENGLISH_SYSTEM_PROMPT)
 
     def test_prompt_defines_all_six_kinds(self) -> None:
         for expected in (

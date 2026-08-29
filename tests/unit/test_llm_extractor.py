@@ -251,7 +251,7 @@ def test_extract_metrics_count_schema_retries_and_repairs(caplog) -> None:
 
 def test_exact_claim_limit_emits_possible_under_extraction_audit() -> None:
     """恰好命中 schema 上限时应告警可能存在模型自行省略。"""
-    values = [f"The user recorded collection item {index} with quantity {index + 1}" for index in range(20)]
+    values = [f"The user recorded collection item {index} with quantity {index + 1}" for index in range(30)]
     raw = json.dumps(
         {
             "claims": [
@@ -275,7 +275,7 @@ def test_exact_claim_limit_emits_possible_under_extraction_audit() -> None:
     with audit_scope(audit):
         claims = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract(source)
 
-    assert len(claims) == 20
+    assert len(claims) == 30
     warnings = [event for event in audit.events if event[1] == "possible_under_extraction"]
     assert warnings == [
         (
@@ -283,8 +283,8 @@ def test_exact_claim_limit_emits_possible_under_extraction_audit() -> None:
             "possible_under_extraction",
             "claim_limit_reached",
             {
-                "claim_count": 20,
-                "schema_limit": 20,
+                "claim_count": 30,
+                "schema_limit": 30,
                 "chunk_index": 0,
                 "start_unit": 0,
                 "end_unit": 1,

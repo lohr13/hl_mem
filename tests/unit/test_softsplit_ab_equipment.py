@@ -255,9 +255,9 @@ def _balanced_source(left_values: list[str], right_values: list[str]) -> str:
 
 def test_runner_replays_control_root_and_records_three_treatment_requests() -> None:
     runner = _load_module("run_ab")
-    left = [f"left fact {index:02d}" for index in range(20)]
-    right = [f"right fact {index:02d}" for index in range(20)]
-    root = left[:10] + right[:10]
+    left = [f"left fact {index:02d}" for index in range(30)]
+    right = [f"right fact {index:02d}" for index in range(30)]
+    root = left[:15] + right[:15]
     clients = iter(
         [
             _SequenceClient([_response(root)]),
@@ -286,7 +286,7 @@ def test_runner_replays_control_root_and_records_three_treatment_requests() -> N
     assert len(record["control"]["requests"]) == 1
     assert len(record["treatment"]["requests"]) == 3
     assert record["treatment"]["requests"][0]["cache_hit"] is True
-    assert record["comparison"]["net_new_after_split"] == 20
+    assert record["comparison"]["net_new_after_split"] == 30
     assert record["treatment"]["request_summary"] == {
         "expected_count": 3,
         "observed_count": 3,
@@ -297,14 +297,14 @@ def test_runner_replays_control_root_and_records_three_treatment_requests() -> N
 
 def test_runner_delta_repair_mode_runs_only_real_treatment_requests() -> None:
     runner = _load_module("run_ab")
-    left = [f"left repair fact {index:02d}" for index in range(21)]
+    left = [f"left repair fact {index:02d}" for index in range(31)]
     right = [f"right repair fact {index:02d}" for index in range(4)]
-    root = left[:16] + right
+    root = left[:26] + right
     client = _SequenceClient(
         [
             _response(root),
-            _response(left[:20]),
-            _response([left[20]]),
+            _response(left[:30]),
+            _response([left[30]]),
             _response(right),
         ]
     )

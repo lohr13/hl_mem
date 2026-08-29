@@ -125,3 +125,20 @@ class ZhipuProvider(OpenAICompatibleProvider):
 
     name = "zhipu"
     capabilities = LLMCapabilities(json_object=True, json_schema_strict=False)
+
+    def __init__(
+        self,
+        *,
+        max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
+    ) -> None:
+        if reasoning_effort not in {None, "low", "high", "max"}:
+            raise ValueError("reasoning_effort must be 'low', 'high', 'max', or None")
+        super().__init__(max_tokens=max_tokens)
+        self.reasoning_effort = reasoning_effort
+
+    def build_payload(self, model: str, request: LLMRequest, mode: StructuredOutputMode) -> dict[str, Any]:
+        payload = super().build_payload(model, request, mode)
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
+        return payload

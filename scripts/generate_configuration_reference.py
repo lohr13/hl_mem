@@ -79,6 +79,7 @@ CONSTRAINTS = {
     "hermes.prefetch_cache_ttl_seconds": "> 0",
     "llm.model": "非空字符串",
     "llm.max_tokens": "正整数；输出上限保险丝，截断可能导致 JSON 不完整（`finish=length`），结构化提取将“快速失败”并由上层重试/降级",
+    "llm.reasoning_effort": "`low`、`high`、`max`；可省略",
     "llm.timeout": "> 0",
     "llm.max_attempts": ">= 1",
     "llm.schema_retries": ">= 0",
@@ -167,6 +168,7 @@ TABLE_NOTES = {
         '`llm.thinking_control = "chat_template_kwargs"` 时，客户端发送嵌套的',
         "`chat_template_kwargs = {enable_thinking = ...}`，直接使用 `json_object` 结构化输出，并仅剥离 JSON 前的空",
         "`<think>...</think>` 块。该兼容模式面向 llama.cpp 等本地 OpenAI-compatible 端点。",
+        "`llm.reasoning_effort` 仅在显式配置时作为顶层字段发送给 Zhipu；默认未设置，不改变其他 provider 请求体。",
     ],
     "extraction": [
         "",

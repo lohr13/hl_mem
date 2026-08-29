@@ -172,21 +172,21 @@ def system_prompt(language: str, arm: str) -> str:
     if arm not in {"A", "B"}:
         raise ValueError(f"unsupported arm: {arm}")
     prompt = ENGLISH_SYSTEM_PROMPT if language == "en" else SYSTEM_PROMPT
-    if arm == "A":
+    if arm == "B":
         return prompt
     if language == "zh":
-        anchor = "\n限制：\n"
-        if prompt.count(anchor) != 1:
-            raise RuntimeError("Chinese prompt limits anchor changed")
-        prompt = prompt.replace(anchor, "\n" + "\n".join(ZH_DENSITY_LINES) + anchor)
-        prompt = prompt.replace("- max 20 claims per chunk。", "- max 30 claims per chunk。")
+        density_block = "\n" + "\n".join(ZH_DENSITY_LINES)
+        current_limit = "- max 30 claims per chunk。"
+        historical_limit = "- max 20 claims per chunk。"
     else:
-        anchor = "\nLimits:\n"
-        if prompt.count(anchor) != 1:
-            raise RuntimeError("English prompt limits anchor changed")
-        prompt = prompt.replace(anchor, "\n" + "\n".join(EN_DENSITY_LINES) + anchor)
-        prompt = prompt.replace("- Maximum 20 claims per chunk.", "- Maximum 30 claims per chunk.")
-    return prompt
+        density_block = "\n" + "\n".join(EN_DENSITY_LINES)
+        current_limit = "- Maximum 30 claims per chunk."
+        historical_limit = "- Maximum 20 claims per chunk."
+    if prompt.count(density_block) != 1:
+        raise RuntimeError(f"{language} production density block changed")
+    if prompt.count(current_limit) != 1:
+        raise RuntimeError(f"{language} production claim limit changed")
+    return prompt.replace(density_block, "").replace(current_limit, historical_limit)
 
 
 def response_schema(arm: str) -> dict[str, Any]:

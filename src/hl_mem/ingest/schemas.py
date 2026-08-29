@@ -146,7 +146,7 @@ class CompactExtractionResponseSchema(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    claims: list[CompactExtractedClaimSchema] = Field(max_length=20)
+    claims: list[CompactExtractedClaimSchema] = Field(max_length=30)
     should_memorize: bool
 
 

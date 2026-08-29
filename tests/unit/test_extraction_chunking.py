@@ -186,8 +186,8 @@ def test_text_prefers_paragraph_boundaries_and_can_be_bisected() -> None:
 
 
 def test_exact_compact_limit_keeps_single_request_when_soft_split_is_disabled() -> None:
-    """默认关闭必须保持 compact==20 的现有单请求行为。"""
-    values = [f"User recorded baseline item {index:02d}" for index in range(20)]
+    """默认关闭必须保持 compact==30 的现有单请求行为。"""
+    values = [f"User recorded baseline item {index:02d}" for index in range(30)]
     client = _SequenceClient([LLMResponse(_compact_response(values), "stop", 10)])
     audit = _RecordingAudit()
 
@@ -201,9 +201,9 @@ def test_exact_compact_limit_keeps_single_request_when_soft_split_is_disabled() 
 
 def test_soft_split_preserves_root_merges_children_and_does_not_recurse_on_residual() -> None:
     """软触发只拆一层，保留根结果并用既有 merge 去重。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(20)]
-    right_values = [f"User recorded right item {index:02d}" for index in range(20)]
-    root_values = left_values[:10] + right_values[:10]
+    left_values = [f"User recorded left item {index:02d}" for index in range(30)]
+    right_values = [f"User recorded right item {index:02d}" for index in range(30)]
+    root_values = left_values[:15] + right_values[:15]
     client = _SequenceClient(
         [
             LLMResponse(_compact_response(root_values), "stop", 10),
@@ -223,20 +223,22 @@ def test_soft_split_preserves_root_merges_children_and_does_not_recurse_on_resid
 
     assert extractor.delta_repair_enabled is False
     assert len(client.requests) == 3
-    assert [claim.value for claim in claims[:20]] == root_values
+    assert [claim.value for claim in claims[:30]] == root_values
     assert {claim.value for claim in claims} == set(left_values + right_values)
     outcomes = [event[2] for event in audit.events]
     assert outcomes.count("claim_limit_residual_after_split") == 2
     assert outcomes.count("claim_limit_split_applied") == 1
+    residual_details = [event[3] for event in audit.events if event[2] == "claim_limit_residual_after_split"]
+    assert all(detail["schema_limit"] == 30 for detail in residual_details)
     split_detail = next(event[3] for event in audit.events if event[2] == "claim_limit_split_applied")
     assert split_detail == {
-        "claim_count_before_split": 20,
-        "root_unique_claim_count": 20,
-        "left_claim_count": 20,
-        "right_claim_count": 20,
-        "merged_claim_count": 40,
-        "net_new_after_split": 20,
-        "duplicates_removed": 20,
+        "claim_count_before_split": 30,
+        "root_unique_claim_count": 30,
+        "left_claim_count": 30,
+        "right_claim_count": 30,
+        "merged_claim_count": 60,
+        "net_new_after_split": 30,
+        "duplicates_removed": 30,
         "chunk_index": 0,
         "start_unit": 0,
         "end_unit": 1,
@@ -245,16 +247,46 @@ def test_soft_split_preserves_root_merges_children_and_does_not_recurse_on_resid
     assert "delta_repair_applied" not in outcomes
 
 
+def test_unavailable_soft_split_reports_30_claim_schema_limit() -> None:
+    client = _SequenceClient([LLMResponse(_compact_response(["x"] * 30), "stop", 10)])
+    audit = _RecordingAudit()
+
+    with audit_scope(audit):
+        LLMExtractor(
+            client,
+            ChunkingPolicy(10_000, 0, 3),
+            soft_split_enabled=True,
+        ).extract("x")
+
+    residual = [event for event in audit.events if event[2] == "claim_limit_residual_after_split"]
+    assert residual == [
+        (
+            "extract",
+            "possible_under_extraction",
+            "claim_limit_residual_after_split",
+            {
+                "claim_count": 30,
+                "schema_limit": 30,
+                "chunk_index": 0,
+                "start_unit": 0,
+                "end_unit": 1,
+                "source_length": 1,
+                "reason": "split_unavailable",
+            },
+        )
+    ]
+
+
 def test_delta_repair_runs_once_for_residual_and_merges_only_new_claims() -> None:
     """残余子块只补一轮，并在既有五元组 merge 后报告真实净新增。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(21)]
+    left_values = [f"User recorded left item {index:02d}" for index in range(31)]
     right_values = [f"User recorded right item {index:02d}" for index in range(4)]
-    root_values = left_values[:16] + right_values
+    root_values = left_values[:26] + right_values
     client = _SequenceClient(
         [
             LLMResponse(_compact_response(root_values), "stop", 10),
-            LLMResponse(_compact_response(left_values[:20]), "stop", 11),
-            LLMResponse(_compact_response([left_values[0], left_values[20]]), "stop", 12),
+            LLMResponse(_compact_response(left_values[:30]), "stop", 11),
+            LLMResponse(_compact_response([left_values[0], left_values[30]]), "stop", 12),
             LLMResponse(_compact_response(right_values), "stop", 13),
         ]
     )
@@ -272,7 +304,7 @@ def test_delta_repair_runs_once_for_residual_and_merges_only_new_claims() -> Non
     assert len(client.requests) == 4
     assert {claim.value for claim in claims} == set(left_values + right_values)
     repair_prompt = client.requests[2].messages[1].content
-    assert left_values[20] in repair_prompt
+    assert left_values[30] in repair_prompt
     assert f"1. user | {left_values[0]}" in repair_prompt
     assert "Extract only new atomic facts not covered by the list above" in repair_prompt
     outcomes = [event[2] for event in audit.events]
@@ -280,9 +312,9 @@ def test_delta_repair_runs_once_for_residual_and_merges_only_new_claims() -> Non
     assert outcomes.count("delta_repair_applied") == 1
     repair_detail = next(event[3] for event in audit.events if event[2] == "delta_repair_applied")
     assert repair_detail == {
-        "residual_claim_count": 20,
+        "residual_claim_count": 30,
         "repair_new_count": 2,
-        "merged_total": 21,
+        "merged_total": 31,
         "net_new_after_repair": 1,
         "duplicates_removed": 1,
         "chunk_index": 0,
@@ -295,9 +327,9 @@ def test_delta_repair_runs_once_for_residual_and_merges_only_new_claims() -> Non
 
 def test_delta_repair_empty_response_stops_after_one_request() -> None:
     """合法空 repair 响应立即停止，保留软拆分已有 claims。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(20)]
+    left_values = [f"User recorded left item {index:02d}" for index in range(30)]
     right_values = ["User recorded right item"]
-    root_values = left_values[:19] + right_values
+    root_values = left_values[:29] + right_values
     empty_response = json.dumps({"claims": [], "should_memorize": False})
     client = _SequenceClient(
         [
@@ -326,15 +358,15 @@ def test_delta_repair_empty_response_stops_after_one_request() -> None:
 
 
 def test_delta_repair_saturation_emits_residual_without_recursing() -> None:
-    """repair 再次返回 20 条时仅审计，不发第二轮请求。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(40)]
+    """repair 再次返回 30 条时仅审计，不发第二轮请求。"""
+    left_values = [f"User recorded left item {index:02d}" for index in range(60)]
     right_values = ["User recorded right item"]
-    root_values = left_values[:19] + right_values
+    root_values = left_values[:29] + right_values
     client = _SequenceClient(
         [
             LLMResponse(_compact_response(root_values), "stop", 10),
-            LLMResponse(_compact_response(left_values[:20]), "stop", 11),
-            LLMResponse(_compact_response(left_values[20:]), "stop", 12),
+            LLMResponse(_compact_response(left_values[:30]), "stop", 11),
+            LLMResponse(_compact_response(left_values[30:]), "stop", 12),
             LLMResponse(_compact_response(right_values), "stop", 13),
         ]
     )
@@ -351,15 +383,16 @@ def test_delta_repair_saturation_emits_residual_without_recursing() -> None:
     assert len(client.requests) == 4
     residual = [event for event in audit.events if event[2] == "claim_limit_residual_after_repair"]
     assert len(residual) == 1
-    assert residual[0][3]["claim_count"] == 20
+    assert residual[0][3]["claim_count"] == 30
+    assert residual[0][3]["schema_limit"] == 30
     assert [event[2] for event in audit.events].count("delta_repair_applied") == 1
 
 
 def test_delta_repair_failure_preserves_residual_claims_and_continues() -> None:
     """repair 调用失败必须 fail-open，右子块仍继续提取且根 claims 不丢。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(20)]
+    left_values = [f"User recorded left item {index:02d}" for index in range(30)]
     right_values = ["User recorded right item"]
-    root_values = left_values[:19] + right_values
+    root_values = left_values[:29] + right_values
     client = _SequenceClient(
         [
             LLMResponse(_compact_response(root_values), "stop", 10),
@@ -389,8 +422,8 @@ def test_delta_repair_failure_preserves_residual_claims_and_continues() -> None:
 
 def test_hard_recovery_inside_soft_child_does_not_reset_one_level_guard() -> None:
     """软拆子块即使发生硬截断恢复，也不能在更深层再次软拆。"""
-    root_values = [f"User recorded root item {index:02d}" for index in range(20)]
-    residual_values = [f"User recorded residual item {index:02d}" for index in range(20)]
+    root_values = [f"User recorded root item {index:02d}" for index in range(30)]
+    residual_values = [f"User recorded residual item {index:02d}" for index in range(30)]
     client = _SequenceClient(
         [
             LLMResponse(_compact_response(root_values), "stop", 10),
@@ -467,7 +500,7 @@ def test_truncated_output_is_bisected_and_usage_is_accumulated() -> None:
 
 
 def test_claim_count_overflow_is_bisected_without_schema_retry() -> None:
-    """A dense chunk should split instead of asking the model to rewrite more than 20 claims."""
+    """A dense chunk should split instead of asking the model to rewrite more than 30 claims."""
 
     def compact_claim(value: str, evidence_quote: str) -> dict[str, object]:
         return {
@@ -482,7 +515,7 @@ def test_claim_count_overflow_is_bisected_without_schema_retry() -> None:
 
     overflow = json.dumps(
         {
-            "claims": [compact_claim(f"overflow-{index}", "User likes tea") for index in range(21)],
+            "claims": [compact_claim(f"overflow-{index}", "User likes tea") for index in range(31)],
             "should_memorize": True,
         }
     )

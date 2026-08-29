@@ -45,10 +45,21 @@ def test_payload_freezes_strict_schema_and_only_b_adds_density_contract() -> Non
     assert "高密度长文通常应产出 12–30 条" not in runner.system_prompt("zh", "A")
     assert "高密度长文通常应产出 12–30 条" in runner.system_prompt("zh", "B")
     assert "禁止为接近 12 或 30" in runner.system_prompt("zh", "B")
+    assert runner.system_prompt("zh", "B") == runner.SYSTEM_PROMPT
+    assert runner.system_prompt("zh", "B").count(runner.ZH_DENSITY_LINES[0]) == 1
 
     assert "dense long source will often yield 12–30 claims" not in runner.system_prompt("en", "A")
     assert "dense long source will often yield 12–30 claims" in runner.system_prompt("en", "B")
     assert "never repeat, fragment, pad, generalize, or invent" in runner.system_prompt("en", "B")
+    assert runner.system_prompt("en", "B") == runner.ENGLISH_SYSTEM_PROMPT
+    assert runner.system_prompt("en", "B").count(runner.EN_DENSITY_LINES[0]) == 1
+
+
+def test_checked_in_manifest_matches_frozen_executable_configuration() -> None:
+    runner = load_runner()
+    manifest = json.loads(SCRIPT.with_name("manifest.json").read_text(encoding="utf-8"))
+
+    runner.validate_frozen_configuration(manifest)
 
 
 def test_budget_guard_stops_new_requests_at_soft_limit_and_reserves_hard_limit() -> None:

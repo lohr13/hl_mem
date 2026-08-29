@@ -134,6 +134,7 @@ def test_make_llm_client_applies_max_tokens_to_zhipu_without_thinking_fields() -
             llm_api_key="test-key",
             llm_provider="zhipu",
             llm_max_tokens=4000,
+            llm_reasoning_effort="low",
         )
     )
 
@@ -144,8 +145,27 @@ def test_make_llm_client_applies_max_tokens_to_zhipu_without_thinking_fields() -
     )
 
     assert payload["max_tokens"] == 4000
+    assert payload["reasoning_effort"] == "low"
     assert "enable_thinking" not in payload
     assert "thinking" not in payload
+
+
+@pytest.mark.parametrize("reasoning_effort", ["low", "high", "max"])
+def test_zhipu_provider_includes_supported_reasoning_effort(reasoning_effort: str) -> None:
+    payload = ZhipuProvider(reasoning_effort=reasoning_effort).build_payload(
+        "glm-5.3-flash",
+        _request(),
+        StructuredOutputMode.JSON_OBJECT,
+    )
+
+    assert payload["reasoning_effort"] == reasoning_effort
+    assert "enable_thinking" not in payload
+    assert "thinking" not in payload
+
+
+def test_zhipu_provider_rejects_unsupported_reasoning_effort_at_construction() -> None:
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        ZhipuProvider(reasoning_effort="medium")
 
 
 def test_provider_parses_response_metadata() -> None:

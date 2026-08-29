@@ -271,6 +271,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.max_tokens` | 整数 | 未设置 | 正整数；输出上限保险丝，截断可能导致 JSON 不完整（`finish=length`），结构化提取将“快速失败”并由上层重试/降级 | `llm_max_tokens` |
 | `llm.model` | 字符串 | `"qwen3.7-plus"` | 非空字符串 | `llm_model` |
 | `llm.provider` | 字符串 | `"dashscope"` | `dashscope`、`zhipu`、`openai_compatible` | `llm_provider` |
+| `llm.reasoning_effort` | 字符串 | 未设置 | `low`、`high`、`max`；可省略 | `llm_reasoning_effort` |
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |
 | `llm.thinking_control` | 字符串 | `"auto"` | `auto`、`chat_template_kwargs` | `llm_thinking_control` |
@@ -281,6 +282,7 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 `llm.thinking_control = "chat_template_kwargs"` 时，客户端发送嵌套的
 `chat_template_kwargs = {enable_thinking = ...}`，直接使用 `json_object` 结构化输出，并仅剥离 JSON 前的空
 `<think>...</think>` 块。该兼容模式面向 llama.cpp 等本地 OpenAI-compatible 端点。
+`llm.reasoning_effort` 仅在显式配置时作为顶层字段发送给 Zhipu；默认未设置，不改变其他 provider 请求体。
 
 ### `[maintenance_judge]`
 

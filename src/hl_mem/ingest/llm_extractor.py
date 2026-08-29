@@ -182,8 +182,10 @@ assistant durable output：
 - 显式支持表格行、编号列表项、脚本设定、联系人信息、工具到算法的映射等可回答 span。
 - 只提取能独立回答后续问题的最小原子内容；禁止记忆整段 assistant 回答或普通解释性填充。
 
+- 覆盖优先：先逐项扫描全文，再输出所有有证据、可独立回答的原子事实；高密度长文通常应产出 12–30 条，不要在已有少量 claim 时提前停止。
+- 数量由原文决定：短文可以只有 0–少量；禁止为接近 12 或 30 而重复、拆碎同一事实、概括填充或虚构。
 限制：
-- max 20 claims per chunk。
+- max 30 claims per chunk。
 - claims 中每项必须且只能包含上述 7 个字段。
 - kind、notability 和 confidence 必须满足上述枚举与范围。"""
 
@@ -293,8 +295,10 @@ Assistant durable output:
   tool-to-algorithm mappings.
 - Extract only the smallest self-contained span that can answer a later question. Do not memorize the whole assistant answer.
 
+- Coverage first: scan the full source and emit every supported independently answerable atomic fact; a dense long source will often yield 12–30 claims, so do not stop after only a few.
+- Let the source determine the count: a short source may yield zero or only a few; never repeat, fragment, pad, generalize, or invent facts to approach 12 or 30.
 Limits:
-- Maximum 20 claims per chunk.
+- Maximum 30 claims per chunk.
 - Every claim must contain exactly the seven fields shown above.
 - kind, notability, and confidence must use the specified values and ranges."""
 
@@ -905,7 +909,7 @@ class LLMExtractor:
                     "claim_limit_residual_after_split",
                     detail={
                         "claim_count": outcome.raw_claim_count,
-                        "schema_limit": 20,
+                        "schema_limit": 30,
                         "chunk_index": chunk.index,
                         "start_unit": chunk.start_unit,
                         "end_unit": chunk.end_unit,
@@ -921,7 +925,7 @@ class LLMExtractor:
                     "claim_limit_residual_after_split",
                     detail={
                         "claim_count": outcome.raw_claim_count,
-                        "schema_limit": 20,
+                        "schema_limit": 30,
                         "chunk_index": chunk.index,
                         "start_unit": chunk.start_unit,
                         "end_unit": chunk.end_unit,
@@ -1070,7 +1074,7 @@ class LLMExtractor:
                     "claim_limit_residual_after_repair",
                     detail={
                         "claim_count": outcome.raw_claim_count,
-                        "schema_limit": 20,
+                        "schema_limit": 30,
                         "accepted_claim_count": len(repair_claims),
                         "chunk_index": chunk.index,
                         "start_unit": chunk.start_unit,
@@ -1462,7 +1466,7 @@ class LLMExtractor:
             else self._request_chunk(chunk, context, occurred_at, language)
         )
         compact_response = isinstance(result, CompactExtractionResponseSchema)
-        compact_soft_saturated = compact_response and len(result.claims) == 20
+        compact_soft_saturated = compact_response and len(result.claims) == 30
         if compact_soft_saturated and repair_covered_claims is None:
             current_audit().emit(
                 "extract",
@@ -1470,7 +1474,7 @@ class LLMExtractor:
                 "claim_limit_reached",
                 detail={
                     "claim_count": len(result.claims),
-                    "schema_limit": 20,
+                    "schema_limit": 30,
                     "chunk_index": chunk.index,
                     "start_unit": chunk.start_unit,
                     "end_unit": chunk.end_unit,

@@ -108,6 +108,7 @@ def make_llm_client(
     provider_type = provider_types.get(settings.llm_provider)
     if provider_type is None:
         raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
+    provider: OpenAICompatibleProvider
     if provider_type is DashScopeProvider:
         provider = DashScopeProvider(
             enable_thinking=settings.enable_llm_thinking,
@@ -118,6 +119,11 @@ def make_llm_client(
             enable_thinking=settings.enable_llm_thinking,
             thinking_control=settings.llm_thinking_control,
             max_tokens=settings.llm_max_tokens,
+        )
+    elif provider_type is ZhipuProvider:
+        provider = ZhipuProvider(
+            max_tokens=settings.llm_max_tokens,
+            reasoning_effort=settings.llm_reasoning_effort,
         )
     else:
         provider = provider_type(max_tokens=settings.llm_max_tokens)

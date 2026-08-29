@@ -378,6 +378,10 @@ class Settings:
         default="auto",
         metadata={"toml": "llm.thinking_control"},
     )
+    llm_reasoning_effort: str | None = field(
+        default=None,
+        metadata={"toml": "llm.reasoning_effort"},
+    )
     llm_max_tokens: int | None = field(default=None, metadata={"toml": "llm.max_tokens"})
     llm_timeout: float = field(default=90.0, metadata={"toml": "llm.timeout"})
     llm_max_attempts: int = field(default=3, metadata={"toml": "llm.max_attempts"})
@@ -755,6 +759,8 @@ class Settings:
             raise ConfigurationError("llm.enable_thinking must be a boolean")
         if self.llm_thinking_control not in {"auto", "chat_template_kwargs"}:
             raise ConfigurationError("llm.thinking_control must be 'auto' or 'chat_template_kwargs'")
+        if self.llm_reasoning_effort not in {None, "low", "high", "max"}:
+            raise ConfigurationError("llm.reasoning_effort must be 'low', 'high', 'max', or omitted")
         if self.llm_max_tokens is not None and (type(self.llm_max_tokens) is not int or self.llm_max_tokens <= 0):
             raise ConfigurationError("llm.max_tokens must be a positive integer")
         if self.relation_expansion_mode not in {"off", "on"}:
