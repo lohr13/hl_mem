@@ -1,0 +1,17 @@
+metric,D_glm_effort_low,C_qwen_c1024
+overall_passed,False,False
+claims_ge_12_of_20,15,15
+claim_total,269,374
+claim_mean,13.45,18.7
+latency_p50_seconds,21.666608299972722,25.780540350009687
+latency_p95_seconds,42.022064485013836,36.52323310997454
+reasoning_tokens_max,331,1024
+reasoning_tokens_mean,64.0,813.45
+cost_total_cny,0.0801954,0.2351052
+cost_mean_cny,0.00400977,0.01175526
+schema_success_rate,0.95,1.0
+duplicate_count,0,0
+duplicate_rate,0.0,0.0
+gold_coverage_corrected,0.85,0.85
+hallucinated_claims_corrected,0,0
+subject_misbindings,1,13

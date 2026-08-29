@@ -1,0 +1,41 @@
+{
+  "protocol_id": "prompt_density_glm_effort_low_20260829_v1",
+  "started_at": "2026-08-29T01:47:43.805034+00:00",
+  "status": "completed",
+  "manifest_sha256": "15b85acfedf0e4f4bdd5923b2369f0e23a54eb9ac1ea6b4d735283d72d3b5fc9",
+  "gold_definition_sha256": "983890fc12e76df71699031551ee622af2afa7449eda8ed5d7c9eec350661977",
+  "base_runner_sha256": "2dc0bcac011f844c6ebc84a499ed1e0863d68cf5cf2e85a0b6350e76718f3123",
+  "runner_sha256": "8a071b51d061424ac84e747079f56b089767cd8df4f026f8ad1ecc1393eec1f4",
+  "configuration": {
+    "arm": "D",
+    "source_prompt_arm": "B",
+    "provider": "zhipu",
+    "model": "glm-5.3-flash",
+    "base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "thinking": {
+      "type": "enabled"
+    },
+    "reasoning_effort": "low",
+    "schema_max_items": 30,
+    "max_tokens": null,
+    "enable_thinking": null,
+    "case_type": "dense",
+    "expected_case_count": 20,
+    "max_attempts": 1,
+    "concurrency": 4,
+    "timeout_seconds": 120.0,
+    "pricing_cny_per_million": {
+      "input": 0.4,
+      "output": 1.4,
+      "discount": "5折实测"
+    }
+  },
+  "completed_at": "2026-08-29T01:49:46.028494+00:00",
+  "records": 20,
+  "final_case_records": 20,
+  "requests_started": 20,
+  "max_attempt_count": 1,
+  "cost_known_records": 20,
+  "cost_total_cny": 0.0801954,
+  "runs_sha256": "125545dc707b76919032854119999269aaaf99237577469b2f5f47c08fbcca79"
+}

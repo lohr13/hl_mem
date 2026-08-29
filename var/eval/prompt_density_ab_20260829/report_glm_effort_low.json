@@ -1,0 +1,216 @@
+{
+  "protocol_id": "prompt_density_glm_effort_low_20260829_v1",
+  "overall_passed": false,
+  "gates": [
+    {
+      "gate_id": "density",
+      "measured": {
+        "qualifying_cases": 15,
+        "cases": 20,
+        "failed_cases": [
+          {
+            "case_id": "3af1765478754e3f9764472f6e167da0",
+            "claims": 11
+          },
+          {
+            "case_id": "3d9eed608581474698063d108e85e9bb",
+            "claims": 0
+          },
+          {
+            "case_id": "819557d08c834cc49434b3d0fcb53c02",
+            "claims": 9
+          },
+          {
+            "case_id": "84d2d519d115428aab26b82e58a088f3",
+            "claims": 2
+          },
+          {
+            "case_id": "abe73898662c4bd093aa959d464c8b70",
+            "claims": 0
+          }
+        ]
+      },
+      "threshold": ">=18/20 claims>=12",
+      "passed": false,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "latency_p50",
+      "measured": 21.666608299972722,
+      "threshold": "<=40s",
+      "passed": true,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "latency_p95",
+      "measured": 42.022064485013836,
+      "threshold": "<=90s",
+      "passed": true,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "reasoning_tokens",
+      "measured": {
+        "max": 331,
+        "over_1024": 0
+      },
+      "threshold": "all <=1024",
+      "passed": true,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "cost_mean",
+      "measured": 0.00400977,
+      "threshold": "<=¥0.02/case",
+      "passed": true,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "schema_success",
+      "measured": 0.95,
+      "threshold": ">=95%",
+      "passed": true,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "duplicate_rate",
+      "measured": {
+        "duplicates": 0,
+        "claims": 269,
+        "rate": 0.0
+      },
+      "threshold": "<=2%",
+      "passed": true,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "hallucination",
+      "measured": {
+        "reviewed_cases": 5,
+        "hallucinated_claims": 0
+      },
+      "threshold": "0 fabricated claims in same 5-case gold review",
+      "passed": true,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "subject_misbinding",
+      "measured": {
+        "reviewed_cases": 5,
+        "claims": 1
+      },
+      "threshold": "diagnostic only; excluded from hallucination gate",
+      "passed": true,
+      "diagnostic_only": true
+    },
+    {
+      "gate_id": "gold_coverage_corrected",
+      "measured": {
+        "covered": 34,
+        "total": 40,
+        "coverage": 0.85
+      },
+      "threshold": ">=90% on 4 non-boundary cases",
+      "passed": false,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "run_integrity",
+      "measured": {
+        "actual_api_calls": 20,
+        "final_cases": 20,
+        "max_actual_calls_per_case": 1
+      },
+      "threshold": "20 calls, 20 final cases, exactly 1 actual call/case",
+      "passed": true,
+      "diagnostic_only": false
+    },
+    {
+      "gate_id": "freeze_integrity",
+      "measured": {
+        "mismatches": []
+      },
+      "threshold": "manifest/gold/runs hashes match pre-run freeze",
+      "passed": true,
+      "diagnostic_only": false
+    }
+  ],
+  "arm_d": {
+    "cases": 20,
+    "claims_ge_12": 15,
+    "claim_total": 269,
+    "claim_mean": 13.45,
+    "latency_p50_seconds": 21.666608299972722,
+    "latency_p95_seconds": 42.022064485013836,
+    "reasoning_tokens_max": 331,
+    "reasoning_tokens_mean": 64.0,
+    "cost_total_cny": 0.0801954,
+    "cost_mean_cny": 0.00400977,
+    "schema_success_rate": 0.95,
+    "duplicate_count": 0,
+    "duplicate_rate": 0.0,
+    "gold_review": {
+      "covered": 34,
+      "total": 40,
+      "coverage": 0.85,
+      "hallucinated_claims": 0,
+      "subject_misbindings": 1
+    },
+    "configuration": {
+      "provider": "zhipu",
+      "model": "glm-5.3-flash",
+      "prompt": "B_density_max30",
+      "thinking": {
+        "type": "enabled"
+      },
+      "reasoning_effort": "low",
+      "max_tokens": null,
+      "enable_thinking": null,
+      "timeout_seconds": 120.0,
+      "max_attempts": 1,
+      "concurrency": 4
+    }
+  },
+  "cost": {
+    "actual_cny": 0.0801954,
+    "mean_cny": 0.00400977,
+    "all_costs_known": true
+  },
+  "pricing": {
+    "input_cny_per_million": 0.4,
+    "output_cny_per_million": 1.4,
+    "basis": "智谱按量 ¥0.4/百万输入 tokens、¥1.4/百万输出 tokens（5折）实测 usage"
+  },
+  "scored_at": "2026-08-29T01:55:56.582428+00:00",
+  "disposition": "FAIL -> report measured values and hand the terminal D vs C-1024 choice to the user without tuning or rerun.",
+  "integrity": {
+    "manifest_sha256": "15b85acfedf0e4f4bdd5923b2369f0e23a54eb9ac1ea6b4d735283d72d3b5fc9",
+    "gold_definition_sha256": "983890fc12e76df71699031551ee622af2afa7449eda8ed5d7c9eec350661977",
+    "runs_sha256": "125545dc707b76919032854119999269aaaf99237577469b2f5f47c08fbcca79",
+    "run_metadata_sha256": "71d8adee371c2cfc903bfaaa40a590217899dc33edc24ab63f5c0f43b40bb0fb",
+    "request_runner_sha256": "8a071b51d061424ac84e747079f56b089767cd8df4f026f8ad1ecc1393eec1f4",
+    "scoring_runner_sha256": "d67050699c70720b25357f7e61692eac6fbc88be33cbf5a86a28f59530ea47e5",
+    "base_runner_sha256": "2dc0bcac011f844c6ebc84a499ed1e0863d68cf5cf2e85a0b6350e76718f3123",
+    "post_run_equipment_fix": "review template now preserves the untouched short-event gold definitions required by the frozen gold hash; request payload construction was unchanged"
+  },
+  "c1024_adjusted": {
+    "overall_passed": false,
+    "claims_ge_12": 15,
+    "claim_total": 374,
+    "claim_mean": 18.7,
+    "latency_p50_seconds": 25.780540350009687,
+    "latency_p95_seconds": 36.52323310997454,
+    "reasoning_tokens_max": 1024,
+    "reasoning_tokens_mean": 813.45,
+    "cost_total_cny": 0.2351052,
+    "cost_mean_cny": 0.01175526,
+    "schema_success_rate": 1.0,
+    "duplicate_count": 0,
+    "duplicate_rate": 0.0,
+    "coverage": 0.85,
+    "hallucinated_claims": 0,
+    "subject_misbindings": 13,
+    "taxonomy_adjustment": "C-1024 necropsy reclassified the 13 prior hallucination labels as subject misbindings, not fabricated claims"
+  },
+  "production_landing_diff": null
+}
