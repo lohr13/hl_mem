@@ -59,6 +59,24 @@ def test_query_expander_inherits_main_line_when_dedicated_line_is_unset() -> Non
     assert expander.client.provider.reasoning_effort == "low"
 
 
+def test_query_expander_inherits_main_line_when_only_dedicated_api_key_is_set() -> None:
+    settings = Settings(
+        llm_api_key="main-secret",
+        llm_base_url="https://main.example.com/v1",
+        llm_provider="zhipu",
+        query_expansion_mode="auto",
+        query_expansion_api_key="parked-secret",
+    )
+
+    settings.validate()
+    expander = make_query_expander(settings)
+
+    assert expander is not None
+    assert expander.client.api_key == "main-secret"
+    assert expander.client.base_url == "https://main.example.com/v1"
+    assert isinstance(expander.client.provider, ZhipuProvider)
+
+
 def test_query_expander_uses_complete_dedicated_dashscope_line() -> None:
     settings = Settings(
         llm_api_key=None,

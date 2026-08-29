@@ -648,13 +648,8 @@ class Settings:
         )
 
     def query_expansion_line_overrides(self) -> tuple[str, str, str] | None:
-        """返回完整的 QE 独立线路；全空时沿用主 LLM 线路。"""
-        values = (
-            self.query_expansion_provider,
-            self.query_expansion_base_url,
-            self.query_expansion_api_key,
-        )
-        if all(value is None for value in values):
+        """返回完整的 QE 独立线路；未配置 provider/base_url 时沿用主 LLM 线路。"""
+        if self.query_expansion_provider is None and self.query_expansion_base_url is None:
             return None
         if self.query_expansion_provider is None:
             raise ConfigurationError(
