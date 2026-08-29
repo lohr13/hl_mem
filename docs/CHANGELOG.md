@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## v0.35.0（2026-08-29）
+
+### 冲突裁决 delegation 读面
+
+- 新增 `GET /v1/conflicts/{id}/dossier`，为 pair/group 冲突统一返回完整案卷：Claim 全文、authority、confidence、
+  valid/recorded 双时间坐标与 evidence 对应的源事件，agent 无需再跨表拼接裁决上下文。
+- 新增 `GET /v1/conflicts` 三态分页列表，覆盖 `pending`、`auto_resolved` 与 `manual_required`，作为 agent 有界轮询与
+  分页领取待裁决案件的入口。
+
+### 冲突裁决写面与人工审计
+
+- pair 案与 group 案统一执行 `expected_revision` 乐观锁；pair 案不再接受缺失 revision 的假保护，也会拒绝陈旧
+  revision，避免并发裁决覆盖较新的案件状态。
+- 人工裁决现在写入 `governance_actions` 审计账本，记录 resolver、decision、rationale、前后 revision 与状态；
+  `reject_candidate` 的 rationale 同步持久化，不再在丢弃候选时遗失。
+- CLI 新增 `--resolver`，默认 `agent:hermes-local`；REST 输入沿用同一默认 resolver，并把人工裁决身份带入审计链。
+
+### 模块边界与契约收尾
+
+- 将冲突查询、冲突审计与 API 路由分别下沉到 `conflict_queries`、`conflict_audit`、`conflict_routes`，CLI、
+  application 与 API 消费方改为直连真实定义源，保持复杂度棘轮不回退。
+- 查询扩展独立线路校验与文档合同对齐：仅配置 `QUERY_EXPANSION_API_KEY` 时继承主线路，不再阻断启动；只有显式配置
+  query-expansion provider 或 base URL 时，才要求 provider、base URL 与 key 三项齐全。
+- 修复配置参考生成器并清理未使用导入，生成文档重新与 Settings 合同保持一致。
+
+### Breaking changes 与升级提示
+
+- **Breaking：**`hl-mem conflicts resolve` 现在必须显式传入 `--expected-revision`；遗漏参数会直接报错，不再以无保护方式
+  尝试裁决 pair 案。
+- **Breaking：**pair 案的直接应用服务与 REST 调用现在执行真实 CAS；`expected_revision` 缺失或落后于当前案卷 revision
+  时会拒绝写入。调用方应先读取列表或 dossier 的最新 revision，再提交裁决。
+
 ## v0.34.0（2026-08-29）
 
 ### 查询扩展独立线路
