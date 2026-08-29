@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v0.35.1（2026-08-30）
+
+### 冲突候选撤回安全闭环
+
+- **Breaking：**group 案的 `reject_candidate` 是会把候选全部成员 Claim 置为 `retracted` 的破坏性动作；REST 与
+  application service 现在都要求显式传入 `confirm_retraction=true`，缺失或为 `false` 时 fail-closed。该确认只作用于
+  `reject_candidate`，不改变 `select_candidate` 或 pair 裁决行为。
+- `reject_candidate` 从 `pending`、`auto_resolved` 或 `manual_required` 执行后统一持久化为 `manual_required`，确保数据库、
+  响应与治理审计的 after 状态一致。
+- group 候选撤回审计新增成员总数、完整稳定 ID 集合的 SHA-256、最多 64 个排序后成员 ID 及截断标志，使已撤回集合可核验。
+
+### delegation 契约补全
+
+- conflict dossier 的 Claim 明细补充 `qualifiers`、`recorded_from` 与 `recorded_to`，与 valid/recorded 双时间裁决上下文对齐。
+- 互斥 group 对 `coexist`/pair `reject` 的错误提示不再指向不存在的 slot/qualifier 在线修正端点，改为说明必须选择唯一
+  有效候选且当前接口不提供在线坐标修正。
+- 无 migration；OpenAPI 同步到 v0.35.1，并公开 `confirm_retraction` 与 dossier 新字段。
+
 ## v0.35.0（2026-08-29）
 
 ### 冲突裁决 delegation 读面

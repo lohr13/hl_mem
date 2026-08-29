@@ -164,9 +164,15 @@ exposure batch cannot be accepted, those identifiers are omitted rather than ret
 canonical candidate. Each candidate includes its stable `candidate_key`, canonical value, representative Claim, support
 and evidence counts, timestamps, member Claim IDs, and their current statuses.
 
+`GET /v1/conflicts/{case_id}/dossier` returns the pair/group adjudication dossier. Every Claim detail includes the full
+text, `qualifiers`, authority, confidence, `valid_from`/`valid_to`, `recorded_from`/`recorded_to`, and linked source-event
+evidence.
+
 `POST /v1/conflicts/{case_id}/resolve` accepts `action` (`select_candidate` or `reject_candidate`), `candidate_key`, the
-snapshot's `expected_revision`, and an optional rationale. A revision or active-generation mismatch returns `409` before
-any Claim, candidate, case, or audit mutation. Clients should fetch a fresh snapshot and make a new decision; they must not
+snapshot's `expected_revision`, and an optional rationale. `reject_candidate` is destructive: it retracts every Claim in
+the selected candidate and therefore requires `confirm_retraction=true`; omission or `false` fails closed. The confirmation
+does not apply to `select_candidate` or pair resolution. A revision or active-generation mismatch returns `409` before any
+Claim, candidate, case, or audit mutation. Clients should fetch a fresh snapshot and make a new decision; they must not
 blindly retry a stale request. Other manual actions and generation advancement are reserved for v0.29.
 
 ## Experience Requests

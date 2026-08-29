@@ -81,11 +81,11 @@ class ResolutionService:
 
             if decision == "coexist" and exclusive_group:
                 raise ConflictResolutionError(
-                    "同互斥 conflict group 禁止 coexist；应共存需先修正 slot/qualifier 使脱离同 conflict key"
+                    "同互斥 conflict group 禁止 coexist；该组必须选择唯一有效候选；当前接口不提供在线坐标修正"
                 )
             if decision == "reject" and exclusive_group:
                 raise ConflictResolutionError(
-                    "同互斥 conflict group 禁止 reject；拒绝冲突需先修正 slot/qualifier 使脱离同 conflict key"
+                    "同互斥 conflict group 禁止 reject；该组必须选择唯一有效候选；当前接口不提供在线坐标修正"
                 )
             if decision == "reject":
                 self._restore_rejected_pair(left, right)
@@ -221,12 +221,15 @@ class ResolutionService:
         resolved_at: str | None = None,
         rationale: str | None = None,
         resolver: str | None = None,
+        confirm_retraction: bool = False,
         local_postconditions: bool = False,
     ) -> dict[str, Any]:
         """以乐观 revision guard 选择或拒绝一个 group candidate。"""
 
         if action not in {"select_candidate", "reject_candidate"}:
             raise ConflictResolutionError(f"unsupported group conflict action: {action}")
+        if action == "reject_candidate" and confirm_retraction is not True:
+            raise ConflictResolutionError("confirm_retraction=true is required for reject_candidate")
         timestamp = resolved_at or datetime.now(timezone.utc).isoformat()
         effective_rationale = rationale if rationale and rationale.strip() else None
         effective_resolver = self._normalize_resolver(resolver)
@@ -247,6 +250,7 @@ class ResolutionService:
             if candidate is None:
                 raise ConflictResolutionError(f"conflict candidate not found: {case_id}:{candidate_key}")
             winner_id: str | None = None
+            retracted_claim_ids: list[str] | None = None
             terminal_replay = case["status"] in {"resolved", "rejected"}
             if terminal_replay:
                 if (
@@ -266,7 +270,6 @@ class ResolutionService:
                     raise ConflictResolutionError(
                         f"terminal conflict case has a different group winner: {case_id} ({winner_id})"
                     )
-                status = "resolved"
             elif action == "select_candidate":
                 winner_id = str(candidate["representative_claim_id"])
                 left = self._load_claim(str(case["left_claim_id"]))
@@ -280,8 +283,8 @@ class ResolutionService:
                     timestamp,
                     effective_rationale,
                 )
-                status = "resolved"
             else:
+                retracted_claim_ids = []
                 member_rows = self.connection.execute(
                     "SELECT claim_id FROM conflict_candidate_members "
                     "WHERE case_id=? AND candidate_key=? ORDER BY claim_id",
@@ -302,7 +305,15 @@ class ResolutionService:
                     )
                     if cursor.rowcount != 1:
                         raise ConflictResolutionError(f"conflict candidate member changed: {claim['id']}")
-                status = "manual_required"
+                    retracted_claim_ids.append(str(claim["id"]))
+                if case["status"] != "manual_required":
+                    cursor = self.connection.execute(
+                        "UPDATE conflict_cases SET status='manual_required' "
+                        "WHERE id=? AND status=? AND resolved_at IS NULL",
+                        (case_id, case["status"]),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ConflictResolutionError(f"conflict case changed during candidate rejection: {case_id}")
             if terminal_replay:
                 pass
             elif local_postconditions:
@@ -328,7 +339,10 @@ class ResolutionService:
                 (case_id,),
             ).fetchone()
             if effective_resolver is not None and not terminal_replay:
-                ConflictAuditWriter(self.connection).record_human_action(
+                ConflictAuditWriter(
+                    self.connection,
+                    retracted_claim_ids=retracted_claim_ids,
+                ).record_human_action(
                     case_id=case_id,
                     decision=action,
                     candidate_key=candidate_key,
@@ -350,7 +364,7 @@ class ResolutionService:
             "case_id": case_id,
             "generation": int(case["generation"]),
             "revision": int(current["revision"]),
-            "status": status,
+            "status": str(current["status"]),
             "action": action,
             "candidate_key": candidate_key,
             "winner_id": winner_id,

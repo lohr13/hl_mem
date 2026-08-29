@@ -353,6 +353,13 @@ class ConflictResolutionInput(BaseModel):
     expected_revision: int = Field(ge=0)
     rationale: str | None = Field(default=None, max_length=5000)
     resolver: str = Field(default=DEFAULT_HUMAN_RESOLVER, min_length=1, max_length=200)
+    confirm_retraction: bool = False
+
+    @model_validator(mode="after")
+    def require_retraction_confirmation(self) -> ConflictResolutionInput:
+        if self.action == "reject_candidate" and self.confirm_retraction is not True:
+            raise ValueError("confirm_retraction=true is required for reject_candidate")
+        return self
 
 
 class ConflictResolutionOutput(BaseModel):
@@ -393,12 +400,15 @@ class ConflictDossierClaimOutput(BaseModel):
     id: str
     canonical_slot: str | None = None
     value: Any
+    qualifiers: dict[str, Any] = Field(default_factory=dict)
     subject_entity_id: str | None = None
     assertion_kind: str
     confidence: float | None = None
     source_authority: str | None = None
     valid_from: str | None = None
     valid_to: str | None = None
+    recorded_from: str | None = None
+    recorded_to: str | None = None
     observed_at: str | None = None
     status: str
     evidence_links: list[ConflictEvidenceOutput] = Field(default_factory=list)

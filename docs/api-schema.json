@@ -508,6 +508,33 @@
             ],
             "title": "Observed At"
           },
+          "qualifiers": {
+            "additionalProperties": true,
+            "title": "Qualifiers",
+            "type": "object"
+          },
+          "recorded_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded From"
+          },
+          "recorded_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded To"
+          },
           "source_authority": {
             "anyOf": [
               {
@@ -735,6 +762,11 @@
             "minLength": 1,
             "title": "Candidate Key",
             "type": "string"
+          },
+          "confirm_retraction": {
+            "default": false,
+            "title": "Confirm Retraction",
+            "type": "boolean"
           },
           "expected_revision": {
             "minimum": 0.0,
@@ -2485,7 +2517,7 @@
   },
   "info": {
     "title": "HL-Mem",
-    "version": "0.35.0"
+    "version": "0.35.1"
   },
   "openapi": "3.1.0",
   "paths": {

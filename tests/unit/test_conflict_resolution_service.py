@@ -88,12 +88,12 @@ def _revision(connection: sqlite3.Connection, case_id: str) -> int:
     return int(connection.execute("SELECT revision FROM conflict_cases WHERE id=?", (case_id,)).fetchone()[0])
 
 
-def test_exclusive_group_rejects_coexist_with_remediation_reason(tmp_path) -> None:
+def test_exclusive_group_rejects_coexist_with_executable_constraint(tmp_path) -> None:
     connection, repository = _exclusive_group(tmp_path)
 
     with pytest.raises(
         ConflictResolutionError,
-        match="应共存需先修正 slot/qualifier 使脱离同 conflict key",
+        match="该组必须选择唯一有效候选；当前接口不提供在线坐标修正",
     ):
         ResolutionService(connection).resolve(
             "case-left-right",
@@ -109,12 +109,12 @@ def test_exclusive_group_rejects_coexist_with_remediation_reason(tmp_path) -> No
     assert {row["status"] for row in connection.execute("SELECT status FROM conflict_cases")} == {"manual_required"}
 
 
-def test_exclusive_group_rejects_reject_with_remediation_reason(tmp_path) -> None:
+def test_exclusive_group_rejects_reject_with_executable_constraint(tmp_path) -> None:
     connection, repository = _exclusive_group(tmp_path)
 
     with pytest.raises(
         ConflictResolutionError,
-        match="拒绝冲突需先修正 slot/qualifier 使脱离同 conflict key",
+        match="该组必须选择唯一有效候选；当前接口不提供在线坐标修正",
     ):
         ResolutionService(connection).resolve(
             "case-left-right",
