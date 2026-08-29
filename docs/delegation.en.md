@@ -7,6 +7,26 @@ longer contains an LLM conflict judge.
 > **Trust boundary:** HL-Mem is a trusted, local, single-tenant service. If the host is not on the same machine, put
 > authentication, authorization, and TLS in front of the API. Never expose it directly to the public Internet.
 
+## Choose a conflict owner and action path
+
+Every deployment must assign a conflict owner: either an automated delegation loop that performs bounded polling and
+adjudication, or a human/on-demand owner that acts after a notice. Without a loop, `manual_required` cases do not
+disappear on their own. The Hermes conflict notice is constrained by session-level system-prompt construction and the
+cached health snapshot, so it can be delayed. It notifies only when a session first observes a nonzero count or when
+that count changes; rebuilding with the same count does not repeat the notice. It is a notification, not a background
+adjudicator.
+
+Installing the Hermes provider alone does not give the host conflict-adjudication tools. The provider exposes only the
+read-only `hl_mem_recall` tool; the REST contract below is the complete pair/group review and resolution surface. The
+CLI can list cases, but its `resolve` command does not cover group cases and is not a complete substitute. In manual
+mode, a host with HTTP or shell access can call REST. Otherwise, an external operator with API access must own the
+workflow.
+
+Installation acceptance must exercise the complete path in a controlled environment: a nonzero
+`manual_required_count` can be expanded into its open cases, a dossier can be read, and the designated owner can submit
+one CAS-guarded decision using that dossier's revision and fingerprint. Confirming only that the notice appears or that
+`/healthz` reports a count is not sufficient.
+
 ## REST contract
 
 | Method | Path | Purpose |

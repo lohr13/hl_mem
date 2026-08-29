@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.36.1（2026-08-30）
+
+### Hermes 冲突提示生命周期
+
+- `ManualConflictNotice` 的 session 计数状态增加 256 条硬上限，并在既有 `on_session_end(messages, **kwargs)`
+  生命周期钩子清理对应 session，避免长生命周期 Hermes 进程随会话数无界增长。
+- 保持既有提示语义不变：`count=0` 静默、相同 session 的相同计数不重复提示、非零计数文案和 Degraded 路径均未改动。
+
+### 无自动化宿主引导
+
+- 中英双语 delegation 指南新增 conflict owner 选择、无 loop 时的残留语义、Hermes provider 工具边界、人工 REST
+  行动入口与端到端安装验收要求。
+- 本补丁不新增 migration，不改变 REST/OpenAPI、MCP 或 prompt 文案契约。
+
 ## v0.36.0（2026-08-30）
 
 ### 内置冲突 L2 退役

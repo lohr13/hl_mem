@@ -6,6 +6,21 @@
 > **信任边界：** HL-Mem 是本地、可信、单租户服务。若宿主不与服务同机，请在 API 前配置认证、授权和
 > TLS；不要把服务直接暴露到公网。
 
+## 选择冲突 owner 与行动入口
+
+部署时必须明确一个冲突 owner：使用自动 delegation loop 有界轮询并裁决，或指定人工/按需 owner 在收到通知后
+处理。未配置 loop 时，`manual_required` 不会自行消失；Hermes conflict notice 受会话级 system prompt 构建和健康
+快照缓存约束，可能延迟，并且只在会话首次观察到非零计数或计数变化时通知，同值重建不会重复提示。它是提醒，
+不是后台裁决器。
+
+单独安装 Hermes provider 也不等于宿主具备冲突裁决工具。provider 只暴露只读 `hl_mem_recall`；完整的 pair/group
+查看与裁决入口是下述 REST 契约。CLI 可以列案，但其 `resolve` 不覆盖 group 案，因此不能作为完整替代。人工模式下，
+宿主具备 HTTP 或 shell 能力时可调用 REST；否则必须由能够访问 API 的外部 operator 负责处理。
+
+安装验收必须在受控环境验证完整路径：非零 `manual_required_count` 能够列出对应开放案、读取其 dossier，并由指定
+owner 使用该 dossier 的 revision 与 fingerprint 提交一次 CAS 裁决。只确认 notice 能显示或 `/healthz` 有计数不算
+完成验收。
+
 ## REST 契约
 
 | 方法 | 路径 | 用途 |
