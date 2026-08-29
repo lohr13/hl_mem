@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from hl_mem import __version__
 from hl_mem.adapters.hermes.deployment import deploy_plugin
 from hl_mem.adapters.hermes.provider import HLMemProvider
 from hl_mem.errors import ConfigurationError
@@ -115,7 +116,7 @@ def test_missing_hermes_config_logs_safe_diagnostics_and_reraises(
     assert expected_config in caplog.text
     assert str(source_tree.resolve()) in caplog.text
     assert str(hermes_home.resolve()) in caplog.text
-    assert "hl_mem_version=0.33.0" in caplog.text
+    assert f"hl_mem_version={__version__}" in caplog.text
     assert "Traceback (most recent call last)" in caplog.text
     assert secret not in caplog.text
 

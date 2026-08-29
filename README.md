@@ -2,7 +2,7 @@
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 0.33.0](https://img.shields.io/badge/version-0.33.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 0.34.0](https://img.shields.io/badge/version-0.34.0-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -419,7 +419,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.33.0，共 56 个不可变、仅向前执行的 SQL Migration。migration 055–056 增加 Claim mutation
+当前基线为 v0.34.0，共 56 个不可变、仅向前执行的 SQL Migration。migration 055–056 增加 Claim mutation
 审计账本触发器与可移植审计上下文；全部是仅向前的 additive 升级。升级前仍须停止写入者并备份主库与
 tombstone sidecar，旧二进制不得再打开已升级数据库。
 

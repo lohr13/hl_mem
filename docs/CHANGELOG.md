@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## v0.34.0（2026-08-29）
+
+### 查询扩展独立线路
+
+- 查询扩展新增独立线路配置：`recall.query_expansion_provider`、`recall.query_expansion_base_url` 与
+  `QUERY_EXPANSION_API_KEY` 全部留空时继承主 LLM 线路；任一项配置后必须三项齐全，否则启动时 fail-closed。
+- `recall.query_expansion_timeout_seconds` 默认值从 5 秒提高到 15 秒，
+  `recall.query_expansion_total_timeout_seconds` 默认值从 6 秒提高到 16 秒，为独立线路保留合理的请求与总预算。
+
+### L1 生产接线移除
+
+- 删除未进入生产决策的 L1 接线与 `conflict.l1_min_time_delta_seconds`、
+  `conflict.l1_min_confidence_delta` 两个配置键；L1 算法继续保留为 E1 冻结语料回放装备，不参与生产维护路径。
+
+### 配置参考修复
+
+- 配置参考生成器现在识别 `QUERY_EXPANSION_API_KEY`，并同步 Settings 字段计数契约。
+
+### Breaking changes 与升级提示
+
+- **Breaking：**旧 `hl_mem.toml` 若仍包含 `conflict.l1_min_time_delta_seconds` 或
+  `conflict.l1_min_confidence_delta`，新版本会按未知键 fail-closed。升级到 v0.34.0 前必须从 TOML 中移除这两个键。
+
 ## v0.33.0（2026-08-29）
 
 ### 提取触顶软拆分与实验装备

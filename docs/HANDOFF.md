@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- **分支**：`eval/glm-effort-low-20case`
-- **版本**：v0.33.0
-- **阶段**：v0.33.0 发版准备；等待用户验收后 push/tag
+- **分支**：`main`
+- **版本**：v0.34.0
+- **阶段**：v0.34.0 发版准备；等待用户验收后 push/tag
 - **发布状态**：本地 commit，未 push、未打 tag、未部署
 - **服务**：FastAPI 默认监听 8200；非敏感配置只从工作目录 `hl_mem.toml` 读取
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
