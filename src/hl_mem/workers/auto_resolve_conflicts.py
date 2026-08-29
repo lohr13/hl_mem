@@ -8,22 +8,20 @@ from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from hl_mem.application.conflict_invariants import assert_global_conflict_postconditions
-from hl_mem.application.conflict_queries import follow_claim_tip
+from hl_mem.application.conflict_snapshot import (
+    conflict_docket_fingerprint,
+    load_conflict_docket,
+)
 from hl_mem.application.conflicts import (
     ResolutionService,
     StaleConflictDecision,
 )
-from hl_mem.domain.claims.conflicts import coordinate_qualifier_key
 from hl_mem.domain.governance import (
     CONFLICT_AUTO_POLICY_VERSION,
     AutoDecision,
     DecisionEnvelope,
     decide_l0,
-    is_terminal_conflict_status,
-    snapshot_fingerprint,
 )
-from hl_mem.errors import ConflictResolutionError
-from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.governance import (
     GovernanceActionRepository,
     upgrade_conflict_auto_policy,
@@ -35,124 +33,6 @@ __all__ = [
     "auto_resolve_conflicts",
     "decide_l0",
 ]
-
-
-def _coordinates_complete(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    slot = left.get("canonical_slot")
-    return bool(
-        isinstance(slot, str)
-        and slot == right.get("canonical_slot")
-        and left.get("namespace_key") == right.get("namespace_key")
-        and left.get("subject_entity_id")
-        and left.get("subject_entity_id") == right.get("subject_entity_id")
-        and coordinate_qualifier_key(slot, left.get("qualifiers"))
-        == coordinate_qualifier_key(slot, right.get("qualifiers"))
-    )
-
-
-def _claim_evidence(connection: sqlite3.Connection, claim_ids: list[str]) -> list[dict[str, Any]]:
-    placeholders = ",".join("?" for _ in claim_ids)
-    rows = connection.execute(
-        "SELECT id,derived_id,evidence_type,evidence_id,relation,weight FROM evidence_links "
-        f"WHERE derived_type='claim' AND derived_id IN ({placeholders}) ORDER BY id",
-        claim_ids,
-    ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def load_conflict_docket(connection: sqlite3.Connection, case_id: str) -> dict[str, Any]:
-    """读取一次裁决所需的完整 pair/group 快照，不开启写事务。"""
-
-    row = connection.execute(
-        "SELECT cases.*,state.dirty_at,state.dirty_reason,state.not_before,state.input_fingerprint,"
-        "state.policy_version AS review_policy_version FROM conflict_cases AS cases "
-        "LEFT JOIN conflict_review_state AS state ON state.case_id=cases.id WHERE cases.id=?",
-        (case_id,),
-    ).fetchone()
-    if row is None:
-        raise ConflictResolutionError(f"conflict case not found: {case_id}")
-    case = dict(row)
-    repository = ClaimRepository(connection)
-    left = follow_claim_tip(repository, str(case["left_claim_id"]))
-    right = follow_claim_tip(repository, str(case["right_claim_id"]))
-    if left is None or right is None:
-        raise ConflictResolutionError(f"conflict case has invalid endpoints: {case_id}")
-    claim_ids = [str(left["id"]), str(right["id"])]
-    evidence = _claim_evidence(connection, claim_ids)
-    review = ResolutionService(connection).review(case_id)
-    candidates = review["candidates"]
-    group_native = bool(case.get("group_key") and candidates)
-    if not candidates:
-        counts = {claim_id: 0 for claim_id in claim_ids}
-        for item in evidence:
-            counts[str(item["derived_id"])] += 1
-        candidates = [
-            {
-                "candidate_key": claim_id,
-                "representative_claim_id": claim_id,
-                "support_count": 1,
-                "evidence_count": counts[claim_id],
-                "terminal": is_terminal_conflict_status(claim.get("status")),
-            }
-            for claim_id, claim in zip(claim_ids, (left, right), strict=True)
-        ]
-    else:
-        for candidate in candidates:
-            statuses = candidate.get("claim_statuses") or {}
-            candidate["terminal"] = bool(statuses) and all(
-                is_terminal_conflict_status(status) for status in statuses.values()
-            )
-    case["group_native"] = group_native
-    other_open = connection.execute(
-        "SELECT 1 FROM conflict_cases WHERE id<>? AND status IN ('pending','auto_resolved','manual_required') "
-        "AND resolved_at IS NULL AND (left_claim_id IN (?,?) OR right_claim_id IN (?,?)) LIMIT 1",
-        (case_id, *claim_ids, *claim_ids),
-    ).fetchone()
-    context = {
-        "left_tip_id": left["id"],
-        "right_tip_id": right["id"],
-        "survivor_contested": other_open is not None,
-        "entity_type_mismatch": False,
-        "coordinates_complete": _coordinates_complete(left, right),
-        "nonexclusive_false_positive": bool(
-            left.get("canonical_slot") != right.get("canonical_slot")
-            or (
-                left.get("valid_from")
-                and left.get("valid_from") == right.get("valid_from")
-                and not _coordinates_complete(left, right)
-            )
-        ),
-    }
-    return {"case": case, "claims": [left, right], "candidates": candidates, "evidence": evidence, "context": context}
-
-
-def conflict_docket_fingerprint(docket: dict[str, Any]) -> str:
-    """散列实际裁决读取的 case/claim/candidate/evidence 有界字段。"""
-
-    case = docket["case"]
-    claim_fields = (
-        "id",
-        "status",
-        "namespace_key",
-        "subject_entity_id",
-        "canonical_slot",
-        "value_json",
-        "qualifiers_json",
-        "valid_from",
-        "valid_to",
-        "recorded_from",
-        "source_authority",
-        "confidence",
-        "assertion_kind",
-        "superseded_by_id",
-    )
-    payload = {
-        "case": {key: case.get(key) for key in ("id", "generation", "revision", "overflow", "group_key")},
-        "claims": [{key: claim.get(key) for key in claim_fields} for claim in docket["claims"]],
-        "candidates": docket["candidates"],
-        "evidence_ids": [item.get("id") for item in docket["evidence"]],
-    }
-    return snapshot_fingerprint(payload)
 
 
 def _mutation_snapshot(connection: sqlite3.Connection, case_id: str, claim_ids: list[str]) -> dict[str, Any]:

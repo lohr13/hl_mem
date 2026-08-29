@@ -180,6 +180,42 @@ def test_pair_dossier_returns_full_claims_and_bounded_event_evidence(tmp_path: P
     assert body["candidates"] == []
 
 
+def test_pair_dossier_returns_tip_and_complete_supersession_lineage(tmp_path: Path) -> None:
+    path = tmp_path / "pair-lineage-dossier.db"
+    case_id = _pair_case(path)
+    database = Database(path)
+    connection = database.open()
+    repository = ClaimRepository(connection)
+    _claim(repository, "left-middle", "8080-middle")
+    _claim(repository, "left-tip", "8080-current")
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='left-middle',"
+        "valid_to='2026-08-29T20:00:00+00:00',recorded_to='2026-08-29T20:01:00+00:00' WHERE id='left'"
+    )
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='left-tip',"
+        "valid_to='2026-08-29T21:00:00+00:00',recorded_to='2026-08-29T21:01:00+00:00' "
+        "WHERE id='left-middle'"
+    )
+    connection.commit()
+    database.close()
+
+    with TestClient(server.create_app(path)) as client:
+        response = client.get(f"/v1/conflicts/{case_id}/dossier")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["fingerprint_version"] == "v2"
+    assert len(body["fingerprint"]) == 64
+    assert body["left_tip_id"] == body["left_claim"]["id"] == "left-tip"
+    assert body["right_tip_id"] == body["right_claim"]["id"] == "right"
+    assert [claim["id"] for claim in body["left_lineage"]] == ["left", "left-middle", "left-tip"]
+    assert body["left_lineage"][0]["valid_to"] == "2026-08-29T20:00:00+00:00"
+    assert body["left_lineage"][0]["recorded_to"] == "2026-08-29T20:01:00+00:00"
+    assert body["left_lineage"][1]["valid_to"] == "2026-08-29T21:00:00+00:00"
+    assert body["left_lineage"][1]["recorded_to"] == "2026-08-29T21:01:00+00:00"
+
+
 def test_group_dossier_returns_candidates_and_full_member_claims(tmp_path: Path) -> None:
     path = tmp_path / "group-dossier.db"
     database = Database(path)
@@ -232,10 +268,59 @@ def test_group_dossier_returns_candidates_and_full_member_claims(tmp_path: Path)
         "valid_to": None,
         "recorded_from": NOW,
         "recorded_to": None,
+        "superseded_by_id": None,
         "observed_at": "2026-08-29T19:30:00+00:00",
         "status": "disputed",
         "evidence_links": [],
     }
+
+
+def test_group_dossier_retains_nonendpoint_candidate_lineage(tmp_path: Path) -> None:
+    path = tmp_path / "group-candidate-lineage.db"
+    database = Database(path)
+    connection = database.open()
+    repository = ClaimRepository(connection)
+    left = _claim(repository, "left", "8080")
+    right = _claim(repository, "right", "8081")
+    created = repository.ensure_group_conflict_case(
+        [left, right],
+        created_at=NOW,
+        decision="uncertain",
+        rationale="delegated",
+    )
+    third = _claim(repository, "third", "8082")
+    repository.ensure_group_conflict_case(
+        [third],
+        created_at=NOW,
+        decision="uncertain",
+        rationale="third candidate",
+    )
+    _claim(repository, "third-middle", "8082")
+    _claim(repository, "third-tip", "8082")
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='third-middle',valid_to=?,recorded_to=? "
+        "WHERE id='third'",
+        (NOW, NOW),
+    )
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='third-tip',valid_to=?,recorded_to=? "
+        "WHERE id='third-middle'",
+        (NOW, NOW),
+    )
+    connection.commit()
+    database.close()
+
+    with TestClient(server.create_app(path)) as client:
+        response = client.get(f"/v1/conflicts/{created['case_id']}/dossier")
+
+    assert response.status_code == 200
+    candidate = next(item for item in response.json()["candidates"] if item["candidate_key"] == '"8082"')
+    assert candidate["representative_tip_id"] == "third-tip"
+    assert [claim["id"] for claim in candidate["member_lineages"]["third"]] == [
+        "third",
+        "third-middle",
+        "third-tip",
+    ]
 
 
 def test_large_group_dossier_uses_bounded_batch_queries(tmp_path: Path) -> None:

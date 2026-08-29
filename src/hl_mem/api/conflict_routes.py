@@ -94,6 +94,7 @@ def add_conflict_routes(
             payload.action,
             candidate_key=payload.candidate_key,
             expected_revision=payload.expected_revision,
+            expected_fingerprint=payload.expected_fingerprint,
             rationale=payload.rationale,
             resolver=payload.resolver,
             confirm_retraction=payload.confirm_retraction,

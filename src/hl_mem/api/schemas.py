@@ -323,6 +323,7 @@ class ConflictCandidateOutput(BaseModel):
     candidate_key: str
     canonical_value: Any
     representative_claim_id: str
+    representative_tip_id: str
     support_count: int = Field(ge=1)
     evidence_count: int = Field(ge=0)
     first_seen_at: str
@@ -339,6 +340,8 @@ class ConflictReviewOutput(BaseModel):
     group_key: str | None = None
     generation: int = Field(ge=1)
     revision: int = Field(ge=0)
+    fingerprint_version: Literal["v2"]
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: str
     overflow: bool
     candidate_count: int = Field(ge=0)
@@ -351,6 +354,7 @@ class ConflictResolutionInput(BaseModel):
     action: Literal["select_candidate", "reject_candidate"]
     candidate_key: str = Field(min_length=1, max_length=50000)
     expected_revision: int = Field(ge=0)
+    expected_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     rationale: str | None = Field(default=None, max_length=5000)
     resolver: str = Field(default=DEFAULT_HUMAN_RESOLVER, min_length=1, max_length=200)
     confirm_retraction: bool = False
@@ -409,6 +413,7 @@ class ConflictDossierClaimOutput(BaseModel):
     valid_to: str | None = None
     recorded_from: str | None = None
     recorded_to: str | None = None
+    superseded_by_id: str | None = None
     observed_at: str | None = None
     status: str
     evidence_links: list[ConflictEvidenceOutput] = Field(default_factory=list)
@@ -419,9 +424,11 @@ class ConflictDossierCandidateOutput(BaseModel):
 
     candidate_key: str
     representative_claim_id: str
+    representative_tip_id: str
     support_count: int = Field(ge=1)
     canonical_value_json: str
     member_claims: list[ConflictDossierClaimOutput] = Field(default_factory=list)
+    member_lineages: dict[str, list[ConflictDossierClaimOutput]] = Field(default_factory=dict)
 
 
 class ConflictDossierOutput(BaseModel):
@@ -432,11 +439,17 @@ class ConflictDossierOutput(BaseModel):
     status: str
     created_at: str
     revision: int = Field(ge=0)
+    fingerprint_version: Literal["v2"]
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     namespace_key: str | None = None
     group_key: str | None = None
     overflow: bool
+    left_tip_id: str
+    right_tip_id: str
     left_claim: ConflictDossierClaimOutput
     right_claim: ConflictDossierClaimOutput
+    left_lineage: list[ConflictDossierClaimOutput]
+    right_lineage: list[ConflictDossierClaimOutput]
     candidates: list[ConflictDossierCandidateOutput] = Field(default_factory=list)
 
 

@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from hl_mem.application.conflicts import ResolutionService
+from hl_mem.application.conflicts import ResolutionService, StaleConflictDecision
 from hl_mem.errors import ConflictResolutionError
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
@@ -130,6 +130,66 @@ def test_exclusive_group_rejects_reject_with_executable_constraint(tmp_path) -> 
     assert {row["status"] for row in connection.execute("SELECT status FROM conflict_cases")} == {"manual_required"}
 
 
+def test_pair_fingerprint_covers_entire_exclusive_group_mutation_scope(tmp_path) -> None:
+    connection, repository = _exclusive_group(tmp_path)
+    service = ResolutionService(connection)
+    review = service.review("case-left-right")
+    connection.execute("UPDATE claims SET confidence=0.42 WHERE id='third'")
+    connection.commit()
+    assert _revision(connection, "case-left-right") == review["revision"]
+
+    with pytest.raises(StaleConflictDecision, match="stale conflict fingerprint"):
+        service.resolve_pair(
+            "case-left-right",
+            "keep_left",
+            resolved_at=NOW,
+            expected_revision=review["revision"],
+            expected_fingerprint=review["fingerprint"],
+        )
+
+    assert {repository.get_claim(claim_id)["status"] for claim_id in ("left", "right", "third")} == {
+        "candidate",
+        "disputed",
+    }
+    assert {row["status"] for row in connection.execute("SELECT status FROM conflict_cases")} == {"manual_required"}
+
+
+def test_pair_fingerprint_covers_lineages_of_every_case_closed_with_group(tmp_path) -> None:
+    connection, repository = _exclusive_group(tmp_path)
+    _claim(
+        repository,
+        "third-tip",
+        value="9091",
+        status="candidate",
+        conflict_key="outside-port-group",
+    )
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='third-tip',valid_to=?,recorded_to=? "
+        "WHERE id='third'",
+        (NOW, NOW),
+    )
+    connection.commit()
+    service = ResolutionService(connection)
+    review = service.review("case-left-right")
+
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='left',valid_to=?,recorded_to=? "
+        "WHERE id='third-tip'",
+        (NOW, NOW),
+    )
+    connection.commit()
+    assert _revision(connection, "case-left-right") == review["revision"]
+
+    with pytest.raises(StaleConflictDecision, match="stale conflict fingerprint"):
+        service.resolve_pair(
+            "case-left-right",
+            "keep_left",
+            resolved_at=NOW,
+            expected_revision=review["revision"],
+            expected_fingerprint=review["fingerprint"],
+        )
+
+
 def test_keep_left_converges_group_and_closes_every_overlapping_open_case(tmp_path) -> None:
     connection, repository = _exclusive_group(tmp_path)
 
@@ -219,7 +279,7 @@ def test_terminal_replay_without_rationale_preserves_group_values(tmp_path) -> N
     assert {row["rationale"] for row in rows} == {"original rationale"}
 
 
-def test_terminal_replay_with_matching_decision_replaces_group_rationale(tmp_path) -> None:
+def test_terminal_replay_with_matching_decision_rejects_rationale_rewrite(tmp_path) -> None:
     connection, _ = _exclusive_group(tmp_path)
     service = ResolutionService(connection)
     service.resolve(
@@ -230,16 +290,17 @@ def test_terminal_replay_with_matching_decision_replaces_group_rationale(tmp_pat
         expected_revision=_revision(connection, "case-left-right"),
     )
 
-    service.resolve(
-        "case-left-right",
-        "keep_left",
-        resolved_at="later",
-        rationale="reviewed rationale",
-        expected_revision=_revision(connection, "case-left-right"),
-    )
+    with pytest.raises(ConflictResolutionError, match="terminal conflict rationale is immutable"):
+        service.resolve(
+            "case-left-right",
+            "keep_left",
+            resolved_at="later",
+            rationale="reviewed rationale",
+            expected_revision=_revision(connection, "case-left-right"),
+        )
 
     rows = connection.execute("SELECT rationale FROM conflict_cases").fetchall()
-    assert {row["rationale"] for row in rows} == {"reviewed rationale"}
+    assert {row["rationale"] for row in rows} == {"original rationale"}
 
 
 def test_terminal_replay_with_different_decision_does_not_replace_rationale(tmp_path) -> None:

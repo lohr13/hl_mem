@@ -97,9 +97,12 @@ def test_review_returns_generation_revision_and_all_candidates(tmp_path: Path) -
     assert body["case_id"] == case_id
     assert body["generation"] == 1
     assert body["revision"] == 2
+    assert body["fingerprint_version"] == "v2"
+    assert len(body["fingerprint"]) == 64
     assert body["candidate_count"] == 2
     assert [candidate["canonical_value"] for candidate in body["candidates"]] == ["8080", "8081"]
     assert {candidate["representative_claim_id"] for candidate in body["candidates"]} == {"left", "right"}
+    assert {candidate["representative_tip_id"] for candidate in body["candidates"]} == {"left", "right"}
 
 
 def test_stale_group_resolution_returns_409_without_mutating_any_state(tmp_path: Path) -> None:
@@ -143,6 +146,37 @@ def test_stale_group_resolution_returns_409_without_mutating_any_state(tmp_path:
     assert _snapshot(path) == before
 
 
+def test_stale_group_fingerprint_returns_409_when_revision_still_matches(tmp_path: Path) -> None:
+    path = tmp_path / "stale-fingerprint.db"
+    case_id, winner_key = _seed(path)
+    with TestClient(server.create_app(path)) as client:
+        review = client.get(f"/v1/conflicts/{case_id}").json()
+        database = Database(path)
+        connection = database.open()
+        connection.execute("UPDATE claims SET confidence=0.42 WHERE id='left'")
+        connection.commit()
+        assert (
+            connection.execute("SELECT revision FROM conflict_cases WHERE id=?", (case_id,)).fetchone()[0]
+            == review["revision"]
+        )
+        database.close()
+        before = _snapshot(path)
+
+        response = client.post(
+            f"/v1/conflicts/{case_id}/resolve",
+            json={
+                "action": "select_candidate",
+                "candidate_key": winner_key,
+                "expected_revision": review["revision"],
+                "expected_fingerprint": review["fingerprint"],
+            },
+        )
+
+    assert response.status_code == 409
+    assert "stale conflict fingerprint" in response.json()["detail"]
+    assert _snapshot(path) == before
+
+
 def test_current_revision_selects_candidate_and_closes_group(tmp_path: Path) -> None:
     path = tmp_path / "select.db"
     case_id, winner_key = _seed(path)
@@ -165,6 +199,78 @@ def test_current_revision_selects_candidate_and_closes_group(tmp_path: Path) -> 
     assert connection.execute("SELECT count(*) FROM claims WHERE status='active'").fetchone()[0] == 1
     assert connection.execute("SELECT count(*) FROM claims WHERE status='superseded'").fetchone()[0] == 1
     database.close()
+
+
+def test_group_resolution_selects_representative_tip_and_returns_tip_winner(tmp_path: Path) -> None:
+    path = tmp_path / "select-tip.db"
+    case_id, winner_key = _seed(path)
+    database = Database(path)
+    connection = database.open()
+    repository = ClaimRepository(connection)
+    _claim(repository, "left-middle", "8080")
+    _claim(repository, "left-tip", "8080")
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='left-middle',valid_to=?,recorded_to=? "
+        "WHERE id='left'",
+        (NOW, NOW),
+    )
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='left-tip',valid_to=?,recorded_to=? "
+        "WHERE id='left-middle'",
+        (NOW, NOW),
+    )
+    connection.commit()
+    database.close()
+
+    with TestClient(server.create_app(path)) as client:
+        review = client.get(f"/v1/conflicts/{case_id}").json()
+        winner = next(candidate for candidate in review["candidates"] if candidate["candidate_key"] == winner_key)
+        assert winner["representative_claim_id"] == "left"
+        assert winner["representative_tip_id"] == "left-tip"
+        response = client.post(
+            f"/v1/conflicts/{case_id}/resolve",
+            json={
+                "action": "select_candidate",
+                "candidate_key": winner_key,
+                "expected_revision": review["revision"],
+                "expected_fingerprint": review["fingerprint"],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["winner_id"] == "left-tip"
+
+
+def test_group_native_terminal_replay_rejects_rationale_rewrite(tmp_path: Path) -> None:
+    path = tmp_path / "group-terminal-rationale.db"
+    case_id, winner_key = _seed(path)
+    connection = Database(path).open()
+    service = ResolutionService(connection)
+    review = service.review(case_id)
+    service.resolve_group(
+        case_id,
+        "select_candidate",
+        candidate_key=winner_key,
+        expected_revision=review["revision"],
+        expected_fingerprint=review["fingerprint"],
+        rationale="original rationale",
+    )
+    current = service.review(case_id)
+
+    with pytest.raises(ConflictResolutionError, match="terminal conflict rationale is immutable"):
+        service.resolve_group(
+            case_id,
+            "select_candidate",
+            candidate_key=winner_key,
+            expected_revision=current["revision"],
+            expected_fingerprint=current["fingerprint"],
+            rationale="rewritten rationale",
+        )
+
+    assert (
+        connection.execute("SELECT rationale FROM conflict_cases WHERE id=?", (case_id,)).fetchone()[0]
+        == "original rationale"
+    )
 
 
 def test_reject_candidate_requires_api_confirmation_without_mutation(tmp_path: Path) -> None:

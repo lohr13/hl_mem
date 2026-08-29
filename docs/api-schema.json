@@ -311,6 +311,10 @@
             "title": "Representative Claim Id",
             "type": "string"
           },
+          "representative_tip_id": {
+            "title": "Representative Tip Id",
+            "type": "string"
+          },
           "support_count": {
             "minimum": 1.0,
             "title": "Support Count",
@@ -321,6 +325,7 @@
           "candidate_key",
           "canonical_value",
           "representative_claim_id",
+          "representative_tip_id",
           "support_count",
           "evidence_count",
           "first_seen_at",
@@ -438,8 +443,22 @@
             "title": "Member Claims",
             "type": "array"
           },
+          "member_lineages": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/ConflictDossierClaimOutput"
+              },
+              "type": "array"
+            },
+            "title": "Member Lineages",
+            "type": "object"
+          },
           "representative_claim_id": {
             "title": "Representative Claim Id",
+            "type": "string"
+          },
+          "representative_tip_id": {
+            "title": "Representative Tip Id",
             "type": "string"
           },
           "support_count": {
@@ -451,6 +470,7 @@
         "required": [
           "candidate_key",
           "representative_claim_id",
+          "representative_tip_id",
           "support_count",
           "canonical_value_json"
         ],
@@ -561,6 +581,17 @@
             ],
             "title": "Subject Entity Id"
           },
+          "superseded_by_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Id"
+          },
           "valid_from": {
             "anyOf": [
               {
@@ -614,6 +645,16 @@
             "title": "Created At",
             "type": "string"
           },
+          "fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "fingerprint_version": {
+            "const": "v2",
+            "title": "Fingerprint Version",
+            "type": "string"
+          },
           "group_key": {
             "anyOf": [
               {
@@ -627,6 +668,17 @@
           },
           "left_claim": {
             "$ref": "#/components/schemas/ConflictDossierClaimOutput"
+          },
+          "left_lineage": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictDossierClaimOutput"
+            },
+            "title": "Left Lineage",
+            "type": "array"
+          },
+          "left_tip_id": {
+            "title": "Left Tip Id",
+            "type": "string"
           },
           "namespace_key": {
             "anyOf": [
@@ -655,6 +707,17 @@
           "right_claim": {
             "$ref": "#/components/schemas/ConflictDossierClaimOutput"
           },
+          "right_lineage": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictDossierClaimOutput"
+            },
+            "title": "Right Lineage",
+            "type": "array"
+          },
+          "right_tip_id": {
+            "title": "Right Tip Id",
+            "type": "string"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -666,9 +729,15 @@
           "status",
           "created_at",
           "revision",
+          "fingerprint_version",
+          "fingerprint",
           "overflow",
+          "left_tip_id",
+          "right_tip_id",
           "left_claim",
-          "right_claim"
+          "right_claim",
+          "left_lineage",
+          "right_lineage"
         ],
         "title": "ConflictDossierOutput",
         "type": "object"
@@ -767,6 +836,18 @@
             "default": false,
             "title": "Confirm Retraction",
             "type": "boolean"
+          },
+          "expected_fingerprint": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Fingerprint"
           },
           "expected_revision": {
             "minimum": 0.0,
@@ -883,6 +964,16 @@
             "title": "Case Id",
             "type": "string"
           },
+          "fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "fingerprint_version": {
+            "const": "v2",
+            "title": "Fingerprint Version",
+            "type": "string"
+          },
           "generation": {
             "minimum": 1.0,
             "title": "Generation",
@@ -928,6 +1019,8 @@
           "case_id",
           "generation",
           "revision",
+          "fingerprint_version",
+          "fingerprint",
           "status",
           "overflow",
           "candidate_count"

@@ -8,38 +8,18 @@ from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
+from hl_mem.application.conflict_snapshot import (
+    conflict_docket_fingerprint,
+    load_conflict_docket,
+)
 from hl_mem.errors import ConflictResolutionError, NotFoundError, ValidationError
-from hl_mem.storage.claims import ClaimRepository
 
 OPEN_CASE_STATUSES = ("pending", "auto_resolved", "manual_required")
-MAX_EVIDENCE_PER_CLAIM = 5
-MAX_EVENT_CONTENT_CHARS = 500
 MAX_DOSSIER_RESPONSE_BYTES = 1024 * 1024
-CLAIM_BATCH_SIZE = 100
 
 
 class ConflictDossierTooLargeError(Exception):
     """冲突案卷超过固定 REST 响应上限。"""
-
-
-def follow_claim_tip(repository: ClaimRepository, claim_id: str) -> dict[str, Any] | None:
-    """沿 supersession chain 返回当前 claim tip。"""
-
-    visited: set[str] = set()
-    current_id = claim_id
-    for _ in range(33):
-        if current_id in visited:
-            return None
-        visited.add(current_id)
-        claim = repository.get_claim(current_id)
-        if claim is None:
-            return None
-        if claim.get("status") != "superseded":
-            return claim
-        current_id = str(claim.get("superseded_by_id") or "")
-        if not current_id:
-            return None
-    return None
 
 
 def load_conflict_case(connection: sqlite3.Connection, case_id: str) -> dict[str, Any]:
@@ -59,53 +39,31 @@ class ConflictQueryService:
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
-        self.claims = ClaimRepository(connection)
 
     def review(self, case_id: str) -> dict[str, Any]:
         """返回一个 revision 快照及其全部 canonical candidates。"""
 
-        case = load_conflict_case(self.connection, case_id)
-        rows = self.connection.execute(
-            "SELECT candidate_key,canonical_value_json,representative_claim_id,support_count,"
-            "first_seen_at,last_seen_at FROM conflict_case_candidates "
-            "WHERE case_id=? ORDER BY candidate_key",
-            (case_id,),
-        ).fetchall()
+        docket = load_conflict_docket(self.connection, case_id)
+        case = docket["case"]
         candidates: list[dict[str, Any]] = []
-        for row in rows:
-            member_rows = self.connection.execute(
-                "SELECT members.claim_id,claims.status,claims.source_authority "
-                "FROM conflict_candidate_members AS members "
-                "JOIN claims ON claims.id=members.claim_id "
-                "WHERE members.case_id=? AND members.candidate_key=? ORDER BY members.claim_id",
-                (case_id, row["candidate_key"]),
-            ).fetchall()
-            claim_ids = [str(member["claim_id"]) for member in member_rows]
-            evidence_count = 0
-            if claim_ids:
-                placeholders = ",".join("?" for _ in claim_ids)
-                evidence_count = int(
-                    self.connection.execute(
-                        "SELECT count(*) FROM evidence_links WHERE derived_type='claim' "
-                        f"AND derived_id IN ({placeholders})",
-                        claim_ids,
-                    ).fetchone()[0]
-                )
+        raw_candidates = docket["candidates"] if case.get("group_key") else []
+        for raw_candidate in raw_candidates:
             try:
-                canonical_value = json.loads(str(row["canonical_value_json"]))
+                canonical_value = json.loads(str(raw_candidate["canonical_value_json"]))
             except json.JSONDecodeError:
-                canonical_value = row["canonical_value_json"]
+                canonical_value = raw_candidate["canonical_value_json"]
             candidates.append(
                 {
-                    "candidate_key": str(row["candidate_key"]),
+                    "candidate_key": str(raw_candidate["candidate_key"]),
                     "canonical_value": canonical_value,
-                    "representative_claim_id": str(row["representative_claim_id"]),
-                    "support_count": int(row["support_count"]),
-                    "evidence_count": evidence_count,
-                    "first_seen_at": str(row["first_seen_at"]),
-                    "last_seen_at": str(row["last_seen_at"]),
-                    "claim_ids": claim_ids,
-                    "claim_statuses": {str(member["claim_id"]): str(member["status"]) for member in member_rows},
+                    "representative_claim_id": str(raw_candidate["representative_claim_id"]),
+                    "representative_tip_id": str(raw_candidate["representative_tip_id"]),
+                    "support_count": int(raw_candidate["support_count"]),
+                    "evidence_count": int(raw_candidate["evidence_count"]),
+                    "first_seen_at": str(raw_candidate["first_seen_at"]),
+                    "last_seen_at": str(raw_candidate["last_seen_at"]),
+                    "claim_ids": list(raw_candidate["claim_ids"]),
+                    "claim_statuses": dict(raw_candidate["claim_statuses"]),
                 }
             )
         return {
@@ -114,6 +72,8 @@ class ConflictQueryService:
             "group_key": case.get("group_key"),
             "generation": int(case.get("generation") or 1),
             "revision": int(case.get("revision") or 0),
+            "fingerprint_version": "v2",
+            "fingerprint": conflict_docket_fingerprint(docket),
             "status": str(case["status"]),
             "overflow": bool(case.get("overflow")),
             "candidate_count": len(candidates),
@@ -123,12 +83,14 @@ class ConflictQueryService:
     def dossier(self, case_id: str) -> dict[str, Any]:
         """返回 pair/group 共用的完整裁决案卷。"""
 
-        row = self.connection.execute("SELECT * FROM conflict_cases WHERE id=?", (case_id,)).fetchone()
-        if row is None:
-            raise NotFoundError(f"conflict case not found: {case_id}")
-        case = dict(row)
+        try:
+            snapshot = load_conflict_docket(self.connection, case_id)
+        except ConflictResolutionError as error:
+            if str(error) == f"conflict case not found: {case_id}":
+                raise NotFoundError(str(error)) from error
+            raise
+        case = snapshot["case"]
         remaining_bytes = MAX_DOSSIER_RESPONSE_BYTES
-        claim_cache: dict[str, dict[str, Any]] = {}
 
         def consume_budget(value: Any, *, occurrences: int = 1) -> None:
             nonlocal remaining_bytes
@@ -144,107 +106,89 @@ class ConflictQueryService:
             "status": str(case["status"]),
             "created_at": str(case["created_at"]),
             "revision": int(case.get("revision") or 0),
+            "fingerprint_version": "v2",
+            "fingerprint": conflict_docket_fingerprint(snapshot),
             "namespace_key": case.get("namespace_key"),
             "group_key": case.get("group_key"),
             "overflow": bool(case.get("overflow")),
+            "left_tip_id": str(snapshot["context"]["left_tip_id"]),
+            "right_tip_id": str(snapshot["context"]["right_tip_id"]),
         }
         consume_budget(fixed_fields)
-        left_claim_id = str(case["left_claim_id"])
-        right_claim_id = str(case["right_claim_id"])
-        claim_ids = list(dict.fromkeys((left_claim_id, right_claim_id)))
-        seen_claim_ids = set(claim_ids)
-        occurrences: Counter[str] = Counter((left_claim_id, right_claim_id))
-        candidate_builders: list[dict[str, Any]] = []
-        current_candidate: dict[str, Any] | None = None
-        current_candidate_key: str | None = None
-        candidate_rows = self.connection.execute(
-            "SELECT candidates.candidate_key,candidates.representative_claim_id,"
-            "candidates.support_count,candidates.canonical_value_json,members.claim_id "
-            "FROM conflict_case_candidates AS candidates "
-            "LEFT JOIN conflict_candidate_members AS members "
-            "ON members.case_id=candidates.case_id AND members.candidate_key=candidates.candidate_key "
-            "WHERE candidates.case_id=? ORDER BY candidates.candidate_key,members.claim_id",
-            (case_id,),
-        )
-        for candidate_row in candidate_rows:
-            candidate_key = str(candidate_row["candidate_key"])
-            if candidate_key != current_candidate_key:
-                current_candidate_key = candidate_key
-                current_candidate = {
-                    "candidate_key": candidate_key,
-                    "representative_claim_id": str(candidate_row["representative_claim_id"]),
-                    "support_count": int(candidate_row["support_count"]),
-                    "canonical_value_json": str(candidate_row["canonical_value_json"]),
-                    "member_claim_ids": [],
-                }
-                candidate_builders.append(current_candidate)
-                consume_budget({key: value for key, value in current_candidate.items() if key != "member_claim_ids"})
-            member_claim_id = candidate_row["claim_id"]
-            if member_claim_id is None or current_candidate is None:
-                continue
-            member_id = str(member_claim_id)
-            consume_budget(member_id)
-            current_candidate["member_claim_ids"].append(member_id)
-            occurrences[member_id] += 1
-            if member_id not in seen_claim_ids:
-                seen_claim_ids.add(member_id)
-                claim_ids.append(member_id)
+        left_claim_id = str(snapshot["context"]["left_tip_id"])
+        right_claim_id = str(snapshot["context"]["right_tip_id"])
+        left_lineage_ids = [str(claim["id"]) for claim in snapshot["lineages"]["left"]["claims"]]
+        right_lineage_ids = [str(claim["id"]) for claim in snapshot["lineages"]["right"]["claims"]]
+        occurrences: Counter[str] = Counter((*left_lineage_ids, *right_lineage_ids))
+        occurrences.update((left_claim_id, right_claim_id))
+        claims_by_id: dict[str, dict[str, Any]] = {}
+        for lineage in (snapshot["lineages"]["left"], snapshot["lineages"]["right"]):
+            claims_by_id.update({str(claim["id"]): claim for claim in lineage["claims"]})
+        raw_candidates = snapshot["candidates"] if case.get("group_key") else []
+        for candidate in raw_candidates:
+            for member_id, lineage in (candidate.get("member_lineages") or {}).items():
+                occurrences[str(member_id)] += 1
+                for claim in lineage["claims"]:
+                    claim_id = str(claim["id"])
+                    occurrences[claim_id] += 1
+                    claims_by_id[claim_id] = claim
 
-        for start in range(0, len(claim_ids), CLAIM_BATCH_SIZE):
-            batch = claim_ids[start : start + CLAIM_BATCH_SIZE]
-            placeholders = ",".join("?" for _ in batch)
-            raw_value_bytes = int(
-                self.connection.execute(
-                    "SELECT COALESCE(sum(length(CAST(value_json AS BLOB))),0) FROM claims "
-                    f"WHERE id IN ({placeholders})",
-                    batch,
-                ).fetchone()[0]
+        evidence_by_claim: dict[str, list[dict[str, Any]]] = {claim_id: [] for claim_id in claims_by_id}
+        for evidence in snapshot["evidence"]:
+            evidence_by_claim[str(evidence["derived_id"])].append(
+                {key: value for key, value in evidence.items() if key != "derived_id"}
             )
-            if raw_value_bytes > remaining_bytes:
-                raise ConflictDossierTooLargeError(
-                    f"conflict dossier exceeds {MAX_DOSSIER_RESPONSE_BYTES} bytes: {case_id}"
-                )
-            claims = self.claims.batch_get_claims(batch)
-            evidence_by_claim = self._batch_evidence_links(batch)
-            for claim_id in batch:
-                claim = claims.get(claim_id)
-                if claim is None:
-                    raise NotFoundError(f"claim not found: {claim_id}")
-                detail = {
-                    "id": str(claim["id"]),
-                    "canonical_slot": claim.get("canonical_slot"),
-                    "value": claim.get("value"),
-                    "qualifiers": dict(claim.get("qualifiers") or {}),
-                    "subject_entity_id": claim.get("subject_entity_id"),
-                    "assertion_kind": str(claim.get("assertion_kind") or "unknown"),
-                    "confidence": claim.get("confidence"),
-                    "source_authority": claim.get("source_authority"),
-                    "valid_from": claim.get("valid_from"),
-                    "valid_to": claim.get("valid_to"),
-                    "recorded_from": claim.get("recorded_from"),
-                    "recorded_to": claim.get("recorded_to"),
-                    "observed_at": claim.get("observed_at"),
-                    "status": str(claim["status"]),
-                    "evidence_links": evidence_by_claim[claim_id],
-                }
-                consume_budget(detail, occurrences=occurrences[claim_id])
-                claim_cache[claim_id] = detail
-
-        candidates = [
-            {
-                "candidate_key": candidate["candidate_key"],
-                "representative_claim_id": candidate["representative_claim_id"],
-                "support_count": candidate["support_count"],
-                "canonical_value_json": candidate["canonical_value_json"],
-                "member_claims": [claim_cache[claim_id] for claim_id in candidate["member_claim_ids"]],
+        claim_cache: dict[str, dict[str, Any]] = {}
+        for claim_id, claim in claims_by_id.items():
+            detail = {
+                "id": claim_id,
+                "canonical_slot": claim.get("canonical_slot"),
+                "value": claim.get("value"),
+                "qualifiers": dict(claim.get("qualifiers") or {}),
+                "subject_entity_id": claim.get("subject_entity_id"),
+                "assertion_kind": str(claim.get("assertion_kind") or "unknown"),
+                "confidence": claim.get("confidence"),
+                "source_authority": claim.get("source_authority"),
+                "valid_from": claim.get("valid_from"),
+                "valid_to": claim.get("valid_to"),
+                "recorded_from": claim.get("recorded_from"),
+                "recorded_to": claim.get("recorded_to"),
+                "superseded_by_id": claim.get("superseded_by_id"),
+                "observed_at": claim.get("observed_at"),
+                "status": str(claim["status"]),
+                "evidence_links": evidence_by_claim[claim_id],
             }
-            for candidate in candidate_builders
-        ]
+            consume_budget(detail, occurrences=occurrences[claim_id])
+            claim_cache[claim_id] = detail
+
+        candidates: list[dict[str, Any]] = []
+        for candidate in raw_candidates:
+            candidate_metadata = {
+                "candidate_key": str(candidate["candidate_key"]),
+                "representative_claim_id": str(candidate["representative_claim_id"]),
+                "representative_tip_id": str(candidate["representative_tip_id"]),
+                "support_count": int(candidate["support_count"]),
+                "canonical_value_json": str(candidate["canonical_value_json"]),
+            }
+            consume_budget(candidate_metadata)
+            member_ids = [str(member_id) for member_id in candidate["claim_ids"]]
+            candidates.append(
+                {
+                    **candidate_metadata,
+                    "member_claims": [claim_cache[member_id] for member_id in member_ids],
+                    "member_lineages": {
+                        member_id: [claim_cache[str(claim["id"])] for claim in lineage["claims"]]
+                        for member_id, lineage in candidate["member_lineages"].items()
+                    },
+                }
+            )
 
         dossier = {
             **fixed_fields,
             "left_claim": claim_cache[left_claim_id],
             "right_claim": claim_cache[right_claim_id],
+            "left_lineage": [claim_cache[claim_id] for claim_id in left_lineage_ids],
+            "right_lineage": [claim_cache[claim_id] for claim_id in right_lineage_ids],
             "candidates": candidates,
         }
         rendered_size = self._serialized_size(dossier)
@@ -303,36 +247,6 @@ class ConflictQueryService:
             "limit": limit,
             "offset": offset,
         }
-
-    def _batch_evidence_links(self, claim_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-        placeholders = ",".join("?" for _ in claim_ids)
-        rows = self.connection.execute(
-            "WITH ranked AS (SELECT links.derived_id,links.id,links.evidence_type,"
-            "links.evidence_id,links.relation,links.weight,events.event_type,events.occurred_at,"
-            "events.content_json,ROW_NUMBER() OVER (PARTITION BY links.derived_id ORDER BY links.id) "
-            "AS evidence_rank FROM evidence_links AS links LEFT JOIN events "
-            "ON links.evidence_type='event' AND events.id=links.evidence_id "
-            f"WHERE links.derived_type='claim' AND links.derived_id IN ({placeholders})) "
-            "SELECT * FROM ranked WHERE evidence_rank<=? ORDER BY derived_id,id",
-            (*claim_ids, MAX_EVIDENCE_PER_CLAIM),
-        ).fetchall()
-        result: dict[str, list[dict[str, Any]]] = {claim_id: [] for claim_id in claim_ids}
-        for row in rows:
-            result[str(row["derived_id"])].append(
-                {
-                    "id": str(row["id"]),
-                    "evidence_type": str(row["evidence_type"]),
-                    "evidence_id": str(row["evidence_id"]),
-                    "relation": str(row["relation"]),
-                    "weight": row["weight"],
-                    "event_type": row["event_type"],
-                    "occurred_at": row["occurred_at"],
-                    "content_json": (
-                        str(row["content_json"])[:MAX_EVENT_CONTENT_CHARS] if row["content_json"] is not None else None
-                    ),
-                }
-            )
-        return result
 
     @staticmethod
     def _serialized_size(value: Any) -> int:

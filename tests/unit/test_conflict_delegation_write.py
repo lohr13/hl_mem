@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import hl_mem.cli as cli_module
-from hl_mem.application.conflicts import ResolutionService
+from hl_mem.application.conflicts import ResolutionService, StaleConflictDecision
 from hl_mem.cli import main
 from hl_mem.errors import ConflictResolutionError
 from hl_mem.settings import Settings
@@ -102,6 +102,55 @@ def test_pair_resolution_rejects_stale_revision_without_mutation(tmp_path: Path)
     assert _pair_state(connection) == before
 
 
+def test_pair_resolution_rejects_stale_fingerprint_without_mutation(tmp_path: Path) -> None:
+    path = tmp_path / "pair-stale-fingerprint.db"
+    _seed_pair(path)
+    connection = Database(path).open()
+    repository = ClaimRepository(connection)
+    assert repository.insert_claim(
+        {
+            "id": "left-tip",
+            "namespace_key": "default",
+            "subject_entity_id": "project",
+            "predicate": "uses",
+            "value": "SQLite current",
+            "qualifiers": {"scope": "old"},
+            "recorded_from": NOW,
+            "status": "disputed",
+            "scope": "permanent",
+            "source_authority": "medium",
+        }
+    )
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='left-tip',valid_to=?,recorded_to=? WHERE id='left'",
+        (NOW, NOW),
+    )
+    connection.commit()
+    service = ResolutionService(connection)
+    review = service.review("pair-case")
+    connection.execute(
+        "UPDATE claims SET value_json=?,qualifiers_json=? WHERE id='left-tip'",
+        (json.dumps("SQLite changed"), json.dumps({"scope": "new"})),
+    )
+    connection.commit()
+    assert (
+        connection.execute("SELECT revision FROM conflict_cases WHERE id='pair-case'").fetchone()[0]
+        == review["revision"]
+    )
+    before = _pair_state(connection)
+
+    with pytest.raises(StaleConflictDecision, match="stale conflict fingerprint"):
+        service.resolve_pair(
+            "pair-case",
+            "keep_left",
+            resolved_at=NOW,
+            expected_revision=review["revision"],
+            expected_fingerprint=review["fingerprint"],
+        )
+
+    assert _pair_state(connection) == before
+
+
 def test_pair_human_resolution_persists_governance_action_structure(tmp_path: Path) -> None:
     path = tmp_path / "pair-audit.db"
     _seed_pair(path)
@@ -165,6 +214,51 @@ def test_pair_human_resolution_persists_governance_action_structure(tmp_path: Pa
     assert result["status"] == "resolved"
 
 
+def test_pair_service_projection_exposes_tip_winner_and_current_revision(tmp_path: Path) -> None:
+    path = tmp_path / "pair-service-projection.db"
+    _seed_pair(path)
+    connection = Database(path).open()
+    repository = ClaimRepository(connection)
+    assert repository.insert_claim(
+        {
+            "id": "left-tip",
+            "namespace_key": "default",
+            "subject_entity_id": "project",
+            "predicate": "uses",
+            "value": "SQLite current",
+            "recorded_from": NOW,
+            "status": "disputed",
+            "scope": "permanent",
+            "source_authority": "medium",
+        }
+    )
+    connection.execute(
+        "UPDATE claims SET status='superseded',superseded_by_id='left-tip',valid_to=?,recorded_to=? " "WHERE id='left'",
+        (NOW, NOW),
+    )
+    connection.commit()
+    revision = connection.execute("SELECT revision FROM conflict_cases WHERE id='pair-case'").fetchone()[0]
+
+    result = ResolutionService(connection).resolve_pair(
+        "pair-case",
+        "keep_left",
+        resolved_at=NOW,
+        expected_revision=revision,
+    )
+
+    assert result == {
+        "case_id": "pair-case",
+        "generation": 1,
+        "revision": result["revision"],
+        "status": "resolved",
+        "decision": "keep_left",
+        "winner_id": "left-tip",
+        "resolved_at": NOW,
+        "closed_case_ids": ["pair-case"],
+    }
+    assert result["revision"] > revision
+
+
 def test_terminal_pair_replay_uses_action_time_for_new_audit_row(tmp_path: Path) -> None:
     path = tmp_path / "pair-terminal-replay.db"
     _seed_pair(path)
@@ -182,7 +276,6 @@ def test_terminal_pair_replay_uses_action_time_for_new_audit_row(tmp_path: Path)
         "pair-case",
         "keep_left",
         resolved_at=LATER,
-        rationale="audited legacy replay",
         expected_revision=current_revision,
         resolver="agent:replay",
     )
@@ -191,6 +284,35 @@ def test_terminal_pair_replay_uses_action_time_for_new_audit_row(tmp_path: Path)
     assert row is not None
     assert (row["created_at"], row["applied_at"]) == (LATER, LATER)
     assert replay["resolved_at"] == first["resolved_at"] == NOW
+
+
+def test_terminal_pair_replay_rejects_rationale_rewrite(tmp_path: Path) -> None:
+    path = tmp_path / "pair-terminal-rationale.db"
+    _seed_pair(path)
+    connection = Database(path).open()
+    service = ResolutionService(connection)
+    service.resolve(
+        "pair-case",
+        "keep_left",
+        resolved_at=NOW,
+        rationale="original rationale",
+        expected_revision=0,
+    )
+    current_revision = connection.execute("SELECT revision FROM conflict_cases WHERE id='pair-case'").fetchone()[0]
+
+    with pytest.raises(ConflictResolutionError, match="terminal conflict rationale is immutable"):
+        service.resolve(
+            "pair-case",
+            "keep_left",
+            resolved_at=LATER,
+            rationale="rewritten rationale",
+            expected_revision=current_revision,
+        )
+
+    assert (
+        connection.execute("SELECT rationale FROM conflict_cases WHERE id='pair-case'").fetchone()[0]
+        == "original rationale"
+    )
 
 
 def test_cli_resolve_accepts_custom_resolver_and_persists_it(

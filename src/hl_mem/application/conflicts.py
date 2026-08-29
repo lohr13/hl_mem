@@ -13,10 +13,16 @@ from hl_mem.application.conflict_invariants import (
     assert_no_orphan_disputed_claims,
 )
 from hl_mem.application.conflict_queries import (
-    OPEN_CASE_STATUSES,
     ConflictQueryService,
-    follow_claim_tip,
     load_conflict_case,
+)
+from hl_mem.application.conflict_snapshot import (
+    StaleConflictDecision,
+    assert_expected_conflict_fingerprint,
+    assert_terminal_rationale_immutable,
+    prepare_group_case_decisions,
+    project_pair_resolution,
+    resolve_claim_lineage,
 )
 from hl_mem.domain.claims.attributes import is_mutually_exclusive_attribute
 from hl_mem.domain.governance import CONFLICT_AUTO_POLICY_VERSION
@@ -38,10 +44,6 @@ __all__ = [
 ]
 
 
-class StaleConflictDecision(ConflictResolutionError):
-    """裁决期间 case revision 或输入指纹已经变化。"""
-
-
 class ResolutionService:
     """在单一事务中裁决并收敛完整 conflict group。"""
 
@@ -56,6 +58,7 @@ class ResolutionService:
         resolved_at: str | None = None,
         rationale: str | None = None,
         expected_revision: int | None = None,
+        expected_fingerprint: str | None = None,
         resolver: str | None = None,
         local_postconditions: bool = False,
     ) -> dict[str, Any]:
@@ -72,12 +75,10 @@ class ResolutionService:
             case = load_conflict_case(self.connection, case_id)
             if not (local_postconditions and expected_revision is None):
                 self._assert_expected_revision(case, expected_revision)
+            assert_expected_conflict_fingerprint(self.connection, case_id, expected_fingerprint)
             before_revision = int(case.get("revision") or 0)
             before_status = str(case["status"])
-            left = self._load_claim(str(case["left_claim_id"]))
-            right = self._load_claim(str(case["right_claim_id"]))
-            exclusive_group = self._is_exclusive_group(left, right)
-            group_claims = self._load_group_claims(left, right, exclusive_group)
+            left, right, group_claims, exclusive_group = self._load_case_claims(case)
 
             if decision == "coexist" and exclusive_group:
                 raise ConflictResolutionError(
@@ -97,15 +98,18 @@ class ResolutionService:
                     decision,
                     group_claims,
                 )
-                if effective_rationale is not None:
-                    self._update_terminal_group_rationale(case, group_claims, effective_rationale)
+                assert_terminal_rationale_immutable(case, effective_rationale)
             elif decision in {"keep_left", "keep_right"}:
                 winner_side = decision.removeprefix("keep_")
-                winner_id = str(case[f"{winner_side}_claim_id"])
+                winner_id = str(left["id"] if winner_side == "left" else right["id"])
+                group_cases = prepare_group_case_decisions(
+                    self.connection,
+                    [str(claim["id"]) for claim in group_claims],
+                    winner_id,
+                )
                 self._converge_winner(group_claims, winner_id, timestamp)
                 closed_case_ids = self._close_group_cases(
-                    group_claims,
-                    winner_id,
+                    group_cases,
                     timestamp,
                     effective_rationale,
                 )
@@ -171,6 +175,33 @@ class ResolutionService:
             "closed_case_ids": closed_case_ids,
         }
 
+    def resolve_pair(
+        self,
+        case_id: str,
+        decision: str,
+        *,
+        expected_revision: int,
+        expected_fingerprint: str | None = None,
+        resolved_at: str | None = None,
+        rationale: str | None = None,
+        resolver: str | None = None,
+    ) -> dict[str, Any]:
+        """为后续 pair REST 适配提供不泄露内部结果形状的独立投影。"""
+
+        case = load_conflict_case(self.connection, case_id)
+        if case.get("group_key") is not None:
+            raise ConflictResolutionError(f"conflict case is not pair-native: {case_id}")
+        result = self.resolve(
+            case_id,
+            decision,
+            resolved_at=resolved_at,
+            rationale=rationale,
+            expected_revision=expected_revision,
+            expected_fingerprint=expected_fingerprint,
+            resolver=resolver,
+        )
+        return project_pair_resolution(self.connection, case_id, result)
+
     def resolve_followed_pair(
         self,
         case_id: str,
@@ -189,9 +220,11 @@ class ResolutionService:
         if case.get("group_key") is not None:
             raise ConflictResolutionError(f"followed-tip pair unexpectedly has a group key: {case_id}")
         repository = ClaimRepository(self.connection)
-        left = follow_claim_tip(repository, str(case["left_claim_id"]))
-        right = follow_claim_tip(repository, str(case["right_claim_id"]))
-        if left is None or right is None or winner_id not in {left["id"], right["id"]}:
+        left_lineage = resolve_claim_lineage(repository, str(case["left_claim_id"]))
+        right_lineage = resolve_claim_lineage(repository, str(case["right_claim_id"]))
+        left = left_lineage.tip
+        right = right_lineage.tip
+        if winner_id not in {left_lineage.tip_id, right_lineage.tip_id}:
             raise ConflictResolutionError(f"followed conflict endpoint changed: {case_id}")
         self._converge_winner([left, right], winner_id, resolved_at)
         self._close_case(case, "resolved", decision, resolved_at, rationale)
@@ -218,6 +251,7 @@ class ResolutionService:
         *,
         candidate_key: str,
         expected_revision: int,
+        expected_fingerprint: str | None = None,
         resolved_at: str | None = None,
         rationale: str | None = None,
         resolver: str | None = None,
@@ -241,6 +275,7 @@ class ResolutionService:
             if case.get("group_key") is None or case.get("namespace_key") is None:
                 raise ConflictResolutionError(f"conflict case is not group-native: {case_id}")
             self._assert_expected_revision(case, expected_revision)
+            assert_expected_conflict_fingerprint(self.connection, case_id, expected_fingerprint)
             before_revision = int(case.get("revision") or 0)
             before_status = str(case["status"])
             candidate = self.connection.execute(
@@ -249,6 +284,10 @@ class ResolutionService:
             ).fetchone()
             if candidate is None:
                 raise ConflictResolutionError(f"conflict candidate not found: {case_id}:{candidate_key}")
+            candidate_tip_id = resolve_claim_lineage(
+                ClaimRepository(self.connection),
+                str(candidate["representative_claim_id"]),
+            ).tip_id
             winner_id: str | None = None
             retracted_claim_ids: list[str] | None = None
             terminal_replay = case["status"] in {"resolved", "rejected"}
@@ -262,19 +301,16 @@ class ResolutionService:
                     raise ConflictResolutionError(
                         f"terminal conflict case has a different group decision: {case_id} ({case.get('decision')})"
                     )
-                left = self._load_claim(str(case["left_claim_id"]))
-                right = self._load_claim(str(case["right_claim_id"]))
-                group_claims = self._load_group_claims(left, right, True)
+                left, right, group_claims, _ = self._load_case_claims(case)
+                assert_terminal_rationale_immutable(case, effective_rationale)
                 winner_id = self._established_group_winner(case, group_claims)
-                if str(candidate["representative_claim_id"]) != winner_id:
+                if candidate_tip_id != winner_id:
                     raise ConflictResolutionError(
                         f"terminal conflict case has a different group winner: {case_id} ({winner_id})"
                     )
             elif action == "select_candidate":
-                winner_id = str(candidate["representative_claim_id"])
-                left = self._load_claim(str(case["left_claim_id"]))
-                right = self._load_claim(str(case["right_claim_id"]))
-                group_claims = self._load_group_claims(left, right, True)
+                winner_id = candidate_tip_id
+                left, right, group_claims, _ = self._load_case_claims(case)
                 self._converge_winner(group_claims, winner_id, timestamp)
                 self._close_case(
                     case,
@@ -413,36 +449,22 @@ class ResolutionService:
             )
         winner_id: str | None = None
         if decision in {"keep_left", "keep_right"}:
-            winner_id = str(case[f"{decision.removeprefix('keep_')}_claim_id"])
+            endpoint_id = str(case[f"{decision.removeprefix('keep_')}_claim_id"])
+            winner_id = resolve_claim_lineage(ClaimRepository(self.connection), endpoint_id).tip_id
         return str(case["status"]), winner_id, [str(case["id"])], str(case["resolved_at"])
 
-    @staticmethod
-    def _established_group_winner(case: dict[str, Any], group_claims: list[dict[str, Any]]) -> str:
-        claims_by_id = {str(claim["id"]): claim for claim in group_claims}
-
-        def terminal_claim_id(start_id: str) -> str:
-            claim_id = start_id
-            visited: set[str] = set()
-            while True:
-                if claim_id in visited:
-                    raise ConflictResolutionError(f"supersession cycle in conflict group: {claim_id}")
-                visited.add(claim_id)
-                claim = claims_by_id.get(claim_id)
-                if claim is None:
-                    raise ConflictResolutionError(f"conflict group winner is missing: {claim_id}")
-                successor_id = claim.get("superseded_by_id")
-                if not successor_id:
-                    if claim.get("status") != "active":
-                        raise ConflictResolutionError(f"conflict group has no established active winner: {claim_id}")
-                    return claim_id
-                claim_id = str(successor_id)
-
-        left_winner = terminal_claim_id(str(case["left_claim_id"]))
-        right_winner = terminal_claim_id(str(case["right_claim_id"]))
+    def _established_group_winner(self, case: dict[str, Any], _group_claims: list[dict[str, Any]]) -> str:
+        repository = ClaimRepository(self.connection)
+        left_lineage = resolve_claim_lineage(repository, str(case["left_claim_id"]))
+        right_lineage = resolve_claim_lineage(repository, str(case["right_claim_id"]))
+        left_winner = left_lineage.tip_id
+        right_winner = right_lineage.tip_id
         if left_winner != right_winner:
             raise ConflictResolutionError(
                 f"terminal group_winner case does not converge: {case['id']} ({left_winner}, {right_winner})"
             )
+        if left_lineage.tip.get("status") != "active":
+            raise ConflictResolutionError(f"conflict group has no established active winner: {left_winner}")
         return left_winner
 
     def _load_claim(self, claim_id: str) -> dict[str, Any]:
@@ -478,8 +500,27 @@ class ResolutionService:
         claims = [repository.get_claim(str(row["id"])) for row in rows]
         return [claim for claim in claims if claim is not None]
 
+    def _load_case_claims(
+        self,
+        case: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], bool]:
+        repository = ClaimRepository(self.connection)
+        left_lineage = resolve_claim_lineage(repository, str(case["left_claim_id"]))
+        right_lineage = resolve_claim_lineage(repository, str(case["right_claim_id"]))
+        left = left_lineage.tip
+        right = right_lineage.tip
+        exclusive_group = self._is_exclusive_group(left, right)
+        group_claims = self._load_group_claims(left, right, exclusive_group)
+        by_id = {str(claim["id"]): claim for claim in group_claims}
+        for claim in (*left_lineage.claims, *right_lineage.claims):
+            by_id.setdefault(str(claim["id"]), claim)
+        return left, right, list(by_id.values()), exclusive_group
+
     def _converge_winner(self, group_claims: list[dict[str, Any]], winner_id: str, timestamp: str) -> None:
         winner = next((claim for claim in group_claims if claim["id"] == winner_id), None)
+        if winner is None:
+            winner = self._load_claim(winner_id)
+            group_claims.append(winner)
         if winner is None or winner.get("status") not in NONTERMINAL_CLAIM_STATUSES:
             raise ConflictResolutionError(f"conflict group winner is not resolvable: {winner_id}")
         repository = ClaimRepository(self.connection)
@@ -519,49 +560,15 @@ class ResolutionService:
 
     def _close_group_cases(
         self,
-        group_claims: list[dict[str, Any]],
-        winner_id: str,
+        group_cases: list[tuple[dict[str, Any], str]],
         timestamp: str,
         rationale: str | None,
     ) -> list[str]:
-        claim_ids = [str(claim["id"]) for claim in group_claims]
-        placeholders = ",".join("?" for _ in claim_ids)
-        status_placeholders = ",".join("?" for _ in OPEN_CASE_STATUSES)
-        rows = self.connection.execute(
-            "SELECT * FROM conflict_cases "
-            f"WHERE left_claim_id IN ({placeholders}) AND right_claim_id IN ({placeholders}) "
-            f"AND status IN ({status_placeholders}) ORDER BY id",
-            (*claim_ids, *claim_ids, *OPEN_CASE_STATUSES),
-        ).fetchall()
         closed_case_ids: list[str] = []
-        for row in rows:
-            case = dict(row)
-            if case["left_claim_id"] == winner_id:
-                case_decision = "keep_left"
-            elif case["right_claim_id"] == winner_id:
-                case_decision = "keep_right"
-            else:
-                case_decision = "group_winner"
+        for case, case_decision in group_cases:
             self._close_case(case, "resolved", case_decision, timestamp, rationale)
             closed_case_ids.append(str(case["id"]))
         return closed_case_ids
-
-    def _update_terminal_group_rationale(
-        self,
-        case: dict[str, Any],
-        group_claims: list[dict[str, Any]],
-        rationale: str,
-    ) -> None:
-        claim_ids = [str(claim["id"]) for claim in group_claims]
-        placeholders = ",".join("?" for _ in claim_ids)
-        cursor = self.connection.execute(
-            "UPDATE conflict_cases SET rationale=? "
-            f"WHERE left_claim_id IN ({placeholders}) AND right_claim_id IN ({placeholders}) "
-            "AND status IN ('resolved','rejected') AND resolved_at=?",
-            (rationale, *claim_ids, *claim_ids, case["resolved_at"]),
-        )
-        if cursor.rowcount < 1:
-            raise ConflictResolutionError(f"terminal conflict group changed during rationale update: {case['id']}")
 
     def _close_case(
         self,
