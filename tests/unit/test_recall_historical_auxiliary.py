@@ -149,3 +149,62 @@ def test_historical_recall_omits_current_only_auxiliary_context(tmp_path) -> Non
         assert known_as_of_payload["observations"] == []
     finally:
         app.state.db.close()
+
+
+@pytest.mark.parametrize(
+    ("intent", "historical_fields"),
+    [
+        ("procedure", {"as_of": "2026-01-15T00:00:00+00:00"}),
+        ("procedure", {"known_as_of": "2026-01-15T00:00:00+00:00"}),
+        ("tool", {"as_of": "2026-01-15T00:00:00+00:00"}),
+        ("tool", {"known_as_of": "2026-01-15T00:00:00+00:00"}),
+    ],
+)
+def test_historical_experience_recall_omits_current_policies(
+    tmp_path,
+    intent: str,
+    historical_fields: dict[str, str],
+) -> None:
+    app = create_app(tmp_path / f"historical-{intent}.db")
+    try:
+        with TestClient(app) as client:
+            connection = app.state.db.open()
+            experience = ExperienceService(connection, min_support=2)
+            for episode_id in ("episode-1", "episode-2"):
+                experience.record_episode(
+                    episode_id,
+                    "service outage recovery",
+                    "success",
+                    1.0,
+                    "2026-08-30T00:00:00+00:00",
+                )
+            policy_id = experience.induce_policy(
+                "service outage",
+                {"steps": ["inspect logs"]},
+                ["episode-1", "episode-2"],
+                "2026-08-30T00:00:00+00:00",
+            )
+
+            current = client.post(
+                "/v1/recall",
+                json={"query": "service outage", "intent": intent, "limit": 10},
+            )
+            historical = client.post(
+                "/v1/recall",
+                json={
+                    "query": "service outage",
+                    "intent": intent,
+                    "limit": 10,
+                    **historical_fields,
+                },
+            )
+
+        assert current.status_code == 200
+        assert [item["id"] for item in current.json()["policies"]] == [policy_id]
+
+        assert historical.status_code == 200
+        historical_payload = historical.json()
+        assert historical_payload["policies"] == []
+        assert all(item["memory_type"] != "policy" for item in historical_payload["results"])
+    finally:
+        app.state.db.close()
