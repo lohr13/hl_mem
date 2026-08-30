@@ -35,9 +35,7 @@ class TestSQLiteOwner:
         return database
 
     def connect(self, *args: object, **kwargs: object) -> sqlite3.Connection:
-        connection = sqlite3.connect(*args, **kwargs)
-        self._register_connection(connection)
-        return connection
+        return self._connect(*args, **kwargs)
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         if self._installed:
@@ -52,19 +50,7 @@ class TestSQLiteOwner:
 
         @wraps(self._sqlite_connect)
         def sqlite_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
-            connect_args = list(args)
-            connect_kwargs = dict(kwargs)
-            factory = connect_args[5] if len(connect_args) > 5 else connect_kwargs.get("factory", sqlite3.Connection)
-            if not isinstance(factory, type) or not issubclass(factory, sqlite3.Connection):
-                raise TypeError("TestSQLiteOwner requires a sqlite3.Connection subclass factory")
-            tracking_factory = self._tracking_factory(factory)
-            if len(connect_args) > 5:
-                connect_args[5] = tracking_factory
-            else:
-                connect_kwargs["factory"] = tracking_factory
-            connection = self._sqlite_connect(*connect_args, **connect_kwargs)
-            self._register_connection(connection)
-            return connection
+            return self._connect(*args, **kwargs)
 
         monkeypatch.setattr(Database, "__init__", database_init)
         monkeypatch.setattr(sqlite3, "connect", sqlite_connect)
@@ -92,6 +78,21 @@ class TestSQLiteOwner:
     def _register_connection(self, connection: sqlite3.Connection) -> None:
         if not any(owned is connection for owned in self.connections):
             self.connections.append(connection)
+
+    def _connect(self, *args: object, **kwargs: object) -> sqlite3.Connection:
+        connect_args = list(args)
+        connect_kwargs = dict(kwargs)
+        factory = connect_args[5] if len(connect_args) > 5 else connect_kwargs.get("factory", sqlite3.Connection)
+        if not isinstance(factory, type) or not issubclass(factory, sqlite3.Connection):
+            raise TypeError("TestSQLiteOwner requires a sqlite3.Connection subclass factory")
+        tracking_factory = self._tracking_factory(factory)
+        if len(connect_args) > 5:
+            connect_args[5] = tracking_factory
+        else:
+            connect_kwargs["factory"] = tracking_factory
+        connection = self._sqlite_connect(*connect_args, **connect_kwargs)
+        self._register_connection(connection)
+        return connection
 
     def _tracking_factory(self, factory: type[sqlite3.Connection]) -> type[sqlite3.Connection]:
         tracking_factory = self._tracking_factories.get(factory)

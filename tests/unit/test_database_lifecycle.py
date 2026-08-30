@@ -90,6 +90,33 @@ def test_sqlite_owner_rejects_untrackable_callable_factory(
 
 
 @pytest.mark.no_sqlite_autoclose
+def test_sqlite_owner_connect_rejects_untrackable_callable_factory() -> None:
+    owner = TestSQLiteOwner()
+    errors: list[Exception] = []
+
+    def callable_factory(*args: object, **kwargs: object) -> sqlite3.Connection:
+        return sqlite3.Connection(*args, **kwargs)
+
+    def create_and_close() -> None:
+        try:
+            connection = owner.connect(":memory:", factory=callable_factory)
+            connection.close()
+        except Exception as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=create_and_close)
+    thread.start()
+    thread.join(timeout=5.0)
+
+    assert not thread.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], TypeError)
+    assert "sqlite3.Connection subclass" in str(errors[0])
+    assert owner.connections == []
+    owner.close()
+
+
+@pytest.mark.no_sqlite_autoclose
 def test_sqlite_owner_tolerates_connection_closed_by_creator_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     owner = TestSQLiteOwner()
     owner.install(monkeypatch)
