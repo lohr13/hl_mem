@@ -26,7 +26,7 @@ jobs:
         env:
           HL_MEM_ENV: test
         run: |
-          uv run --frozen python -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term-missing --cov-fail-under=60
+          uv run --frozen python -W error::ResourceWarning -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term-missing --cov-fail-under=60
       - name: Run migration upgrade test
         run: uv run --frozen python -m pytest tests/test_migration_upgrade.py -q --tb=short
 
