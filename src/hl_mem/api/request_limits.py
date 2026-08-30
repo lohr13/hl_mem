@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterable
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 INVALID = object()
+TOO_LARGE = object()
 
 
 def parse_content_length(headers: Iterable[tuple[bytes, bytes]]) -> int | None | object:
@@ -16,9 +18,13 @@ def parse_content_length(headers: Iterable[tuple[bytes, bytes]]) -> int | None |
         return None
     if any(not value or not value.isdigit() for value in values):
         return INVALID
-    if any(value != values[0] for value in values[1:]):
+    normalized = [value.lstrip(b"0") or b"0" for value in values]
+    if any(value != normalized[0] for value in normalized[1:]):
         return INVALID
-    return int(values[0])
+    try:
+        return int(normalized[0])
+    except ValueError:
+        return TOO_LARGE
 
 
 async def send_plain_response(send: Send, status: int, body: bytes) -> None:
@@ -36,14 +42,16 @@ async def send_plain_response(send: Send, status: int, body: bytes) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-def replay(messages: list[Message]) -> Receive:
-    """Return an ASGI receive callable that replays buffered messages in order."""
-    buffered = iter(messages)
+def replay(messages: list[Message], receive: Receive) -> Receive:
+    """Replay buffered messages, then resume reads from the original receive."""
+    buffered = deque(messages)
 
-    async def receive() -> Message:
-        return next(buffered)
+    async def receive_replayed() -> Message:
+        if buffered:
+            return buffered.popleft()
+        return await receive()
 
-    return receive
+    return receive_replayed
 
 
 class RequestSizeLimitMiddleware:
@@ -64,7 +72,7 @@ class RequestSizeLimitMiddleware:
         if declared is INVALID:
             await send_plain_response(send, 400, b"Invalid Content-Length")
             return
-        if declared is not None and declared > self.max_request_body:
+        if declared is TOO_LARGE or declared is not None and declared > self.max_request_body:
             await send_plain_response(send, 413, b"Request body too large")
             return
 
@@ -87,4 +95,4 @@ class RequestSizeLimitMiddleware:
             if not message.get("more_body", False):
                 break
 
-        await self.app(scope, replay(messages), send)
+        await self.app(scope, replay(messages, receive), send)

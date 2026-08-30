@@ -25,6 +25,7 @@ async def invoke_messages(
     *,
     headers: list[tuple[bytes, bytes]],
     limit: int,
+    receive_after_body: bool = False,
 ) -> Invocation:
     source_messages = iter(messages)
     source_receive_calls = 0
@@ -48,7 +49,7 @@ async def invoke_messages(
                 break
             if message["type"] == "http.request":
                 downstream_body.extend(message.get("body", b""))
-                if not message.get("more_body", False):
+                if not message.get("more_body", False) and not receive_after_body:
                     break
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"accepted"})
@@ -141,7 +142,7 @@ async def test_malformed_content_length_is_bad_request(value: bytes) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("values", [(b"2", b"3"), (b"02", b"2")])
+@pytest.mark.parametrize("values", [(b"2", b"3"), (b"20", b"2")])
 async def test_unequal_duplicate_content_lengths_are_bad_request(values: tuple[bytes, bytes]) -> None:
     response = await invoke(
         [b"{}"],
@@ -154,6 +155,18 @@ async def test_unequal_duplicate_content_lengths_are_bad_request(values: tuple[b
 
 
 @pytest.mark.asyncio
+async def test_equal_numeric_duplicate_content_lengths_are_accepted() -> None:
+    response = await invoke(
+        [b"{}"],
+        headers=[(b"content-length", b"02"), (b"content-length", b"2")],
+        limit=8,
+    )
+
+    assert response.status == 200
+    assert response.downstream_body == b"{}"
+
+
+@pytest.mark.asyncio
 async def test_equal_duplicate_content_lengths_are_accepted() -> None:
     response = await invoke(
         [b"{}"],
@@ -163,6 +176,15 @@ async def test_equal_duplicate_content_lengths_are_accepted() -> None:
 
     assert response.status == 200
     assert response.downstream_body == b"{}"
+
+
+@pytest.mark.asyncio
+async def test_enormous_declared_length_is_rejected_before_reading() -> None:
+    response = await invoke([b"ignored"], headers=[(b"content-length", b"9" * 5_000)], limit=8)
+
+    assert response.status == 413
+    assert response.downstream_calls == 0
+    assert response.source_receive_calls == 0
 
 
 @pytest.mark.asyncio
@@ -190,6 +212,19 @@ async def test_disconnect_is_replayed_without_change() -> None:
     ]
 
     response = await invoke_messages(source_messages, headers=[], limit=8)
+
+    assert response.status == 200
+    assert response.downstream_messages == source_messages
+
+
+@pytest.mark.asyncio
+async def test_receive_after_complete_body_falls_through_to_disconnect() -> None:
+    source_messages: list[Message] = [
+        {"type": "http.request", "body": b"123", "more_body": False},
+        {"type": "http.disconnect"},
+    ]
+
+    response = await invoke_messages(source_messages, headers=[], limit=8, receive_after_body=True)
 
     assert response.status == 200
     assert response.downstream_messages == source_messages
