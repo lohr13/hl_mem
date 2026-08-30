@@ -169,42 +169,62 @@ def test_historical_experience_recall_omits_current_policies(
     try:
         with TestClient(app) as client:
             connection = app.state.db.open()
+            ClaimRepository(connection).insert_claim(
+                {
+                    "id": "claim-historical-procedure",
+                    "status": "active",
+                    "subject_entity_id": "service",
+                    "predicate": "state",
+                    "value": "historical outage procedure",
+                    "index_text": "service outage historical procedure",
+                    "valid_from": "2025-01-01T00:00:00+00:00",
+                    "recorded_from": "2025-01-01T00:00:00+00:00",
+                }
+            )
             experience = ExperienceService(connection, min_support=2)
             for episode_id in ("episode-1", "episode-2"):
                 experience.record_episode(
                     episode_id,
-                    "service outage recovery",
+                    f"unrelated support {episode_id}",
                     "success",
                     1.0,
-                    "2026-08-30T00:00:00+00:00",
+                    "2025-01-01T00:00:00+00:00",
                 )
-            policy_id = experience.induce_policy(
-                "service outage",
-                {"steps": ["inspect logs"]},
-                ["episode-1", "episode-2"],
-                "2026-08-30T00:00:00+00:00",
-            )
+            policy_ids = {
+                experience.induce_policy(
+                    f"service outage policy {index}",
+                    {"steps": [f"inspect logs {index}"]},
+                    ["episode-1", "episode-2"],
+                    f"2026-08-30T00:00:0{index}+00:00",
+                )
+                for index in range(4)
+            }
 
             current = client.post(
                 "/v1/recall",
-                json={"query": "service outage", "intent": intent, "limit": 10},
+                json={"query": "service outage", "intent": intent, "limit": 1},
             )
             historical = client.post(
                 "/v1/recall",
                 json={
                     "query": "service outage",
                     "intent": intent,
-                    "limit": 10,
+                    "limit": 1,
                     **historical_fields,
                 },
             )
 
         assert current.status_code == 200
-        assert [item["id"] for item in current.json()["policies"]] == [policy_id]
+        current_payload = current.json()
+        assert len(current_payload["policies"]) == 1
+        assert current_payload["policies"][0]["id"] in policy_ids
+        assert [item["memory_type"] for item in current_payload["results"]] == ["policy"]
 
         assert historical.status_code == 200
         historical_payload = historical.json()
         assert historical_payload["policies"] == []
-        assert all(item["memory_type"] != "policy" for item in historical_payload["results"])
+        assert [item["id"] for item in historical_payload["results"]] == ["claim-historical-procedure"]
+        assert historical_payload["total"] == 1
+        assert historical_payload["answerability"] == "supported"
     finally:
         app.state.db.close()

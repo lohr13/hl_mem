@@ -80,9 +80,10 @@ def recall_procedure(
     recent_outcome_window: int = 20,
     outcome_half_life_days: int = 30,
     claim_candidates: list[MemoryCandidate] | None = None,
+    include_policies: bool = True,
 ) -> list[MemoryCandidate]:
     """召回并按类型内公式排序 Experience 候选，失败 Episode 不作为步骤推荐。"""
-    policies = repository.list_active_policies(namespace, query, candidate_limit)
+    policies = repository.list_active_policies(namespace, query, candidate_limit) if include_policies else []
     episodes = repository.list_success_episodes(namespace, query, candidate_limit)
     traces = repository.list_traces_for_episodes(
         [str(item["id"]) for item in episodes],

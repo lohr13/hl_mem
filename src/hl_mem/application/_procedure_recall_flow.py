@@ -147,12 +147,11 @@ class ProcedureRecallFlow:
             recent_outcome_window=self.service.settings.procedure_recent_outcome_window,
             outcome_half_life_days=self.service.settings.procedure_outcome_half_life_days,
             claim_candidates=claim_candidates,
+            include_policies=recall_module.auxiliary_context_is_current(
+                as_of=self.request.as_of,
+                known_as_of=self.request.known_as_of,
+            ),
         )
-        if not recall_module.auxiliary_context_is_current(
-            as_of=self.request.as_of,
-            known_as_of=self.request.known_as_of,
-        ):
-            candidates = [item for item in candidates if item.memory_type != "policy"]
         budget = self.request.token_budget or self.service.settings.packed_context_token_budget
         freshness_request = FreshnessRequest(
             delivery_purpose=self.injection_context.delivery_purpose,
