@@ -41,6 +41,42 @@ def test_sqlite_factory_fixtures_own_created_resources(
     sqlite_connection_factory(tmp_path / "fixture-connection.db").execute("SELECT 1")
 
 
+def test_sqlite_owner_rejects_live_connection_from_another_thread(
+    sqlite_test_owner: TestSQLiteOwner,
+) -> None:
+    ready = threading.Event()
+    probe = threading.Event()
+    results: list[int] = []
+    errors: list[Exception] = []
+
+    def create_and_probe() -> None:
+        try:
+            connection = sqlite3.connect(":memory:")
+            ready.set()
+            if not probe.wait(timeout=5.0):
+                raise TimeoutError("main thread did not release SQLite probe")
+            results.append(connection.execute("SELECT 1").fetchone()[0])
+            connection.close()
+        except Exception as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=create_and_probe)
+    thread.start()
+    assert ready.wait(timeout=5.0)
+
+    try:
+        with pytest.raises(RuntimeError, match="still open in its creator thread"):
+            sqlite_test_owner.close()
+    finally:
+        probe.set()
+        thread.join(timeout=5.0)
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert results == [1]
+    sqlite_test_owner.close()
+
+
 @pytest.mark.no_sqlite_autoclose
 def test_sqlite_owner_tolerates_connection_closed_by_creator_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     owner = TestSQLiteOwner()
@@ -61,3 +97,18 @@ def test_sqlite_owner_tolerates_connection_closed_by_creator_thread(monkeypatch:
     assert not thread.is_alive()
     assert errors == []
     owner.close()
+
+
+@pytest.mark.no_sqlite_autoclose
+def test_no_sqlite_autoclose_leaves_resources_unregistered(
+    tmp_path: Path,
+    sqlite_test_owner: TestSQLiteOwner,
+) -> None:
+    database = Database(tmp_path / "opt-out.db")
+    connection = sqlite3.connect(":memory:")
+    try:
+        assert sqlite_test_owner.databases == []
+        assert sqlite_test_owner.connections == []
+    finally:
+        database.close()
+        connection.close()

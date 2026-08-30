@@ -25,6 +25,8 @@ class TestSQLiteOwner:
         self.connections: list[sqlite3.Connection] = []
         self._database_init: Callable[..., None] = Database.__init__
         self._sqlite_connect: Callable[..., sqlite3.Connection] = sqlite3.connect
+        self._closed_connections: list[sqlite3.Connection] = []
+        self._tracking_factories: dict[type[sqlite3.Connection], type[sqlite3.Connection]] = {}
         self._installed = False
 
     def database(self, path: Path, *, settings: Settings | None = None, **kwargs: object) -> Database:
@@ -50,7 +52,16 @@ class TestSQLiteOwner:
 
         @wraps(self._sqlite_connect)
         def sqlite_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
-            connection = self._sqlite_connect(*args, **kwargs)
+            connect_args = list(args)
+            connect_kwargs = dict(kwargs)
+            factory = connect_args[5] if len(connect_args) > 5 else connect_kwargs.get("factory", sqlite3.Connection)
+            if isinstance(factory, type) and issubclass(factory, sqlite3.Connection):
+                tracking_factory = self._tracking_factory(factory)
+                if len(connect_args) > 5:
+                    connect_args[5] = tracking_factory
+                else:
+                    connect_kwargs["factory"] = tracking_factory
+            connection = self._sqlite_connect(*connect_args, **connect_kwargs)
             self._register_connection(connection)
             return connection
 
@@ -62,12 +73,16 @@ class TestSQLiteOwner:
         for database in reversed(self.databases):
             database.close()
         for connection in reversed(self.connections):
+            if any(closed is connection for closed in self._closed_connections):
+                continue
             try:
                 connection.close()
             except sqlite3.ProgrammingError as error:
-                # SQLite checks creator-thread affinity even after that thread closed the connection.
-                if _THREAD_AFFINITY_ERROR not in str(error):
-                    raise
+                if _THREAD_AFFINITY_ERROR in str(error):
+                    raise RuntimeError(
+                        "SQLite connection is still open in its creator thread; close it there before test teardown"
+                    ) from error
+                raise
 
     def _register_database(self, database: Database) -> None:
         if not any(owned is database for owned in self.databases):
@@ -76,3 +91,21 @@ class TestSQLiteOwner:
     def _register_connection(self, connection: sqlite3.Connection) -> None:
         if not any(owned is connection for owned in self.connections):
             self.connections.append(connection)
+
+    def _tracking_factory(self, factory: type[sqlite3.Connection]) -> type[sqlite3.Connection]:
+        tracking_factory = self._tracking_factories.get(factory)
+        if tracking_factory is not None:
+            return tracking_factory
+
+        def close(connection: sqlite3.Connection) -> None:
+            factory.close(connection)
+            if not any(closed is connection for closed in self._closed_connections):
+                self._closed_connections.append(connection)
+
+        tracking_factory = type(
+            factory.__name__,
+            (factory,),
+            {"__module__": factory.__module__, "close": close},
+        )
+        self._tracking_factories[factory] = tracking_factory
+        return tracking_factory
