@@ -4,7 +4,7 @@
 
 ## 开发环境
 
-需要 Python 3.11+、Git 和 [uv](https://docs.astral.sh/uv/)。
+需要 Python 3.12+、Git 和 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
 git clone https://github.com/lohr13/hl_mem.git
