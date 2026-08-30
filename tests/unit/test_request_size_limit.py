@@ -1,0 +1,195 @@
+"""Raw-ASGI behavioral tests for request body size enforcement."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import pytest
+from starlette.types import Message, Receive, Scope, Send
+
+from hl_mem.api.request_limits import RequestSizeLimitMiddleware
+
+
+@dataclass
+class Invocation:
+    status: int
+    body: bytes
+    downstream_calls: int
+    downstream_body: bytes
+    downstream_messages: list[Message]
+    source_receive_calls: int
+
+
+async def invoke_messages(
+    messages: list[Message],
+    *,
+    headers: list[tuple[bytes, bytes]],
+    limit: int,
+) -> Invocation:
+    source_messages = iter(messages)
+    source_receive_calls = 0
+    downstream_calls = 0
+    downstream_body = bytearray()
+    downstream_messages: list[Message] = []
+    response_messages: list[Message] = []
+
+    async def source_receive() -> Message:
+        nonlocal source_receive_calls
+        source_receive_calls += 1
+        return next(source_messages)
+
+    async def downstream(scope: Scope, receive: Receive, send: Send) -> None:
+        nonlocal downstream_calls
+        downstream_calls += 1
+        while True:
+            message = await receive()
+            downstream_messages.append(message)
+            if message["type"] == "http.disconnect":
+                break
+            if message["type"] == "http.request":
+                downstream_body.extend(message.get("body", b""))
+                if not message.get("more_body", False):
+                    break
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"accepted"})
+
+    async def capture_send(message: Message) -> None:
+        response_messages.append(message)
+
+    scope: Scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "server": ("testserver", 80),
+        "client": ("testclient", 50000),
+        "state": {},
+    }
+    middleware = RequestSizeLimitMiddleware(downstream, max_request_body=limit)
+    await middleware(scope, source_receive, capture_send)
+
+    start = next(message for message in response_messages if message["type"] == "http.response.start")
+    body = b"".join(
+        message.get("body", b"") for message in response_messages if message["type"] == "http.response.body"
+    )
+    return Invocation(
+        status=start["status"],
+        body=body,
+        downstream_calls=downstream_calls,
+        downstream_body=bytes(downstream_body),
+        downstream_messages=downstream_messages,
+        source_receive_calls=source_receive_calls,
+    )
+
+
+async def invoke(
+    chunks: list[bytes],
+    *,
+    headers: list[tuple[bytes, bytes]],
+    limit: int,
+) -> Invocation:
+    messages: list[Message] = [
+        {"type": "http.request", "body": chunk, "more_body": index < len(chunks) - 1}
+        for index, chunk in enumerate(chunks)
+    ]
+    if not messages:
+        messages.append({"type": "http.request", "body": b"", "more_body": False})
+    return await invoke_messages(messages, headers=headers, limit=limit)
+
+
+@pytest.mark.asyncio
+async def test_missing_content_length_cannot_bypass_limit() -> None:
+    response = await invoke([b"1234", b"5678", b"9"], headers=[], limit=8)
+
+    assert response.status == 413
+    assert response.downstream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_false_small_content_length_cannot_bypass_limit() -> None:
+    response = await invoke([b"12345", b"67890"], headers=[(b"content-length", b"2")], limit=8)
+
+    assert response.status == 413
+    assert response.downstream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_body_at_limit_is_replayed_without_change() -> None:
+    response = await invoke([b"123", b"45678"], headers=[], limit=8)
+
+    assert response.status == 200
+    assert response.downstream_body == b"12345678"
+    assert response.downstream_messages == [
+        {"type": "http.request", "body": b"123", "more_body": True},
+        {"type": "http.request", "body": b"45678", "more_body": False},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [b"abc", b"-1", b"3,4"])
+async def test_malformed_content_length_is_bad_request(value: bytes) -> None:
+    response = await invoke([b"{}"], headers=[(b"content-length", value)], limit=8)
+
+    assert response.status == 400
+    assert response.downstream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("values", [(b"2", b"3"), (b"02", b"2")])
+async def test_unequal_duplicate_content_lengths_are_bad_request(values: tuple[bytes, bytes]) -> None:
+    response = await invoke(
+        [b"{}"],
+        headers=[(b"content-length", values[0]), (b"content-length", values[1])],
+        limit=8,
+    )
+
+    assert response.status == 400
+    assert response.downstream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_equal_duplicate_content_lengths_are_accepted() -> None:
+    response = await invoke(
+        [b"{}"],
+        headers=[(b"content-length", b"2"), (b"content-length", b"2")],
+        limit=8,
+    )
+
+    assert response.status == 200
+    assert response.downstream_body == b"{}"
+
+
+@pytest.mark.asyncio
+async def test_declared_oversize_is_rejected_before_reading() -> None:
+    response = await invoke([b"ignored"], headers=[(b"content-length", b"9")], limit=8)
+
+    assert response.status == 413
+    assert response.downstream_calls == 0
+    assert response.source_receive_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_body_passes() -> None:
+    response = await invoke([], headers=[], limit=8)
+
+    assert response.status == 200
+    assert response.downstream_body == b""
+
+
+@pytest.mark.asyncio
+async def test_disconnect_is_replayed_without_change() -> None:
+    source_messages: list[Message] = [
+        {"type": "http.request", "body": b"123", "more_body": True},
+        {"type": "http.disconnect"},
+    ]
+
+    response = await invoke_messages(source_messages, headers=[], limit=8)
+
+    assert response.status == 200
+    assert response.downstream_messages == source_messages

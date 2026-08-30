@@ -21,6 +21,7 @@ from starlette.responses import Response
 
 from hl_mem import __version__, components
 from hl_mem.api.conflict_routes import add_conflict_routes
+from hl_mem.api.request_limits import RequestSizeLimitMiddleware
 from hl_mem.api.schemas import (
     ConsolidationScopeInput,
     ContextPacketRecallOutput,
@@ -86,21 +87,6 @@ def _resolve_namespace_alias(namespace: str | None, tenant_id: str | None) -> st
     if namespace is not None and tenant_id is not None and namespace != tenant_id:
         raise HTTPException(422, "namespace and deprecated tenant_id must match")
     return namespace or tenant_id or "default"
-
-
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """根据 Content-Length 拒绝超过配置上限的请求体，并返回 HTTP 413。"""
-
-    def __init__(self, app: Any, max_request_body: int) -> None:
-        super().__init__(app)
-        self.max_request_body = max_request_body
-
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """检查请求体声明长度，并继续处理未超限的请求。"""
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > self.max_request_body:
-            return Response(status_code=413, content="Request body too large")
-        return await call_next(request)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
