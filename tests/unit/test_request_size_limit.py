@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import pytest
@@ -21,7 +22,7 @@ class Invocation:
 
 
 async def invoke_messages(
-    messages: list[Message],
+    messages: Iterable[Message],
     *,
     headers: list[tuple[bytes, bytes]],
     limit: int,
@@ -127,9 +128,38 @@ async def test_body_at_limit_is_replayed_without_change() -> None:
     assert response.status == 200
     assert response.downstream_body == b"12345678"
     assert response.downstream_messages == [
-        {"type": "http.request", "body": b"123", "more_body": True},
-        {"type": "http.request", "body": b"45678", "more_body": False},
+        {"type": "http.request", "body": b"12345678", "more_body": False},
     ]
+
+
+@pytest.mark.asyncio
+async def test_highly_fragmented_body_has_bounded_replay_metadata() -> None:
+    frame_count = 10_000
+    messages = (
+        {"type": "http.request", "body": b"x", "more_body": index < frame_count - 1} for index in range(frame_count)
+    )
+
+    response = await invoke_messages(messages, headers=[], limit=frame_count)
+
+    assert response.status == 200
+    assert response.downstream_body == b"x" * frame_count
+    assert response.downstream_messages == [
+        {"type": "http.request", "body": b"x" * frame_count, "more_body": False},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_empty_frame_budget_prevents_unbounded_receive_loop() -> None:
+    frame_count = 65_537
+    messages = (
+        {"type": "http.request", "body": b"", "more_body": index < frame_count - 1} for index in range(frame_count)
+    )
+
+    response = await invoke_messages(messages, headers=[], limit=8)
+
+    assert response.status == 413
+    assert response.downstream_calls == 0
+    assert response.source_receive_calls == frame_count
 
 
 @pytest.mark.asyncio

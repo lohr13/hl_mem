@@ -441,7 +441,7 @@ Pending dedup pairs below the current `dedup.threshold` can be reported read-onl
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
-| `server.max_request_body` | 整数 | `2097152` | 任意整数 | `max_request_body` |
+| `server.max_request_body` | 整数 | `2097152` | >= 0 | `max_request_body` |
 
 ### `[state]`
 

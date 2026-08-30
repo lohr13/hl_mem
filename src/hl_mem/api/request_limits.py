@@ -14,6 +14,9 @@ class _ContentLengthState(Enum):
     TOO_LARGE = "too_large"
 
 
+_MAX_BUFFERED_RECEIVE_MESSAGES = 65_536
+
+
 def parse_content_length(headers: Iterable[tuple[bytes, bytes]]) -> int | None | _ContentLengthState:
     """Parse all Content-Length fields, rejecting malformed or unequal values."""
     values = [value for name, value in headers if name.lower() == b"content-length"]
@@ -79,23 +82,44 @@ class RequestSizeLimitMiddleware:
             await send_plain_response(send, 413, b"Request body too large")
             return
 
-        messages: list[Message] = []
-        retained = 0
+        body_buffer = bytearray()
+        buffered_request = False
+        buffered_disconnect: Message | None = None
+        buffered_more_body = False
+        receive_messages = 0
         while True:
             message = await receive()
+            receive_messages += 1
+            if receive_messages > _MAX_BUFFERED_RECEIVE_MESSAGES:
+                await send_plain_response(send, 413, b"Request body too fragmented")
+                return
             if message["type"] == "http.disconnect":
-                messages.append(message)
+                buffered_disconnect = message
                 break
             if message["type"] != "http.request":
                 continue
 
+            buffered_request = True
             body = message.get("body", b"")
-            if len(body) > self.max_request_body - retained:
+            if len(body) > self.max_request_body - len(body_buffer):
                 await send_plain_response(send, 413, b"Request body too large")
                 return
-            retained += len(body)
-            messages.append(message)
-            if not message.get("more_body", False):
+            body_buffer.extend(body)
+            buffered_more_body = message.get("more_body", False)
+            if not buffered_more_body:
                 break
 
+        messages: list[Message] = []
+        if buffered_request:
+            buffered_body = bytes(body_buffer)
+            del body_buffer
+            messages.append(
+                {
+                    "type": "http.request",
+                    "body": buffered_body,
+                    "more_body": buffered_more_body,
+                }
+            )
+        if buffered_disconnect is not None:
+            messages.append(buffered_disconnect)
         await self.app(scope, replay(messages, receive), send)

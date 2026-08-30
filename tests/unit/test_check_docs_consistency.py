@@ -10,6 +10,12 @@ def test_configuration_reference_matches_generator() -> None:
     assert (ROOT / "docs/configuration.md").read_text(encoding="utf-8") == generate()
 
 
+def test_configuration_reference_documents_non_negative_request_limit() -> None:
+    request_limit_row = next(line for line in generate().splitlines() if "`server.max_request_body`" in line)
+
+    assert "| >= 0 |" in request_limit_row
+
+
 def test_find_broken_relative_links_reports_only_missing_local_target(tmp_path: Path) -> None:
     """缺失的仓库内链接必须失败，外部链接和页内锚点不得误报。"""
 

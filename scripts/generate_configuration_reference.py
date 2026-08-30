@@ -128,6 +128,7 @@ CONSTRAINTS = {
     "retention.dedup_pair_days": ">= 1",
     "retention.feedback_uninjected_days": ">= 1",
     "retention.feedback_unlabeled_days": ">= 1",
+    "server.max_request_body": ">= 0",
     "decay.temporal_half_life_days": ">= 1",
     "decay.permanent_half_life_days": ">= 1",
     "decay.identity_half_life_days": ">= 1",
