@@ -13,12 +13,16 @@ version. Minor and patch releases may add optional fields or capabilities withou
 
 ### Deprecation and migration notice
 
-A stable REST endpoint or field, configuration key, CLI command or flag, MCP tool or input, or public Provider Plugin API
-member that is superseded must first be deprecated in a `1.x` release. The deprecated form remains functional for the
-rest of `1.x` and may be removed only in the next major version. The release that announces the deprecation must mark the
-relevant contract surface and changelog, name the supported replacement, and provide migration instructions. Where the
-surface supports it, notices also appear in OpenAPI metadata, CLI help or runtime warnings, configuration diagnostics,
-MCP contract documentation, or Provider Plugin API documentation and manifests.
+Any planned incompatible change to or removal of a stable REST endpoint or field, MCP tool or input, CLI command or flag,
+configuration schema key, import/export format, backup format, or public Provider Plugin API member must first be
+deprecated in a `1.x` release, whether or not a replacement exists. The deprecated contract remains functional for the
+rest of `1.x`; the incompatible change or removal may take effect only in the next major version.
+
+The deprecating release must mark the relevant contract surface and changelog, explain the compatibility impact and
+next-major plan, and provide migration guidance. It must name the supported replacement when one exists; otherwise it must
+state that there is no replacement and describe the required consumer or operator action. Notices appear in the relevant
+OpenAPI metadata, CLI help or runtime warnings, configuration diagnostics, MCP contract documentation, import/export or
+backup format documentation, and Provider Plugin API documentation or manifests, as those surfaces support.
 
 ### Beta and experimental contracts
 
@@ -31,10 +35,15 @@ they are exposed.
 Internal SQLite tables are not a public SQL API. SQLite migrations are immutable after release and forward-only, and
 supported forward migrations preserve application-managed data.
 
-Before an irreversible upgrade, the CLI requires a verified pre-upgrade backup set containing the database, its
-corresponding tombstone sidecar, and the prior configuration. Rollback means restoring that complete set and using the old
-binary; it never means downgrading a live schema or opening an already-migrated database with the old binary. Writes
-accepted after the upgrade are not replayed into the restored snapshot and will be absent after rollback.
+Before an irreversible upgrade, the CLI requires a verified pre-upgrade recovery set: the main database backup, its
+backup manifest, the separately preserved authoritative tombstone ledger (`<database>.tombstones.db`), the prior
+configuration, and the old binary. The database backup and manifest must pass validation, and the ledger identity and
+schema version must match the manifest.
+
+Rollback means placing the authoritative ledger at `<target>.tombstones.db`, restoring the main database backup with its
+manifest, and running the restored snapshot with the prior configuration and old binary. It never means downgrading a live
+schema or opening an already-migrated database with the old binary. Writes accepted after the upgrade are not replayed
+into the restored snapshot and will be absent after rollback.
 
 ### Version mismatch behavior
 
