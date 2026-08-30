@@ -95,6 +95,10 @@ class RecallRequest:
     injection_context: InjectionContext | None
 
 
+def auxiliary_context_is_current(*, as_of: str | None, known_as_of: str | None) -> bool:
+    return as_of is None and known_as_of is None
+
+
 @dataclass(frozen=True)
 class _RecallSession:
     request: RecallRequest
@@ -790,17 +794,21 @@ class RecallService:
     ) -> EnrichedSelection:
         session.tracer.trace.phases.assembly_us = (time.perf_counter_ns() - selection.assembly_started) // 1000
         request = session.request
-        observations = self._assemble_observations([claim["id"] for claim in selection.claims])
-        policies = matching_policies(
-            ExperienceService(self.connection).list_policies("active", namespace=request.namespace),
-            request.query,
-        )
-        policy_evidence = EvidenceRepository(self.connection).batch_get_links_for_derived(
-            "policy",
-            [str(policy["id"]) for policy in policies],
-        )
-        for policy in policies:
-            policy["evidence"] = policy_evidence.get(str(policy["id"]), [])
+        if auxiliary_context_is_current(as_of=request.as_of, known_as_of=request.known_as_of):
+            observations = self._assemble_observations([claim["id"] for claim in selection.claims])
+            policies = matching_policies(
+                ExperienceService(self.connection).list_policies("active", namespace=request.namespace),
+                request.query,
+            )
+            policy_evidence = EvidenceRepository(self.connection).batch_get_links_for_derived(
+                "policy",
+                [str(policy["id"]) for policy in policies],
+            )
+            for policy in policies:
+                policy["evidence"] = policy_evidence.get(str(policy["id"]), [])
+        else:
+            observations = []
+            policies = []
         packet_candidates = self._context_candidates(selection.results, observations, policies)
         answerability = self._answerability(
             selection.claims,
