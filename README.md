@@ -1,6 +1,6 @@
 # HL-Mem
 
-[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Version: 0.36.1](https://img.shields.io/badge/version-0.36.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
@@ -29,7 +29,7 @@ flowchart LR
 
 ## 30 秒极速上手
 
-需要 Python 3.13+。前两行在当前终端执行；服务启动后，在另一个终端执行第三行：
+需要 Python 3.12+。前两行在当前终端执行；服务启动后，在另一个终端执行第三行：
 
 ```bash
 python -m pip install hl-mem
@@ -39,7 +39,7 @@ hlmem remember "Alice 喜欢深色模式" && hlmem recall "Alice 喜欢什么"
 
 ## 五分钟上手
 
-需要 Python 3.13+。先从 PyPI 安装：
+需要 Python 3.12+。先从 PyPI 安装：
 
 ```bash
 python -m pip install hl-mem

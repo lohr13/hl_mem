@@ -8,7 +8,7 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 
 ## 技术栈
 
-- **运行时**：Python 3.11+，FastAPI + uvicorn
+- **运行时**：Python 3.12+，FastAPI + uvicorn
 - **存储**：SQLite WAL + FTS5（全文检索）+ 向量 BLOB（默认 `sqlite_scan` 两阶段精确扫描；可选 `sqlite_vec` 后端）
 - **LLM 提取**：API 密钥通过 .env 配置，provider/model 通过 TOML 配置，使用结构化 JSON 输出
 - **Embedding**：API 密钥通过 .env 配置，provider/model/维度通过 TOML 配置

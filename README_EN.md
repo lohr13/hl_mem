@@ -1,6 +1,6 @@
 # HL-Mem
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Version: 0.36.1](https://img.shields.io/badge/version-0.36.1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
@@ -29,7 +29,7 @@ flowchart LR
 
 ## 30-second quickstart
 
-Python 3.11+ is required. Run the first two lines in the current terminal; once the server starts, run the third in another terminal:
+Python 3.12+ is required. Run the first two lines in the current terminal; once the server starts, run the third in another terminal:
 
 ```bash
 python -m pip install hl-mem
@@ -39,7 +39,7 @@ hlmem remember "Alice prefers dark mode" && hlmem recall "What does Alice prefer
 
 ## Five-minute quickstart
 
-Python 3.11+ is required. Install HL-Mem from PyPI:
+Python 3.12+ is required. Install HL-Mem from PyPI:
 
 ```bash
 python -m pip install hl-mem

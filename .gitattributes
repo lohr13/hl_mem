@@ -1,3 +1,8 @@
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
 *.sh text eol=lf
 evaluation/datasets/v0300_state_*.jsonl text eol=lf
 evaluation/datasets/v0300_state_corpus_manifest.json text eol=lf

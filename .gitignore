@@ -1,4 +1,8 @@
 __pycache__/
+/.coverage
+/Temp/
+/nul
+/hl_mem.toml.bak_*
 *.pyc
 *.pyo
 .pytest_cache/
