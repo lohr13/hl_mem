@@ -8,6 +8,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from types import TracebackType
 from typing import Iterator
 
 from hl_mem.domain.entity_coordinates import normalize_typed_alias
@@ -106,6 +107,17 @@ class Database:
         self._connections: set[sqlite3.Connection] = set()
         self._lock = threading.Lock()
         self._migrated = False
+
+    def __enter__(self) -> Database:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
 
     def _new_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
