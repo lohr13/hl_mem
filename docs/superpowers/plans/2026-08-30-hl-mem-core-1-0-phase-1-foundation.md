@@ -15,7 +15,7 @@
 - Do not delete the user's untracked `.coverage`, `Temp/`, `nul`, backup, or research files; only add ignore rules for future artifacts.
 - Do not suppress `ResourceWarning`. Every connection must have an owner, and CI must promote the warning to an error.
 - Historical requests containing either `as_of` or `known_as_of` must omit Policy and Derivation context until those models have real bitemporal versions.
-- Request limiting must count ASGI body bytes and keep memory bounded to `max_request_body + 1`; `Content-Length` is only an early rejection hint.
+- Request limiting must count ASGI body bytes and retain at most `max_request_body`; `Content-Length` is only an early rejection hint.
 - Each task ends in a focused commit. Run the phase gate only after all task commits pass individually.
 
 ---
@@ -28,7 +28,6 @@
 
 **Files:**
 
-- Create: `tests/unit/test_project_metadata.py`
 - Modify: `pyproject.toml`
 - Modify: `uv.lock`
 - Modify: `.github/workflows/test.yml`
@@ -38,52 +37,13 @@
 - Modify: `README_EN.md`
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Add a failing metadata consistency test**
+- [ ] **Step 1: Capture the current published metadata and configuration baseline**
 
-```python
-# tests/unit/test_project_metadata.py
-from __future__ import annotations
+This task changes packaging, CI, documentation, and repository configuration only. The user approved the TDD exception: do not add pytest tests that merely inspect source text.
 
-import tomllib
-from pathlib import Path
+Run `uv build`, then read the built wheel's `METADATA` with `zipfile` and record the current `Requires-Python` and Python classifiers. Record the current `git check-attr eol` results for one Python, Markdown, TOML, and YAML file. These commands provide a real artifact baseline instead of source-string assertions.
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def test_python_support_matrix_is_consistent() -> None:
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    workflow = (ROOT / ".github/workflows/test.yml").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    readme_en = (ROOT / "README_EN.md").read_text(encoding="utf-8")
-    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-
-    assert project["project"]["requires-python"] == ">=3.12"
-    assert project["tool"]["black"]["target-version"] == ["py312"]
-    assert 'python-version: ["3.12", "3.13", "3.14"]' in workflow
-    assert "Python 3.12+" in readme
-    assert "Python 3.12+" in readme_en
-    assert "Python 3.12+" in agents
-
-
-def test_text_and_workspace_rules_cover_project_artifacts() -> None:
-    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
-    ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
-
-    assert {"*.py text eol=lf", "*.md text eol=lf", "*.toml text eol=lf", "*.yml text eol=lf", "*.yaml text eol=lf"} <= set(attributes)
-    assert {"/.coverage", "/Temp/", "/nul", "/hl_mem.toml.bak_*"} <= set(ignored)
-```
-
-- [ ] **Step 2: Run the test and confirm the current contradictions**
-
-Run:
-
-```powershell
-& '.\.venv\Scripts\python.exe' -m pytest tests/unit/test_project_metadata.py -v
-```
-
-Expected: FAIL because `requires-python` is `>=3.13`, Black targets 3.11, CI tests only 3.13, English/Chinese docs disagree, and the LF/ignore rules are incomplete.
-
-- [ ] **Step 3: Apply the minimal metadata and documentation changes**
+- [ ] **Step 2: Apply the minimal metadata and documentation changes**
 
 - Set `project.requires-python = ">=3.12"`.
 - Add Python classifiers for 3.12, 3.13, and 3.14.
@@ -94,22 +54,24 @@ Expected: FAIL because `requires-python` is `>=3.13`, Black targets 3.11, CI tes
 - Add root-scoped ignores for `.coverage`, `Temp/`, `nul`, and `hl_mem.toml.bak_*`; do not remove existing files.
 - Regenerate the lock with `uv lock`; do not hand-edit dependency resolutions.
 
-- [ ] **Step 4: Verify metadata, lock, and documentation**
+- [ ] **Step 3: Verify built metadata, lock, text attributes, and documentation**
 
 Run:
 
 ```powershell
-& '.\.venv\Scripts\python.exe' -m pytest tests/unit/test_project_metadata.py -v
+uv build
 uv lock --check
+& '.\.venv\Scripts\python.exe' -c "from pathlib import Path; import zipfile; wheel=next(Path('dist').glob('*.whl')); z=zipfile.ZipFile(wheel); name=next(n for n in z.namelist() if n.endswith('.dist-info/METADATA')); text=z.read(name).decode(); assert 'Requires-Python: >=3.12' in text; assert all(f'Programming Language :: Python :: {v}' in text for v in ('3.12','3.13','3.14'))"
+git check-attr eol -- src/hl_mem/__init__.py README.md pyproject.toml .github/workflows/test.yml
 & '.\.venv\Scripts\python.exe' scripts/check_docs_consistency.py
 ```
 
 Expected: all commands PASS.
 
-- [ ] **Step 5: Commit the task**
+- [ ] **Step 4: Commit the task**
 
 ```powershell
-git add pyproject.toml uv.lock .github/workflows/test.yml .gitattributes .gitignore README.md README_EN.md AGENTS.md tests/unit/test_project_metadata.py
+git add pyproject.toml uv.lock .github/workflows/test.yml .gitattributes .gitignore README.md README_EN.md AGENTS.md
 git commit -m "build: align Python support and repository rules"
 ```
 
@@ -198,18 +160,20 @@ class RequestSizeLimitMiddleware:
             return
 
         messages: list[Message] = []
-        received = 0
+        retained = 0
         while True:
             message = await receive()
-            messages.append(message)
             if message["type"] == "http.disconnect":
+                messages.append(message)
                 break
             if message["type"] != "http.request":
                 continue
-            received += len(message.get("body", b""))
-            if received > self.max_request_body:
+            body = message.get("body", b"")
+            if len(body) > self.max_request_body - retained:
                 await send_plain_response(send, 413, b"Request body too large")
                 return
+            retained += len(body)
+            messages.append(message)
             if not message.get("more_body", False):
                 break
 
@@ -219,7 +183,7 @@ class RequestSizeLimitMiddleware:
 Implementation rules:
 
 - Parse all `Content-Length` headers; duplicate unequal values are invalid.
-- Buffer at most `max_request_body + 1` bytes and stop before calling downstream on overflow.
+- Retain at most `max_request_body` bytes. Inspect each received chunk before appending it to the replay buffer; an oversized chunk is transient and is never retained by the middleware.
 - Preserve message boundaries and `more_body` during replay.
 - Do not import application services, settings, or storage in `request_limits.py`.
 - Remove the old `RequestSizeLimitMiddleware` class from `server.py` and import the new class; leave registration at the existing `app.add_middleware(...)` point.
@@ -550,36 +514,13 @@ git commit -m "test: enforce deterministic SQLite cleanup"
 
 **Files:**
 
-- Create: `tests/unit/test_compatibility_policy.py`
 - Modify: `docs/compatibility.md`
-- Modify: `scripts/check_docs_consistency.py`
 
-- [ ] **Step 1: Add a failing policy contract test**
+- [ ] **Step 1: Confirm the current policy scope**
 
-```python
-def test_compatibility_policy_defines_1x_contracts() -> None:
-    policy = (ROOT / "docs/compatibility.md").read_text(encoding="utf-8")
-    assert "## 1.x policy" in policy
-    assert "Stable REST" in policy
-    assert "Provider Plugin API" in policy
-    assert "forward-only" in policy
-    assert "backup" in policy.lower()
-    assert "experimental" in policy
-```
+Read `docs/compatibility.md` and confirm it explicitly applies only to 0.x. The user approved the TDD exception for human-facing policy prose: do not create pytest or script checks that merely search for required sentences.
 
-Extend `check_docs_consistency.py` with equivalent semantic markers so a deleted or accidentally reverted 1.x section fails CI. Check stable contract names, not full paragraphs, to avoid brittle prose snapshots.
-
-- [ ] **Step 2: Run the test and confirm the policy gap**
-
-Run:
-
-```powershell
-& '.\.venv\Scripts\python.exe' -m pytest tests/unit/test_compatibility_policy.py -v
-```
-
-Expected: FAIL because the current document explicitly applies only to 0.x.
-
-- [ ] **Step 3: Separate the historical 0.x policy from the binding 1.x policy**
+- [ ] **Step 2: Separate the historical 0.x policy from the binding 1.x policy**
 
 Keep the existing 0.x rules as historical context and add a binding `## 1.x policy` section with these exact decisions:
 
@@ -592,12 +533,12 @@ Keep the existing 0.x rules as historical context and add a binding `## 1.x poli
 - Unknown future configuration/backup versions and Plugin API major mismatches fail explicitly.
 - The 0.x-to-1.x configuration break is handled only by the Phase 2 `hl-mem config migrate` path; do not promise indefinite aliases here.
 
-- [ ] **Step 4: Run the complete Phase 1 gate**
+- [ ] **Step 3: Run the complete Phase 1 gate**
 
 Run:
 
 ```powershell
-& '.\.venv\Scripts\python.exe' -m pytest tests/unit/test_project_metadata.py tests/unit/test_request_size_limit.py tests/unit/test_recall_historical_auxiliary.py tests/unit/test_database_lifecycle.py tests/unit/test_compatibility_policy.py -q --tb=short
+& '.\.venv\Scripts\python.exe' -m pytest tests/unit/test_request_size_limit.py tests/unit/test_recall_historical_auxiliary.py tests/unit/test_database_lifecycle.py tests/unit/test_runtime_resource_ownership.py -q --tb=short
 & '.\.venv\Scripts\python.exe' -W error::ResourceWarning -m pytest tests/ -q --tb=short
 & '.\.venv\Scripts\python.exe' -m ruff check src tests scripts
 & '.\.venv\Scripts\python.exe' -m black --check .
@@ -611,7 +552,7 @@ Run:
 
 Expected: every command PASS. OpenAPI and MCP snapshots remain byte-for-byte unchanged.
 
-- [ ] **Step 5: Review scope and commit the policy**
+- [ ] **Step 4: Review scope and commit the policy**
 
 Run:
 
@@ -623,7 +564,7 @@ git status --short
 Confirm there is no migration, no Settings redesign, no Provider Registry, no graph change, and no unrelated artifact deletion.
 
 ```powershell
-git add docs/compatibility.md scripts/check_docs_consistency.py tests/unit/test_compatibility_policy.py
+git add docs/compatibility.md
 git commit -m "docs: define the HL-Mem 1.x compatibility policy"
 ```
 
