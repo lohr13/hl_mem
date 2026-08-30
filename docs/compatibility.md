@@ -11,6 +11,15 @@ Stable REST, MCP, CLI, configuration schema, import/export, backup format, and P
 backward-compatible within `1.x`. Removing a stable contract or changing it incompatibly requires the next major
 version. Minor and patch releases may add optional fields or capabilities without breaking existing consumers.
 
+### Deprecation and migration notice
+
+A stable REST endpoint or field, configuration key, CLI command or flag, MCP tool or input, or public Provider Plugin API
+member that is superseded must first be deprecated in a `1.x` release. The deprecated form remains functional for the
+rest of `1.x` and may be removed only in the next major version. The release that announces the deprecation must mark the
+relevant contract surface and changelog, name the supported replacement, and provide migration instructions. Where the
+surface supports it, notices also appear in OpenAPI metadata, CLI help or runtime warnings, configuration diagnostics,
+MCP contract documentation, or Provider Plugin API documentation and manifests.
+
 ### Beta and experimental contracts
 
 Beta contracts may change in a minor release, provided the changelog describes the change and includes migration
@@ -19,19 +28,27 @@ they are exposed.
 
 ### SQLite upgrades and rollback
 
-SQLite migrations are immutable after release and forward-only. Before an irreversible upgrade, the CLI requires a
-verified backup. Rollback means restoring that backup and using the old binary; it never means downgrading a live,
-already-migrated schema.
+Internal SQLite tables are not a public SQL API. SQLite migrations are immutable after release and forward-only, and
+supported forward migrations preserve application-managed data.
+
+Before an irreversible upgrade, the CLI requires a verified pre-upgrade backup set containing the database, its
+corresponding tombstone sidecar, and the prior configuration. Rollback means restoring that complete set and using the old
+binary; it never means downgrading a live schema or opening an already-migrated database with the old binary. Writes
+accepted after the upgrade are not replayed into the restored snapshot and will be absent after rollback.
 
 ### Version mismatch behavior
 
 Unknown future configuration versions, unknown future backup versions, and Provider Plugin API major-version mismatches
 fail explicitly. HL-Mem does not guess how to interpret an unsupported version.
 
+### Security fixes
+
+Security fixes may tighten input validation immediately, but must not silently change the semantics of stored memories.
+
 The configuration break from `0.x` to `1.x` is handled only by the Phase 2 `hl-mem config migrate` path. This policy does
 not promise indefinite aliases for `0.x` configuration names or behavior.
 
-## Historical 0.x policy
+## Historical 0.x policy (nonbinding)
 
 The remainder of this document records the compatibility policy that applied only to HL-Mem releases in the `0.x`
 series. It is retained as historical context and does not weaken or extend the binding `1.x` policy above.
