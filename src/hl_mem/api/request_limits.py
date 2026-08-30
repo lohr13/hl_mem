@@ -4,27 +4,30 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Iterable
+from enum import Enum
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-INVALID = object()
-TOO_LARGE = object()
+
+class _ContentLengthState(Enum):
+    INVALID = "invalid"
+    TOO_LARGE = "too_large"
 
 
-def parse_content_length(headers: Iterable[tuple[bytes, bytes]]) -> int | None | object:
+def parse_content_length(headers: Iterable[tuple[bytes, bytes]]) -> int | None | _ContentLengthState:
     """Parse all Content-Length fields, rejecting malformed or unequal values."""
     values = [value for name, value in headers if name.lower() == b"content-length"]
     if not values:
         return None
     if any(not value or not value.isdigit() for value in values):
-        return INVALID
+        return _ContentLengthState.INVALID
     normalized = [value.lstrip(b"0") or b"0" for value in values]
     if any(value != normalized[0] for value in normalized[1:]):
-        return INVALID
+        return _ContentLengthState.INVALID
     try:
         return int(normalized[0])
     except ValueError:
-        return TOO_LARGE
+        return _ContentLengthState.TOO_LARGE
 
 
 async def send_plain_response(send: Send, status: int, body: bytes) -> None:
@@ -69,10 +72,10 @@ class RequestSizeLimitMiddleware:
             return
 
         declared = parse_content_length(scope.get("headers", []))
-        if declared is INVALID:
+        if declared is _ContentLengthState.INVALID:
             await send_plain_response(send, 400, b"Invalid Content-Length")
             return
-        if declared is TOO_LARGE or declared is not None and declared > self.max_request_body:
+        if declared is _ContentLengthState.TOO_LARGE or declared is not None and declared > self.max_request_body:
             await send_plain_response(send, 413, b"Request body too large")
             return
 
