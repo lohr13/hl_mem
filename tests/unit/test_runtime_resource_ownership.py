@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -20,6 +22,56 @@ pytestmark = pytest.mark.no_sqlite_autoclose
 def _assert_closed(connection: sqlite3.Connection) -> None:
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connection.execute("SELECT 1")
+
+
+def test_ci_warning_policy_rejects_destructor_time_sqlite_leaks(tmp_path: Path) -> None:
+    probe = tmp_path / "test_sqlite_leak_probe.py"
+    probe.write_text(
+        """\
+import gc
+import sqlite3
+import warnings
+
+
+class DeliberatelyLeakedConnection(sqlite3.Connection):
+    def __del__(self) -> None:
+        warnings.warn(f"unclosed database in {self!r}", ResourceWarning)
+
+
+def test_deliberate_sqlite_leak() -> None:
+    connection = sqlite3.connect(":memory:", factory=DeliberatelyLeakedConnection)
+    connection.execute("SELECT 1")
+    del connection
+    gc.collect()
+""",
+        encoding="utf-8",
+    )
+    repository_root = Path(__file__).resolve().parents[2]
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-W",
+            "error::ResourceWarning",
+            "-m",
+            "pytest",
+            "-c",
+            str(repository_root / "pyproject.toml"),
+            str(probe),
+            "-q",
+            "--tb=short",
+        ],
+        cwd=repository_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = f"{completed.stdout}\n{completed.stderr}"
+
+    assert completed.returncode == pytest.ExitCode.TESTS_FAILED, output
+    assert "PytestUnraisableExceptionWarning" in output
+    assert "ResourceWarning: unclosed database" in output
 
 
 def test_fastapi_lifespan_closes_owned_connections(tmp_path: Path) -> None:

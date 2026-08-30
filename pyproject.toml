@@ -61,6 +61,7 @@ asyncio_mode = "auto"
 timeout = 300
 timeout_method = "thread"
 filterwarnings = [
+    "error::pytest.PytestUnraisableExceptionWarning",
     "ignore:Using `httpx` with `starlette\\.testclient` is deprecated; install `httpx2` instead\\.:starlette.exceptions.StarletteDeprecationWarning",
 ]
 markers = [
