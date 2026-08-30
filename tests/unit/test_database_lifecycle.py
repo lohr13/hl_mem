@@ -77,6 +77,18 @@ def test_sqlite_owner_rejects_live_connection_from_another_thread(
     sqlite_test_owner.close()
 
 
+def test_sqlite_owner_rejects_untrackable_callable_factory(
+    sqlite_test_owner: TestSQLiteOwner,
+) -> None:
+    def callable_factory(*args: object, **kwargs: object) -> sqlite3.Connection:
+        return sqlite3.Connection(*args, **kwargs)
+
+    with pytest.raises(TypeError, match="sqlite3.Connection subclass"):
+        sqlite3.connect(":memory:", factory=callable_factory)
+
+    assert sqlite_test_owner.connections == []
+
+
 @pytest.mark.no_sqlite_autoclose
 def test_sqlite_owner_tolerates_connection_closed_by_creator_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     owner = TestSQLiteOwner()
