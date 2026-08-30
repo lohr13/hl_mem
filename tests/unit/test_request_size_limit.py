@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -130,6 +132,54 @@ async def test_body_at_limit_is_replayed_without_change() -> None:
     assert response.downstream_messages == [
         {"type": "http.request", "body": b"12345678", "more_body": False},
     ]
+
+
+@pytest.mark.asyncio
+async def test_single_frame_bytes_payload_is_reused_without_copy() -> None:
+    payload = b"x" * (1024 * 1024)
+
+    response = await invoke([payload], headers=[], limit=len(payload))
+
+    assert response.status == 200
+    assert response.downstream_messages[0]["body"] is payload
+
+
+@pytest.mark.asyncio
+async def test_oversized_payload_is_released_before_response_send() -> None:
+    class WeakPayload(bytearray):
+        pass
+
+    payload: WeakPayload | None = WeakPayload(b"123456789")
+    payload_reference = weakref.ref(payload)
+    source_message: Message | None = {
+        "type": "http.request",
+        "body": payload,
+        "more_body": False,
+    }
+    release_states: list[bool] = []
+    response_messages: list[Message] = []
+
+    async def source_receive() -> Message:
+        nonlocal payload, source_message
+        message = source_message
+        source_message = None
+        payload = None
+        assert message is not None
+        return message
+
+    async def downstream(scope: Scope, receive: Receive, send: Send) -> None:
+        raise AssertionError("oversized payload reached downstream")
+
+    async def capture_send(message: Message) -> None:
+        gc.collect()
+        release_states.append(payload_reference() is None)
+        response_messages.append(message)
+
+    middleware = RequestSizeLimitMiddleware(downstream, max_request_body=8)
+    await middleware({"type": "http", "headers": []}, source_receive, capture_send)
+
+    assert next(message["status"] for message in response_messages if message["type"] == "http.response.start") == 413
+    assert release_states == [True, True]
 
 
 @pytest.mark.asyncio

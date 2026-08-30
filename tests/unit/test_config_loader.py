@@ -35,6 +35,27 @@ def test_empty_toml_uses_static_defaults(tmp_path: Path) -> None:
     )
 
 
+def test_negative_max_request_body_is_rejected_from_toml(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "negative-request-limit.toml",
+        "[server]\nmax_request_body = -1\n[recall]\nquery_expansion_mode = 'off'\n",
+    )
+
+    with pytest.raises(ConfigurationError) as caught:
+        load_settings(config_path, tmp_path / ".env", environ={})
+
+    assert str(caught.value) == f"{config_path}: server.max_request_body must be non-negative"
+
+
+def test_zero_max_request_body_loads_from_toml(tmp_path: Path) -> None:
+    config_path = _write(
+        tmp_path / "zero-request-limit.toml",
+        "[server]\nmax_request_body = 0\n[recall]\nquery_expansion_mode = 'off'\n",
+    )
+
+    assert load_settings(config_path, tmp_path / ".env", environ={}).max_request_body == 0
+
+
 def test_old_toml_without_llm_max_tokens_keeps_default(tmp_path: Path) -> None:
     config_path = _write(
         tmp_path / "old.toml",

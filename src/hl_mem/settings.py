@@ -662,6 +662,8 @@ class Settings:
 
     def validate(self) -> None:
         """校验配置组合以及已启用组件的密钥。"""
+        if self.max_request_body < 0:
+            raise ConfigurationError("server.max_request_body must be non-negative")
         if self.fts_language not in {"auto", "zh", "en"}:
             raise ConfigurationError("recall.fts_language must be 'auto', 'zh', or 'en'")
         if self.resurrection_mode not in {"off", "auto"}:

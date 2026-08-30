@@ -82,44 +82,64 @@ class RequestSizeLimitMiddleware:
             await send_plain_response(send, 413, b"Request body too large")
             return
 
-        body_buffer = bytearray()
+        buffered_body: bytes | bytearray | None = None
         buffered_request = False
         buffered_disconnect: Message | None = None
         buffered_more_body = False
+        retained = 0
         receive_messages = 0
         while True:
             message = await receive()
             receive_messages += 1
             if receive_messages > _MAX_BUFFERED_RECEIVE_MESSAGES:
+                del message
                 await send_plain_response(send, 413, b"Request body too fragmented")
                 return
             if message["type"] == "http.disconnect":
                 buffered_disconnect = message
+                del message
                 break
             if message["type"] != "http.request":
+                del message
                 continue
 
             buffered_request = True
             body = message.get("body", b"")
-            if len(body) > self.max_request_body - len(body_buffer):
+            body_length = len(body)
+            if body_length > self.max_request_body - retained:
+                del body
+                del message
                 await send_plain_response(send, 413, b"Request body too large")
                 return
-            body_buffer.extend(body)
+            if body_length:
+                if buffered_body is None:
+                    buffered_body = body if isinstance(body, bytes) else bytearray(body)
+                else:
+                    if isinstance(buffered_body, bytes):
+                        buffered_body = bytearray(buffered_body)
+                    buffered_body.extend(body)
+            retained += body_length
             buffered_more_body = message.get("more_body", False)
+            del body
+            del message
             if not buffered_more_body:
                 break
 
         messages: list[Message] = []
         if buffered_request:
-            buffered_body = bytes(body_buffer)
-            del body_buffer
+            replay_body = b"" if buffered_body is None else buffered_body
+            if isinstance(replay_body, bytearray):
+                replay_body = bytes(replay_body)
+            del buffered_body
             messages.append(
                 {
                     "type": "http.request",
-                    "body": buffered_body,
+                    "body": replay_body,
                     "more_body": buffered_more_body,
                 }
             )
+            del replay_body
         if buffered_disconnect is not None:
             messages.append(buffered_disconnect)
+        del buffered_disconnect
         await self.app(scope, replay(messages, receive), send)

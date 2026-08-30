@@ -112,6 +112,13 @@ def test_conflict_l0_only_mode_is_a_valid_configuration() -> None:
     replace(Settings.for_test(), conflict_auto_mode="l0_only").validate()
 
 
+def test_max_request_body_validation_accepts_zero_and_rejects_negative() -> None:
+    replace(Settings.for_test(), max_request_body=0).validate()
+
+    with pytest.raises(ConfigurationError, match="server.max_request_body must be non-negative"):
+        replace(Settings.for_test(), max_request_body=-1).validate()
+
+
 @pytest.mark.parametrize("retired_mode", ("observe", "enforce"))
 def test_retired_conflict_modes_fail_programmatic_validation(retired_mode: str) -> None:
     with pytest.raises(ConfigurationError, match="conflict.auto_mode must be 'off' or 'l0_only'"):
