@@ -1,13 +1,13 @@
 {
   "case_count": 32,
-  "commit": "ea28e717b240494e6b015cc00e38d1ed88cfdbda",
+  "commit": "de8a13030583209938efc57343d153ae848f01d1",
   "dataset_sha256": "00490041287a1991dca39d7aec1e97f7e588fe16aac8a55c91f8e4cc0d0eb6ca",
   "external_model_calls": 0,
   "http_success_rate": 1.0,
   "label": "v1.0.0rc1",
   "latency_ms": {
-    "p50": 23.873799946159124,
-    "p95": 25.273800012655556
+    "p50": 23.719899938441813,
+    "p95": 25.05830000154674
   },
   "metrics": {
     "hard_abstention_precision": 0.0,
