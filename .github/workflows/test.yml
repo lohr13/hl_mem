@@ -132,6 +132,9 @@ jobs:
           .build-venv/bin/python -m pip install --upgrade pip
           .build-venv/bin/python -m pip install dist/*.whl
           .build-venv/bin/python -c "import hl_mem; print(hl_mem.__version__)"
+          .build-venv/bin/hl-mem --version
+          .build-venv/bin/hl-mem config migrate --help
+          .build-venv/bin/hl-mem doctor --help
 
   migrations:
     runs-on: ubuntu-latest
@@ -181,7 +184,8 @@ jobs:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
       - run: uv sync --frozen
-      - name: Check OpenAPI and MCP contracts
+      - name: Check config, OpenAPI, and MCP contracts
         run: |
+          uv run --frozen python scripts/check_config_schema_snapshot.py
           uv run --frozen python scripts/check_openapi_snapshot.py
           uv run --frozen python scripts/check_mcp_snapshot.py

@@ -11,7 +11,7 @@
 
 ## 中文
 
-HL-Mem 是面向 AI Agent 的本地优先、证据驱动长期记忆系统，而不只是一个向量数据库。它把不可变 Event 转化为带证据链的结构化 Claim，以双时间模型记录事实变化，并通过独立的 Experience 通道沉淀 Episode、Trace 与可复用 Policy；默认只需 SQLite，也可按需启用在线模型与 sqlite-vec。
+HL-Mem 是面向 AI Agent 的证据驱动长期记忆系统，而不只是一个向量数据库。它把不可变 Event 转化为带证据链的结构化 Claim，以双时间模型记录事实变化，并通过独立的 Experience 通道沉淀 Episode、Trace 与可复用 Policy；SQLite 保存权威数据，高质量 LLM 与 Embedding 服务负责提取和语义召回，sqlite-vec 可选。
 
 **每条记忆都可追溯到不可变的原始事件。**
 
@@ -33,7 +33,8 @@ flowchart LR
 
 ```bash
 python -m pip install hl-mem
-hlmem init --offline && hlmem server
+hlmem init
+hlmem server
 hlmem remember "Alice 喜欢深色模式" && hlmem recall "Alice 喜欢什么"
 ```
 
@@ -45,10 +46,10 @@ hlmem remember "Alice 喜欢深色模式" && hlmem recall "Alice 喜欢什么"
 python -m pip install hl-mem
 ```
 
-在准备存放本地配置和数据库的目录中，生成无需 API key 的离线配置并启动服务：
+在准备存放本地配置和数据库的目录中运行配置向导。向导会要求明确选择 LLM、Embedding 和可选 Reranker，验证服务成功后才原子写入 `hl_mem.toml` 与 `.env`；不会提供低质量 Fake 降级：
 
 ```bash
-hlmem init --offline
+hlmem init
 hlmem server
 ```
 
@@ -69,7 +70,7 @@ hlmem recall "Alice 喜欢什么"
       - event/<event-id>
 ```
 
-`event/<event-id>` 表示这条 Claim 可追溯到对应的不可变原始事件，而不是一段没有来源的模型文本。可用 `hlmem list` 再次查看 Claim ID，并将它用于 `hlmem forget <claim-id>`、REST 详情查询或 MCP 的 `memory_explain`。离线配置是 FTS-only 关键词召回；fake embedding 只保持存储结构兼容，不提供语义检索。
+`event/<event-id>` 表示这条 Claim 可追溯到对应的不可变原始事件，而不是一段没有来源的模型文本。可用 `hlmem list` 再次查看 Claim ID，并将它用于 `hlmem forget <claim-id>`、REST 详情查询或 MCP 的 `memory_explain`。
 
 ## 进阶安装与集成
 
@@ -79,7 +80,7 @@ hlmem recall "Alice 喜欢什么"
 git clone https://github.com/lohr13/hl_mem.git
 cd hl_mem
 uv sync
-uv run hlmem init --offline
+uv run hlmem init
 uv run hlmem server
 ```
 
@@ -250,12 +251,12 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | TOML 键 | 代码默认值 | 说明 |
 |---|---:|---|
 | `database.path` | `var/hl_mem.db` | SQLite 数据库路径；相对配置文件真实目录解析 |
-| `extraction.mode` | `fake` | 提取器：`fake`、`real` 或 `llm` |
+| `extraction.mode` | `llm` | 生产提取器：`real` 或 `llm`；Fake 仅供测试 |
 | `extraction.batch_max_events` | `5` | 同 session 单次提取的 Event 上限 |
 | `extraction.batch_max_wait_seconds` | `120.0` | 未满窗口的最长等待时间 |
-| `embedding.mode` | `fake` | 向量化：`fake` 或 `real` |
+| `embedding.mode` | `real` | 生产向量化固定为 `real`；Fake 仅供测试 |
 | `embedding.text_type` | 未设置 | native 模式可选 `document` 或 `query`；默认不发送 |
-| `reranker.mode` | `off` | 重排：`off`、`fake`、`on` 或 `real` |
+| `reranker.mode` | `off` | 重排：`off`、`on` 或 `real`；Fake 仅供测试 |
 | `image_describer.mode` | `off` | 图片描述：`off` 或 `on` |
 | `llm.provider` | `dashscope` | `dashscope`、`zhipu` 或 `openai_compatible` |
 | `llm.structured_mode` | `json_object` | `auto`、`json_object` 或 `json_schema` |
@@ -265,17 +266,16 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `recall.dedup_candidate_limit` | `100` | 每次召回参与近重复折叠判定的候选上限 |
 | `recall.echo_suppression_mode` | `enforce` | 同会话回声治理：`off`、只观测的 `observe` 或 `enforce` |
 | `recall.freshness_annotation_mode` | `render` | 风险门控的新鲜度提示：`off`、只观测的 `observe` 或 `render` |
-| `recall.resurrection_mode` | `auto` | 主召回证据不足时启用有界 archived-only 冷路径；设为 `off` 可关闭 |
-| `recall.query_expansion_mode` | `auto` | 多查询召回：`off`、`auto` 或 `always` |
+| `recall.resurrection_mode` | `off` | 显式设为 `auto` 才启用有界 archived-only 冷路径 |
+| `recall.query_expansion_mode` | `off` | 多查询召回：`off`、`auto` 或 `always` |
 | `decay.model` | `activation_halflife` | 按 scope 半衰期衰减 activation，不因日常衰减改写 confidence |
 | `dedup.scan_limit` | `200` | 每轮维护最多审查的 pending `dedup_pairs` 数量 |
-| `relation.discovery_mode` | `off` | 关系发现：`off`、`audit` 或 `auto` |
-| `recall.tag_channel_enabled` | `false` | 是否启用独立 Tag 检索通道 |
+| `relation.discovery_mode` | `off` | 关系发现：`off` 或只生成提案的 `audit` |
 
 真实组件和外部调用路径必须提供各自密钥；失败时不会自动切换为 fake。任意 `HL_MEM_*` 环境变量都不再参与应用 `Settings` 配置。
 `Settings` 与 `config.example.toml` 的 `recall.default_limit` / `recall.relevance_reranker_floor` 均为 `5` / `0.15`；
 示例部署仅把 `recall.relevance_relative_drop` 从代码默认 `0.15` 显式调整为 `0.30`，并保持
-`recall.relevance_keep_top1 = true`。query expansion 使用独立可配置模型，单次/总超时为 5/6 秒。
+`recall.relevance_keep_top1 = true`。query expansion 使用独立可配置模型，并且默认关闭。
 
 ### 向量检索规模指引
 

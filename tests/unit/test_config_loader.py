@@ -12,6 +12,7 @@ import pytest
 from hl_mem.config_loader import load_settings
 from hl_mem.errors import ConfigurationError
 from hl_mem.settings import Settings, VectorBackend
+from scripts.check_config_schema_snapshot import build_config_schema
 
 
 def _write(path: Path, content: str = "", *, versioned: bool = True) -> Path:
@@ -41,6 +42,19 @@ def _load_runtime_settings(
     environ: Mapping[str, str] | None = None,
 ) -> Settings:
     return load_settings(config_path, env_path, environ=environ, validate_runtime=True)
+
+
+def test_public_config_schema_is_secret_free_and_production_only() -> None:
+    schema = build_config_schema()
+    fields = {item["path"]: item for item in schema["fields"]}
+
+    assert schema["schema_version"] == 1
+    assert "plugins.<id>" in schema["open_namespaces"]
+    assert "recall.tag_channel_enabled" in schema["retired_paths"]
+    assert "fake" not in fields["extraction.mode"]["production_choices"]
+    assert "fake" not in fields["embedding.mode"]["production_choices"]
+    assert "fake" not in fields["reranker.mode"]["production_choices"]
+    assert all(set(item) == {"environment", "settings_field"} for item in schema["secrets"])
 
 
 def test_unversioned_config_requires_migration(tmp_path: Path) -> None:

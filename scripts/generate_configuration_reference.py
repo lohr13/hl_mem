@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sys
 import types
-from dataclasses import Field, fields
+from dataclasses import Field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from hl_mem import __version__  # noqa: E402
+from hl_mem.config.models import iter_config_fields  # noqa: E402
 from hl_mem.config_loader import load_settings  # noqa: E402
 from hl_mem.settings import Settings  # noqa: E402
 
@@ -278,6 +279,13 @@ def render_choices(annotation: Any) -> str | None:
 def render_allowed(settings_field: Field[Any], annotation: Any) -> str:
     """Describe allowed values, adding Settings.validate ranges where present."""
     key_path = str(settings_field.metadata["toml"])
+    production_choices = {
+        "embedding.mode": "生产仅 `real`；`fake` 仅供测试",
+        "extraction.mode": "生产为 `real` 或 `llm`；`fake` 仅供测试",
+        "reranker.mode": "生产为 `off`、`on` 或 `real`；`fake` 仅供测试",
+    }
+    if key_path in production_choices:
+        return production_choices[key_path]
     if key_path in CONSTRAINTS:
         return CONSTRAINTS[key_path]
     choices = render_choices(annotation)
@@ -297,18 +305,18 @@ def generate() -> str:
     """Build the complete reference from Settings metadata."""
     annotations = get_type_hints(Settings)
     toml_fields = sorted(
-        (item for item in fields(Settings) if "toml" in item.metadata),
+        (item for item in iter_config_fields() if "toml" in item.metadata),
         key=lambda item: str(item.metadata["toml"]),
     )
     secret_fields = sorted(
-        (item for item in fields(Settings) if "secret_env" in item.metadata),
+        (item for item in iter_config_fields() if "secret_env" in item.metadata),
         key=lambda item: str(item.metadata["secret_env"]),
     )
 
     lines = [
         "# HL-Mem 配置参考",
         "",
-        f"HL-Mem {__version__} 使用单个 TOML 文件保存非敏感配置，并用 `.env` 或同名进程环境变量保存四个密钥。",
+        f"HL-Mem {__version__} 使用带 `schema_version = 1` 的 TOML 保存非敏感配置，并用 `.env` 或同名进程环境变量保存五个密钥。",
         "`Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。",
         "模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。",
         "",
@@ -340,13 +348,12 @@ def generate() -> str:
         "- 通用 CLI/server 默认读取当前工作目录的 `hl_mem.toml`；Hermes 插件固定读取 `<HERMES_HOME>/hl_mem.toml`，不依赖宿主进程 CWD。文件缺失、TOML 语法错误、未知表、未知键或类型错误都会阻止启动。",
         "- 通用 CLI/server 的 `.env` 默认相对当前工作目录读取；Hermes 插件固定读取 `<HERMES_HOME>/.env`。`.env` 可以缺失，进程环境中的同名密钥覆盖它。",
         "- 相对 `database.path` 以配置文件 symlink 的真实目标目录为基准；异平台绝对路径会阻止启动，不会被当成相对路径创建影子数据库。",
-        "- 除四个密钥外，环境变量不参与配置；所有 `HL_MEM_*` 变量均被忽略。",
+        "- 除五个密钥外，环境变量不参与配置；所有 `HL_MEM_*` 变量均被忽略。",
         "- TOML 使用原生类型；仅允许数组转换为 tuple、字符串转换为枚举。密钥不得写入 TOML。",
         "- 可从 [`config.example.toml`](../config.example.toml) 复制常用配置；该示例显式启用真实能力，推荐值不等于代码默认值。",
         "",
         "```bash",
-        "cp config.example.toml hl_mem.toml",
-        "cp .env.example .env",
+        "hl-mem init",
         "uv run hl-mem doctor",
         "uv run python start_server.py",
         "```",
@@ -355,7 +362,7 @@ def generate() -> str:
         "",
         "- Windows 使用 `start_production.bat`，Git Bash/POSIX 使用 `./start_hl_mem.sh`。两个脚本都从脚本自身位置定位仓库根目录，并调用 `start_server.py`，因此可以从任意当前目录启动。",
         "- 脚本使用仓库内的虚拟环境；Shell 入口兼容 `.venv/bin/python` 和 `.venv/Scripts/python.exe`。",
-        "- 启动脚本不保存第二份运行配置，也不选择 provider/model，且不再设置旧版 `HL_MEM_*` 覆盖。除四个密钥外，所有有效配置都只来自仓库根目录的 `hl_mem.toml`；loader 会忽略继承到进程中的 `HL_MEM_*`。",
+        "- 启动脚本不保存第二份运行配置，也不选择 provider/model，且不再设置旧版 `HL_MEM_*` 覆盖。除五个密钥外，所有有效配置都只来自仓库根目录的 `hl_mem.toml`；loader 会忽略继承到进程中的 `HL_MEM_*`。",
         "- 直接执行 `uv run python start_server.py` 时，`hl_mem.toml` 和 `.env` 仍相对进程当前目录解析。",
         "",
         "## 部署边界",
@@ -384,16 +391,24 @@ def generate() -> str:
         "target 或 ledger 旁残留的 `-wal`、`-shm`、`-journal` sidecar，防止未纳入验证的页面影响结果。执行 restore",
         "前必须停止 API、Worker 及其他数据库/ledger 使用者，成功后再重启服务。",
         "",
-        "## 升级到 v0.28.9",
+        "## 从 v0.36.1 配置迁移到 schema v1",
         "",
-        "先停止 API、Worker 和全部写入者，并保留主库的离线副本。v0.28.9 首次打开主库时会继续执行 migration",
-        "045/046：前者建立单案多候选、generation/revision、dirty queue 与版本化裁决约束；后者增加运维清理索引，并将",
-        "历史上低于摄入 floor 的 pending dedup pair 一次性标记为已审查。migration 不执行存量冲突裁决。",
+        "先停止 API、Worker 和全部写入者。用显式 `--db` 创建恢复集；该命令不加载旧配置：",
         "",
-        "迁移成功后立即运行一次 `hlmem backup`。若该库此前没有 tombstone sidecar，backup 会创建并绑定",
-        "`<database>.tombstones.db`，再生成 manifest v2；从此应把主库 backup、manifest 和 ledger 作为同一恢复集合保存。",
-        "旧 manifest v1 可留作升级前取证副本，但 v0.28.9 restore 会拒绝它，因为它无法证明删除历史。确认新的 v2",
-        "backup 可校验后，再恢复 API/Worker 服务。",
+        "```bash",
+        "hl-mem backup var/pre-v1.db --db var/hl_mem.db",
+        "hl-mem config migrate --config hl_mem.toml",
+        "hl-mem config migrate --config hl_mem.toml --apply \\",
+        "  --backup var/pre-v1.db --manifest var/pre-v1.db.manifest.json",
+        "hl-mem doctor --config hl_mem.toml --backup var/pre-v1.db \\",
+        "  --manifest var/pre-v1.db.manifest.json",
+        "```",
+        "",
+        "第一次 `config migrate` 只输出确定性变更计划，不写文件。`--apply` 会先验证 backup、manifest 与当前数据库",
+        "的 tombstone ledger 身份，再把旧配置逐字节保存为 `hl_mem.toml.v0.bak`，最后原子替换配置。已有备份、",
+        "来源在规划后变化、未知键、Fake 模型模式或恢复集错配都会 fail-closed。配置 schema 不支持 downgrade。",
+        "数据库 migration 仍只向前；回滚必须停止写入者，恢复升级前数据库、权威 tombstone ledger、旧配置与旧二进制，",
+        "不能让旧二进制打开已升级数据库。",
         "",
         "## JSONL Event 归档",
         "",
@@ -420,7 +435,7 @@ def generate() -> str:
         "|---|---|---|",
     ]
     secret_requirements = {
-        "LLM_API_KEY": "extraction 非 fake、query expansion 非 off 或 relation discovery 非 off",
+        "LLM_API_KEY": "生产 extraction，以及启用的 query expansion 或 relation discovery",
         "QUERY_EXPANSION_API_KEY": "可选；配置 recall.query_expansion_provider/base_url 时必填",
         "EMBEDDING_API_KEY": "embedding.mode = real",
         "RERANKER_API_KEY": "reranker.mode = on 或 real",

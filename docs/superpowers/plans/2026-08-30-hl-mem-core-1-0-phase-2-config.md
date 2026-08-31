@@ -566,12 +566,12 @@ Confirm the branch contains no Provider Registry, usage ledger, automatic-job mi
 
 ## Phase 2 Completion Record
 
-- [ ] `hl_mem.settings` and `hl_mem.config_loader` are thin facades over eight typed config groups, one loader, one secret boundary, and one migrator.
-- [ ] Production TOML requires `schema_version = 1`, explicit model-backed extraction/embedding, and valid enabled secrets; Fake implementations remain test-only.
-- [ ] Tag soft boost remains; independent Tag candidates, extraction pre-filter, and relation auto-apply are absent from runtime and schema.
-- [ ] Query Expansion and Resurrection default off; migrated old effective `auto` becomes explicit `off`; explicit relation `auto` becomes audit-only.
-- [ ] Migration dry-run is deterministic and write-free; apply preserves the original config and requires matching verified recovery evidence for an existing database.
-- [ ] Init is service-neutral, validates/probes before commit, stores secrets only in `.env`, and exposes no offline/Fake option.
-- [ ] Doctor reports structured v1 readiness and is proven not to modify production configuration, secrets, database, ledger, backup, or plugin files.
-- [ ] Config schema snapshot, documentation, CI, clean-wheel CLI, backup/restore, focused tests, full suite, formatting, typing, import boundaries, OpenAPI, and MCP gates all pass.
+- [x] `hl_mem.settings` and `hl_mem.config_loader` are thin facades over eight typed config groups, one loader, one secret boundary, and one migrator.
+- [x] Production TOML requires `schema_version = 1`, explicit model-backed extraction/embedding, and valid enabled secrets; Fake implementations remain test-only.
+- [x] Tag soft boost remains; independent Tag candidates, extraction pre-filter, and relation auto-apply are absent from runtime and schema.
+- [x] Query Expansion and Resurrection default off; migrated old effective `auto` becomes explicit `off`; explicit relation `auto` becomes audit-only.
+- [x] Migration dry-run is deterministic and write-free; apply preserves the original config and requires matching verified recovery evidence for an existing database.
+- [x] Init is service-neutral, validates/probes before commit, stores secrets only in `.env`, and exposes no offline/Fake option.
+- [x] Doctor reports structured v1 readiness and is proven not to modify production configuration, secrets, database, ledger, backup, or plugin files.
+- [x] Config schema snapshot, documentation, CI, clean-wheel CLI, backup/restore, focused tests, full suite, formatting, typing, import boundaries, OpenAPI, and MCP gates all pass.
 - [ ] Only after this record is complete: author `2026-08-30-hl-mem-core-1-0-phase-3-provider-governance.md` against the merged Phase 2 code.

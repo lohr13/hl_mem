@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -114,10 +115,13 @@ def main() -> int:
         capability_matrix = read("docs/capability-matrix.md")
         changelog = read("docs/CHANGELOG.md")
         agents_md = read("AGENTS.md")
+        config_schema = json.loads(read("docs/config-schema.json"))
 
         errors: list[str] = []
         if project_version != version:
             errors.append(f"  pyproject.toml version: found '{project_version}', expected '{version}'")
+        if not isinstance(config_schema, dict) or config_schema.get("schema_version") != 1:
+            errors.append("  config schema snapshot: expected schema_version 1")
         errors += check_value(
             readme,
             r"shields\.io/badge/version-v?(\d+\.\d+\.\d+)-",

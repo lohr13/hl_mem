@@ -17,8 +17,8 @@ from hl_mem.config.models import CONFIG_SCHEMA_VERSION, Settings, iter_config_fi
 from hl_mem.config.secrets import read_secret_values
 from hl_mem.errors import ConfigurationError
 
-_PLUGIN_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
-_REQUIRED_RUNTIME_PATHS = (
+PLUGIN_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+REQUIRED_RUNTIME_PATHS = (
     "extraction.mode",
     "embedding.mode",
     "llm.provider",
@@ -29,7 +29,7 @@ _REQUIRED_RUNTIME_PATHS = (
     "embedding.dim",
     "embedding.api_mode",
 )
-_RETIRED_TOML_PATHS = frozenset(
+RETIRED_TOML_PATHS = frozenset(
     {
         "extraction.pre_filter",
         "recall.tag_channel_enabled",
@@ -184,7 +184,7 @@ def _flatten_toml(
             key_path = f"{prefix}.{key}" if prefix else key
             if key_path in forbidden_paths:
                 raise ConfigurationError(f"{path}: {key_path}: secrets must not appear in TOML")
-            if key_path in _RETIRED_TOML_PATHS:
+            if key_path in RETIRED_TOML_PATHS:
                 raise ConfigurationError(
                     f"{path}: {key_path}: retired configuration; run 'hl-mem config migrate --config {path}'"
                 )
@@ -245,7 +245,7 @@ def _split_plugin_namespace(
     for plugin_id, raw_options in raw_plugins.items():
         if plugin_id == "enabled":
             continue
-        if _PLUGIN_ID_PATTERN.fullmatch(plugin_id) is None:
+        if PLUGIN_ID_PATTERN.fullmatch(plugin_id) is None:
             raise ConfigurationError(f"{path}: plugins.{plugin_id}: plugin ID must match [a-z0-9][a-z0-9._-]{{0,63}}")
         if not isinstance(raw_options, dict):
             raise ConfigurationError(f"{path}: plugins.{plugin_id}: expected TOML table")
@@ -335,7 +335,7 @@ def load_settings_data(
             values[settings_field.name] = secret_values[secret_name]
 
     if validate_runtime:
-        missing_paths = [path for path in _REQUIRED_RUNTIME_PATHS if path not in flattened]
+        missing_paths = [path for path in REQUIRED_RUNTIME_PATHS if path not in flattened]
         if missing_paths:
             raise ConfigurationError(
                 f"{resolved_config_path}: production configuration must explicitly set: " + ", ".join(missing_paths)

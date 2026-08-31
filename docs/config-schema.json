@@ -1,0 +1,1596 @@
+{
+  "fields": [
+    {
+      "default": 300.0,
+      "path": "alert.dedupe_seconds",
+      "required_in_production": false,
+      "settings_field": "alert_dedupe_seconds",
+      "type": "number"
+    },
+    {
+      "default": null,
+      "path": "alert.email_from",
+      "required_in_production": false,
+      "settings_field": "alert_email_from",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "path": "alert.email_to",
+      "required_in_production": false,
+      "settings_field": "alert_email_to",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "path": "alert.smtp_host",
+      "required_in_production": false,
+      "settings_field": "smtp_host",
+      "type": "string"
+    },
+    {
+      "default": 25,
+      "path": "alert.smtp_port",
+      "required_in_production": false,
+      "settings_field": "smtp_port",
+      "type": "integer"
+    },
+    {
+      "default": null,
+      "path": "alert.webhook_url",
+      "required_in_production": false,
+      "settings_field": "alert_webhook_url",
+      "type": "string"
+    },
+    {
+      "default": "l0_only",
+      "path": "conflict.auto_mode",
+      "production_choices": [
+        "off",
+        "l0_only"
+      ],
+      "required_in_production": false,
+      "settings_field": "conflict_auto_mode",
+      "type": "string"
+    },
+    {
+      "default": 30,
+      "path": "database.busy_timeout_seconds",
+      "required_in_production": false,
+      "settings_field": "database_busy_timeout_seconds",
+      "type": "integer"
+    },
+    {
+      "default": "var/hl_mem.db",
+      "path": "database.path",
+      "required_in_production": false,
+      "settings_field": "database_path",
+      "type": "string"
+    },
+    {
+      "default": 8,
+      "path": "database.pool_size",
+      "required_in_production": false,
+      "settings_field": "database_pool_size",
+      "type": "integer"
+    },
+    {
+      "default": 7,
+      "path": "decay.halflife_archive_grace_days",
+      "required_in_production": false,
+      "settings_field": "decay_halflife_archive_grace_days",
+      "type": "integer"
+    },
+    {
+      "default": 0.05,
+      "path": "decay.halflife_archive_threshold",
+      "required_in_production": false,
+      "settings_field": "decay_halflife_archive_threshold",
+      "type": "number"
+    },
+    {
+      "default": 365,
+      "path": "decay.identity_half_life_days",
+      "required_in_production": false,
+      "settings_field": "decay_identity_half_life_days",
+      "type": "integer"
+    },
+    {
+      "default": "activation_halflife",
+      "path": "decay.model",
+      "production_choices": [
+        "legacy_linear",
+        "activation_halflife",
+        "confidence_halflife"
+      ],
+      "required_in_production": false,
+      "settings_field": "decay_model",
+      "type": "string"
+    },
+    {
+      "default": 90,
+      "path": "decay.permanent_half_life_days",
+      "required_in_production": false,
+      "settings_field": "decay_permanent_half_life_days",
+      "type": "integer"
+    },
+    {
+      "default": 45,
+      "path": "decay.temporal_half_life_days",
+      "required_in_production": false,
+      "settings_field": "decay_temporal_half_life_days",
+      "type": "integer"
+    },
+    {
+      "default": true,
+      "path": "dedup.audit_only",
+      "required_in_production": false,
+      "settings_field": "dedup_audit_only",
+      "type": "boolean"
+    },
+    {
+      "default": 0.98,
+      "path": "dedup.auto_merge_min_confidence",
+      "required_in_production": false,
+      "settings_field": "dedup_auto_merge_min_confidence",
+      "type": "number"
+    },
+    {
+      "default": "03:00",
+      "path": "dedup.cron",
+      "required_in_production": false,
+      "settings_field": "dedup_cron",
+      "type": "string"
+    },
+    {
+      "default": true,
+      "path": "dedup.enabled",
+      "required_in_production": false,
+      "settings_field": "dedup_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": 10000,
+      "path": "dedup.max_pending_pairs",
+      "required_in_production": false,
+      "settings_field": "dedup_max_pending_pairs",
+      "type": "integer"
+    },
+    {
+      "default": 200,
+      "path": "dedup.scan_limit",
+      "required_in_production": false,
+      "settings_field": "dedup_scan_limit",
+      "type": "integer"
+    },
+    {
+      "default": 0.92,
+      "path": "dedup.threshold",
+      "required_in_production": false,
+      "settings_field": "dedup_threshold",
+      "type": "number"
+    },
+    {
+      "default": "compatible",
+      "path": "embedding.api_mode",
+      "production_choices": [
+        "compatible",
+        "native"
+      ],
+      "required_in_production": true,
+      "settings_field": "embedding_api_mode",
+      "type": "string"
+    },
+    {
+      "default": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "path": "embedding.base_url",
+      "required_in_production": true,
+      "settings_field": "embedding_base_url",
+      "type": "string"
+    },
+    {
+      "default": 5.0,
+      "path": "embedding.connect_timeout",
+      "required_in_production": false,
+      "settings_field": "embedding_connect_timeout",
+      "type": "number"
+    },
+    {
+      "default": 2048,
+      "path": "embedding.dim",
+      "required_in_production": true,
+      "settings_field": "embedding_dim",
+      "type": "integer"
+    },
+    {
+      "default": 3,
+      "path": "embedding.max_attempts",
+      "required_in_production": false,
+      "settings_field": "embedding_max_attempts",
+      "type": "integer"
+    },
+    {
+      "default": "real",
+      "path": "embedding.mode",
+      "production_choices": [
+        "real"
+      ],
+      "required_in_production": true,
+      "settings_field": "embedder_mode",
+      "type": "string"
+    },
+    {
+      "default": "text-embedding-v4",
+      "path": "embedding.model",
+      "required_in_production": true,
+      "settings_field": "embedding_model",
+      "type": "string"
+    },
+    {
+      "default": 30.0,
+      "path": "embedding.read_timeout",
+      "required_in_production": false,
+      "settings_field": "embedding_read_timeout",
+      "type": "number"
+    },
+    {
+      "default": null,
+      "path": "embedding.text_type",
+      "required_in_production": false,
+      "settings_field": "embedding_text_type",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "path": "entity.aliases_path",
+      "required_in_production": false,
+      "settings_field": "entity_aliases_path",
+      "type": "string"
+    },
+    {
+      "default": 5,
+      "path": "extraction.batch_max_events",
+      "required_in_production": false,
+      "settings_field": "extraction_batch_max_events",
+      "type": "integer"
+    },
+    {
+      "default": 120.0,
+      "path": "extraction.batch_max_wait_seconds",
+      "required_in_production": false,
+      "settings_field": "extraction_batch_max_wait_seconds",
+      "type": "number"
+    },
+    {
+      "default": 2,
+      "path": "extraction.chunk_overlap_turns",
+      "required_in_production": false,
+      "settings_field": "extraction_chunk_overlap_turns",
+      "type": "integer"
+    },
+    {
+      "default": 12000,
+      "path": "extraction.chunk_target_chars",
+      "required_in_production": false,
+      "settings_field": "extraction_chunk_target_chars",
+      "type": "integer"
+    },
+    {
+      "default": false,
+      "path": "extraction.delta_repair_enabled",
+      "required_in_production": false,
+      "settings_field": "extraction_delta_repair_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": "observe",
+      "path": "extraction.lesson_signal_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "lesson_signal_mode",
+      "type": "string"
+    },
+    {
+      "default": 3,
+      "path": "extraction.max_split_depth",
+      "required_in_production": false,
+      "settings_field": "extraction_max_split_depth",
+      "type": "integer"
+    },
+    {
+      "default": "llm",
+      "path": "extraction.mode",
+      "production_choices": [
+        "real",
+        "llm"
+      ],
+      "required_in_production": true,
+      "settings_field": "extractor_mode",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "path": "extraction.soft_split_enabled",
+      "required_in_production": false,
+      "settings_field": "extraction_soft_split_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": "off",
+      "path": "extraction.verification_mode",
+      "production_choices": [
+        "off",
+        "audit",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "verification_mode",
+      "type": "string"
+    },
+    {
+      "default": 5,
+      "path": "hermes.circuit_failure_threshold",
+      "required_in_production": false,
+      "settings_field": "hermes_circuit_failure_threshold",
+      "type": "integer"
+    },
+    {
+      "default": 60.0,
+      "path": "hermes.circuit_open_seconds",
+      "required_in_production": false,
+      "settings_field": "hermes_circuit_open_seconds",
+      "type": "number"
+    },
+    {
+      "default": false,
+      "path": "hermes.enabled",
+      "required_in_production": false,
+      "settings_field": "hermes_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": null,
+      "path": "hermes.home",
+      "required_in_production": false,
+      "settings_field": "hermes_home",
+      "type": "string"
+    },
+    {
+      "default": true,
+      "path": "hermes.manual_conflict_notice",
+      "required_in_production": false,
+      "settings_field": "hermes_manual_conflict_notice",
+      "type": "boolean"
+    },
+    {
+      "default": 8.0,
+      "path": "hermes.on_demand_recall_timeout_seconds",
+      "required_in_production": false,
+      "settings_field": "hermes_on_demand_recall_timeout_seconds",
+      "type": "number"
+    },
+    {
+      "default": 300.0,
+      "path": "hermes.prefetch_cache_ttl_seconds",
+      "required_in_production": false,
+      "settings_field": "hermes_prefetch_cache_ttl_seconds",
+      "type": "number"
+    },
+    {
+      "default": 30,
+      "path": "hermes.timeout",
+      "required_in_production": false,
+      "settings_field": "hermes_timeout",
+      "type": "integer"
+    },
+    {
+      "default": "http://127.0.0.1:8200",
+      "path": "hermes.url",
+      "required_in_production": false,
+      "settings_field": "hermes_url",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "path": "image_describer.allow_file_uris",
+      "required_in_production": false,
+      "settings_field": "image_allow_file_uris",
+      "type": "boolean"
+    },
+    {
+      "default": "https://coding.dashscope.aliyuncs.com/v1",
+      "path": "image_describer.base_url",
+      "required_in_production": false,
+      "settings_field": "image_describer_base_url",
+      "type": "string"
+    },
+    {
+      "default": [],
+      "path": "image_describer.file_allow_roots",
+      "required_in_production": false,
+      "settings_field": "image_file_allow_roots",
+      "type": "array[string]"
+    },
+    {
+      "default": 10485760,
+      "path": "image_describer.max_bytes",
+      "required_in_production": false,
+      "settings_field": "image_max_bytes",
+      "type": "integer"
+    },
+    {
+      "default": 4,
+      "path": "image_describer.max_parts",
+      "required_in_production": false,
+      "settings_field": "image_max_parts",
+      "type": "integer"
+    },
+    {
+      "default": "off",
+      "path": "image_describer.mode",
+      "production_choices": [
+        "off",
+        "on"
+      ],
+      "required_in_production": false,
+      "settings_field": "image_describer_mode",
+      "type": "string"
+    },
+    {
+      "default": "qwen3.7-plus",
+      "path": "image_describer.model",
+      "required_in_production": false,
+      "settings_field": "image_describer_model",
+      "type": "string"
+    },
+    {
+      "default": "dashscope",
+      "path": "image_describer.provider",
+      "production_choices": [
+        "dashscope"
+      ],
+      "required_in_production": false,
+      "settings_field": "image_describer_provider",
+      "type": "string"
+    },
+    {
+      "default": 20.0,
+      "path": "image_describer.timeout_seconds",
+      "required_in_production": false,
+      "settings_field": "image_describer_timeout_seconds",
+      "type": "number"
+    },
+    {
+      "default": 100,
+      "path": "index.backfill_batch_size",
+      "required_in_production": false,
+      "settings_field": "index_backfill_batch_size",
+      "type": "integer"
+    },
+    {
+      "default": 3,
+      "path": "index.backfill_max_attempts",
+      "required_in_production": false,
+      "settings_field": "index_backfill_max_attempts",
+      "type": "integer"
+    },
+    {
+      "default": "natural",
+      "path": "index.text_mode",
+      "production_choices": [
+        "legacy",
+        "value_only",
+        "natural",
+        "answerable"
+      ],
+      "required_in_production": false,
+      "settings_field": "index_text_mode",
+      "type": "string"
+    },
+    {
+      "default": "v2",
+      "path": "index.text_version",
+      "required_in_production": false,
+      "settings_field": "index_text_version",
+      "type": "string"
+    },
+    {
+      "default": "https://coding.dashscope.aliyuncs.com/v1",
+      "path": "llm.base_url",
+      "required_in_production": true,
+      "settings_field": "llm_base_url",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "path": "llm.enable_thinking",
+      "required_in_production": false,
+      "settings_field": "enable_llm_thinking",
+      "type": "boolean"
+    },
+    {
+      "default": 3,
+      "path": "llm.max_attempts",
+      "required_in_production": false,
+      "settings_field": "llm_max_attempts",
+      "type": "integer"
+    },
+    {
+      "default": null,
+      "path": "llm.max_tokens",
+      "required_in_production": false,
+      "settings_field": "llm_max_tokens",
+      "type": "integer"
+    },
+    {
+      "default": "qwen3.7-plus",
+      "path": "llm.model",
+      "required_in_production": true,
+      "settings_field": "llm_model",
+      "type": "string"
+    },
+    {
+      "default": "dashscope",
+      "path": "llm.provider",
+      "production_choices": [
+        "dashscope",
+        "zhipu",
+        "openai_compatible"
+      ],
+      "required_in_production": true,
+      "settings_field": "llm_provider",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "path": "llm.reasoning_effort",
+      "required_in_production": false,
+      "settings_field": "llm_reasoning_effort",
+      "type": "string"
+    },
+    {
+      "default": 2,
+      "path": "llm.schema_retries",
+      "required_in_production": false,
+      "settings_field": "llm_schema_retries",
+      "type": "integer"
+    },
+    {
+      "default": "json_object",
+      "path": "llm.structured_mode",
+      "production_choices": [
+        "auto",
+        "json_object",
+        "json_schema"
+      ],
+      "required_in_production": false,
+      "settings_field": "llm_structured_mode",
+      "type": "string"
+    },
+    {
+      "default": "auto",
+      "path": "llm.thinking_control",
+      "production_choices": [
+        "auto",
+        "chat_template_kwargs"
+      ],
+      "required_in_production": false,
+      "settings_field": "llm_thinking_control",
+      "type": "string"
+    },
+    {
+      "default": 90.0,
+      "path": "llm.timeout",
+      "required_in_production": false,
+      "settings_field": "llm_timeout",
+      "type": "number"
+    },
+    {
+      "default": "enforce",
+      "path": "plan.fulfillment_mode",
+      "production_choices": [
+        "off",
+        "audit",
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "plan_fulfillment_mode",
+      "type": "string"
+    },
+    {
+      "default": [],
+      "path": "plugins.enabled",
+      "required_in_production": false,
+      "settings_field": "plugins_enabled",
+      "type": "array[string]"
+    },
+    {
+      "default": "enforce",
+      "path": "price.target_mode",
+      "production_choices": [
+        "off",
+        "audit",
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "price_target_mode",
+      "type": "string"
+    },
+    {
+      "default": 50,
+      "path": "recall.candidate_floor",
+      "required_in_production": false,
+      "settings_field": "recall_candidate_floor",
+      "type": "integer"
+    },
+    {
+      "default": 100,
+      "path": "recall.dedup_candidate_limit",
+      "required_in_production": false,
+      "settings_field": "recall_dedup_candidate_limit",
+      "type": "integer"
+    },
+    {
+      "default": 0.95,
+      "path": "recall.dedup_threshold",
+      "required_in_production": false,
+      "settings_field": "recall_dedup_threshold",
+      "type": "number"
+    },
+    {
+      "default": 5,
+      "path": "recall.default_limit",
+      "required_in_production": false,
+      "settings_field": "recall_default_limit",
+      "type": "integer"
+    },
+    {
+      "default": true,
+      "path": "recall.dense_enabled",
+      "required_in_production": false,
+      "settings_field": "recall_dense_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": 7200,
+      "path": "recall.echo_pending_max_seconds",
+      "required_in_production": false,
+      "settings_field": "echo_pending_max_seconds",
+      "type": "integer"
+    },
+    {
+      "default": false,
+      "path": "recall.echo_pending_review_enabled",
+      "required_in_production": false,
+      "settings_field": "echo_pending_review_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": 0.95,
+      "path": "recall.echo_pending_similarity_threshold",
+      "required_in_production": false,
+      "settings_field": "echo_pending_similarity_threshold",
+      "type": "number"
+    },
+    {
+      "default": 1800,
+      "path": "recall.echo_session_window_seconds",
+      "required_in_production": false,
+      "settings_field": "echo_session_window_seconds",
+      "type": "integer"
+    },
+    {
+      "default": "enforce",
+      "path": "recall.echo_suppression_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "echo_suppression_mode",
+      "type": "string"
+    },
+    {
+      "default": "observe",
+      "path": "recall.entity_constraint_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "entity_constraint_mode",
+      "type": "string"
+    },
+    {
+      "default": 5,
+      "path": "recall.expansion_circuit_failure_threshold",
+      "required_in_production": false,
+      "settings_field": "expansion_circuit_failure_threshold",
+      "type": "integer"
+    },
+    {
+      "default": 60.0,
+      "path": "recall.expansion_circuit_open_seconds",
+      "required_in_production": false,
+      "settings_field": "expansion_circuit_open_seconds",
+      "type": "number"
+    },
+    {
+      "default": 3,
+      "path": "recall.feedback_min_samples",
+      "required_in_production": false,
+      "settings_field": "feedback_min_samples",
+      "type": "integer"
+    },
+    {
+      "default": "render",
+      "path": "recall.freshness_annotation_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "render"
+      ],
+      "required_in_production": false,
+      "settings_field": "freshness_annotation_mode",
+      "type": "string"
+    },
+    {
+      "default": "auto",
+      "path": "recall.fts_language",
+      "production_choices": [
+        "auto",
+        "zh",
+        "en"
+      ],
+      "required_in_production": false,
+      "settings_field": "fts_language",
+      "type": "string"
+    },
+    {
+      "default": 2000,
+      "path": "recall.packed_context_token_budget",
+      "required_in_production": false,
+      "settings_field": "packed_context_token_budget",
+      "type": "integer"
+    },
+    {
+      "default": 0.12,
+      "path": "recall.preference_recency_boost",
+      "required_in_production": false,
+      "settings_field": "preference_recency_boost",
+      "type": "number"
+    },
+    {
+      "default": 30,
+      "path": "recall.procedure_candidate_limit",
+      "required_in_production": false,
+      "settings_field": "procedure_candidate_limit",
+      "type": "integer"
+    },
+    {
+      "default": 0.8,
+      "path": "recall.procedure_llm_threshold",
+      "required_in_production": false,
+      "settings_field": "procedure_llm_threshold",
+      "type": "number"
+    },
+    {
+      "default": "keyword",
+      "path": "recall.procedure_mode",
+      "production_choices": [
+        "off",
+        "keyword",
+        "auto"
+      ],
+      "required_in_production": false,
+      "settings_field": "procedure_recall_mode",
+      "type": "string"
+    },
+    {
+      "default": 30,
+      "path": "recall.procedure_outcome_half_life_days",
+      "required_in_production": false,
+      "settings_field": "procedure_outcome_half_life_days",
+      "type": "integer"
+    },
+    {
+      "default": 20,
+      "path": "recall.procedure_recent_outcome_window",
+      "required_in_production": false,
+      "settings_field": "procedure_recent_outcome_window",
+      "type": "integer"
+    },
+    {
+      "default": 1.5,
+      "path": "recall.procedure_router_timeout_seconds",
+      "required_in_production": false,
+      "settings_field": "procedure_router_timeout_seconds",
+      "type": "number"
+    },
+    {
+      "default": 5,
+      "path": "recall.query_context_max_events",
+      "required_in_production": false,
+      "settings_field": "query_context_max_events",
+      "type": "integer"
+    },
+    {
+      "default": "off",
+      "path": "recall.query_context_mode",
+      "production_choices": [
+        "off",
+        "coreference"
+      ],
+      "required_in_production": false,
+      "settings_field": "query_context_mode",
+      "type": "string"
+    },
+    {
+      "default": 256,
+      "path": "recall.query_context_token_budget",
+      "required_in_production": false,
+      "settings_field": "query_context_token_budget",
+      "type": "integer"
+    },
+    {
+      "default": null,
+      "path": "recall.query_expansion_base_url",
+      "required_in_production": false,
+      "settings_field": "query_expansion_base_url",
+      "type": "string"
+    },
+    {
+      "default": 8,
+      "path": "recall.query_expansion_candidate_floor",
+      "required_in_production": false,
+      "settings_field": "query_expansion_candidate_floor",
+      "type": "integer"
+    },
+    {
+      "default": 2,
+      "path": "recall.query_expansion_max",
+      "required_in_production": false,
+      "settings_field": "query_expansion_max",
+      "type": "integer"
+    },
+    {
+      "default": 4,
+      "path": "recall.query_expansion_max_concurrency",
+      "required_in_production": false,
+      "settings_field": "query_expansion_max_concurrency",
+      "type": "integer"
+    },
+    {
+      "default": "off",
+      "path": "recall.query_expansion_mode",
+      "production_choices": [
+        "off",
+        "auto",
+        "always"
+      ],
+      "required_in_production": false,
+      "settings_field": "query_expansion_mode",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "path": "recall.query_expansion_model",
+      "required_in_production": false,
+      "settings_field": "query_expansion_model",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "path": "recall.query_expansion_provider",
+      "required_in_production": false,
+      "settings_field": "query_expansion_provider",
+      "type": "string"
+    },
+    {
+      "default": 15.0,
+      "path": "recall.query_expansion_timeout_seconds",
+      "required_in_production": false,
+      "settings_field": "query_expansion_timeout_seconds",
+      "type": "number"
+    },
+    {
+      "default": 256,
+      "path": "recall.query_expansion_token_ceiling",
+      "required_in_production": false,
+      "settings_field": "query_expansion_token_ceiling",
+      "type": "integer"
+    },
+    {
+      "default": 16.0,
+      "path": "recall.query_expansion_total_timeout_seconds",
+      "required_in_production": false,
+      "settings_field": "query_expansion_total_timeout_seconds",
+      "type": "number"
+    },
+    {
+      "default": 0.3,
+      "path": "recall.relevance_dense_floor",
+      "required_in_production": false,
+      "settings_field": "relevance_dense_floor",
+      "type": "number"
+    },
+    {
+      "default": "off",
+      "path": "recall.relevance_gate_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "relevance_gate_mode",
+      "type": "string"
+    },
+    {
+      "default": [
+        "current_state"
+      ],
+      "path": "recall.relevance_intents",
+      "required_in_production": false,
+      "settings_field": "relevance_intents",
+      "type": "array[string]"
+    },
+    {
+      "default": true,
+      "path": "recall.relevance_keep_top1",
+      "required_in_production": false,
+      "settings_field": "relevance_keep_top1",
+      "type": "boolean"
+    },
+    {
+      "default": 0.15,
+      "path": "recall.relevance_relative_drop",
+      "required_in_production": false,
+      "settings_field": "relevance_relative_drop",
+      "type": "number"
+    },
+    {
+      "default": 0.15,
+      "path": "recall.relevance_reranker_floor",
+      "required_in_production": false,
+      "settings_field": "relevance_reranker_floor",
+      "type": "number"
+    },
+    {
+      "default": 3,
+      "path": "recall.resurrection_candidate_limit",
+      "required_in_production": false,
+      "settings_field": "resurrection_candidate_limit",
+      "type": "integer"
+    },
+    {
+      "default": 0.8,
+      "path": "recall.resurrection_min_term_coverage",
+      "required_in_production": false,
+      "settings_field": "resurrection_min_term_coverage",
+      "type": "number"
+    },
+    {
+      "default": "off",
+      "path": "recall.resurrection_mode",
+      "production_choices": [
+        "off",
+        "auto"
+      ],
+      "required_in_production": false,
+      "settings_field": "resurrection_mode",
+      "type": "string"
+    },
+    {
+      "default": 0.05,
+      "path": "recall.side_effect_backoff_seconds",
+      "required_in_production": false,
+      "settings_field": "recall_side_effect_backoff_seconds",
+      "type": "number"
+    },
+    {
+      "default": 3,
+      "path": "recall.side_effect_max_attempts",
+      "required_in_production": false,
+      "settings_field": "recall_side_effect_max_attempts",
+      "type": "integer"
+    },
+    {
+      "default": true,
+      "path": "recall.tag_boost_enabled",
+      "required_in_production": false,
+      "settings_field": "tag_boost_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": 0.05,
+      "path": "recall.tag_boost_weight",
+      "required_in_production": false,
+      "settings_field": "tag_boost_weight",
+      "type": "number"
+    },
+    {
+      "default": "sqlite_scan",
+      "path": "recall.vector_backend",
+      "production_choices": [
+        "sqlite_scan",
+        "sqlite_vec"
+      ],
+      "required_in_production": false,
+      "settings_field": "vector_backend",
+      "type": "string"
+    },
+    {
+      "default": 512,
+      "path": "recall.vector_batch_size",
+      "required_in_production": false,
+      "settings_field": "vector_batch_size",
+      "type": "integer"
+    },
+    {
+      "default": 200,
+      "path": "recall.vector_scan_limit",
+      "required_in_production": false,
+      "settings_field": "recall_vector_scan_limit",
+      "type": "integer"
+    },
+    {
+      "default": 10,
+      "path": "relation.discovery_max_proposals",
+      "required_in_production": false,
+      "settings_field": "relation_discovery_max_proposals",
+      "type": "integer"
+    },
+    {
+      "default": "off",
+      "path": "relation.discovery_mode",
+      "production_choices": [
+        "off",
+        "audit"
+      ],
+      "required_in_production": false,
+      "settings_field": "relation_discovery_mode",
+      "type": "string"
+    },
+    {
+      "default": 40,
+      "path": "relation.discovery_pool_limit",
+      "required_in_production": false,
+      "settings_field": "relation_discovery_pool_limit",
+      "type": "integer"
+    },
+    {
+      "default": 1,
+      "path": "relation.expansion_max_depth",
+      "required_in_production": false,
+      "settings_field": "relation_expansion_max_depth",
+      "type": "integer"
+    },
+    {
+      "default": "off",
+      "path": "relation.expansion_mode",
+      "production_choices": [
+        "off",
+        "on"
+      ],
+      "required_in_production": false,
+      "settings_field": "relation_expansion_mode",
+      "type": "string"
+    },
+    {
+      "default": "https://dashscope.aliyuncs.com",
+      "path": "reranker.base_url",
+      "required_in_production": false,
+      "settings_field": "reranker_base_url",
+      "type": "string"
+    },
+    {
+      "default": "off",
+      "path": "reranker.mode",
+      "production_choices": [
+        "off",
+        "on",
+        "real"
+      ],
+      "required_in_production": false,
+      "settings_field": "reranker_mode",
+      "type": "string"
+    },
+    {
+      "default": "qwen3-rerank",
+      "path": "reranker.model",
+      "required_in_production": false,
+      "settings_field": "reranker_model",
+      "type": "string"
+    },
+    {
+      "default": "dashscope",
+      "path": "reranker.provider",
+      "production_choices": [
+        "dashscope"
+      ],
+      "required_in_production": false,
+      "settings_field": "reranker_provider",
+      "type": "string"
+    },
+    {
+      "default": 30,
+      "path": "retention.access_bonus_cap_days",
+      "required_in_production": false,
+      "settings_field": "access_bonus_cap_days",
+      "type": "integer"
+    },
+    {
+      "default": 1,
+      "path": "retention.access_bonus_days",
+      "required_in_production": false,
+      "settings_field": "access_bonus_days",
+      "type": "integer"
+    },
+    {
+      "default": 5,
+      "path": "retention.access_bonus_every",
+      "required_in_production": false,
+      "settings_field": "access_bonus_every",
+      "type": "integer"
+    },
+    {
+      "default": 180,
+      "path": "retention.archive_permanent_days",
+      "required_in_production": false,
+      "settings_field": "archive_permanent_days",
+      "type": "integer"
+    },
+    {
+      "default": 30,
+      "path": "retention.archive_temporal_days",
+      "required_in_production": false,
+      "settings_field": "archive_temporal_days",
+      "type": "integer"
+    },
+    {
+      "default": 0.05,
+      "path": "retention.decay_min_confidence",
+      "required_in_production": false,
+      "settings_field": "decay_min_confidence",
+      "type": "number"
+    },
+    {
+      "default": 90,
+      "path": "retention.decay_permanent_days",
+      "required_in_production": false,
+      "settings_field": "decay_permanent_days",
+      "type": "integer"
+    },
+    {
+      "default": 7,
+      "path": "retention.decay_rollout_grace_days",
+      "required_in_production": false,
+      "settings_field": "decay_rollout_grace_days",
+      "type": "integer"
+    },
+    {
+      "default": 7,
+      "path": "retention.decay_temporal_days",
+      "required_in_production": false,
+      "settings_field": "decay_temporal_days",
+      "type": "integer"
+    },
+    {
+      "default": 90,
+      "path": "retention.dedup_pair_days",
+      "required_in_production": false,
+      "settings_field": "dedup_pair_days",
+      "type": "integer"
+    },
+    {
+      "default": 30,
+      "path": "retention.event_days",
+      "required_in_production": false,
+      "settings_field": "retention_days",
+      "type": "integer"
+    },
+    {
+      "default": 90,
+      "path": "retention.expired_claim_retention_days",
+      "required_in_production": false,
+      "settings_field": "expired_claim_retention_days",
+      "type": "integer"
+    },
+    {
+      "default": 100,
+      "path": "retention.expired_cleanup_batch_size",
+      "required_in_production": false,
+      "settings_field": "expired_cleanup_batch_size",
+      "type": "integer"
+    },
+    {
+      "default": "observe",
+      "path": "retention.expired_cleanup_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "on"
+      ],
+      "required_in_production": false,
+      "settings_field": "expired_cleanup_mode",
+      "type": "string"
+    },
+    {
+      "default": 180,
+      "path": "retention.feedback_bonus_cap_days",
+      "required_in_production": false,
+      "settings_field": "feedback_bonus_cap_days",
+      "type": "integer"
+    },
+    {
+      "default": 14,
+      "path": "retention.feedback_bonus_days",
+      "required_in_production": false,
+      "settings_field": "feedback_bonus_days",
+      "type": "integer"
+    },
+    {
+      "default": 3,
+      "path": "retention.feedback_bonus_every",
+      "required_in_production": false,
+      "settings_field": "feedback_bonus_every",
+      "type": "integer"
+    },
+    {
+      "default": "observe",
+      "path": "retention.feedback_lifecycle_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "on"
+      ],
+      "required_in_production": false,
+      "settings_field": "feedback_lifecycle_mode",
+      "type": "string"
+    },
+    {
+      "default": 7,
+      "path": "retention.feedback_uninjected_days",
+      "required_in_production": false,
+      "settings_field": "feedback_uninjected_days",
+      "type": "integer"
+    },
+    {
+      "default": 90,
+      "path": "retention.feedback_unlabeled_days",
+      "required_in_production": false,
+      "settings_field": "feedback_unlabeled_days",
+      "type": "integer"
+    },
+    {
+      "default": 0.7,
+      "path": "retention.importance_high_threshold",
+      "required_in_production": false,
+      "settings_field": "importance_high_threshold",
+      "type": "number"
+    },
+    {
+      "default": 0.4,
+      "path": "retention.importance_low_threshold",
+      "required_in_production": false,
+      "settings_field": "importance_low_threshold",
+      "type": "number"
+    },
+    {
+      "default": 0.2,
+      "path": "retention.importance_write_floor",
+      "required_in_production": false,
+      "settings_field": "importance_write_floor",
+      "type": "number"
+    },
+    {
+      "default": 90,
+      "path": "retention.job_dead_days",
+      "required_in_production": false,
+      "settings_field": "job_dead_days",
+      "type": "integer"
+    },
+    {
+      "default": 30,
+      "path": "retention.job_succeeded_days",
+      "required_in_production": false,
+      "settings_field": "job_succeeded_days",
+      "type": "integer"
+    },
+    {
+      "default": 30,
+      "path": "retention.llm_span_days",
+      "required_in_production": false,
+      "settings_field": "llm_span_days",
+      "type": "integer"
+    },
+    {
+      "default": 2000,
+      "path": "retention.operational_batch_size",
+      "required_in_production": false,
+      "settings_field": "operational_batch_size",
+      "type": "integer"
+    },
+    {
+      "default": true,
+      "path": "retention.operational_cleanup_enabled",
+      "required_in_production": false,
+      "settings_field": "operational_cleanup_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": 86400,
+      "path": "retention.slot_short_ttl_seconds",
+      "required_in_production": false,
+      "settings_field": "slot_short_ttl_seconds",
+      "type": "integer"
+    },
+    {
+      "default": 30,
+      "path": "retention.temporal_cleanup_age_days",
+      "required_in_production": false,
+      "settings_field": "temporal_cleanup_age_days",
+      "type": "integer"
+    },
+    {
+      "default": 90,
+      "path": "retention.temporal_cleanup_expiry_days",
+      "required_in_production": false,
+      "settings_field": "temporal_cleanup_expiry_days",
+      "type": "integer"
+    },
+    {
+      "default": 7,
+      "path": "retention.temporal_ttl_days",
+      "required_in_production": false,
+      "settings_field": "memory_temporal_ttl_days",
+      "type": "integer"
+    },
+    {
+      "default": 14,
+      "path": "retention.temporal_ttl_days_high",
+      "required_in_production": false,
+      "settings_field": "temporal_ttl_days_high",
+      "type": "integer"
+    },
+    {
+      "default": 3,
+      "path": "retention.temporal_ttl_days_low",
+      "required_in_production": false,
+      "settings_field": "temporal_ttl_days_low",
+      "type": "integer"
+    },
+    {
+      "default": 7,
+      "path": "retention.temporal_ttl_days_normal",
+      "required_in_production": false,
+      "settings_field": "temporal_ttl_days_normal",
+      "type": "integer"
+    },
+    {
+      "default": 100,
+      "path": "retention.ttl_backfill_batch_size",
+      "required_in_production": false,
+      "settings_field": "ttl_backfill_batch_size",
+      "type": "integer"
+    },
+    {
+      "default": 0,
+      "path": "retention.ttl_backfill_grace_hours",
+      "required_in_production": false,
+      "settings_field": "ttl_backfill_grace_hours",
+      "type": "integer"
+    },
+    {
+      "default": 2097152,
+      "path": "server.max_request_body",
+      "required_in_production": false,
+      "settings_field": "max_request_body",
+      "type": "integer"
+    },
+    {
+      "default": "observe",
+      "path": "state.latest_wins_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "latest_wins_mode",
+      "type": "string"
+    },
+    {
+      "default": [
+        "config.version"
+      ],
+      "path": "state.latest_wins_slots",
+      "required_in_production": false,
+      "settings_field": "latest_wins_slots",
+      "type": "array[string]"
+    },
+    {
+      "default": 30,
+      "path": "worker.audit_retention_days",
+      "required_in_production": false,
+      "settings_field": "audit_retention_days",
+      "type": "integer"
+    },
+    {
+      "default": true,
+      "path": "worker.conflict_auto_resolve_enabled",
+      "required_in_production": false,
+      "settings_field": "conflict_auto_resolve_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": 8,
+      "path": "worker.conflict_auto_resolve_max_candidates",
+      "required_in_production": false,
+      "settings_field": "conflict_auto_resolve_max_candidates",
+      "type": "integer"
+    },
+    {
+      "default": 300,
+      "path": "worker.conflict_failure_backoff_seconds",
+      "required_in_production": false,
+      "settings_field": "conflict_failure_backoff_seconds",
+      "type": "integer"
+    },
+    {
+      "default": 1000,
+      "path": "worker.conflict_maintenance_budget_ms",
+      "required_in_production": false,
+      "settings_field": "conflict_maintenance_budget_ms",
+      "type": "integer"
+    },
+    {
+      "default": 50,
+      "path": "worker.conflict_maintenance_max_cases",
+      "required_in_production": false,
+      "settings_field": "conflict_maintenance_max_cases",
+      "type": "integer"
+    },
+    {
+      "default": 25,
+      "path": "worker.conflict_writer_yield_ms",
+      "required_in_production": false,
+      "settings_field": "conflict_writer_yield_ms",
+      "type": "integer"
+    },
+    {
+      "default": 100,
+      "path": "worker.consolidate_batch_size",
+      "required_in_production": false,
+      "settings_field": "consolidate_batch_size",
+      "type": "integer"
+    },
+    {
+      "default": 0.8,
+      "path": "worker.consolidate_confidence",
+      "required_in_production": false,
+      "settings_field": "consolidate_confidence",
+      "type": "number"
+    },
+    {
+      "default": "03:30",
+      "path": "worker.consolidate_cron",
+      "required_in_production": false,
+      "settings_field": "consolidate_cron",
+      "type": "string"
+    },
+    {
+      "default": 500000,
+      "path": "worker.daily_token_limit",
+      "required_in_production": false,
+      "settings_field": "daily_token_limit",
+      "type": "integer"
+    },
+    {
+      "default": "04:00",
+      "path": "worker.induce_policies_cron",
+      "required_in_production": false,
+      "settings_field": "induce_policies_cron",
+      "type": "string"
+    },
+    {
+      "default": 5,
+      "path": "worker.job_lease_minutes",
+      "required_in_production": false,
+      "settings_field": "worker_job_lease_minutes",
+      "type": "integer"
+    },
+    {
+      "default": 600.0,
+      "path": "worker.maintenance_interval",
+      "required_in_production": false,
+      "settings_field": "worker_maintenance_interval",
+      "type": "number"
+    },
+    {
+      "default": 7,
+      "path": "worker.policy_induction_lookback_days",
+      "required_in_production": false,
+      "settings_field": "policy_induction_lookback_days",
+      "type": "integer"
+    },
+    {
+      "default": 3,
+      "path": "worker.policy_induction_min_episodes",
+      "required_in_production": false,
+      "settings_field": "policy_induction_min_episodes",
+      "type": "integer"
+    },
+    {
+      "default": 2.0,
+      "path": "worker.poll_interval",
+      "required_in_production": false,
+      "settings_field": "worker_poll_interval",
+      "type": "number"
+    },
+    {
+      "default": "04:30",
+      "path": "worker.reclassify_cron",
+      "required_in_production": false,
+      "settings_field": "reclassify_cron",
+      "type": "string"
+    }
+  ],
+  "open_namespaces": {
+    "plugins.<id>": {
+      "id_pattern": "[a-z0-9][a-z0-9._-]{0,63}",
+      "value": "plugin-defined non-secret TOML table"
+    }
+  },
+  "required_production_paths": [
+    "extraction.mode",
+    "embedding.mode",
+    "llm.provider",
+    "llm.base_url",
+    "llm.model",
+    "embedding.base_url",
+    "embedding.model",
+    "embedding.dim",
+    "embedding.api_mode"
+  ],
+  "retired_paths": [
+    "extraction.pre_filter",
+    "recall.tag_candidate_limit",
+    "recall.tag_channel_enabled",
+    "recall.tag_channel_weight",
+    "relation.auto_apply_confidence",
+    "relation.conflict_confidence"
+  ],
+  "schema_version": 1,
+  "secrets": [
+    {
+      "environment": "EMBEDDING_API_KEY",
+      "settings_field": "embedding_api_key"
+    },
+    {
+      "environment": "IMAGE_API_KEY",
+      "settings_field": "image_describer_api_key"
+    },
+    {
+      "environment": "LLM_API_KEY",
+      "settings_field": "llm_api_key"
+    },
+    {
+      "environment": "QUERY_EXPANSION_API_KEY",
+      "settings_field": "query_expansion_api_key"
+    },
+    {
+      "environment": "RERANKER_API_KEY",
+      "settings_field": "reranker_api_key"
+    }
+  ]
+}

@@ -11,6 +11,10 @@ Stable REST, MCP, CLI, configuration schema, import/export, backup format, and P
 backward-compatible within `1.x`. Removing a stable contract or changing it incompatibly requires the next major
 version. Minor and patch releases may add optional fields or capabilities without breaking existing consumers.
 
+The committed `docs/config-schema.json` snapshot freezes schema v1 TOML paths, production choices, required fields,
+secret environment names, retired paths, and the open `plugins.<id>` namespace. A deliberate change must update the
+snapshot through `scripts/check_config_schema_snapshot.py --write` and follow the policy below.
+
 ### Deprecation and migration notice
 
 Any planned incompatible change to or removal of a stable REST endpoint or field, MCP tool or input, CLI command or flag,

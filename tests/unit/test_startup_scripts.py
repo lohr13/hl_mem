@@ -34,6 +34,20 @@ def _last_json_line(output: str) -> dict[str, object]:
     return json.loads(output.strip().splitlines()[-1])
 
 
+@pytest.mark.parametrize("arguments", (("--version",), ("config", "migrate", "--help"), ("doctor", "--help")))
+def test_packaged_management_entrypoints_are_parseable(arguments: tuple[str, ...]) -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "hl_mem.cli", *arguments],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_windows_startup_delegates_to_isolated_repository_launcher() -> None:
     script = (ROOT / "start_production.bat").read_text(encoding="utf-8")
     launcher = (ROOT / "scripts" / "hlmem-python.cmd").read_text(encoding="utf-8")

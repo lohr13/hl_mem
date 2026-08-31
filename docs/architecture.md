@@ -142,13 +142,13 @@ src/hl_mem/
 │   ├── rebuild_usefulness.py # Usefulness rebuild
 │   └── induce_policies.py    # Experience-to-Policy induction
 ├── components.py             # Central component factories and health state
-├── config.py                 # Shared constants
-├── config_loader.py          # Strict TOML + four-secret configuration loader
+├── config/                   # Typed groups, strict TOML loader, secrets, and migration
+├── config_loader.py          # Thin compatibility facade over the v1 loader
 ├── errors.py                 # Application exception family
 ├── http_utils.py             # Retry and timeout utilities
 ├── lifecycle.py              # Central state-transition guards
 ├── protocols.py              # Backend and component protocols
-├── settings.py               # Settings schema, defaults, metadata, and validation
+├── settings.py               # Thin compatibility facade over typed config models
 └── cli.py                    # Maintenance, backup, import/export, evaluation CLI
 ```
 
@@ -475,7 +475,7 @@ adjacent SQLite `-wal`, `-shm`, and `-journal` sidecars for the backup, restore 
 cannot alter the verified image.
 
 All runtime paths, provider models, timeouts, and feature modes come from one validated `Settings` snapshot loaded from
-`hl_mem.toml`. Only four provider credentials come from `.env` or same-named process environment variables. Image file
+`hl_mem.toml`. Only five provider credentials come from `.env` or same-named process environment variables. Image file
 inputs remain disabled unless explicitly enabled and constrained to configured allow-roots. PostgreSQL is only an
 experimental connectivity probe and does not implement HL-Mem storage semantics.
 
@@ -493,7 +493,7 @@ start_production.bat
 Direct `start_server.py` execution resolves both files from the process current working directory. The platform launch
 scripts resolve the repository root from their own location and launch that same entry point, so they also work from another
 current directory. `hl_mem.toml` is mandatory. Both scripts use the repository virtual environment and do not duplicate or
-override runtime configuration: non-secret settings, including provider/model selection, come only from TOML; the four
+override runtime configuration: non-secret settings, including provider/model selection, come only from TOML; the five
 provider credentials may come from `.env` or same-named process environment variables. There is no environment-based
 production profile or automatic fake fallback.
 

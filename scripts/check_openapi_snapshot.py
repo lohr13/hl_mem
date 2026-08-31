@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -21,7 +22,7 @@ SNAPSHOT = ROOT / "docs/api-schema.json"
 def rendered_schema() -> str:
     """返回确定性序列化的 OpenAPI JSON。"""
     with TemporaryDirectory() as directory:
-        settings = Settings(database_path=str(Path(directory) / "openapi-snapshot.db"))
+        settings = replace(Settings.for_test(), database_path=str(Path(directory) / "openapi-snapshot.db"))
         app = create_app(settings)
         return json.dumps(app.openapi(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 

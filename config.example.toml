@@ -1,4 +1,4 @@
-# HL-Mem 常用配置示例。
+# HL-Mem 常用配置示例；新安装优先运行 `hl-mem init` 交互验证模型服务。
 # 未列出的字段使用代码默认值；完整字段见 docs/configuration.md。
 # 复制为当前工作目录下的 hl_mem.toml 后再启动服务。
 schema_version = 1

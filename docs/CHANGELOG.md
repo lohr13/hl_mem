@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Core 1.0 Phase 2：配置与启动边界
+
+- 配置升级为显式 `schema_version = 1`；生产启动要求完整的模型服务与独立密钥，Fake 提取、Embedding 和 Reranker
+  仅保留给 `Settings.for_test()`，未知键、未来版本和退役键均 fail-closed。
+- 新增确定性的 `hl-mem config migrate`：默认只输出脱敏计划；`--apply` 在验证数据库 backup、manifest 与 tombstone
+  ledger 身份后保存逐字节旧配置并原子替换。配置 schema 与 SQLite migration 均不提供 downgrade。
+- `hl-mem init` 改为服务中立的验证向导；删除 `--offline`，不再生成低质量 Fake 配置。LLM、Embedding 与可选
+  Reranker 只有探测成功后才写入 TOML 和 `.env`，失败保持已有文件不变。
+- `doctor` 新增稳定检查码、JSON 输出、生产就绪与恢复集验证；配置错误成为结构化失败。集成门禁证明诊断不会修改
+  配置、密钥、数据库、tombstone ledger、backup 或 manifest。
+- 删除 extraction pre-filter、独立 Tag 候选通道和关系自动落边配置；Tag soft boost 保留，关系发现仅允许
+  `off`/`audit`。Query Expansion 与 Resurrection 的默认值改为 `off`。
+- 新增 `docs/config-schema.json` 公共配置快照及 CI 门禁；生产配置分为八组类型化所有权，兼容 facade 保持薄层。
+
 ## v0.36.1（2026-08-30）
 
 ### Hermes 冲突提示生命周期

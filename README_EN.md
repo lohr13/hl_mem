@@ -11,7 +11,7 @@
 
 ## English
 
-HL-Mem is a local-first, evidence-driven long-term memory system for AI agents—not just another vector store. It turns immutable Events into structured Claims with evidence lineage, tracks change through a bitemporal model, and distills Episodes, Traces, and reusable Policies through a separate Experience channel; SQLite is all you need by default, with online models and sqlite-vec available when needed.
+HL-Mem is an evidence-driven long-term memory system for AI agents—not just another vector store. It turns immutable Events into structured Claims with evidence lineage, tracks change through a bitemporal model, and distills Episodes, Traces, and reusable Policies through a separate Experience channel. SQLite stores authoritative data; high-quality LLM and Embedding services power extraction and semantic recall, while sqlite-vec remains optional.
 
 **Every memory is traceable to an immutable source event.**
 
@@ -33,7 +33,8 @@ Python 3.12+ is required. Run the first two lines in the current terminal; once 
 
 ```bash
 python -m pip install hl-mem
-hlmem init --offline && hlmem server
+hlmem init
+hlmem server
 hlmem remember "Alice prefers dark mode" && hlmem recall "What does Alice prefer?"
 ```
 
@@ -45,10 +46,10 @@ Python 3.12+ is required. Install HL-Mem from PyPI:
 python -m pip install hl-mem
 ```
 
-In the directory where you want the local configuration and database, create an API-key-free setup and start the service:
+In the directory where you want the configuration and database, run the setup wizard. It requires an explicit LLM, Embedding service, and optional Reranker, verifies them before atomically writing `hl_mem.toml` and `.env`, and never falls back to low-quality Fake providers:
 
 ```bash
-hlmem init --offline
+hlmem init
 hlmem server
 ```
 
@@ -69,7 +70,7 @@ Recall prints the Claim ID, score, and evidence references together:
       - event/<event-id>
 ```
 
-`event/<event-id>` means the Claim is traceable to an immutable source event instead of being unsupported model text. Use `hlmem list` to see the Claim ID again, then pass it to `hlmem forget <claim-id>`, the REST detail endpoint, or MCP's `memory_explain`. The CLI output labels are currently Chinese. Offline mode is FTS-only keyword recall; fake embeddings preserve the storage shape but do not provide semantic search.
+`event/<event-id>` means the Claim is traceable to an immutable source event instead of being unsupported model text. Use `hlmem list` to see the Claim ID again, then pass it to `hlmem forget <claim-id>`, the REST detail endpoint, or MCP's `memory_explain`. The CLI output labels are currently Chinese.
 
 ## Advanced installation and integrations
 
@@ -79,7 +80,7 @@ Recall prints the Claim ID, score, and evidence references together:
 git clone https://github.com/lohr13/hl_mem.git
 cd hl_mem
 uv sync
-uv run hlmem init --offline
+uv run hlmem init
 uv run hlmem server
 ```
 
@@ -135,12 +136,12 @@ fail before startup. Common keys are listed below.
 | TOML key | Code default | Purpose |
 |---|---:|---|
 | `database.path` | `var/hl_mem.db` | SQLite path, relative to the real configuration directory |
-| `extraction.mode` | `fake` | `fake`, `real`, or `llm` |
+| `extraction.mode` | `llm` | Production uses `real` or `llm`; Fake is test-only |
 | `extraction.batch_max_events` | `5` | Maximum same-session Events per extraction call |
 | `extraction.batch_max_wait_seconds` | `120.0` | Maximum wait for a non-full extraction window |
-| `embedding.mode` | `fake` | `fake` or `real` |
+| `embedding.mode` | `real` | Production uses `real`; Fake is test-only |
 | `embedding.text_type` | unset | Optional `document` or `query` in native mode; omitted by default |
-| `reranker.mode` | `off` | `off`, `fake`, `on`, or `real` |
+| `reranker.mode` | `off` | `off`, `on`, or `real`; Fake is test-only |
 | `image_describer.mode` | `off` | `off` or `on` |
 | `llm.provider` | `dashscope` | `dashscope`, `zhipu`, or `openai_compatible` |
 | `llm.structured_mode` | `json_object` | `auto`, `json_object`, or `json_schema` |
@@ -150,18 +151,17 @@ fail before startup. Common keys are listed below.
 | `recall.dedup_candidate_limit` | `100` | Maximum recall candidates considered for near-copy folding |
 | `recall.echo_suppression_mode` | `enforce` | Same-session echo governance: `off`, observe-only `observe`, or `enforce` |
 | `recall.freshness_annotation_mode` | `render` | Risk-gated freshness hints: `off`, observe-only `observe`, or `render` |
-| `recall.resurrection_mode` | `auto` | Bounded archived-only cold path when primary recall is insufficient; `off` disables it |
-| `recall.query_expansion_mode` | `auto` | `off`, `auto`, or `always` |
+| `recall.resurrection_mode` | `off` | Set `auto` explicitly to enable the bounded archived-only cold path |
+| `recall.query_expansion_mode` | `off` | `off`, `auto`, or `always` |
 | `decay.model` | `activation_halflife` | Decays activation by scope-specific half-life without changing confidence during routine decay |
 | `dedup.scan_limit` | `200` | Maximum pending `dedup_pairs` reviewed per maintenance pass |
-| `relation.discovery_mode` | `off` | `off`, `audit`, or `auto` |
-| `recall.tag_channel_enabled` | `false` | Whether to enable the independent Tag retrieval channel |
+| `relation.discovery_mode` | `off` | `off` or proposal-only `audit` |
 
 Real components and external-call paths must be supplied with their own key; there is no automatic fake fallback.
 `HL_MEM_*` environment variables no longer participate in application `Settings` configuration. `Settings` and
 `config.example.toml` both use `5` / `0.15` for `recall.default_limit` / `recall.relevance_reranker_floor`; the example
 deployment only raises `recall.relevance_relative_drop` from the code default `0.15` to `0.30` and keeps
-`recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model with 5/6-second per-call/total timeouts.
+`recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model and is disabled by default.
 
 ### Vector search sizing
 
