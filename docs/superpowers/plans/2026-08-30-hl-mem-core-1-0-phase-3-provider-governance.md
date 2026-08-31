@@ -550,7 +550,7 @@ git commit -m "refactor: govern Reranker Provider calls"
 - `GovernedImageDescriber` resolves only an experimental capability, passes `ValidatedImageInput` to the adapter, records one image plus response token usage, and reconstructs the public locator from the host-held original ImagePart.
 - Image plugin configuration remains explicit via `image_describer.mode = "on"`; plugin docs and diagnostics label it experimental.
 
-- [ ] **Step 1: Add failing redirect, rebinding, file-root, MIME, and adapter-isolation tests**
+- [x] **Step 1: Add failing redirect, rebinding, file-root, MIME, and adapter-isolation tests**
 
 ```python
 def test_redirect_to_private_address_is_rejected_before_second_fetch() -> None:
@@ -568,23 +568,23 @@ def test_plugin_receives_materialized_bytes_not_source_locator(runtime: Provider
 
 Also test oversized chunked response, redirect limit, hostname resolving to mixed public/private IPs, file symlink escape, extension/MIME/magic disagreement, base64 bounds, and zero network usage on guard rejection.
 
-- [ ] **Step 2: Run tests and observe current URI pass-through**
+- [x] **Step 2: Run tests and observe current URI pass-through**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_image_input_guard.py tests/unit/test_image_provider_preview.py tests/unit/test_image_evidence.py -q --tb=short
 ```
 
-- [ ] **Step 3: Implement materialization and the experimental governed proxy**
+- [x] **Step 3: Implement materialization and the experimental governed proxy**
 
 The guard may use httpx only for image acquisition; Provider plugin code receives no acquisition client. Keep caption/OCR/confidence bounds and host-side locator construction identical to the existing behavior.
 
-- [ ] **Step 4: Run image ingest, request-limit, and secret-redaction regressions**
+- [x] **Step 4: Run image ingest, request-limit, and secret-redaction regressions**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_image_input_guard.py tests/unit/test_image_provider_preview.py tests/unit/test_image_evidence.py tests/unit/test_http_utils.py tests/integration/test_extract_pipeline.py -q --tb=short
 ```
 
-- [ ] **Step 5: Commit the experimental Image boundary**
+- [x] **Step 5: Commit the experimental Image boundary**
 
 ```powershell
 git add src/hl_mem/security src/hl_mem/ingest/image_describer.py src/hl_mem/components.py tests/unit/test_image_input_guard.py tests/unit/test_image_provider_preview.py tests/unit/test_image_evidence.py

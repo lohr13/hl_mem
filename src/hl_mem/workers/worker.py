@@ -185,9 +185,8 @@ class Worker:
         self.provider_runtime = provider_runtime
         self._owns_provider_runtime = False
         self.extractor = extractor or self._make_extractor()
-        self.image_describer = (
-            image_describer if image_describer is not _UNSET else components.make_image_describer(self.settings)
-        )
+        self._owns_image_describer = image_describer is _UNSET
+        self.image_describer = image_describer if image_describer is not _UNSET else self._make_image_describer()
         self.embedder = embedder or self._make_embedder()
         if audit_logger is not None:
             self.audit = audit_logger
@@ -292,6 +291,10 @@ class Worker:
     def close(self) -> None:
         """关闭 Worker 自有资源；外部注入的数据库连接由调用方管理。"""
         self.audit.close()
+        if self._owns_image_describer and self.image_describer is not None:
+            close_image = getattr(self.image_describer, "close", None)
+            if callable(close_image):
+                close_image()
         if self._owns_provider_runtime and self.provider_runtime is not None:
             self.provider_runtime.close()
             self.provider_runtime = None
@@ -858,6 +861,12 @@ class Worker:
         if self.settings.embedder_mode == "real" and self.settings.embedding_api_key:
             runtime = self._get_provider_runtime()
         return components.make_embedder(self.settings, runtime=runtime)
+
+    def _make_image_describer(self) -> Any:
+        runtime = None
+        if self.settings.image_describer_mode == "on" and self.settings.image_describer_api_key:
+            runtime = self._get_provider_runtime()
+        return components.make_image_describer(self.settings, runtime=runtime)
 
     def _get_provider_runtime(self) -> Any:
         if getattr(self, "provider_runtime", None) is None:

@@ -51,6 +51,23 @@ def test_image_validation_rejects_mime_region_and_size() -> None:
         )
 
 
+def test_oversized_base64_is_rejected_before_decode(monkeypatch) -> None:
+    decoded = False
+
+    def unexpected_decode(*args, **kwargs):
+        nonlocal decoded
+        decoded = True
+        raise AssertionError("oversized base64 must be rejected before allocation")
+
+    monkeypatch.setattr(base64, "b64decode", unexpected_decode)
+    with pytest.raises(ValueError, match="maximum"):
+        parse_content(
+            {"images": [{"base64_data": "A" * 1024, "mime_type": "image/png"}]},
+            image_max_bytes=8,
+        )
+    assert not decoded
+
+
 def test_parse_content_preserves_text_file_image_order() -> None:
     parts = parse_content(
         {

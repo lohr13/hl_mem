@@ -92,8 +92,12 @@ def _parse_image(raw: dict[str, Any], max_bytes: int) -> ImagePart:
     base64_data = raw.get("base64_data")
     mime_type = str(raw.get("mime_type", ""))
     if base64_data is not None:
+        encoded = str(base64_data)
+        max_encoded = ((max_bytes + 2) // 3) * 4
+        if len(encoded) > max_encoded:
+            raise ValueError(f"image exceeds maximum size of {max_bytes} bytes")
         try:
-            decoded = base64.b64decode(str(base64_data), validate=True)
+            decoded = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError) as error:
             raise ValueError("image base64_data is invalid") from error
         if len(decoded) > max_bytes:

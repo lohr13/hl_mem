@@ -6,12 +6,14 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
+
 from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
 from hl_mem.errors import ConfigurationError
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.embedder import Embedder, FakeEmbedder
 from hl_mem.ingest.extractors import FakeExtractor
-from hl_mem.ingest.image_describer import DashScopeImageDescriber
+from hl_mem.ingest.image_describer import GovernedImageDescriber
 from hl_mem.ingest.llm_extractor import ExtractionModes, LLMExtractor
 from hl_mem.ingest.verifier import EntailmentVerifier
 from hl_mem.llm.client import LLMClient
@@ -29,6 +31,7 @@ from hl_mem.protocols import (
 )
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.reranker import DashScopeReranker, FakeReranker
+from hl_mem.security.image_input import ImageInputGuard
 from hl_mem.settings import Settings
 
 _EXTRACTOR_REGISTRY: dict[str, str] = {
@@ -67,21 +70,50 @@ def _record_component_health(
     }
 
 
-def make_image_describer(settings: Settings) -> ImageDescriberProtocol | None:
+def make_image_describer(
+    settings: Settings,
+    *,
+    runtime: ProviderRuntime | None = None,
+    input_client: httpx.Client | None = None,
+) -> ImageDescriberProtocol | None:
     """Build the experimental image component only when explicitly enabled."""
     if settings.image_describer_mode == "off":
         return None
     if not settings.image_describer_api_key:
         raise ConfigurationError("IMAGE_API_KEY is required")
-    return DashScopeImageDescriber(
-        settings.image_describer_api_key,
-        settings.image_describer_base_url,
-        settings.image_describer_model,
-        max_bytes=settings.image_max_bytes,
-        allow_file_uris=settings.image_allow_file_uris,
-        file_allow_roots=tuple(Path(root) for root in settings.image_file_allow_roots),
-        max_attempts=settings.llm_max_attempts,
+    resolved_runtime = runtime or create_provider_runtime(settings)
+    guard = ImageInputGuard(
+        settings.image_max_bytes,
+        settings.image_allow_file_uris,
+        tuple(Path(root) for root in settings.image_file_allow_roots),
+        client=input_client,
     )
+    try:
+        provider = resolved_runtime.registry.create_image_describer(settings.image_describer_provider, {})
+        endpoint = ProviderEndpoint(
+            settings.image_describer_base_url,
+            settings.image_describer_api_key,
+            settings.image_describer_model,
+            settings.image_describer_timeout_seconds,
+            settings.llm_max_attempts,
+        )
+        return GovernedImageDescriber(
+            endpoint=endpoint,
+            provider=provider,
+            governed=resolved_runtime.governed_call(
+                ProviderCapability.IMAGE_DESCRIBER,
+                settings.image_describer_provider,
+                "describe",
+                endpoint.model,
+            ),
+            input_guard=guard,
+            owned_runtime=resolved_runtime if runtime is None else None,
+        )
+    except Exception:
+        guard.close()
+        if runtime is None:
+            resolved_runtime.close()
+        raise
 
 
 def make_llm_client(
