@@ -260,6 +260,45 @@ reservation_lease_seconds = 120
     assert settings.usage_reservation_lease_seconds == 120
 
 
+def test_v1_resolves_optional_price_book_relative_to_the_config_without_exposing_path(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    path = _write(
+        config_dir / "hl_mem.toml",
+        _v1('[usage]\nprice_book_path = "pricing/provider.json"\n'),
+    )
+
+    settings = _load_structural_settings(path, environ={})
+
+    assert settings.usage_price_book_path == str((config_dir / "pricing" / "provider.json").resolve())
+    snapshot = settings.snapshot()
+    assert snapshot["price_book_configured"] is True
+    assert "usage_price_book_path" not in snapshot
+    assert str(config_dir) not in repr(snapshot)
+
+
+def test_v1_without_price_book_keeps_the_existing_optional_config_contract(tmp_path: Path) -> None:
+    settings = _load_structural_settings(_write(tmp_path / "hl_mem.toml"), environ={})
+
+    assert settings.usage_price_book_path is None
+    assert settings.snapshot()["price_book_configured"] is False
+
+
+def test_public_config_schema_adds_only_the_optional_price_book_path() -> None:
+    schema = build_config_schema()
+    pricing_fields = [item for item in schema["fields"] if item["path"].startswith("usage.price_book")]
+
+    assert pricing_fields == [
+        {
+            "default": None,
+            "path": "usage.price_book_path",
+            "required_in_production": False,
+            "settings_field": "usage_price_book_path",
+            "type": "string",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     "body",
     (

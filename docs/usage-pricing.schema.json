@@ -1,0 +1,65 @@
+{
+  "$id": "https://hl-mem.local/schemas/usage-pricing-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "currency": { "const": "CNY" },
+    "effective_date": { "format": "date", "type": "string" },
+    "rules": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "enum": ["llm", "embedding", "reranker", "image_describer"]
+          },
+          "model": {
+            "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._:/-]{0,198}[A-Za-z0-9])?$",
+            "type": "string"
+          },
+          "provider": {
+            "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$",
+            "type": "string"
+          },
+          "rates_microunits": {
+            "additionalProperties": false,
+            "properties": {
+              "embedding_item": { "minimum": 0, "type": "integer" },
+              "image": { "minimum": 0, "type": "integer" },
+              "million_input_tokens": { "minimum": 0, "type": "integer" },
+              "million_output_tokens": { "minimum": 0, "type": "integer" },
+              "request": { "minimum": 0, "type": "integer" },
+              "rerank_document": { "minimum": 0, "type": "integer" }
+            },
+            "required": [
+              "request",
+              "million_input_tokens",
+              "million_output_tokens",
+              "embedding_item",
+              "rerank_document",
+              "image"
+            ],
+            "type": "object"
+          }
+        },
+        "required": ["capability", "model", "rates_microunits"],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "schema_version": { "const": 1 },
+    "source_urls": {
+      "items": {
+        "format": "uri",
+        "maxLength": 2048,
+        "pattern": "^https://",
+        "type": "string"
+      },
+      "maxItems": 16,
+      "type": "array"
+    }
+  },
+  "required": ["schema_version", "currency", "effective_date", "rules"],
+  "title": "HL-Mem Provider Usage Price Book",
+  "type": "object"
+}

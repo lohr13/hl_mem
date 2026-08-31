@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -11,6 +12,7 @@ import httpx
 from hl_mem.config.models import Settings
 from hl_mem.errors import ConfigurationError
 from hl_mem.observability.ops_report import UsageLedgerReader
+from hl_mem.observability.pricing import UsageCostEstimator, UsagePriceBook
 from hl_mem.observability.usage import (
     UsageGovernor,
     UsageIdentity,
@@ -31,6 +33,7 @@ class ProviderRuntime:
     registry: ProviderRegistry
     _governor: UsageGovernor | None
     transport: ProviderTransport
+    _estimator: UsageCostEstimator | None = None
     _client: httpx.Client | None = None
     _owns_client: bool = False
 
@@ -58,10 +61,17 @@ class ProviderRuntime:
             ),
             self.governor,
             self.transport,
+            estimator=self._estimator,
         )
 
     def usage_snapshot(self) -> dict[str, object] | None:
-        return None if self._governor is None else self._governor.snapshot()
+        if self._governor is None:
+            return None
+        return {
+            **self._governor.snapshot(),
+            "price_book_configured": self._estimator is not None,
+            "price_book_fingerprint": None if self._estimator is None else self._estimator.fingerprint,
+        }
 
     def usage_health_snapshot(self) -> dict[str, object] | None:
         if self._governor is None:
@@ -89,6 +99,7 @@ def create_provider_runtime(
     """Validate Providers, recover reservations, and create process-owned state."""
 
     registry = build_provider_registry(settings, entry_points=entry_points)
+    estimator = UsagePriceBook.load(Path(settings.usage_price_book_path)) if settings.usage_price_book_path else None
     governor = None
     if create_usage:
         governor = UsageGovernor(
@@ -107,6 +118,7 @@ def create_provider_runtime(
         registry=registry,
         _governor=governor,
         transport=ProviderTransport(resolved_client),
+        _estimator=estimator,
         _client=resolved_client,
         _owns_client=client is None,
     )

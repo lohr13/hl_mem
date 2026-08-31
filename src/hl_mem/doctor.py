@@ -27,6 +27,7 @@ from hl_mem.compatibility import (
 from hl_mem.config_loader import load_settings
 from hl_mem.errors import ConfigurationError
 from hl_mem.llm.types import LLMMessage, LLMRequest
+from hl_mem.observability.pricing import UsagePriceBook
 from hl_mem.observability.usage import USAGE_LEDGER_SCHEMA_VERSION, default_usage_ledger_path
 from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.backup import validate_upgrade_recovery_set
@@ -87,6 +88,7 @@ _CHECK_CODES = {
     "Provider 插件": "provider_plugins",
     "Provider 信任": "provider_trust",
     "Provider 用量账本": "usage_ledger",
+    "Provider 价格表": "usage_price_book",
     "服务端口": "server_port",
     "Daemon 兼容性": "daemon_contract",
     "Hermes 插件": "hermes_files",
@@ -238,6 +240,20 @@ def _check_usage_ledger(settings: Settings) -> CheckResult:
         "Provider 用量账本",
         f"schema={version}；expired_unsent={expired_unsent}；expired_ambiguous={expired_ambiguous}；"
         "doctor 未执行恢复",
+    )
+
+
+def _check_usage_price_book(settings: Settings) -> CheckResult | None:
+    if settings.usage_price_book_path is None:
+        return None
+    try:
+        price_book = UsagePriceBook.load(Path(settings.usage_price_book_path))
+    except ConfigurationError:
+        return CheckResult(CheckStatus.FAIL, "Provider 价格表", "configured=true；validation failed")
+    return CheckResult(
+        CheckStatus.OK,
+        "Provider 价格表",
+        f"configured=true；fingerprint={price_book.fingerprint}",
     )
 
 
@@ -501,6 +517,7 @@ def run_doctor(
             recovery = CheckResult(CheckStatus.OK, "恢复集", "备份、manifest 与当前数据库身份匹配")
 
     daemon_probe = _probe_daemon(settings)
+    price_book_check = _check_usage_price_book(settings)
     version = tuple(sys.version_info[:3])
     return [
         CheckResult(
@@ -517,6 +534,7 @@ def run_doctor(
         _check_secrets(settings),
         *_check_provider_plugins(settings),
         _check_usage_ledger(settings),
+        *((price_book_check,) if price_book_check is not None else ()),
         *probe_model_components(settings),
         _check_port(),
         _check_daemon_compatibility(daemon_probe),

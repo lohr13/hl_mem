@@ -174,6 +174,58 @@ def test_usage_ledger_doctor_is_read_only_and_previews_expired_recovery(tmp_path
         assert connection.execute("SELECT count(*) FROM usage_reservations WHERE state='active'").fetchone()[0] == 2
 
 
+def test_usage_price_book_doctor_validates_configured_book_without_disclosing_provenance(tmp_path: Path) -> None:
+    check = getattr(doctor_module, "_check_usage_price_book", None)
+    assert callable(check), "doctor does not validate configured usage price books"
+    source_url = "https://pricing.example.test/private-source"
+    price_path = tmp_path / "private-pricing.json"
+    price_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "currency": "CNY",
+                "effective_date": "2026-09-01",
+                "source_urls": [source_url],
+                "rules": [
+                    {
+                        "capability": "llm",
+                        "model": "qwen",
+                        "rates_microunits": {
+                            "request": 0,
+                            "million_input_tokens": 0,
+                            "million_output_tokens": 0,
+                            "embedding_item": 0,
+                            "rerank_document": 0,
+                            "image": 0,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    configured = replace(Settings.for_test(), usage_price_book_path=str(price_path))
+
+    valid = check(configured)
+    missing = check(replace(configured, usage_price_book_path=str(tmp_path / "missing.json")))
+
+    assert valid is not None
+    assert (valid.code, valid.status) == ("usage_price_book", CheckStatus.OK)
+    assert "configured=true" in valid.detail
+    assert "fingerprint=" in valid.detail
+    assert missing is not None
+    assert (missing.code, missing.status) == ("usage_price_book", CheckStatus.FAIL)
+    rendered = repr((valid.to_dict(), missing.to_dict()))
+    assert str(tmp_path) not in rendered
+    assert source_url not in rendered
+
+
+def test_usage_price_book_doctor_is_absent_when_not_configured() -> None:
+    check = getattr(doctor_module, "_check_usage_price_book", None)
+    assert callable(check), "doctor does not validate configured usage price books"
+    assert check(Settings.for_test()) is None
+
+
 def test_invalid_config_is_a_structured_failure(tmp_path: Path) -> None:
     path = tmp_path / "hl_mem.toml"
     path.write_text("schema_version = 2\n", encoding="utf-8")

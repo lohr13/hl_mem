@@ -76,8 +76,12 @@ def test_healthz_provider_usage_preserves_detail_and_adds_daily_health(tmp_path)
         "remaining",
         "unknown_cost_count",
         "counts_by_capability",
+        "price_book_configured",
+        "price_book_fingerprint",
         "health",
     }
+    assert usage["price_book_configured"] is False
+    assert usage["price_book_fingerprint"] is None
     assert usage["health"] == {
         "failures": 0,
         "stale_reservations": 0,
@@ -131,8 +135,12 @@ def test_healthz_degrades_invalid_or_naive_usage_lease_without_leaking_details(
         "remaining",
         "unknown_cost_count",
         "counts_by_capability",
+        "price_book_configured",
+        "price_book_fingerprint",
         "health",
     }
+    assert usage["price_book_configured"] is False
+    assert usage["price_book_fingerprint"] is None
     assert usage["health"] is None
     assert lease_expires_at not in response.text
     assert str(ledger_path) not in response.text

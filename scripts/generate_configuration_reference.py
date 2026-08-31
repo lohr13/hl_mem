@@ -74,6 +74,7 @@ CONSTRAINTS = {
     "hermes.circuit_open_seconds": "> 0",
     "hermes.on_demand_recall_timeout_seconds": "> 0",
     "hermes.prefetch_cache_ttl_seconds": "> 0",
+    "usage.price_book_path": "非空本地路径；可省略",
     "llm.model": "非空字符串",
     "llm.max_tokens": "正整数；输出上限保险丝，截断可能导致 JSON 不完整（`finish=length`），结构化提取将“快速失败”并由上层重试/降级",
     "llm.reasoning_effort": "`low`、`high`、`max`；可省略",
@@ -197,6 +198,13 @@ TABLE_NOTES = {
         "`[state]` 控制白名单状态 slot 的确定性 latest-wins 关链；当前仅支持 `config.version`。默认 `observe` 只记录",
         '建议，不改变 claim 或 conflict case；设置 `latest_wins_mode = "off"` 可完全关闭建议和动作。`enforce` 只执行',
         "已通过冻结门禁的确定性动作，灰区仍保持并存。",
+    ],
+    "usage": [
+        "",
+        "`usage.price_book_path` 是可选的宿主本地 JSON 价格表，schema 见",
+        "[`usage-pricing.schema.json`](usage-pricing.schema.json)。相对路径以 `hl_mem.toml` 所在目录解析；",
+        "价格表只支持 CNY 整数 microunits、精确 capability/model/provider 匹配，不支持远程 include、正则或表达式。",
+        "未配置或没有匹配规则时成本保持 unknown；启用有限 `daily_cost_limit_microunits` 时 unknown reserve 会 fail-closed。",
     ],
     "worker": [
         "",

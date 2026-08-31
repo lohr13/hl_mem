@@ -590,6 +590,12 @@ class ObservabilityConfig:
         metadata={"toml": "usage.daily_request_limit"},
     )
 
+    usage_price_book_path: str | None = field(
+        default=None,
+        repr=False,
+        metadata={"toml": "usage.price_book_path"},
+    )
+
     usage_daily_cost_limit_microunits: int = field(
         default=0,
         metadata={"toml": "usage.daily_cost_limit_microunits"},
@@ -679,6 +685,8 @@ class Settings(
             raise ConfigurationError("server.max_request_body must be non-negative")
         if type(self.usage_daily_request_limit) is not int:
             raise ConfigurationError("usage.daily_request_limit must be an integer")
+        if self.usage_price_book_path is not None and not self.usage_price_book_path.strip():
+            raise ConfigurationError("usage.price_book_path must not be empty")
         if type(self.usage_daily_cost_limit_microunits) is not int:
             raise ConfigurationError("usage.daily_cost_limit_microunits must be an integer")
         if type(self.usage_reservation_lease_seconds) is not int or self.usage_reservation_lease_seconds <= 0:
@@ -1038,6 +1046,7 @@ class Settings(
             "schema_version": self.schema_version,
             "plugins_enabled": list(self.plugins_enabled),
             "usage_daily_request_limit": self.usage_daily_request_limit,
+            "price_book_configured": self.usage_price_book_path is not None,
             "usage_daily_cost_limit_microunits": self.usage_daily_cost_limit_microunits,
             "usage_reservation_lease_seconds": self.usage_reservation_lease_seconds,
             "embedder_mode": self.embedder_mode,

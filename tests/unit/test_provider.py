@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import httpx
+import pytest
 
 from hl_mem import __version__
 from hl_mem.adapters.hermes.prefetch import PrefetchCache
@@ -19,7 +20,10 @@ from hl_mem.adapters.hermes.provider import (
     _validation_response_body,
 )
 from hl_mem.application.context_packet import retrieval_bundle_to_dict
+from hl_mem.errors import ConfigurationError
 from hl_mem.observability.ops_report import UsageLedgerReader
+from hl_mem.observability.usage import UsageAmount
+from hl_mem.plugins.contracts import ProviderCapability, ProviderRequest
 from hl_mem.recall.injection import InjectionContext
 from hl_mem.settings import Settings
 
@@ -74,6 +78,81 @@ def test_provider_runtime_health_snapshot_uses_two_daily_aggregate_queries(
     assert "SUM(" in statements[1]
     assert "SELECT *" not in statements[1]
     assert "ORDER BY" not in statements[1]
+
+
+def test_provider_runtime_loads_price_book_once_and_exposes_only_validated_identity(tmp_path: Path) -> None:
+    from hl_mem.plugins.runtime import create_provider_runtime
+
+    price_path = tmp_path / "pricing.json"
+    source_url = "https://pricing.example.test/private-source"
+    price_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "currency": "CNY",
+                "effective_date": "2026-09-01",
+                "source_urls": [source_url],
+                "rules": [
+                    {
+                        "capability": "llm",
+                        "provider": "openai_compatible",
+                        "model": "qwen-plus",
+                        "rates_microunits": {
+                            "request": 7,
+                            "million_input_tokens": 0,
+                            "million_output_tokens": 0,
+                            "embedding_item": 0,
+                            "rerank_document": 0,
+                            "image": 0,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}, request=request)))
+    runtime = create_provider_runtime(
+        replace(
+            Settings.for_test(),
+            database_path=str(tmp_path / "memory.db"),
+            usage_price_book_path=str(price_path),
+        ),
+        client=client,
+    )
+    try:
+        snapshot = runtime.usage_snapshot()
+        assert snapshot is not None
+        assert snapshot["price_book_configured"] is True
+        assert len(snapshot["price_book_fingerprint"]) == 64
+        assert source_url not in repr(snapshot)
+        assert str(price_path) not in repr(snapshot)
+
+        price_path.unlink()
+        call = runtime.governed_call(ProviderCapability.LLM, "openai_compatible", "extract", "qwen-plus")
+        result = call.execute(
+            ProviderRequest("POST", "https://provider.example.test", {}, {}, 1.0),
+            UsageAmount(requests=1),
+            lambda response: ("ok", UsageAmount(requests=1)),
+            max_attempts=1,
+        )
+        assert result == "ok"
+        assert runtime.usage_snapshot()["settled"]["cost_microunits"] == 7
+    finally:
+        runtime.close()
+        client.close()
+
+
+def test_provider_runtime_rejects_missing_or_invalid_configured_price_book(tmp_path: Path) -> None:
+    from hl_mem.plugins.runtime import create_provider_runtime
+
+    missing = replace(
+        Settings.for_test(),
+        database_path=str(tmp_path / "memory.db"),
+        usage_price_book_path=str(tmp_path / "missing.json"),
+    )
+    with pytest.raises(ConfigurationError, match=r"price book.*does not exist"):
+        create_provider_runtime(missing)
 
 
 class Response:

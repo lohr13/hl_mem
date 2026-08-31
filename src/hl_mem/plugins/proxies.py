@@ -9,6 +9,7 @@ from typing import Any, Generic, TypeVar
 from hl_mem.errors import ProviderCallError
 from hl_mem.monitoring.metrics import DEFAULT_PROVIDER_METRICS, ProviderCall, ProviderMetrics
 from hl_mem.observability.audit import current_audit
+from hl_mem.observability.pricing import UsageCostEstimator
 from hl_mem.observability.usage import UsageAmount, UsageGovernor, UsageIdentity
 from hl_mem.plugins.contracts import ProviderRequest, ProviderResponse
 from hl_mem.plugins.transport import ProviderTransport
@@ -26,12 +27,15 @@ class GovernedProviderCall(Generic[T]):
         transport: ProviderTransport,
         metrics: ProviderMetrics | None = None,
         audit: Any = None,
+        *,
+        estimator: UsageCostEstimator | None = None,
     ) -> None:
         self.identity = identity
         self.governor = governor
         self.transport = transport
         self.metrics = metrics or DEFAULT_PROVIDER_METRICS
         self.audit = audit if audit is not None else current_audit()
+        self.estimator = estimator
 
     def execute(
         self,
@@ -61,7 +65,8 @@ class GovernedProviderCall(Generic[T]):
     ) -> T:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
-        reservation = self.governor.reserve(self.identity, estimate.scale(max_attempts))
+        priced_estimate = self._price(estimate, phase="reserve")
+        reservation = self.governor.reserve(self.identity, priced_estimate.scale(max_attempts))
         started = time.perf_counter()
         marked_attempts = 0
 
@@ -91,7 +96,7 @@ class GovernedProviderCall(Generic[T]):
             if not isinstance(actual, UsageAmount):
                 raise TypeError("Provider parser must return UsageAmount as its second value")
         except Exception as error:
-            conservative = estimate.scale(marked_attempts)
+            conservative = priced_estimate.scale(marked_attempts)
             if marked_attempts > 0:
                 self.governor.settle_unknown(
                     reservation.id,
@@ -112,7 +117,13 @@ class GovernedProviderCall(Generic[T]):
             )
             raise
 
-        total_actual = estimate.scale(max(0, response.attempts - 1)) + actual
+        if self.estimator is None:
+            total_actual = estimate.scale(max(0, response.attempts - 1)) + actual
+        else:
+            total_actual = priced_estimate.scale(max(0, response.attempts - 1)) + self._price(
+                actual,
+                phase="settle",
+            )
         latency_ms = (time.perf_counter() - started) * 1000
         usage_status = settlement_status(value) if settlement_status is not None else "success"
         try:
@@ -131,6 +142,13 @@ class GovernedProviderCall(Generic[T]):
     @staticmethod
     def _error_class(error: Exception) -> str:
         return error.category if isinstance(error, ProviderCallError) else type(error).__name__
+
+    def _price(self, amount: UsageAmount, *, phase: str) -> UsageAmount:
+        if self.estimator is None:
+            return amount
+        if phase == "reserve":
+            return self.estimator.price(self.identity, amount, phase="reserve")
+        return self.estimator.price(self.identity, amount, phase="settle")
 
     def _record(
         self,
@@ -163,6 +181,7 @@ class GovernedProviderCall(Generic[T]):
             rerank_documents=usage.rerank_documents,
             images=usage.images,
             cost_microunits=usage.cost_microunits,
+            price_book_fingerprint=None if self.estimator is None else self.estimator.fingerprint,
         )
         try:
             self.metrics.record(call)
@@ -184,6 +203,8 @@ class GovernedProviderCall(Generic[T]):
             "images": usage.images,
             "cost_microunits": usage.cost_microunits,
         }
+        if self.estimator is not None:
+            detail["price_book_fingerprint"] = self.estimator.fingerprint
         if error_class is not None:
             detail["error_class"] = error_class
         if http_status is not None:

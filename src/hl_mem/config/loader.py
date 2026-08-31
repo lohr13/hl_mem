@@ -65,6 +65,26 @@ def _resolve_database_path(raw_path: str, resolved_config_path: Path, platform: 
     return str((resolved_config_path.resolve().parent / raw_path).resolve())
 
 
+def _resolve_price_book_path(raw_path: str, resolved_config_path: Path, platform: str) -> str:
+    windows_absolute = PureWindowsPath(raw_path).is_absolute()
+    posix_absolute = PurePosixPath(raw_path).is_absolute()
+    if platform == "win32":
+        if windows_absolute:
+            return raw_path
+        if posix_absolute:
+            raise ConfigurationError(
+                f"{resolved_config_path}: usage.price_book_path: POSIX absolute path is not valid on Windows: {raw_path}"
+            )
+    else:
+        if posix_absolute:
+            return raw_path
+        if windows_absolute:
+            raise ConfigurationError(
+                f"{resolved_config_path}: usage.price_book_path: Windows absolute path is not valid on POSIX: {raw_path}"
+            )
+    return str((resolved_config_path.resolve().parent / raw_path).resolve())
+
+
 def _expected_type(annotation: Any) -> str:
     origin = get_origin(annotation)
     if origin is Literal:
@@ -340,6 +360,14 @@ def load_settings_data(
         resolved_config_path,
         sys.platform,
     )
+    price_book_field = toml_fields["usage.price_book_path"]
+    price_book_value = values.get(price_book_field.name, price_book_field.default)
+    if price_book_value is not None:
+        values[price_book_field.name] = _resolve_price_book_path(
+            price_book_value,
+            resolved_config_path,
+            sys.platform,
+        )
 
     secret_names = frozenset(secret_fields)
     process_environment = environ if environ is not None else os.environ

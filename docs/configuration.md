@@ -491,7 +491,13 @@ Pending dedup pairs below the current `dedup.threshold` can be reported read-onl
 |---|---|---|---|---|
 | `usage.daily_cost_limit_microunits` | 整数 | `0` | 任意整数 | `usage_daily_cost_limit_microunits` |
 | `usage.daily_request_limit` | 整数 | `0` | 任意整数 | `usage_daily_request_limit` |
+| `usage.price_book_path` | 字符串 | 未设置 | 非空本地路径；可省略 | `usage_price_book_path` |
 | `usage.reservation_lease_seconds` | 整数 | `300` | 任意整数 | `usage_reservation_lease_seconds` |
+
+`usage.price_book_path` 是可选的宿主本地 JSON 价格表，schema 见
+[`usage-pricing.schema.json`](usage-pricing.schema.json)。相对路径以 `hl_mem.toml` 所在目录解析；
+价格表只支持 CNY 整数 microunits、精确 capability/model/provider 匹配，不支持远程 include、正则或表达式。
+未配置或没有匹配规则时成本保持 unknown；启用有限 `daily_cost_limit_microunits` 时 unknown reserve 会 fail-closed。
 
 ### `[worker]`
 

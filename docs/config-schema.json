@@ -1436,6 +1436,13 @@
       "type": "integer"
     },
     {
+      "default": null,
+      "path": "usage.price_book_path",
+      "required_in_production": false,
+      "settings_field": "usage_price_book_path",
+      "type": "string"
+    },
+    {
       "default": 300,
       "path": "usage.reservation_lease_seconds",
       "required_in_production": false,
