@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
 from hl_mem.config.models import Settings
 from hl_mem.errors import ConfigurationError
+from hl_mem.observability.ops_report import UsageLedgerReader
 from hl_mem.observability.usage import (
     UsageGovernor,
     UsageIdentity,
@@ -60,6 +62,16 @@ class ProviderRuntime:
 
     def usage_snapshot(self) -> dict[str, object] | None:
         return None if self._governor is None else self._governor.snapshot()
+
+    def usage_health_snapshot(self) -> dict[str, object] | None:
+        if self._governor is None:
+            return None
+        now = datetime.now(timezone.utc)
+        return UsageLedgerReader(self._governor.path).health_summary(
+            day=now.date(),
+            limits=self._governor.limits,
+            now=now,
+        )
 
     def close(self) -> None:
         if self._owns_client and self._client is not None:

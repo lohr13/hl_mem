@@ -25,6 +25,7 @@ jobs:
           uv run --frozen python scripts/check_imports.py
           uv run --frozen python scripts/check_config_schema_snapshot.py
           uv run --frozen python scripts/check_provider_plugin_api.py
+          uv run --frozen python scripts/check_ops_report_schema.py
           uv run --frozen python scripts/check_openapi_snapshot.py
           uv run --frozen python scripts/check_mcp_snapshot.py
       - name: Run focused release contracts

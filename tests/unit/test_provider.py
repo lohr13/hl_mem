@@ -2,6 +2,9 @@ import json
 import logging
 import threading
 import time
+from dataclasses import replace
+from decimal import Decimal
+from pathlib import Path
 
 import httpx
 
@@ -17,6 +20,25 @@ from hl_mem.adapters.hermes.provider import (
 from hl_mem.application.context_packet import retrieval_bundle_to_dict
 from hl_mem.recall.injection import InjectionContext
 from hl_mem.settings import Settings
+
+
+def test_provider_runtime_health_snapshot_is_daily_and_compact(tmp_path: Path) -> None:
+    from hl_mem.plugins.runtime import create_provider_runtime
+
+    runtime = create_provider_runtime(
+        replace(Settings.for_test(), database_path=str(tmp_path / "memory.db")),
+        create_usage=True,
+    )
+    try:
+        assert runtime.usage_health_snapshot() == {
+            "failures": 0,
+            "stale_reservations": 0,
+            "utilization": {"requests": None, "tokens": Decimal("0"), "cost_microunits": None},
+            "unknown_outcomes": 0,
+            "unknown_costs": 0,
+        }
+    finally:
+        runtime.close()
 
 
 class Response:

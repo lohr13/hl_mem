@@ -52,6 +52,37 @@ def test_healthz_provider_inventory_is_bounded_and_secret_free(tmp_path) -> None
     assert settings.embedding_base_url not in serialized
 
 
+def test_healthz_provider_usage_preserves_detail_and_adds_daily_health(tmp_path) -> None:
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(tmp_path / "health-usage.db"),
+        embedder_mode="real",
+        embedding_api_key="test-key",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        usage = client.get("/healthz").json()["provider_usage"]
+
+    assert usage is not None
+    assert set(usage) == {
+        "date",
+        "settled",
+        "reserved",
+        "remaining",
+        "unknown_cost_count",
+        "counts_by_capability",
+        "health",
+    }
+    assert usage["health"] == {
+        "failures": 0,
+        "stale_reservations": 0,
+        "utilization": {"requests": None, "tokens": "0", "cost_microunits": None},
+        "unknown_outcomes": 0,
+        "unknown_costs": 0,
+    }
+
+
 def test_request_lifecycle_logs_healthz_with_query_id(caplog, tmp_path) -> None:
     app = create_app(tmp_path / "health-logging.db")
 

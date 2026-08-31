@@ -220,7 +220,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         from hl_mem.application.conflict_repairs import count_dangling_conflicts
-        from hl_mem.application.health import conflict_backlog_snapshot, monitoring_snapshot
+        from hl_mem.application.health import conflict_backlog_snapshot, monitoring_snapshot, provider_usage_snapshot
 
         connection = database.connection or database.open_worker()
         conflict_backlog = conflict_backlog_snapshot(connection)
@@ -239,7 +239,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             "settings": settings.snapshot(),
             "components": components.component_health(),
             "providers": ([] if provider_runtime is None else list(provider_runtime.registry.health_snapshot())),
-            "provider_usage": None if provider_runtime is None else provider_runtime.usage_snapshot(),
+            "provider_usage": provider_usage_snapshot(provider_runtime),
             "vector_search": SearchTracer.vector_search_metrics(),
             "recall_side_effects": recall_side_effect_health(connection, recall_side_effects),
             "monitoring": monitoring_snapshot(

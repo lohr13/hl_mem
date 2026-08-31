@@ -358,7 +358,9 @@ def _usage_limits(settings: Settings) -> UsageLimits:
 def _usage_snapshot(path: Path, *, window: ReportWindow, settings: Settings) -> tuple[dict[str, object], bool]:
     try:
         return UsageLedgerReader(path).report(window, limits=_usage_limits(settings)), False
-    except OpsReportError:
+    except OpsReportError as error:
+        if str(error) != "usage ledger does not exist":
+            raise
         return {
             "window": {"since": _iso(window.since), "until": _iso(window.until)},
             "groups": [],

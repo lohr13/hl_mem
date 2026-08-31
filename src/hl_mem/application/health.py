@@ -26,6 +26,16 @@ from hl_mem.recall.freshness_annotation import (
 from hl_mem.recall.injection import injection_governance_snapshot
 
 
+def provider_usage_snapshot(runtime: object | None) -> dict[str, object] | None:
+    """Keep the detailed usage counters and attach only today's cheap health aggregate."""
+    if runtime is None:
+        return None
+    usage_snapshot = getattr(runtime, "usage_snapshot")()
+    if usage_snapshot is None:
+        return None
+    return {**usage_snapshot, "health": getattr(runtime, "usage_health_snapshot")()}
+
+
 class ConflictBacklogSnapshot(TypedDict):
     conflict_counts_by_status: dict[str, int]
     manual_required_count: int
