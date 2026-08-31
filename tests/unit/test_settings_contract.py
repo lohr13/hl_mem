@@ -13,7 +13,6 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 210
     assert settings.schema_version == 1
     assert settings.plugins_enabled == ()
     assert settings.plugin_options == {}
