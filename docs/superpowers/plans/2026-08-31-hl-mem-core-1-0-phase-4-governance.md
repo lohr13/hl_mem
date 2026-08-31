@@ -289,7 +289,7 @@ Expected: contradiction and state-change tests fail because the current implemen
 **Step 2: Remove mutation branches**
 
 - Keep candidate scan, model judgment, confidence classification, CAS freshness check and audit recording.
-- Record every accepted judgment as `audit_only`.
+- Record every accepted judgment as `audit_only:<kind>` so audit mode and model classification are both preserved.
 - Remove direct Claim disputes, conflict-case creation, and supersession.
 - Do not create a replacement auto-apply path.
 - Keep the explicit human/delegation conflict workflow untouched.

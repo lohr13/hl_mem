@@ -50,13 +50,14 @@ def test_candidate_thresholds_and_pair_idempotency(tmp_path) -> None:
     assert worker.run_batch(10)["reviewed"] == 0
 
 
-def test_state_change_supersedes_and_low_confidence_does_not_mutate(tmp_path) -> None:
+def test_state_change_and_low_confidence_decisions_do_not_mutate(tmp_path) -> None:
     connection = Database(tmp_path / "state.db").open()
     _claim(connection, "a", [1.0, 0.0])
     _claim(connection, "b", [0.8, 0.6])
     result = ConflictConsolidator(connection, Judge("state_change", 1.0, "b")).run_batch(10)
     assert result["state_change"] == 1
-    assert ClaimRepository(connection).get_claim("a")["status"] == "superseded"
+    assert ClaimRepository(connection).get_claim("a")["status"] == "active"
+    assert connection.execute("SELECT decision FROM consolidation_pairs").fetchone()[0] == "audit_only:state_change"
 
     other = Database(tmp_path / "low.db").open()
     _claim(other, "a", [1.0, 0.0])

@@ -11,7 +11,6 @@ from typing import Any, Callable, Literal, Protocol
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.conflicts import compute_claim_pair_key
 from hl_mem.domain.consolidation_scope import ConsolidationScope
-from hl_mem.lifecycle import assert_transition
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import (
     LLMMessage,
@@ -245,63 +244,13 @@ class ConflictConsolidator:
             if not self._unchanged(pair):
                 stats["cas_skipped"] += 1
                 continue
-            if decision.kind == "contradiction":
-                self.connection.execute("BEGIN IMMEDIATE")
-                try:
-                    current_rows = self.connection.execute(
-                        "SELECT status FROM claims WHERE id IN (?,?)",
-                        (pair.left["id"], pair.right["id"]),
-                    ).fetchall()
-                    if len(current_rows) != 2 or any(row["status"] != "active" for row in current_rows):
-                        self.connection.rollback()
-                        stats["cas_skipped"] += 1
-                        continue
-                    for row in current_rows:
-                        assert_transition(row["status"], "disputed")
-                    cursor = self.connection.execute(
-                        "UPDATE claims SET status='disputed' WHERE id IN (?,?) AND status='active'",
-                        (pair.left["id"], pair.right["id"]),
-                    )
-                    if cursor.rowcount != 2:
-                        self.connection.rollback()
-                        stats["cas_skipped"] += 1
-                        continue
-                    self.connection.execute(
-                        "INSERT OR IGNORE INTO conflict_cases "
-                        "(id,pair_key,left_claim_id,right_claim_id,status,decision,confidence,rationale,created_at) "
-                        "VALUES (?,?,?,?,?,?,?,?,?)",
-                        (
-                            uuid.uuid4().hex,
-                            pair.pair_key,
-                            pair.left["id"],
-                            pair.right["id"],
-                            "manual_required" if decision.confidence < 0.9 else "auto_resolved",
-                            None,
-                            decision.confidence,
-                            decision.rationale,
-                            datetime.now(timezone.utc).isoformat(),
-                        ),
-                    )
-                except Exception:
-                    self.connection.rollback()
-                    raise
-            elif decision.kind == "state_change":
+            if decision.kind == "state_change":
                 current_id = decision.current_claim_id
                 if current_id not in {pair.left["id"], pair.right["id"]}:
                     stats["manual_review"] += 1
                     self._record(pair, decision, run_id, "manual_review")
                     continue
-                current = pair.left if pair.left["id"] == current_id else pair.right
-                old = pair.right if current is pair.left else pair.left
-                ClaimRepository(self.connection).supersede_with_inline(
-                    old["id"],
-                    current["id"],
-                    current["value"],
-                    current.get("valid_from") or current["recorded_from"],
-                    datetime.now(timezone.utc).isoformat(),
-                )
-            self._record(pair, decision, run_id, decision.kind)
-            self.connection.commit()
+            self._record(pair, decision, run_id, f"audit_only:{decision.kind}")
             stats["reviewed"] += 1
             stats[decision.kind] += 1
         return stats
