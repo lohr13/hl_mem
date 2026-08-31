@@ -1,0 +1,167 @@
+name: Core 1.0 release gates
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*rc*"
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
+      - run: uv sync --frozen --extra sqlite-vec
+      - name: Run authoritative suite
+        env:
+          HL_MEM_ENV: test
+        run: |
+          mkdir -p evidence
+          uv run --frozen python -W error::ResourceWarning -m pytest tests/ -q --tb=short \
+            --cov=hl_mem --cov-report=term-missing --cov-fail-under=80 \
+            --junitxml=evidence/python-${{ matrix.python-version }}.xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-python-${{ matrix.python-version }}
+          path: evidence/
+          if-no-files-found: error
+
+  operational:
+    name: Operational release contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
+      - run: uv sync --frozen --extra sqlite-vec
+      - name: Verify migrations
+        run: |
+          mkdir -p evidence
+          uv run --frozen python -m pytest tests/release/test_migration_release_gate.py \
+            tests/test_migration_upgrade.py -q --tb=short --junitxml=evidence/migration.xml
+      - name: Verify backup and restore
+        run: >-
+          uv run --frozen python -m pytest tests/unit/test_backup_cli.py -q --tb=short
+          --junitxml=evidence/backup-restore.xml
+      - name: Verify external Provider conflict handling
+        run: >-
+          uv run --frozen python -m pytest tests/integration/test_provider_plugin_wheel.py -q --tb=short
+          --junitxml=evidence/plugin-conflict.xml
+      - name: Verify streaming request limit
+        run: >-
+          uv run --frozen python -m pytest tests/unit/test_request_size_limit.py -q --tb=short
+          --junitxml=evidence/streaming-limit.xml
+      - name: Verify default zero-model-call contract
+        run: >-
+          uv run --frozen python -m pytest tests/release/test_default_zero_model_calls.py -q --tb=short
+          --junitxml=evidence/zero-model-call.xml
+      - name: Verify public recall gate
+        run: uv run --frozen python -m tests.eval.ci_gate --report evidence/public-recall.json
+      - name: Build and install distributions
+        run: |
+          uv run --frozen python -m build
+          uv run --frozen python scripts/check_wheel_contents.py --reject-v030 dist/*.whl
+          python -m venv .release-venv
+          .release-venv/bin/python -m pip install --upgrade pip
+          .release-venv/bin/python -m pip install dist/*.whl
+          .release-venv/bin/python -c "import hl_mem; print(hl_mem.__version__)"
+          .release-venv/bin/hl-mem --version
+          .release-venv/bin/hl-mem config migrate --help
+          .release-venv/bin/hl-mem doctor --help
+          python -c "from pathlib import Path; Path('evidence/wheel-install.xml').write_text('<testsuite name=\"wheel-install\" tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\"/>', encoding='utf-8')"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-operational
+          path: evidence/
+          if-no-files-found: error
+
+  supply-chain:
+    name: Dependency audit and SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
+      - name: Export locked runtime dependencies
+        run: |
+          mkdir -p evidence
+          uv export --frozen --all-extras --no-dev --no-emit-project --no-hashes \
+            --format requirements.txt --output-file evidence/requirements.txt
+      - name: Audit locked dependencies
+        run: >-
+          uvx --from pip-audit==2.10.1 pip-audit --strict
+          --requirement evidence/requirements.txt --format json --output evidence/pip-audit.json
+      - name: Generate validated CycloneDX SBOM
+        run: >-
+          uvx --from cyclonedx-bom==7.3.1 cyclonedx-py requirements evidence/requirements.txt
+          --pyproject pyproject.toml --mc-type application --spec-version 1.6
+          --output-reproducible --output-format JSON --output-file evidence/sbom.cdx.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-supply-chain
+          path: evidence/
+          if-no-files-found: error
+
+  evidence:
+    name: Validate release evidence
+    if: always()
+    needs: [python, operational, supply-chain]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: evidence
+          merge-multiple: true
+      - name: Validate and aggregate evidence
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          RELEASE_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          python scripts/write_release_evidence.py \
+            --version "$RELEASE_VERSION" \
+            --commit "$RELEASE_COMMIT" \
+            --run-url "$RELEASE_RUN_URL" \
+            --output-dir evidence/manifest \
+            --junit python-3.12=evidence/python-3.12.xml \
+            --junit python-3.13=evidence/python-3.13.xml \
+            --junit python-3.14=evidence/python-3.14.xml \
+            --junit migration=evidence/migration.xml \
+            --junit backup-restore=evidence/backup-restore.xml \
+            --junit plugin-conflict=evidence/plugin-conflict.xml \
+            --junit streaming-limit=evidence/streaming-limit.xml \
+            --junit zero-model-call=evidence/zero-model-call.xml \
+            --json public-recall=evidence/public-recall.json \
+            --json pip-audit=evidence/pip-audit.json \
+            --file sbom=evidence/sbom.cdx.json \
+            --junit wheel-install=evidence/wheel-install.xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-evidence
+          path: evidence/
+          if-no-files-found: error
