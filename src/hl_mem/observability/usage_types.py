@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -36,12 +36,15 @@ class UsageAmount:
     rerank_documents: int = 0
     images: int = 0
     cost_microunits: int | None = None
+    unknown_units: frozenset[str] = field(default_factory=frozenset, repr=False)
 
     def __post_init__(self) -> None:
         for field_name in _COUNTER_FIELDS:
             _require_integer(field_name, getattr(self, field_name), non_negative=True)
         if self.cost_microunits is not None:
             _require_integer("cost_microunits", self.cost_microunits, non_negative=True)
+        if not isinstance(self.unknown_units, frozenset) or not self.unknown_units.issubset(_COUNTER_FIELDS):
+            raise ValueError("unknown_units must be a frozenset of usage counter names")
 
     @property
     def total_tokens(self) -> int:
@@ -63,6 +66,7 @@ class UsageAmount:
             rerank_documents=self.rerank_documents + other.rerank_documents,
             images=self.images + other.images,
             cost_microunits=cost,
+            unknown_units=self.unknown_units | other.unknown_units,
         )
 
     def scale(self, factor: int) -> UsageAmount:
@@ -75,6 +79,7 @@ class UsageAmount:
             rerank_documents=self.rerank_documents * factor,
             images=self.images * factor,
             cost_microunits=None if self.cost_microunits is None else self.cost_microunits * factor,
+            unknown_units=self.unknown_units,
         )
 
 

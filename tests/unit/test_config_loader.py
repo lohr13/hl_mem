@@ -697,6 +697,56 @@ def test_relative_database_path_uses_real_config_target_directory(
     assert settings.database_path == str((canonical_dir / "data" / "memory.db").resolve())
 
 
+def test_relative_database_and_price_book_paths_share_real_config_target_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canonical_dir = tmp_path / "canonical"
+    source_dir = tmp_path / "source"
+    canonical_dir.mkdir()
+    source_dir.mkdir()
+    canonical_config = _write(
+        canonical_dir / "hl_mem.toml",
+        (
+            '[database]\npath = "data/memory.db"\n'
+            '[usage]\nprice_book_path = "pricing/provider.json"\n'
+            '[recall]\nquery_expansion_mode = "off"\n'
+        ),
+    )
+    linked_config = tmp_path / "hl_mem.toml"
+    linked_config.symlink_to(canonical_config)
+    monkeypatch.chdir(source_dir)
+
+    settings = _load_structural_settings(linked_config, tmp_path / ".env", environ={})
+
+    assert settings.database_path == str((canonical_dir / "data" / "memory.db").resolve())
+    assert settings.usage_price_book_path == str((canonical_dir / "pricing" / "provider.json").resolve())
+
+
+@pytest.mark.parametrize(
+    ("platform", "foreign_path", "expected"),
+    [
+        ("linux", "D:/hl_mem/prices.json", r"usage\.price_book_path.*Windows absolute path.*POSIX"),
+        ("win32", "/opt/hl_mem/prices.json", r"usage\.price_book_path.*POSIX absolute path.*Windows"),
+    ],
+)
+def test_price_book_rejects_foreign_absolute_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    foreign_path: str,
+    expected: str,
+) -> None:
+    config_path = _write(
+        tmp_path / "hl_mem.toml",
+        f'[usage]\nprice_book_path = "{foreign_path}"\n[recall]\nquery_expansion_mode = "off"\n',
+    )
+    monkeypatch.setattr(sys, "platform", platform)
+
+    with pytest.raises(ConfigurationError, match=expected):
+        _load_structural_settings(config_path, tmp_path / ".env", environ={})
+
+
 @pytest.mark.parametrize("foreign_path", ["D:/hl_mem/var/hl_mem.db", r"\\server\share\hl_mem.db"])
 def test_posix_rejects_windows_absolute_database_paths(
     tmp_path: Path,

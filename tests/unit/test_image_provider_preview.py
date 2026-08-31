@@ -10,6 +10,7 @@ import pytest
 
 from hl_mem.components import create_provider_runtime, make_image_describer
 from hl_mem.domain.content import ImagePart
+from hl_mem.errors import UsageLimitExceededError
 from hl_mem.plugins.contracts import (
     ImageProviderResult,
     ProviderCapability,
@@ -20,6 +21,7 @@ from hl_mem.plugins.contracts import (
 )
 from hl_mem.security.image_input import ImageInputGuard
 from hl_mem.settings import Settings
+from tests.unit._usage_pricing_fixture import write_usage_price_book
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"safe-image-bytes"
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "providers" / "image_dashscope.json"
@@ -135,6 +137,72 @@ def test_guard_rejection_creates_no_provider_usage(tmp_path: Path) -> None:
             describer.describe(ImagePart("https://127.0.0.1/a.png", None, "image/png"), timeout_seconds=5.0)
         assert not called
         assert runtime.governor.snapshot()["settled"]["requests"] == 0
+    finally:
+        runtime.close()
+        client.close()
+
+
+def test_token_priced_image_reservation_fails_closed_before_network(tmp_path: Path) -> None:
+    called = False
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, request=request, json={})
+
+    price_book = write_usage_price_book(
+        tmp_path / "prices.json",
+        capability="image_describer",
+        provider="dashscope",
+        model="qwen-vl",
+        million_input_tokens=1,
+    )
+    settings = replace(
+        _settings(tmp_path),
+        usage_price_book_path=str(price_book),
+        usage_daily_cost_limit_microunits=1,
+    )
+    client = httpx.Client(transport=httpx.MockTransport(handle))
+    runtime = create_provider_runtime(settings, client=client)
+    try:
+        describer = make_image_describer(settings, runtime=runtime)
+        assert describer is not None
+        with pytest.raises(UsageLimitExceededError, match="cost"):
+            describer.describe(_image(), timeout_seconds=5.0)
+        assert not called
+    finally:
+        runtime.close()
+        client.close()
+
+
+def test_token_priced_image_missing_usage_settles_unknown_cost(tmp_path: Path) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "model": "qwen-vl",
+                "choices": [{"message": {"content": '{"caption":"receipt","confidence":null}'}}],
+            },
+        )
+
+    price_book = write_usage_price_book(
+        tmp_path / "prices.json",
+        capability="image_describer",
+        provider="dashscope",
+        model="qwen-vl",
+        million_input_tokens=1,
+    )
+    settings = replace(_settings(tmp_path), usage_price_book_path=str(price_book))
+    client = httpx.Client(transport=httpx.MockTransport(handle))
+    runtime = create_provider_runtime(settings, client=client)
+    try:
+        describer = make_image_describer(settings, runtime=runtime)
+        assert describer is not None
+        describer.describe(_image(), timeout_seconds=5.0)
+        snapshot = runtime.governor.snapshot()
+        assert snapshot["settled"]["cost_microunits"] is None
+        assert snapshot["unknown_cost_count"] == 1
     finally:
         runtime.close()
         client.close()

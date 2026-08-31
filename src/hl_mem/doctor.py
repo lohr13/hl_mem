@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 import httpx
 
@@ -27,12 +27,14 @@ from hl_mem.compatibility import (
 from hl_mem.config_loader import load_settings
 from hl_mem.errors import ConfigurationError
 from hl_mem.llm.types import LLMMessage, LLMRequest
-from hl_mem.observability.pricing import UsagePriceBook
+from hl_mem.observability.pricing import UsageCostEstimator, UsagePriceBook
 from hl_mem.observability.usage import USAGE_LEDGER_SCHEMA_VERSION, default_usage_ledger_path
+from hl_mem.plugins.runtime import ProviderRuntime
 from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.backup import validate_upgrade_recovery_set
 
 MIGRATION_DIR = Path(__file__).resolve().parent / "storage" / "migrations"
+_ESTIMATOR_UNSET = object()
 
 
 class CheckStatus(StrEnum):
@@ -244,25 +246,43 @@ def _check_usage_ledger(settings: Settings) -> CheckResult:
 
 
 def _check_usage_price_book(settings: Settings) -> CheckResult | None:
+    return _validated_usage_price_book(settings)[0]
+
+
+def _validated_usage_price_book(
+    settings: Settings,
+) -> tuple[CheckResult | None, UsagePriceBook | None]:
     if settings.usage_price_book_path is None:
-        return None
+        return None, None
     try:
         price_book = UsagePriceBook.load(Path(settings.usage_price_book_path))
     except ConfigurationError:
-        return CheckResult(CheckStatus.FAIL, "Provider 价格表", "configured=true；validation failed")
-    return CheckResult(
-        CheckStatus.OK,
-        "Provider 价格表",
-        f"configured=true；fingerprint={price_book.fingerprint}",
+        return (
+            CheckResult(
+                CheckStatus.FAIL,
+                "Provider 价格表",
+                "configured=true；validation failed",
+                code="usage_price_book",
+            ),
+            None,
+        )
+    return (
+        CheckResult(
+            CheckStatus.OK,
+            "Provider 价格表",
+            f"configured=true；fingerprint={price_book.fingerprint}",
+            code="usage_price_book",
+        ),
+        price_book,
     )
 
 
-def _check_embedding(settings: Settings) -> CheckResult:
+def _check_embedding(settings: Settings, runtime: ProviderRuntime | None = None) -> CheckResult:
     if settings.embedder_mode == "fake":
         return CheckResult(CheckStatus.WARN, "Embedding API", "embedder=fake，跳过")
     embedder = None
     try:
-        embedder = components.make_embedder(settings)
+        embedder = components.make_embedder(settings, runtime=runtime)
         embedder.embed_one("ping")
         return CheckResult(CheckStatus.OK, "Embedding API", "请求成功")
     except (RuntimeError, ValueError, KeyError, TypeError) as error:
@@ -273,12 +293,12 @@ def _check_embedding(settings: Settings) -> CheckResult:
             close()
 
 
-def _check_llm(settings: Settings) -> CheckResult:
+def _check_llm(settings: Settings, runtime: ProviderRuntime | None = None) -> CheckResult:
     if settings.extractor_mode == "fake":
         return CheckResult(CheckStatus.WARN, "LLM API", "extractor=fake，跳过")
     client = None
     try:
-        client = components.make_llm_client(settings, operation="doctor")
+        client = components.make_llm_client(settings, operation="doctor", runtime=runtime)
         client.complete(LLMRequest([LLMMessage("user", "ping")]), timeout_seconds=settings.llm_timeout)
         return CheckResult(CheckStatus.OK, "LLM API", "请求成功")
     except (RuntimeError, ValueError, KeyError, TypeError) as error:
@@ -289,14 +309,14 @@ def _check_llm(settings: Settings) -> CheckResult:
             close()
 
 
-def _check_reranker(settings: Settings) -> CheckResult:
+def _check_reranker(settings: Settings, runtime: ProviderRuntime | None = None) -> CheckResult:
     if settings.reranker_mode == "off":
         return CheckResult(CheckStatus.WARN, "Reranker API", "reranker=off，跳过")
     if is_placeholder_secret(settings.reranker_api_key):
         return CheckResult(CheckStatus.FAIL, "Reranker API", "缺少有效 API key")
     reranker = None
     try:
-        reranker = components.make_reranker(settings)
+        reranker = components.make_reranker(settings, runtime=runtime)
         if reranker is None:
             return CheckResult(CheckStatus.FAIL, "Reranker API", "reranker 未启用")
         results = reranker.rerank("ping", ["ping"], top_n=1)
@@ -311,7 +331,11 @@ def _check_reranker(settings: Settings) -> CheckResult:
     return CheckResult(CheckStatus.OK, "Reranker API", "请求成功")
 
 
-def probe_model_components(settings: Settings) -> list[CheckResult]:
+def probe_model_components(
+    settings: Settings,
+    *,
+    estimator: UsageCostEstimator | None | object = _ESTIMATOR_UNSET,
+) -> list[CheckResult]:
     """Probe every model path enabled by a prospective production configuration."""
     with tempfile.TemporaryDirectory(prefix="hl-mem-provider-probe-", ignore_cleanup_errors=True) as temporary:
         probe_settings = replace(
@@ -319,10 +343,20 @@ def probe_model_components(settings: Settings) -> list[CheckResult]:
             database_path=str(Path(temporary) / "probe.db"),
             llm_max_tokens=1,
         )
-        results = [_check_llm(probe_settings), _check_embedding(probe_settings)]
-        if probe_settings.reranker_mode in {"on", "real"}:
-            results.append(_check_reranker(probe_settings))
-        return results
+        if estimator is _ESTIMATOR_UNSET:
+            runtime = components.create_provider_runtime(probe_settings)
+        else:
+            runtime = components.create_provider_runtime(
+                probe_settings,
+                _validated_estimator=cast(UsageCostEstimator | None, estimator),
+            )
+        try:
+            results = [_check_llm(probe_settings, runtime), _check_embedding(probe_settings, runtime)]
+            if probe_settings.reranker_mode in {"on", "real"}:
+                results.append(_check_reranker(probe_settings, runtime))
+            return results
+        finally:
+            runtime.close()
 
 
 def _check_port() -> CheckResult:
@@ -517,7 +551,7 @@ def run_doctor(
             recovery = CheckResult(CheckStatus.OK, "恢复集", "备份、manifest 与当前数据库身份匹配")
 
     daemon_probe = _probe_daemon(settings)
-    price_book_check = _check_usage_price_book(settings)
+    price_book_check, price_book = _validated_usage_price_book(settings)
     version = tuple(sys.version_info[:3])
     return [
         CheckResult(
@@ -535,7 +569,7 @@ def run_doctor(
         *_check_provider_plugins(settings),
         _check_usage_ledger(settings),
         *((price_book_check,) if price_book_check is not None else ()),
-        *probe_model_components(settings),
+        *probe_model_components(settings, estimator=price_book),
         _check_port(),
         _check_daemon_compatibility(daemon_probe),
         _check_hermes(settings),

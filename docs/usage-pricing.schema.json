@@ -3,14 +3,24 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
-    "currency": { "const": "CNY" },
-    "effective_date": { "format": "date", "type": "string" },
+    "currency": {
+      "const": "CNY"
+    },
+    "effective_date": {
+      "format": "date",
+      "type": "string"
+    },
     "rules": {
       "items": {
         "additionalProperties": false,
         "properties": {
           "capability": {
-            "enum": ["llm", "embedding", "reranker", "image_describer"]
+            "enum": [
+              "llm",
+              "embedding",
+              "reranker",
+              "image_describer"
+            ]
           },
           "model": {
             "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._:/-]{0,198}[A-Za-z0-9])?$",
@@ -23,12 +33,30 @@
           "rates_microunits": {
             "additionalProperties": false,
             "properties": {
-              "embedding_item": { "minimum": 0, "type": "integer" },
-              "image": { "minimum": 0, "type": "integer" },
-              "million_input_tokens": { "minimum": 0, "type": "integer" },
-              "million_output_tokens": { "minimum": 0, "type": "integer" },
-              "request": { "minimum": 0, "type": "integer" },
-              "rerank_document": { "minimum": 0, "type": "integer" }
+              "embedding_item": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "image": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "million_input_tokens": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "million_output_tokens": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "rerank_document": {
+                "minimum": 0,
+                "type": "integer"
+              }
             },
             "required": [
               "request",
@@ -41,25 +69,36 @@
             "type": "object"
           }
         },
-        "required": ["capability", "model", "rates_microunits"],
+        "required": [
+          "capability",
+          "model",
+          "rates_microunits"
+        ],
         "type": "object"
       },
       "minItems": 1,
       "type": "array"
     },
-    "schema_version": { "const": 1 },
+    "schema_version": {
+      "const": 1
+    },
     "source_urls": {
       "items": {
         "format": "uri",
         "maxLength": 2048,
-        "pattern": "^https://",
+        "pattern": "^https://(?:[^/?#@\\s]+@)?(?:\\[[0-9A-Fa-f:.]+\\]|[^/?#:@\\s]+)(?::[0-9]+)?(?:[/?#].*)?$",
         "type": "string"
       },
       "maxItems": 16,
       "type": "array"
     }
   },
-  "required": ["schema_version", "currency", "effective_date", "rules"],
+  "required": [
+    "schema_version",
+    "currency",
+    "effective_date",
+    "rules"
+  ],
   "title": "HL-Mem Provider Usage Price Book",
   "type": "object"
 }

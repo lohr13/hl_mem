@@ -5,17 +5,25 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Literal, Protocol
+from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator, FormatChecker
 
 from hl_mem.errors import ConfigurationError
-from hl_mem.observability.usage_types import _LABEL_PATTERN, _MODEL_PATTERN, UsageAmount, UsageIdentity
+from hl_mem.observability.usage_types import UsageAmount, UsageIdentity
 from hl_mem.plugins.contracts import ProviderCapability
 
+_V1_CAPABILITIES = ("llm", "embedding", "reranker", "image_describer")
+_V1_LABEL_PATTERN = r"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$"
+_V1_MODEL_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9._:/-]{0,198}[A-Za-z0-9])?$"
+_V1_HTTPS_URL_PATTERN = (
+    r"^https://(?:[^/?#@\s]+@)?(?:\[[0-9A-Fa-f:.]+\]|[^/?#:@\s]+)(?::[0-9]+)?(?:[/?#].*)?$"
+)
 _RATE_KEYS = (
     "request",
     "million_input_tokens",
@@ -24,8 +32,18 @@ _RATE_KEYS = (
     "rerank_document",
     "image",
 )
-_PRICE_BOOK_SCHEMA: dict[str, object] = {
+_RATE_TO_UNIT = {
+    "request": "requests",
+    "million_input_tokens": "input_tokens",
+    "million_output_tokens": "output_tokens",
+    "embedding_item": "embedding_items",
+    "rerank_document": "rerank_documents",
+    "image": "images",
+}
+_PRICE_BOOK_SCHEMA_V1: dict[str, object] = {
+    "$id": "https://hl-mem.local/schemas/usage-pricing-v1.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "HL-Mem Provider Usage Price Book",
     "type": "object",
     "additionalProperties": False,
     "required": ["schema_version", "currency", "effective_date", "rules"],
@@ -40,7 +58,7 @@ _PRICE_BOOK_SCHEMA: dict[str, object] = {
                 "type": "string",
                 "format": "uri",
                 "maxLength": 2048,
-                "pattern": "^https://",
+                "pattern": _V1_HTTPS_URL_PATTERN,
             },
         },
         "rules": {
@@ -51,9 +69,9 @@ _PRICE_BOOK_SCHEMA: dict[str, object] = {
                 "additionalProperties": False,
                 "required": ["capability", "model", "rates_microunits"],
                 "properties": {
-                    "capability": {"enum": [item.value for item in ProviderCapability]},
-                    "provider": {"type": "string", "pattern": f"^{_LABEL_PATTERN.pattern}$"},
-                    "model": {"type": "string", "pattern": f"^{_MODEL_PATTERN.pattern}$"},
+                    "capability": {"enum": list(_V1_CAPABILITIES)},
+                    "provider": {"type": "string", "pattern": _V1_LABEL_PATTERN},
+                    "model": {"type": "string", "pattern": _V1_MODEL_PATTERN},
                     "rates_microunits": {
                         "type": "object",
                         "additionalProperties": False,
@@ -67,6 +85,11 @@ _PRICE_BOOK_SCHEMA: dict[str, object] = {
         },
     },
 }
+
+
+def build_usage_pricing_schema() -> dict[str, object]:
+    """Return the frozen schema-v1 contract used by runtime and documentation."""
+    return deepcopy(_PRICE_BOOK_SCHEMA_V1)
 
 
 class UsageCostEstimator(Protocol):
@@ -122,7 +145,7 @@ class UsagePriceBook:
         except (OSError, UnicodeError) as error:
             raise ConfigurationError(f"failed to read usage price book: {resolved}: {error}") from error
 
-        validator = Draft202012Validator(_PRICE_BOOK_SCHEMA, format_checker=FormatChecker())
+        validator = Draft202012Validator(_PRICE_BOOK_SCHEMA_V1, format_checker=FormatChecker())
         validation_errors = sorted(
             validator.iter_errors(raw),
             key=lambda item: tuple(str(part) for part in item.path),
@@ -172,6 +195,14 @@ class UsagePriceBook:
         source_urls = raw.get("source_urls", [])
         if not isinstance(source_urls, list):
             raise ConfigurationError("usage price book source_urls must be an array")
+        for source_url in source_urls:
+            try:
+                parsed = urlsplit(str(source_url))
+                hostname = parsed.hostname
+            except ValueError as error:
+                raise ConfigurationError("usage price book source_urls must contain valid HTTPS URLs") from error
+            if parsed.scheme != "https" or hostname is None:
+                raise ConfigurationError("usage price book source_urls must contain valid HTTPS URLs")
         return {
             "schema_version": 1,
             "currency": "CNY",
@@ -200,6 +231,11 @@ class UsagePriceBook:
             rates = self._rules.get((identity.capability, identity.model, None))
         if rates is None:
             return replace(amount, cost_microunits=None)
+        if any(
+            getattr(rates, rate_name) > 0 and unit_name in amount.unknown_units
+            for rate_name, unit_name in _RATE_TO_UNIT.items()
+        ):
+            return replace(amount, cost_microunits=None)
         cost = (
             amount.requests * rates.request
             + self._million_rate(amount.input_tokens, rates.million_input_tokens)
@@ -211,4 +247,4 @@ class UsagePriceBook:
         return replace(amount, cost_microunits=cost)
 
 
-__all__ = ["UsageCostEstimator", "UsagePriceBook"]
+__all__ = ["UsageCostEstimator", "UsagePriceBook", "build_usage_pricing_schema"]

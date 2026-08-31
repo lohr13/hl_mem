@@ -52,6 +52,69 @@ def _governed(tmp_path, handler, *, estimator=None, cost_limit: int = 0):  # typ
     )
 
 
+def _governed_for_capability(
+    tmp_path,
+    handler,
+    *,
+    capability: ProviderCapability,
+    estimator,
+    cost_limit: int,
+):  # type: ignore[no-untyped-def]
+    governor = UsageGovernor(tmp_path / "usage.db", UsageLimits(0, 0, cost_limit))
+    metrics = ProviderMetrics()
+    audit = RecordingAudit()
+    transport = ProviderTransport(
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        sleep=lambda _delay: None,
+    )
+    identity = UsageIdentity(capability, "test", "hl-mem.builtin", "dashscope", "qwen")
+    return (
+        GovernedProviderCall(identity, governor, transport, metrics, audit, estimator=estimator),
+        governor,
+        metrics,
+        audit,
+    )
+
+
+def _price_book_for_capability(
+    tmp_path,
+    capability: ProviderCapability,
+    *,
+    rates: dict[str, int],
+):  # type: ignore[no-untyped-def]
+    from hl_mem.observability.pricing import UsagePriceBook
+
+    all_rates = {
+        "request": 0,
+        "million_input_tokens": 0,
+        "million_output_tokens": 0,
+        "embedding_item": 0,
+        "rerank_document": 0,
+        "image": 0,
+    }
+    all_rates.update(rates)
+    path = tmp_path / f"{capability.value}.pricing.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "currency": "CNY",
+                "effective_date": "2026-09-01",
+                "rules": [
+                    {
+                        "capability": capability.value,
+                        "provider": "dashscope",
+                        "model": "qwen",
+                        "rates_microunits": all_rates,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return UsagePriceBook.load(path)
+
+
 def _price_book(tmp_path, *, model: str = "qwen", source_url: str = "https://pricing.example.test"):
     from hl_mem.observability.pricing import UsagePriceBook
 
@@ -324,3 +387,131 @@ def test_price_book_source_and_path_never_enter_audit(tmp_path) -> None:
     rendered = repr(audit.events)
     assert source_url not in rendered
     assert str(tmp_path) not in rendered
+
+
+@pytest.mark.parametrize(
+    ("capability", "known_units"),
+    (
+        (ProviderCapability.LLM, {"requests": 1}),
+        (ProviderCapability.EMBEDDING, {"requests": 1, "embedding_items": 2}),
+        (ProviderCapability.RERANKER, {"requests": 1, "rerank_documents": 2}),
+        (ProviderCapability.IMAGE_DESCRIBER, {"requests": 1, "images": 1}),
+    ),
+)
+def test_finite_money_limit_rejects_unsafe_token_estimate_before_network(
+    tmp_path,
+    capability: ProviderCapability,
+    known_units: dict[str, int],
+) -> None:
+    sends = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sends
+        sends += 1
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    estimator = _price_book_for_capability(
+        tmp_path,
+        capability,
+        rates={"million_input_tokens": 1},
+    )
+    governed, _governor, _metrics, _audit = _governed_for_capability(
+        tmp_path,
+        handler,
+        capability=capability,
+        estimator=estimator,
+        cost_limit=1,
+    )
+    estimate = UsageAmount(**known_units, unknown_units=frozenset({"input_tokens", "output_tokens"}))
+
+    with pytest.raises(UsageLimitExceededError, match="cost"):
+        governed.execute(_request(), estimate, _parse, max_attempts=1)
+
+    assert sends == 0
+
+
+@pytest.mark.parametrize(
+    ("capability", "known_units", "rate_name", "expected_cost"),
+    (
+        (ProviderCapability.LLM, {"requests": 1}, "request", 3),
+        (ProviderCapability.EMBEDDING, {"requests": 1, "embedding_items": 2}, "embedding_item", 6),
+        (ProviderCapability.RERANKER, {"requests": 1, "rerank_documents": 2}, "rerank_document", 6),
+        (ProviderCapability.IMAGE_DESCRIBER, {"requests": 1, "images": 1}, "image", 3),
+    ),
+)
+def test_finite_money_limit_accepts_safe_exact_unit_estimate(
+    tmp_path,
+    capability: ProviderCapability,
+    known_units: dict[str, int],
+    rate_name: str,
+    expected_cost: int,
+) -> None:
+    sends = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sends
+        sends += 1
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    estimator = _price_book_for_capability(tmp_path, capability, rates={rate_name: 3})
+    governed, governor, _metrics, _audit = _governed_for_capability(
+        tmp_path,
+        handler,
+        capability=capability,
+        estimator=estimator,
+        cost_limit=expected_cost,
+    )
+    usage = UsageAmount(**known_units, unknown_units=frozenset({"input_tokens", "output_tokens"}))
+
+    governed.execute(_request(), usage, lambda _response: ("ok", usage), max_attempts=1)
+
+    assert sends == 1
+    assert governor.snapshot()["settled"]["cost_microunits"] == expected_cost
+
+
+@pytest.mark.parametrize("capability", tuple(ProviderCapability))
+def test_unmeasured_settlement_cost_closes_following_finite_budget(
+    tmp_path,
+    capability: ProviderCapability,
+) -> None:
+    sends = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sends
+        sends += 1
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    estimator = _price_book_for_capability(
+        tmp_path,
+        capability,
+        rates={"million_input_tokens": 1_000_000},
+    )
+    governed, governor, _metrics, _audit = _governed_for_capability(
+        tmp_path,
+        handler,
+        capability=capability,
+        estimator=estimator,
+        cost_limit=100,
+    )
+
+    governed.execute(
+        _request(),
+        UsageAmount(requests=1, input_tokens=10),
+        lambda _response: (
+            "ok",
+            UsageAmount(requests=1, input_tokens=10, unknown_units=frozenset({"input_tokens"})),
+        ),
+        max_attempts=1,
+    )
+
+    snapshot = governor.snapshot()
+    assert snapshot["settled"]["cost_microunits"] is None
+    assert snapshot["unknown_cost_count"] == 1
+    with pytest.raises(UsageLimitExceededError, match="unknown"):
+        governed.execute(
+            _request(),
+            UsageAmount(requests=1, input_tokens=1),
+            lambda _response: ("ok", UsageAmount(requests=1, input_tokens=1)),
+            max_attempts=1,
+        )
+    assert sends == 1

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -23,6 +23,8 @@ from hl_mem.plugins.contracts import ProviderCapability, ProviderKey
 from hl_mem.plugins.proxies import GovernedProviderCall
 from hl_mem.plugins.registry import ProviderRegistry, build_provider_registry
 from hl_mem.plugins.transport import ProviderTransport
+
+_ESTIMATOR_UNSET = object()
 
 
 @dataclass
@@ -95,11 +97,16 @@ def create_provider_runtime(
     entry_points: Any = None,
     client: httpx.Client | None = None,
     create_usage: bool = True,
+    _validated_estimator: UsageCostEstimator | None | object = _ESTIMATOR_UNSET,
 ) -> ProviderRuntime:
     """Validate Providers, recover reservations, and create process-owned state."""
 
     registry = build_provider_registry(settings, entry_points=entry_points)
-    estimator = UsagePriceBook.load(Path(settings.usage_price_book_path)) if settings.usage_price_book_path else None
+    estimator: UsageCostEstimator | None
+    if _validated_estimator is _ESTIMATOR_UNSET:
+        estimator = UsagePriceBook.load(Path(settings.usage_price_book_path)) if settings.usage_price_book_path else None
+    else:
+        estimator = cast(UsageCostEstimator | None, _validated_estimator)
     governor = None
     if create_usage:
         governor = UsageGovernor(

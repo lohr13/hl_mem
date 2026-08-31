@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from hl_mem.errors import ProviderCallError
+from hl_mem.errors import ProviderCallError, UsageLimitExceededError
 from hl_mem.observability.usage import UsageAmount
 from hl_mem.plugins.contracts import (
     ProviderEndpoint,
@@ -130,7 +130,11 @@ class DashScopeReranker:
             self._set_result([], "empty", None)
             return []
         invocation = RerankInvocation(query, tuple(documents), top_n)
-        estimate = UsageAmount(requests=1, rerank_documents=len(documents))
+        estimate = UsageAmount(
+            requests=1,
+            rerank_documents=len(documents),
+            unknown_units=frozenset({"input_tokens", "output_tokens"}),
+        )
         usage_status = "usage_unknown"
 
         def parse(response: ProviderResponse) -> tuple[list[tuple[int, float]], UsageAmount]:
@@ -146,6 +150,14 @@ class DashScopeReranker:
                     input_tokens=parsed.input_tokens or 0,
                     output_tokens=parsed.output_tokens or 0,
                     rerank_documents=len(documents),
+                    unknown_units=frozenset(
+                        unit
+                        for unit, value in (
+                            ("input_tokens", parsed.input_tokens),
+                            ("output_tokens", parsed.output_tokens),
+                        )
+                        if value is None
+                    ),
                 ),
             )
 
@@ -157,6 +169,8 @@ class DashScopeReranker:
                 max_attempts=self.max_attempts,
                 settlement_status=lambda _value: usage_status,
             )
+        except UsageLimitExceededError:
+            raise
         except ProviderCallError as error:
             self._set_result([], "error", error.category)
             raise

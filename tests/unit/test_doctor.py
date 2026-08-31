@@ -69,7 +69,7 @@ def _disable_network_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_module,
         "probe_model_components",
-        lambda _settings: [
+        lambda _settings, **_kwargs: [
             CheckResult(CheckStatus.OK, "LLM API", "verified"),
             CheckResult(CheckStatus.OK, "Embedding API", "verified"),
         ],
@@ -436,17 +436,17 @@ def test_model_probe_includes_only_enabled_model_paths(monkeypatch: pytest.Monke
     monkeypatch.setattr(
         doctor_module,
         "_check_llm",
-        lambda _settings: CheckResult(CheckStatus.OK, "LLM API", "ok"),
+        lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "LLM API", "ok"),
     )
     monkeypatch.setattr(
         doctor_module,
         "_check_embedding",
-        lambda _settings: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
+        lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
     )
     monkeypatch.setattr(
         doctor_module,
         "_check_reranker",
-        lambda _settings: CheckResult(CheckStatus.OK, "Reranker API", "ok"),
+        lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "Reranker API", "ok"),
     )
 
     without_reranker = probe_model_components(Settings.for_test())
@@ -454,6 +454,76 @@ def test_model_probe_includes_only_enabled_model_paths(monkeypatch: pytest.Monke
 
     assert [item.name for item in without_reranker] == ["LLM API", "Embedding API"]
     assert [item.name for item in with_reranker] == ["LLM API", "Embedding API", "Reranker API"]
+
+
+def test_run_doctor_loads_one_price_book_and_shares_one_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hl_mem.observability.pricing import UsagePriceBook
+
+    config = _production_config(tmp_path / "config.toml")
+    price_path = tmp_path / "prices.json"
+    price_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "currency": "CNY",
+                "effective_date": "2026-08-31",
+                "rules": [
+                    {
+                        "capability": "llm",
+                        "provider": "openai_compatible",
+                        "model": "quality-llm",
+                        "rates_microunits": {
+                            "request": 1,
+                            "million_input_tokens": 0,
+                            "million_output_tokens": 0,
+                            "embedding_item": 0,
+                            "rerank_document": 0,
+                            "image": 0,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write(f'\n[usage]\nprice_book_path = "{price_path.as_posix()}"\n')
+
+    original_load = UsagePriceBook.load.__func__
+    load_count = 0
+
+    def counting_load(cls: type[UsagePriceBook], path: Path) -> UsagePriceBook:
+        nonlocal load_count
+        load_count += 1
+        return original_load(cls, path)
+
+    runtimes: list[object] = []
+    runtime_fingerprints: list[object] = []
+
+    def checked(_settings: Settings, runtime=None) -> CheckResult:
+        assert runtime is not None
+        runtimes.append(runtime)
+        runtime_fingerprints.append(runtime.usage_snapshot()["price_book_fingerprint"])
+        return CheckResult(CheckStatus.OK, "model", "ok")
+
+    monkeypatch.setattr(UsagePriceBook, "load", classmethod(counting_load))
+    monkeypatch.setattr(doctor_module, "_check_llm", checked)
+    monkeypatch.setattr(doctor_module, "_check_embedding", checked)
+    monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
+
+    results = run_doctor(
+        config_path=config,
+        environ={"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"},
+    )
+
+    price_check = next(result for result in results if result.code == "usage_price_book")
+    assert load_count == 1
+    assert len(runtimes) == 2 and runtimes[0] is runtimes[1]
+    assert len(set(runtime_fingerprints)) == 1
+    assert runtime_fingerprints[0] in price_check.detail
 
 
 def test_migration_count_matches_database(tmp_path: Path) -> None:

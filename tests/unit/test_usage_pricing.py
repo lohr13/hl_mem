@@ -161,6 +161,48 @@ def test_unmatched_rule_replaces_only_cost_with_unknown(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("unit", "rate"),
+    (
+        ("requests", "request"),
+        ("input_tokens", "million_input_tokens"),
+        ("output_tokens", "million_output_tokens"),
+        ("embedding_items", "embedding_item"),
+        ("rerank_documents", "rerank_document"),
+        ("images", "image"),
+    ),
+)
+def test_positive_rate_for_an_unknown_billable_unit_keeps_cost_unknown(
+    tmp_path: Path,
+    unit: str,
+    rate: str,
+) -> None:
+    book = _load(
+        _write_book(
+            tmp_path / f"unknown-{unit}.json",
+            _document(_rule(rates=_rates(**{rate: 1}))),
+        )
+    )
+    amount = UsageAmount(**{unit: 7}, unknown_units=frozenset({unit}))
+
+    priced = book.price(_identity(), amount, phase="settle")
+
+    assert priced.cost_microunits is None
+    assert priced.unknown_units == frozenset({unit})
+
+
+def test_zero_rate_for_an_unknown_unit_does_not_hide_known_cost(tmp_path: Path) -> None:
+    book = _load(
+        _write_book(
+            tmp_path / "known-request.json",
+            _document(_rule(rates=_rates(request=9))),
+        )
+    )
+    amount = UsageAmount(requests=1, input_tokens=0, unknown_units=frozenset({"input_tokens"}))
+
+    assert book.price(_identity(), amount, phase="reserve").cost_microunits == 9
+
+
 def test_duplicate_exact_rule_identity_is_rejected(tmp_path: Path) -> None:
     path = _write_book(
         tmp_path / "duplicate.json",
@@ -195,6 +237,9 @@ def test_duplicate_exact_rule_identity_is_rejected(tmp_path: Path) -> None:
             "image",
         ),
         (lambda value: value.update(source_urls=["http://pricing.example.test"]), "source_urls"),
+        (lambda value: value.update(source_urls=["https://"]), "source_urls"),
+        (lambda value: value.update(source_urls=["https:///path"]), "source_urls"),
+        (lambda value: value.update(source_urls=["https://?q=x"]), "source_urls"),
     ),
 )
 def test_invalid_price_book_contract_fails_closed(
@@ -255,3 +300,21 @@ def test_published_json_schema_accepts_the_canonical_book_and_rejects_extra_fiel
     assert list(validator.iter_errors(document)) == []
     document["rules"][0]["rates_microunits"]["unexpected"] = 1
     assert any(error.validator == "additionalProperties" for error in validator.iter_errors(document))
+
+
+def test_published_schema_is_generated_from_the_frozen_runtime_v1_contract() -> None:
+    try:
+        from scripts.check_usage_pricing_schema import rendered_schema
+    except ModuleNotFoundError as error:
+        raise AssertionError("usage pricing schema has no single generated source") from error
+
+    schema_path = Path(__file__).resolve().parents[2] / "docs" / "usage-pricing.schema.json"
+    schema = json.loads(rendered_schema())
+
+    assert schema_path.read_text(encoding="utf-8") == rendered_schema()
+    assert schema["properties"]["rules"]["items"]["properties"]["capability"]["enum"] == [
+        "llm",
+        "embedding",
+        "reranker",
+        "image_describer",
+    ]

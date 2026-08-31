@@ -44,8 +44,13 @@ RETIRED_TOML_PATHS = frozenset(
 )
 
 
-def _resolve_database_path(raw_path: str, resolved_config_path: Path, platform: str) -> str:
-    """按配置文件真实目录解析数据库路径，并拒绝异平台绝对路径。"""
+def _resolve_local_path(
+    raw_path: str,
+    resolved_config_path: Path,
+    platform: str,
+    key_path: str,
+) -> str:
+    """Resolve a local path from the real config directory and reject foreign absolutes."""
     windows_absolute = PureWindowsPath(raw_path).is_absolute()
     posix_absolute = PurePosixPath(raw_path).is_absolute()
     if platform == "win32":
@@ -53,36 +58,25 @@ def _resolve_database_path(raw_path: str, resolved_config_path: Path, platform: 
             return raw_path
         if posix_absolute:
             raise ConfigurationError(
-                f"{resolved_config_path}: database.path: POSIX absolute path is not valid on Windows: {raw_path}"
+                f"{resolved_config_path}: {key_path}: POSIX absolute path is not valid on Windows: {raw_path}"
             )
     else:
         if posix_absolute:
             return raw_path
         if windows_absolute:
             raise ConfigurationError(
-                f"{resolved_config_path}: database.path: Windows absolute path is not valid on POSIX: {raw_path}"
+                f"{resolved_config_path}: {key_path}: Windows absolute path is not valid on POSIX: {raw_path}"
             )
     return str((resolved_config_path.resolve().parent / raw_path).resolve())
+
+
+def _resolve_database_path(raw_path: str, resolved_config_path: Path, platform: str) -> str:
+    """按配置文件真实目录解析数据库路径，并拒绝异平台绝对路径。"""
+    return _resolve_local_path(raw_path, resolved_config_path, platform, "database.path")
 
 
 def _resolve_price_book_path(raw_path: str, resolved_config_path: Path, platform: str) -> str:
-    windows_absolute = PureWindowsPath(raw_path).is_absolute()
-    posix_absolute = PurePosixPath(raw_path).is_absolute()
-    if platform == "win32":
-        if windows_absolute:
-            return raw_path
-        if posix_absolute:
-            raise ConfigurationError(
-                f"{resolved_config_path}: usage.price_book_path: POSIX absolute path is not valid on Windows: {raw_path}"
-            )
-    else:
-        if posix_absolute:
-            return raw_path
-        if windows_absolute:
-            raise ConfigurationError(
-                f"{resolved_config_path}: usage.price_book_path: Windows absolute path is not valid on POSIX: {raw_path}"
-            )
-    return str((resolved_config_path.resolve().parent / raw_path).resolve())
+    return _resolve_local_path(raw_path, resolved_config_path, platform, "usage.price_book_path")
 
 
 def _expected_type(annotation: Any) -> str:

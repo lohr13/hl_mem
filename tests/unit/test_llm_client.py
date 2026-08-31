@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from hl_mem.components import create_provider_runtime, make_llm_client
-from hl_mem.errors import ProviderCallError
+from hl_mem.errors import ProviderCallError, UsageLimitExceededError
 from hl_mem.llm.types import (
     LLMMessage,
     LLMRequest,
@@ -19,6 +19,7 @@ from hl_mem.llm.types import (
 from hl_mem.observability.llm_spans import LLMSpanRecorder
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
+from tests.unit._usage_pricing_fixture import write_usage_price_book
 
 
 def _request() -> LLMRequest:
@@ -174,3 +175,61 @@ def test_client_records_normalized_error_span(tmp_path: Path) -> None:
         runtime.close()
         http_client.close()
         connection.close()
+
+
+def test_token_priced_llm_reservation_fails_closed_before_network(tmp_path: Path) -> None:
+    called = False
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, request=request, json={"choices": [{"message": {"content": "{}"}}]})
+
+    price_book = write_usage_price_book(
+        tmp_path / "prices.json",
+        capability="llm",
+        provider="openai_compatible",
+        model="model",
+        million_input_tokens=1,
+    )
+    client, runtime, http_client = _client(
+        tmp_path,
+        handle,
+        provider="openai_compatible",
+        usage_price_book_path=str(price_book),
+        usage_daily_cost_limit_microunits=1,
+    )
+    try:
+        with pytest.raises(UsageLimitExceededError, match="cost"):
+            client.complete(_request())
+        assert not called
+    finally:
+        runtime.close()
+        http_client.close()
+
+
+def test_token_priced_llm_missing_usage_settles_unknown_cost(tmp_path: Path) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={"choices": [{"message": {"content": "{}"}}]})
+
+    price_book = write_usage_price_book(
+        tmp_path / "prices.json",
+        capability="llm",
+        provider="openai_compatible",
+        model="model",
+        million_input_tokens=1,
+    )
+    client, runtime, http_client = _client(
+        tmp_path,
+        handle,
+        provider="openai_compatible",
+        usage_price_book_path=str(price_book),
+    )
+    try:
+        client.complete(_request())
+        snapshot = runtime.governor.snapshot()
+        assert snapshot["settled"]["cost_microunits"] is None
+        assert snapshot["unknown_cost_count"] == 1
+    finally:
+        runtime.close()
+        http_client.close()

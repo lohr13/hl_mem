@@ -8,8 +8,9 @@ import httpx
 import pytest
 
 from hl_mem.components import create_provider_runtime, make_reranker
-from hl_mem.errors import ProviderCallError
+from hl_mem.errors import ProviderCallError, UsageLimitExceededError
 from hl_mem.settings import Settings
+from tests.unit._usage_pricing_fixture import write_usage_price_book
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "providers" / "reranker_dashscope.json"
 
@@ -144,6 +145,69 @@ def test_reranker_auth_failure_remains_normalized_for_recall_fallback(tmp_path: 
         with pytest.raises(ProviderCallError) as captured:
             reranker.rerank("query", ["only"], 1)
         assert (captured.value.category, reranker.last_outcome) == ("auth", "error")
+    finally:
+        runtime.close()
+        http_client.close()
+
+
+def test_token_priced_reranker_reservation_fails_closed_before_network(tmp_path: Path) -> None:
+    called = False
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, request=request, json={})
+
+    price_book = write_usage_price_book(
+        tmp_path / "prices.json",
+        capability="reranker",
+        provider="dashscope",
+        model="qwen3-rerank",
+        million_input_tokens=1,
+    )
+    settings = replace(
+        _settings(tmp_path),
+        usage_price_book_path=str(price_book),
+        usage_daily_cost_limit_microunits=1,
+    )
+    http_client = httpx.Client(transport=httpx.MockTransport(handle))
+    runtime = create_provider_runtime(settings, client=http_client)
+    try:
+        reranker = make_reranker(settings, runtime=runtime)
+        assert reranker is not None
+        with pytest.raises(UsageLimitExceededError, match="cost"):
+            reranker.rerank("query", ["document"], 1)
+        assert not called
+    finally:
+        runtime.close()
+        http_client.close()
+
+
+def test_token_priced_reranker_missing_usage_settles_unknown_cost(tmp_path: Path) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=request,
+            json={"output": {"results": [{"index": 0, "relevance_score": 0.8}]}},
+        )
+
+    price_book = write_usage_price_book(
+        tmp_path / "prices.json",
+        capability="reranker",
+        provider="dashscope",
+        model="qwen3-rerank",
+        million_input_tokens=1,
+    )
+    settings = replace(_settings(tmp_path), usage_price_book_path=str(price_book))
+    http_client = httpx.Client(transport=httpx.MockTransport(handle))
+    runtime = create_provider_runtime(settings, client=http_client)
+    try:
+        reranker = make_reranker(settings, runtime=runtime)
+        assert reranker is not None
+        assert reranker.rerank("query", ["document"], 1) == [(0, 0.8)]
+        snapshot = runtime.governor.snapshot()
+        assert snapshot["settled"]["cost_microunits"] is None
+        assert snapshot["unknown_cost_count"] == 1
     finally:
         runtime.close()
         http_client.close()

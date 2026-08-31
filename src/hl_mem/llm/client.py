@@ -222,17 +222,45 @@ class LLMClient:
     def _estimate_usage(self, request: LLMRequest) -> UsageAmount:
         input_tokens = max(1, sum(len(message.content) for message in request.messages) // 2)
         output_tokens = self._max_tokens if self._max_tokens is not None else max(256, min(4096, input_tokens))
-        return UsageAmount(requests=1, input_tokens=input_tokens, output_tokens=output_tokens)
+        unknown_units = {"input_tokens"}
+        if self._max_tokens is None:
+            unknown_units.add("output_tokens")
+        return UsageAmount(
+            requests=1,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            unknown_units=frozenset(unknown_units),
+        )
 
     @staticmethod
     def _actual_usage(response: LLMResponse, estimate: UsageAmount) -> UsageAmount:
         if response.input_tokens is not None or response.output_tokens is not None:
             input_tokens = response.input_tokens if response.input_tokens is not None else estimate.input_tokens
             output_tokens = response.output_tokens if response.output_tokens is not None else estimate.output_tokens
-            return UsageAmount(requests=1, input_tokens=input_tokens, output_tokens=output_tokens)
+            unknown_units = {
+                unit
+                for unit, value in (
+                    ("input_tokens", response.input_tokens),
+                    ("output_tokens", response.output_tokens),
+                )
+                if value is None
+            }
+            return UsageAmount(
+                requests=1,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                unknown_units=frozenset(unknown_units),
+            )
         if response.usage_total_tokens > 0:
-            return UsageAmount(requests=1, input_tokens=response.usage_total_tokens)
-        return estimate
+            return UsageAmount(
+                requests=1,
+                input_tokens=response.usage_total_tokens,
+                unknown_units=frozenset({"input_tokens", "output_tokens"}),
+            )
+        return replace(
+            estimate,
+            unknown_units=frozenset({"input_tokens", "output_tokens"}),
+        )
 
     def _select_structured_mode(self, request: LLMRequest) -> StructuredOutputMode:
         spec = request.structured_output
