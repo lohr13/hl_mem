@@ -117,7 +117,7 @@ git commit -m "feat: define the Provider Plugin API"
 - Create: `src/hl_mem/plugins/builtin.py`
 - Modify: `src/hl_mem/config/models.py`
 - Modify: `src/hl_mem/config/loader.py`
-- Modify: `src/hl_mem/settings.py`
+- Reuse: `src/hl_mem/settings.py`
 - Modify: `src/hl_mem/components.py`
 - Create: `tests/unit/test_provider_discovery.py`
 - Create: `tests/unit/test_provider_registry.py`
@@ -137,7 +137,7 @@ git commit -m "feat: define the Provider Plugin API"
 - Query Expansion uses the same LLM Registry and may select an external LLM name.
 - `_split_plugin_namespace()` recursively rejects option keys containing `api_key`, `token`, `secret`, `password`, `authorization`, or `credential`, case-insensitively and across `-`/`_` variants.
 
-- [ ] **Step 1: Add failing discovery, conflict, and secret-option tests**
+- [x] **Step 1: Add failing discovery, conflict, and secret-option tests**
 
 ```python
 def test_disabled_entry_point_is_not_loaded() -> None:
@@ -154,21 +154,21 @@ def test_builtin_collision_fails_before_registry_freeze() -> None:
 
 Also assert missing enabled IDs, duplicate distribution entry points, manifest/entry-point ID mismatch, unknown plugin config, invalid provider names, and nested `plugins.vendor.api_token` fail with paths and no values.
 
-- [ ] **Step 2: Run the focused tests and observe absent discovery/registry behavior**
+- [x] **Step 2: Run the focused tests and observe absent discovery/registry behavior**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_provider_discovery.py tests/unit/test_provider_registry.py tests/unit/test_config_loader.py -q --tb=short
 ```
 
-- [ ] **Step 3: Implement metadata-first discovery and immutable Registry freeze**
+- [x] **Step 3: Implement metadata-first discovery and immutable Registry freeze**
 
 Sort candidates by `(entry_point.name, distribution_name, entry_point.value)` only for deterministic diagnostics; never use order to resolve a collision. Validate all enabled IDs and all plugin options before returning a Registry.
 
-- [ ] **Step 4: Register built-ins through the same manifest and factory records**
+- [x] **Step 4: Register built-ins through the same manifest and factory records**
 
 Factories receive a frozen `ProviderFactoryContext` containing the capability-specific typed invocation settings and one plugin's validated non-secret options. They receive no transport, database connection, or application service.
 
-- [ ] **Step 5: Run config, registry, and existing factory regressions**
+- [x] **Step 5: Run config, registry, and existing factory regressions**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_provider_discovery.py tests/unit/test_provider_registry.py tests/unit/test_config_loader.py tests/unit/test_config_module_boundaries.py tests/unit/test_llm_thinking_settings.py tests/unit/test_reranker_registry.py -q --tb=short
@@ -176,7 +176,7 @@ uv run --frozen python scripts/check_config_schema_snapshot.py --write
 uv run --frozen python scripts/check_config_schema_snapshot.py
 ```
 
-- [ ] **Step 6: Commit discovery and registration**
+- [x] **Step 6: Commit discovery and registration**
 
 ```powershell
 git add src/hl_mem/plugins src/hl_mem/config src/hl_mem/settings.py src/hl_mem/components.py tests/unit/test_provider_discovery.py tests/unit/test_provider_registry.py tests/unit/test_config_loader.py tests/unit/test_config_module_boundaries.py docs/config-schema.json

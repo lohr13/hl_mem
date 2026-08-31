@@ -193,6 +193,61 @@ def test_v1_plugin_namespace_fails_closed_for_invalid_ids(tmp_path: Path, body: 
         _load_structural_settings(path, environ={})
 
 
+@pytest.mark.parametrize("key", ("api_token", "API-KEY", "nested_secret", "authorization"))
+def test_v1_plugin_namespace_rejects_nested_secret_options(tmp_path: Path, key: str) -> None:
+    path = _write(
+        tmp_path / "plugin-secret.toml",
+        _v1(f"""\n[plugins]\nenabled = ["vendor.plugin"]\n\n[plugins.vendor.plugin.nested]\n{key} = "do-not-log"\n"""),
+    )
+
+    with pytest.raises(ConfigurationError, match=r"plugins\.vendor\.plugin\.nested") as captured:
+        _load_structural_settings(path, environ={})
+
+    assert "do-not-log" not in str(captured.value)
+
+
+def test_v1_accepts_external_provider_names_and_embedding_provider(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "external-providers.toml",
+        _v1("""
+[llm]
+provider = "vendor_llm"
+
+[embedding]
+provider = "vendor_embedding"
+
+[reranker]
+provider = "vendor_reranker"
+
+[image_describer]
+provider = "vendor_image"
+"""),
+    )
+
+    settings = _load_structural_settings(path, environ={})
+
+    assert settings.llm_provider == "vendor_llm"
+    assert settings.embedding_provider == "vendor_embedding"
+    assert settings.reranker_provider == "vendor_reranker"
+    assert settings.image_describer_provider == "vendor_image"
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        '[llm]\nprovider = "Bad Provider"\n',
+        '[embedding]\nprovider = "Bad Provider"\n',
+        '[reranker]\nprovider = "Bad Provider"\n',
+        '[image_describer]\nprovider = "Bad Provider"\n',
+    ),
+)
+def test_v1_rejects_invalid_provider_names(tmp_path: Path, body: str) -> None:
+    path = _write(tmp_path / "invalid-provider.toml", _v1(body))
+
+    with pytest.raises(ConfigurationError, match="invalid provider name"):
+        _load_structural_settings(path, environ={})
+
+
 @pytest.mark.parametrize(
     "body",
     (

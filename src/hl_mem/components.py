@@ -24,6 +24,7 @@ from hl_mem.llm.providers import (
 )
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.observability.llm_spans import LLMSpanRecorder
+from hl_mem.plugins.registry import ProviderRegistry, build_provider_registry
 from hl_mem.protocols import (
     EmbedderProtocol,
     ExtractorProtocol,
@@ -46,6 +47,12 @@ _EXTRACTOR_REGISTRY: dict[str, str] = {
 
 Reranker = DashScopeReranker
 _COMPONENT_HEALTH: dict[str, dict[str, str | None]] = {}
+
+
+def make_provider_registry(settings: Settings, *, entry_points: Any = None) -> ProviderRegistry:
+    """为一个进程边界构造冻结的 Provider Registry，不保留全局可变实例。"""
+
+    return build_provider_registry(settings, entry_points=entry_points)
 
 
 def initialize_process(settings: Settings) -> None:

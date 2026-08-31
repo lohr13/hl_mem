@@ -227,6 +227,13 @@
       "type": "string"
     },
     {
+      "default": "dashscope",
+      "path": "embedding.provider",
+      "required_in_production": false,
+      "settings_field": "embedding_provider",
+      "type": "string"
+    },
+    {
       "default": 30.0,
       "path": "embedding.read_timeout",
       "required_in_production": false,
@@ -450,9 +457,6 @@
     {
       "default": "dashscope",
       "path": "image_describer.provider",
-      "production_choices": [
-        "dashscope"
-      ],
       "required_in_production": false,
       "settings_field": "image_describer_provider",
       "type": "string"
@@ -536,11 +540,6 @@
     {
       "default": "dashscope",
       "path": "llm.provider",
-      "production_choices": [
-        "dashscope",
-        "zhipu",
-        "openai_compatible"
-      ],
       "required_in_production": true,
       "settings_field": "llm_provider",
       "type": "string"
@@ -1114,9 +1113,6 @@
     {
       "default": "dashscope",
       "path": "reranker.provider",
-      "production_choices": [
-        "dashscope"
-      ],
       "required_in_production": false,
       "settings_field": "reranker_provider",
       "type": "string"
@@ -1547,7 +1543,7 @@
   ],
   "open_namespaces": {
     "plugins.<id>": {
-      "id_pattern": "[a-z0-9][a-z0-9._-]{0,63}",
+      "id_pattern": "[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?",
       "value": "plugin-defined non-secret TOML table"
     }
   },

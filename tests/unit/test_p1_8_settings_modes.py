@@ -14,7 +14,7 @@ def test_new_feature_modes_use_literal_annotations() -> None:
     assert hints["procedure_recall_mode"] == Literal["off", "keyword", "auto"]
     assert hints["feedback_lifecycle_mode"] == Literal["off", "observe", "on"]
     assert hints["image_describer_mode"] == Literal["off", "on"]
-    assert hints["image_describer_provider"] == Literal["dashscope"]
+    assert hints["image_describer_provider"] is str
     assert hints["index_text_mode"] == Literal["legacy", "value_only", "natural", "answerable"]
 
 

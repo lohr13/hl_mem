@@ -17,7 +17,10 @@ from hl_mem.config.models import CONFIG_SCHEMA_VERSION, Settings, iter_config_fi
 from hl_mem.config.secrets import read_secret_values
 from hl_mem.errors import ConfigurationError
 
-PLUGIN_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+PLUGIN_ID_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?")
+_SECRET_OPTION_PARTS = frozenset(
+    {"api_key", "authorization", "credential", "credentials", "password", "secret", "token"}
+)
 REQUIRED_RUNTIME_PATHS = (
     "extraction.mode",
     "embedding.mode",
@@ -246,12 +249,23 @@ def _split_plugin_namespace(
         if plugin_id == "enabled":
             continue
         if PLUGIN_ID_PATTERN.fullmatch(plugin_id) is None:
-            raise ConfigurationError(f"{path}: plugins.{plugin_id}: plugin ID must match [a-z0-9][a-z0-9._-]{{0,63}}")
+            raise ConfigurationError(f"{path}: plugins.{plugin_id}: plugin ID must use 1-64 lowercase safe characters")
         if not isinstance(raw_options, dict):
             raise ConfigurationError(f"{path}: plugins.{plugin_id}: expected TOML table")
+        _reject_plugin_secrets(raw_options, path, f"plugins.{plugin_id}")
         options[plugin_id] = _freeze_toml(raw_options)
     core_data["plugins"] = core_plugins
     return core_data, types.MappingProxyType(options)
+
+
+def _reject_plugin_secrets(value: Mapping[str, Any], path: Path, key_path: str) -> None:
+    for key, child in value.items():
+        child_path = f"{key_path}.{key}"
+        normalized = key.casefold().replace("-", "_")
+        if normalized in _SECRET_OPTION_PARTS or any(part in _SECRET_OPTION_PARTS for part in normalized.split("_")):
+            raise ConfigurationError(f"{path}: {key_path}: plugin options must not contain secrets")
+        if isinstance(child, dict):
+            _reject_plugin_secrets(child, path, child_path)
 
 
 def load_settings(

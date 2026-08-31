@@ -18,18 +18,21 @@ from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.errors import ConfigurationError
 
 CONFIG_SCHEMA_VERSION: Final[Literal[1]] = 1
-_PLUGIN_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_PLUGIN_ID_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?")
+_SECRET_PLUGIN_OPTION_PARTS = frozenset(
+    {"api_key", "authorization", "credential", "credentials", "password", "secret", "token"}
+)
 
 EmbedderMode = Literal["fake", "real"]
 EmbeddingApiMode = Literal["compatible", "native"]
 EmbeddingTextType = Literal["", "document", "query"] | None
 RerankerMode = Literal["off", "fake", "on", "real"]
-RerankerProvider = Literal["dashscope"]
+RerankerProvider = str
 RelationExpansionMode = Literal["off", "on"]
 RelationDiscoveryMode = Literal["off", "audit"]
 ExtractorMode = Literal["fake", "real", "llm"]
 VerificationMode = Literal["off", "audit", "enforce"]
-LLMProvider = Literal["dashscope", "zhipu", "openai_compatible"]
+LLMProvider = str
 StructuredOutputModeName = Literal["auto", "json_object", "json_schema"]
 LLMThinkingControl = Literal["auto", "chat_template_kwargs"]
 QueryExpansionMode = Literal["off", "auto", "always"]
@@ -40,7 +43,7 @@ EchoSuppressionMode = Literal["off", "observe", "enforce"]
 FreshnessAnnotationMode = Literal["off", "observe", "render"]
 ResurrectionMode = Literal["off", "auto"]
 ImageDescriberMode = Literal["off", "on"]
-ImageDescriberProvider = Literal["dashscope"]
+ImageDescriberProvider = str
 IndexTextMode = Literal["legacy", "value_only", "natural", "answerable"]
 FtsLanguage = Literal["auto", "zh", "en"]
 ConflictAutoMode = Literal["off", "l0_only"]
@@ -78,6 +81,21 @@ def _validate_runtime_modes(settings: "Settings") -> None:
         raise ConfigurationError("conflict.auto_mode must be 'off' or 'l0_only'")
 
 
+def _find_secret_plugin_option(value: Mapping[str, Any], prefix: str) -> str | None:
+    for key, child in value.items():
+        child_path = f"{prefix}.{key}"
+        normalized = key.casefold().replace("-", "_")
+        if normalized in _SECRET_PLUGIN_OPTION_PARTS or any(
+            part in _SECRET_PLUGIN_OPTION_PARTS for part in normalized.split("_")
+        ):
+            return child_path
+        if isinstance(child, Mapping):
+            nested = _find_secret_plugin_option(child, child_path)
+            if nested is not None:
+                return nested
+    return None
+
+
 @dataclass(frozen=True)
 class DatabaseConfig:
     """Configuration owned by the database boundary."""
@@ -110,6 +128,8 @@ class ExtractionConfig:
     embedder_mode: EmbedderMode = field(default="real", metadata={"toml": "embedding.mode"})
 
     embedding_dim: int = field(default=2048, metadata={"toml": "embedding.dim"})
+
+    embedding_provider: str = field(default="dashscope", metadata={"toml": "embedding.provider"})
 
     embedding_api_key: str | None = field(
         default=None,
@@ -644,10 +664,6 @@ class Settings(
             raise ConfigurationError(
                 "recall.query_expansion_provider is required when configuring a custom query expansion line"
             )
-        if self.query_expansion_provider not in {"dashscope", "zhipu", "openai_compatible"}:
-            raise ConfigurationError(
-                "recall.query_expansion_provider must be 'dashscope', 'zhipu', or 'openai_compatible'"
-            )
         if self.query_expansion_base_url is None or not self.query_expansion_base_url.strip():
             raise ConfigurationError(
                 "recall.query_expansion_base_url is required when configuring a custom query expansion line"
@@ -670,7 +686,22 @@ class Settings(
             raise ConfigurationError("plugins.enabled must not contain duplicate plugin IDs")
         plugin_ids = (*self.plugins_enabled, *self.plugin_options)
         if any(_PLUGIN_ID_PATTERN.fullmatch(plugin_id) is None for plugin_id in plugin_ids):
-            raise ConfigurationError("plugins must use lowercase IDs matching [a-z0-9][a-z0-9._-]{0,63}")
+            raise ConfigurationError("plugins must use lowercase IDs with 1-64 safe characters")
+        for plugin_id, options in self.plugin_options.items():
+            secret_path = _find_secret_plugin_option(options, f"plugins.{plugin_id}")
+            if secret_path is not None:
+                raise ConfigurationError(f"{secret_path}: plugin options must not contain secrets")
+        provider_names = {
+            "llm.provider": self.llm_provider,
+            "embedding.provider": self.embedding_provider,
+            "reranker.provider": self.reranker_provider,
+            "image_describer.provider": self.image_describer_provider,
+        }
+        if self.query_expansion_provider is not None:
+            provider_names["recall.query_expansion_provider"] = self.query_expansion_provider
+        for provider_path, provider_name in provider_names.items():
+            if _PLUGIN_ID_PATTERN.fullmatch(provider_name) is None:
+                raise ConfigurationError(f"{provider_path} contains an invalid provider name")
         if self.max_request_body < 0:
             raise ConfigurationError("server.max_request_body must be non-negative")
         if self.fts_language not in {"auto", "zh", "en"}:
@@ -757,8 +788,6 @@ class Settings(
             raise ConfigurationError("feedback bonus days and cap must be non-negative")
         if self.feedback_min_samples <= 0:
             raise ConfigurationError("recall.feedback_min_samples must be positive")
-        if self.llm_provider not in {"dashscope", "zhipu", "openai_compatible"}:
-            raise ConfigurationError("llm.provider must be 'dashscope', 'zhipu', or 'openai_compatible'")
         if self.llm_structured_mode not in {"auto", "json_object", "json_schema"}:
             raise ConfigurationError("llm.structured_mode must be 'auto', 'json_object', or 'json_schema'")
         if not isinstance(self.enable_llm_thinking, bool):
@@ -873,8 +902,6 @@ class Settings(
             raise ConfigurationError("llm.schema_retries must be non-negative")
         if self.image_describer_mode not in {"off", "on"}:
             raise ConfigurationError("image_describer.mode must be 'off' or 'on'")
-        if self.image_describer_provider != "dashscope":
-            raise ConfigurationError("image_describer.provider must be 'dashscope'")
         if self.image_max_bytes < 1 or self.image_max_parts < 1 or self.image_describer_timeout_seconds <= 0:
             raise ConfigurationError("image limits and timeout must be positive")
         if self.image_describer_mode == "on":
@@ -973,8 +1000,6 @@ class Settings(
             raise ConfigurationError("index.text_version must not be empty")
         if self.reranker_mode not in {"off", "fake", "on", "real"}:
             raise ConfigurationError("reranker.mode must be 'off', 'fake', 'on', or 'real'")
-        if self.reranker_provider != "dashscope":
-            raise ConfigurationError("reranker.provider must be 'dashscope'")
         if self.extractor_mode not in {"fake", "real", "llm"}:
             raise ConfigurationError("extraction.mode must be 'fake', 'real', or 'llm'")
 
@@ -1035,6 +1060,7 @@ class Settings(
             "plugins_enabled": list(self.plugins_enabled),
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
+            "embedding_provider": self.embedding_provider,
             "embedding_api_mode": self.embedding_api_mode,
             "embedding_text_type": self.embedding_text_type,
             "price_target_mode": self.price_target_mode,
