@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
@@ -5,8 +7,7 @@ from hl_mem.settings import Settings
 from hl_mem.workers.worker import Worker
 
 
-def test_fake_pipeline_filter_claim_evidence_recall_and_stats(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_EXTRACTOR", "fake")
+def test_fake_pipeline_filter_claim_evidence_recall_and_stats(tmp_path) -> None:
     app = create_app(tmp_path / "pipeline.db")
     with TestClient(app) as client:
         response = client.post(
@@ -30,8 +31,7 @@ def test_fake_pipeline_filter_claim_evidence_recall_and_stats(tmp_path, monkeypa
         assert stats["jobs_pending"] == 0
 
 
-def test_filter_skips_extraction_and_job(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_EXTRACTOR", "fake")
+def test_filter_skips_extraction_and_job(tmp_path) -> None:
     app = create_app(tmp_path / "filtered.db")
     with TestClient(app) as client:
         client.post(
@@ -46,11 +46,10 @@ def test_filter_skips_extraction_and_job(tmp_path, monkeypatch) -> None:
         assert client.get("/v1/stats").json()["jobs_pending"] == 0
 
 
-def test_exhausted_budget_leaves_job_pending(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("HL_MEM_EXTRACTOR", "fake")
-    monkeypatch.setenv("HL_MEM_DAILY_TOKEN_LIMIT", "0")
+def test_exhausted_budget_leaves_job_pending(tmp_path) -> None:
     app = create_app(
-        Settings(
+        replace(
+            Settings.for_test(),
             database_path=str(tmp_path / "exhausted.db"),
             daily_token_limit=0,
         )

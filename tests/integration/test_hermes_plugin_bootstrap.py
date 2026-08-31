@@ -15,6 +15,24 @@ from hl_mem.adapters.hermes.deployment import deploy_plugin
 from hl_mem.adapters.hermes.provider import HLMemProvider
 from hl_mem.errors import ConfigurationError
 
+RUNTIME_CONFIG = """schema_version = 1
+[llm]
+provider = "openai_compatible"
+base_url = "https://llm.example.test/v1"
+model = "quality-llm"
+[extraction]
+mode = "real"
+[embedding]
+mode = "real"
+base_url = "https://embedding.example.test/v1"
+model = "quality-embedding"
+dim = 2048
+api_mode = "compatible"
+[recall]
+query_expansion_mode = "off"
+"""
+RUNTIME_SECRETS = "LLM_API_KEY=test-llm\nEMBEDDING_API_KEY=test-embedding\n"
+
 
 class _Collector:
     def __init__(self) -> None:
@@ -46,9 +64,10 @@ def test_plugin_loads_config_from_hermes_home_when_cwd_is_source_tree(
     hermes_home.mkdir()
     source_tree.mkdir()
     (hermes_home / "hl_mem.toml").write_text(
-        '[hermes]\nenabled = true\n[recall]\nquery_expansion_mode = "off"\n',
+        RUNTIME_CONFIG + "[hermes]\nenabled = true\n",
         encoding="utf-8",
     )
+    (hermes_home / ".env").write_text(RUNTIME_SECRETS, encoding="utf-8")
     (source_tree / "hl_mem.toml").write_text("[unknown]\nvalue = 1\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.chdir(source_tree)
@@ -74,9 +93,9 @@ def test_explicit_plugin_config_and_env_paths_take_priority(
     (hermes_home / "hl_mem.toml").write_text("[unknown]\nvalue = 1\n", encoding="utf-8")
     (source_tree / "hl_mem.toml").write_text("[unknown]\nvalue = 2\n", encoding="utf-8")
     config_path = explicit_dir / "hl_mem.toml"
-    config_path.write_text('[extraction]\nmode = "real"\n[recall]\nquery_expansion_mode = "off"\n', encoding="utf-8")
+    config_path.write_text(RUNTIME_CONFIG, encoding="utf-8")
     env_path = explicit_dir / ".env"
-    env_path.write_text("LLM_API_KEY=explicit-key\n", encoding="utf-8")
+    env_path.write_text("LLM_API_KEY=explicit-key\nEMBEDDING_API_KEY=explicit-embedding\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.chdir(source_tree)

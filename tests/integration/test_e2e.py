@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
@@ -17,10 +19,10 @@ def event(key: str, session: str, text: str) -> dict[str, object]:
     }
 
 
-def test_idempotency_cross_session_and_evidence(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("HL_MEM_RELATION_DISCOVERY_MODE", "audit")
+def test_idempotency_cross_session_and_evidence(tmp_path) -> None:
     app = create_app(
-        Settings(
+        replace(
+            Settings.for_test(),
             database_path=str(tmp_path / "e2e.db"),
             relation_discovery_mode="audit",
             llm_api_key="test-key",
@@ -48,7 +50,7 @@ def test_data_survives_database_restart(tmp_path) -> None:
     path = tmp_path / "restart.db"
     with TestClient(create_app(path)) as client:
         client.post("/v1/events", json=event("persist-1", "s1", "记住使用 SQLite 持久化"))
-    assert Worker(Settings(database_path=str(path))).run_once()["status"] == "succeeded"
+    assert Worker(replace(Settings.for_test(), database_path=str(path))).run_once()["status"] == "succeeded"
     with TestClient(create_app(path)) as client:
         response = client.post("/v1/recall", json={"query": "SQLite", "session_id": "s2"})
         assert response.json()["total"] == 1

@@ -49,6 +49,7 @@ class BudgetEntry:
     max_lines: int
     max_params: Mapping[str, int]
     max_callable_lines: Mapping[str, int]
+    renamed_from: str | None = None
 
 
 class _CallableVisitor(ast.NodeVisitor):
@@ -194,7 +195,12 @@ def _parse_budget(raw_budget: Any, source: str) -> dict[str, BudgetEntry]:
             max_callable_lines=_integer_mapping(
                 raw_entry.get("max_callable_lines"), f"{description}.max_callable_lines"
             ),
+            renamed_from=raw_entry.get("renamed_from"),
         )
+        if entries[path].renamed_from is not None and (
+            not isinstance(entries[path].renamed_from, str) or not entries[path].renamed_from
+        ):
+            raise ValueError(f"{description}.renamed_from must be a non-empty string")
     return entries
 
 
@@ -290,9 +296,13 @@ def _load_git_budget(ref: str) -> dict[str, BudgetEntry] | None:
 
 def _check_ratchet(current: Mapping[str, BudgetEntry], base: Mapping[str, BudgetEntry]) -> list[str]:
     violations: list[str] = []
+    moved_sources = {entry.renamed_from for entry in current.values() if entry.renamed_from is not None}
     for path in sorted(set(current) | set(base)):
         current_entry = current.get(path)
-        base_entry = base.get(path)
+        if current_entry is None and path in moved_sources:
+            continue
+        base_path = current_entry.renamed_from if current_entry is not None else None
+        base_entry = base.get(base_path or path)
         current_lines = current_entry.max_lines if current_entry else DEFAULT_MAX_LINES
         base_lines = base_entry.max_lines if base_entry else DEFAULT_MAX_LINES
         if current_lines > base_lines:

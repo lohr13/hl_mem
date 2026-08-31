@@ -497,6 +497,34 @@ def run_doctor(
     ]
 
 
+def add_doctor_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    doctor = commands.add_parser("doctor")
+    doctor.add_argument("--db", type=Path, default=argparse.SUPPRESS)
+    doctor.add_argument("--config", type=Path, default=argparse.SUPPRESS)
+    doctor.add_argument("--env-file", type=Path, default=argparse.SUPPRESS)
+    doctor.add_argument("--backup", type=Path)
+    doctor.add_argument("--manifest", type=Path)
+    doctor.add_argument("--json", action="store_true")
+
+
+def handle_doctor_command(args: argparse.Namespace) -> bool:
+    if args.command != "doctor":
+        return False
+    doctor_args: list[str] = []
+    for option, value in (
+        ("--db", args.db),
+        ("--config", args.config),
+        ("--env-file", args.env_file),
+        ("--backup", args.backup),
+        ("--manifest", args.manifest),
+    ):
+        if value is not None:
+            doctor_args.extend([option, str(value)])
+    if args.json:
+        doctor_args.append("--json")
+    raise SystemExit(main(doctor_args))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """运行 doctor 命令并打印逐项结果和汇总。"""
     parser = argparse.ArgumentParser(prog="hl-mem doctor")

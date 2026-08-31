@@ -152,6 +152,28 @@ def test_backup_cli_outputs_machine_readable_manifest(
     assert _counts(backup) == (1, 1)
 
 
+def test_backup_with_explicit_database_does_not_require_migrated_config(tmp_path: Path) -> None:
+    source = tmp_path / "source.db"
+    backup = tmp_path / "backup.db"
+    legacy_config = tmp_path / "legacy.toml"
+    legacy_config.write_text("[database]\npath='old.db'\n", encoding="utf-8")
+    _seed_database(source, event_id="source-event")
+
+    cli_module.main(
+        [
+            "--config",
+            str(legacy_config),
+            "backup",
+            str(backup),
+            "--db",
+            str(source),
+        ]
+    )
+
+    assert backup.is_file()
+    assert json.loads((tmp_path / "backup.db.manifest.json").read_text(encoding="utf-8"))["format_version"] == 2
+
+
 def test_restore_requires_confirmation_and_preserves_existing_target(tmp_path: Path) -> None:
     source = tmp_path / "source.db"
     backup = tmp_path / "backup.db"

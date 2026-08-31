@@ -160,7 +160,7 @@ def test_management_cli_forwards_structured_doctor_options(
         captured.extend(arguments)
         return 0
 
-    monkeypatch.setattr(cli_module, "doctor_main", fake_doctor_main)
+    monkeypatch.setattr(doctor_module, "main", fake_doctor_main)
     with pytest.raises(SystemExit, match="0"):
         cli_module.main(
             [
