@@ -54,7 +54,14 @@ def _iso(value: datetime | str) -> str:
 
 
 def _utc_microseconds(value: str) -> int:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError("timestamp must be valid offset-aware ISO") from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp must be valid offset-aware ISO")
+    parsed = parsed.astimezone(timezone.utc)
     delta = parsed - _EPOCH
     return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
 
@@ -334,6 +341,8 @@ class UsageLedgerReader:
                 dict[str, Any],
                 self._reservations(connection, at=current, created_until=current, usage_day=day),
             )
+        except sqlite3.Error as error:
+            raise OpsReportError("usage ledger is unreadable") from error
         finally:
             connection.close()
         budget = self._budget(totals, reservations, limits)

@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import TypedDict
 
+from hl_mem.errors import OpsReportError
 from hl_mem.monitoring.metrics import (
     DEFAULT_ADMISSION_METRICS,
     DEFAULT_PROVIDER_METRICS,
@@ -33,7 +34,11 @@ def provider_usage_snapshot(runtime: object | None) -> dict[str, object] | None:
     usage_snapshot = getattr(runtime, "usage_snapshot")()
     if usage_snapshot is None:
         return None
-    return {**usage_snapshot, "health": getattr(runtime, "usage_health_snapshot")()}
+    try:
+        health = getattr(runtime, "usage_health_snapshot")()
+    except OpsReportError:
+        health = None
+    return {**usage_snapshot, "health": health}
 
 
 class ConflictBacklogSnapshot(TypedDict):

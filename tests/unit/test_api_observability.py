@@ -5,12 +5,16 @@ from __future__ import annotations
 import inspect
 import logging
 import re
+import sqlite3
 from dataclasses import replace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.observability.usage_types import UsageAmount, UsageIdentity
+from hl_mem.plugins.contracts import ProviderCapability
 from hl_mem.settings import Settings
 
 
@@ -81,6 +85,58 @@ def test_healthz_provider_usage_preserves_detail_and_adds_daily_health(tmp_path)
         "unknown_outcomes": 0,
         "unknown_costs": 0,
     }
+
+
+@pytest.mark.parametrize("lease_expires_at", ["not-an-iso-timestamp", "2026-08-30T13:00:01.000000"])
+def test_healthz_degrades_invalid_or_naive_usage_lease_without_leaking_details(
+    tmp_path,
+    lease_expires_at: str,
+) -> None:
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(tmp_path / "health-invalid-lease.db"),
+        embedder_mode="real",
+        embedding_api_key="test-key",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        runtime = app.state.provider_runtime
+        reservation = runtime.governor.reserve(
+            UsageIdentity(
+                ProviderCapability.EMBEDDING,
+                "embed",
+                "hl-mem.builtin",
+                "openai_compatible",
+                "test-model",
+            ),
+            UsageAmount(requests=7),
+        )
+        ledger_path = runtime.governor.path
+        with sqlite3.connect(ledger_path) as connection:
+            connection.execute(
+                "UPDATE usage_reservations SET lease_expires_at=? WHERE id=?",
+                (lease_expires_at, reservation.id),
+            )
+
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    usage = response.json()["provider_usage"]
+    assert set(usage) == {
+        "date",
+        "settled",
+        "reserved",
+        "remaining",
+        "unknown_cost_count",
+        "counts_by_capability",
+        "health",
+    }
+    assert usage["health"] is None
+    assert lease_expires_at not in response.text
+    assert str(ledger_path) not in response.text
+    assert "user-defined function raised exception" not in response.text
 
 
 def test_request_lifecycle_logs_healthz_with_query_id(caplog, tmp_path) -> None:

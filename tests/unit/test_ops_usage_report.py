@@ -421,3 +421,47 @@ def test_health_summary_keeps_microsecond_lease_ordering_across_offsets(tmp_path
 
     assert summary["stale_reservations"] == 2
     assert summary["utilization"]["requests"] == Decimal("0.2")
+
+
+@pytest.mark.parametrize("lease_expires_at", ["not-an-iso-timestamp", "2026-08-30T13:00:01.000000"])
+def test_invalid_or_naive_reservation_lease_fails_closed(
+    tmp_path: Path,
+    lease_expires_at: str,
+) -> None:
+    path = tmp_path / "usage.budget.db"
+    governor = _governor(path, Clock(NOW), lease_seconds=300)
+    reservation = governor.reserve(IDENTITY, UsageAmount(requests=7))
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE usage_reservations SET lease_expires_at=? WHERE id=?",
+            (lease_expires_at, reservation.id),
+        )
+
+    with pytest.raises(OpsReportError, match="^usage ledger is unreadable$") as raised:
+        UsageLedgerReader(path).report(WINDOW, limits=UsageLimits(daily_requests=10))
+
+    assert lease_expires_at not in str(raised.value)
+
+
+@pytest.mark.parametrize("lease_expires_at", ["not-an-iso-timestamp", "2026-08-30T13:00:01.000000"])
+def test_health_summary_wraps_invalid_or_naive_reservation_lease(
+    tmp_path: Path,
+    lease_expires_at: str,
+) -> None:
+    path = tmp_path / "usage.budget.db"
+    governor = _governor(path, Clock(NOW), lease_seconds=300)
+    reservation = governor.reserve(IDENTITY, UsageAmount(requests=7))
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE usage_reservations SET lease_expires_at=? WHERE id=?",
+            (lease_expires_at, reservation.id),
+        )
+
+    with pytest.raises(OpsReportError, match="^usage ledger is unreadable$") as raised:
+        UsageLedgerReader(path).health_summary(
+            day=NOW.date(),
+            limits=UsageLimits(daily_requests=10),
+            now=NOW,
+        )
+
+    assert lease_expires_at not in str(raised.value)
