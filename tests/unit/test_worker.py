@@ -18,6 +18,7 @@ from hl_mem.storage.deferred_tasks import DeferredTaskRepository
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers import job_handlers
+from hl_mem.workers import maintenance as maintenance_module
 from hl_mem.workers.deferred import process_deferred_tasks
 from hl_mem.workers.worker import Worker
 
@@ -494,8 +495,8 @@ def test_maintenance_failure_rolls_back_and_does_not_stop_later_items(
         later_items.append("expire_claims")
         return {"expired": 0}
 
-    monkeypatch.setattr(worker_module, "cleanup_stale_temporal_claims", broken_cleanup)
-    monkeypatch.setattr(worker_module, "expire_claims", healthy_expiration)
+    monkeypatch.setattr(maintenance_module, "cleanup_stale_temporal_claims", broken_cleanup)
+    monkeypatch.setattr(maintenance_module, "expire_claims", healthy_expiration)
 
     with caplog.at_level(logging.ERROR, logger="hl_mem.workers.worker"):
         worker._run_maintenance()
@@ -538,7 +539,7 @@ def test_maintenance_reviews_pending_near_duplicates_without_llm(monkeypatch, tm
         calls.append((threshold, limit))
         return {"scanned": 0, "equivalent": 0, "deferred": 0, "missing": 0}
 
-    monkeypatch.setattr(worker_module, "review_pending_near_duplicates", review)
+    monkeypatch.setattr(maintenance_module, "review_pending_near_duplicates", review)
 
     worker._run_maintenance()
 
@@ -563,7 +564,7 @@ def test_maintenance_observes_expired_cleanup_with_bounded_settings(monkeypatch,
         calls.append((retention_days, batch_size, mode))
         return {"eligible_claim_count": 0, "deleted": 0}
 
-    monkeypatch.setattr(worker_module, "maintain_expired_claims", maintain)
+    monkeypatch.setattr(maintenance_module, "maintain_expired_claims", maintain)
 
     worker._run_maintenance()
 
@@ -604,7 +605,7 @@ def test_maintenance_passes_conflict_budget_and_records_result(monkeypatch, tmp_
         )
         return {"scanned": 2, "changed": 1, "dirty_ready": 4, "dirty_blocked": 1}
 
-    monkeypatch.setattr(worker_module, "auto_resolve_conflicts", resolve)
+    monkeypatch.setattr(maintenance_module, "auto_resolve_conflicts", resolve)
 
     worker._run_maintenance()
 
@@ -631,7 +632,7 @@ def test_maintenance_conflict_kill_switch_skips_auto_resolve(monkeypatch, tmp_pa
     def unexpected(*_args, **_kwargs):
         raise AssertionError("auto resolve must be disabled")
 
-    monkeypatch.setattr(worker_module, "auto_resolve_conflicts", unexpected)
+    monkeypatch.setattr(maintenance_module, "auto_resolve_conflicts", unexpected)
 
     worker._run_maintenance()
 

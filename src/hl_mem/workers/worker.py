@@ -9,13 +9,10 @@ import logging
 import threading
 import time
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, cast
 
 from hl_mem import components
-from hl_mem.application.conflict_repairs import repair_dangling_conflicts
-from hl_mem.application.expired_cleanup import maintain_expired_claims
 from hl_mem.application.ingest import IngestService
 from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.attributes import infer_canonical_attribute
@@ -25,40 +22,26 @@ from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.monitoring.worker import DEFAULT_WORKER_RUNTIME, WorkerRuntimeState
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
-from hl_mem.settings import Settings, is_placeholder_secret, parse_daily_cron
+from hl_mem.settings import Settings, parse_daily_cron
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
-from hl_mem.workers.auto_resolve_conflicts import auto_resolve_conflicts
 from hl_mem.workers.consolidate import (
     ConflictConsolidator,
     LLMConflictJudge,
-    enqueue_daily_consolidation,
-)
-from hl_mem.workers.decay import cleanup_stale_temporal_claims, decay_claims
-from hl_mem.workers.deduplicate import (
-    enqueue_daily_deduplication,
-    review_pending_near_duplicates,
 )
 from hl_mem.workers.deferred import (
-    cleanup_recall_side_effect_tasks,
     complete_deferred_extractions,
     handle_failed_extractions,
-    process_deferred_tasks,
     process_recall_side_effect_tasks,
 )
-from hl_mem.workers.history_cleanup import HistoryCleanupPolicy, cleanup_operational_history
-from hl_mem.workers.induce_policies import enqueue_daily_policy_induction
 from hl_mem.workers.job_handlers import dispatch_job
-from hl_mem.workers.job_handlers import purge_retained_events_for_namespaces as _purge_retained_events
-from hl_mem.workers.mental_models import DerivedMemoryMaintainer
-from hl_mem.workers.plan_fulfillment import plan_maintenance_items
-from hl_mem.workers.scheduling import (
-    enqueue_daily_job,
+from hl_mem.workers.maintenance import (
+    build_deterministic_maintenance,
+    build_semantic_schedules,
 )
 from hl_mem.workers.scheduling import lease_deadline as _lease_deadline
 from hl_mem.workers.scheduling import utc_now as _now
-from hl_mem.workers.ttl import expire_claims
 
 _UNSET = object()
 LOGGER = logging.getLogger(__name__)
@@ -123,21 +106,6 @@ class _LeaseHeartbeat:
             if renewed != len(self.job_ids):
                 self._error = "job lease ownership lost during execution"
                 return
-
-
-def enqueue_daily_reclassify(connection: Any, now: str, cron: str) -> bool:
-    """到达计划时间后幂等创建当天的重分类任务。"""
-    return (
-        enqueue_daily_job(
-            connection,
-            now,
-            {"cron": cron, "idempotency_prefix": "reclassify"},
-            "reclassify_claims",
-            {},
-            "HL_MEM_RECLASSIFY_CRON",
-        )
-        is not None
-    )
 
 
 def _process_recall_side_effects_safely(connection: Any, now: str) -> dict[str, int]:
@@ -307,196 +275,26 @@ class Worker:
     def _run_maintenance(self) -> None:
         """执行一轮 TTL、衰减、派生记忆、保留策略和定时任务维护。"""
         maintenance_now = _now()
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)).isoformat()
-        items: list[tuple[str, Callable[[], Any]]] = [
-            (
-                "process_deferred_tasks",
-                lambda: process_deferred_tasks(self.connection, now=maintenance_now),
+        items = [
+            *build_deterministic_maintenance(
+                self.connection,
+                self.settings,
+                now=maintenance_now,
+                audit=self.audit,
             ),
-            (
-                "cleanup_recall_side_effect_tasks",
-                lambda: cleanup_recall_side_effect_tasks(self.connection, before=cutoff),
-            ),
-            (
-                "cleanup_stale_temporal_claims",
-                lambda: cleanup_stale_temporal_claims(
-                    self.connection,
-                    age_days=self.settings.temporal_cleanup_age_days,
-                    expiry_days=self.settings.temporal_cleanup_expiry_days,
-                ),
-            ),
-            (
-                "expire_claims",
-                lambda: expire_claims(
-                    self.connection,
-                    feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
-                    slot_short_ttl_seconds=self.settings.slot_short_ttl_seconds,
-                ),
-            ),
-            *(
-                [
-                    (
-                        "cleanup_expired_claims",
-                        lambda: maintain_expired_claims(
-                            self.connection,
-                            now=maintenance_now,
-                            retention_days=self.settings.expired_claim_retention_days,
-                            batch_size=self.settings.expired_cleanup_batch_size,
-                            mode=self.settings.expired_cleanup_mode,
-                        ),
-                    )
-                ]
-                if self.settings.expired_cleanup_mode != "off"
-                else []
-            ),
-            (
-                "decay_claims",
-                lambda: decay_claims(
-                    self.connection,
-                    temporal_decay_days=self.settings.decay_temporal_days,
-                    temporal_archive_days=self.settings.archive_temporal_days,
-                    permanent_decay_days=self.settings.decay_permanent_days,
-                    permanent_archive_days=self.settings.archive_permanent_days,
-                    access_bonus_every=self.settings.access_bonus_every,
-                    access_bonus_days=self.settings.access_bonus_days,
-                    access_bonus_cap_days=self.settings.access_bonus_cap_days,
-                    rollout_grace_days=self.settings.decay_rollout_grace_days,
-                    min_confidence=self.settings.decay_min_confidence,
-                    feedback_lifecycle_mode=self.settings.feedback_lifecycle_mode,
-                    feedback_bonus_cap_days=self.settings.feedback_bonus_cap_days,
-                    decay_model=self.settings.decay_model,
-                    temporal_half_life_days=self.settings.decay_temporal_half_life_days,
-                    permanent_half_life_days=self.settings.decay_permanent_half_life_days,
-                    identity_half_life_days=self.settings.decay_identity_half_life_days,
-                    halflife_archive_threshold=self.settings.decay_halflife_archive_threshold,
-                    halflife_archive_grace_days=self.settings.decay_halflife_archive_grace_days,
-                ),
-            ),
-            (
-                "mark_stale_dependencies",
-                lambda: DerivedMemoryMaintainer(self.connection).mark_stale_dependencies(),
-            ),
-            (
-                "scan_derived_memories",
-                lambda: DerivedMemoryMaintainer(self.connection).scan_and_build(maintenance_now),
-            ),
-            *(
-                [
-                    (
-                        "review_pending_near_duplicates",
-                        lambda: review_pending_near_duplicates(
-                            self.connection,
-                            threshold=self.settings.dedup_threshold,
-                            limit=self.settings.dedup_scan_limit,
-                        ),
-                    )
-                ]
-                if self.settings.dedup_enabled
-                else []
-            ),
-            (
-                "repair_dangling_conflicts",
-                lambda: repair_dangling_conflicts(self.connection, source="worker"),
-            ),
-            *(
-                [
-                    (
-                        "auto_resolve_conflicts",
-                        lambda: auto_resolve_conflicts(
-                            self.connection,
-                            maintenance_now,
-                            max_cases=self.settings.conflict_maintenance_max_cases,
-                            max_elapsed_ms=self.settings.conflict_maintenance_budget_ms,
-                            failure_backoff_seconds=self.settings.conflict_failure_backoff_seconds,
-                        ),
-                    )
-                ]
-                if self.settings.conflict_auto_resolve_enabled and self.settings.conflict_auto_mode != "off"
-                else []
-            ),
-            *plan_maintenance_items(self.connection, maintenance_now, self.settings.plan_fulfillment_mode),
-            (
-                "purge_retained_events",
-                lambda: _purge_retained_events(self.connection, cutoff),
+            *build_semantic_schedules(
+                self.connection,
+                self.settings,
+                now=_now,
+                dedup_scheduled_minutes=self.dedup_scheduled_minutes,
             ),
         ]
-        if self.settings.operational_cleanup_enabled:
-            items.extend(
-                [
-                    (
-                        "cleanup_operational_history",
-                        lambda: cleanup_operational_history(
-                            self.connection,
-                            maintenance_now,
-                            HistoryCleanupPolicy(
-                                batch_size=self.settings.operational_batch_size,
-                                job_succeeded_days=self.settings.job_succeeded_days,
-                                job_dead_days=self.settings.job_dead_days,
-                                llm_span_days=self.settings.llm_span_days,
-                                dedup_pair_days=self.settings.dedup_pair_days,
-                                feedback_uninjected_days=self.settings.feedback_uninjected_days,
-                                feedback_unlabeled_days=self.settings.feedback_unlabeled_days,
-                            ),
-                        ),
-                    ),
-                    (
-                        "cleanup_audit_log",
-                        lambda: self.audit.cleanup(
-                            self.settings.audit_retention_days,
-                            batch_size=self.settings.operational_batch_size,
-                        ),
-                    ),
-                ]
-            )
-        if not is_placeholder_secret(self.settings.llm_api_key):
-            items.append(
-                (
-                    "enqueue_daily_consolidation",
-                    lambda: enqueue_daily_consolidation(
-                        self.connection,
-                        _now(),
-                        self.settings.consolidate_cron,
-                    ),
-                )
-            )
-            if self.settings.dedup_enabled:
-                items.append(
-                    (
-                        "enqueue_daily_deduplication",
-                        lambda: enqueue_daily_deduplication(
-                            self.connection,
-                            _now(),
-                            self.dedup_scheduled_minutes,
-                        ),
-                    )
-                )
-        items.extend(
-            [
-                (
-                    "enqueue_daily_policy_induction",
-                    lambda: enqueue_daily_policy_induction(
-                        self.connection,
-                        _now(),
-                        self.settings.induce_policies_cron,
-                    ),
-                ),
-                (
-                    "enqueue_daily_reclassify",
-                    lambda: enqueue_daily_reclassify(
-                        self.connection,
-                        _now(),
-                        self.settings.reclassify_cron,
-                    ),
-                ),
-            ]
-        )
-
         self.worker_runtime.begin_maintenance(maintenance_now)
         try:
-            for item, operation in items:
-                result = self._run_maintenance_item(item, operation)
+            for item in items:
+                result = self._run_maintenance_item(item.name, item.operation)
                 if (
-                    item == "auto_resolve_conflicts"
+                    item.name == "auto_resolve_conflicts"
                     and isinstance(result, dict)
                     and int(result.get("scanned", 0)) > 0
                     and self.settings.conflict_writer_yield_ms > 0
