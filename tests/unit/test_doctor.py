@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import hl_mem.cli as cli_module
 import hl_mem.doctor as doctor_module
 from hl_mem.compatibility import (
     CONTEXT_PACKET_SCHEMA_MAJOR,
@@ -29,9 +30,55 @@ from hl_mem.doctor import (
 )
 from hl_mem.errors import ConfigurationError
 from hl_mem.settings import Settings, is_placeholder_secret
+from hl_mem.storage.backup import backup_database
 from hl_mem.storage.database import Database
 
 HERMES_PLUGIN_FILES = ("__init__.py", "plugin.yaml", "contract.json")
+
+
+def _production_config(path: Path, database_name: str = "memory.db") -> Path:
+    path.write_text(
+        f"""schema_version = 1
+[database]
+path = "{database_name}"
+[llm]
+provider = "openai_compatible"
+base_url = "https://llm.example.test/v1"
+model = "quality-llm"
+[extraction]
+mode = "llm"
+[embedding]
+mode = "real"
+base_url = "https://embedding.example.test/v1"
+model = "quality-embedding"
+dim = 2048
+api_mode = "compatible"
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _disable_network_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        doctor_module,
+        "probe_model_components",
+        lambda _settings: [
+            CheckResult(CheckStatus.OK, "LLM API", "verified"),
+            CheckResult(CheckStatus.OK, "Embedding API", "verified"),
+        ],
+    )
+    monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
+    monkeypatch.setattr(
+        doctor_module,
+        "_check_hermes",
+        lambda _settings: CheckResult(CheckStatus.WARN, "Hermes 插件", "not installed"),
+    )
+    monkeypatch.setattr(
+        doctor_module,
+        "_check_plugin_compatibility",
+        lambda _settings: CheckResult(CheckStatus.WARN, "Hermes 插件兼容性", "not installed"),
+    )
 
 
 def _copy_packaged_plugin(target: Path) -> None:
@@ -69,7 +116,114 @@ def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
         env_path=env_path,
         environ={},
     )
-    assert len(results) == 12
+    assert len(results) == 15
+
+
+def test_invalid_config_is_a_structured_failure(tmp_path: Path) -> None:
+    path = tmp_path / "hl_mem.toml"
+    path.write_text("schema_version = 2\n", encoding="utf-8")
+
+    [result] = run_doctor(config_path=path, environ={})
+
+    assert (result.code, result.status) == ("config", CheckStatus.FAIL)
+    assert set(result.to_dict()) == {"code", "status", "name", "detail"}
+
+
+def test_doctor_json_output_is_machine_readable(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _production_config(tmp_path / "hl_mem.toml")
+    env = tmp_path / ".env"
+    env.write_text("LLM_API_KEY=test-llm\nEMBEDDING_API_KEY=test-embedding\n", encoding="utf-8")
+    database = Database(tmp_path / "memory.db")
+    database.open()
+    database.close()
+    _disable_network_probes(monkeypatch)
+
+    exit_code = doctor_module.main(["--config", str(config), "--env-file", str(env), "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["summary"]["failures"] == 0
+    assert all(set(item) == {"code", "status", "name", "detail"} for item in payload["checks"])
+
+
+def test_management_cli_forwards_structured_doctor_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[str] = []
+
+    def fake_doctor_main(arguments: list[str]) -> int:
+        captured.extend(arguments)
+        return 0
+
+    monkeypatch.setattr(cli_module, "doctor_main", fake_doctor_main)
+    with pytest.raises(SystemExit, match="0"):
+        cli_module.main(
+            [
+                "doctor",
+                "--json",
+                "--backup",
+                str(tmp_path / "backup.db"),
+                "--manifest",
+                str(tmp_path / "manifest.json"),
+            ]
+        )
+
+    assert captured == [
+        "--backup",
+        str(tmp_path / "backup.db"),
+        "--manifest",
+        str(tmp_path / "manifest.json"),
+        "--json",
+    ]
+
+
+def test_python_311_is_reported_as_unsupported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _production_config(tmp_path / "hl_mem.toml")
+    monkeypatch.setattr(doctor_module.sys, "version_info", (3, 11, 9))
+    _disable_network_probes(monkeypatch)
+
+    results = run_doctor(config_path=config, environ={"LLM_API_KEY": "a", "EMBEDDING_API_KEY": "b"})
+
+    python = next(item for item in results if item.code == "python")
+    assert python.status is CheckStatus.FAIL
+
+
+def test_doctor_recovery_evidence_is_optional_but_verifiable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _production_config(tmp_path / "hl_mem.toml")
+    database_path = tmp_path / "memory.db"
+    database = Database(database_path)
+    database.open()
+    database.close()
+    backup = tmp_path / "recovery.db"
+    manifest = backup_database(database_path, backup)
+    _disable_network_probes(monkeypatch)
+    environment = {"LLM_API_KEY": "a", "EMBEDDING_API_KEY": "b"}
+
+    without = run_doctor(config_path=config, environ=environment)
+    with_evidence = run_doctor(
+        config_path=config,
+        environ=environment,
+        backup_path=backup,
+        manifest_path=manifest,
+    )
+
+    recovery_without = [item for item in without if item.code == "recovery"]
+    recovery_with = [item for item in with_evidence if item.code == "recovery"]
+    assert len(recovery_without) == 1
+    assert recovery_without[0].status is CheckStatus.WARN
+    assert len(recovery_with) == 1
+    assert recovery_with[0].status is CheckStatus.OK
 
 
 def test_doctor_accepts_matching_daemon_and_wire_contracts() -> None:

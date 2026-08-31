@@ -583,6 +583,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     doctor.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--config", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--env-file", type=Path, default=argparse.SUPPRESS)
+    doctor.add_argument("--backup", type=Path)
+    doctor.add_argument("--manifest", type=Path)
+    doctor.add_argument("--json", action="store_true")
     config = commands.add_parser("config")
     config_commands = config.add_subparsers(dest="config_command", required=True)
     config_migrate = config_commands.add_parser("migrate")
@@ -656,6 +659,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             doctor_args.extend(["--config", str(args.config)])
         if args.env_file is not None:
             doctor_args.extend(["--env-file", str(args.env_file)])
+        if args.backup is not None:
+            doctor_args.extend(["--backup", str(args.backup)])
+        if args.manifest is not None:
+            doctor_args.extend(["--manifest", str(args.manifest)])
+        if args.json:
+            doctor_args.append("--json")
         raise SystemExit(doctor_main(doctor_args))
     settings = load_settings(args.config, args.env_file)
     if args.db is not None:

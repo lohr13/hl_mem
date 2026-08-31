@@ -23,10 +23,12 @@ from hl_mem.compatibility import (
     HERMES_PLUGIN_CONTRACT_MAJOR,
 )
 from hl_mem.config_loader import load_settings
+from hl_mem.errors import ConfigurationError
 from hl_mem.http_utils import retry_http
 from hl_mem.ingest.embedder import Embedder
 from hl_mem.recall.reranker import DashScopeReranker
 from hl_mem.settings import Settings, is_placeholder_secret
+from hl_mem.storage.backup import validate_upgrade_recovery_set
 
 MIGRATION_DIR = Path(__file__).resolve().parent / "storage" / "migrations"
 
@@ -46,6 +48,19 @@ class CheckResult:
     status: CheckStatus
     name: str
     detail: str
+    code: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.code:
+            object.__setattr__(self, "code", _CHECK_CODES.get(self.name, "diagnostic"))
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "status": self.status.value,
+            "name": self.name,
+            "detail": self.detail,
+        }
 
 
 @dataclass(frozen=True)
@@ -54,6 +69,26 @@ class DaemonProbe:
 
     payload: Mapping[str, Any] | None
     error: str | None
+
+
+_CHECK_CODES = {
+    "Python 版本": "python",
+    "配置结构": "config_schema",
+    "生产就绪": "runtime_readiness",
+    "数据库文件": "database",
+    "Migration 数量": "migrations",
+    "claims_fts rebuild": "fts_rebuild",
+    "恢复集": "recovery",
+    "密钥配置": "secrets",
+    "Embedding API": "embedding",
+    "LLM API": "llm",
+    "Reranker API": "reranker",
+    "服务端口": "server_port",
+    "Daemon 兼容性": "daemon_contract",
+    "Hermes 插件": "hermes_files",
+    "Hermes 插件兼容性": "hermes_contract",
+    "Context Packet wire": "context_packet",
+}
 
 
 def count_code_migrations(migration_dir: Path = MIGRATION_DIR) -> int:
@@ -410,23 +445,50 @@ def run_doctor(
     config_path: Path | None = None,
     env_path: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    backup_path: Path | None = None,
+    manifest_path: Path | None = None,
 ) -> list[CheckResult]:
     """执行全部诊断并返回结构化结果。"""
-    settings = load_settings(config_path, env_path, environ=environ, validate_runtime=False)
+    try:
+        settings = load_settings(config_path, env_path, environ=environ, validate_runtime=False)
+    except (ConfigurationError, OSError, ValueError) as error:
+        return [CheckResult(CheckStatus.FAIL, "配置结构", str(error), code="config")]
     resolved_database = database_path or Path(settings.database_path)
+    try:
+        settings.validate_runtime()
+    except ConfigurationError as error:
+        readiness = CheckResult(CheckStatus.FAIL, "生产就绪", str(error))
+    else:
+        readiness = CheckResult(CheckStatus.OK, "生产就绪", "配置与已启用组件密钥完整")
+
+    if backup_path is None and manifest_path is None:
+        recovery = CheckResult(CheckStatus.WARN, "恢复集", "未提供 backup/manifest，跳过恢复能力验证")
+    elif backup_path is None or manifest_path is None:
+        recovery = CheckResult(CheckStatus.FAIL, "恢复集", "backup 与 manifest 必须同时提供")
+    else:
+        try:
+            validate_upgrade_recovery_set(resolved_database, backup_path, manifest_path)
+        except (FileNotFoundError, OSError, ValueError) as error:
+            recovery = CheckResult(CheckStatus.FAIL, "恢复集", f"验证失败：{error}")
+        else:
+            recovery = CheckResult(CheckStatus.OK, "恢复集", "备份、manifest 与当前数据库身份匹配")
+
     daemon_probe = _probe_daemon(settings)
+    version = tuple(sys.version_info[:3])
     return [
         CheckResult(
-            CheckStatus.OK if sys.version_info >= (3, 11) else CheckStatus.FAIL,
+            CheckStatus.OK if version >= (3, 12, 0) else CheckStatus.FAIL,
             "Python 版本",
-            f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            ".".join(str(item) for item in version),
         ),
+        CheckResult(CheckStatus.OK, "配置结构", f"schema_version={settings.schema_version}"),
+        readiness,
         _check_database(resolved_database),
         _check_migrations(resolved_database),
         _check_fts_rebuild(resolved_database),
+        recovery,
         _check_secrets(settings),
-        _check_embedding(settings),
-        _check_llm(settings),
+        *probe_model_components(settings),
         _check_port(),
         _check_daemon_compatibility(daemon_probe),
         _check_hermes(settings),
@@ -441,18 +503,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--db", type=Path)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--backup", type=Path)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     results = run_doctor(
         database_path=args.db,
         config_path=args.config,
         env_path=args.env_file,
+        backup_path=args.backup,
+        manifest_path=args.manifest,
     )
-    for result in results:
-        print(f"[{result.status}] {result.name} — {result.detail}")
     passed = sum(result.status is CheckStatus.OK for result in results)
     warnings_count = sum(result.status is CheckStatus.WARN for result in results)
     failures = sum(result.status is CheckStatus.FAIL for result in results)
-    print(f"{passed} passed, {warnings_count} warnings, {failures} failures")
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "checks": [result.to_dict() for result in results],
+                    "summary": {
+                        "failures": failures,
+                        "passed": passed,
+                        "warnings": warnings_count,
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+    else:
+        for result in results:
+            print(f"[{result.status}] {result.name} — {result.detail}")
+        print(f"{passed} passed, {warnings_count} warnings, {failures} failures")
     return int(failures > 0)
 
 
