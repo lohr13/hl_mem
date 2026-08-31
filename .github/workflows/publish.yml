@@ -1,6 +1,12 @@
 name: Publish to PyPI
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable v* tag to publish
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -13,15 +19,19 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
       - name: Validate tag matches project version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           python - <<'PY'
           import os
+          import subprocess
           import tomllib
           from pathlib import Path
 
@@ -30,6 +40,14 @@ jobs:
           actual_tag = os.environ["RELEASE_TAG"]
           if actual_tag != expected_tag:
               raise SystemExit(f"release tag {actual_tag!r} does not match project version {expected_tag!r}")
+          tag_commit = subprocess.check_output(
+              ["git", "rev-list", "-n", "1", actual_tag], text=True
+          ).strip()
+          head_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if tag_commit != head_commit:
+              raise SystemExit(
+                  f"release tag {actual_tag!r} resolves to {tag_commit}, but checkout is {head_commit}"
+              )
           PY
       - name: Build wheel and source distribution
         run: |
@@ -58,6 +76,6 @@ jobs:
           path: dist/
       # 首次创建 PyPI 项目前，需在账户 Publishing 页面添加 pending publisher；项目存在后可在设置中维护。
       # 需绑定 GitHub publisher（owner lohr13、repository hl_mem、workflow publish.yml、environment pypi）。
-      - uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26 # v1.14.2
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist/
