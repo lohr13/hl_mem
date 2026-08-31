@@ -2738,7 +2738,7 @@
   },
   "info": {
     "title": "HL-Mem",
-    "version": "0.36.1"
+    "version": "1.0.0rc1"
   },
   "openapi": "3.1.0",
   "paths": {

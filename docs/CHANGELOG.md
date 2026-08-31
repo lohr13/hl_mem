@@ -1,6 +1,31 @@
 # HL-Mem 变更记录
 
-## Unreleased
+## v1.0.0rc1（2026-08-31）
+
+### Core 1.0 Phase 6：可审计发布候选
+
+- Python 3.12、3.13、3.14 的完整测试矩阵执行 80% 覆盖率门槛；公开 32 案零网络召回门禁不再因私有
+  fixture 缺失而跳过，空库、历史库和重复 migration 均进入发布证据。
+- 新增确定性的发布证据清单、`v0.36.1` 冻结 Benchmark、依赖漏洞扫描、CycloneDX SBOM、CodeQL、完整
+  Git 历史密钥扫描和全 SHA 固定的 GitHub Actions。发布门禁只验证，不自动上传 PyPI。
+- `1.0.0rc1` 必须连续观察七个 UTC 日期且没有未关闭 P0/P1，才允许提升为稳定版；SQLite 仍只支持
+  备份恢复，不提供 schema downgrade。
+
+### Core 1.0 Phase 5：职责边界与评测解耦
+
+- 提取、召回交付、HTTP 路由和 Worker 编排按真实职责拆分，保留现有公共 patch point 和业务语义；复杂度
+  预算同步收紧，不进行全仓目录重排。
+- 稳定 `hl-mem eval` 继续随 wheel 发布；v0.30 历史研究装备迁入 `benchmarks/archive/`，生产包禁止导入或
+  携带研究代码。
+
+### Core 1.0 Phase 4：显式自动化与关系治理
+
+- 语义维护任务同时在入队和执行阶段门控；升级会终止遗留 pending 语义任务并废弃 pending resurrection，
+  防止旧队列绕过新默认值。
+- LLM dedup、冲突语义审查、重分类、Query Expansion、Resurrection 和关系发现均要求显式开启；关系发现
+  只写 Proposal，批准与带 provenance 的正式落边在同一事务完成。
+- 确定性 near-copy 审查与 Observation 构建保持低成本路径；所有 Provider 调用受原子预算、审计和失败结算
+  治理。
 
 ### Core 1.0 Phase 3：受治理的 Provider 扩展与统一调用面
 
@@ -27,6 +52,15 @@
 - 删除 extraction pre-filter、独立 Tag 候选通道和关系自动落边配置；Tag soft boost 保留，关系发现仅允许
   `off`/`audit`。Query Expansion 与 Resurrection 的默认值改为 `off`。
 - 新增 `docs/config-schema.json` 公共配置快照及 CI 门禁；生产配置分为八组类型化所有权，兼容 facade 保持薄层。
+
+### Core 1.0 Phase 1：运行与兼容基础
+
+- 正式支持 Python 3.12–3.14，统一仓库换行规则；测试期 SQLite 连接所有权、`ResourceWarning` 和
+  unraisable warning 进入确定性门禁。
+- 请求体限制按实际流式字节执行并限制缓冲生命周期，无法再用缺失或虚假 `Content-Length` 绕过；历史
+  Procedure/Tool 召回遵守双时间边界。
+- 建立绑定的 1.x 兼容、弃用和恢复政策：稳定 REST、MCP、CLI、配置 schema、备份格式和 Provider API 在
+  1.x 内兼容；不可逆升级只能通过升级前恢复集回滚。
 
 ## v0.36.1（2026-08-30）
 

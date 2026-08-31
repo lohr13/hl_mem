@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parent.parent
+VERSION_PATTERN = r"\d+\.\d+\.\d+(?:rc\d+)?"
 MARKDOWN_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)\n]+)\)")
 URI_SCHEME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
@@ -93,7 +94,8 @@ def check_value(text: str, pattern: str, expected: str | int, label: str) -> lis
 def latest_changelog_entry(changelog: str) -> tuple[str, str]:
     """返回 CHANGELOG 最新版本号及其条目正文。"""
     match = re.search(
-        r"^##\s+v?(\d+\.\d+\.\d+)\b(?P<body>.*?)(?=^##\s+v?\d+\.\d+\.\d+\b|\Z)",
+        rf"^##\s+v?({VERSION_PATTERN})(?=\s|[：（(]|\Z)(?P<body>.*?)"
+        rf"(?=^##\s+v?{VERSION_PATTERN}(?=\s|[：（(]|\Z)|\Z)",
         changelog,
         re.MULTILINE | re.DOTALL,
     )
@@ -132,43 +134,43 @@ def main() -> int:
             errors.append("  Provider Plugin API docs: trust and allowlist boundaries are missing")
         errors += check_value(
             readme,
-            r"shields\.io/badge/version-v?(\d+\.\d+\.\d+)-",
+            rf"shields\.io/badge/version-v?({VERSION_PATTERN})-",
             version,
             "README badge version",
         )
         errors += check_value(
             readme_en,
-            r"The current baseline is\s+v?(\d+\.\d+\.\d+)",
+            rf"The current baseline is\s+v?({VERSION_PATTERN})",
             version,
             "README_EN body version",
         )
         errors += check_value(
             readme,
-            r"当前基线为\s*v?(\d+\.\d+\.\d+)",
+            rf"当前基线为\s*v?({VERSION_PATTERN})",
             version,
             "README body version",
         )
         errors += check_value(
             architecture,
-            r"Document baseline:\s*v?(\d+\.\d+\.\d+)",
+            rf"Document baseline:\s*v?({VERSION_PATTERN})",
             version,
             "architecture baseline",
         )
         errors += check_value(
             handoff,
-            r"\*\*版本\*\*[：:]\s*v?(\d+\.\d+\.\d+)",
+            rf"\*\*版本\*\*[：:]\s*v?({VERSION_PATTERN})",
             version,
             "HANDOFF version",
         )
         errors += check_value(
             agents_md,
-            r"\*\*当前版本[：:]\s*v?(\d+\.\d+\.\d+)",
+            rf"\*\*当前版本[：:]\s*v?({VERSION_PATTERN})",
             version,
             "AGENTS.md version",
         )
         errors += check_value(
             capability_matrix,
-            r"基线[：:]\s*v?(\d+\.\d+\.\d+)",
+            rf"基线[：:]\s*v?({VERSION_PATTERN})",
             version,
             "capability matrix baseline",
         )
@@ -197,7 +199,7 @@ def main() -> int:
             for broken in find_broken_relative_links(ROOT, tracked_markdown_files(ROOT))
         ]
 
-        headers = re.findall(r"^##\s+v?(\d+\.\d+\.\d+)\b", changelog, re.MULTILINE)
+        headers = re.findall(rf"^##\s+v?({VERSION_PATTERN})(?=\s|[：（(]|\Z)", changelog, re.MULTILINE)
         duplicates = sorted({header for header in headers if headers.count(header) > 1})
         if duplicates:
             errors.append(f"  CHANGELOG: duplicate version headers: {', '.join(duplicates)}")

@@ -1,125 +1,48 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-08-30
+> 最后更新：2026-08-31
 
 ## 当前状态
 
-- **分支**：`codex/v0360-b4-pair-rest-host-docs`
-- **版本**：v0.36.1
-- **阶段**：v0.36.1 patch 发版准备；等待用户验收后 push/tag
-- **发布状态**：B1–B3 已提交，B4 本地实施并通过门禁；未 push、未打 tag、未部署
-- **服务**：FastAPI 默认监听 8200；非敏感配置只从工作目录 `hl_mem.toml` 读取
-- **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：59 migrations（SQL 001–059），只允许向前迁移
-- **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
+- **分支**：`codex/core-1-0-phase-6`
+- **版本**：v1.0.0rc1
+- **阶段**：Core 1.0 RC 本地收口；尚未 push、打 tag、创建 GitHub Release 或发布 PyPI
+- **Schema**：59 migrations；全部不可变、仅向前执行
+- **运行时**：Python 3.12–3.14；SQLite 为权威存储
+- **发布原则**：RC 固定提交、完整证据、连续七个 UTC 日期观察、无开放 P0/P1 后才能提升稳定版
 
-## v0.36.0 发版默认
+## Core 1.0 已交付
 
-| 能力 | 默认 | 决议依据 |
-|---|---|---|
-| 冲突自动化 | `conflict.auto_mode="l0_only"` | E1 两轮 SEALED；只保留 sealed 集 37/37、危险反向 0 的 L0 |
-| Plan fulfillment | `plan.fulfillment_mode="enforce"` | E5 A 臂 143 场景满分，错误关闭 0 |
-| 价格 target | `price.target_mode="enforce"` | E6 B 臂 precision/series accuracy 1.0，coverage 0.90，跨 target supersede 0 |
-| 版本状态关链 | `state.latest_wins_mode="observe"` | ADR-0004 两份独立冻结集：800/800 exact、危险误关链 0；显式切 enforce 前保持只观察 |
-| 提取触顶软拆分 | `extraction.soft_split_enabled=false` | 实验装备已随版提供，轻量模型代际终验未触发；保留懒触发能力但不启用 |
-| 提取残余修复 | `extraction.delta_repair_enabled=false` | 仅 soft split 启用且首次二分后的子块仍触顶时懒触发；密度/gold coverage 扩展门未全过 |
-| LLM 输出上限 | `llm.max_tokens` 未设置 | 保险丝仅供部署显式选择；默认保持 provider 既有上限 |
-| Thinking 方言 | `llm.thinking_control="auto"` | 仅 llama.cpp 等端点需要显式切 `chat_template_kwargs` |
-| Zhipu 推理强度 | `llm.reasoning_effort` 未设置 | 仅显式配置时透传；20 案 `low` 终验 P50 21.7 秒 |
-| Dedup apply | `dedup.audit_only=true` | E2 SEALED_v2，不批量应用历史 equivalent |
-| Lesson signal | `extraction.lesson_signal_mode="observe"` | E3 SEALED_v2，旧 notability prompt 保持 |
-| 查询实体约束 | `recall.entity_constraint_mode="observe"` | E4 行为过但证据全为 synthetic，production-shaped coverage 不足 |
-| Hermes 人工冲突提醒 | `hermes.manual_conflict_notice=true` | 只读 health；同 session 首次或计数变化提示一次 |
+- 生产配置 schema v1、确定性 `config migrate`、Provider 中立 `init` 和只读 `doctor`；生产配置缺失或使用
+  Fake Provider 时 fail-closed。
+- 受治理的 `hl_mem.providers` Entry Point、显式 allowlist、版本协商、冲突即失败和宿主代理；内置 LLM、
+  Embedding、Reranker 与实验 Image Provider 走同一 Registry。
+- 四条 Provider 调用统一执行 HTTP、安全校验、原子预算、审计和结算；插件是可信进程内代码，不是沙箱。
+- 自动任务按确定性与语义副作用拆分；语义任务在入队和执行两端显式门控，关系发现只进入 Proposal，批准
+  后正式边保留 provenance。
+- 提取、召回交付、HTTP 路由、Worker 和评测职责已解耦；稳定评测留在 wheel，历史研究装备只留在
+  `benchmarks/archive/`。
+- 测试覆盖 Python 3.12–3.14，发布门槛 80%；SQLite 资源、请求流限制、migration、备份恢复、Provider
+  冲突、零模型调用和公开召回均有阻断门禁。
+- 发布证据聚合、CodeQL、依赖审计、SBOM、Git 历史密钥扫描及完整 SHA Action 固定已接入。
 
-生产没有内置冲突判官依赖。默认 `l0_only` 只执行确定性 L0，灰区案进入 `manual_required`；紧急停用使用
-`conflict.auto_mode="off"`。旧 `observe`/`enforce` 值及已退役的判官配置表会在启动时 fail-closed。
+## 当前发布阻断
 
-## 已交付能力
+- Git 历史中的已删除 `.env.bak_glm` 含两条真实凭据形状。测试假阳性已按精确 fingerprint 基线化；这两条
+  真实凭据不得加入忽略列表，必须先在对应 Provider 侧轮换或吊销。
+- 远端 release-gates 和 security 工作流尚未执行，证据 URL 尚未产生。
+- RC 尚未发布，因此真实的 168 小时、七个连续 UTC 日期观察尚未开始。
 
-- migration 055–056 为每次 Claim UPDATE/DELETE 增加数据库边界审计，记录 changed fields 与调用来源；migration
-  057 把遗留非终态冲突判官 job 标为 dead、清租约，并重新 dirty 其关联开放案；已终态历史不改。
-- migration 058 终止旧 pending 语义 job 并废弃旧 pending resurrection task；migration 059 为关系边增加不可变
-  provenance，并将批准提案与正式落边放进同一事务。
-- reclassify 跳过证据完备的 `report-version` 确定性探针；legacy slot backfill 注册同一组 SQLite 函数。
-- compact 提取改为 coverage-first 的 12–30 条高密度协议，schema `maxItems=30`；Zhipu 可显式透传
-  `reasoning_effort`，通用 provider 支持可选 `max_tokens` 保险丝与 llama.cpp thinking 方言。
-- 软拆分和 delta repair 仅作为默认关闭的 opt-in 能力随版提供；A/B runner 可用 `--respect-llm-config` 忠实复用
-  TOML provider/model/base URL。
-- migration 050–054 增加治理动作账本、conflict policy version、typed canonical entity/alias/relation/Claim links、
-  plan outcomes 与 slot-aware cross-subject dedup metadata；001–049 未改。
-- typed entity 保持 person/agent/device/environment/instrument/project/topic 类型隔离；无 proof、跨类型同名和多 active
-  alias 均 fail-closed，Claim 继续兼容 legacy subject/entity JSON。
-- plan fulfillment 以严格坐标匹配 complete/cancel/replace/partial，只关闭 valid time；数量用 Decimal 守恒，
-  结果/关系/governance action 同事务写入。
-- 价格序列以 `(axis, canonical_target_entity_id, snapshot_date)` 定位；qualified code 与唯一 typed alias 可 enforce，
-  target/date/币种/单位不完整继续 `uncertain`。
-- `config.version` latest-wins 只接受可信 `status_report_v1` currentness proof；默认 observe，灰区并存且不建人工队列。
-  `hl-mem report-version` 从包版本构造确定性事件与 Claim，不调用 LLM；`state.latest_wins_mode="off"` 可停止新建议和动作。
-- conflict、dedup、plan 共享输入 fingerprint、短事务 CAS、governance ledger 和有条件 rollback，但不共享领域决策枚举。
-- `l0_only` 运行时只调用 L0；L1 不进入维护路径，未命中 L0 的案稳定转 `manual_required` 且不建判官 job。
-  migration 057 一次性退役残留 job，活动 handler 注册表不再接受该 job 类型。
-- conflict review/dossier、winner 与 fingerprint v2 统一解析 supersession tip，同时展示完整 lineage；revision 与
-  fingerprint 任一 stale 均在 mutation/audit 前返回 `409`，终态 rationale 不可改写。
-- delegation REST 写面同时支持 pair `{keep_left, keep_right, coexist, reject}` 与既有 group
-  `{select_candidate, reject_candidate}`；group 破坏性撤回仍要求 `confirm_retraction=true`。中英双语宿主指南给出
-  有界轮询、CAS 重拉、默认禁 group 自动撤回和 Linux systemd/cron 接线。
-- query entity filter 只运行 observe shadow，不增加通道、boost 或 weight；lesson signal 只记录 qualifier/audit，不改变
-  importance/scope。
-- `/healthz` 提供 residual `manual_required` 计数与年龄，Hermes plugin 2.1.0 提供 session 级 no-spam 提示；
-  daemon contract 1、plugin contract major 2、Context Packet 1.1 均未改变。
+## 升级与恢复
 
-## 发版证据
-
-- v0.33.0 Zhipu coding `reasoning_effort=low` 20 案终验：P50 21.7 秒、P95 42.0 秒、15/20 案至少 12 条、
-  抽审虚构 Claim 0；密度与 gold coverage 扩展门未全过，因此软拆分/delta repair 保持默认关闭。聚合证据位于
-  `var/eval/prompt_density_ab_20260829/`。
-- 总决议：`C:/Users/Administrator/hl_mem_docs/evaluations/v030/release-decision.json`，SHA256
-  `2ab4a42fa98293a7bd80cbe171383d45cc0ae72c5a25001af80a651a4526cd97`。
-- Cross-feature replay：typed alias → price target → plan closure → dedup audit → recall observe → Hermes notice；
-  最终报告位于 `.../batch5/cross_feature/report.json`，SHA256
-  `028d0fcf7377d4840278fc293173dd955ede0a4ef6b5cd186e311bc6048307a5`。
-- Replay 在 migration 054 克隆库上通过：plan applied 1、dedup applied 0、rolled_back delta 0、跨领域 rollback 0、
-  foreign-key error 0；源 snapshot hash 前后不变。
-- 首次无效 fixture 使用 topic-only slot，typed resolver 正确拒绝其作为 subject；诊断保存在外部
-  `cross_feature/diagnostics/attempt-1-invalid-topic-slot/`，未删除也未进入 Git。
-
-实验语料、逐案报告、生产形状快照与 replay 数据都留在 `~/hl_mem_docs/evaluations/v030/`，不得加入 Git。
-
-## 回滚边界
-
-- 设置 `conflict.auto_mode="off"`、`plan.fulfillment_mode="observe"|"off"`、
-  `price.target_mode="observe"|"off"` 可停止新 mutation；已有动作必须由 governance action 在 after fingerprint
-  仍匹配时回滚，不能直接清空新列或覆盖后续 outcome。
-- `dedup.audit_only=true`、`extraction.lesson_signal_mode="observe"`、
-  `recall.entity_constraint_mode="observe"` 已是发布保守值；Hermes 提示可单独设
-  `hermes.manual_conflict_notice=false`。
-- 新增提取实验回滚到保守值时设置 `extraction.soft_split_enabled=false`、
-  `extraction.delta_repair_enabled=false`、`llm.thinking_control="auto"`；删除 `llm.max_tokens` 与
-  `llm.reasoning_effort` 可恢复 provider 自身默认。
-- schema 为 additive forward-only。旧二进制不了解新治理语义，升级后不得恢复旧二进制写库；恢复应使用升级前
-  主库 + tombstone sidecar 的一致备份。
+从 `v0.36.1` 升级前，使用新 CLI 生成并验证主库 backup、manifest 和独立 tombstone ledger，并保留旧配置与
+旧二进制。配置先运行 `hl-mem config migrate` 查看脱敏计划，再显式 `--apply`。SQLite 不支持 downgrade；
+恢复是把完整恢复集还原到独立目标并使用旧配置和旧二进制启动，不能让旧二进制打开已升级数据库。
 
 ## 下一步
 
-Windows B4 发版预检已通过：Black 检查 592 个仓库文件，isort、Ruff、mypy（236 个 source files）、docs
-consistency（v0.36.0 / SQL 001–057）、OpenAPI、MCP snapshot 与 complexity ratchet 均为绿。冲突相关 targeted
-suite 覆盖 B1–B4、migration 057 与 CLI 管理面，结果为 **154 passed**。本批按约束未跑全量 pytest；全量回归由
-GitHub Actions 验证。
-
-OpenAPI 与配置参考都在 b4 worktree 内以显式 `PYTHONPATH=src` 重生成，避免导入主仓安装路径造成假绿。本批未
-修改、删除或纳入主仓既有未跟踪文件。
-
-下一步由用户验收本分支与发版证据；验收后手动 push/tag，再进入正常三机部署。本 worktree 不 push、不打 tag、
-不修改部署机 `.env`/`hl_mem.toml`。
-
-## 当前规范
-
-- [Architecture](architecture.md)
-- [Configuration](configuration.md)
-- [REST API](api.md)
-- [Delegation 宿主集成（中文）](delegation.md)
-- [Delegation host integration (English)](delegation.en.md)
-- [Capability matrix](capability-matrix.md)
-- [Compatibility policy](compatibility.md)
-- [Changelog](CHANGELOG.md)
-- [Historical archive](archive/)
+1. 完成本地 RC 全量门禁和 wheel 安装验证。
+2. 获得明确授权后 push 分支并创建 RC tag/release；不直接发布稳定版。
+3. 轮换历史凭据，确认 Gitleaks 全历史扫描为零未审查结果。
+4. 收集连续七天证据；任何代码修复都发布新的 RC 并重新开始观察。
+5. 观察门禁通过并再次获得发布授权后，单独准备和发布 `1.0.0`。
