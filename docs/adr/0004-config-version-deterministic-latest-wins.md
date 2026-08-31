@@ -97,6 +97,9 @@ class TemporalResolution:
 metadata、日期版、git SHA、版本范围和自然语言版本均为灰区。版本 atom 只证明两端可规范化且值不相等；合法
 downgrade/rollback 必须能成为较晚 current tip。禁止字符串大小比较。
 
+`report-version` 可以如实记录当前包的严格 `MAJOR.MINOR.PATCHrcN` 预发布版本，但该值不扩展上述窄解析器，
+因此只形成可审计 observation，不获得确定性 latest-wins 自动关链权限。
+
 ### 3. `supersedes_existing` 的九项必要前置条件
 
 确定性 `supersedes_existing` 必须同时满足以下九项；任一不满足都不得自动关链：

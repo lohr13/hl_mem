@@ -94,6 +94,20 @@ def test_report_version_requires_one_active_typed_owner(tmp_path: Path) -> None:
     assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 0
 
 
+def test_report_version_accepts_release_candidate_runtime_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = Database(tmp_path / "release-candidate.db")
+    monkeypatch.setattr(hl_mem, "__version__", "1.0.0rc1")
+    try:
+        result = report_version(database.open(), namespace="default", subject="HL-Mem")
+    finally:
+        database.close()
+
+    assert result["reported_version"] == "1.0.0rc1"
+    assert result["stored"] is True
+
+
 def test_report_version_is_idempotent_per_version_and_rollback_creates_new_occurrence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

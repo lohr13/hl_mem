@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from datetime import datetime
 
@@ -8,17 +9,19 @@ from hl_mem.domain.claims.attributes import SLOT_REGISTRY
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.settings import Settings
-from hl_mem.state_latest_wins import CurrentnessProof, parse_version_atom
+from hl_mem.state_latest_wins import CurrentnessProof
 from hl_mem.storage.database import Database
 from hl_mem.storage.entities import EntityRepository
 from hl_mem.storage.events import EventRepository
+
+_RUNTIME_VERSION = re.compile(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:rc(?:0|[1-9]\d*))?")
 
 
 def report_version(db: sqlite3.Connection, *, namespace: str, subject: str) -> dict[str, object]:
     observed_at = _now()
     runtime_version = hl_mem.__version__
     parsed_time = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
-    if not namespace.strip() or parsed_time.tzinfo is None or parse_version_atom(runtime_version) is None:
+    if not namespace.strip() or parsed_time.tzinfo is None or _RUNTIME_VERSION.fullmatch(runtime_version) is None:
         raise ValueError("report-version namespace, runtime version, or timestamp is invalid")
     contract = ("status_report_v1", "hl_mem.report-version-v1", "hl_mem")
     entities = EntityRepository(db)

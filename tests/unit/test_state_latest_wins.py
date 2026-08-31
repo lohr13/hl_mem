@@ -102,7 +102,8 @@ def test_all_permission_bearing_preconditions_must_be_explicit() -> None:
 
 
 @pytest.mark.parametrize(
-    "value", ["v1.2.3-alpha", "1.2.3+7", "2026.08.26", "abc1234", ">=1.2.3", "version one", "V1.2.3", "01.2.3"]
+    "value",
+    ["v1.2.3-alpha", "1.2.3rc1", "1.2.3+7", "2026.08.26", "abc1234", ">=1.2.3", "version one", "V1.2.3", "01.2.3"],
 )
 def test_narrow_version_parser_rejects_non_frozen_forms(value: str) -> None:
     assert parse_version_atom(value) is None
