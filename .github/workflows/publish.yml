@@ -12,8 +12,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
       - name: Validate tag matches project version
@@ -37,7 +37,7 @@ jobs:
           python -m build
       - name: Verify wheel contents
         run: python scripts/check_wheel_contents.py --reject-v030 dist/*.whl
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-package-distributions
           path: dist/
@@ -52,12 +52,12 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: python-package-distributions
           path: dist/
       # 首次创建 PyPI 项目前，需在账户 Publishing 页面添加 pending publisher；项目存在后可在设置中维护。
       # 需绑定 GitHub publisher（owner lohr13、repository hl_mem、workflow publish.yml、environment pypi）。
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26 # v1.14.2
         with:
           packages-dir: dist/

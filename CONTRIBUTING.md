@@ -58,6 +58,20 @@ uv run --frozen python -m pytest tests/release/test_migration_release_gate.py te
 uv run --frozen --extra sqlite-vec python -W error::ResourceWarning -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term --cov-fail-under=80
 ```
 
+发布候选还必须通过 `Core 1.0 release gates` 工作流。它保留 Python 3.12–3.14、迁移、备份恢复、Provider
+冲突、请求流限制、零模型调用、公开召回、依赖审计、SBOM 和干净 wheel 安装的可校验证据。该工作流不发布
+PyPI 包。
+
+供应链检查可在本地运行：
+
+```powershell
+uv run --frozen python scripts/check_actions_pinned.py
+uv lock --check
+```
+
+所有第三方 GitHub Actions 必须固定到完整提交 SHA，并在行尾保留对应版本注释。依赖漏洞或疑似密钥泄漏
+不得通过忽略失败来绕过；需要例外时必须记录可审计的风险判断和失效日期。
+
 ## 代码与数据规则
 
 - Python 使用完整类型标注；Black 行宽 120，isort 使用 Black profile。

@@ -1,0 +1,88 @@
+name: Security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: github/codeql-action/init@a35ac6e6798d72df5475948b28efb89edc2e19ca # v4.37.9
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@a35ac6e6798d72df5475948b28efb89edc2e19ca # v4.37.9
+
+  dependencies:
+    name: Dependency audit and SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
+      - name: Export locked runtime dependencies
+        run: |
+          mkdir -p security-artifacts
+          uv export --frozen --all-extras --no-dev --no-emit-project --no-hashes \
+            --format requirements.txt --output-file security-artifacts/requirements.txt
+      - name: Audit dependencies
+        id: audit
+        continue-on-error: true
+        run: >-
+          uvx --from pip-audit==2.10.1 pip-audit --strict
+          --requirement security-artifacts/requirements.txt --format json
+          --output security-artifacts/pip-audit.json
+      - name: Generate validated CycloneDX SBOM
+        if: always()
+        run: >-
+          uvx --from cyclonedx-bom==7.3.1 cyclonedx-py requirements security-artifacts/requirements.txt
+          --pyproject pyproject.toml --mc-type application --spec-version 1.6
+          --output-reproducible --output-format JSON --output-file security-artifacts/sbom.cdx.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: security-supply-chain-${{ github.sha }}
+          path: security-artifacts/
+          if-no-files-found: warn
+      - name: Enforce dependency audit result
+        if: always()
+        env:
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          test "$AUDIT_OUTCOME" = "success"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("security-artifacts/pip-audit.json").read_text(encoding="utf-8"))
+          vulnerabilities = [vulnerability for dependency in payload for vulnerability in dependency.get("vulns", [])]
+          if vulnerabilities:
+              raise SystemExit(f"pip-audit reported {len(vulnerabilities)} known vulnerabilities")
+          print(f"pip-audit passed for {len(payload)} dependencies")
+          PY
+
+  secrets:
+    name: Secret history scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,9 @@
+# Synthetic API-like values used by deterministic tests.
+818fd1bb2180cf217550f1e7782ff1810abf1e2e:tests/unit/test_migration_058_disable_v1_semantic_jobs.py:generic-api-key:52
+5d7b371170b06bd043872fbf6abc49d4e985afd6:tests/integration/test_hermes_plugin_bootstrap.py:generic-api-key:34
+f778fd70e986517f4c04931206e942d9a6533543:tests/unit/test_temporal_linking.py:generic-api-key:264
+f778fd70e986517f4c04931206e942d9a6533543:tests/unit/test_temporal_linking.py:generic-api-key:296
+f778fd70e986517f4c04931206e942d9a6533543:tests/unit/test_temporal_linking.py:generic-api-key:323
+aaf44408c7df5a34110562deb87a79d384a6eee2:tests/unit/test_longmemeval_batching.py:generic-api-key:600
+43bb3ae0a64934eeb528fa18c3fcdbe05fb3af50:tests/unit/test_longmemeval_batching.py:generic-api-key:559
+397831b4493f1c4bc56c25e042f0a8cc33a444fa:tests/unit/test_extraction_batch_a.py:generic-api-key:74

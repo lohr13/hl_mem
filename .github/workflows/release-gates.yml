@@ -18,11 +18,12 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
+      - run: python scripts/check_actions_pinned.py
       - run: uv sync --frozen --extra sqlite-vec
       - name: Run authoritative suite
         env:
@@ -32,7 +33,7 @@ jobs:
           uv run --frozen python -W error::ResourceWarning -m pytest tests/ -q --tb=short \
             --cov=hl_mem --cov-report=term-missing --cov-fail-under=80 \
             --junitxml=evidence/python-${{ matrix.python-version }}.xml
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: release-python-${{ matrix.python-version }}
@@ -43,8 +44,8 @@ jobs:
     name: Operational release contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
@@ -84,7 +85,7 @@ jobs:
           .release-venv/bin/hl-mem config migrate --help
           .release-venv/bin/hl-mem doctor --help
           python -c "from pathlib import Path; Path('evidence/wheel-install.xml').write_text('<testsuite name=\"wheel-install\" tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\"/>', encoding='utf-8')"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: release-operational
@@ -95,8 +96,8 @@ jobs:
     name: Dependency audit and SBOM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
@@ -114,7 +115,7 @@ jobs:
           uvx --from cyclonedx-bom==7.3.1 cyclonedx-py requirements evidence/requirements.txt
           --pyproject pyproject.toml --mc-type application --spec-version 1.6
           --output-reproducible --output-format JSON --output-file evidence/sbom.cdx.json
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: release-supply-chain
@@ -127,11 +128,11 @@ jobs:
     needs: [python, operational, supply-chain]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
           path: evidence
@@ -159,7 +160,7 @@ jobs:
             --json pip-audit=evidence/pip-audit.json \
             --file sbom=evidence/sbom.cdx.json \
             --junit wheel-install=evidence/wheel-install.xml
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: release-evidence
