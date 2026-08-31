@@ -111,6 +111,28 @@ def _set_default(
     changes.append(MigrationChange(f"{table_name}.{key}", None, value, reason))
 
 
+def _set_automation_defaults(
+    dedup: dict[str, Any] | None,
+    worker: dict[str, Any] | None,
+    changes: list[MigrationChange],
+) -> None:
+    defaults = (
+        (dedup, "dedup", "llm_enabled", "make paid semantic deduplication opt-in"),
+        (worker, "worker", "semantic_conflict_consolidation_enabled", "make paid semantic conflict review opt-in"),
+        (worker, "worker", "policy_induction_enabled", "make automatic policy publication opt-in"),
+        (worker, "worker", "reclassify_enabled", "make paid semantic reclassification opt-in"),
+    )
+    for table, table_name, key, reason in defaults:
+        _set_default(
+            table,
+            table_name=table_name,
+            key=key,
+            value=False,
+            reason=reason,
+            changes=changes,
+        )
+
+
 def _candidate_settings(
     data: Mapping[str, Any],
     *,
@@ -222,38 +244,7 @@ def plan_config_migration(
             reason="require review before relation proposals affect memory",
             changes=changes,
         )
-        _set_default(
-            dedup,
-            table_name="dedup",
-            key="llm_enabled",
-            value=False,
-            reason="make paid semantic deduplication opt-in",
-            changes=changes,
-        )
-        _set_default(
-            worker,
-            table_name="worker",
-            key="semantic_conflict_consolidation_enabled",
-            value=False,
-            reason="make paid semantic conflict review opt-in",
-            changes=changes,
-        )
-        _set_default(
-            worker,
-            table_name="worker",
-            key="policy_induction_enabled",
-            value=False,
-            reason="make automatic policy publication opt-in",
-            changes=changes,
-        )
-        _set_default(
-            worker,
-            table_name="worker",
-            key="reclassify_enabled",
-            value=False,
-            reason="make paid semantic reclassification opt-in",
-            changes=changes,
-        )
+        _set_automation_defaults(dedup, worker, changes)
         if plugins is not None and "enabled" not in plugins:
             plugins["enabled"] = []
             changes.append(MigrationChange("plugins.enabled", None, (), "declare an explicit plugin allowlist"))
