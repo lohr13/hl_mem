@@ -203,6 +203,17 @@ def test_zero_rate_for_an_unknown_unit_does_not_hide_known_cost(tmp_path: Path) 
     assert book.price(_identity(), amount, phase="reserve").cost_microunits == 9
 
 
+def test_scaling_unknown_usage_to_zero_returns_exact_additive_identity() -> None:
+    amount = UsageAmount(
+        requests=1,
+        input_tokens=7,
+        cost_microunits=None,
+        unknown_units=frozenset({"input_tokens", "output_tokens"}),
+    )
+
+    assert amount.scale(0) == UsageAmount(cost_microunits=0)
+
+
 def test_duplicate_exact_rule_identity_is_rejected(tmp_path: Path) -> None:
     path = _write_book(
         tmp_path / "duplicate.json",

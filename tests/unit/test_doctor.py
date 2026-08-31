@@ -502,11 +502,13 @@ def test_run_doctor_loads_one_price_book_and_shares_one_runtime(
 
     runtimes: list[object] = []
     runtime_fingerprints: list[object] = []
+    runtime_clients: list[object] = []
 
     def checked(_settings: Settings, runtime=None) -> CheckResult:
         assert runtime is not None
         runtimes.append(runtime)
         runtime_fingerprints.append(runtime.usage_snapshot()["price_book_fingerprint"])
+        runtime_clients.append(runtime._client)
         return CheckResult(CheckStatus.OK, "model", "ok")
 
     monkeypatch.setattr(UsagePriceBook, "load", classmethod(counting_load))
@@ -524,6 +526,107 @@ def test_run_doctor_loads_one_price_book_and_shares_one_runtime(
     assert len(runtimes) == 2 and runtimes[0] is runtimes[1]
     assert len(set(runtime_fingerprints)) == 1
     assert runtime_fingerprints[0] in price_check.detail
+    assert len(set(map(id, runtime_clients))) == 1
+    assert runtime_clients[0].is_closed
+
+
+def test_run_doctor_invalid_price_book_skips_all_model_probes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _production_config(tmp_path / "config.toml")
+    missing = tmp_path / "missing-prices.json"
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write(f'\n[usage]\nprice_book_path = "{missing.as_posix()}"\n')
+    runtime_calls = 0
+    daemon_calls = 0
+    port_calls = 0
+
+    def unexpected_runtime(*_args: object, **_kwargs: object) -> object:
+        nonlocal runtime_calls
+        runtime_calls += 1
+        raise AssertionError("invalid price book reached model runtime construction")
+
+    def unexpected_daemon(_settings: Settings) -> DaemonProbe:
+        nonlocal daemon_calls
+        daemon_calls += 1
+        return DaemonProbe(None, "invalid price book reached daemon network probe")
+
+    def unexpected_port() -> CheckResult:
+        nonlocal port_calls
+        port_calls += 1
+        return CheckResult(CheckStatus.WARN, "服务端口", "invalid price book reached port probe")
+
+    monkeypatch.setattr(doctor_module.components, "create_provider_runtime", unexpected_runtime)
+    monkeypatch.setattr(doctor_module, "_probe_daemon", unexpected_daemon)
+    monkeypatch.setattr(doctor_module, "_check_port", unexpected_port)
+
+    results = run_doctor(
+        config_path=config,
+        environ={"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"},
+    )
+
+    price_check = next(result for result in results if result.code == "usage_price_book")
+    assert runtime_calls == 0
+    assert daemon_calls == 0
+    assert port_calls == 0
+    assert price_check.status is CheckStatus.FAIL
+    assert str(missing) not in price_check.detail
+
+
+def test_run_doctor_runtime_factory_failure_becomes_safe_model_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _production_config(tmp_path / "config.toml")
+    secret_detail = str(tmp_path / "private-plugin.py")
+
+    def fail_runtime(*_args: object, **_kwargs: object) -> object:
+        raise ConfigurationError(secret_detail)
+
+    monkeypatch.setattr(doctor_module.components, "create_provider_runtime", fail_runtime)
+    monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
+
+    results = run_doctor(
+        config_path=config,
+        environ={"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"},
+    )
+
+    model_failure = next(result for result in results if result.code == "model_runtime")
+    assert model_failure.status is CheckStatus.FAIL
+    assert model_failure.detail == "initialization failed"
+    assert secret_detail not in repr(results)
+
+
+@pytest.mark.parametrize("error_type", (OSError, RuntimeError))
+def test_run_doctor_plugin_adapter_failure_becomes_safe_model_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    config = _production_config(tmp_path / "config.toml")
+    secret_detail = str(tmp_path / "private-adapter.py")
+
+    def fail_adapter(*_args: object, **_kwargs: object) -> object:
+        raise error_type(secret_detail)
+
+    monkeypatch.setattr(doctor_module.components, "make_llm_client", fail_adapter)
+    monkeypatch.setattr(
+        doctor_module,
+        "_check_embedding",
+        lambda _settings, _runtime=None: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
+    )
+    monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
+
+    results = run_doctor(
+        config_path=config,
+        environ={"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"},
+    )
+
+    llm_failure = next(result for result in results if result.code == "llm")
+    assert llm_failure.status is CheckStatus.FAIL
+    assert llm_failure.detail == "minimal request failed"
+    assert secret_detail not in repr(results)
 
 
 def test_migration_count_matches_database(tmp_path: Path) -> None:

@@ -285,8 +285,8 @@ def _check_embedding(settings: Settings, runtime: ProviderRuntime | None = None)
         embedder = components.make_embedder(settings, runtime=runtime)
         embedder.embed_one("ping")
         return CheckResult(CheckStatus.OK, "Embedding API", "请求成功")
-    except (RuntimeError, ValueError, KeyError, TypeError) as error:
-        return CheckResult(CheckStatus.FAIL, "Embedding API", f"最小请求失败：{error}")
+    except Exception:
+        return CheckResult(CheckStatus.FAIL, "Embedding API", "minimal request failed")
     finally:
         close = getattr(embedder, "close", None)
         if callable(close):
@@ -301,8 +301,8 @@ def _check_llm(settings: Settings, runtime: ProviderRuntime | None = None) -> Ch
         client = components.make_llm_client(settings, operation="doctor", runtime=runtime)
         client.complete(LLMRequest([LLMMessage("user", "ping")]), timeout_seconds=settings.llm_timeout)
         return CheckResult(CheckStatus.OK, "LLM API", "请求成功")
-    except (RuntimeError, ValueError, KeyError, TypeError) as error:
-        return CheckResult(CheckStatus.FAIL, "LLM API", f"最小请求失败：{error}")
+    except Exception:
+        return CheckResult(CheckStatus.FAIL, "LLM API", "minimal request failed")
     finally:
         close = getattr(client, "close", None)
         if callable(close):
@@ -320,8 +320,8 @@ def _check_reranker(settings: Settings, runtime: ProviderRuntime | None = None) 
         if reranker is None:
             return CheckResult(CheckStatus.FAIL, "Reranker API", "reranker 未启用")
         results = reranker.rerank("ping", ["ping"], top_n=1)
-    except (httpx.HTTPError, RuntimeError, ValueError, KeyError, TypeError) as error:
-        return CheckResult(CheckStatus.FAIL, "Reranker API", f"最小请求失败：{error}")
+    except Exception:
+        return CheckResult(CheckStatus.FAIL, "Reranker API", "minimal request failed")
     finally:
         close = getattr(reranker, "close", None)
         if callable(close):
@@ -343,13 +343,23 @@ def probe_model_components(
             database_path=str(Path(temporary) / "probe.db"),
             llm_max_tokens=1,
         )
-        if estimator is _ESTIMATOR_UNSET:
-            runtime = components.create_provider_runtime(probe_settings)
-        else:
-            runtime = components.create_provider_runtime(
-                probe_settings,
-                _validated_estimator=cast(UsageCostEstimator | None, estimator),
-            )
+        try:
+            if estimator is _ESTIMATOR_UNSET:
+                runtime = components.create_provider_runtime(probe_settings)
+            else:
+                runtime = components.create_provider_runtime(
+                    probe_settings,
+                    _validated_estimator=cast(UsageCostEstimator | None, estimator),
+                )
+        except Exception:
+            return [
+                CheckResult(
+                    CheckStatus.FAIL,
+                    "Provider model runtime",
+                    "initialization failed",
+                    code="model_runtime",
+                )
+            ]
         try:
             results = [_check_llm(probe_settings, runtime), _check_embedding(probe_settings, runtime)]
             if probe_settings.reranker_mode in {"on", "real"}:
@@ -550,8 +560,20 @@ def run_doctor(
         else:
             recovery = CheckResult(CheckStatus.OK, "恢复集", "备份、manifest 与当前数据库身份匹配")
 
-    daemon_probe = _probe_daemon(settings)
     price_book_check, price_book = _validated_usage_price_book(settings)
+    if price_book_check is not None and price_book_check.status is CheckStatus.FAIL:
+        daemon_probe = DaemonProbe(None, "skipped because usage price book validation failed")
+        model_checks: list[CheckResult] = []
+        port_check = CheckResult(
+            CheckStatus.WARN,
+            "服务端口",
+            "skipped because usage price book validation failed",
+            code="server_port",
+        )
+    else:
+        daemon_probe = _probe_daemon(settings)
+        model_checks = probe_model_components(settings, estimator=price_book)
+        port_check = _check_port()
     version = tuple(sys.version_info[:3])
     return [
         CheckResult(
@@ -569,8 +591,8 @@ def run_doctor(
         *_check_provider_plugins(settings),
         _check_usage_ledger(settings),
         *((price_book_check,) if price_book_check is not None else ()),
-        *probe_model_components(settings, estimator=price_book),
-        _check_port(),
+        *model_checks,
+        port_check,
         _check_daemon_compatibility(daemon_probe),
         _check_hermes(settings),
         _check_plugin_compatibility(settings),

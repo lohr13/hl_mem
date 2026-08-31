@@ -322,6 +322,60 @@ def test_estimator_prices_reservation_and_settles_actual_usage(tmp_path) -> None
     assert detail["price_book_fingerprint"] == governed.estimator.fingerprint
 
 
+def test_single_attempt_measured_actual_replaces_unknown_reserve_cost(tmp_path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    governed, governor, _metrics, _audit = _governed(tmp_path, handler, estimator=_price_book(tmp_path))
+    unsafe_estimate = UsageAmount(
+        requests=1,
+        input_tokens=1,
+        unknown_units=frozenset({"input_tokens"}),
+    )
+
+    governed.execute(
+        _request(),
+        unsafe_estimate,
+        lambda _response: ("ok", UsageAmount(requests=1, input_tokens=2)),
+        max_attempts=1,
+    )
+
+    snapshot = governor.snapshot()
+    assert snapshot["settled"]["cost_microunits"] == 11
+    assert snapshot["unknown_cost_count"] == 0
+
+
+def test_retry_keeps_failed_attempt_unknown_when_success_usage_is_measured(tmp_path) -> None:
+    sends = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sends
+        sends += 1
+        if sends == 1:
+            raise httpx.ConnectTimeout("slow", request=request)
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    governed, governor, _metrics, _audit = _governed(tmp_path, handler, estimator=_price_book(tmp_path))
+    unsafe_estimate = UsageAmount(
+        requests=1,
+        input_tokens=1,
+        unknown_units=frozenset({"input_tokens"}),
+    )
+
+    governed.execute(
+        _request(),
+        unsafe_estimate,
+        lambda _response: ("ok", UsageAmount(requests=1, input_tokens=2)),
+        max_attempts=2,
+    )
+
+    snapshot = governor.snapshot()
+    assert snapshot["settled"]["requests"] == 2
+    assert snapshot["settled"]["input_tokens"] == 3
+    assert snapshot["settled"]["cost_microunits"] is None
+    assert snapshot["unknown_cost_count"] == 1
+
+
 def test_retry_pricing_ceilings_are_applied_per_attempt(tmp_path) -> None:
     sends = 0
 

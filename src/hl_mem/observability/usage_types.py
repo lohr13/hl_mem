@@ -71,6 +71,8 @@ class UsageAmount:
 
     def scale(self, factor: int) -> UsageAmount:
         _require_integer("factor", factor, non_negative=True)
+        if factor == 0:
+            return UsageAmount(cost_microunits=0)
         return UsageAmount(
             requests=self.requests * factor,
             input_tokens=self.input_tokens * factor,
