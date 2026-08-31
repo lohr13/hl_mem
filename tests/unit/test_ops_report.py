@@ -208,6 +208,97 @@ def test_report_warns_for_expired_reservations_and_near_budget(tmp_path: Path) -
     assert {"budget_near_limit", "expired_reservation", "worker_unknown"}.issubset(report["warnings"])
 
 
+def test_report_normalizes_offset_timestamps_before_job_health_aggregation(tmp_path: Path) -> None:
+    connection, database_path = _seeded_connection(tmp_path)
+    plus_two = timezone(timedelta(hours=2))
+    minus_two = timezone(-timedelta(hours=2))
+    plus_one = timezone(timedelta(hours=1))
+    minus_one = timezone(-timedelta(hours=1))
+    try:
+        _insert_job(
+            connection,
+            job_id="oldest-pending",
+            job_type="maintenance",
+            status="pending",
+            created_at=datetime(2026, 8, 31, 11, 0, tzinfo=plus_two),
+        )
+        _insert_job(
+            connection,
+            job_id="newer-pending",
+            job_type="maintenance",
+            status="pending",
+            created_at=datetime(2026, 8, 31, 10, 0, tzinfo=minus_two),
+        )
+        _insert_job(
+            connection,
+            job_id="expired-running",
+            job_type="maintenance",
+            status="running",
+            created_at=NOW,
+            leased_until=datetime(2026, 8, 31, 12, 30, tzinfo=plus_one),
+            heartbeat_at=datetime(2026, 8, 31, 12, 50, tzinfo=plus_one),
+        )
+        _insert_job(
+            connection,
+            job_id="latest-heartbeat",
+            job_type="maintenance",
+            status="running",
+            created_at=NOW,
+            heartbeat_at=datetime(2026, 8, 31, 10, 59, 59, tzinfo=minus_one),
+        )
+
+        report = build_ops_report(connection, **_inputs(tmp_path, database_path))
+    finally:
+        connection.close()
+
+    assert report["jobs"]["oldest_pending_age_seconds"] == 3 * 60 * 60
+    assert report["jobs"]["expired_running_leases"] == 1
+    assert report["worker"] == {
+        "state": "active",
+        "source": "job_heartbeat",
+        "heartbeat_at": "2026-08-31T11:59:59+00:00",
+    }
+    assert "stale_running_jobs" in report["warnings"]
+    assert "worker_inactive" not in report["warnings"]
+
+
+def test_report_accepts_query_only_readonly_connection_without_writes(tmp_path: Path) -> None:
+    writer, database_path = _seeded_connection(tmp_path)
+    writer.close()
+    before = (database_path.stat().st_size, database_path.stat().st_mtime_ns)
+    readonly = sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True)
+    readonly.row_factory = sqlite3.Row
+    readonly.execute("PRAGMA query_only=ON")
+    try:
+        report = build_ops_report(readonly, **_inputs(tmp_path, database_path))
+    finally:
+        readonly.close()
+
+    assert report["jobs"]["counts_by_status"] == {
+        "pending": 0,
+        "running": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "dead": 0,
+    }
+    assert (database_path.stat().st_size, database_path.stat().st_mtime_ns) == before
+
+
+def test_report_keeps_worker_active_at_exactly_two_poll_intervals(tmp_path: Path) -> None:
+    connection, database_path = _seeded_connection(tmp_path)
+    try:
+        report = build_ops_report(
+            connection,
+            **_inputs(tmp_path, database_path),
+            worker_runtime={"heartbeat_at": (NOW - timedelta(seconds=4)).isoformat()},
+        )
+    finally:
+        connection.close()
+
+    assert report["worker"]["state"] == "active"
+    assert "worker_inactive" not in report["warnings"]
+
+
 def test_report_rejects_missing_main_database(tmp_path: Path) -> None:
     connection = sqlite3.connect(":memory:")
     try:

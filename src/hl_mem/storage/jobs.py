@@ -15,7 +15,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _report_timestamp(value: object) -> str | None:
+def _report_datetime(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
@@ -24,14 +24,12 @@ def _report_timestamp(value: object) -> str | None:
         return None
     if parsed.tzinfo is None:
         return None
-    return parsed.astimezone(timezone.utc).isoformat()
+    return parsed.astimezone(timezone.utc)
 
 
-def _report_age(value: object, now: datetime) -> int | None:
-    timestamp = _report_timestamp(value)
-    if timestamp is None:
-        return None
-    return max(0, int((now.astimezone(timezone.utc) - datetime.fromisoformat(timestamp)).total_seconds()))
+def _report_timestamp(value: object) -> str | None:
+    parsed = _report_datetime(value)
+    return None if parsed is None else parsed.isoformat()
 
 
 def _safe_failure_category(value: object) -> str | None:
@@ -233,7 +231,7 @@ class JobRepository:
         """Return content-free job and recall-side-effect health aggregates."""
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
-        current = now.astimezone(timezone.utc).isoformat()
+        current = now.astimezone(timezone.utc)
         statuses = {name: 0 for name in ("pending", "running", "succeeded", "failed", "dead")}
         for row in self.connection.execute("SELECT status,COUNT(*) AS count FROM jobs GROUP BY status").fetchall():
             status = str(row["status"])
@@ -245,27 +243,39 @@ class JobRepository:
                 "SELECT job_type,COUNT(*) AS count FROM jobs GROUP BY job_type ORDER BY job_type"
             ).fetchall()
         }
-        pending = self.connection.execute(
-            "SELECT MIN(created_at) AS oldest FROM jobs WHERE status='pending'"
-        ).fetchone()
-        oldest_pending_age_seconds = _report_age(pending["oldest"] if pending is not None else None, now)
-        expired_running_leases = int(
-            self.connection.execute(
-                "SELECT COUNT(*) FROM jobs WHERE status='running' AND leased_until IS NOT NULL AND leased_until<=?",
-                (current,),
-            ).fetchone()[0]
+        pending_timestamps = [
+            parsed
+            for row in self.connection.execute("SELECT created_at FROM jobs WHERE status='pending'").fetchall()
+            if (parsed := _report_datetime(row["created_at"])) is not None
+        ]
+        oldest_pending_age_seconds = (
+            max(0, int((current - min(pending_timestamps)).total_seconds())) if pending_timestamps else None
         )
-        heartbeat = self.connection.execute(
-            "SELECT MAX(heartbeat_at) FROM jobs WHERE heartbeat_at IS NOT NULL"
-        ).fetchone()[0]
-        last_failure = self.connection.execute(
-            "SELECT last_error FROM jobs WHERE status IN ('failed','dead') "
-            "AND updated_at>=? AND updated_at<=? ORDER BY updated_at DESC,id DESC LIMIT 1",
-            (
-                window.since.astimezone(timezone.utc).isoformat(),
-                window.until.astimezone(timezone.utc).isoformat(),
-            ),
-        ).fetchone()
+        expired_running_leases = sum(
+            1
+            for row in self.connection.execute(
+                "SELECT leased_until FROM jobs WHERE status='running' AND leased_until IS NOT NULL"
+            ).fetchall()
+            if (lease_until := _report_datetime(row["leased_until"])) is not None and lease_until <= current
+        )
+        heartbeat_timestamps = [
+            parsed
+            for row in self.connection.execute(
+                "SELECT heartbeat_at FROM jobs WHERE heartbeat_at IS NOT NULL"
+            ).fetchall()
+            if (parsed := _report_datetime(row["heartbeat_at"])) is not None
+        ]
+        latest_heartbeat_at = max(heartbeat_timestamps).isoformat() if heartbeat_timestamps else None
+        window_start, window_end = window.since.astimezone(timezone.utc), window.until.astimezone(timezone.utc)
+        failures = [
+            (updated_at, row["last_error"])
+            for row in self.connection.execute(
+                "SELECT updated_at,last_error FROM jobs WHERE status IN ('failed','dead')"
+            ).fetchall()
+            if (updated_at := _report_datetime(row["updated_at"])) is not None
+            and window_start <= updated_at <= window_end
+        ]
+        last_failure = max(failures, default=(None, None), key=lambda item: item[0])
         recall_side_effect_backlog = int(
             self.connection.execute(
                 "SELECT COUNT(*) FROM deferred_tasks WHERE status='pending' "
@@ -279,8 +289,8 @@ class JobRepository:
             "dead_count": statuses["dead"],
             "oldest_pending_age_seconds": oldest_pending_age_seconds,
             "expired_running_leases": expired_running_leases,
-            "last_safe_failure_category": _safe_failure_category(last_failure["last_error"] if last_failure else None),
-            "latest_heartbeat_at": _report_timestamp(heartbeat),
+            "last_safe_failure_category": _safe_failure_category(last_failure[1]),
+            "latest_heartbeat_at": latest_heartbeat_at,
             "recall_side_effect_backlog": recall_side_effect_backlog,
         }
 
