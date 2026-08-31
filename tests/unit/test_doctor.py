@@ -149,6 +149,44 @@ def test_provider_doctor_reports_resolution_and_trust_without_disabled_imports(
     assert "dashscope" in results[0].detail
 
 
+@pytest.mark.parametrize(
+    ("failure_stage", "error_type"),
+    (
+        ("build", OSError),
+        ("build", ConfigurationError),
+        ("health", RuntimeError),
+    ),
+)
+def test_provider_doctor_normalizes_registry_failures_without_disclosure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+    error_type: type[Exception],
+) -> None:
+    sensitive = str(tmp_path / "private-provider-secret.txt")
+
+    class BrokenRegistry:
+        def health_snapshot(self) -> object:
+            raise error_type(sensitive)
+
+    def registry(_settings: Settings) -> object:
+        if failure_stage == "build":
+            raise error_type(sensitive)
+        return BrokenRegistry()
+
+    monkeypatch.setattr(doctor_module.components, "make_provider_registry", registry)
+
+    results = _check_provider_plugins(Settings.for_test())
+
+    assert [(item.code, item.status) for item in results] == [
+        ("provider_plugins", CheckStatus.FAIL),
+        ("provider_trust", CheckStatus.OK),
+    ]
+    assert results[0].detail == "Provider registry check failed"
+    serialized = json.dumps([item.to_dict() for item in results], ensure_ascii=False)
+    assert sensitive not in serialized
+
+
 def test_usage_ledger_doctor_is_read_only_and_previews_expired_recovery(tmp_path: Path) -> None:
     database_path = tmp_path / "memory.db"
     ledger_path = tmp_path / "memory.budget.db"
@@ -572,6 +610,51 @@ def test_run_doctor_invalid_price_book_skips_all_model_probes(
     assert port_calls == 0
     assert price_check.status is CheckStatus.FAIL
     assert str(missing) not in price_check.detail
+
+
+@pytest.mark.parametrize(
+    ("reranker_enabled", "expected_codes"),
+    (
+        (False, ["llm", "embedding"]),
+        (True, ["llm", "embedding", "reranker"]),
+    ),
+)
+def test_invalid_price_book_preserves_enabled_model_check_codes_without_probing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reranker_enabled: bool,
+    expected_codes: list[str],
+) -> None:
+    config = _production_config(tmp_path / "config.toml")
+    missing = tmp_path / "sensitive-missing-prices.json"
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write(f'\n[usage]\nprice_book_path = "{missing.as_posix()}"\n')
+        if reranker_enabled:
+            stream.write('\n[reranker]\nmode = "real"\n')
+    probe_calls = {"llm": 0, "embedding": 0, "reranker": 0}
+
+    def checked(code: str):
+        def unexpected(_settings: Settings, _runtime=None) -> CheckResult:
+            probe_calls[code] += 1
+            return CheckResult(CheckStatus.OK, code, "unexpected")
+
+        return unexpected
+
+    monkeypatch.setattr(doctor_module, "_check_llm", checked("llm"))
+    monkeypatch.setattr(doctor_module, "_check_embedding", checked("embedding"))
+    monkeypatch.setattr(doctor_module, "_check_reranker", checked("reranker"))
+
+    environment = {"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"}
+    if reranker_enabled:
+        environment["RERANKER_API_KEY"] = "live-reranker"
+    results = run_doctor(config_path=config, environ=environment)
+
+    model_results = [result for result in results if result.code in {"llm", "embedding", "reranker"}]
+    assert [result.code for result in model_results] == expected_codes
+    assert all(result.status is CheckStatus.FAIL for result in model_results)
+    assert {result.detail for result in model_results} == {"model probe skipped because usage pricing is unavailable"}
+    assert probe_calls == {"llm": 0, "embedding": 0, "reranker": 0}
+    assert str(missing) not in json.dumps([result.to_dict() for result in results], ensure_ascii=False)
 
 
 def test_run_doctor_runtime_factory_failure_becomes_safe_model_failure(

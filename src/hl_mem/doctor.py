@@ -195,12 +195,12 @@ def _check_secrets(settings: Settings) -> CheckResult:
 def _check_provider_plugins(settings: Settings) -> list[CheckResult]:
     try:
         registry = components.make_provider_registry(settings)
-    except ConfigurationError as error:
-        resolution = CheckResult(CheckStatus.FAIL, "Provider 插件", str(error))
-    else:
         capabilities = ", ".join(
             f"{item['capability']}:{item['name']}@{item['plugin_id']}" for item in registry.health_snapshot()
         )
+    except Exception:
+        resolution = CheckResult(CheckStatus.FAIL, "Provider 插件", "Provider registry check failed")
+    else:
         resolution = CheckResult(CheckStatus.OK, "Provider 插件", capabilities or "未注册 Provider")
     if settings.plugins_enabled:
         trust = CheckResult(
@@ -563,7 +563,13 @@ def run_doctor(
     price_book_check, price_book = _validated_usage_price_book(settings)
     if price_book_check is not None and price_book_check.status is CheckStatus.FAIL:
         daemon_probe = DaemonProbe(None, "skipped because usage price book validation failed")
-        model_checks: list[CheckResult] = []
+        skipped_detail = "model probe skipped because usage pricing is unavailable"
+        model_checks = [
+            CheckResult(CheckStatus.FAIL, "LLM API", skipped_detail),
+            CheckResult(CheckStatus.FAIL, "Embedding API", skipped_detail),
+        ]
+        if settings.reranker_mode in {"on", "real"}:
+            model_checks.append(CheckResult(CheckStatus.FAIL, "Reranker API", skipped_detail))
         port_check = CheckResult(
             CheckStatus.WARN,
             "服务端口",
