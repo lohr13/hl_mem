@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- **分支**：`codex/core-1-0-phase-6`
+- **分支**：`main`（仅本地，尚未推送）
 - **版本**：v1.0.0rc1
-- **阶段**：Core 1.0 RC 本地收口；尚未 push、打 tag、创建 GitHub Release 或发布 PyPI
+- **阶段**：Core 1.0 RC 本地门禁完成；尚未 push、打 tag、创建 GitHub Release 或发布 PyPI
 - **Schema**：59 migrations；全部不可变、仅向前执行
 - **运行时**：Python 3.12–3.14；SQLite 为权威存储
 - **发布原则**：RC 固定提交、完整证据、连续七个 UTC 日期观察、无开放 P0/P1 后才能提升稳定版
@@ -25,6 +25,8 @@
 - 测试覆盖 Python 3.12–3.14，发布门槛 80%；SQLite 资源、请求流限制、migration、备份恢复、Provider
   冲突、零模型调用和公开召回均有阻断门禁。
 - 发布证据聚合、CodeQL、依赖审计、SBOM、Git 历史密钥扫描及完整 SHA Action 固定已接入。
+- 本地全量门禁为 2701 passed、4 skipped、108 subtests，覆盖率 87.48%；Python 3.12、3.13、3.14
+  全新环境的 wheel 安装、导入和 CLI 启动均通过。
 
 ## 当前发布阻断
 
@@ -41,8 +43,8 @@
 
 ## 下一步
 
-1. 完成本地 RC 全量门禁和 wheel 安装验证。
-2. 获得明确授权后 push 分支并创建 RC tag/release；不直接发布稳定版。
-3. 轮换历史凭据，确认 Gitleaks 全历史扫描为零未审查结果。
+1. 轮换或吊销历史凭据，确认 Gitleaks 全历史扫描为零未审查结果。
+2. 获得明确授权后 push `main`、创建不可变 RC tag 和 GitHub prerelease；不直接发布稳定版。
+3. 运行远端 release-gates/security，保存证据 URL 和 artifact hash。
 4. 收集连续七天证据；任何代码修复都发布新的 RC 并重新开始观察。
 5. 观察门禁通过并再次获得发布授权后，单独准备和发布 `1.0.0`。

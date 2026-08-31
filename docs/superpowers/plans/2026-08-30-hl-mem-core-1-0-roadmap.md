@@ -134,6 +134,8 @@ No phase runs in parallel with a phase below it. Tasks inside a phase may run in
 
 ## Phase 6: Release gates, security automation, benchmark, and RC
 
+**Status:** Local RC complete; remote publication and seven-day observation require explicit authorization.
+
 **Plan path:** `docs/superpowers/plans/2026-08-30-hl-mem-core-1-0-phase-6-release.md`
 
 **Plan creation trigger:** Phase 5 is merged and package/module paths are final.
