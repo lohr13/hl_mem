@@ -1,0 +1,265 @@
+"""Read-only Provider usage-ledger reports.
+
+Latency percentiles use nearest-rank over deterministic ``(latency_ms, id)``
+ordering. Accounting remains integer micro-units; utilization is ``Decimal``.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+import sqlite3
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, cast
+from urllib.parse import quote
+
+from hl_mem.errors import OpsReportError
+from hl_mem.observability.usage import USAGE_LEDGER_SCHEMA_VERSION
+from hl_mem.observability.usage_types import UsageLimits
+
+_DURATION = re.compile(r"([1-9][0-9]*)([hd])$")
+_SUCCESS = frozenset({"success", "ok", "settled", "imported"})
+_AMOUNTS = ("requests", "input_tokens", "output_tokens", "embedding_items", "rerank_documents", "images")
+
+
+@dataclass(frozen=True, slots=True)
+class ReportWindow:
+    since: datetime
+    until: datetime
+
+    def __post_init__(self) -> None:
+        if self.since.tzinfo is None or self.until.tzinfo is None:
+            raise ValueError("report window bounds must be timezone-aware")
+        if self.since > self.until:
+            raise ValueError("report window since must not be after until")
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        raise ValueError("report window now must be timezone-aware")
+    return value.astimezone(timezone.utc)
+
+
+def _iso(value: datetime | str) -> str:
+    parsed = datetime.fromisoformat(value) if isinstance(value, str) else value
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def parse_report_window(value: str, *, now: datetime) -> ReportWindow:
+    """Parse the bounded whole-unit duration accepted by ``--since``."""
+    match = _DURATION.fullmatch(value)
+    if match is None:
+        raise ValueError("--since must be a whole number of hours or days (maximum 30d)")
+    count, unit = int(match.group(1)), match.group(2)
+    if (unit == "h" and count > 720) or (unit == "d" and count > 30):
+        raise ValueError("--since must be no longer than 30d")
+    until = _utc(now)
+    return ReportWindow(until - (timedelta(hours=count) if unit == "h" else timedelta(days=count)), until)
+
+
+def _empty_amount() -> dict[str, int | None]:
+    return {
+        "requests": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "embedding_items": 0,
+        "rerank_documents": 0,
+        "images": 0,
+        "cost_microunits": 0,
+    }
+
+
+def _add_amount(target: dict[str, Any], row: sqlite3.Row, *, prefix: str = "") -> bool:
+    for field in _AMOUNTS:
+        target[field] = int(target[field]) + int(row[f"{prefix}{field}"])
+    target["total_tokens"] = int(target["input_tokens"]) + int(target["output_tokens"])
+    cost = row[f"{prefix}cost_microunits"]
+    unknown = cost is None or ("unknown_cost" in row.keys() and int(row["unknown_cost"]) != 0)
+    if unknown:
+        target["cost_microunits"] = None
+    elif target["cost_microunits"] is not None:
+        target["cost_microunits"] = int(target["cost_microunits"]) + int(cost)
+    return unknown
+
+
+def _percentiles(samples: list[tuple[float, int]]) -> dict[str, float | None]:
+    if not samples:
+        return {"p50": None, "p95": None}
+    ordered = sorted(samples)
+    return {
+        "p50": ordered[math.ceil(0.5 * len(ordered)) - 1][0],
+        "p95": ordered[math.ceil(0.95 * len(ordered)) - 1][0],
+    }
+
+
+def _utilization(limit: int, used: int | None) -> Decimal | None:
+    return None if limit <= 0 or used is None else Decimal(used) / Decimal(limit)
+
+
+class UsageLedgerReader:
+    """Aggregate an existing UsageGovernor ledger without creating or changing it."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def _connect(self) -> sqlite3.Connection:
+        if not self.path.is_file():
+            raise OpsReportError("usage ledger does not exist")
+        quoted_path = quote(self.path.resolve().as_posix(), safe="/:")
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(f"file:{quoted_path}?mode=ro", uri=True)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only=ON")
+            self._validate_schema(connection)
+            return connection
+        except OpsReportError:
+            if connection is not None:
+                connection.close()
+            raise
+        except (OSError, sqlite3.Error) as error:
+            if connection is not None:
+                connection.close()
+            raise OpsReportError("usage ledger is unreadable") from error
+
+    @staticmethod
+    def _validate_schema(connection: sqlite3.Connection) -> None:
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if version > USAGE_LEDGER_SCHEMA_VERSION:
+            raise OpsReportError("usage ledger schema is newer than supported")
+        tables = {str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if version != USAGE_LEDGER_SCHEMA_VERSION or not {"usage_events", "usage_reservations"}.issubset(tables):
+            raise OpsReportError("usage ledger has an unsupported schema")
+
+    @staticmethod
+    def _new_group(key: tuple[str, str, str, str, str]) -> dict[str, Any]:
+        capability, plugin_id, provider, model, status = key
+        return {
+            "capability": capability,
+            "plugin_id": plugin_id,
+            "provider": provider,
+            "model": model,
+            "status": status,
+            **_empty_amount(),
+            "successes": 0,
+            "errors": 0,
+            "unknown_outcomes": 0,
+            "unknown_costs": 0,
+            "last_failure_at": None,
+            "_latencies": [],
+            "error_categories": defaultdict(int),
+        }
+
+    @staticmethod
+    def _add_event(target: dict[str, Any], row: sqlite3.Row) -> None:
+        unknown_cost = _add_amount(target, row)
+        success = str(row["status"]) in _SUCCESS
+        unknown_outcome = int(row["unknown_outcome"]) != 0
+        if success:
+            target["successes"] += 1
+        else:
+            target["errors"] += 1
+            failure_at = _iso(str(row["created_at"]))
+            if target["last_failure_at"] is None or failure_at > target["last_failure_at"]:
+                target["last_failure_at"] = failure_at
+            if row["error_class"] is not None:
+                target["error_categories"][str(row["error_class"])] += 1
+        target["unknown_outcomes"] += int(unknown_outcome)
+        target["unknown_costs"] += int(unknown_cost)
+        target["_latencies"].append((float(row["latency_ms"]), int(row["id"])))
+
+    @staticmethod
+    def _finish(value: dict[str, Any]) -> dict[str, object]:
+        value["latency_ms"] = _percentiles(value.pop("_latencies"))
+        value["error_categories"] = dict(sorted(value["error_categories"].items()))
+        return value
+
+    def _reservations(self, connection: sqlite3.Connection, *, at: datetime) -> dict[str, object]:
+        rows = connection.execute("SELECT * FROM usage_reservations WHERE state='active' ORDER BY id").fetchall()
+        reserved: dict[str, Any] = _empty_amount()
+        active, expired = 0, 0
+        cutoff = _iso(at)
+        for row in rows:
+            if _iso(str(row["lease_expires_at"])) <= cutoff:
+                expired += 1
+            else:
+                active += 1
+                _add_amount(reserved, row, prefix="reserved_")
+        return {"active_count": active, "expired_count": expired, "reserved": reserved}
+
+    @staticmethod
+    def _budget(totals: dict[str, Any], reservations: dict[str, Any], limits: UsageLimits) -> dict[str, dict[str, Any]]:
+        reserved = reservations["reserved"]
+        assert isinstance(reserved, dict)
+        requests = int(totals["requests"]) + int(reserved["requests"])
+        tokens = int(totals["total_tokens"]) + int(reserved["total_tokens"])
+        total_cost, reserved_cost = totals["cost_microunits"], reserved["cost_microunits"]
+        cost = None if total_cost is None or reserved_cost is None else int(total_cost) + int(reserved_cost)
+        return {
+            "requests": {"limit": limits.daily_requests, "used": requests, "utilization": _utilization(limits.daily_requests, requests)},
+            "tokens": {"limit": limits.daily_tokens, "used": tokens, "utilization": _utilization(limits.daily_tokens, tokens)},
+            "cost_microunits": {"limit": limits.daily_cost_microunits, "used": cost, "utilization": _utilization(limits.daily_cost_microunits, cost)},
+        }
+
+    def report(self, window: ReportWindow, *, limits: UsageLimits) -> dict[str, object]:
+        window = ReportWindow(_utc(window.since), _utc(window.until))
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT * FROM usage_events WHERE created_at>=? AND created_at<=? "
+                "ORDER BY capability,plugin_id,provider,model,status,created_at,id",
+                (_iso(window.since), _iso(window.until)),
+            ).fetchall()
+            groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+            totals: dict[str, Any] = self._new_group(("", "", "", "", ""))
+            for row in rows:
+                key = (
+                    str(row["capability"]),
+                    str(row["plugin_id"]),
+                    str(row["provider"]),
+                    str(row["model"]),
+                    str(row["status"]),
+                )
+                self._add_event(groups.setdefault(key, self._new_group(key)), row)
+                self._add_event(totals, row)
+            finished_groups = [self._finish(groups[key]) for key in sorted(groups)]
+            finished_totals = self._finish(totals)
+            for field in ("capability", "plugin_id", "provider", "model", "status"):
+                finished_totals.pop(field)
+            reservations = self._reservations(connection, at=window.until)
+            return {
+                "window": {"since": _iso(window.since), "until": _iso(window.until)},
+                "groups": finished_groups,
+                "totals": finished_totals,
+                "reservations": reservations,
+                "budget": self._budget(finished_totals, reservations, limits),
+            }
+        except sqlite3.Error as error:
+            raise OpsReportError("usage ledger is unreadable") from error
+        finally:
+            connection.close()
+
+    def health_summary(self, *, day: date, limits: UsageLimits, now: datetime) -> dict[str, object]:
+        current = _utc(now)
+        start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+        report = self.report(ReportWindow(start, start + timedelta(days=1) - timedelta(microseconds=1)), limits=limits)
+        totals = cast(dict[str, Any], report["totals"])
+        assert isinstance(totals, dict)
+        connection = self._connect()
+        try:
+            reservations = cast(dict[str, Any], self._reservations(connection, at=current))
+        finally:
+            connection.close()
+        budget = self._budget(totals, reservations, limits)
+        return {
+            "failures": totals["errors"],
+            "stale_reservations": reservations["expired_count"],
+            "utilization": {name: value["utilization"] for name, value in budget.items()},
+            "unknown_outcomes": totals["unknown_outcomes"],
+            "unknown_costs": totals["unknown_costs"],
+        }
