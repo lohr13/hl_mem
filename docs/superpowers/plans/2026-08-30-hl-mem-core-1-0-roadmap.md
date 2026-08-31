@@ -115,7 +115,7 @@ No phase runs in parallel with a phase below it. Tasks inside a phase may run in
 
 ## Phase 5: Targeted architecture cleanup and evaluation separation
 
-**Status:** Complete on the Phase 5 implementation branch; final merge follows the full quality and installed-wheel gates.
+**Status:** Complete and merged into `main` at `d7a808c` after the full quality and installed-wheel gates passed.
 
 **Plan path:** `docs/superpowers/plans/2026-08-30-hl-mem-core-1-0-phase-5-architecture.md`
 
