@@ -26,9 +26,9 @@ backup format documentation, and Provider Plugin API documentation or manifests,
 
 ### Beta and experimental contracts
 
-Beta contracts may change in a minor release, provided the changelog describes the change and includes migration
-instructions. Experimental contracts have no compatibility window and must be visibly marked as experimental wherever
-they are exposed.
+Beta and experimental contracts may change only in a minor release, provided the changelog describes the change and
+includes migration instructions. Experimental contracts have no compatibility window and must be visibly marked as
+experimental wherever they are exposed.
 
 ### SQLite upgrades and rollback
 

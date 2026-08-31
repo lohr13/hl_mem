@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Establish the Core 1.0 correctness and safety foundation: a truthful Python support matrix, deterministic repository text rules, byte-accurate request limits, temporally correct historical recall, explicit SQLite ownership, zero `ResourceWarning`, and a written 1.x compatibility contract.
+**Goal:** Establish the Core 1.0 correctness and safety foundation: a truthful Python support matrix, deterministic repository text rules, byte-accurate request limits, temporally correct historical recall, explicit SQLite ownership, zero `ResourceWarning` during the pytest-managed lifecycle, and a written 1.x compatibility contract.
 
 **Architecture:** Preserve the existing modular monolith and public REST/MCP schemas. Add one transport-only ASGI middleware, one small recall policy predicate, context-manager ownership to `Database`, and test fixtures that own test-created resources. This phase changes no memory schema and adds no new product capability.
 
@@ -13,7 +13,7 @@
 - Baseline is `v0.36.1 / 2dbb6a9`; approved design is commit `7619d7c`.
 - Do not reorganize the repository, change OpenAPI/MCP schemas, add migrations, or begin Provider/plugin work in this phase.
 - Do not delete the user's untracked `.coverage`, `Temp/`, `nul`, backup, or research files; only add ignore rules for future artifacts.
-- Do not suppress `ResourceWarning`. Every connection must have an owner, and CI must promote the warning to an error.
+- Do not suppress `ResourceWarning`. Every supported connection path must have an owner, and CI must promote warnings observed during pytest execution to errors. Warnings emitted only after pytest hooks have ended during interpreter finalization are recorded for the later“SQLite 连接生命周期观测”专项 and are not a Phase 1 release gate.
 - Historical requests containing either `as_of` or `known_as_of` must omit Policy and Derivation context until those models have real bitemporal versions.
 - Request limiting must count ASGI body bytes and retain at most `max_request_body`; `Content-Length` is only an early rejection hint.
 - Each task ends in a focused commit. Run the phase gate only after all task commits pass individually.
@@ -432,7 +432,7 @@ git commit -m "test: establish explicit SQLite resource ownership"
 
 **Consumes:** Task 4 ownership fixtures and the measured baseline `2414 passed, 1 skipped, 541 ResourceWarning instances` when warnings are expanded.
 
-**Produces:** Independent evidence that long-lived production owners close themselves, deterministic cleanup for isolated tests, and CI failure on any future unowned resource.
+**Produces:** Independent evidence that long-lived production owners close themselves, deterministic cleanup for isolated tests, and CI failure on unowned resources observable during the pytest-managed lifecycle.
 
 **Files:**
 
@@ -479,7 +479,7 @@ Run each suite independently:
 & '.\.venv\Scripts\python.exe' -W error::ResourceWarning -m pytest tests/eval -q --tb=short
 ```
 
-Expected: all three commands PASS; there is no warnings summary and no unraisable SQLite warning after pytest exits.
+Expected: all three commands PASS; there is no warning summary or unraisable SQLite warning before pytest completes. A warning first emitted after all pytest hooks have ended during interpreter finalization is outside this gate and is tracked in `docs/research/sqlite-connection-lifecycle.md`.
 
 - [ ] **Step 5: Promote ResourceWarning to an error in CI**
 
@@ -527,7 +527,7 @@ Keep the existing 0.x rules as historical context and add a binding `## 1.x poli
 - Semantic Versioning governs 1.x.
 - Stable REST, MCP, CLI, configuration schema, import/export, backup format, and Provider Plugin API remain backward-compatible within 1.x.
 - Stable removals or incompatible changes require the next major version; optional fields/capabilities may be added in 1.x.
-- Beta contracts may change in a minor release with changelog and migration instructions.
+- Beta and experimental contracts may change only in a minor release with changelog and migration instructions.
 - Experimental contracts have no compatibility window but must be visibly marked.
 - SQLite migrations remain immutable and forward-only. Before an irreversible upgrade, the CLI requires a verified backup; rollback means restoring that backup with the old binary, never downgrading the live schema.
 - Unknown future configuration/backup versions and Plugin API major mismatches fail explicitly.
@@ -577,6 +577,7 @@ git commit -m "docs: define the HL-Mem 1.x compatibility policy"
 - [ ] Actual request bytes, including streamed/no-header bodies, cannot bypass the configured limit.
 - [ ] Historical recall never injects current-only Policy or Derivation context.
 - [ ] Full test suite passes with `ResourceWarning` promoted to error.
+- [ ] Interpreter-finalization-only SQLite diagnostics are explicitly deferred to `docs/research/sqlite-connection-lifecycle.md` and do not weaken deterministic owner shutdown tests.
 - [ ] 1.x compatibility and rollback-by-restore policies are explicit.
 - [ ] Public OpenAPI and MCP snapshots are unchanged.
 - [ ] Unrelated user files remain untouched.

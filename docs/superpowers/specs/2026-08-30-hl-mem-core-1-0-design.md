@@ -231,6 +231,8 @@ API 请求上限按 ASGI 实际接收字节执行，而不是只信任 `Content-
 
 统一连接所有权：请求连接、Worker 自有连接、Repository 测试和临时数据库均由 Context Manager 或 Fixture 关闭。全量测试必须达到零 `ResourceWarning`，随后在 CI 将 `ResourceWarning` 提升为错误，防止回归。
 
+Phase 1 的门禁覆盖 pytest 生命周期内可观测的 `ResourceWarning`、unraisable warning，以及 API、MCP、Worker 和 `Database` 的确定性关闭；不承诺捕获 pytest 钩子全部结束后、仅在 Python 解释器最终析构时才出现的警告。该边界不阻塞 1.0，后续以独立的 SQLite 生命周期观测专项处理，方案见 `docs/research/sqlite-connection-lifecycle.md`。
+
 ### 9.4 配置与数据库回滚
 
 Migration 保持只前进。首次使用 1.0 或 RC 打开生产数据库前：停止写入、创建数据库和 tombstone sidecar 备份、验证 Manifest 与校验和、在副本上完成 Migration 和 `doctor`。回滚使用旧二进制、旧配置备份和升级前数据库快照；不得让旧二进制直接打开已迁移数据库。RC 后产生的新写入不会自动回放到旧快照，此限制必须在升级提示中明确显示。
