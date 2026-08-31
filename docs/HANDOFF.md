@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- **分支**：`main`（仅本地，尚未推送）
+- **分支**：`main`（已推送）
 - **版本**：v1.0.0rc1
-- **阶段**：Core 1.0 RC 本地门禁完成；尚未 push、打 tag、创建 GitHub Release 或发布 PyPI
+- **阶段**：`v1.0.0rc1` 已发布至 GitHub 与 PyPI；七日观察已于 2026-08-31 UTC 启动
 - **Schema**：59 migrations；全部不可变、仅向前执行
 - **运行时**：Python 3.12–3.14；SQLite 为权威存储
 - **发布原则**：RC 固定提交、完整证据、连续七个 UTC 日期观察、无开放 P0/P1 后才能提升稳定版
@@ -28,12 +28,14 @@
 - 本地全量门禁为 2701 passed、4 skipped、108 subtests，覆盖率 87.48%；Python 3.12、3.13、3.14
   全新环境的 wheel 安装、导入和 CLI 启动均通过。
 
-## 当前发布阻断
+## 当前发布状态
 
 - Git 历史中的已删除 `.env.bak_glm` 含两条真实凭据形状。测试假阳性已按精确 fingerprint 基线化；这两条
-  真实凭据不得加入忽略列表，必须先在对应 Provider 侧轮换或吊销。
-- 远端 release-gates 和 security 工作流尚未执行，证据 URL 尚未产生。
-- RC 尚未发布，因此真实的 168 小时、七个连续 UTC 日期观察尚未开始。
+  真实凭据未加入忽略列表；维护者已明确接受其仍有效的残余风险，本项不记为安全清单通过。
+- 不可变标签 `v1.0.0rc1` 指向 `d99ed926b1951011013905dd858893d95d407ed1`；GitHub Release 为非草稿
+  prerelease，PyPI wheel 与 sdist 已通过 Trusted Publishing 上传。
+- Core 1.0 release-gates、Tests、Security 与 2026-08-31 UTC 首日观察证据均已通过并保存在 GitHub Actions。
+- 稳定版仍受至少 168 小时、七个连续 UTC 日期和无开放 P0/P1 三项门禁约束。
 
 ## 升级与恢复
 
@@ -43,8 +45,7 @@
 
 ## 下一步
 
-1. 轮换或吊销历史凭据，确认 Gitleaks 全历史扫描为零未审查结果。
-2. 获得明确授权后 push `main`、创建不可变 RC tag 和 GitHub prerelease；不直接发布稳定版。
-3. 运行远端 release-gates/security，保存证据 URL 和 artifact hash。
-4. 收集连续七天证据；任何代码修复都发布新的 RC 并重新开始观察。
-5. 观察门禁通过并再次获得发布授权后，单独准备和发布 `1.0.0`。
+1. 按 UTC 日期收集第 2–7 天观察证据；任何产品代码、配置、schema、migration 或稳定契约修复都发布新 RC
+   并重新开始观察。
+2. 满 168 小时后运行最终观察验证，确认没有未关闭 P0/P1。
+3. 再次获得发布授权后，单独准备和发布 `1.0.0`；不得直接移动 RC 标签或把 RC 版本冒充稳定版。
