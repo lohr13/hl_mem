@@ -25,5 +25,13 @@ resurrection_mode = "off"
 [relation]
 discovery_mode = "audit"
 
+[dedup]
+llm_enabled = false
+
+[worker]
+semantic_conflict_consolidation_enabled = false
+policy_induction_enabled = false
+reclassify_enabled = false
+
 [plugins]
 enabled = []

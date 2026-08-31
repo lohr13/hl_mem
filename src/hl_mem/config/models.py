@@ -535,6 +535,8 @@ class GovernanceConfig:
 
     dedup_enabled: bool = field(default=True, metadata={"toml": "dedup.enabled"})
 
+    dedup_llm_enabled: bool = field(default=False, metadata={"toml": "dedup.llm_enabled"})
+
     dedup_threshold: float = field(default=0.92, metadata={"toml": "dedup.threshold"})
 
     dedup_audit_only: bool = field(default=True, metadata={"toml": "dedup.audit_only"})

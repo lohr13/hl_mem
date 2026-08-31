@@ -177,6 +177,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `dedup.auto_merge_min_confidence` | 数值 | `0.98` | dedup.threshold - 1.0 | `dedup_auto_merge_min_confidence` |
 | `dedup.cron` | 字符串 | `"03:00"` | HH:MM（00:00 - 23:59） | `dedup_cron` |
 | `dedup.enabled` | 布尔值 | `true` | `true`、`false` | `dedup_enabled` |
+| `dedup.llm_enabled` | 布尔值 | `false` | `true`、`false` | `dedup_llm_enabled` |
 | `dedup.max_pending_pairs` | 整数 | `10000` | >= 1 | `dedup_max_pending_pairs` |
 | `dedup.scan_limit` | 整数 | `200` | >= 1 | `dedup_scan_limit` |
 | `dedup.threshold` | 数值 | `0.92` | 0.0 - 1.0 | `dedup_threshold` |
@@ -488,10 +489,13 @@ Pending dedup pairs below the current `dedup.threshold` can be reported read-onl
 | `worker.induce_policies_cron` | 字符串 | `"04:00"` | 任意字符串 | `induce_policies_cron` |
 | `worker.job_lease_minutes` | 整数 | `5` | >= 1 | `worker_job_lease_minutes` |
 | `worker.maintenance_interval` | 数值 | `600.0` | 任意数值 | `worker_maintenance_interval` |
+| `worker.policy_induction_enabled` | 布尔值 | `false` | `true`、`false` | `policy_induction_enabled` |
 | `worker.policy_induction_lookback_days` | 整数 | `7` | >= 1 | `policy_induction_lookback_days` |
 | `worker.policy_induction_min_episodes` | 整数 | `3` | >= 1 | `policy_induction_min_episodes` |
 | `worker.poll_interval` | 数值 | `2.0` | 任意数值 | `worker_poll_interval` |
 | `worker.reclassify_cron` | 字符串 | `"04:30"` | 任意字符串 | `reclassify_cron` |
+| `worker.reclassify_enabled` | 布尔值 | `false` | `true`、`false` | `reclassify_enabled` |
+| `worker.semantic_conflict_consolidation_enabled` | 布尔值 | `false` | `true`、`false` | `semantic_conflict_consolidation_enabled` |
 
 Worker 在任务执行期间按 lease 时长的三分之一周期续租全部同窗口 job；进度回调也会续租。若 token ownership
 在终态写入前丢失，本次执行返回 `lease_lost`，不会把更新 0 行误报为成功。

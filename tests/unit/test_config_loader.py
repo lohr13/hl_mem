@@ -156,6 +156,16 @@ def test_test_factory_is_the_only_fake_profile() -> None:
     settings.validate()
 
 
+def test_semantic_automation_defaults_are_explicit_and_safe() -> None:
+    settings = Settings.for_test()
+
+    assert settings.dedup_enabled is True
+    assert settings.dedup_llm_enabled is False
+    assert settings.semantic_conflict_consolidation_enabled is False
+    assert settings.policy_induction_enabled is False
+    assert settings.reclassify_enabled is False
+
+
 def test_v1_plugin_namespace_is_typed_and_immutable(tmp_path: Path) -> None:
     path = _write(
         tmp_path / "plugins.toml",

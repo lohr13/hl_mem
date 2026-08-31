@@ -83,6 +83,7 @@ fts_language = "auto"
 
 [dedup]
 enabled = true
+llm_enabled = false
 threshold = 0.92
 # E2 v2 的 0.98/0.99 臂均未达到精度门禁，保持只审计。
 audit_only = true
@@ -118,6 +119,9 @@ poll_interval = 2.0
 maintenance_interval = 600
 job_lease_minutes = 5
 daily_token_limit = 500000  # set 0 to disable limit
+semantic_conflict_consolidation_enabled = false
+policy_induction_enabled = false
+reclassify_enabled = false
 conflict_auto_resolve_enabled = true
 conflict_maintenance_max_cases = 50
 conflict_maintenance_budget_ms = 1000

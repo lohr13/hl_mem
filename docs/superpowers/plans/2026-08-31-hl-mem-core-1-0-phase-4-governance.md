@@ -45,7 +45,9 @@ Additional invariants:
 - Modify: `src/hl_mem/config/lifecycle.py`
 - Modify: `src/hl_mem/config/models.py`
 - Modify: `src/hl_mem/config/migrate.py`
-- Modify: `src/hl_mem/config/example.py`
+- Modify: `config.example.toml`
+- Regenerate: `docs/configuration.md`
+- Regenerate: `docs/config-schema.json`
 - Create: `src/hl_mem/workers/automation.py`
 - Modify: `tests/unit/test_config_loader.py`
 - Modify: `tests/unit/test_config_migrate.py`
@@ -79,6 +81,7 @@ Expected: failure because fields and policy do not exist.
 - Define `SemanticJobType` and a total mapping in `workers/automation.py`.
 - Do not make the policy module enqueue jobs or access SQLite.
 - Update config migration and generated example.
+- Regenerate the checked-in configuration reference and schema with the repository script.
 
 **Step 3: Verify**
 

@@ -67,9 +67,24 @@ class LifecycleConfig:
         metadata={"toml": "worker.consolidate_confidence"},
     )
 
+    semantic_conflict_consolidation_enabled: bool = field(
+        default=False,
+        metadata={"toml": "worker.semantic_conflict_consolidation_enabled"},
+    )
+
     induce_policies_cron: str = field(default="04:00", metadata={"toml": "worker.induce_policies_cron"})
 
+    policy_induction_enabled: bool = field(
+        default=False,
+        metadata={"toml": "worker.policy_induction_enabled"},
+    )
+
     reclassify_cron: str = field(default="04:30", metadata={"toml": "worker.reclassify_cron"})
+
+    reclassify_enabled: bool = field(
+        default=False,
+        metadata={"toml": "worker.reclassify_enabled"},
+    )
 
     memory_temporal_ttl_days: int = field(
         default=7,

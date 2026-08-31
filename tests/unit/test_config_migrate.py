@@ -37,6 +37,10 @@ def test_plan_is_deterministic_complete_and_read_only(tmp_path: Path) -> None:
         "recall.query_expansion_mode",
         "recall.resurrection_mode",
         "relation.discovery_mode",
+        "dedup.llm_enabled",
+        "worker.semantic_conflict_consolidation_enabled",
+        "worker.policy_induction_enabled",
+        "worker.reclassify_enabled",
         "plugins.enabled",
     }
     assert set(first.removed) == {

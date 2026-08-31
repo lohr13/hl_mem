@@ -150,6 +150,13 @@
       "type": "boolean"
     },
     {
+      "default": false,
+      "path": "dedup.llm_enabled",
+      "required_in_production": false,
+      "settings_field": "dedup_llm_enabled",
+      "type": "boolean"
+    },
+    {
       "default": 10000,
       "path": "dedup.max_pending_pairs",
       "required_in_production": false,
@@ -1534,6 +1541,13 @@
       "type": "number"
     },
     {
+      "default": false,
+      "path": "worker.policy_induction_enabled",
+      "required_in_production": false,
+      "settings_field": "policy_induction_enabled",
+      "type": "boolean"
+    },
+    {
       "default": 7,
       "path": "worker.policy_induction_lookback_days",
       "required_in_production": false,
@@ -1560,6 +1574,20 @@
       "required_in_production": false,
       "settings_field": "reclassify_cron",
       "type": "string"
+    },
+    {
+      "default": false,
+      "path": "worker.reclassify_enabled",
+      "required_in_production": false,
+      "settings_field": "reclassify_enabled",
+      "type": "boolean"
+    },
+    {
+      "default": false,
+      "path": "worker.semantic_conflict_consolidation_enabled",
+      "required_in_production": false,
+      "settings_field": "semantic_conflict_consolidation_enabled",
+      "type": "boolean"
     }
   ],
   "open_namespaces": {

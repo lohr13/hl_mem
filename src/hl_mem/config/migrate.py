@@ -96,6 +96,21 @@ def _set_mode(
     changes.append(MigrationChange(f"{table_name}.{key}", before, to_value, reason))
 
 
+def _set_default(
+    table: dict[str, Any] | None,
+    *,
+    table_name: str,
+    key: str,
+    value: object,
+    reason: str,
+    changes: list[MigrationChange],
+) -> None:
+    if table is None or key in table:
+        return
+    table[key] = value
+    changes.append(MigrationChange(f"{table_name}.{key}", None, value, reason))
+
+
 def _candidate_settings(
     data: Mapping[str, Any],
     *,
@@ -162,6 +177,8 @@ def plan_config_migration(
         embedding = _table(candidate, "embedding")
         recall = _table(candidate, "recall")
         relation = _table(candidate, "relation")
+        dedup = _table(candidate, "dedup")
+        worker = _table(candidate, "worker")
         plugins = _table(candidate, "plugins")
 
         if extraction is not None:
@@ -203,6 +220,38 @@ def plan_config_migration(
             from_value="auto",
             to_value="audit",
             reason="require review before relation proposals affect memory",
+            changes=changes,
+        )
+        _set_default(
+            dedup,
+            table_name="dedup",
+            key="llm_enabled",
+            value=False,
+            reason="make paid semantic deduplication opt-in",
+            changes=changes,
+        )
+        _set_default(
+            worker,
+            table_name="worker",
+            key="semantic_conflict_consolidation_enabled",
+            value=False,
+            reason="make paid semantic conflict review opt-in",
+            changes=changes,
+        )
+        _set_default(
+            worker,
+            table_name="worker",
+            key="policy_induction_enabled",
+            value=False,
+            reason="make automatic policy publication opt-in",
+            changes=changes,
+        )
+        _set_default(
+            worker,
+            table_name="worker",
+            key="reclassify_enabled",
+            value=False,
+            reason="make paid semantic reclassification opt-in",
             changes=changes,
         )
         if plugins is not None and "enabled" not in plugins:
