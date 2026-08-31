@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from hl_mem import __version__
-from hl_mem.daily_cli import OFFLINE_CONFIG
 from hl_mem.mcp.server import McpMemoryServer, get_tool_schemas
 from hl_mem.settings import Settings
 
@@ -89,9 +88,25 @@ def test_entry_point_loads_explicit_config_env_and_database(tmp_path: Path, monk
     from hl_mem.mcp import runtime
 
     config_path = tmp_path / "config.toml"
-    config_path.write_text(OFFLINE_CONFIG, encoding="utf-8")
+    config_path.write_text(
+        """schema_version = 1
+[llm]
+provider = "openai_compatible"
+base_url = "https://llm.example.test/v1"
+model = "quality-llm"
+[extraction]
+mode = "llm"
+[embedding]
+mode = "real"
+base_url = "https://embedding.example.test/v1"
+model = "quality-embedding"
+dim = 2048
+api_mode = "compatible"
+""",
+        encoding="utf-8",
+    )
     env_path = tmp_path / ".env"
-    env_path.write_text("", encoding="utf-8")
+    env_path.write_text("LLM_API_KEY=test-llm\nEMBEDDING_API_KEY=test-embedding\n", encoding="utf-8")
     database_path = tmp_path / "runtime.db"
     captured: dict[str, object] = {}
 
@@ -114,7 +129,7 @@ def test_entry_point_loads_explicit_config_env_and_database(tmp_path: Path, monk
     settings = captured["settings"]
     assert isinstance(settings, Settings)
     assert settings.database_path == str(database_path)
-    assert settings.recall_dense_enabled is False
+    assert settings.recall_dense_enabled is True
 
 
 def test_entry_point_rejects_unknown_arguments() -> None:

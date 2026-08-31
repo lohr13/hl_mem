@@ -10,7 +10,9 @@ import hl_mem.cli as cli_module
 import hl_mem.daily_cli as daily_cli
 import hl_mem.server as server_module
 from hl_mem.cli import main
+from hl_mem.config.secrets import merge_secret_file
 from hl_mem.config_loader import load_settings
+from hl_mem.doctor import CheckResult, CheckStatus
 from hl_mem.settings import Settings
 
 
@@ -23,41 +25,169 @@ def _use_http_handler(monkeypatch: pytest.MonkeyPatch, handler: httpx.MockTransp
     )
 
 
-def test_init_offline_writes_valid_no_key_configuration(
+def _wizard_answers(monkeypatch: pytest.MonkeyPatch, *, reranker: str = "n") -> tuple[str, str]:
+    answers = iter(
+        (
+            "openai_compatible",
+            "https://llm.example.test/v1",
+            "quality-llm",
+            "https://embedding.example.test/v1",
+            "quality-embedding",
+            "2048",
+            "compatible",
+            reranker,
+        )
+    )
+    secrets = iter(("llm-secret-value", "embedding-secret-value"))
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+    monkeypatch.setattr(daily_cli.getpass, "getpass", lambda _prompt: next(secrets))
+    monkeypatch.setattr(
+        daily_cli,
+        "probe_model_components",
+        lambda _settings: [
+            CheckResult(CheckStatus.OK, "LLM API", "verified"),
+            CheckResult(CheckStatus.OK, "Embedding API", "verified"),
+        ],
+    )
+    return "llm-secret-value", "embedding-secret-value"
+
+
+def test_init_wizard_writes_verified_provider_neutral_configuration(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path = tmp_path / "offline.toml"
+    config_path = tmp_path / "hl_mem.toml"
+    env_path = tmp_path / ".env"
+    llm_secret, embedding_secret = _wizard_answers(monkeypatch)
 
-    main(["init", "--offline", "--config", str(config_path)])
+    main(["init", "--config", str(config_path), "--env-file", str(env_path)])
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
-    assert settings.extractor_mode == "fake"
-    assert settings.embedder_mode == "fake"
+    settings = load_settings(config_path, env_path, environ={})
+    assert settings.extractor_mode == "llm"
+    assert settings.embedder_mode == "real"
     assert settings.reranker_mode == "off"
     assert settings.image_describer_mode == "off"
     assert settings.query_expansion_mode == "off"
+    assert settings.resurrection_mode == "off"
     assert settings.relation_discovery_mode == "off"
-    assert settings.recall_dense_enabled is False
-    assert settings.dedup_enabled is False
-    output = capsys.readouterr().out
+    document = config_path.read_text(encoding="utf-8")
+    assert document.startswith("schema_version = 1\n")
+    assert llm_secret not in document
+    assert embedding_secret not in document
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert str(config_path) in output
-    assert "FTS" in output
-    assert "真实模型" in output
+    assert llm_secret not in output
+    assert embedding_secret not in output
 
 
-def test_init_requires_force_before_overwriting_existing_file(tmp_path: Path) -> None:
+def test_init_rejects_removed_offline_profile(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["init", "--offline"])
+
+    assert error.value.code == 2
+    assert "unrecognized arguments: --offline" in capsys.readouterr().err
+
+
+def test_init_requires_force_before_overwriting_existing_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config_path = tmp_path / "hl_mem.toml"
     config_path.write_text("keep-me", encoding="utf-8")
 
     with pytest.raises(SystemExit) as error:
-        main(["init", "--offline", "--config", str(config_path)])
+        main(["init", "--config", str(config_path)])
 
     assert error.value.code == 2
     assert config_path.read_text(encoding="utf-8") == "keep-me"
 
-    main(["init", "--offline", "--force", "--config", str(config_path)])
-    assert "dense_enabled = false" in config_path.read_text(encoding="utf-8")
+    _wizard_answers(monkeypatch)
+    main(["init", "--force", "--config", str(config_path)])
+    assert config_path.read_text(encoding="utf-8").startswith("schema_version = 1\n")
+
+
+def test_init_preserves_unrelated_env_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = tmp_path / "hl_mem.toml"
+    env_path = tmp_path / ".env"
+    env_path.write_text("# user setting\nUNRELATED=value\n", encoding="utf-8")
+    _wizard_answers(monkeypatch)
+
+    main(["init", "--config", str(config_path), "--env-file", str(env_path)])
+
+    secret_file = env_path.read_text(encoding="utf-8")
+    assert "# user setting\nUNRELATED=value\n" in secret_file
+    assert "LLM_API_KEY=llm-secret-value" in secret_file
+    assert "EMBEDDING_API_KEY=embedding-secret-value" in secret_file
+
+
+def test_init_probe_failure_changes_neither_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "hl_mem.toml"
+    env_path = tmp_path / ".env"
+    config_path.write_text("original-config", encoding="utf-8")
+    env_path.write_text("ORIGINAL=secret-safe\n", encoding="utf-8")
+    llm_secret, embedding_secret = _wizard_answers(monkeypatch)
+    monkeypatch.setattr(
+        daily_cli,
+        "probe_model_components",
+        lambda _settings: [CheckResult(CheckStatus.FAIL, "LLM API", f"failed using {llm_secret}")],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "init",
+                "--force",
+                "--config",
+                str(config_path),
+                "--env-file",
+                str(env_path),
+            ]
+        )
+
+    assert error.value.code == 1
+    assert config_path.read_text(encoding="utf-8") == "original-config"
+    assert env_path.read_text(encoding="utf-8") == "ORIGINAL=secret-safe\n"
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert llm_secret not in output
+    assert embedding_secret not in output
+
+
+def test_init_write_failure_restores_exact_secret_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "hl_mem.toml"
+    env_path = tmp_path / ".env"
+    original = b"# exact original\r\nUNRELATED=value\r\n"
+    env_path.write_bytes(original)
+    _wizard_answers(monkeypatch)
+    monkeypatch.setattr(daily_cli, "_write_config_atomic", lambda *_args: (_ for _ in ()).throw(OSError("disk")))
+
+    with pytest.raises(SystemExit) as error:
+        main(["init", "--config", str(config_path), "--env-file", str(env_path)])
+
+    assert error.value.code == 1
+    assert env_path.read_bytes() == original
+    assert not config_path.exists()
+
+
+def test_secret_merge_requires_force_to_replace_supported_values(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("UNRELATED=keep\nLLM_API_KEY=old\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="--force"):
+        merge_secret_file(env_path, {"LLM_API_KEY": "new"})
+    assert env_path.read_text(encoding="utf-8") == "UNRELATED=keep\nLLM_API_KEY=old\n"
+
+    merge_secret_file(env_path, {"LLM_API_KEY": "new"}, force=True)
+    assert env_path.read_text(encoding="utf-8") == "UNRELATED=keep\nLLM_API_KEY=new\n"
 
 
 def test_remember_posts_explicit_memory_and_prints_event_id(

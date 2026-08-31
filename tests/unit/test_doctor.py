@@ -24,6 +24,7 @@ from hl_mem.doctor import (
     _check_plugin_compatibility,
     _check_wire_compatibility,
     count_code_migrations,
+    probe_model_components,
     run_doctor,
 )
 from hl_mem.errors import ConfigurationError
@@ -168,6 +169,30 @@ def test_placeholder_secret_detection() -> None:
     for value in (None, "", "xxx", "your-key", "<API_KEY>", "sk-xxx", "sk-e72xxx"):
         assert is_placeholder_secret(value)
     assert not is_placeholder_secret("sk-live-abcdef123456")
+
+
+def test_model_probe_includes_only_enabled_model_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        doctor_module,
+        "_check_llm",
+        lambda _settings: CheckResult(CheckStatus.OK, "LLM API", "ok"),
+    )
+    monkeypatch.setattr(
+        doctor_module,
+        "_check_embedding",
+        lambda _settings: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
+    )
+    monkeypatch.setattr(
+        doctor_module,
+        "_check_reranker",
+        lambda _settings: CheckResult(CheckStatus.OK, "Reranker API", "ok"),
+    )
+
+    without_reranker = probe_model_components(Settings.for_test())
+    with_reranker = probe_model_components(Settings(reranker_mode="real"))
+
+    assert [item.name for item in without_reranker] == ["LLM API", "Embedding API"]
+    assert [item.name for item in with_reranker] == ["LLM API", "Embedding API", "Reranker API"]
 
 
 def test_migration_count_matches_database(tmp_path: Path) -> None:

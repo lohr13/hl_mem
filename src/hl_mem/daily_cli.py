@@ -3,95 +3,34 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import sys
+import tempfile
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
+import tomli_w
+
+from hl_mem.config.loader import load_settings_data
+from hl_mem.config.models import EmbeddingApiMode, LLMProvider, Settings
+from hl_mem.config.secrets import merge_secret_file, redact_secret_text
+from hl_mem.doctor import CheckStatus, probe_model_components
+from hl_mem.errors import ConfigurationError
 
 DEFAULT_SERVER_URL = "http://127.0.0.1:8200"
 DAILY_HTTP_COMMANDS = frozenset({"remember", "recall", "list", "forget", "correct"})
-
-OFFLINE_CONFIG = """# HL-Mem offline configuration: no API keys or network models required.
-# Fake embedding is deterministic storage compatibility data, not semantic search.
-
-[database]
-path = "var/hl_mem.db"
-
-[extraction]
-mode = "fake"
-
-[embedding]
-mode = "fake"
-dim = 2048
-
-[reranker]
-mode = "off"
-
-[image_describer]
-mode = "off"
-
-[recall]
-dense_enabled = false
-query_expansion_mode = "off"
-tag_channel_enabled = false
-relevance_gate_mode = "off"
-
-[relation]
-expansion_mode = "off"
-discovery_mode = "off"
-
-[dedup]
-enabled = false
-"""
-
-ONLINE_CONFIG = """# HL-Mem model-backed configuration.
-# Put enabled components' API keys in .env; never commit real keys.
-
-[database]
-path = "var/hl_mem.db"
-
-[llm]
-provider = "dashscope"
-base_url = "https://coding.dashscope.aliyuncs.com/v1"
-model = "qwen3.7-plus"
-structured_mode = "json_object"
-
-[extraction]
-mode = "llm"
-
-[embedding]
-mode = "real"
-model = "text-embedding-v4"
-dim = 2048
-
-[reranker]
-mode = "on"
-provider = "dashscope"
-model = "gte-rerank-v2"
-
-[image_describer]
-mode = "off"
-
-[recall]
-dense_enabled = true
-query_expansion_mode = "auto"
-query_expansion_model = "glm-4.7"
-
-[relation]
-expansion_mode = "off"
-discovery_mode = "off"
-"""
 
 
 def add_daily_commands(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """注册不改变既有运维命令的日常子命令。"""
     init = commands.add_parser("init", help="生成 hl_mem.toml 配置")
     init.add_argument("--config", type=Path, default=argparse.SUPPRESS)
-    init.add_argument("--offline", action="store_true", help="生成无需 API key 的 FTS-only 配置")
+    init.add_argument("--env-file", type=Path, default=argparse.SUPPRESS)
     init.add_argument("--force", action="store_true", help="覆盖已有配置文件")
 
     server = commands.add_parser("server", help="启动本地 API 与后台 Worker")
@@ -139,18 +78,175 @@ def _add_url(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def initialize_config(path: Path, *, offline: bool, force: bool, parser: argparse.ArgumentParser) -> None:
-    """生成配置；已有文件必须显式 --force。"""
+def _required_prompt(label: str) -> str:
+    value = input(f"{label}: ").strip()
+    if not value:
+        raise ConfigurationError(f"{label} is required")
+    return value
+
+
+def _secret_prompt(label: str) -> str:
+    value = getpass.getpass(f"{label}: ").strip()
+    if not value:
+        raise ConfigurationError(f"{label} is required")
+    return value
+
+
+def _write_config_atomic(path: Path, document: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, raw_temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(raw_temporary)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(document.encode("utf-8"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _restore_secret_file(path: Path, existed: bool, content: bytes | None) -> None:
+    if not existed:
+        path.unlink(missing_ok=True)
+        return
+    assert content is not None
+    path.write_bytes(content)
+
+
+def _collect_init_settings() -> tuple[Settings, dict[str, str]]:
+    provider_value = _required_prompt("LLM provider (dashscope/zhipu/openai_compatible)")
+    if provider_value not in {"dashscope", "zhipu", "openai_compatible"}:
+        raise ConfigurationError("LLM provider must be dashscope, zhipu, or openai_compatible")
+    llm_base_url = _required_prompt("LLM base URL")
+    llm_model = _required_prompt("LLM model")
+    llm_key = _secret_prompt("LLM API key")
+    embedding_base_url = _required_prompt("Embedding base URL")
+    embedding_model = _required_prompt("Embedding model")
+    raw_dimension = _required_prompt("Embedding dimension")
+    try:
+        embedding_dim = int(raw_dimension)
+    except ValueError as error:
+        raise ConfigurationError("Embedding dimension must be an integer") from error
+    embedding_api_value = _required_prompt("Embedding API mode (compatible/native)")
+    if embedding_api_value not in {"compatible", "native"}:
+        raise ConfigurationError("Embedding API mode must be compatible or native")
+    embedding_key = _secret_prompt("Embedding API key")
+    reranker_choice = _required_prompt("Enable the built-in DashScope reranker? (y/n)").lower()
+    if reranker_choice not in {"y", "yes", "n", "no"}:
+        raise ConfigurationError("Reranker choice must be y or n")
+
+    values: dict[str, Any] = {
+        "llm_provider": cast(LLMProvider, provider_value),
+        "llm_base_url": llm_base_url,
+        "llm_model": llm_model,
+        "llm_api_key": llm_key,
+        "extractor_mode": "llm",
+        "embedder_mode": "real",
+        "embedding_base_url": embedding_base_url,
+        "embedding_model": embedding_model,
+        "embedding_dim": embedding_dim,
+        "embedding_api_mode": cast(EmbeddingApiMode, embedding_api_value),
+        "embedding_api_key": embedding_key,
+        "query_expansion_mode": "off",
+        "resurrection_mode": "off",
+        "relation_discovery_mode": "off",
+        "image_describer_mode": "off",
+    }
+    secrets = {"LLM_API_KEY": llm_key, "EMBEDDING_API_KEY": embedding_key}
+    if reranker_choice in {"y", "yes"}:
+        values.update(
+            reranker_mode="real",
+            reranker_provider="dashscope",
+            reranker_base_url=_required_prompt("Reranker base URL"),
+            reranker_model=_required_prompt("Reranker model"),
+            reranker_api_key=_secret_prompt("Reranker API key"),
+        )
+        secrets["RERANKER_API_KEY"] = str(values["reranker_api_key"])
+    settings = Settings(**values)
+    settings.validate_runtime()
+    return settings, secrets
+
+
+def _render_init_config(settings: Settings) -> str:
+    document: dict[str, Any] = {
+        "schema_version": 1,
+        "database": {"path": "var/hl_mem.db"},
+        "llm": {
+            "provider": settings.llm_provider,
+            "base_url": settings.llm_base_url,
+            "model": settings.llm_model,
+            "structured_mode": settings.llm_structured_mode,
+        },
+        "extraction": {"mode": "llm"},
+        "embedding": {
+            "mode": "real",
+            "base_url": settings.embedding_base_url,
+            "model": settings.embedding_model,
+            "dim": settings.embedding_dim,
+            "api_mode": settings.embedding_api_mode,
+        },
+        "reranker": {
+            "mode": settings.reranker_mode,
+            "provider": settings.reranker_provider,
+            "base_url": settings.reranker_base_url,
+            "model": settings.reranker_model,
+        },
+        "image_describer": {"mode": "off"},
+        "recall": {
+            "query_expansion_mode": "off",
+            "resurrection_mode": "off",
+        },
+        "relation": {"expansion_mode": "off", "discovery_mode": "off"},
+        "plugins": {"enabled": []},
+    }
+    return tomli_w.dumps(document)
+
+
+def initialize_config(
+    path: Path,
+    *,
+    env_path: Path,
+    force: bool,
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Collect, verify, then atomically commit a production configuration."""
     if path.exists() and not force:
         parser.error(f"配置文件已存在：{path}；如需覆盖请加 --force")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(OFFLINE_CONFIG if offline else ONLINE_CONFIG, encoding="utf-8", newline="\n")
-    print(f"已生成配置：{path}")
-    if offline:
-        print("当前为无 AK 的 FTS-only 关键词召回；fake embedding 不提供语义检索。")
-        print("切换真实模型：填写 .env 密钥，并将 extraction/embedding/reranker 等 mode 改为真实模式。")
-    else:
-        print("请按启用的组件在 .env 中填写独立 API key，然后运行 `hl-mem server`。")
+    secret_values: tuple[str, ...] = ()
+    try:
+        settings, secrets = _collect_init_settings()
+        secret_values = tuple(secrets.values())
+        document = _render_init_config(settings)
+        candidate = load_settings_data(
+            tomllib.loads(document),
+            source_path=path,
+            env_path=env_path,
+            environ=secrets,
+            validate_runtime=True,
+        )
+        probes = probe_model_components(candidate)
+        failures = [result for result in probes if result.status is CheckStatus.FAIL]
+        if failures:
+            detail = "; ".join(f"{result.name}: {result.detail}" for result in failures)
+            raise ConfigurationError(f"provider verification failed: {detail}")
+    except (ConfigurationError, EOFError, OSError, ValueError) as error:
+        safe_message = redact_secret_text(str(error), secret_values)
+        print(f"初始化失败：{safe_message}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+    env_existed = env_path.is_file()
+    env_original = env_path.read_bytes() if env_existed else None
+    try:
+        merge_secret_file(env_path, secrets, force=force)
+        _write_config_atomic(path, document)
+    except (ConfigurationError, OSError, ValueError) as error:
+        _restore_secret_file(env_path, env_existed, env_original)
+        safe_message = redact_secret_text(str(error), secret_values)
+        print(f"初始化失败：{safe_message}", file=sys.stderr)
+        raise SystemExit(1) from error
+    print(f"配置与模型服务验证完成：{path}")
+    print(f"密钥已写入：{env_path}")
 
 
 def handle_daily_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> bool:
@@ -158,7 +254,7 @@ def handle_daily_command(args: argparse.Namespace, parser: argparse.ArgumentPars
     if args.command == "init":
         initialize_config(
             args.config or Path("hl_mem.toml"),
-            offline=args.offline,
+            env_path=args.env_file or Path(".env"),
             force=args.force,
             parser=parser,
         )

@@ -25,6 +25,7 @@ from hl_mem.compatibility import (
 from hl_mem.config_loader import load_settings
 from hl_mem.http_utils import retry_http
 from hl_mem.ingest.embedder import Embedder
+from hl_mem.recall.reranker import DashScopeReranker
 from hl_mem.settings import Settings, is_placeholder_secret
 
 MIGRATION_DIR = Path(__file__).resolve().parent / "storage" / "migrations"
@@ -215,6 +216,32 @@ def _check_llm(settings: Settings) -> CheckResult:
         )
     except ValueError as error:
         return CheckResult(CheckStatus.FAIL, "LLM API", f"配置值无效：{error}")
+
+
+def _check_reranker(settings: Settings) -> CheckResult:
+    if settings.reranker_mode == "off":
+        return CheckResult(CheckStatus.WARN, "Reranker API", "reranker=off，跳过")
+    if is_placeholder_secret(settings.reranker_api_key):
+        return CheckResult(CheckStatus.FAIL, "Reranker API", "缺少有效 API key")
+    try:
+        results = DashScopeReranker(
+            settings.reranker_api_key or "",
+            settings.reranker_base_url,
+            settings.reranker_model,
+        ).rerank("ping", ["ping"], top_n=1)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+        return CheckResult(CheckStatus.FAIL, "Reranker API", f"最小请求失败：{error}")
+    if not results:
+        return CheckResult(CheckStatus.FAIL, "Reranker API", "最小请求未返回结果")
+    return CheckResult(CheckStatus.OK, "Reranker API", "请求成功")
+
+
+def probe_model_components(settings: Settings) -> list[CheckResult]:
+    """Probe every model path enabled by a prospective production configuration."""
+    results = [_check_llm(settings), _check_embedding(settings)]
+    if settings.reranker_mode in {"on", "real"}:
+        results.append(_check_reranker(settings))
+    return results
 
 
 def _check_port() -> CheckResult:
