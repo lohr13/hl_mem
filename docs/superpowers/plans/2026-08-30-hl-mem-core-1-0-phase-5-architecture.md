@@ -148,7 +148,7 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
   Run:
 
   ```powershell
-  uv run --frozen pytest tests/unit/test_phase5_extraction_contract.py tests/unit/test_llm_extractor.py tests/unit/test_llm_extractor_language.py tests/unit/test_extraction_schema.py tests/unit/test_repair.py -q
+  uv run --frozen pytest tests/unit/test_phase5_extraction_contract.py tests/unit/test_llm_extractor.py tests/unit/test_extraction_language_episodic_time.py tests/unit/test_extraction_repair.py tests/unit/test_v021_repairs.py -q
   ```
 
   Expected: PASS with unchanged prompt hash, request payloads, schema diagnostics, and repaired payloads.
@@ -270,7 +270,7 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
 - Create: `src/hl_mem/api/routes/experience.py`
 - Create: `src/hl_mem/api/routes/maintenance.py`
 - Modify: `src/hl_mem/api/server.py`
-- Modify: `tests/unit/test_api.py`
+- Modify: `tests/unit/test_phase5_api_contract.py`
 - Modify: `scripts/complexity_budget.json`
 
 **Interfaces:**
@@ -279,14 +279,14 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
 
 - [ ] **Step 1: Freeze application-factory patch points**
 
-  Add tests that monkeypatch `hl_mem.api.server.RecallService` before `create_app()` and assert the patched class serves recall, and monkeypatch `hl_mem.api.server.components.make_extractor` and assert dry-run extraction uses it. Assert every current operation ID and schema still matches the checked-in OpenAPI snapshot.
+  Create `test_phase5_api_contract.py` with tests that monkeypatch `hl_mem.api.server.RecallService` before `create_app()` and assert the patched class serves recall, and monkeypatch `hl_mem.api.server.components.make_extractor` and assert dry-run extraction uses it. Assert every current operation ID and schema still matches the checked-in OpenAPI snapshot.
 
 - [ ] **Step 2: Run the factory tests on the baseline**
 
   Run:
 
   ```powershell
-  uv run --frozen pytest tests/unit/test_api.py tests/unit/test_session_context.py tests/unit/test_dry_run_extract.py -q
+  uv run --frozen pytest tests/unit/test_phase5_api_contract.py tests/unit/test_session_context.py tests/unit/test_dry_run_extract.py -q
   ```
 
   Expected: PASS before route extraction.
@@ -308,7 +308,7 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
   Run:
 
   ```powershell
-  uv run --frozen pytest tests/unit/test_api.py tests/unit/test_session_context.py tests/unit/test_dry_run_extract.py tests/unit/test_context_packet_api.py -q
+  uv run --frozen pytest tests/unit/test_phase5_api_contract.py tests/unit/test_session_context.py tests/unit/test_dry_run_extract.py tests/unit/test_context_packet.py tests/unit/test_experience_api.py tests/unit/test_daily_memory_api.py tests/unit/test_forget_api.py -q
   uv run --frozen python scripts/check_openapi_snapshot.py
   uv run --frozen python scripts/check_mcp_contract_snapshot.py
   ```
@@ -320,7 +320,7 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
   Reduce the `api/server.py` file ceiling and remove the obsolete `create_app` callable allowance. Run the complexity ratchet, then commit.
 
   ```powershell
-  git add src/hl_mem/api/server.py src/hl_mem/api/routes tests/unit/test_api.py scripts/complexity_budget.json
+  git add src/hl_mem/api/server.py src/hl_mem/api/routes tests/unit/test_phase5_api_contract.py scripts/complexity_budget.json
   git commit -m "refactor: organize HTTP routes by domain"
   ```
 
