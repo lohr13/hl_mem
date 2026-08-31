@@ -26,6 +26,15 @@ class RelationType(StrEnum):
     REPLACED_BY = "replaced_by"
 
 
+class RelationProvenance(StrEnum):
+    """Auditable origin of one official memory relation."""
+
+    LEGACY = "legacy"
+    DETERMINISTIC = "deterministic"
+    MANUAL = "manual"
+    APPROVED_PROPOSAL = "approved_proposal"
+
+
 EXPANDABLE_RELATION_TYPES = (
     RelationType.SUMMARIZES,
     RelationType.SUPPORTS,
@@ -41,24 +50,60 @@ def add_relation(
     to_id: str,
     relation: RelationType | str,
     confidence: float = 1.0,
+    *,
+    provenance: RelationProvenance | str,
+    evidence_ids: tuple[str, ...] = (),
+    created_at: str | None = None,
 ) -> str:
     """创建一条 claim 关系并返回其标识。"""
+    relation_provenance = RelationProvenance(provenance)
+    if relation_provenance is RelationProvenance.LEGACY:
+        raise ValueError("legacy provenance is reserved for migrated relations")
+    if relation_provenance is RelationProvenance.APPROVED_PROPOSAL:
+        raise ValueError("approved proposal relations must use RelationProposalRepository.approve_proposal")
+    return _insert_relation(
+        connection,
+        from_id,
+        to_id,
+        relation,
+        confidence,
+        provenance=relation_provenance,
+        evidence_ids=evidence_ids,
+        created_at=created_at,
+    )
+
+
+def _insert_relation(
+    connection: sqlite3.Connection,
+    from_id: str,
+    to_id: str,
+    relation: RelationType | str,
+    confidence: float,
+    *,
+    provenance: RelationProvenance,
+    evidence_ids: tuple[str, ...] = (),
+    proposal_id: str | None = None,
+    created_at: str | None = None,
+) -> str:
+    """Persist a validated official relation; callers own the transaction."""
     relation_type = RelationType(relation)
     relation_id = uuid.uuid4().hex
-    created_at = datetime.now(timezone.utc).isoformat()
+    recorded_at = created_at or datetime.now(timezone.utc).isoformat()
     connection.execute(
         "INSERT INTO memory_relations "
-        "(id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from) "
-        "VALUES (?,?,?,?,?,?,?,?)",
+        "(id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from,provenance,proposal_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
             relation_id,
             from_id,
             to_id,
             relation_type.value,
             min(1.0, max(0.0, float(confidence))),
-            json.dumps([], ensure_ascii=False),
-            created_at,
-            created_at,
+            json.dumps(sorted(set(evidence_ids)), ensure_ascii=False, separators=(",", ":")),
+            recorded_at,
+            recorded_at,
+            provenance.value,
+            proposal_id,
         ),
     )
     return relation_id
@@ -81,7 +126,8 @@ def get_relations(
         clauses.append("to_id=?")
         parameters.append(claim_id)
     rows = connection.execute(
-        "SELECT id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from,valid_to "
+        "SELECT id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from,valid_to,"
+        "provenance,proposal_id "
         f"FROM memory_relations WHERE {' OR '.join(clauses)} ORDER BY created_at,id",
         parameters,
     ).fetchall()
@@ -152,7 +198,8 @@ def get_relations_batch(
                 )
         if include_memory_relations:
             memory_rows = connection.execute(
-                "SELECT from_id,to_id,relation,confidence,valid_from,valid_to FROM memory_relations "
+                "SELECT from_id,to_id,relation,confidence,valid_from,valid_to,provenance,proposal_id "
+                "FROM memory_relations "
                 f"WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
                 (*chunk, *chunk),
             ).fetchall()

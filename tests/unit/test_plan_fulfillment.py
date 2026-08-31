@@ -145,10 +145,12 @@ def test_terminal_outcomes_close_only_plan_valid_time(
         before["recorded_to"],
         before["superseded_by_id"],
     )
-    assert connection.execute(
-        "SELECT 1 FROM memory_relations " "WHERE from_id=? AND to_id=? AND relation=? AND valid_to IS NULL",
+    relation_row = connection.execute(
+        "SELECT provenance,proposal_id FROM memory_relations "
+        "WHERE from_id=? AND to_id=? AND relation=? AND valid_to IS NULL",
         (plan_id, result_id, relation),
     ).fetchone()
+    assert tuple(relation_row) == ("deterministic", None)
 
 
 def test_cancellation_may_omit_quantity_only_with_strong_plan_id(tmp_path: Path) -> None:

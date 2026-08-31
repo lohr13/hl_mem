@@ -91,6 +91,8 @@ def test_get_relations_batch_expands_memory_and_reverse_claim_evidence(
         "evidence-out",
         "evidence-in",
     }
+    memory_edges = [item for item in expanded["seed"] if item["source"] == "memory_relations"]
+    assert {item["provenance"] for item in memory_edges} == {"legacy"}
 
 
 def test_expand_related_claims_filters_and_keeps_max_path_score(tmp_path) -> None:

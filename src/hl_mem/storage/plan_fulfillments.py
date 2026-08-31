@@ -6,6 +6,7 @@ import sqlite3
 import uuid
 from typing import Any, Iterable, Mapping
 
+from hl_mem.domain.relations import RelationProvenance, add_relation
 from hl_mem.storage.claims import ClaimRepository
 
 
@@ -103,13 +104,14 @@ class PlanFulfillmentRepository:
         ).fetchone()
         if existing is not None:
             return str(existing["id"])
-        relation_id = uuid.uuid4().hex
-        self.connection.execute(
-            "INSERT INTO memory_relations(id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from) "
-            "VALUES(?,?,?,?,1.0,'[]',?,?)",
-            (relation_id, plan_id, result_id, relation, now, now),
+        return add_relation(
+            self.connection,
+            plan_id,
+            result_id,
+            relation,
+            provenance=RelationProvenance.DETERMINISTIC,
+            created_at=now,
         )
-        return relation_id
 
     def action_id(self, plan_id: str, input_fingerprint: str, policy_version: str) -> str | None:
         row = self.connection.execute(
