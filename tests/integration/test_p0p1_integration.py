@@ -179,15 +179,12 @@ def test_relation_discovery_rejects_endpoint_archived_during_proposal(
         connection,
         _ArchivingDiscoverer(connection),
         "source",
-        mode="auto",
+        mode="audit",
         pool_limit=5,
         max_proposals=1,
-        auto_apply_confidence=0.8,
-        conflict_confidence=0.9,
     )
-    proposal = connection.execute("SELECT status,decision_reason FROM relation_proposals").fetchone()
-    assert result["applied"] == 0
-    assert tuple(proposal) == ("rejected", "stale-input")
+    assert result == {"candidates": 1, "proposals": 0, "rejected": 1}
+    assert connection.execute("SELECT count(*) FROM relation_proposals").fetchone()[0] == 0
     app.state.db.close()
 
 

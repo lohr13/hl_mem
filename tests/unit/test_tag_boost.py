@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from hl_mem.ingest.embedder import pack_vector
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
@@ -85,7 +87,6 @@ def test_recall_config_supplies_pipeline_defaults() -> None:
         recall_config=RecallConfig(
             candidate_floor=7,
             tag_boost_enabled=False,
-            tag_channel_enabled=False,
             preference_recency_boost=0.12,
         ),
     )
@@ -152,7 +153,6 @@ def test_tag_boost_disabled_preserves_existing_order_and_skips_tag_search() -> N
         None,
         now=NOW,
         tag_boost_enabled=False,
-        tag_channel_enabled=False,
     )
 
     assert [claim["id"] for claim in result] == ["first", "second"]
@@ -160,7 +160,7 @@ def test_tag_boost_disabled_preserves_existing_order_and_skips_tag_search() -> N
     assert repo.tag_queries == []
 
 
-def test_unrecognized_query_does_not_affect_ranking_or_search_tag_channel() -> None:
+def test_unrecognized_query_does_not_affect_ranking_or_search_tags() -> None:
     """无识别标签时即使 flags 开启也应完全跳过标签逻辑。"""
     first = _claim("first")
     second = _claim("second", ["architecture"])
@@ -174,57 +174,42 @@ def test_unrecognized_query_does_not_affect_ranking_or_search_tag_channel() -> N
         None,
         now=NOW,
         tag_boost_enabled=True,
-        tag_channel_enabled=True,
     )
 
     assert [claim["id"] for claim in result] == ["first", "second"]
     assert repo.tag_queries == []
 
 
-def test_tag_channel_adds_candidate_and_ignores_empty_channel_in_denominator() -> None:
-    """独立 tag channel 应补充候选，空通道则不稀释原有 RRF 分数。"""
+def test_tag_soft_boost_cannot_introduce_a_new_candidate() -> None:
+    """Tag 只能重排 FTS/Dense 已有候选，不能独立补充候选。"""
     text_match = _claim("text")
     tag_match = _claim("tag", ["architecture"])
-    with_tag = _Repo([text_match], [text_match], [tag_match])
-    without_tag = _Repo([text_match], [text_match], [])
+    repo = _Repo([text_match], [text_match], [tag_match])
 
-    added = hybrid_claims(
-        with_tag,
+    result = hybrid_claims(
+        repo,
         "架构",
         pack_vector([1.0]),
         2,
         None,
         now=NOW,
-        tag_boost_enabled=False,
-        tag_channel_enabled=True,
-        tag_channel_weight=0.15,
-        tag_candidate_limit=20,
-    )
-    baseline = hybrid_claims(
-        without_tag,
-        "架构",
-        pack_vector([1.0]),
-        1,
-        None,
-        now=NOW,
-        tag_boost_enabled=False,
-        tag_channel_enabled=True,
-        tag_channel_weight=0.15,
-        tag_candidate_limit=20,
+        tag_boost_enabled=True,
     )
 
-    assert {claim["id"] for claim in added} == {"text", "tag"}
-    assert with_tag.tag_queries == [["architecture"]]
-    assert (
-        baseline[0]["_score"]
-        == hybrid_claims(
-            without_tag,
+    assert [claim["id"] for claim in result] == ["text"]
+    assert repo.tag_queries == []
+
+
+def test_retired_tag_channel_arguments_are_not_accepted() -> None:
+    claim = _claim("candidate", ["architecture"])
+
+    with pytest.raises(TypeError, match="tag_channel_enabled"):
+        hybrid_claims(
+            _Repo([claim], [claim], [claim]),
             "架构",
             pack_vector([1.0]),
             1,
             None,
             now=NOW,
-            tag_boost_enabled=False,
-            tag_channel_enabled=False,
-        )[0]["_score"]
-    )
+            tag_channel_enabled=True,
+        )

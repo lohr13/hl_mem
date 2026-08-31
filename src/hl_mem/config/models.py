@@ -22,7 +22,7 @@ EmbeddingTextType = Literal["", "document", "query"] | None
 RerankerMode = Literal["off", "fake", "on", "real"]
 RerankerProvider = Literal["dashscope"]
 RelationExpansionMode = Literal["off", "on"]
-RelationDiscoveryMode = Literal["off", "audit", "auto"]
+RelationDiscoveryMode = Literal["off", "audit"]
 ExtractorMode = Literal["fake", "real", "llm"]
 VerificationMode = Literal["off", "audit", "enforce"]
 LLMProvider = Literal["dashscope", "zhipu", "openai_compatible"]
@@ -157,8 +157,6 @@ class ExtractionConfig:
     reranker_model: str = field(default="qwen3-rerank", metadata={"toml": "reranker.model"})
 
     extractor_mode: ExtractorMode = field(default="llm", metadata={"toml": "extraction.mode"})
-
-    extract_pre_filter: bool = field(default=False, metadata={"toml": "extraction.pre_filter"})
 
     verification_mode: VerificationMode = field(
         default="off",
@@ -320,7 +318,7 @@ class RetrievalConfig:
     )
 
     resurrection_mode: ResurrectionMode = field(
-        default="auto",
+        default="off",
         metadata={"toml": "recall.resurrection_mode"},
     )
 
@@ -370,14 +368,8 @@ class RetrievalConfig:
 
     tag_boost_weight: float = field(default=0.05, metadata={"toml": "recall.tag_boost_weight"})
 
-    tag_channel_enabled: bool = field(default=False, metadata={"toml": "recall.tag_channel_enabled"})
-
-    tag_channel_weight: float = field(default=0.15, metadata={"toml": "recall.tag_channel_weight"})
-
-    tag_candidate_limit: int = field(default=20, metadata={"toml": "recall.tag_candidate_limit"})
-
     query_expansion_mode: QueryExpansionMode = field(
-        default="auto",
+        default="off",
         metadata={"toml": "recall.query_expansion_mode"},
     )
 
@@ -537,16 +529,6 @@ class GovernanceConfig:
     relation_discovery_max_proposals: int = field(
         default=10,
         metadata={"toml": "relation.discovery_max_proposals"},
-    )
-
-    relation_auto_apply_confidence: float = field(
-        default=0.90,
-        metadata={"toml": "relation.auto_apply_confidence"},
-    )
-
-    relation_conflict_confidence: float = field(
-        default=0.80,
-        metadata={"toml": "relation.conflict_confidence"},
     )
 
     conflict_auto_mode: ConflictAutoMode = _toml_field("l0_only", "conflict.auto_mode")
@@ -1019,14 +1001,10 @@ class Settings(
             raise ConfigurationError("relation.expansion_mode must be 'off' or 'on'")
         if self.relation_expansion_max_depth < 1:
             raise ConfigurationError("relation.expansion_max_depth must be at least 1")
-        if self.relation_discovery_mode not in {"off", "audit", "auto"}:
-            raise ConfigurationError("relation.discovery_mode must be 'off', 'audit', or 'auto'")
+        if self.relation_discovery_mode not in {"off", "audit"}:
+            raise ConfigurationError("relation.discovery_mode must be 'off' or 'audit'")
         if self.relation_discovery_pool_limit < 1 or self.relation_discovery_max_proposals < 1:
             raise ConfigurationError("relation discovery limits must be positive")
-        if not 0.0 <= self.relation_auto_apply_confidence <= 1.0:
-            raise ConfigurationError("relation.auto_apply_confidence must be between 0 and 1")
-        if not 0.0 <= self.relation_conflict_confidence <= 1.0:
-            raise ConfigurationError("relation.conflict_confidence must be between 0 and 1")
         if self.packed_context_token_budget < 1 or self.recall_candidate_floor < 1:
             raise ConfigurationError("recall budgets must be positive")
         if not 0.0 <= self.recall_dedup_threshold <= 1.0:
@@ -1072,10 +1050,6 @@ class Settings(
             raise ConfigurationError("recall.preference_recency_boost must be between 0 and 1")
         if not 0.0 <= self.tag_boost_weight <= 1.0:
             raise ConfigurationError("recall.tag_boost_weight must be between 0 and 1")
-        if not 0.0 <= self.tag_channel_weight <= 1.0:
-            raise ConfigurationError("recall.tag_channel_weight must be between 0 and 1")
-        if self.tag_candidate_limit < 1:
-            raise ConfigurationError("recall.tag_candidate_limit must be positive")
         if self.query_expansion_mode not in {"off", "auto", "always"}:
             raise ConfigurationError("recall.query_expansion_mode must be 'off', 'auto', or 'always'")
         if self.query_context_mode not in {"off", "coreference"}:
@@ -1328,9 +1302,6 @@ class Settings(
             "resurrection_min_term_coverage": self.resurrection_min_term_coverage,
             "tag_boost_enabled": self.tag_boost_enabled,
             "tag_boost_weight": self.tag_boost_weight,
-            "tag_channel_enabled": self.tag_channel_enabled,
-            "tag_channel_weight": self.tag_channel_weight,
-            "tag_candidate_limit": self.tag_candidate_limit,
             "query_expansion_mode": self.query_expansion_mode,
             "query_expansion_model": self.query_expansion_model,
             "query_expansion_provider": self.query_expansion_provider,
@@ -1363,7 +1334,6 @@ class Settings(
             "vector_batch_size": self.vector_batch_size,
             "hermes_on_demand_recall_timeout_seconds": self.hermes_on_demand_recall_timeout_seconds,
             "hermes_manual_conflict_notice": self.hermes_manual_conflict_notice,
-            "extract_pre_filter": self.extract_pre_filter,
             "verification_mode": self.verification_mode,
             "lesson_signal_mode": self.lesson_signal_mode,
             "llm_model": self.llm_model,

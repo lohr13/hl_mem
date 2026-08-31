@@ -29,6 +29,16 @@ _REQUIRED_RUNTIME_PATHS = (
     "embedding.dim",
     "embedding.api_mode",
 )
+_RETIRED_TOML_PATHS = frozenset(
+    {
+        "extraction.pre_filter",
+        "recall.tag_channel_enabled",
+        "recall.tag_channel_weight",
+        "recall.tag_candidate_limit",
+        "relation.auto_apply_confidence",
+        "relation.conflict_confidence",
+    }
+)
 
 
 def _resolve_database_path(raw_path: str, resolved_config_path: Path, platform: str) -> str:
@@ -174,6 +184,10 @@ def _flatten_toml(
             key_path = f"{prefix}.{key}" if prefix else key
             if key_path in forbidden_paths:
                 raise ConfigurationError(f"{path}: {key_path}: secrets must not appear in TOML")
+            if key_path in _RETIRED_TOML_PATHS:
+                raise ConfigurationError(
+                    f"{path}: {key_path}: retired configuration; run 'hl-mem config migrate --config {path}'"
+                )
             settings_field = toml_fields.get(key_path)
             if isinstance(value, dict):
                 if settings_field is not None:

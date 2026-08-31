@@ -210,7 +210,6 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `extraction.lesson_signal_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `lesson_signal_mode` |
 | `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
 | `extraction.mode` | 字符串 | `"llm"` | `fake`、`real`、`llm` | `extractor_mode` |
-| `extraction.pre_filter` | 布尔值 | `false` | `true`、`false` | `extract_pre_filter` |
 | `extraction.soft_split_enabled` | 布尔值 | `false` | `true`、`false` | `extraction_soft_split_enabled` |
 | `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
 
@@ -343,7 +342,7 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 | `recall.query_expansion_candidate_floor` | 整数 | `8` | > 0 | `query_expansion_candidate_floor` |
 | `recall.query_expansion_max` | 整数 | `2` | 0 - 2 | `query_expansion_max` |
 | `recall.query_expansion_max_concurrency` | 整数 | `4` | > 0 | `query_expansion_max_concurrency` |
-| `recall.query_expansion_mode` | 字符串 | `"auto"` | `off`、`auto`、`always` | `query_expansion_mode` |
+| `recall.query_expansion_mode` | 字符串 | `"off"` | `off`、`auto`、`always` | `query_expansion_mode` |
 | `recall.query_expansion_model` | 字符串 | 未设置 | 字符串；可省略 | `query_expansion_model` |
 | `recall.query_expansion_provider` | 字符串 | 未设置 | 字符串；可省略 | `query_expansion_provider` |
 | `recall.query_expansion_timeout_seconds` | 数值 | `15.0` | > 0 | `query_expansion_timeout_seconds` |
@@ -357,14 +356,11 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 | `recall.relevance_reranker_floor` | 数值 | `0.15` | 0.0 - 1.0 | `relevance_reranker_floor` |
 | `recall.resurrection_candidate_limit` | 整数 | `3` | >= 1 | `resurrection_candidate_limit` |
 | `recall.resurrection_min_term_coverage` | 数值 | `0.8` | 0.0 - 1.0（不含 0） | `resurrection_min_term_coverage` |
-| `recall.resurrection_mode` | 字符串 | `"auto"` | `off`、`auto` | `resurrection_mode` |
+| `recall.resurrection_mode` | 字符串 | `"off"` | `off`、`auto` | `resurrection_mode` |
 | `recall.side_effect_backoff_seconds` | 数值 | `0.05` | >= 0 | `recall_side_effect_backoff_seconds` |
 | `recall.side_effect_max_attempts` | 整数 | `3` | >= 1 | `recall_side_effect_max_attempts` |
 | `recall.tag_boost_enabled` | 布尔值 | `true` | `true`、`false` | `tag_boost_enabled` |
 | `recall.tag_boost_weight` | 数值 | `0.05` | 0.0 - 1.0 | `tag_boost_weight` |
-| `recall.tag_candidate_limit` | 整数 | `20` | >= 1 | `tag_candidate_limit` |
-| `recall.tag_channel_enabled` | 布尔值 | `false` | `true`、`false` | `tag_channel_enabled` |
-| `recall.tag_channel_weight` | 数值 | `0.15` | 0.0 - 1.0 | `tag_channel_weight` |
 | `recall.vector_backend` | 字符串 | `"sqlite_scan"` | `sqlite_scan`、`sqlite_vec` | `vector_backend` |
 | `recall.vector_batch_size` | 整数 | `512` | >= 1 | `vector_batch_size` |
 | `recall.vector_scan_limit` | 整数 | `200` | >= 1 | `recall_vector_scan_limit` |
@@ -373,10 +369,8 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
 |---|---|---|---|---|
-| `relation.auto_apply_confidence` | 数值 | `0.9` | 0.0 - 1.0 | `relation_auto_apply_confidence` |
-| `relation.conflict_confidence` | 数值 | `0.8` | 0.0 - 1.0 | `relation_conflict_confidence` |
 | `relation.discovery_max_proposals` | 整数 | `10` | >= 1 | `relation_discovery_max_proposals` |
-| `relation.discovery_mode` | 字符串 | `"off"` | `off`、`audit`、`auto` | `relation_discovery_mode` |
+| `relation.discovery_mode` | 字符串 | `"off"` | `off`、`audit` | `relation_discovery_mode` |
 | `relation.discovery_pool_limit` | 整数 | `40` | >= 1 | `relation_discovery_pool_limit` |
 | `relation.expansion_max_depth` | 整数 | `1` | >= 1 | `relation_expansion_max_depth` |
 | `relation.expansion_mode` | 字符串 | `"off"` | `off`、`on` | `relation_expansion_mode` |

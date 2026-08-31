@@ -51,7 +51,6 @@ class SearchPhaseMetrics:
 
     fts_us: int = 0
     dense_us: int = 0
-    tag_us: int = 0
     relation_us: int = 0
     fusion_us: int = 0
     reranker_us: int = 0
@@ -116,7 +115,6 @@ class SearchTrace:
     entity_filtered_count: int = 0
     slot_boost_applied: bool = False
     tag_boost_applied: bool = False
-    tag_channel_applied: bool = False
     expansion_trigger: str | None = None
     expansions: list[QueryExpansionTrace] = field(default_factory=list)
     expansion_total_tokens: int = 0

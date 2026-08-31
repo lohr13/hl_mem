@@ -367,8 +367,6 @@ def _ingest_config_identity(settings: Settings) -> dict[str, Any]:
             "mode": settings.relation_discovery_mode,
             "pool_limit": settings.relation_discovery_pool_limit,
             "max_proposals": settings.relation_discovery_max_proposals,
-            "auto_apply_confidence": settings.relation_auto_apply_confidence,
-            "conflict_confidence": settings.relation_conflict_confidence,
         },
     }
 

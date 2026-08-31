@@ -1,4 +1,4 @@
-"""有界关系候选发现与审计/自动应用 worker。"""
+"""有界关系候选发现与审计 worker。"""
 
 from __future__ import annotations
 
@@ -9,9 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from hl_mem.core.vector import cosine_similarity
-from hl_mem.domain.claims.conflicts import compute_claim_pair_key
 from hl_mem.domain.relations import EXPANDABLE_RELATION_TYPES
-from hl_mem.lifecycle import assert_transition
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import (
     LLMMessage,
@@ -24,7 +22,6 @@ from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.relation_proposals import RelationProposalRepository
 
 ALLOWED_RELATIONS = frozenset(item.value for item in EXPANDABLE_RELATION_TYPES)
-AUTO_RELATIONS = frozenset({"about", "follows", "supports"})
 
 RELATION_DISCOVERY_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -262,44 +259,6 @@ def _validate_proposal(
     return None
 
 
-def _find_or_insert_relation(
-    connection: sqlite3.Connection,
-    proposal_id: str,
-    proposal: RelationProposal,
-    now: str,
-) -> str:
-    row = connection.execute(
-        "SELECT id FROM memory_relations WHERE from_id=? AND to_id=? AND relation=? "
-        "ORDER BY confidence DESC,created_at,id LIMIT 1",
-        (proposal.from_claim_id, proposal.to_claim_id, proposal.relation),
-    ).fetchone()
-    if row:
-        return str(row["id"])
-    relation_id = uuid.uuid4().hex
-    evidence = {
-        "proposal_id": proposal_id,
-        "model": proposal.model,
-        "rationale": proposal.rationale,
-        "supporting_claim_ids": proposal.supporting_claim_ids,
-    }
-    connection.execute(
-        "INSERT INTO memory_relations("
-        "id,from_id,to_id,relation,confidence,evidence_json,created_at,valid_from"
-        ") VALUES (?,?,?,?,?,?,?,?)",
-        (
-            relation_id,
-            proposal.from_claim_id,
-            proposal.to_claim_id,
-            proposal.relation,
-            proposal.confidence,
-            json.dumps(evidence, ensure_ascii=False),
-            now,
-            now,
-        ),
-    )
-    return relation_id
-
-
 def discover_relations(
     connection: sqlite3.Connection,
     discoverer: RelationDiscoveryProtocol,
@@ -308,16 +267,14 @@ def discover_relations(
     mode: str,
     pool_limit: int,
     max_proposals: int,
-    auto_apply_confidence: float,
-    conflict_confidence: float,
 ) -> dict[str, int]:
-    """发现、审计并按模式原子应用一批关系提案。"""
+    """发现并原子记录一批经过校验的关系提案。"""
+    if mode not in {"off", "audit"}:
+        raise ValueError("relation discovery mode must be 'off' or 'audit'")
     if mode == "off":
         return {
             "candidates": 0,
             "proposals": 0,
-            "applied": 0,
-            "conflicts": 0,
             "rejected": 0,
         }
     source = ClaimRepository(connection).get_claim(claim_id)
@@ -325,8 +282,6 @@ def discover_relations(
         return {
             "candidates": 0,
             "proposals": 0,
-            "applied": 0,
-            "conflicts": 0,
             "rejected": 0,
         }
     candidates = build_neighbor_pool(connection, source, pool_limit)
@@ -342,8 +297,6 @@ def discover_relations(
     counts = {
         "candidates": len(candidates),
         "proposals": 0,
-        "applied": 0,
-        "conflicts": 0,
         "rejected": 0,
     }
     now = datetime.now(timezone.utc).isoformat()
@@ -357,10 +310,10 @@ def discover_relations(
                 counts["rejected"] += 1
                 continue
             reason = _validate_proposal(proposal, claims)
-            if reason == "missing_endpoint":
+            if reason is not None:
                 counts["rejected"] += 1
                 continue
-            proposal_id = repository.insert_proposal(
+            inserted_id = repository.insert_proposal(
                 {
                     "source_claim_id": proposal.from_claim_id,
                     "run_id": run_id,
@@ -376,83 +329,9 @@ def discover_relations(
                 },
                 commit=False,
             )
-            if proposal_id is None:
+            if inserted_id is None:
                 continue
             counts["proposals"] += 1
-            if mode == "audit":
-                continue
-            status, relation_id, conflict_case_id = "rejected", None, None
-            if reason is not None:
-                decision_reason = (
-                    "stale-input"
-                    if reason
-                    in {
-                        "missing_endpoint",
-                        "inactive_endpoint",
-                        "missing_support",
-                        "inactive_support",
-                    }
-                    else reason
-                )
-            elif proposal.relation == "summarizes":
-                decision_reason = "topic_summary_builder_only"
-            elif proposal.relation in AUTO_RELATIONS and proposal.confidence >= auto_apply_confidence:
-                relation_id = _find_or_insert_relation(connection, proposal_id, proposal, now)
-                status, decision_reason = "applied", "auto_confidence_threshold"
-                counts["applied"] += 1
-            elif proposal.relation == "contradicts" and proposal.confidence >= conflict_confidence:
-                pair_key = compute_claim_pair_key(proposal.from_claim_id, proposal.to_claim_id)
-                row = connection.execute("SELECT id FROM conflict_cases WHERE pair_key=?", (pair_key,)).fetchone()
-                conflict_case_id = str(row["id"]) if row else uuid.uuid4().hex
-                if row is None:
-                    connection.execute(
-                        "INSERT INTO conflict_cases(id,pair_key,left_claim_id,right_claim_id,status,decision,"
-                        "rationale,confidence,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                        (
-                            conflict_case_id,
-                            pair_key,
-                            proposal.from_claim_id,
-                            proposal.to_claim_id,
-                            "manual_required",
-                            "contradicts",
-                            proposal.rationale,
-                            proposal.confidence,
-                            now,
-                        ),
-                    )
-                endpoint_update_failed = False
-                for endpoint_id in (proposal.from_claim_id, proposal.to_claim_id):
-                    endpoint = claims[endpoint_id]
-                    if endpoint["status"] == "active":
-                        assert_transition("active", "disputed")
-                        cursor = connection.execute(
-                            "UPDATE claims SET status='disputed' WHERE id=? AND status='active'",
-                            (endpoint_id,),
-                        )
-                        if cursor.rowcount != 1:
-                            endpoint_update_failed = True
-                            break
-                if endpoint_update_failed:
-                    status, decision_reason = "rejected", "stale-input"
-                else:
-                    status, decision_reason = (
-                        "conflict_created",
-                        "contradiction_threshold",
-                    )
-                    counts["conflicts"] += 1
-            else:
-                decision_reason = "below_confidence_threshold"
-            if status == "rejected":
-                counts["rejected"] += 1
-            repository.update_proposal_status(
-                proposal_id,
-                status,
-                decision_reason=decision_reason,
-                relation_id=relation_id,
-                conflict_case_id=conflict_case_id,
-                decided_at=now,
-                commit=False,
-            )
         connection.commit()
     except Exception:
         connection.rollback()

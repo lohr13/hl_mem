@@ -32,7 +32,6 @@ from hl_mem.recall.echo_suppression import (
     EchoRequest,
     EchoSuppressionPolicy,
 )
-from hl_mem.recall.entity_query import apply_entity_constraint
 from hl_mem.recall.ranking import (
     DEFAULT_WEIGHTS,
     blend_reranker_score,
@@ -67,9 +66,6 @@ class RecallConfig:
     candidate_floor: int = 50
     tag_boost_enabled: bool = True
     tag_boost_weight: float = 0.05
-    tag_channel_enabled: bool = False
-    tag_channel_weight: float = 0.15
-    tag_candidate_limit: int = 20
     preference_recency_boost: float = 0.12
     dedup_threshold: float = 0.0
     dedup_candidate_limit: int = 100
@@ -104,20 +100,15 @@ class RecallContext:
     query_slot_hints: list[str] = field(default_factory=list)
     tag_boost_enabled: bool = True
     tag_boost_weight: float = 0.05
-    tag_channel_enabled: bool = False
-    tag_channel_weight: float = 0.15
-    tag_candidate_limit: int = 20
     dedup_threshold: float = 0.0
     dedup_candidate_limit: int = 100
     feedback_min_samples: int = 3
     ranking_weights: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
     fts: list[dict[str, Any]] = field(default_factory=list)
     dense: list[dict[str, Any]] = field(default_factory=list)
-    tags: list[dict[str, Any]] = field(default_factory=list)
     query_channels: list[tuple[str, list[dict[str, Any]], float, float]] = field(default_factory=list)
     fts_us: int = 0
     dense_us: int = 0
-    tag_us: int = 0
     total_started: int = 0
 
     by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -239,9 +230,6 @@ def hybrid_claims(
     preference_recency_boost: float | None = None,
     tag_boost_enabled: bool | None = None,
     tag_boost_weight: float | None = None,
-    tag_channel_enabled: bool | None = None,
-    tag_channel_weight: float | None = None,
-    tag_candidate_limit: int | None = None,
     weighted_queries: list[WeightedQuery] | None = None,
     query_blobs: list[bytes] | None = None,
     low_recall_expander: Callable[[int, int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
@@ -269,9 +257,6 @@ def hybrid_claims(
         preference_recency_boost=preference_recency_boost,
         tag_boost_enabled=tag_boost_enabled,
         tag_boost_weight=tag_boost_weight,
-        tag_channel_enabled=tag_channel_enabled,
-        tag_channel_weight=tag_channel_weight,
-        tag_candidate_limit=tag_candidate_limit,
         weighted_queries=weighted_queries,
         query_blobs=query_blobs,
         low_recall_expander=low_recall_expander,
@@ -302,9 +287,6 @@ def _collect_candidates(
     preference_recency_boost: float | None = None,
     tag_boost_enabled: bool | None = None,
     tag_boost_weight: float | None = None,
-    tag_channel_enabled: bool | None = None,
-    tag_channel_weight: float | None = None,
-    tag_candidate_limit: int | None = None,
     weighted_queries: list[WeightedQuery] | None = None,
     query_blobs: list[bytes] | None = None,
     low_recall_expander: Callable[[int, int], tuple[list[WeightedQuery], list[bytes]]] | None = None,
@@ -321,8 +303,7 @@ def _collect_candidates(
     reference = as_of or ranking_now
     total_started = time.perf_counter_ns()
     effective_tag_boost_enabled = config.tag_boost_enabled if tag_boost_enabled is None else tag_boost_enabled
-    effective_tag_channel_enabled = config.tag_channel_enabled if tag_channel_enabled is None else tag_channel_enabled
-    query_tags = extract_query_tags(query) if effective_tag_boost_enabled or effective_tag_channel_enabled else []
+    query_tags = extract_query_tags(query) if effective_tag_boost_enabled else []
     query_slot_hints, hinted_tags = extract_query_slot_hints(query)
     query_tags = list(dict.fromkeys([*query_tags, *hinted_tags]))
 
@@ -386,31 +367,6 @@ def _collect_candidates(
         tracer.trace.phases.fts_us = fts_us
         tracer.trace.phases.dense_us = dense_us
 
-    effective_tag_candidate_limit = tag_candidate_limit or config.tag_candidate_limit
-    tag_results: list[dict[str, Any]] = []
-    tag_us = 0
-    if effective_tag_channel_enabled and query_tags:
-        started = time.perf_counter_ns()
-        tag_results = repo.search_claims_tags(
-            query_tags,
-            namespace,
-            effective_tag_candidate_limit,
-            reference,
-            selected_intent,
-            known_as_of,
-        )
-        constrained = apply_entity_constraint(
-            getattr(repo, "connection", None),
-            tag_results,
-            config.entity_constraint_mode,
-            config.entity_filter_id,
-        )
-        tag_results = constrained.items
-        entity_filtered_ids.update(constrained.filtered_ids)
-        tag_us = (time.perf_counter_ns() - started) // 1000
-        if tracer is not None:
-            tracer.trace.phases.tag_us = tag_us
-            tracer.record_channel("tag", tag_results)
     if tracer is not None:
         tracer.trace.query_tags = query_tags
         tracer.trace.query_slot_hints = query_slot_hints
@@ -418,7 +374,6 @@ def _collect_candidates(
             tracer.trace.entity_filter_mode = config.entity_constraint_mode
             tracer.trace.entity_filtered_count = len(entity_filtered_ids)
         tracer.trace.tag_boost_applied = bool(effective_tag_boost_enabled and query_tags)
-        tracer.trace.tag_channel_applied = bool(effective_tag_channel_enabled and query_tags and tag_results)
 
     return RecallContext(
         repo=repo,
@@ -443,20 +398,15 @@ def _collect_candidates(
         query_slot_hints=query_slot_hints,
         tag_boost_enabled=effective_tag_boost_enabled,
         tag_boost_weight=config.tag_boost_weight if tag_boost_weight is None else tag_boost_weight,
-        tag_channel_enabled=effective_tag_channel_enabled,
-        tag_channel_weight=config.tag_channel_weight if tag_channel_weight is None else tag_channel_weight,
-        tag_candidate_limit=effective_tag_candidate_limit,
         dedup_threshold=config.dedup_threshold,
         dedup_candidate_limit=config.dedup_candidate_limit,
         feedback_min_samples=config.feedback_min_samples,
         ranking_weights=decay_ranking_weights(config.decay_model),
         fts=fts,
         dense=dense,
-        tags=tag_results,
         query_channels=query_channels,
         fts_us=fts_us,
         dense_us=dense_us,
-        tag_us=tag_us,
         total_started=total_started,
         echo_policy=echo_policy,
         echo_request=echo_request,
@@ -470,7 +420,7 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
     tracer = ctx.tracer
     visible: list[dict[str, Any]] = []
     semantic_candidates = [claim for _, channel, _, _ in ctx.query_channels for claim in channel]
-    for claim in semantic_candidates + ctx.tags:
+    for claim in semantic_candidates:
         if claim_is_visible(claim, ctx.reference, ctx.known_as_of, ctx.selected_intent):
             visible.append(claim)
         elif tracer is not None:
@@ -485,12 +435,8 @@ def _filter_and_score(ctx: RecallContext) -> RecallContext:
     ).items():
         by_id[claim_id]["helpful_rate"] = helpful_rate
     channels = [(items, query_weight, channel_weight) for _, items, query_weight, channel_weight in ctx.query_channels]
-    if ctx.tag_channel_enabled and ctx.tags:
-        channels.append((ctx.tags, 1.0, ctx.tag_channel_weight))
     scores = _weighted_rrf_scores(channels, RRF_K)
     enabled_weight = sum(query_weight * channel_weight for _, _, query_weight, channel_weight in ctx.query_channels)
-    if ctx.tag_channel_enabled and ctx.tags:
-        enabled_weight += ctx.tag_channel_weight
     normalization = enabled_weight / (RRF_K + 1)
     max_access = max((_access_count(claim) for claim in by_id.values()), default=0)
     feature_by_id = {
@@ -798,11 +744,9 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
             "candidate_limit": ctx.candidate_limit,
             "fts_ids": [item["id"] for item in ctx.fts],
             "dense_ids": [item["id"] for item in ctx.dense],
-            "tag_ids": [item["id"] for item in ctx.tags],
             "query_tags": ctx.query_tags,
             "tag_boost_applied": bool(ctx.tag_boosts),
             "tag_boost": ctx.tag_boosts,
-            "tag_channel_applied": bool(ctx.tag_channel_enabled and ctx.query_tags and ctx.tags),
             "rrf_ids": [item["id"] for item in ctx.ranked_claims],
             "returned_ids": [item["id"] for item in final],
             "weights": ctx.ranking_weights,
@@ -821,7 +765,6 @@ def _finalize(ctx: RecallContext) -> list[dict[str, Any]]:
             "timing_us": {
                 "fts": ctx.fts_us,
                 "dense": ctx.dense_us,
-                "tag": ctx.tag_us,
                 "reranker": ctx.rerank_us,
             },
         },

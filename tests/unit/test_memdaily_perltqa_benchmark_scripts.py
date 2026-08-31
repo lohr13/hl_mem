@@ -104,8 +104,6 @@ class MemDailyAggregationTests(unittest.TestCase):
             replace(settings, relation_discovery_mode="audit"),
             replace(settings, relation_discovery_pool_limit=settings.relation_discovery_pool_limit + 1),
             replace(settings, relation_discovery_max_proposals=settings.relation_discovery_max_proposals + 1),
-            replace(settings, relation_auto_apply_confidence=settings.relation_auto_apply_confidence - 0.01),
-            replace(settings, relation_conflict_confidence=settings.relation_conflict_confidence - 0.01),
         )
 
         for variant in variants:

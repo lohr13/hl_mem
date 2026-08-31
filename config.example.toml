@@ -39,7 +39,6 @@ timeout_seconds = 20.0
 
 [extraction]
 mode = "llm"
-pre_filter = false
 chunk_target_chars = 12000
 # Larger/longer microbatches reduce LLM call cost but increase extraction latency.
 batch_max_events = 5
@@ -74,7 +73,6 @@ query_expansion_model = "glm-4.7"
 # query_expansion_base_url = "https://coding.dashscope.aliyuncs.com/v1"
 query_expansion_timeout_seconds = 15.0
 query_expansion_total_timeout_seconds = 16.0
-tag_channel_enabled = false
 relevance_gate_mode = "observe"
 relevance_reranker_floor = 0.15
 relevance_dense_floor = 0.3

@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from hl_mem.domain.relations import walk_relation_graph
+from hl_mem.errors import ConfigurationError
 from hl_mem.llm.types import LLMResponse
 from hl_mem.protocols import RelationProposal
 from hl_mem.settings import Settings
@@ -113,6 +114,11 @@ def test_settings_default_keeps_relation_discovery_off() -> None:
     assert Settings().relation_discovery_mode == "off"
 
 
+def test_relation_discovery_rejects_auto_application_mode() -> None:
+    with pytest.raises(ConfigurationError, match=r"relation\.discovery_mode.*off.*audit"):
+        Settings(relation_discovery_mode="auto").validate()
+
+
 def test_neighbor_pool_is_namespace_isolated_prioritized_and_bounded(
     connection,
 ) -> None:
@@ -136,10 +142,10 @@ def test_neighbor_pool_is_namespace_isolated_prioritized_and_bounded(
     assert all(item["namespace_key"] == "default" for item in pool)
 
 
-def test_audit_records_proposal_without_writing_edge(connection) -> None:
+def test_audit_records_proposal_without_mutating_relation_or_claim_state(connection) -> None:
     _insert_claim(connection, "source")
     _insert_claim(connection, "target")
-    proposal = RelationProposal("source", "target", "supports", 0.99, "evidence", (), "fake")
+    proposal = RelationProposal("source", "target", "contradicts", 0.99, "evidence", (), "fake")
     result = discover_relations(
         connection,
         FakeRelationDiscoverer([proposal]),
@@ -147,34 +153,12 @@ def test_audit_records_proposal_without_writing_edge(connection) -> None:
         mode="audit",
         pool_limit=40,
         max_proposals=10,
-        auto_apply_confidence=0.9,
-        conflict_confidence=0.8,
     )
     assert result["proposals"] == 1
     assert connection.execute("SELECT count(*) FROM memory_relations").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 0
+    assert {row[0] for row in connection.execute("SELECT status FROM claims")} == {"active"}
     assert connection.execute("SELECT status FROM relation_proposals").fetchone()[0] == "pending"
-
-
-def test_auto_applies_high_confidence_safe_edge_and_rejects_summary(connection) -> None:
-    _insert_claim(connection, "source")
-    _insert_claim(connection, "target")
-    proposals = [
-        RelationProposal("source", "target", "supports", 0.95, "strong", (), "fake"),
-        RelationProposal("target", "source", "summarizes", 0.99, "summary", (), "fake"),
-    ]
-    result = discover_relations(
-        connection,
-        FakeRelationDiscoverer(proposals),
-        "source",
-        mode="auto",
-        pool_limit=40,
-        max_proposals=10,
-        auto_apply_confidence=0.9,
-        conflict_confidence=0.8,
-    )
-    assert result["applied"] == 1
-    assert result["rejected"] == 1
-    assert connection.execute("SELECT count(*) FROM memory_relations").fetchone()[0] == 1
 
 
 def test_missing_proposal_endpoint_is_rejected_without_foreign_key_failure(connection) -> None:
@@ -185,35 +169,13 @@ def test_missing_proposal_endpoint_is_rejected_without_foreign_key_failure(conne
         connection,
         FakeRelationDiscoverer([proposal]),
         "source",
-        mode="auto",
+        mode="audit",
         pool_limit=40,
         max_proposals=10,
-        auto_apply_confidence=0.9,
-        conflict_confidence=0.8,
     )
 
     assert result["rejected"] == 1
     assert connection.execute("SELECT count(*) FROM relation_proposals").fetchone()[0] == 0
-
-
-def test_contradiction_reuses_pair_case_and_marks_claims_disputed(connection) -> None:
-    _insert_claim(connection, "source")
-    _insert_claim(connection, "target")
-    proposal = RelationProposal("source", "target", "contradicts", 0.9, "conflict", (), "fake")
-    for _ in range(2):
-        discover_relations(
-            connection,
-            FakeRelationDiscoverer([proposal]),
-            "source",
-            mode="auto",
-            pool_limit=40,
-            max_proposals=10,
-            auto_apply_confidence=0.9,
-            conflict_confidence=0.8,
-        )
-    assert connection.execute("SELECT count(*) FROM conflict_cases").fetchone()[0] == 1
-    statuses = {row[0] for row in connection.execute("SELECT status FROM claims")}
-    assert statuses == {"disputed"}
 
 
 def test_recursive_graph_walk_stops_cycles_and_respects_namespace(connection) -> None:

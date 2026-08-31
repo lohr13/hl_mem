@@ -179,6 +179,24 @@ def test_v1_plugin_namespace_fails_closed_for_invalid_ids(tmp_path: Path, body: 
         _load_structural_settings(path, environ={})
 
 
+@pytest.mark.parametrize(
+    "body",
+    (
+        "[extraction]\npre_filter = true\n",
+        "[recall]\ntag_channel_enabled = true\n",
+        "[recall]\ntag_channel_weight = 0.2\n",
+        "[recall]\ntag_candidate_limit = 10\n",
+        "[relation]\nauto_apply_confidence = 0.9\n",
+        "[relation]\nconflict_confidence = 0.8\n",
+    ),
+)
+def test_v1_rejects_retired_surfaces_with_migration_command(tmp_path: Path, body: str) -> None:
+    path = _write(tmp_path / "retired.toml", body)
+
+    with pytest.raises(ConfigurationError, match=r"retired.*hl-mem config migrate"):
+        _load_structural_settings(path, environ={})
+
+
 def test_missing_default_and_explicit_config_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ConfigurationError, match=r"hl_mem\.toml.*does not exist"):
@@ -356,7 +374,7 @@ def test_extraction_delta_repair_flag_loads_from_toml_and_defaults_off(tmp_path:
     assert settings.extraction_delta_repair_enabled is True
 
 
-def test_old_config_without_lifecycle_keys_adopts_v027_defaults(tmp_path: Path) -> None:
+def test_v1_config_without_lifecycle_keys_uses_safe_defaults(tmp_path: Path) -> None:
     config_path = _write(
         tmp_path / "old.toml",
         """
@@ -367,7 +385,7 @@ query_expansion_mode = "off"
 
     settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
-    assert settings.resurrection_mode == "auto"
+    assert settings.resurrection_mode == "off"
     assert settings.decay_model == "activation_halflife"
 
 
@@ -404,7 +422,6 @@ timeout = 12
 [recall]
 query_expansion_model = "glm-4.7"
 query_expansion_mode = "off"
-tag_channel_enabled = true
 relevance_intents = ["current_state", "preference"]
 vector_backend = "sqlite_scan"
 
@@ -423,7 +440,6 @@ latest_wins_slots = ["config.version"]
     assert settings.database_pool_size == 4
     assert settings.llm_timeout == 12.0
     assert settings.query_expansion_model == "glm-4.7"
-    assert settings.tag_channel_enabled is True
     assert settings.relevance_intents == ("current_state", "preference")
     assert settings.vector_backend is VectorBackend.SQLITE_SCAN
     assert settings.decay_min_confidence == 0.1

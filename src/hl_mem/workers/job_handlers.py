@@ -146,7 +146,7 @@ def _handle_discover_relations(worker: Worker, job: dict[str, Any]) -> dict[str,
     payload = json.loads(job["payload_json"] or "{}")
     discoverer = worker.relation_discoverer or components.make_relation_discoverer(worker.settings, worker.connection)
     if discoverer is None:
-        return {"candidates": 0, "proposals": 0, "applied": 0, "conflicts": 0, "rejected": 0}
+        return {"candidates": 0, "proposals": 0, "rejected": 0}
     return discover_relations(
         worker.connection,
         discoverer,
@@ -154,8 +154,6 @@ def _handle_discover_relations(worker: Worker, job: dict[str, Any]) -> dict[str,
         mode=worker.settings.relation_discovery_mode,
         pool_limit=worker.settings.relation_discovery_pool_limit,
         max_proposals=worker.settings.relation_discovery_max_proposals,
-        auto_apply_confidence=worker.settings.relation_auto_apply_confidence,
-        conflict_confidence=worker.settings.relation_conflict_confidence,
     )
 
 

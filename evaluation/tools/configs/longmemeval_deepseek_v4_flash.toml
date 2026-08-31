@@ -32,7 +32,6 @@ model = "qwen3-rerank"
 
 [extraction]
 mode = "llm"
-pre_filter = false
 verification_mode = "off"
 chunk_target_chars = 12000
 

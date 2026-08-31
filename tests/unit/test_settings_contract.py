@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 212
+    assert len(fields(Settings)) == 206
     assert settings.schema_version == 1
     assert settings.plugins_enabled == ()
     assert settings.plugin_options == {}
@@ -31,7 +31,7 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.embedding_api_mode == "compatible"
     assert settings.reranker_mode == "off"
     assert settings.image_describer_mode == "off"
-    assert settings.query_expansion_mode == "auto"
+    assert settings.query_expansion_mode == "off"
     assert settings.query_expansion_model is None
     assert settings.query_expansion_provider is None
     assert settings.query_expansion_base_url is None
@@ -39,7 +39,7 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.query_expansion_timeout_seconds == 15.0
     assert settings.query_expansion_total_timeout_seconds == 16.0
     assert settings.relation_discovery_mode == "off"
-    assert settings.resurrection_mode == "auto"
+    assert settings.resurrection_mode == "off"
     assert settings.decay_model == "activation_halflife"
     assert settings.dedup_threshold == 0.92
     assert settings.daily_token_limit == 500_000

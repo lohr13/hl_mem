@@ -241,7 +241,7 @@ def test_context_mode_off_does_not_read_events_or_expand_coreference(tmp_path, m
 def test_settings_query_context_defaults() -> None:
     settings = Settings()
 
-    assert settings.query_expansion_mode == "auto"
+    assert settings.query_expansion_mode == "off"
     assert settings.query_context_mode == "off"
     assert settings.query_context_max_events == 5
     assert settings.query_context_token_budget == 256

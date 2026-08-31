@@ -11,7 +11,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from hl_mem import components
 from hl_mem.application.conflict_repairs import repair_dangling_conflicts
@@ -24,9 +24,8 @@ from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
-from hl_mem.ingest.pre_filter import ExtractionPreFilter
 from hl_mem.monitoring.worker import DEFAULT_WORKER_RUNTIME, WorkerRuntimeState
-from hl_mem.observability.audit import AuditLogger, audit_scope
+from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.settings import Settings, is_placeholder_secret, parse_daily_cron
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
@@ -161,7 +160,6 @@ class Worker:
         settings: Settings,
         *,
         event_filter: Any = None,
-        pre_filter: Any = None,
         extractor: Any = None,
         image_describer: Any = _UNSET,
         embedder: Any = None,
@@ -186,7 +184,6 @@ class Worker:
             self.connection = connection
         self.jobs = JobRepository(self.connection)
         self.filter = event_filter or EventFilter()
-        self.pre_filter = pre_filter or ExtractionPreFilter()
         self.extractor = extractor or self._make_extractor()
         self.image_describer = (
             image_describer if image_describer is not _UNSET else components.make_image_describer(self.settings)
@@ -199,7 +196,7 @@ class Worker:
         if audit_logger is not None:
             self.audit = audit_logger
         else:
-            self.audit = AuditLogger(self.db_path, enabled=self.settings.extract_pre_filter)
+            self.audit = NullAuditLogger()
         self.consolidator = consolidator
         self.relation_discoverer = relation_discoverer
         self.worker_runtime = worker_runtime
@@ -586,17 +583,12 @@ class Worker:
             tenant_id=first.get("tenant_id", "default"),
         ):
             prepared: list[tuple[dict[str, Any], dict[str, Any]]] = []
-            pre_filter_reasons: list[str] = []
             for event in source_batch:
-                content, pre_filter_reason = self._prepare_event(events, event)
+                content = self._prepare_event(events, event)
                 if content is not None:
                     prepared.append((event, content))
-                elif pre_filter_reason:
-                    pre_filter_reasons.append(pre_filter_reason)
             if not prepared:
                 report_writes("claims_written", 0, 0, 0)
-                if len(source_batch) == 1 and pre_filter_reasons:
-                    return {"claims": 0, "pre_filter": pre_filter_reasons[0]}
                 return {
                     "events": len(source_batch),
                     "eligible_events": 0,
@@ -790,8 +782,8 @@ class Worker:
         self,
         events: EventRepository,
         event: dict[str, Any],
-    ) -> tuple[dict[str, Any] | None, str | None]:
-        """逐 Event 执行多模态准备和两级过滤，供窗口构建复用。"""
+    ) -> dict[str, Any] | None:
+        """逐 Event 执行多模态准备和准入过滤，供窗口构建复用。"""
         content = json.loads(event["content_json"])
         image_parts = [
             part
@@ -862,41 +854,8 @@ class Worker:
             },
         )
         if not allowed:
-            return None, None
-        if self.settings.extract_pre_filter:
-            started = time.perf_counter_ns()
-            try:
-                decision = self.pre_filter.evaluate(event, content)
-            except Exception as error:
-                self.audit.emit(
-                    "extraction_pre_filter",
-                    "evaluated",
-                    "error_fallback",
-                    event_id=event["id"],
-                    duration_us=(time.perf_counter_ns() - started) // 1000,
-                    detail={
-                        "error_class": type(error).__name__,
-                        "rule_version": str(getattr(self.pre_filter, "rule_version", "unknown")),
-                    },
-                )
-            else:
-                self.audit.emit(
-                    "extraction_pre_filter",
-                    "evaluated",
-                    "allow" if decision.should_extract else "skip",
-                    event_id=event["id"],
-                    duration_us=(time.perf_counter_ns() - started) // 1000,
-                    detail={
-                        "reason": decision.reason,
-                        "rule_version": str(getattr(self.pre_filter, "rule_version", "unknown")),
-                        "event_type": event["event_type"],
-                        "actor_type": event["actor_type"],
-                        "content_chars": len(event["content_json"]),
-                    },
-                )
-                if not decision.should_extract:
-                    return None, decision.reason
-        return content, None
+            return None
+        return cast(dict[str, Any], content)
 
     @staticmethod
     def _event_text(content: dict[str, Any]) -> str:
