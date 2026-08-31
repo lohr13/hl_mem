@@ -74,6 +74,7 @@ def process_deferred_tasks(
     *,
     now: str | None = None,
     limit: int = 20,
+    disabled_task_types: frozenset[str] = frozenset(),
 ) -> dict[str, int]:
     """轮询通用待办并交给已注册的轻量 handler。"""
     current_text = now or datetime.now(timezone.utc).isoformat()
@@ -91,6 +92,10 @@ def process_deferred_tasks(
         if repository.abandon_task(task["id"], "deferred retry budget exhausted", current_text):
             counts["abandoned"] += 1
     for task in repository.list_due(current_text, limit=limit):
+        if task["task_type"] in disabled_task_types:
+            if repository.abandon_task(task["id"], "disabled_by_configuration", current_text):
+                counts["abandoned"] += 1
+            continue
         handler = DEFERRED_TASK_HANDLERS.get(task["task_type"])
         if handler is None:
             repository.postpone(
@@ -125,6 +130,7 @@ def process_recall_side_effect_tasks(
     *,
     now: str | None = None,
     limit: int = 100,
+    disabled_task_types: frozenset[str] = frozenset(),
 ) -> dict[str, int]:
     """高频消费召回副作用，不执行 legacy extraction 注册扫描。"""
     current_text = now or datetime.now(timezone.utc).isoformat()
@@ -135,6 +141,10 @@ def process_recall_side_effect_tasks(
         if repository.abandon_task(task["id"], "deferred retry budget exhausted", current_text):
             counts["abandoned"] += 1
     for task in repository.list_due(current_text, limit=limit, task_types=RECALL_SIDE_EFFECT_TASK_TYPES):
+        if task["task_type"] in disabled_task_types:
+            if repository.abandon_task(task["id"], "disabled_by_configuration", current_text):
+                counts["abandoned"] += 1
+            continue
         handler = DEFERRED_TASK_HANDLERS[task["task_type"]]
         try:
             outcome = handler(connection, task, current)

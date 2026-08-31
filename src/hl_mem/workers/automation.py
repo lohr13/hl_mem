@@ -38,3 +38,8 @@ def semantic_job_enabled(settings: Settings, job_type: str) -> bool:
     if job_type == "reclassify_claims":
         return settings.reclassify_enabled
     raise ValueError(f"unknown semantic job type: {job_type}")
+
+
+def disabled_deferred_task_types(settings: Settings) -> frozenset[str]:
+    """Return state-changing deferred tasks disabled by current configuration."""
+    return frozenset() if settings.resurrection_mode == "auto" else frozenset({"resurrect_recalled_claim"})

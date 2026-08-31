@@ -68,8 +68,16 @@ def _record_candidate(connection: sqlite3.Connection, namespace: str, candidate:
     return cursor.rowcount
 
 
-def enqueue_daily_deduplication(connection: sqlite3.Connection, now: str, scheduled_minutes: int) -> bool:
+def enqueue_daily_deduplication(
+    connection: sqlite3.Connection,
+    now: str,
+    scheduled_minutes: int,
+    *,
+    enabled: bool = True,
+) -> bool:
     """到达计划时间后幂等创建当天的跨主体去重任务。"""
+    if not enabled:
+        return False
     return (
         enqueue_daily_job(
             connection,

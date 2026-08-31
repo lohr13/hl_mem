@@ -73,6 +73,7 @@ from hl_mem.recall.trace import SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.jobs import JobRepository
+from hl_mem.workers.automation import semantic_job_enabled
 
 LOGGER = logging.getLogger(__name__)
 
@@ -387,6 +388,8 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, str]:
         """创建带显式作用域的冲突归并任务。"""
+        if not semantic_job_enabled(settings, "consolidate_conflicts"):
+            raise HTTPException(status_code=409, detail="semantic conflict consolidation is disabled")
         job_id = new_id()
         now = _now()
         JobRepository(connection).insert_job(

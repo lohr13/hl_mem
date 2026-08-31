@@ -26,6 +26,7 @@ from hl_mem.settings import Settings, parse_daily_cron
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
+from hl_mem.workers.automation import disabled_deferred_task_types
 from hl_mem.workers.consolidate import (
     ConflictConsolidator,
     LLMConflictJudge,
@@ -108,10 +109,19 @@ class _LeaseHeartbeat:
                 return
 
 
-def _process_recall_side_effects_safely(connection: Any, now: str) -> dict[str, int]:
+def _process_recall_side_effects_safely(
+    connection: Any,
+    now: str,
+    *,
+    disabled_task_types: frozenset[str] = frozenset(),
+) -> dict[str, int]:
     """隔离高频副作用消费异常，避免单次锁竞争终止 worker 主循环。"""
     try:
-        return process_recall_side_effect_tasks(connection, now=now)
+        return process_recall_side_effect_tasks(
+            connection,
+            now=now,
+            disabled_task_types=disabled_task_types,
+        )
     except Exception:
         if connection.in_transaction:
             connection.rollback()
@@ -248,7 +258,11 @@ class Worker:
         try:
             while True:
                 self.worker_runtime.heartbeat(_now())
-                _process_recall_side_effects_safely(self.connection, _now())
+                _process_recall_side_effects_safely(
+                    self.connection,
+                    _now(),
+                    disabled_task_types=disabled_deferred_task_types(self.settings),
+                )
                 current = time.monotonic()
                 if current >= next_ttl:
                     self._run_maintenance()

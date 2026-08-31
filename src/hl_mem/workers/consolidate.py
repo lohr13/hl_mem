@@ -140,8 +140,10 @@ class LLMConflictJudge:
         )
 
 
-def enqueue_daily_consolidation(connection: Any, now: str, cron: str) -> bool:
+def enqueue_daily_consolidation(connection: Any, now: str, cron: str, *, enabled: bool = True) -> bool:
     """到达本地计划时间后幂等创建当天的归并任务。"""
+    if not enabled:
+        return False
     return (
         enqueue_daily_job(
             connection,

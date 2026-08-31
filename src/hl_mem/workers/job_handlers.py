@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from hl_mem import components
 from hl_mem.domain.consolidation_scope import ConsolidationScope
+from hl_mem.workers.automation import SEMANTIC_JOB_TYPES, semantic_job_enabled
 from hl_mem.workers.decay import decay_claims
 from hl_mem.workers.deduplicate import deduplicate_claims
 from hl_mem.workers.discover_relations import discover_relations
@@ -258,7 +259,14 @@ JOB_HANDLERS: dict[str, Callable[[Worker, dict[str, Any]], dict[str, Any]]] = {
 
 
 def dispatch_job(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
-    handler = JOB_HANDLERS.get(job["job_type"])
+    job_type = str(job["job_type"])
+    if job_type in SEMANTIC_JOB_TYPES and not semantic_job_enabled(worker.settings, job_type):
+        return {
+            "status": "disabled",
+            "reason": "disabled_by_configuration",
+            "job_type": job_type,
+        }
+    handler = JOB_HANDLERS.get(job_type)
     if handler is None:
-        raise ValueError(f"unknown job type: {job['job_type']}")
+        raise ValueError(f"unknown job type: {job_type}")
     return handler(worker, job)

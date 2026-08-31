@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
 from hl_mem.domain.consolidation_scope import ConsolidationScope
 from hl_mem.ingest.embedder import pack_vector
+from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.workers.consolidate import ConflictConsolidator, ConsolidationDecision
@@ -100,7 +102,12 @@ def test_default_scope_matches_all(tmp_path) -> None:
 
 def test_consolidate_api_stores_scope_payload(tmp_path) -> None:
     database_path = tmp_path / "api.db"
-    with TestClient(create_app(database_path)) as client:
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(database_path),
+        semantic_conflict_consolidation_enabled=True,
+    )
+    with TestClient(create_app(settings)) as client:
         response = client.post(
             "/v1/consolidate",
             json={
@@ -125,3 +132,15 @@ def test_consolidate_api_stores_scope_payload(tmp_path) -> None:
         "similarity_threshold": 0.72,
         "similarity_ceiling": 0.95,
     }
+
+
+def test_consolidate_api_rejects_disabled_capability_without_queueing(tmp_path) -> None:
+    database_path = tmp_path / "api-disabled.db"
+    with TestClient(create_app(database_path)) as client:
+        response = client.post("/v1/consolidate", json={})
+
+    assert response.status_code == 409
+    database = Database(database_path)
+    connection = database.open()
+    assert connection.execute("SELECT count(*) FROM jobs WHERE job_type='consolidate_conflicts'").fetchone()[0] == 0
+    database.close()

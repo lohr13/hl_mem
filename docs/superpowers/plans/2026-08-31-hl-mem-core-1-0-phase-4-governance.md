@@ -206,7 +206,7 @@ Expected: handler and deferred-task assertions fail.
 Run the tests from Step 1 plus:
 
 ```powershell
-uv run --frozen --extra sqlite-vec python -m pytest tests/unit/test_daily_memory_api.py tests/unit/test_ingest.py tests/unit/test_worker.py -q
+uv run --frozen --extra sqlite-vec python -m pytest tests/unit/test_daily_memory_api.py tests/unit/test_ingest_transaction_characterization_v0293.py tests/unit/test_relation_discovery.py tests/unit/test_worker.py -q
 uv run --frozen mypy src/hl_mem
 ```
 

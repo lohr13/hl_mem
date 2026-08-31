@@ -10,7 +10,7 @@ from hl_mem.application.conflict_repairs import repair_dangling_conflicts
 from hl_mem.application.expired_cleanup import maintain_expired_claims
 from hl_mem.settings import Settings, is_placeholder_secret, parse_daily_cron
 from hl_mem.workers.auto_resolve_conflicts import auto_resolve_conflicts
-from hl_mem.workers.automation import semantic_job_enabled
+from hl_mem.workers.automation import disabled_deferred_task_types, semantic_job_enabled
 from hl_mem.workers.consolidate import enqueue_daily_consolidation
 from hl_mem.workers.decay import cleanup_stale_temporal_claims, decay_claims
 from hl_mem.workers.deduplicate import enqueue_daily_deduplication, review_pending_near_duplicates
@@ -46,7 +46,14 @@ def build_deterministic_maintenance(
     """Build model-free maintenance in stable execution order."""
     cutoff = (datetime.fromisoformat(now.replace("Z", "+00:00")) - timedelta(days=settings.retention_days)).isoformat()
     operations = [
-        MaintenanceOperation("process_deferred_tasks", lambda: process_deferred_tasks(connection, now=now)),
+        MaintenanceOperation(
+            "process_deferred_tasks",
+            lambda: process_deferred_tasks(
+                connection,
+                now=now,
+                disabled_task_types=disabled_deferred_task_types(settings),
+            ),
+        ),
         MaintenanceOperation(
             "cleanup_recall_side_effect_tasks",
             lambda: cleanup_recall_side_effect_tasks(connection, before=cutoff),
@@ -187,8 +194,10 @@ def build_deterministic_maintenance(
     return operations
 
 
-def enqueue_daily_reclassify(connection: Any, now: str, cron: str) -> bool:
+def enqueue_daily_reclassify(connection: Any, now: str, cron: str, *, enabled: bool = True) -> bool:
     """Idempotently enqueue the day's explicitly enabled reclassification job."""
+    if not enabled:
+        return False
     return (
         enqueue_daily_job(
             connection,

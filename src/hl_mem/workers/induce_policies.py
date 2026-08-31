@@ -75,8 +75,10 @@ def induce_policies(
     return {"clusters": eligible, "policies_induced": induced}
 
 
-def enqueue_daily_policy_induction(connection: Any, now: str, cron: str) -> bool:
+def enqueue_daily_policy_induction(connection: Any, now: str, cron: str, *, enabled: bool = True) -> bool:
     """到达每日计划时间后幂等创建策略归纳任务。"""
+    if not enabled:
+        return False
     return (
         enqueue_daily_job(
             connection,
