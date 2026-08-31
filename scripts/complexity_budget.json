@@ -9,9 +9,9 @@
   },
   {
     "path": "src/hl_mem/api/server.py",
-    "max_lines": 807,
+    "max_lines": 320,
     "max_callable_lines": {
-      "create_app": 648
+      "create_app": 200
     }
   },
   {

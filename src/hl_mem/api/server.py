@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import sqlite3
 import time
-from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator, cast
+from typing import Any, AsyncIterator, Iterator
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
@@ -22,34 +18,13 @@ from starlette.responses import Response
 from hl_mem import __version__, components
 from hl_mem.api.conflict_routes import add_conflict_routes
 from hl_mem.api.request_limits import RequestSizeLimitMiddleware
+from hl_mem.api.routes.experience import add_experience_routes
+from hl_mem.api.routes.maintenance import add_maintenance_routes
+from hl_mem.api.routes.memory import add_memory_routes
+from hl_mem.api.routes.recall import add_recall_routes
 from hl_mem.api.schemas import (
-    ConsolidationScopeInput,
-    ContextPacketRecallOutput,
-    DryRunExtractionInput,
-    EpisodeInput,
-    EpisodeUpdate,
-    EventBatchInput,
-    EventInput,
-    FeedbackInput,
-    MemoryCorrectionInput,
-    MemoryCorrectionOutput,
-    MemoryDetailOutput,
-    MemoryInput,
-    MemoryListOutput,
-    MemorySaveOutput,
     RecallInput,
-    RecallOutput,
-    RetrievalBundleInput,
-    TraceInput,
 )
-from hl_mem.application.context_packet import (
-    UnknownSchemaMajorError,
-    retrieval_bundle_from_dict,
-)
-from hl_mem.application.correction import CorrectionService
-from hl_mem.application.forget import ForgetService
-from hl_mem.application.ingest import IngestService, new_id
-from hl_mem.application.memories import MemoryQueryService
 from hl_mem.application.recall import RecallService, recall_side_effect_health
 from hl_mem.application.recall_side_effects import (
     DeferredAuditLogger,
@@ -58,35 +33,17 @@ from hl_mem.application.recall_side_effects import (
 )
 from hl_mem.compatibility import compatibility_manifest
 from hl_mem.errors import ConflictError, NotFoundError, ValidationError
-from hl_mem.experience.service import (
-    ExperienceService,
-    InvalidStateTransitionError,
-    backprop_episode_reward,
-)
 from hl_mem.http_utils import HL_MEM_VERSION_HEADER
 from hl_mem.ingest.embedder import FakeEmbedder
-from hl_mem.observability.audit import NullAuditLogger, audit_scope
+from hl_mem.observability.audit import NullAuditLogger
 from hl_mem.recall.injection import InjectionContext
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.reranker import FakeReranker
 from hl_mem.recall.trace import SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
-from hl_mem.storage.jobs import JobRepository
-from hl_mem.workers.automation import semantic_job_enabled
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _resolve_namespace_alias(namespace: str | None, tenant_id: str | None) -> str:
-    """解析查询参数中的 deprecated tenant_id alias。"""
-    if namespace is not None and tenant_id is not None and namespace != tenant_id:
-        raise HTTPException(422, "namespace and deprecated tenant_id must match")
-    return namespace or tenant_id or "default"
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -299,483 +256,37 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         get_read_connection=get_read_connection,
     )
 
-    @app.post("/v1/events")
-    def post_event(
-        payload: EventInput,
-        idempotency_key: str | None = Header(default=None, min_length=1, max_length=200),
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        key = idempotency_key or payload.idempotency_key
-        content = payload.content if isinstance(payload.content, dict) else {"text": payload.content}
-        content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
-        event = payload.model_dump(exclude={"namespace", "tenant_id"})
-        event["tenant_id"] = payload.effective_namespace
-        service = IngestService(connection)
-        result = service.ingest_event(event, key)
-        event_id, created = result["id"], result["created"]
-        audit.emit(
-            "ingest",
-            "accepted",
-            "queued" if created else "duplicate",
-            trace_id=event_id,
-            event_id=event_id,
-            tenant_id=payload.effective_namespace,
-            detail={
-                "event_type": payload.event_type,
-                "actor_type": payload.actor_type,
-                "content_chars": len(content_json),
-                "content_hash": hashlib.sha256(content_json.encode()).hexdigest(),
-                "sensitivity": payload.sensitivity,
-            },
-        )
-        return result
-
-    @app.post("/v1/events/batch")
-    def post_event_batch(
-        payload: EventBatchInput,
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        """原子写入一个有界 Event 集合；现有单 Event API 保持不变。"""
-        events: list[dict[str, Any]] = []
-        for item in payload.events:
-            event = item.model_dump(exclude={"namespace", "tenant_id"})
-            event["tenant_id"] = item.effective_namespace
-            events.append(event)
-        results = IngestService(connection).ingest_events(events)
-        for item, result in zip(payload.events, results, strict=True):
-            content = item.content if isinstance(item.content, dict) else {"text": item.content}
-            content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
-            audit.emit(
-                "ingest",
-                "accepted",
-                "queued" if result["created"] else "duplicate",
-                trace_id=result["id"],
-                event_id=result["id"],
-                tenant_id=item.effective_namespace,
-                detail={
-                    "event_type": item.event_type,
-                    "actor_type": item.actor_type,
-                    "content_chars": len(content_json),
-                    "content_hash": hashlib.sha256(content_json.encode()).hexdigest(),
-                    "sensitivity": item.sensitivity,
-                    "batch_size": len(payload.events),
-                },
-            )
-        return {"events": results}
-
-    @app.post("/v1/extract/dry-run")
-    def dry_run_extract(
-        payload: DryRunExtractionInput,
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        """提取候选 claims 与 token 用量，但不持久化记忆数据。"""
-        extractor = components.make_extractor(
-            settings,
-            require_real=True,
-            connection=connection,
-            runtime=provider_runtime,
-        )
-        return IngestService.dry_run_extract(
-            extractor,
-            payload.text,
-            payload.context,
-            payload.custom_instructions,
-        )
-
-    @app.post("/v1/consolidate")
-    def consolidate(
-        payload: ConsolidationScopeInput,
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, str]:
-        """创建带显式作用域的冲突归并任务。"""
-        if not semantic_job_enabled(settings, "consolidate_conflicts"):
-            raise HTTPException(status_code=409, detail="semantic conflict consolidation is disabled")
-        job_id = new_id()
-        now = _now()
-        JobRepository(connection).insert_job(
-            {
-                "id": job_id,
-                "job_type": "consolidate_conflicts",
-                "payload": payload.model_dump(),
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
-        return {"id": job_id}
-
-    @app.post(
-        "/v1/recall",
-        response_model=RecallOutput | ContextPacketRecallOutput,
-        response_model_exclude_none=True,
+    add_memory_routes(
+        app,
+        get_connection=get_connection,
+        settings=settings,
+        audit=audit,
+        provider_runtime=provider_runtime,
+        embedder=embedder,
+        make_extractor=components.make_extractor,
     )
-    def recall(
-        payload: RecallInput,
-        request: Request,
-        connection: sqlite3.Connection = Depends(get_read_connection),
-    ) -> dict[str, Any]:
-        query_id = request.headers.get("X-Request-ID") or new_id()
-        with audit_scope(
-            deferred_audit,
-            trace_id=query_id,
-            query_id=query_id,
-            tenant_id=payload.effective_namespace,
-        ):
-            return execute_recall(
-                payload,
-                query_id=query_id,
-                connection=connection,
-                response_format=payload.response_format,
-                injection_context=InjectionContext.create(delivery_purpose="api", rendering_now=_now()),
-            )
-
-    @app.post(
-        "/v1/internal/retrieval-bundles",
-        include_in_schema=False,
+    add_recall_routes(
+        app,
+        get_connection=get_connection,
+        get_read_connection=get_read_connection,
+        make_recall_service=make_recall_service,
+        execute_recall=execute_recall,
+        deferred_audit=deferred_audit,
+        settings=settings,
+        recall_side_effects=recall_side_effects,
     )
-    def retrieve_bundle(
-        payload: RetrievalBundleInput,
-        request: Request,
-        connection: sqlite3.Connection = Depends(get_read_connection),
-    ) -> dict[str, Any]:
-        """为 Hermes 预取 receipt-free bundle；旧 daemon 会安全返回 404。"""
-        query_id = request.headers.get("X-Request-ID") or new_id()
-        with audit_scope(
-            deferred_audit,
-            trace_id=query_id,
-            query_id=query_id,
-            tenant_id=payload.effective_namespace,
-        ):
-            return execute_recall(
-                payload,
-                query_id=query_id,
-                connection=connection,
-                response_format="retrieval_bundle",
-                injection_context=InjectionContext.create(
-                    delivery_purpose=payload.delivery_purpose,
-                    experiment_variant=payload.experiment_variant,
-                    echo_variant=payload.echo_variant,
-                    freshness_variant=payload.freshness_variant,
-                    policy_versions=payload.policy_versions,
-                    rendering_now=payload.rendering_now or _now(),
-                ),
-            )
-
-    @app.post(
-        "/v1/internal/context-packets/materialize",
-        include_in_schema=False,
+    add_experience_routes(
+        app,
+        get_connection=get_connection,
+        settings=settings,
+        recall_side_effects=recall_side_effects,
+        embedder=embedder,
     )
-    def materialize_context_packet(
-        payload: dict[str, Any],
-        connection: sqlite3.Connection = Depends(get_read_connection),
-    ) -> dict[str, Any]:
-        """为 Hermes 缓存的 receipt-free bundle 创建本次 delivery receipt。"""
-        raw_bundle = payload.get("retrieval_bundle", payload)
-        if not isinstance(raw_bundle, Mapping):
-            raise HTTPException(422, "retrieval_bundle must be an object")
-        try:
-            bundle = retrieval_bundle_from_dict(raw_bundle)
-        except UnknownSchemaMajorError as error:
-            raise HTTPException(409, str(error)) from error
-        except (TypeError, ValueError) as error:
-            raise HTTPException(422, str(error)) from error
-        packet = make_recall_service(connection).materialize_context_packet(bundle)
-        return {"context_packet": packet}
-
-    @app.post(
-        "/v1/internal/retrieval-feedback/injected",
-        include_in_schema=False,
+    add_maintenance_routes(
+        app,
+        get_connection=get_connection,
+        settings=settings,
+        provider_runtime=provider_runtime,
     )
-    def mark_retrieval_feedback_injected(
-        payload: dict[str, Any],
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, int]:
-        """在 Hermes delivery 边界后原子标记 injected，不写 outcome。"""
-        feedback_ids = payload.get("feedback_ids")
-        if (
-            not isinstance(feedback_ids, list)
-            or not feedback_ids
-            or any(not isinstance(feedback_id, str) or not feedback_id.strip() for feedback_id in feedback_ids)
-        ):
-            raise HTTPException(422, "feedback_ids must be a non-empty string array")
-        try:
-            updated = ExperienceService(
-                connection,
-                settings=settings,
-                pending_exposure_check=recall_side_effects.has_pending_exposures,
-            ).mark_feedback_injected_eventually(
-                feedback_ids,
-                _now(),
-            )
-        except ValueError as error:
-            raise HTTPException(404, str(error)) from error
-        return {"updated": updated}
-
-    @app.post("/v1/episodes")
-    def create_episode(
-        payload: EpisodeInput, connection: sqlite3.Connection = Depends(get_connection)
-    ) -> dict[str, Any]:
-        episode_id = new_id()
-        service = ExperienceService(connection)
-        service.create_episode(
-            episode_id,
-            payload.goal,
-            _now(),
-            payload.session_id,
-            payload.task_type,
-            namespace=payload.effective_namespace,
-        )
-        return service.get_episode(episode_id)
-
-    @app.post("/v1/feedback")
-    def post_feedback(
-        payload: FeedbackInput, connection: sqlite3.Connection = Depends(get_connection)
-    ) -> dict[str, Any]:
-        try:
-            result: dict[str, Any] = ExperienceService(
-                connection,
-                settings=settings,
-                pending_exposure_check=recall_side_effects.has_pending_exposures,
-            ).submit_retrieval_feedback_eventually(payload.feedback_id, payload.helpful, payload.task_outcome, _now())
-        except ValueError as error:
-            if str(error).startswith("feedback exposure not found:"):
-                raise HTTPException(404, str(error)) from error
-            raise
-        correction = payload.correction
-        if correction is None:
-            return result
-        correction_result = CorrectionService(connection, embedder, settings=settings).apply(
-            correction.memory_id,
-            action=correction.action,
-            corrected_text=correction.corrected_text,
-            idempotency_key=correction.idempotency_key,
-        )
-        result["correction"] = correction_result
-        result["correction_event_id"] = correction_result["correction_event_id"]
-        return result
-
-    @app.post("/v1/episodes/{episode_id}/traces")
-    def add_episode_trace(
-        episode_id: str,
-        payload: TraceInput,
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        service = ExperienceService(connection)
-        try:
-            trace_id = service.add_trace(
-                episode_id,
-                payload.action,
-                payload.observation,
-                payload.error_signature,
-                payload.value,
-            )
-        except InvalidStateTransitionError as error:
-            raise HTTPException(409, str(error)) from error
-        except ValueError as error:
-            raise HTTPException(404, str(error)) from error
-        return {"id": trace_id, "episode_id": episode_id}
-
-    @app.patch("/v1/episodes/{episode_id}")
-    def update_episode(
-        episode_id: str,
-        payload: EpisodeUpdate,
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        service = ExperienceService(connection)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            updated = service.update_episode(
-                episode_id,
-                _now(),
-                payload.status,
-                payload.reward,
-                payload.outcome_summary,
-                commit=False,
-            )
-            if payload.reward is not None:
-                backprop_episode_reward(connection, episode_id, payload.reward, commit=False)
-                updated = service.get_episode(episode_id)
-            connection.commit()
-            return updated
-        except InvalidStateTransitionError as error:
-            connection.rollback()
-            raise HTTPException(409, str(error)) from error
-        except ValueError as error:
-            connection.rollback()
-            raise HTTPException(404, str(error)) from error
-        except Exception:
-            connection.rollback()
-            raise
-
-    @app.get("/v1/episodes")
-    def list_episodes(
-        limit: int = 20,
-        status: str | None = None,
-        namespace: str | None = Query(default=None, min_length=1, max_length=100),
-        tenant_id: str | None = Query(
-            default=None,
-            min_length=1,
-            max_length=100,
-            deprecated=True,
-        ),
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        if not 1 <= limit <= 100:
-            raise HTTPException(422, "limit must be between 1 and 100")
-        effective_namespace = _resolve_namespace_alias(namespace, tenant_id)
-        return {
-            "episodes": ExperienceService(connection).list_episodes(
-                limit,
-                status,
-                namespace=effective_namespace,
-            )
-        }
-
-    @app.get("/v1/episodes/{episode_id}")
-    def get_episode(episode_id: str, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
-        try:
-            return ExperienceService(connection).get_episode(episode_id)
-        except ValueError as error:
-            raise HTTPException(404, str(error)) from error
-
-    @app.get("/v1/policies")
-    def list_policies(
-        status: str = "active",
-        namespace: str | None = Query(default=None, min_length=1, max_length=100),
-        tenant_id: str | None = Query(
-            default=None,
-            min_length=1,
-            max_length=100,
-            deprecated=True,
-        ),
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        effective_namespace = _resolve_namespace_alias(namespace, tenant_id)
-        return {
-            "policies": ExperienceService(connection).list_policies(
-                status,
-                namespace=effective_namespace,
-            )
-        }
-
-    @app.get("/v1/memories", response_model=MemoryListOutput)
-    def list_memories(
-        limit: int = Query(default=20, ge=1, le=100),
-        offset: int = Query(default=0, ge=0),
-        status: str = Query(
-            default="active",
-            pattern="^(active|candidate|disputed|superseded|expired|archived|retracted)$",
-        ),
-        namespace: str | None = Query(default=None, min_length=1, max_length=100),
-        tenant_id: str | None = Query(default=None, min_length=1, max_length=100, deprecated=True),
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        """按 namespace/status 分页列出 Claim 记忆。"""
-        return MemoryQueryService(connection).list_memories(
-            namespace=_resolve_namespace_alias(namespace, tenant_id),
-            status=status,
-            limit=limit,
-            offset=offset,
-        )
-
-    @app.get("/v1/memories/{memory_id}", response_model=MemoryDetailOutput)
-    def get_memory(
-        memory_id: str,
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        """返回单条 Claim 的完整公开详情。"""
-        return MemoryQueryService(connection).get_memory(memory_id)
-
-    @app.post("/v1/memories/{memory_id}/correct", response_model=MemoryCorrectionOutput)
-    def correct_memory(
-        memory_id: str,
-        payload: MemoryCorrectionInput,
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        """按既定契约仅替换 Claim 内容，并原子建立替代证据链。"""
-        return CorrectionService(connection, embedder, settings=settings).correct(
-            memory_id,
-            payload.corrected_text,
-            payload.idempotency_key,
-        )
-
-    @app.post(
-        "/v1/memories",
-        response_model=MemorySaveOutput,
-        responses={409: {"description": "Idempotency key payload conflict"}},
-    )
-    def save_memory(
-        payload: MemoryInput,
-        idempotency_key: str | None = Header(default=None, min_length=1, max_length=200),
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        text = payload.text or payload.content
-        if not text:
-            raise HTTPException(422, "text or content is required")
-        service = IngestService(connection)
-        result = service.save_explicit_memory(
-            text,
-            payload.subject,
-            payload.predicate,
-            payload.qualifiers,
-            idempotency_key=idempotency_key or payload.idempotency_key,
-            namespace=payload.effective_namespace,
-            session_id=payload.session_id,
-        )
-        event_id = result["id"]
-        content_json = json.dumps(
-            {
-                "text": text,
-                "memory": {
-                    "text": text,
-                    "subject": payload.subject,
-                    "predicate": payload.predicate,
-                    "qualifiers": payload.qualifiers,
-                },
-            },
-            ensure_ascii=False,
-        )
-        audit.emit(
-            "ingest",
-            "accepted",
-            "queued" if result["created"] else "duplicate",
-            trace_id=event_id,
-            event_id=event_id,
-            tenant_id=payload.effective_namespace,
-            detail={
-                "event_type": "explicit_memory",
-                "actor_type": "user",
-                "content_chars": len(content_json),
-                "sensitivity": "normal",
-            },
-        )
-        return result
-
-    @app.delete("/v1/memories/{memory_id}")
-    def forget(memory_id: str, connection: sqlite3.Connection = Depends(get_connection)) -> dict[str, Any]:
-        try:
-            return ForgetService(connection).forget(memory_id)
-        except ValueError as error:
-            if str(error).startswith("memory not found"):
-                raise HTTPException(404, "memory not found") from error
-            raise
-
-    @app.get("/v1/stats")
-    def stats(
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        usage = provider_runtime.governor.snapshot() if provider_runtime is not None else None
-        return {
-            "events": connection.execute("SELECT count(*) FROM events").fetchone()[0],
-            "claims": connection.execute("SELECT count(*) FROM claims").fetchone()[0],
-            "tokens_today": (0 if usage is None else int(cast(dict[str, Any], usage["settled"])["total_tokens"])),
-            "jobs_pending": connection.execute("SELECT count(*) FROM jobs WHERE status='pending'").fetchone()[0],
-        }
-
-    @app.get("/v1/jobs")
-    def jobs(
-        connection: sqlite3.Connection = Depends(get_connection),
-    ) -> dict[str, Any]:
-        repository = JobRepository(connection)
-        return {**repository.counts(), "jobs": repository.list_jobs()}
 
     return app
