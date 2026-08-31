@@ -15,6 +15,7 @@ from typing import Any, Mapping, Sequence
 
 import httpx
 
+from hl_mem import components
 from hl_mem.adapters.hermes.deployment import PLUGIN_FILES, plugin_files_match, plugin_files_present
 from hl_mem.adapters.hermes.discovery import find_hermes_home
 from hl_mem.compatibility import (
@@ -25,7 +26,6 @@ from hl_mem.compatibility import (
 from hl_mem.config_loader import load_settings
 from hl_mem.errors import ConfigurationError
 from hl_mem.http_utils import retry_http
-from hl_mem.ingest.embedder import Embedder
 from hl_mem.recall.reranker import DashScopeReranker
 from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.backup import validate_upgrade_recovery_set
@@ -215,21 +215,17 @@ def _post(
 def _check_embedding(settings: Settings) -> CheckResult:
     if settings.embedder_mode == "fake":
         return CheckResult(CheckStatus.WARN, "Embedding API", "embedder=fake，跳过")
+    embedder = None
     try:
-        Embedder(
-            settings.embedding_api_key or "",
-            settings.embedding_base_url,
-            settings.embedding_model,
-            settings.embedding_dim,
-            settings.embedding_connect_timeout,
-            settings.embedding_read_timeout,
-            settings.embedding_max_attempts,
-            api_mode=settings.embedding_api_mode,
-            text_type=settings.embedding_text_type or None,
-        ).embed_one("ping")
+        embedder = components.make_embedder(settings)
+        embedder.embed_one("ping")
         return CheckResult(CheckStatus.OK, "Embedding API", "请求成功")
     except (RuntimeError, ValueError, KeyError, TypeError) as error:
         return CheckResult(CheckStatus.FAIL, "Embedding API", f"最小请求失败：{error}")
+    finally:
+        close = getattr(embedder, "close", None)
+        if callable(close):
+            close()
 
 
 def _check_llm(settings: Settings) -> CheckResult:

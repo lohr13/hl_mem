@@ -854,7 +854,10 @@ class Worker:
         )
 
     def _make_embedder(self) -> Any:
-        return components.make_embedder(self.settings)
+        runtime = None
+        if self.settings.embedder_mode == "real" and self.settings.embedding_api_key:
+            runtime = self._get_provider_runtime()
+        return components.make_embedder(self.settings, runtime=runtime)
 
     def _get_provider_runtime(self) -> Any:
         if getattr(self, "provider_runtime", None) is None:

@@ -36,6 +36,10 @@ def _builtin_runtime_factory(context: ProviderFactoryContext) -> object:
         from hl_mem.llm.providers import make_builtin_llm_provider
 
         return make_builtin_llm_provider(context)
+    if context.key.capability is ProviderCapability.EMBEDDING:
+        from hl_mem.ingest.embedder import make_builtin_embedding_provider
+
+        return make_builtin_embedding_provider(context)
     raise ProviderNotFoundError(
         f"built-in {context.key.capability.value} provider {context.key.name!r} is not connected to ProviderRuntime"
     )

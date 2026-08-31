@@ -435,7 +435,7 @@ git commit -m "refactor: route LLM calls through Provider governance"
 - Adapter output is validated for item count, stable ordering, numeric vectors, and configured dimension before packing BLOBs.
 - Response token usage is recorded when present; otherwise input token amount and cost are explicitly unknown while request/item limits remain enforceable.
 
-- [ ] **Step 1: Add failing compatible/native equivalence and batch-ledger tests**
+- [x] **Step 1: Add failing compatible/native equivalence and batch-ledger tests**
 
 ```python
 def test_eleven_embeddings_create_two_usage_events_not_three(runtime: ProviderRuntime) -> None:
@@ -446,23 +446,23 @@ def test_eleven_embeddings_create_two_usage_events_not_three(runtime: ProviderRu
 
 Also compare compatible/native URLs, bodies, ordering, dimension errors, retry behavior, query `text_type`, and normalized errors with frozen fixtures.
 
-- [ ] **Step 2: Run tests and observe direct HTTP plus logical-only metrics**
+- [x] **Step 2: Run tests and observe direct HTTP plus logical-only metrics**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_embedding_provider_equivalence.py tests/unit/test_embeddings.py tests/unit/test_embedding_native_unittest.py -q --tb=short
 ```
 
-- [ ] **Step 3: Implement the built-in adapter and governed Embedder facade**
+- [x] **Step 3: Implement the built-in adapter and governed Embedder facade**
 
 Remove direct transport/retry/metrics code from `ingest/embedder.py`; retain deterministic `FakeEmbedder` unchanged and outside Registry.
 
-- [ ] **Step 4: Run ingestion, recall, vector, and re-embedding regressions**
+- [x] **Step 4: Run ingestion, recall, vector, and re-embedding regressions**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_embedding_provider_equivalence.py tests/unit/test_embeddings.py tests/unit/test_embedding_native_unittest.py tests/unit/test_reembed_all_claims_unittest.py tests/unit/test_vector_backend_protocol.py tests/integration/test_e2e.py -q --tb=short
 ```
 
-- [ ] **Step 5: Commit Embedding governance**
+- [x] **Step 5: Commit Embedding governance**
 
 ```powershell
 git add src/hl_mem/ingest/embedder.py src/hl_mem/components.py src/hl_mem/protocols.py tests/fixtures/providers/embedding_dashscope.json tests/unit/test_embedding_provider_equivalence.py tests/unit/test_embeddings.py tests/unit/test_embedding_native_unittest.py tests/unit/test_reembed_all_claims_unittest.py

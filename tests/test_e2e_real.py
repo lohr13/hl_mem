@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from hl_mem import components
-from hl_mem.ingest.embedder import Embedder
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
@@ -70,12 +69,7 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     )
     provider_runtime = components.create_provider_runtime(settings)
     extractor = components.make_extractor(settings, runtime=provider_runtime)
-    embedder = Embedder(
-        os.environ["EMBEDDING_API_KEY"],
-        os.environ["EMBEDDING_BASE_URL"],
-        os.environ["EMBEDDING_MODEL"],
-        int(os.environ.get("EMBEDDING_DIM", "2048")),
-    )
+    embedder = components.make_embedder(settings, runtime=provider_runtime)
     events = [
         {
             "event_type": "message",

@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 import threading
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,7 +13,6 @@ from hl_mem.api import server
 from hl_mem.components import make_embedder, make_reranker
 from hl_mem.errors import ConfigurationError
 from hl_mem.experience.service import ExperienceService, backprop_episode_reward
-from hl_mem.ingest.embedder import Embedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
@@ -353,41 +351,6 @@ def test_policy_operations_reject_missing_and_retired_policy(tmp_path) -> None:
         service.add_support(policy_id, "e1")
     with pytest.raises(ValueError, match="retired"):
         service.record_policy_outcome(policy_id, True, "2026-01-02T00:00:00Z")
-
-
-def test_embedding_retries_retryable_status_with_configured_timeout(
-    monkeypatch,
-) -> None:
-    """Embedding 对 429 重试，并使用拆分的连接/读取超时。"""
-    attempts: list[httpx.Timeout] = []
-
-    class Response:
-        def __init__(self, status_code: int) -> None:
-            self.status_code = status_code
-
-        def raise_for_status(self) -> None:
-            if self.status_code >= 400:
-                raise httpx.HTTPStatusError(
-                    "retry",
-                    request=httpx.Request("POST", "https://example.test"),
-                    response=self,
-                )
-
-        def json(self) -> dict[str, object]:
-            return {"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
-
-    responses = iter([Response(429), Response(200)])
-
-    def post(*args, **kwargs):
-        attempts.append(kwargs["timeout"])
-        return next(responses)
-
-    monkeypatch.setattr(httpx, "post", post)
-    monkeypatch.setattr("hl_mem.http_utils.time.sleep", lambda _: None)
-    assert len(Embedder("key", "https://example.test", "model", 2).embed_one("文本")) == 8
-    assert len(attempts) == 2
-    assert attempts[0].connect == 5.0
-    assert attempts[0].read == 30.0
 
 
 def test_experience_schema_has_status_checks(tmp_path) -> None:

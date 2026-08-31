@@ -59,6 +59,7 @@ class ProviderEndpoint:
     model: str
     timeout_seconds: float
     max_attempts: int
+    connect_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if not self.base_url.strip():
@@ -67,6 +68,8 @@ class ProviderEndpoint:
             raise ValueError("provider model must not be empty")
         if self.timeout_seconds <= 0:
             raise ValueError("provider timeout must be positive")
+        if self.connect_timeout_seconds is not None and self.connect_timeout_seconds <= 0:
+            raise ValueError("provider connect timeout must be positive")
         if self.max_attempts < 1:
             raise ValueError("provider max_attempts must be at least 1")
 
@@ -78,6 +81,7 @@ class ProviderRequest:
     headers: Mapping[str, str] = field(repr=False)
     json_body: Mapping[str, Any] = field(repr=False)
     timeout_seconds: float
+    connect_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if not self.method.strip():
@@ -86,6 +90,8 @@ class ProviderRequest:
             raise ValueError("provider request URL must not be empty")
         if self.timeout_seconds <= 0:
             raise ValueError("provider request timeout must be positive")
+        if self.connect_timeout_seconds is not None and self.connect_timeout_seconds <= 0:
+            raise ValueError("provider request connect timeout must be positive")
         object.__setattr__(self, "method", self.method.upper())
         object.__setattr__(self, "headers", _freeze(self.headers))
         object.__setattr__(self, "json_body", _freeze(self.json_body))

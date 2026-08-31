@@ -1,0 +1,73 @@
+{
+  "compatible": {
+    "request": {
+      "dimensions": 2,
+      "input": [
+        "first",
+        "second"
+      ],
+      "model": "text-embedding-v4"
+    },
+    "response": {
+      "data": [
+        {
+          "embedding": [
+            3.0,
+            4.0
+          ],
+          "index": 1
+        },
+        {
+          "embedding": [
+            1.0,
+            2.0
+          ],
+          "index": 0
+        }
+      ],
+      "usage": {
+        "total_tokens": 4
+      }
+    },
+    "url": "https://example.test/compatible-mode/v1/embeddings"
+  },
+  "native": {
+    "request": {
+      "input": {
+        "texts": [
+          "first",
+          "second"
+        ]
+      },
+      "model": "qwen3.7-text-embedding",
+      "parameters": {
+        "dimension": 2,
+        "text_type": "document"
+      }
+    },
+    "response": {
+      "output": {
+        "embeddings": [
+          {
+            "embedding": [
+              3.0,
+              4.0
+            ],
+            "text_index": 1
+          },
+          {
+            "embedding": [
+              1.0,
+              2.0
+            ],
+            "text_index": 0
+          }
+        ]
+      },
+      "usage": {
+        "total_tokens": 4
+      }
+    },
+    "url": "https://example.test/api/v1/services/embeddings/text-embedding/text-embedding"
+  }
+}

@@ -141,23 +141,41 @@ def make_llm_client(
     )
 
 
-def make_embedder(settings: Settings) -> EmbedderProtocol:
+def make_embedder(
+    settings: Settings,
+    *,
+    runtime: ProviderRuntime | None = None,
+) -> EmbedderProtocol:
     if settings.embedder_mode == "fake":
         return FakeEmbedder(settings.embedding_dim)
     if not settings.embedding_api_key:
         raise ConfigurationError("HL_MEM_EMBEDDER=real but EMBEDDING_API_KEY is missing")
-    embedder_options: dict[str, Any] = {"api_mode": settings.embedding_api_mode}
-    if settings.embedding_text_type:
-        embedder_options["text_type"] = settings.embedding_text_type
+    resolved_runtime = runtime or create_provider_runtime(settings)
+    provider = resolved_runtime.registry.create_embedding(
+        settings.embedding_provider,
+        {"api_mode": settings.embedding_api_mode},
+    )
+    endpoint = ProviderEndpoint(
+        base_url=settings.embedding_base_url,
+        api_key=settings.embedding_api_key,
+        model=settings.embedding_model,
+        timeout_seconds=settings.embedding_read_timeout,
+        max_attempts=settings.embedding_max_attempts,
+        connect_timeout_seconds=settings.embedding_connect_timeout,
+    )
     return Embedder(
-        settings.embedding_api_key,
-        settings.embedding_base_url,
-        settings.embedding_model,
-        settings.embedding_dim,
-        settings.embedding_connect_timeout,
-        settings.embedding_read_timeout,
-        settings.embedding_max_attempts,
-        **embedder_options,
+        endpoint=endpoint,
+        provider=provider,
+        governed=resolved_runtime.governed_call(
+            ProviderCapability.EMBEDDING,
+            settings.embedding_provider,
+            "embed",
+            endpoint.model,
+        ),
+        dim=settings.embedding_dim,
+        api_mode=settings.embedding_api_mode,
+        text_type=settings.embedding_text_type or None,
+        owned_runtime=resolved_runtime if runtime is None else None,
     )
 
 

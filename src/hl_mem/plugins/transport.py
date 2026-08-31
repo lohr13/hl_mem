@@ -79,7 +79,14 @@ class ProviderTransport:
                 request.url,
                 headers=dict(request.headers),
                 json=_thaw(request.json_body),
-                timeout=request.timeout_seconds,
+                timeout=(
+                    httpx.Timeout(
+                        request.timeout_seconds,
+                        connect=request.connect_timeout_seconds,
+                    )
+                    if request.connect_timeout_seconds is not None
+                    else request.timeout_seconds
+                ),
             )
             response.raise_for_status()
             return response
