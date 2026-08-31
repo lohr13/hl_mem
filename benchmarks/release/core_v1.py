@@ -20,9 +20,9 @@ from typing import Any, Iterator
 from fastapi.testclient import TestClient
 
 import hl_mem
+import hl_mem.ingest.image_describer as image_describer_module
 from hl_mem.api.server import create_app
 from hl_mem.ingest.embedder import Embedder
-from hl_mem.ingest.image_describer import GovernedImageDescriber
 from hl_mem.llm.client import LLMClient
 from hl_mem.recall.reranker import DashScopeReranker
 from hl_mem.settings import Settings
@@ -88,12 +88,15 @@ def _classification_metrics(records: list[dict[str, Any]], prediction: str) -> t
 
 @contextmanager
 def _reject_external_model_calls(counter: list[int]) -> Iterator[None]:
-    patched = (
+    patched: list[tuple[type[Any], str]] = [
         (LLMClient, "complete"),
         (Embedder, "embed_batch"),
         (DashScopeReranker, "rerank"),
-        (GovernedImageDescriber, "describe"),
-    )
+    ]
+    for class_name in ("GovernedImageDescriber", "DashScopeImageDescriber"):
+        owner = getattr(image_describer_module, class_name, None)
+        if isinstance(owner, type):
+            patched.append((owner, "describe"))
     originals = [(owner, name, getattr(owner, name)) for owner, name in patched]
 
     def unexpected(*_args: object, **_kwargs: object) -> None:
