@@ -33,6 +33,7 @@ from hl_mem.application.expired_cleanup import cleanup_expired_claims, inspect_e
 from hl_mem.application.restore import restore_database
 from hl_mem.application.version_report import report_version_cli
 from hl_mem.components import make_embedder
+from hl_mem.config.migrate import apply_config_migration, plan_config_migration
 from hl_mem.config_loader import load_settings
 from hl_mem.daily_cli import add_daily_commands, handle_daily_command
 from hl_mem.doctor import main as doctor_main
@@ -582,6 +583,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     doctor.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--config", type=Path, default=argparse.SUPPRESS)
     doctor.add_argument("--env-file", type=Path, default=argparse.SUPPRESS)
+    config = commands.add_parser("config")
+    config_commands = config.add_subparsers(dest="config_command", required=True)
+    config_migrate = config_commands.add_parser("migrate")
+    config_migrate.add_argument("--config", type=Path, required=True)
+    config_migrate.add_argument("--env-file", type=Path, default=argparse.SUPPRESS)
+    config_migrate.add_argument("--apply", action="store_true")
+    config_migrate.add_argument("--backup", type=Path)
+    config_migrate.add_argument("--manifest", type=Path)
     hermes = commands.add_parser("hermes", help="安装或升级 Hermes 插件")
     hermes_commands = hermes.add_subparsers(dest="hermes_command", required=True)
     for action in ("install", "upgrade"):
@@ -590,6 +599,40 @@ def main(argv: Sequence[str] | None = None) -> None:
         deployment.add_argument("--dry-run", action="store_true")
     add_daily_commands(commands)
     args = parser.parse_args(argv)
+    if args.command == "config":
+        plan = plan_config_migration(args.config, env_path=args.env_file)
+        report: dict[str, Any] = {
+            "blockers": list(plan.blockers),
+            "changes": [
+                {
+                    "after": change.after,
+                    "before": change.before,
+                    "path": change.path,
+                    "reason": change.reason,
+                }
+                for change in plan.changes
+            ],
+            "dry_run": not args.apply,
+            "recovery_required": plan.recovery_required,
+            "removed": list(plan.removed),
+            "source": str(plan.source),
+            "source_version": plan.source_version,
+            "status": "blocked" if plan.blockers else "ready",
+            "target_version": plan.target_version,
+        }
+        if args.apply:
+            config_backup = apply_config_migration(
+                plan,
+                backup_path=args.backup,
+                manifest_path=args.manifest,
+                env_path=args.env_file,
+            )
+            report["config_backup"] = str(config_backup)
+            report["status"] = "applied"
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        if plan.blockers:
+            raise SystemExit(2)
+        return
     if handle_daily_command(args, parser):
         return
     if args.command == "hermes":

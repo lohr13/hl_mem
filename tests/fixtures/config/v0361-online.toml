@@ -1,0 +1,30 @@
+[database]
+path = "memory.db"
+
+[llm]
+provider = "openai_compatible"
+base_url = "https://llm.example.test/v1"
+model = "quality-llm"
+
+[embedding]
+mode = "real"
+base_url = "https://embedding.example.test/v1"
+model = "quality-embedding"
+dim = 2048
+api_mode = "compatible"
+
+[extraction]
+mode = "llm"
+pre_filter = true
+
+[recall]
+query_expansion_mode = "auto"
+resurrection_mode = "auto"
+tag_channel_enabled = true
+tag_channel_weight = 0.4
+tag_candidate_limit = 25
+
+[relation]
+discovery_mode = "auto"
+auto_apply_confidence = 0.9
+conflict_confidence = 0.8

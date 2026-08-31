@@ -247,6 +247,38 @@ def validate_backup(backup_path: str | Path, manifest_path: str | Path) -> dict[
     }
 
 
+def read_database_ledger_binding(database_path: str | Path) -> tuple[str, int]:
+    """Read a live database's deletion-ledger identity without creating or mutating it."""
+    database = _resolved(database_path)
+    if not database.is_file():
+        raise FileNotFoundError(f"live database does not exist: {database}")
+    try:
+        with closing(_readonly_connection(database)) as connection:
+            return _read_ledger_binding(connection, role="live database")
+    except sqlite3.DatabaseError as error:
+        raise ValueError(f"live database ledger validation failed: {error}") from error
+
+
+def validate_upgrade_recovery_set(
+    database_path: str | Path,
+    backup_path: str | Path,
+    manifest_path: str | Path,
+) -> dict[str, Any]:
+    """Prove that a verified recovery snapshot belongs to the live database."""
+    verified = validate_backup(backup_path, manifest_path)
+    live_ledger_id, live_schema_version = read_database_ledger_binding(database_path)
+    if (verified["ledger_id"], verified["ledger_schema_version"]) != (
+        live_ledger_id,
+        live_schema_version,
+    ):
+        raise ValueError("recovery backup does not belong to the live database")
+    return {
+        **verified,
+        "database": str(_resolved(database_path)),
+        "recovery_set": "verified",
+    }
+
+
 def backup_database(source_path: str | Path, backup_path: str | Path) -> Path:
     """Create a consistent SQLite online backup and SHA-256 manifest."""
     source, destination = _resolved(source_path), _resolved(backup_path)

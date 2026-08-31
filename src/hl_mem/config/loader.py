@@ -275,6 +275,27 @@ def load_settings(
     except OSError as error:
         raise ConfigurationError(f"{resolved_config_path}: failed to read configuration: {error}") from error
 
+    return load_settings_data(
+        toml_data,
+        source_path=resolved_config_path,
+        env_path=resolved_env_path,
+        environ=environ,
+        validate_runtime=validate_runtime,
+    )
+
+
+def load_settings_data(
+    toml_data: Mapping[str, Any],
+    *,
+    source_path: Path,
+    env_path: Path,
+    environ: Mapping[str, str] | None = None,
+    validate_runtime: bool = True,
+) -> Settings:
+    """Validate an already parsed TOML document through the canonical loader."""
+    resolved_config_path = Path(source_path)
+    resolved_env_path = Path(env_path)
+
     schema_version = _read_schema_version(toml_data, resolved_config_path)
     core_toml_data, plugin_options = _split_plugin_namespace(toml_data, resolved_config_path)
     toml_fields, table_paths, secret_fields = _toml_schema()

@@ -1,0 +1,29 @@
+schema_version = 1
+
+[database]
+path = "memory.db"
+
+[llm]
+provider = "openai_compatible"
+base_url = "https://llm.example.test/v1"
+model = "quality-llm"
+
+[embedding]
+mode = "real"
+base_url = "https://embedding.example.test/v1"
+model = "quality-embedding"
+dim = 2048
+api_mode = "compatible"
+
+[extraction]
+mode = "llm"
+
+[recall]
+query_expansion_mode = "off"
+resurrection_mode = "off"
+
+[relation]
+discovery_mode = "audit"
+
+[plugins]
+enabled = []
