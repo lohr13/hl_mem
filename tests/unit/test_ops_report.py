@@ -299,6 +299,33 @@ def test_report_keeps_worker_active_at_exactly_two_poll_intervals(tmp_path: Path
     assert "worker_inactive" not in report["warnings"]
 
 
+def test_report_uses_job_id_to_break_equal_utc_failure_timestamps(tmp_path: Path) -> None:
+    connection, database_path = _seeded_connection(tmp_path)
+    try:
+        _insert_job(
+            connection,
+            job_id="a-timeout",
+            job_type="maintenance",
+            status="failed",
+            created_at=datetime(2026, 8, 31, 11, 0, tzinfo=timezone.utc),
+            last_error="timeout",
+        )
+        _insert_job(
+            connection,
+            job_id="z-busy",
+            job_type="maintenance",
+            status="failed",
+            created_at=datetime(2026, 8, 31, 13, 0, tzinfo=timezone(timedelta(hours=2))),
+            last_error="database is busy",
+        )
+
+        report = build_ops_report(connection, **_inputs(tmp_path, database_path))
+    finally:
+        connection.close()
+
+    assert report["jobs"]["last_safe_failure_category"] == "database_busy"
+
+
 def test_report_rejects_missing_main_database(tmp_path: Path) -> None:
     connection = sqlite3.connect(":memory:")
     try:

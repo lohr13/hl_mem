@@ -268,14 +268,14 @@ class JobRepository:
         latest_heartbeat_at = max(heartbeat_timestamps).isoformat() if heartbeat_timestamps else None
         window_start, window_end = window.since.astimezone(timezone.utc), window.until.astimezone(timezone.utc)
         failures = [
-            (updated_at, row["last_error"])
+            (updated_at, str(row["id"]), row["last_error"])
             for row in self.connection.execute(
-                "SELECT updated_at,last_error FROM jobs WHERE status IN ('failed','dead')"
+                "SELECT id,updated_at,last_error FROM jobs WHERE status IN ('failed','dead')"
             ).fetchall()
             if (updated_at := _report_datetime(row["updated_at"])) is not None
             and window_start <= updated_at <= window_end
         ]
-        last_failure = max(failures, default=(None, None), key=lambda item: item[0])
+        last_failure = max(failures, default=(None, "", None), key=lambda item: (item[0], item[1]))
         recall_side_effect_backlog = int(
             self.connection.execute(
                 "SELECT COUNT(*) FROM deferred_tasks WHERE status='pending' "
@@ -289,7 +289,7 @@ class JobRepository:
             "dead_count": statuses["dead"],
             "oldest_pending_age_seconds": oldest_pending_age_seconds,
             "expired_running_leases": expired_running_leases,
-            "last_safe_failure_category": _safe_failure_category(last_failure[1]),
+            "last_safe_failure_category": _safe_failure_category(last_failure[2]),
             "latest_heartbeat_at": latest_heartbeat_at,
             "recall_side_effect_backlog": recall_side_effect_backlog,
         }
