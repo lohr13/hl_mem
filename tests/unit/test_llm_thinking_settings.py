@@ -40,9 +40,10 @@ def test_llm_thinking_is_exposed_in_health_snapshot() -> None:
     assert snapshot["llm_thinking_control"] == "chat_template_kwargs"
 
 
-def test_make_llm_client_passes_thinking_setting_to_dashscope() -> None:
+def test_make_llm_client_passes_thinking_setting_to_dashscope(tmp_path) -> None:
     client = make_llm_client(
         Settings(
+            database_path=str(tmp_path / "memory.db"),
             llm_api_key="test-key",
             llm_provider="dashscope",
             enable_llm_thinking=True,
@@ -51,11 +52,13 @@ def test_make_llm_client_passes_thinking_setting_to_dashscope() -> None:
 
     assert isinstance(client.provider, DashScopeProvider)
     assert client.provider.enable_thinking is True
+    client.close()
 
 
-def test_make_llm_client_keeps_non_dashscope_provider_constructor_compatible() -> None:
+def test_make_llm_client_keeps_non_dashscope_provider_constructor_compatible(tmp_path) -> None:
     client = make_llm_client(
         Settings(
+            database_path=str(tmp_path / "memory.db"),
             llm_api_key="test-key",
             llm_provider="zhipu",
             llm_thinking_control="chat_template_kwargs",
@@ -69,11 +72,13 @@ def test_make_llm_client_keeps_non_dashscope_provider_constructor_compatible() -
         StructuredOutputMode.JSON_OBJECT,
     )
     assert "chat_template_kwargs" not in payload
+    client.close()
 
 
-def test_make_llm_client_passes_chat_template_thinking_control_to_openai_compatible() -> None:
+def test_make_llm_client_passes_chat_template_thinking_control_to_openai_compatible(tmp_path) -> None:
     client = make_llm_client(
         Settings(
+            database_path=str(tmp_path / "memory.db"),
             llm_api_key="test-key",
             llm_provider="openai_compatible",
             enable_llm_thinking=True,
@@ -88,3 +93,4 @@ def test_make_llm_client_passes_chat_template_thinking_control_to_openai_compati
         StructuredOutputMode.JSON_OBJECT,
     )
     assert payload["chat_template_kwargs"] == {"enable_thinking": True}
+    client.close()

@@ -372,7 +372,7 @@ git commit -m "feat: govern Provider HTTP transport"
 - Worker removes the outer `can_spend()/record_usage()` pair and its `TokenBudget` constructor dependency. Extractor result token fields remain for API responses and audit only.
 - API, MCP, Worker, and evaluation build one runtime and reuse it. Fake `Settings.for_test()` components neither create the sidecar nor require a runtime.
 
-- [ ] **Step 1: Freeze old LLM payload/response/error fixtures and add failing equivalence tests**
+- [x] **Step 1: Freeze old LLM payload/response/error fixtures and add failing equivalence tests**
 
 ```python
 @pytest.mark.parametrize("provider", ("dashscope", "zhipu", "openai_compatible"))
@@ -385,27 +385,27 @@ def test_registry_llm_matches_frozen_request_and_response(provider: str) -> None
 
 Also assert structured fallback produces two governed actual calls, disabled/Fake paths produce zero usage records, and a worker extraction cannot overspend concurrently.
 
-- [ ] **Step 2: Run LLM/Worker tests and observe direct provider construction and double budgeting**
+- [x] **Step 2: Run LLM/Worker tests and observe direct provider construction and double budgeting**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_llm_provider_equivalence.py tests/unit/test_llm_client.py tests/unit/test_worker.py tests/unit/test_extraction_batching.py -q --tb=short
 ```
 
-- [ ] **Step 3: Convert built-in LLM adapters to neutral request/response methods**
+- [x] **Step 3: Convert built-in LLM adapters to neutral request/response methods**
 
 Preserve provider-specific thinking controls, max tokens, response parsing, capabilities, request IDs, cached tokens, and structured fallback detection. Remove all direct `httpx.post` calls from `llm/client.py`.
 
-- [ ] **Step 4: Introduce one ProviderRuntime per process boundary and remove TokenBudget callers**
+- [x] **Step 4: Introduce one ProviderRuntime per process boundary and remove TokenBudget callers**
 
 Keep runtime injection optional only for tests and focused command helpers; production component construction must create or receive a persistent runtime. Do not use a process-global mutable Registry.
 
-- [ ] **Step 5: Run LLM, Worker, API, MCP, and real-smoke regressions**
+- [x] **Step 5: Run LLM, Worker, API, MCP, and real-smoke regressions**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_llm_provider_equivalence.py tests/unit/test_llm_client.py tests/unit/test_llm_providers.py tests/unit/test_worker.py tests/unit/test_extraction_batching.py tests/unit/test_comprehensive_fixes.py tests/unit/test_mcp_runtime.py tests/integration/test_extract_pipeline.py tests/test_e2e_real.py -q --tb=short
 ```
 
-- [ ] **Step 6: Commit the LLM migration**
+- [x] **Step 6: Commit the LLM migration**
 
 ```powershell
 git add -A src/hl_mem/llm src/hl_mem/components.py src/hl_mem/workers/worker.py src/hl_mem/api/server.py src/hl_mem/mcp/server.py src/hl_mem/evaluation/extraction_ab.py src/hl_mem/ingest/budget.py src/hl_mem/ingest/__init__.py tests/fixtures/providers tests/unit/test_llm_provider_equivalence.py tests/unit/test_llm_client.py tests/unit/test_llm_providers.py tests/unit/test_worker.py tests/unit/test_extraction_batching.py tests/unit/test_comprehensive_fixes.py tests/unit/test_budget.py tests/test_e2e_real.py

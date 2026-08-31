@@ -40,8 +40,15 @@ class GovernedProviderCall(Generic[T]):
         parser: Callable[[ProviderResponse], tuple[T, UsageAmount]],
         *,
         max_attempts: int,
+        settlement_status: Callable[[T], str] | None = None,
     ) -> T:
-        return self.execute_factory(lambda: request, estimate, parser, max_attempts=max_attempts)
+        return self.execute_factory(
+            lambda: request,
+            estimate,
+            parser,
+            max_attempts=max_attempts,
+            settlement_status=settlement_status,
+        )
 
     def execute_factory(
         self,
@@ -50,6 +57,7 @@ class GovernedProviderCall(Generic[T]):
         parser: Callable[[ProviderResponse], tuple[T, UsageAmount]],
         *,
         max_attempts: int,
+        settlement_status: Callable[[T], str] | None = None,
     ) -> T:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
@@ -106,11 +114,12 @@ class GovernedProviderCall(Generic[T]):
 
         total_actual = estimate.scale(max(0, response.attempts - 1)) + actual
         latency_ms = (time.perf_counter() - started) * 1000
+        usage_status = settlement_status(value) if settlement_status is not None else "success"
         try:
             self.governor.settle(
                 reservation.id,
                 total_actual,
-                status="success",
+                status=usage_status,
                 latency_ms=latency_ms,
             )
         except Exception as error:

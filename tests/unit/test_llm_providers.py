@@ -128,9 +128,10 @@ def test_dashscope_provider_can_enable_thinking_in_payload() -> None:
     assert "extra_body" not in payload
 
 
-def test_make_llm_client_applies_max_tokens_to_zhipu_without_thinking_fields() -> None:
+def test_make_llm_client_applies_max_tokens_to_zhipu_without_thinking_fields(tmp_path) -> None:
     client = make_llm_client(
         Settings(
+            database_path=str(tmp_path / "memory.db"),
             llm_api_key="test-key",
             llm_provider="zhipu",
             llm_max_tokens=4000,
@@ -148,6 +149,7 @@ def test_make_llm_client_applies_max_tokens_to_zhipu_without_thinking_fields() -
     assert payload["reasoning_effort"] == "low"
     assert "enable_thinking" not in payload
     assert "thinking" not in payload
+    client.close()
 
 
 @pytest.mark.parametrize("reasoning_effort", ["low", "high", "max"])

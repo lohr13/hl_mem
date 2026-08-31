@@ -1,7 +1,9 @@
-"""与具体厂商无关的 LLM 调用层。"""
+"""Transport-neutral LLM contracts with lazy implementation exports."""
 
-from .client import LLMClient
-from .providers import DashScopeProvider, OpenAICompatibleProvider, ZhipuProvider
+from __future__ import annotations
+
+from typing import Any
+
 from .types import (
     LLMCapabilities,
     LLMMessage,
@@ -10,6 +12,19 @@ from .types import (
     StructuredOutputMode,
     StructuredOutputSpec,
 )
+
+
+def __getattr__(name: str) -> Any:
+    if name == "LLMClient":
+        from .client import LLMClient
+
+        return LLMClient
+    if name in {"DashScopeProvider", "OpenAICompatibleProvider", "ZhipuProvider"}:
+        from . import providers
+
+        return getattr(providers, name)
+    raise AttributeError(name)
+
 
 __all__ = [
     "DashScopeProvider",

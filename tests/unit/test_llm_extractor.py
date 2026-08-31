@@ -2,7 +2,6 @@ import json
 import logging
 import re
 
-import httpx
 import pytest
 
 from hl_mem.domain.claims.attributes import PREDICATE_ATTRIBUTE_MAP
@@ -26,8 +25,6 @@ from hl_mem.ingest.llm_extractor import (
     compute_prompt_hash,
 )
 from hl_mem.ingest.schemas import temporal_gate_extraction_response_json_schema
-from hl_mem.llm.client import LLMClient
-from hl_mem.llm.providers import ZhipuProvider
 from hl_mem.llm.types import LLMRequest, LLMResponse
 from hl_mem.observability.audit import audit_scope
 
@@ -335,16 +332,26 @@ def test_invalid_json_is_rejected() -> None:
         LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)).extract("内容")
 
 
-def test_llm_client_has_configured_retry() -> None:
-    client = LLMClient(
-        "key",
-        "https://example.test",
-        "model",
-        provider=ZhipuProvider(),
-        timeout=httpx.Timeout(42.0),
-        max_attempts=3,
+def test_llm_client_has_configured_retry(tmp_path) -> None:
+    from hl_mem.components import create_provider_runtime, make_llm_client
+    from hl_mem.settings import Settings
+
+    settings = Settings(
+        database_path=str(tmp_path / "memory.db"),
+        llm_api_key="key",
+        llm_provider="zhipu",
+        llm_timeout=42.0,
+        llm_max_attempts=3,
+        embedder_mode="fake",
+        reranker_mode="off",
+        query_expansion_mode="off",
+        relation_discovery_mode="off",
+        image_describer_mode="off",
     )
+    runtime = create_provider_runtime(settings)
+    client = make_llm_client(settings, runtime=runtime)
     assert client.max_attempts == 3
+    runtime.close()
 
 
 def test_timeout_is_configurable() -> None:

@@ -231,6 +231,7 @@ class McpMemoryServer:
         settings: Settings | str | Path,
         embedder: Any = None,
         reranker: Any = None,
+        provider_runtime: Any = None,
     ) -> None:
         """使用已加载的统一配置创建 MCP 服务。"""
         if not isinstance(settings, Settings):
@@ -239,6 +240,11 @@ class McpMemoryServer:
         self.database = Database(settings=settings)
         self.database.open_worker()
         self.settings = settings
+        self.provider_runtime = provider_runtime
+        self._owns_provider_runtime = False
+        if self.provider_runtime is None and (settings.llm_api_key or settings.query_expansion_api_key):
+            self.provider_runtime = components.create_provider_runtime(settings)
+            self._owns_provider_runtime = True
         self.embedder = embedder or components.make_embedder(settings)
         self.reranker = reranker if reranker is not None else components.make_reranker(settings)
         self.recall_side_effects = RecallSideEffectDispatcher(self.database, settings=settings)
@@ -338,6 +344,7 @@ class McpMemoryServer:
             query_expander=components.make_query_expander(
                 self.settings,
                 span_recorder=self.deferred_llm_spans,
+                runtime=self.provider_runtime,
             ),
             side_effect_sink=self.recall_side_effects,
         ).recall(
@@ -358,6 +365,9 @@ class McpMemoryServer:
     def close(self) -> None:
         """排空 recall 副作用并关闭数据库资源。"""
         closed = self.recall_side_effects.close(self.recall_side_effects.recommended_shutdown_timeout)
+        if self._owns_provider_runtime and self.provider_runtime is not None:
+            self.provider_runtime.close()
+            self.provider_runtime = None
         if closed:
             self.database.close()
 

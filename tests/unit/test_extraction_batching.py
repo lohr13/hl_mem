@@ -44,17 +44,6 @@ class _FakeLLMClient:
         return LLMResponse(self.content, "stop", 12, input_tokens=10, output_tokens=2)
 
 
-class _UnlimitedBudget:
-    def can_spend(self, _tokens: int) -> bool:
-        return True
-
-    def record_usage(self, _tokens: int) -> None:
-        return None
-
-    def get_stats(self) -> dict[str, int]:
-        return {"used": 0, "limit": 0, "remaining": 0}
-
-
 def _batch_source_events() -> list[dict[str, Any]]:
     return [
         {
@@ -511,7 +500,6 @@ def test_worker_extracts_one_structured_turn_and_persists_per_event_evidence(tmp
         extractor=extractor,
         embedder=FakeEmbedder(),
         image_describer=None,
-        budget=_UnlimitedBudget(),
     )
 
     result = worker.run_once(force_extraction=True)
@@ -570,7 +558,6 @@ def test_worker_filters_each_event_before_building_batch(tmp_path) -> None:
         extractor=LLMExtractor(client, ChunkingPolicy(10_000, 0, 2)),
         embedder=FakeEmbedder(),
         image_describer=None,
-        budget=_UnlimitedBudget(),
     )
 
     result = worker.run_once(force_extraction=True)

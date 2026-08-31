@@ -1,0 +1,49 @@
+{
+  "request": {
+    "messages": [
+      {
+        "content": "extract",
+        "role": "user"
+      }
+    ],
+    "response_format": {
+      "json_schema": {
+        "name": "extraction_response",
+        "schema": {
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "strict": true
+      },
+      "type": "json_schema"
+    }
+  },
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "message": {
+          "content": "{}"
+        }
+      }
+    ],
+    "id": "request-1",
+    "usage": {
+      "completion_tokens": 2,
+      "prompt_tokens": 5,
+      "prompt_tokens_details": {
+        "cached_tokens": 1
+      },
+      "total_tokens": 7
+    }
+  },
+  "normalized_response": {
+    "cached_tokens": 1,
+    "content": "{}",
+    "finish_reason": "stop",
+    "input_tokens": 5,
+    "output_tokens": 2,
+    "raw_request_id": "request-1",
+    "usage_total_tokens": 7
+  }
+}

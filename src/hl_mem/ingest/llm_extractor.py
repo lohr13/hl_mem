@@ -808,6 +808,9 @@ class LLMExtractor:
     ) -> None:
         self.llm_client = llm_client
         self.model = llm_client.model
+        self.provider_name = getattr(llm_client, "provider_name", None)
+        if self.provider_name is None:
+            self.provider_name = llm_client.provider.name
         self.schema_retries = schema_retries
         if self.schema_retries < 0:
             raise ValueError("schema_retries must be non-negative")
@@ -1635,13 +1638,13 @@ class LLMExtractor:
         self.last_output_tokens += response.output_tokens or 0
         if response.finish_reason in {"length", "max_tokens"}:
             raise LLMOutputTruncatedError(
-                f"LLM delta repair output truncated: provider={self.llm_client.provider.name}, model={self.model}"
+                f"LLM delta repair output truncated: provider={self.provider_name}, model={self.model}"
             )
         try:
             raw = self._parse_json(response.content)
             repaired = repair_extraction_json(
                 raw,
-                provider=self.llm_client.provider.name,
+                provider=self.provider_name,
                 model=self.model,
             )
             self._repair_count += self._count_repairs(raw, repaired)
@@ -1657,7 +1660,7 @@ class LLMExtractor:
         except (PydanticValidationError, ValueError) as error:
             raise LLMSchemaValidationError(
                 "LLM delta repair response does not contain valid compact JSON: "
-                f"provider={self.llm_client.provider.name}, model={self.model}, "
+                f"provider={self.provider_name}, model={self.model}, "
                 f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
             ) from error
 
@@ -1778,7 +1781,7 @@ class LLMExtractor:
             self.last_output_tokens += response.output_tokens or 0
             if response.finish_reason in {"length", "max_tokens"}:
                 raise LLMOutputTruncatedError(
-                    f"LLM output truncated: provider={self.llm_client.provider.name}, model={self.model}"
+                    f"LLM output truncated: provider={self.provider_name}, model={self.model}"
                 )
             previous_output_payload: Any = response.content
             try:
@@ -1786,7 +1789,7 @@ class LLMExtractor:
                 previous_output_payload = raw
                 repaired = repair_extraction_json(
                     raw,
-                    provider=self.llm_client.provider.name,
+                    provider=self.provider_name,
                     model=self.model,
                 )
                 self._repair_count += self._count_repairs(raw, repaired)
@@ -1805,12 +1808,12 @@ class LLMExtractor:
                     self._last_schema_errors.extend(dict(item) for item in error.errors())
                 if self._looks_like_truncated_json(response.content):
                     raise LLMOutputTruncatedError(
-                        f"LLM output appears truncated: provider={self.llm_client.provider.name}, model={self.model}"
+                        f"LLM output appears truncated: provider={self.provider_name}, model={self.model}"
                     ) from error
                 if self._is_claim_count_overflow(error):
                     raise LLMSchemaValidationError(
                         "LLM response claims exceed the per-chunk schema limit; auto split required: "
-                        f"provider={self.llm_client.provider.name}, model={self.model}, "
+                        f"provider={self.provider_name}, model={self.model}, "
                         f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
                     ) from error
                 previous_output = previous_output_payload
@@ -1818,7 +1821,7 @@ class LLMExtractor:
                 if attempt == self.schema_retries:
                     raise LLMSchemaValidationError(
                         "LLM response does not contain valid JSON or match schema: "
-                        f"provider={self.llm_client.provider.name}, model={self.model}, "
+                        f"provider={self.provider_name}, model={self.model}, "
                         f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
                     ) from error
         raise RuntimeError("unreachable")

@@ -1,21 +1,26 @@
-"""OpenAI Chat Completions 兼容 provider adapter。"""
+"""Built-in neutral adapters for OpenAI-compatible Chat Completions APIs."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 import httpx
 
-from .types import (
-    LLMCapabilities,
-    LLMRequest,
-    LLMResponse,
-    StructuredOutputMode,
+from hl_mem.errors import ProviderCallError
+from hl_mem.plugins.contracts import (
+    LLMInvocation,
+    ProviderEndpoint,
+    ProviderFactoryContext,
+    ProviderRequest,
+    ProviderResponse,
 )
+
+from .types import LLMCapabilities, LLMRequest, LLMResponse, StructuredOutputMode
 
 
 class OpenAICompatibleProvider:
-    """OpenAI-compatible Chat Completions adapter。"""
+    """Translate the neutral LLM contract to Chat Completions."""
 
     name = "openai_compatible"
     capabilities = LLMCapabilities(json_object=True, json_schema_strict=True)
@@ -39,7 +44,7 @@ class OpenAICompatibleProvider:
         request: LLMRequest,
         mode: StructuredOutputMode,
     ) -> dict[str, Any]:
-        """构建 OpenAI-compatible 请求体。"""
+        """Build the vendor payload; retained as a small characterization seam."""
         payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": message.role, "content": message.content} for message in request.messages],
@@ -64,19 +69,32 @@ class OpenAICompatibleProvider:
             payload["response_format"] = {"type": "json_object"}
         return payload
 
-    def parse_response(self, payload: dict[str, Any]) -> LLMResponse:
-        """解析 OpenAI-compatible 响应外壳。"""
+    def build_request(self, endpoint: ProviderEndpoint, invocation: LLMInvocation) -> ProviderRequest:
+        return ProviderRequest(
+            "POST",
+            f"{endpoint.base_url.rstrip('/')}/chat/completions",
+            {
+                "Authorization": f"Bearer {endpoint.api_key}",
+                "Content-Type": "application/json",
+            },
+            self.build_payload(endpoint.model, invocation.request, invocation.mode),
+            endpoint.timeout_seconds,
+        )
+
+    def parse_response(self, response: ProviderResponse | Mapping[str, Any]) -> LLMResponse:
+        payload = response.json_body if isinstance(response, ProviderResponse) else response
         choice = payload["choices"][0]
         usage = payload.get("usage") or {}
         prompt_details = usage.get("prompt_tokens_details") or {}
         content = choice["message"]["content"]
         if self.thinking_control == "chat_template_kwargs":
             content = self._strip_leading_empty_think_block(content)
+        request_id = response.request_id if isinstance(response, ProviderResponse) else None
         return LLMResponse(
             content=content,
             finish_reason=choice.get("finish_reason"),
             usage_total_tokens=int(usage.get("total_tokens", 0)),
-            raw_request_id=payload.get("id") or payload.get("request_id"),
+            raw_request_id=request_id or payload.get("id") or payload.get("request_id"),
             input_tokens=usage.get("prompt_tokens"),
             output_tokens=usage.get("completion_tokens"),
             cached_tokens=prompt_details.get("cached_tokens"),
@@ -84,7 +102,6 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _strip_leading_empty_think_block(content: str) -> str:
-        """仅剥离位于 JSON 前的空 think 块。"""
         opening_tag = "<think>"
         closing_tag = "</think>"
         if not content.startswith(opening_tag):
@@ -95,18 +112,20 @@ class OpenAICompatibleProvider:
         remainder = content[closing_index + len(closing_tag) :].lstrip()
         return remainder if remainder.startswith("{") else content
 
-    def is_structured_mode_unsupported(self, error: httpx.HTTPStatusError) -> bool:
-        """判断 400/422 是否明确表示 strict structured output 不受支持。"""
-        response = error.response
-        if response is None or response.status_code not in {400, 422}:
-            return False
-        text = response.text.casefold()
+    def is_structured_mode_unsupported(self, error: ProviderCallError | httpx.HTTPStatusError) -> bool:
+        if isinstance(error, ProviderCallError):
+            if error.http_status not in {400, 422}:
+                return False
+            text = str(error.response_body or "").casefold()
+        else:
+            response = error.response
+            if response is None or response.status_code not in {400, 422}:
+                return False
+            text = response.text.casefold()
         return any(marker in text for marker in ("response_format", "json_schema", "strict"))
 
 
 class DashScopeProvider(OpenAICompatibleProvider):
-    """百炼 Qwen OpenAI-compatible adapter。"""
-
     name = "dashscope"
     capabilities = LLMCapabilities(json_object=True, json_schema_strict=False)
 
@@ -121,17 +140,10 @@ class DashScopeProvider(OpenAICompatibleProvider):
 
 
 class ZhipuProvider(OpenAICompatibleProvider):
-    """智谱 GLM OpenAI-compatible adapter。"""
-
     name = "zhipu"
     capabilities = LLMCapabilities(json_object=True, json_schema_strict=False)
 
-    def __init__(
-        self,
-        *,
-        max_tokens: int | None = None,
-        reasoning_effort: str | None = None,
-    ) -> None:
+    def __init__(self, *, max_tokens: int | None = None, reasoning_effort: str | None = None) -> None:
         if reasoning_effort not in {None, "low", "high", "max"}:
             raise ValueError("reasoning_effort must be 'low', 'high', 'max', or None")
         super().__init__(max_tokens=max_tokens)
@@ -142,3 +154,35 @@ class ZhipuProvider(OpenAICompatibleProvider):
         if self.reasoning_effort is not None:
             payload["reasoning_effort"] = self.reasoning_effort
         return payload
+
+
+def make_builtin_llm_provider(context: ProviderFactoryContext) -> OpenAICompatibleProvider:
+    """Create a built-in adapter only from validated non-secret core options."""
+    options = context.core_options
+    max_tokens = options.get("max_tokens")
+    if context.key.name == "dashscope":
+        return DashScopeProvider(
+            enable_thinking=bool(options.get("enable_thinking", False)),
+            max_tokens=max_tokens,
+        )
+    if context.key.name == "zhipu":
+        reasoning_effort = options.get("reasoning_effort")
+        return ZhipuProvider(
+            max_tokens=max_tokens,
+            reasoning_effort=str(reasoning_effort) if reasoning_effort is not None else None,
+        )
+    if context.key.name == "openai_compatible":
+        return OpenAICompatibleProvider(
+            max_tokens=max_tokens,
+            enable_thinking=bool(options.get("enable_thinking", False)),
+            thinking_control=str(options.get("thinking_control", "auto")),  # type: ignore[arg-type]
+        )
+    raise ValueError(f"unsupported built-in LLM provider {context.key.name!r}")
+
+
+__all__ = [
+    "DashScopeProvider",
+    "OpenAICompatibleProvider",
+    "ZhipuProvider",
+    "make_builtin_llm_provider",
+]

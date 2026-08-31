@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal, Protocol
-
-import httpx
+from typing import Any, Literal
 
 
 class StructuredOutputMode(StrEnum):
@@ -60,21 +58,3 @@ class LLMResponse:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cached_tokens: int | None = None
-
-
-class LLMProviderProtocol(Protocol):
-    """LLM provider adapter 协议。"""
-
-    name: str
-    capabilities: LLMCapabilities
-
-    def build_payload(
-        self,
-        model: str,
-        request: LLMRequest,
-        mode: StructuredOutputMode,
-    ) -> dict[str, Any]: ...
-
-    def parse_response(self, payload: dict[str, Any]) -> LLMResponse: ...
-
-    def is_structured_mode_unsupported(self, error: httpx.HTTPStatusError) -> bool: ...

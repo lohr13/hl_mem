@@ -1,12 +1,10 @@
-"""统一组件工厂，所有运行时配置均由 Settings 显式注入。"""
+"""Composition root for configured HL-Mem runtime components."""
 
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
 from typing import Any, Literal
-
-import httpx
 
 from hl_mem.domain.entity import load_entity_aliases, set_active_aliases
 from hl_mem.errors import ConfigurationError
@@ -17,14 +15,11 @@ from hl_mem.ingest.image_describer import DashScopeImageDescriber
 from hl_mem.ingest.llm_extractor import ExtractionModes, LLMExtractor
 from hl_mem.ingest.verifier import EntailmentVerifier
 from hl_mem.llm.client import LLMClient
-from hl_mem.llm.providers import (
-    DashScopeProvider,
-    OpenAICompatibleProvider,
-    ZhipuProvider,
-)
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.observability.llm_spans import LLMSpanRecorder
+from hl_mem.plugins.contracts import ProviderCapability, ProviderEndpoint
 from hl_mem.plugins.registry import ProviderRegistry, build_provider_registry
+from hl_mem.plugins.runtime import ProviderRuntime, create_provider_runtime
 from hl_mem.protocols import (
     EmbedderProtocol,
     ExtractorProtocol,
@@ -33,9 +28,7 @@ from hl_mem.protocols import (
     RerankerProtocol,
 )
 from hl_mem.recall.query_expansion import QueryExpander
-from hl_mem.recall.reranker import (
-    DashScopeReranker,
-)
+from hl_mem.recall.reranker import DashScopeReranker
 from hl_mem.recall.reranker import make_reranker as make_registered_reranker
 from hl_mem.settings import Settings
 
@@ -50,18 +43,16 @@ _COMPONENT_HEALTH: dict[str, dict[str, str | None]] = {}
 
 
 def make_provider_registry(settings: Settings, *, entry_points: Any = None) -> ProviderRegistry:
-    """为一个进程边界构造冻结的 Provider Registry，不保留全局可变实例。"""
-
+    """Build one validated, frozen Provider registry."""
     return build_provider_registry(settings, entry_points=entry_points)
 
 
 def initialize_process(settings: Settings) -> None:
-    """执行显式且幂等的进程级初始化。"""
+    """Apply explicit process-wide immutable domain configuration."""
     set_active_aliases(load_entity_aliases(settings.entity_aliases_path))
 
 
 def component_health() -> dict[str, dict[str, str | None]]:
-    """返回可选组件最近一次构造的请求、有效模式与降级原因。"""
     return {name: dict(status) for name, status in _COMPONENT_HEALTH.items()}
 
 
@@ -71,7 +62,6 @@ def _record_component_health(
     effective_mode: str,
     degradation_reason: str | None = None,
 ) -> None:
-    """记录不含敏感信息的组件构造状态。"""
     _COMPONENT_HEALTH[name] = {
         "requested_mode": requested_mode,
         "effective_mode": effective_mode,
@@ -80,7 +70,7 @@ def _record_component_health(
 
 
 def make_image_describer(settings: Settings) -> ImageDescriberProtocol | None:
-    """按配置构造图片描述器；关闭时不创建网络客户端。"""
+    """Build the experimental image component only when explicitly enabled."""
     if settings.image_describer_mode == "off":
         return None
     if not settings.image_describer_api_key:
@@ -96,35 +86,6 @@ def make_image_describer(settings: Settings) -> ImageDescriberProtocol | None:
     )
 
 
-def _make_llm_provider(settings: Settings, provider_name: str) -> OpenAICompatibleProvider:
-    """按 provider 名称构造与主线路参数一致的适配器。"""
-    provider_types: dict[str, type[OpenAICompatibleProvider]] = {
-        "dashscope": DashScopeProvider,
-        "zhipu": ZhipuProvider,
-        "openai_compatible": OpenAICompatibleProvider,
-    }
-    provider_type = provider_types.get(provider_name)
-    if provider_type is None:
-        raise ConfigurationError("HL_MEM_LLM_PROVIDER must be 'dashscope', 'zhipu', or 'openai_compatible'")
-    if provider_type is DashScopeProvider:
-        return DashScopeProvider(
-            enable_thinking=settings.enable_llm_thinking,
-            max_tokens=settings.llm_max_tokens,
-        )
-    if provider_type is OpenAICompatibleProvider:
-        return OpenAICompatibleProvider(
-            enable_thinking=settings.enable_llm_thinking,
-            thinking_control=settings.llm_thinking_control,
-            max_tokens=settings.llm_max_tokens,
-        )
-    if provider_type is ZhipuProvider:
-        return ZhipuProvider(
-            max_tokens=settings.llm_max_tokens,
-            reasoning_effort=settings.llm_reasoning_effort,
-        )
-    return provider_type(max_tokens=settings.llm_max_tokens)
-
-
 def make_llm_client(
     settings: Settings,
     connection: sqlite3.Connection | None = None,
@@ -135,30 +96,52 @@ def make_llm_client(
     base_url: str | None = None,
     api_key: str | None = None,
     span_recorder: Any = None,
+    runtime: ProviderRuntime | None = None,
 ) -> LLMClient:
-    """依据统一配置创建 provider 无关的 LLM 客户端。"""
+    """Resolve an LLM adapter and wrap it in host-owned governance."""
     resolved_api_key = api_key if api_key is not None else settings.llm_api_key
     if not resolved_api_key:
         raise ConfigurationError("LLM_API_KEY is required")
-    provider = _make_llm_provider(
-        settings,
-        provider_name if provider_name is not None else settings.llm_provider,
+    selected_provider = provider_name if provider_name is not None else settings.llm_provider
+    resolved_runtime = runtime or create_provider_runtime(settings)
+    provider = resolved_runtime.registry.create_llm(
+        selected_provider,
+        {
+            "max_tokens": settings.llm_max_tokens,
+            "enable_thinking": settings.enable_llm_thinking,
+            "thinking_control": settings.llm_thinking_control,
+            "reasoning_effort": settings.llm_reasoning_effort,
+        },
     )
     normalized_model = model.strip() if model is not None else None
-    return LLMClient(
-        api_key=resolved_api_key,
+    endpoint = ProviderEndpoint(
         base_url=base_url if base_url is not None else settings.llm_base_url,
+        api_key=resolved_api_key,
         model=normalized_model or settings.llm_model,
-        provider=provider,
-        timeout=httpx.Timeout(settings.llm_timeout),
+        timeout_seconds=settings.llm_timeout,
         max_attempts=settings.llm_max_attempts,
+    )
+    return LLMClient(
+        endpoint=endpoint,
+        provider_name=selected_provider,
+        provider=provider,
+        governed=resolved_runtime.governed_call(
+            ProviderCapability.LLM,
+            selected_provider,
+            operation,
+            endpoint.model,
+        ),
+        max_tokens=settings.llm_max_tokens,
+        enable_thinking=settings.enable_llm_thinking,
+        thinking_control=settings.llm_thinking_control,
+        reasoning_effort=settings.llm_reasoning_effort,
         span_recorder=span_recorder if span_recorder is not None else LLMSpanRecorder(connection),
         operation=operation,
+        owned_runtime=resolved_runtime if runtime is None else None,
     )
 
 
 def make_embedder(settings: Settings) -> EmbedderProtocol:
-    """依据统一配置创建向量化组件。"""
     if settings.embedder_mode == "fake":
         return FakeEmbedder(settings.embedding_dim)
     if not settings.embedding_api_key:
@@ -179,7 +162,6 @@ def make_embedder(settings: Settings) -> EmbedderProtocol:
 
 
 def make_reranker(settings: Settings) -> RerankerProtocol | None:
-    """依据统一配置创建重排组件。"""
     return make_registered_reranker(settings, {"dashscope": Reranker})
 
 
@@ -188,8 +170,8 @@ def make_query_expander(
     connection: sqlite3.Connection | None = None,
     *,
     span_recorder: Any = None,
+    runtime: ProviderRuntime | None = None,
 ) -> QueryExpander | None:
-    """按模式构造查询扩展器；关闭时不创建 LLM 客户端。"""
     line_overrides = settings.query_expansion_line_overrides()
     if settings.query_expansion_mode == "off" or settings.query_expansion_max == 0:
         _record_component_health("query_expander", settings.query_expansion_mode, "off")
@@ -208,29 +190,29 @@ def make_query_expander(
             operation="query_expansion",
             model=settings.query_expansion_model,
             span_recorder=span_recorder,
+            runtime=runtime,
             **client_overrides,
         ),
         max_concurrency=settings.query_expansion_max_concurrency,
     )
-    _record_component_health(
-        "query_expander",
-        settings.query_expansion_mode,
-        settings.query_expansion_mode,
-    )
+    _record_component_health("query_expander", settings.query_expansion_mode, settings.query_expansion_mode)
     return result
 
 
 def make_relation_discoverer(
     settings: Settings,
     connection: sqlite3.Connection | None = None,
+    *,
+    runtime: ProviderRuntime | None = None,
 ) -> RelationDiscoveryProtocol | None:
-    """按发布模式构造关系发现器；关闭时不创建 LLM 客户端。"""
     if settings.relation_discovery_mode == "off":
         _record_component_health("relation_discoverer", settings.relation_discovery_mode, "off")
         return None
     from hl_mem.workers.discover_relations import LLMRelationDiscoverer
 
-    result = LLMRelationDiscoverer(make_llm_client(settings, connection, operation="relation_discovery"))
+    result = LLMRelationDiscoverer(
+        make_llm_client(settings, connection, operation="relation_discovery", runtime=runtime)
+    )
     _record_component_health(
         "relation_discoverer",
         settings.relation_discovery_mode,
@@ -244,8 +226,8 @@ def make_extractor(
     *,
     require_real: bool = False,
     connection: sqlite3.Connection | None = None,
+    runtime: ProviderRuntime | None = None,
 ) -> ExtractorProtocol:
-    """依据统一配置创建 LLM 提取组件。"""
     if settings.extractor_mode == "fake" and not require_real:
         return FakeExtractor()
     if not settings.llm_api_key:
@@ -255,7 +237,7 @@ def make_extractor(
         if settings.llm_structured_mode == "json_object"
         else StructuredOutputMode.JSON_SCHEMA
     )
-    llm_client = make_llm_client(settings, connection, operation="extract")
+    llm_client = make_llm_client(settings, connection, operation="extract", runtime=runtime)
     verifier = (
         EntailmentVerifier(llm_client, structured_mode=structured_mode) if settings.verification_mode != "off" else None
     )
@@ -278,9 +260,30 @@ def make_extractor(
     )
 
 
-def make_extractor_for_type(event_type: str, settings: Settings) -> ExtractorProtocol | Literal["explicit"]:
-    """根据事件类型选择提取器；显式记忆返回 worker 可识别的特殊标记。"""
+def make_extractor_for_type(
+    event_type: str,
+    settings: Settings,
+    *,
+    runtime: ProviderRuntime | None = None,
+) -> ExtractorProtocol | Literal["explicit"]:
     extractor_name = _EXTRACTOR_REGISTRY.get(event_type, "llm")
     if extractor_name == "explicit":
         return "explicit"
-    return make_extractor(settings)
+    return make_extractor(settings, runtime=runtime)
+
+
+__all__ = [
+    "ProviderRuntime",
+    "component_health",
+    "create_provider_runtime",
+    "initialize_process",
+    "make_embedder",
+    "make_extractor",
+    "make_extractor_for_type",
+    "make_image_describer",
+    "make_llm_client",
+    "make_provider_registry",
+    "make_query_expander",
+    "make_relation_discoverer",
+    "make_reranker",
+]

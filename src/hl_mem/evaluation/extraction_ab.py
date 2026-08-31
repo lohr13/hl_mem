@@ -24,6 +24,7 @@ from hl_mem.ingest.schemas import (
 )
 from hl_mem.ingest.verifier import EntailmentVerifier
 from hl_mem.llm.types import StructuredOutputMode
+from hl_mem.plugins.runtime import ProviderRuntime
 from hl_mem.settings import Settings
 
 LEGACY_CONTRACT_ID = "compact-7field-v1"
@@ -103,6 +104,8 @@ def make_extraction_arm_extractor(
     settings: Settings,
     connection: sqlite3.Connection,
     arm: Literal["old", "new"],
+    *,
+    runtime: ProviderRuntime | None = None,
 ) -> LLMExtractor:
     """按生产参数构造冻结 arm，不引入长期 Settings 开关。"""
     if arm not in {"old", "new"}:
@@ -112,7 +115,12 @@ def make_extraction_arm_extractor(
         if settings.llm_structured_mode == "json_object"
         else StructuredOutputMode.JSON_SCHEMA
     )
-    client = make_llm_client(settings, connection, operation=f"extract_ab_{arm}")
+    client = make_llm_client(
+        settings,
+        connection,
+        operation=f"extract_ab_{arm}",
+        runtime=runtime,
+    )
     verifier = (
         EntailmentVerifier(client, structured_mode=structured_mode) if settings.verification_mode != "off" else None
     )

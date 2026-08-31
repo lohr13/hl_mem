@@ -129,7 +129,12 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     payload = json.loads(job["payload_json"] or "{}")
     return deduplicate_claims(
         worker.connection,
-        components.make_llm_client(worker.settings, worker.connection, operation="dedup"),
+        components.make_llm_client(
+            worker.settings,
+            worker.connection,
+            operation="dedup",
+            runtime=worker._get_provider_runtime(),
+        ),
         worker.embedder,
         namespace=str(payload.get("namespace", "default")),
         threshold=float(payload.get("threshold", worker.settings.dedup_threshold)),
@@ -144,7 +149,11 @@ def _handle_deduplicate(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_discover_relations(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
     payload = json.loads(job["payload_json"] or "{}")
-    discoverer = worker.relation_discoverer or components.make_relation_discoverer(worker.settings, worker.connection)
+    discoverer = worker.relation_discoverer or components.make_relation_discoverer(
+        worker.settings,
+        worker.connection,
+        runtime=worker._get_provider_runtime(),
+    )
     if discoverer is None:
         return {"candidates": 0, "proposals": 0, "rejected": 0}
     return discover_relations(
@@ -186,7 +195,12 @@ def _handle_reclassify(worker: Worker, job: dict[str, Any]) -> dict[str, Any]:
 
     return reclassify_claims(
         worker.connection,
-        components.make_llm_client(worker.settings, worker.connection, operation="other"),
+        components.make_llm_client(
+            worker.settings,
+            worker.connection,
+            operation="other",
+            runtime=worker._get_provider_runtime(),
+        ),
         policy=worker.settings.retention_policy(),
     )
 

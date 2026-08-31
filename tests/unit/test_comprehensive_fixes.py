@@ -14,7 +14,6 @@ from hl_mem.api import server
 from hl_mem.components import make_embedder, make_reranker
 from hl_mem.errors import ConfigurationError
 from hl_mem.experience.service import ExperienceService, backprop_episode_reward
-from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import Embedder
 from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.settings import Settings
@@ -389,17 +388,6 @@ def test_embedding_retries_retryable_status_with_configured_timeout(
     assert len(attempts) == 2
     assert attempts[0].connect == 5.0
     assert attempts[0].read == 30.0
-
-
-def test_budget_uses_sqlite_atomic_updates(tmp_path) -> None:
-    """多个预算实例必须通过 SQLite 原子累加而不丢失更新。"""
-    path = tmp_path / "budget.db"
-    first, second = TokenBudget(10, path), TokenBudget(10, path)
-    first.record_usage(3)
-    second.record_usage(4)
-    assert first.get_stats()["used_tokens"] == 7
-    with sqlite3.connect(path) as connection:
-        assert connection.execute("SELECT SUM(input_tokens) FROM usage_events").fetchone()[0] == 7
 
 
 def test_experience_schema_has_status_checks(tmp_path) -> None:

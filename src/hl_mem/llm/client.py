@@ -1,29 +1,35 @@
-"""同步 LLM transport、HTTP 重试与 structured output 降级。"""
+"""Governed, transport-neutral LLM completion client."""
 
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any
 
 import httpx
 
-from hl_mem.errors import LLMStructuredOutputUnsupportedError
-from hl_mem.http_utils import retry_http
-from hl_mem.monitoring.metrics import DEFAULT_PROVIDER_METRICS, ProviderCall
+from hl_mem.errors import (
+    LLMStructuredOutputUnsupportedError,
+    ProviderCallError,
+)
 from hl_mem.observability.audit import current_audit
 from hl_mem.observability.llm_spans import LLMSpanRecorder
-
-from .types import (
-    LLMProviderProtocol,
-    LLMRequest,
-    LLMResponse,
-    StructuredOutputMode,
+from hl_mem.observability.usage import UsageAmount
+from hl_mem.plugins.contracts import (
+    LLMInvocation,
+    LLMProviderAdapter,
+    ProviderEndpoint,
+    ProviderResponse,
 )
+from hl_mem.plugins.proxies import GovernedProviderCall
+
+from .types import LLMRequest, LLMResponse, StructuredOutputMode
 
 
 def classify_provider_error(error: Exception) -> tuple[str, int | None, str | None]:
-    """将 provider 异常归一化为稳定的诊断类别。"""
+    """Normalize both governed and legacy HTTP errors for logical LLM spans."""
+    if isinstance(error, ProviderCallError):
+        return error.category, error.http_status, error.provider_code
     if isinstance(error, httpx.TimeoutException):
         return "http_timeout", None, None
     if isinstance(error, httpx.HTTPStatusError):
@@ -54,39 +60,56 @@ def classify_provider_error(error: Exception) -> tuple[str, int | None, str | No
 
 
 class LLMClient:
-    """执行与 provider 无关的同步 LLM 请求。"""
+    """Preserve the logical completion API while governing every HTTP sequence."""
 
     def __init__(
         self,
-        api_key: str,
-        base_url: str,
-        model: str,
-        provider: LLMProviderProtocol,
-        timeout: httpx.Timeout,
-        max_attempts: int,
-        client: httpx.Client | None = None,
+        *,
+        endpoint: ProviderEndpoint,
+        provider_name: str,
+        provider: LLMProviderAdapter,
+        governed: GovernedProviderCall[LLMResponse],
+        max_tokens: int | None = None,
+        enable_thinking: bool = False,
+        thinking_control: str = "auto",
+        reasoning_effort: str | None = None,
         span_recorder: LLMSpanRecorder | None = None,
         operation: str = "other",
+        owned_runtime: object | None = None,
     ) -> None:
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.model = model
+        self.endpoint = endpoint
+        self.api_key = endpoint.api_key
+        self.base_url = endpoint.base_url.rstrip("/")
+        self.model = endpoint.model
+        self.provider_name = provider_name
         self.provider = provider
-        self.timeout = timeout
-        self.max_attempts = max_attempts
-        self._client = client
+        self.timeout = httpx.Timeout(endpoint.timeout_seconds)
+        self.max_attempts = endpoint.max_attempts
+        self._governed = governed
+        self._max_tokens = max_tokens
+        self._enable_thinking = enable_thinking
+        self._thinking_control = thinking_control
+        self._reasoning_effort = reasoning_effort
         self._span_recorder = span_recorder
         self._operation = operation
+        self._owned_runtime = owned_runtime
         self._strict_unsupported = False
 
+    def close(self) -> None:
+        runtime = self._owned_runtime
+        if runtime is not None:
+            close = getattr(runtime, "close", None)
+            if callable(close):
+                close()
+            self._owned_runtime = None
+
     def complete(self, request: LLMRequest, *, timeout_seconds: float | None = None) -> LLMResponse:
-        """完成一次 LLM 调用，并按 provider 能力选择或降级结构化模式。"""
         mode = self._select_structured_mode(request)
         started_at = datetime.now(timezone.utc).isoformat()
         started = time.perf_counter()
         try:
             response = self._complete_with_mode(request, mode, timeout_seconds)
-        except httpx.HTTPStatusError as error:
+        except ProviderCallError as error:
             should_fallback = (
                 request.structured_output is not None
                 and mode is StructuredOutputMode.JSON_SCHEMA
@@ -98,14 +121,14 @@ class LLMClient:
             if not self.provider.capabilities.json_object:
                 self._record_span(mode, "error", started_at, started, error=error)
                 raise LLMStructuredOutputUnsupportedError(
-                    f"Provider {self.provider.name} does not support requested structured output"
+                    f"Provider {self.provider_name} does not support requested structured output"
                 ) from error
             self._strict_unsupported = True
             current_audit().emit(
                 "llm",
                 "structured_fallback",
                 "structured_fallback",
-                detail={"provider": self.provider.name, "model": self.model},
+                detail={"provider": self.provider_name, "model": self.model},
             )
             try:
                 response = self._complete_with_mode(request, StructuredOutputMode.JSON_OBJECT, timeout_seconds)
@@ -135,26 +158,15 @@ class LLMClient:
         response: LLMResponse | None = None,
         error: Exception | None = None,
     ) -> None:
-        """在启用记录器时持久化一次完整调用。"""
-        error_class = classify_provider_error(error)[0] if error is not None else None
-        DEFAULT_PROVIDER_METRICS.record(
-            ProviderCall(
-                "llm",
-                self._operation,
-                status,
-                (time.perf_counter() - started) * 1000,
-                error_class=error_class,
-            )
-        )
         if self._span_recorder is None:
             return
         self._span_recorder.record(
             operation=self._operation,
-            provider=self.provider.name,
+            provider=self.provider_name,
             model=self.model,
             structured_mode=mode.value,
             status=status,
-            error_class=error_class,
+            error_class=classify_provider_error(error)[0] if error is not None else None,
             raw_request_id=response.raw_request_id if response is not None else None,
             input_tokens=response.input_tokens if response is not None else None,
             output_tokens=response.output_tokens if response is not None else None,
@@ -170,34 +182,51 @@ class LLMClient:
         mode: StructuredOutputMode,
         timeout_seconds: float | None = None,
     ) -> LLMResponse:
-        payload = self.provider.build_payload(self.model, request, mode)
-        response_payload = retry_http(
-            lambda: self._post_once(payload, timeout_seconds),
-            max_attempts=self.max_attempts,
+        endpoint = self.endpoint if timeout_seconds is None else replace(self.endpoint, timeout_seconds=timeout_seconds)
+        invocation = LLMInvocation(
+            request=request,
+            mode=mode,
+            max_tokens=self._max_tokens,
+            enable_thinking=self._enable_thinking,
+            thinking_control=self._thinking_control,
+            reasoning_effort=self._reasoning_effort,
         )
-        return self.provider.parse_response(response_payload)
+        estimate = self._estimate_usage(request)
 
-    def _post_once(self, payload: dict[str, Any], timeout_seconds: float | None = None) -> dict[str, Any]:
-        """发送一次 Chat Completions 请求并解析 JSON 外壳。"""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        post = self._client.post if self._client is not None else httpx.post
-        response = post(
-            f"{self.base_url}/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=httpx.Timeout(timeout_seconds) if timeout_seconds is not None else self.timeout,
+        def parse(response: ProviderResponse) -> tuple[LLMResponse, UsageAmount]:
+            value = self.provider.parse_response(response)
+            return value, self._actual_usage(value, estimate)
+
+        return self._governed.execute_factory(
+            lambda: self.provider.build_request(endpoint, invocation),
+            estimate,
+            parse,
+            max_attempts=endpoint.max_attempts,
+            settlement_status=self._settlement_status,
         )
-        response.raise_for_status()
-        response_payload = response.json()
-        if not isinstance(response_payload, dict):
-            raise TypeError("LLM response body must be a JSON object")
-        return response_payload
+
+    @staticmethod
+    def _settlement_status(response: LLMResponse) -> str:
+        if response.input_tokens is None and response.output_tokens is None and response.usage_total_tokens <= 0:
+            return "estimated"
+        return "success"
+
+    def _estimate_usage(self, request: LLMRequest) -> UsageAmount:
+        input_tokens = max(1, sum(len(message.content) for message in request.messages) // 2)
+        output_tokens = self._max_tokens if self._max_tokens is not None else max(256, min(4096, input_tokens))
+        return UsageAmount(requests=1, input_tokens=input_tokens, output_tokens=output_tokens)
+
+    @staticmethod
+    def _actual_usage(response: LLMResponse, estimate: UsageAmount) -> UsageAmount:
+        if response.input_tokens is not None or response.output_tokens is not None:
+            input_tokens = response.input_tokens if response.input_tokens is not None else estimate.input_tokens
+            output_tokens = response.output_tokens if response.output_tokens is not None else estimate.output_tokens
+            return UsageAmount(requests=1, input_tokens=input_tokens, output_tokens=output_tokens)
+        if response.usage_total_tokens > 0:
+            return UsageAmount(requests=1, input_tokens=response.usage_total_tokens)
+        return estimate
 
     def _select_structured_mode(self, request: LLMRequest) -> StructuredOutputMode:
-        """根据请求偏好、能力和已缓存降级状态选择结构化模式。"""
         spec = request.structured_output
         if spec is None:
             return StructuredOutputMode.JSON_OBJECT
@@ -210,5 +239,8 @@ class LLMClient:
         if self.provider.capabilities.json_object:
             return StructuredOutputMode.JSON_OBJECT
         raise LLMStructuredOutputUnsupportedError(
-            f"Provider {self.provider.name} has no supported structured output mode"
+            f"Provider {self.provider_name} has no supported structured output mode"
         )
+
+
+__all__ = ["LLMClient", "classify_provider_error"]

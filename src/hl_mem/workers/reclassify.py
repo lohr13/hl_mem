@@ -265,9 +265,11 @@ def main() -> None:
     if args.db is not None:
         settings = replace(settings, database_path=args.db)
     database = Database(settings=settings)
+    provider_runtime = None
     try:
         try:
-            llm_client = components.make_llm_client(settings)
+            provider_runtime = components.create_provider_runtime(settings)
+            llm_client = components.make_llm_client(settings, runtime=provider_runtime)
         except ConfigurationError as error:
             raise SystemExit("LLM_API_KEY is required") from error
         print(
@@ -283,6 +285,8 @@ def main() -> None:
             )
         )
     finally:
+        if provider_runtime is not None:
+            provider_runtime.close()
         database.close()
 
 

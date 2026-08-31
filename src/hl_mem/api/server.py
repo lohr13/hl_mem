@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator
+from typing import Any, AsyncIterator, Iterator, cast
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -64,7 +64,6 @@ from hl_mem.experience.service import (
     backprop_episode_reward,
 )
 from hl_mem.http_utils import HL_MEM_VERSION_HEADER
-from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.observability.audit import NullAuditLogger, audit_scope
 from hl_mem.recall.injection import InjectionContext
@@ -147,7 +146,8 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     recall_side_effects = RecallSideEffectDispatcher(database, settings=settings)
     embedder = components.make_embedder(settings)
     reranker = components.make_reranker(settings)
-    budget = TokenBudget(settings.daily_token_limit, Path(database.path).with_suffix(".budget.db"))
+    has_llm_line = bool(settings.llm_api_key or settings.query_expansion_api_key)
+    provider_runtime = components.create_provider_runtime(settings) if has_llm_line else None
     audit = audit or NullAuditLogger()
     deferred_audit = DeferredAuditLogger(audit, recall_side_effects)
     deferred_llm_spans = DeferredLLMSpanRecorder(recall_side_effects)
@@ -161,6 +161,8 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         finally:
             side_effects_closed = recall_side_effects.close(recall_side_effects.recommended_shutdown_timeout)
             audit.close()
+            if provider_runtime is not None:
+                provider_runtime.close()
             if side_effects_closed:
                 database.close()
             else:
@@ -169,9 +171,9 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
                 )
 
     app = FastAPI(title="HL-Mem", version=__version__, lifespan=lifespan)
-    app.state.db, app.state.token_budget, app.state.reranker = (
+    app.state.db, app.state.provider_runtime, app.state.reranker = (
         database,
-        budget,
+        provider_runtime,
         reranker,
     )
     app.state.settings = settings
@@ -215,7 +217,11 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
                 max_depth=settings.relation_expansion_max_depth,
             ),
             settings,
-            components.make_query_expander(settings, span_recorder=deferred_llm_spans),
+            components.make_query_expander(
+                settings,
+                span_recorder=deferred_llm_spans,
+                runtime=provider_runtime,
+            ),
             side_effect_sink=recall_side_effects,
         )
 
@@ -351,7 +357,12 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
         """提取候选 claims 与 token 用量，但不持久化记忆数据。"""
-        extractor = components.make_extractor(settings, require_real=True, connection=connection)
+        extractor = components.make_extractor(
+            settings,
+            require_real=True,
+            connection=connection,
+            runtime=provider_runtime,
+        )
         return IngestService.dry_run_extract(
             extractor,
             payload.text,
@@ -738,11 +749,11 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     def stats(
         connection: sqlite3.Connection = Depends(get_connection),
     ) -> dict[str, Any]:
-        token_stats = budget.get_stats()
+        usage = provider_runtime.governor.snapshot() if provider_runtime is not None else None
         return {
             "events": connection.execute("SELECT count(*) FROM events").fetchone()[0],
             "claims": connection.execute("SELECT count(*) FROM claims").fetchone()[0],
-            "tokens_today": token_stats["used_tokens"],
+            "tokens_today": (0 if usage is None else int(cast(dict[str, Any], usage["settled"])["total_tokens"])),
             "jobs_pending": connection.execute("SELECT count(*) FROM jobs WHERE status='pending'").fetchone()[0],
         }
 

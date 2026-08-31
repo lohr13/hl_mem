@@ -89,6 +89,15 @@ class ProviderRegistry:
     def keys(self) -> tuple[ProviderKey, ...]:
         return tuple(sorted(self._registrations, key=lambda key: (key.capability.value, key.name)))
 
+    def plugin_id_for(self, key: ProviderKey) -> str:
+        """Return the immutable owner identity used by host governance."""
+        if not self._frozen:
+            raise PluginConflictError("provider registry must be frozen before resolving providers")
+        registration = self._registrations.get(key)
+        if registration is None:
+            raise ProviderNotFoundError(f"provider {key.capability.value}:{key.name} is missing")
+        return registration.plugin_id
+
     def create(self, key: ProviderKey, core_options: Mapping[str, Any]) -> object:
         if not self._frozen:
             raise PluginConflictError("provider registry must be frozen before creating providers")

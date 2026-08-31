@@ -1,4 +1,4 @@
-"""HL-Mem 内置 Provider 的注册清单。"""
+"""Built-in Providers expressed through the public plugin manifest."""
 
 from __future__ import annotations
 
@@ -30,17 +30,18 @@ _CAPABILITIES = (
 )
 
 
-def _pending_runtime_factory(context: ProviderFactoryContext) -> object:
-    """阻止治理 Runtime 接线完成前误用新 Registry 构造内置调用。"""
+def _builtin_runtime_factory(context: ProviderFactoryContext) -> object:
+    """Create only capabilities already migrated onto ProviderRuntime."""
+    if context.key.capability is ProviderCapability.LLM:
+        from hl_mem.llm.providers import make_builtin_llm_provider
 
+        return make_builtin_llm_provider(context)
     raise ProviderNotFoundError(
         f"built-in {context.key.capability.value} provider {context.key.name!r} is not connected to ProviderRuntime"
     )
 
 
 def builtin_plugin() -> ProviderPlugin:
-    """返回使用公共 Manifest/Factory 记录表达的内置 Provider。"""
-
     manifest = ProviderManifest(
         id=BUILTIN_PLUGIN_ID,
         version=__version__,
@@ -49,7 +50,7 @@ def builtin_plugin() -> ProviderPlugin:
         capabilities=_CAPABILITIES,
         config_schema={"type": "object", "properties": {}, "additionalProperties": False},
     )
-    factories = {spec.key: _pending_runtime_factory for spec in _CAPABILITIES}
+    factories = {spec.key: _builtin_runtime_factory for spec in _CAPABILITIES}
     return ProviderPlugin(manifest, factories)
 
 

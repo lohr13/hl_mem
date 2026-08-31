@@ -20,7 +20,6 @@ from hl_mem.application.ingest import IngestService
 from hl_mem.config_loader import load_settings
 from hl_mem.domain.claims.attributes import infer_canonical_attribute
 from hl_mem.domain.content import ImagePart, parse_content
-from hl_mem.ingest.budget import TokenBudget
 from hl_mem.ingest.event_filter import EventFilter
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import LLMExtractor
@@ -163,7 +162,7 @@ class Worker:
         extractor: Any = None,
         image_describer: Any = _UNSET,
         embedder: Any = None,
-        budget: Any = None,
+        provider_runtime: Any = None,
         audit_logger: Any = None,
         consolidator: Any = None,
         relation_discoverer: Any = None,
@@ -171,7 +170,6 @@ class Worker:
         connection: Any = None,
     ) -> None:
         self.settings = settings
-        self.db_path = Path(settings.database_path)
         self.dedup_scheduled_minutes = parse_daily_cron(
             self.settings.dedup_cron,
             "HL_MEM_DEDUP_CRON",
@@ -184,15 +182,13 @@ class Worker:
             self.connection = connection
         self.jobs = JobRepository(self.connection)
         self.filter = event_filter or EventFilter()
+        self.provider_runtime = provider_runtime
+        self._owns_provider_runtime = False
         self.extractor = extractor or self._make_extractor()
         self.image_describer = (
             image_describer if image_describer is not _UNSET else components.make_image_describer(self.settings)
         )
         self.embedder = embedder or self._make_embedder()
-        self.budget = budget or TokenBudget(
-            self.settings.daily_token_limit,
-            self.db_path.with_suffix(".budget.db"),
-        )
         if audit_logger is not None:
             self.audit = audit_logger
         else:
@@ -296,6 +292,9 @@ class Worker:
     def close(self) -> None:
         """关闭 Worker 自有资源；外部注入的数据库连接由调用方管理。"""
         self.audit.close()
+        if self._owns_provider_runtime and self.provider_runtime is not None:
+            self.provider_runtime.close()
+            self.provider_runtime = None
         if self.database is not None:
             self.database.close()
 
@@ -600,16 +599,6 @@ class Worker:
                     "output_tokens": 0,
                     "total_tokens": 0,
                 }
-            estimate = max(1, sum(len(event["content_json"]) for event, _ in prepared) // 2)
-            can_spend = self.budget.can_spend(estimate)
-            self.audit.emit(
-                "budget",
-                "checked",
-                "allow" if can_spend else "reject",
-                detail={"estimated_tokens": estimate, **self.budget.get_stats()},
-            )
-            if not can_spend:
-                raise RuntimeError("daily token budget exhausted")
             anchor = prepared[0][0]
             recent = (
                 events.get_recent_events(
@@ -726,13 +715,6 @@ class Worker:
             output_tokens = int(getattr(self.extractor, "last_output_tokens", 0)) if uses_llm else 0
             total_tokens = int(getattr(self.extractor, "last_usage_tokens", 0)) if uses_llm else 0
             if uses_llm:
-                self.budget.record_usage(total_tokens)
-                self.audit.emit(
-                    "budget",
-                    "recorded",
-                    "success",
-                    detail={"actual_tokens": total_tokens, **self.budget.get_stats()},
-                )
                 for event in extraction_sources:
                     event["extractor"] = "llm"
                     event["extractor_version"] = self.extractor.extractor_version
@@ -862,14 +844,34 @@ class Worker:
         return "\n".join(part.to_text() for part in parse_content(content) if part.to_text())
 
     def _make_extractor(self) -> Any:
-        return components.make_extractor(self.settings, connection=getattr(self, "connection", None))
+        runtime = None
+        if self.settings.extractor_mode != "fake" and self.settings.llm_api_key:
+            runtime = self._get_provider_runtime()
+        return components.make_extractor(
+            self.settings,
+            connection=getattr(self, "connection", None),
+            runtime=runtime,
+        )
 
     def _make_embedder(self) -> Any:
         return components.make_embedder(self.settings)
 
+    def _get_provider_runtime(self) -> Any:
+        if getattr(self, "provider_runtime", None) is None:
+            self.provider_runtime = components.create_provider_runtime(self.settings)
+            self._owns_provider_runtime = True
+        return self.provider_runtime
+
     def _make_consolidator(self) -> ConflictConsolidator:
         """从环境配置构建冲突归并器。"""
-        judge = LLMConflictJudge(components.make_llm_client(self.settings, self.connection, operation="conflict"))
+        judge = LLMConflictJudge(
+            components.make_llm_client(
+                self.settings,
+                self.connection,
+                operation="conflict",
+                runtime=self._get_provider_runtime(),
+            )
+        )
         return ConflictConsolidator(
             self.connection,
             judge,

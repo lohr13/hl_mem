@@ -11,10 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from hl_mem.ingest.budget import TokenBudget
+from hl_mem import components
 from hl_mem.ingest.embedder import Embedder
 from hl_mem.ingest.event_filter import EventFilter
-from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
@@ -40,7 +39,6 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     project_root = Path(__file__).resolve().parent.parent
     _load_env(project_root / ".env")
     db_path = tmp_path / "hl_mem_test.db"
-    budget_path = tmp_path / "hl_mem_budget_test.json"
     monkeypatch.setenv("HL_MEM_DB_PATH", str(db_path))
     monkeypatch.setenv("HL_MEM_EXTRACTOR", "llm")
     monkeypatch.setenv("HL_MEM_EMBEDDER", "real")
@@ -57,14 +55,27 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     if missing:
         pytest.skip(f"缺少真实 API 配置: {', '.join(missing)}")
 
-    extractor = LLMExtractor(os.environ["LLM_API_KEY"], os.environ["LLM_BASE_URL"], os.environ["LLM_MODEL"])
+    settings = Settings(
+        database_path=str(db_path),
+        extractor_mode="real",
+        embedder_mode="real",
+        llm_api_key=os.environ["LLM_API_KEY"],
+        llm_base_url=os.environ["LLM_BASE_URL"],
+        llm_model=os.environ["LLM_MODEL"],
+        embedding_api_key=os.environ["EMBEDDING_API_KEY"],
+        embedding_base_url=os.environ["EMBEDDING_BASE_URL"],
+        embedding_model=os.environ["EMBEDDING_MODEL"],
+        embedding_dim=int(os.environ.get("EMBEDDING_DIM", "2048")),
+        daily_token_limit=500_000,
+    )
+    provider_runtime = components.create_provider_runtime(settings)
+    extractor = components.make_extractor(settings, runtime=provider_runtime)
     embedder = Embedder(
         os.environ["EMBEDDING_API_KEY"],
         os.environ["EMBEDDING_BASE_URL"],
         os.environ["EMBEDDING_MODEL"],
         int(os.environ.get("EMBEDDING_DIM", "2048")),
     )
-    budget = TokenBudget(daily_limit=500_000, path=budget_path)
     events = [
         {
             "event_type": "message",
@@ -135,10 +146,10 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
         database.close()
 
     worker = Worker(
-        Settings(database_path=str(db_path), extractor_mode="real"),
+        settings,
         extractor=extractor,
         embedder=embedder,
-        budget=budget,
+        provider_runtime=provider_runtime,
         event_filter=EventFilter(),
     )
     try:
@@ -146,7 +157,8 @@ def test_real_llm_embedding_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
             if worker.run_once().get("status") == "idle":
                 break
     finally:
-        worker.database.close()
+        worker.close()
+        provider_runtime.close()
 
     verification_database = Database(db_path)
     connection = verification_database.open()
