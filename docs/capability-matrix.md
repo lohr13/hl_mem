@@ -42,7 +42,7 @@
 | 风险门控 freshness 提示 | stable | `render` | 否 | 否，仅输出 trace/指标 | 不满足风险门控时不渲染；可显式设为 `observe` 或 `off` | 保持提示有界、重新 packing 和低风险内容零扰动 |
 | SQLite 向量后端 | stable | `sqlite_scan` | 否 | `sqlite_vec` 写派生索引 | scan 使用两阶段精确回表；sqlite-vec dirty 时查询回退 scan，启动自动修复投影；缺少显式选择的 extra 时配置报错 | 两后端召回与时间可见性语义持续一致，规模化延迟、投影修复和扩展兼容性受回归保护 |
 | Tag soft boost | stable | `on` | 否 | 否 | 无 tag 命中即零 boost | 离线排名不回退并保持可解释权重 |
-| 证据关系图 | beta | 确定性边 `on`；LLM 发现 `off` | 发现阶段可选 LLM | 是 | 正式边必须是 `deterministic`、`manual` 或 `approved_proposal`；存量边只读标记 `legacy`；普通召回不做无界遍历 | 来源、双时间、失效、并发批准与一至两跳收益门禁持续全绿 |
+| 证据关系图 | beta | 确定性边 `on`；LLM 发现 `off` | 发现阶段可选 LLM | 是 | 正式边必须是 `deterministic`、`manual` 或 `approved_proposal`；存量边只读标记 `legacy`；普通召回不做无界遍历 | 来源、双时间、失效、幂等批准与一至两跳收益门禁持续全绿 |
 | 独立 Tag channel | experimental | `off` | 否 | 否 | 关闭或无结果时保持 FTS + Dense 双通道 | 评测证明对主要数据集净增益且无显著延迟/噪声 |
 | Reranker | beta | `off`（可配置 fake/on/real） | real 模式是 | 否 | retry/超时后保留融合前排序 | 相关性净增益、P95 和 API 故障率达到 SLO |
 | 双时间与作用域过滤 | stable | `on` | 否 | 是 | 不降级；非法时间/作用域明确失败 | 保持历史查询、可见性与并发回归 |
