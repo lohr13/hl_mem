@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from decimal import Decimal
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -380,3 +380,17 @@ def test_health_summary_has_only_daily_health_fields(tmp_path: Path) -> None:
         "unknown_outcomes": 1,
         "unknown_costs": 1,
     }
+
+
+def test_health_summary_normalizes_offset_reservation_leases_before_aggregation(tmp_path: Path) -> None:
+    path = tmp_path / "usage.budget.db"
+    governor = _governor(path, Clock(NOW), lease_seconds=300)
+    governor.reserve(IDENTITY, UsageAmount(requests=1))
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE usage_reservations SET lease_expires_at='2026-08-30T14:00:00+02:00'"
+        )
+
+    summary = UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(), now=NOW)
+
+    assert summary["stale_reservations"] == 1

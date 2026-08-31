@@ -191,26 +191,39 @@ class UsageLedgerReader:
         usage_day: date | None = None,
     ) -> dict[str, object]:
         clauses = ["state='active'"]
-        parameters: list[str] = []
+        parameters: dict[str, str] = {"cutoff": _iso(at)}
         if created_until is not None:
-            clauses.append("created_at<=?")
-            parameters.append(_iso(created_until))
+            clauses.append("created_at<=:created_until")
+            parameters["created_until"] = _iso(created_until)
         if usage_day is not None:
-            clauses.append("usage_date=?")
-            parameters.append(usage_day.isoformat())
-        rows = connection.execute(
-            f"SELECT * FROM usage_reservations WHERE {' AND '.join(clauses)} ORDER BY id", parameters
-        ).fetchall()
+            clauses.append("usage_date=:usage_day")
+            parameters["usage_day"] = usage_day.isoformat()
+        row = connection.execute(
+            "SELECT "
+            "COUNT(CASE WHEN julianday(lease_expires_at)<=julianday(:cutoff) THEN 1 END) expired_count, "
+            "COUNT(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN 1 END) active_count, "
+            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_requests ELSE 0 END),0) requests, "
+            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_input_tokens ELSE 0 END),0) input_tokens, "
+            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_output_tokens ELSE 0 END),0) output_tokens, "
+            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_embedding_items ELSE 0 END),0) embedding_items, "
+            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_rerank_documents ELSE 0 END),0) rerank_documents, "
+            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_images ELSE 0 END),0) images, "
+            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_cost_microunits ELSE 0 END),0) cost_microunits, "
+            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) AND reserved_cost_microunits IS NULL THEN 1 ELSE 0 END),0) unknown_costs "
+            f"FROM usage_reservations WHERE {' AND '.join(clauses)}",
+            parameters,
+        ).fetchone()
+        assert row is not None
         reserved: dict[str, Any] = _empty_amount()
-        active, expired = 0, 0
-        cutoff = _iso(at)
-        for row in rows:
-            if _iso(str(row["lease_expires_at"])) <= cutoff:
-                expired += 1
-            else:
-                active += 1
-                _add_amount(reserved, row, prefix="reserved_")
-        return {"active_count": active, "expired_count": expired, "reserved": reserved}
+        for field in _AMOUNTS:
+            reserved[field] = int(row[field])
+        reserved["total_tokens"] = int(reserved["input_tokens"]) + int(reserved["output_tokens"])
+        reserved["cost_microunits"] = None if int(row["unknown_costs"]) else int(row["cost_microunits"])
+        return {
+            "active_count": int(row["active_count"]),
+            "expired_count": int(row["expired_count"]),
+            "reserved": reserved,
+        }
 
     @staticmethod
     def _daily_totals(connection: sqlite3.Connection, day: date) -> dict[str, Any]:

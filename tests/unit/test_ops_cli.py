@@ -148,6 +148,21 @@ def test_ops_report_fails_closed_without_leaking_or_rewriting_invalid_main_datab
     assert _database_fingerprint(tmp_path) == before
 
 
+def test_ops_report_accepts_recognized_legacy_subject_migration_marker(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _config(tmp_path)
+    database_path = _seed_database(tmp_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DELETE FROM schema_migrations WHERE version='038_data_subject_canonicalization_v2'")
+        connection.execute("INSERT INTO schema_migrations(version) VALUES ('038_data_subject_canonicalization_v1')")
+
+    main(["--config", str(config), "--env-file", str(tmp_path / ".env"), "ops", "report", "--json"])
+
+    assert json.loads(capsys.readouterr().out)["schema_version"] == 1
+
+
 def test_ops_report_schema_checker_validates_real_empty_and_seeded_reports() -> None:
     result = subprocess.run(
         [sys.executable, "scripts/check_ops_report_schema.py"],

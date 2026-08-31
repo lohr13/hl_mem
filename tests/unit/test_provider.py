@@ -70,6 +70,10 @@ def test_provider_runtime_health_snapshot_uses_two_daily_aggregate_queries(
     assert len(statements) == 2
     assert "FROM usage_events WHERE usage_date=" in statements[0]
     assert "FROM usage_reservations WHERE state='active'" in statements[1]
+    assert "COUNT(" in statements[1]
+    assert "SUM(" in statements[1]
+    assert "SELECT *" not in statements[1]
+    assert "ORDER BY" not in statements[1]
 
 
 class Response:
