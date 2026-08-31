@@ -12,8 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from benchmarks.archive.v030.v030_corpus import manifest_sha256, validate_manifest, write_manifest
 from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner
-from hl_mem.evaluation.v030_corpus import manifest_sha256, validate_manifest, write_manifest
 
 Progress = Callable[[str], None]
 

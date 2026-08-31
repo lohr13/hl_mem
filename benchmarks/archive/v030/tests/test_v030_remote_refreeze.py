@@ -7,7 +7,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from hl_mem.evaluation.v030_corpus import build_manifest, load_manifest, write_manifest
+from benchmarks.archive.v030.v030_corpus import build_manifest, load_manifest, write_manifest
 
 
 def _case(case_id: str, *, source: str, category: str, decision: str) -> dict:
@@ -195,7 +195,7 @@ def _write_remote_evidence(root: Path) -> tuple[Path, Path]:
 
 
 def _load_refreeze_function():
-    module_name = "scripts.refreeze_v030_remote_evidence"
+    module_name = "benchmarks.archive.v030.refreeze_remote_evidence"
     assert importlib.util.find_spec(module_name) is not None, "v030 remote refreeze tool is missing"
     return importlib.import_module(module_name).refreeze_remote_evidence
 

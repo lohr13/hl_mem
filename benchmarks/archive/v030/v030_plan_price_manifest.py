@@ -10,15 +10,15 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from hl_mem.domain.instruments import InstrumentReference
-from hl_mem.evaluation.v030_corpus import SCHEMA_VERSION, manifest_sha256, validate_manifest, write_manifest
-from hl_mem.evaluation.v030_plan_price_corpus import (
+from benchmarks.archive.v030.v030_corpus import SCHEMA_VERSION, manifest_sha256, validate_manifest, write_manifest
+from benchmarks.archive.v030.v030_plan_price_corpus import (
     assess_e5_v2_manifest,
     assess_e6_v2_manifest,
     derive_e5_case,
     derive_e6_pair,
     derive_real_action_claim,
 )
+from hl_mem.domain.instruments import InstrumentReference
 
 _INNOVATION_PLAN_IDS = (
     "3e8382ec4e7d484595a5b60b6b166694",

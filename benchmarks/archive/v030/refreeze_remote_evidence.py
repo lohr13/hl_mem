@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from hl_mem.evaluation.v030_corpus import build_manifest, load_manifest, write_manifest
+from benchmarks.archive.v030.v030_corpus import build_manifest, load_manifest, write_manifest
 
 E1_DEFAULT_CUTOFF = "2026-08-21T00:00:00+00:00"
 

@@ -4,7 +4,7 @@ import importlib
 
 import pytest
 
-from hl_mem.evaluation.v030_batch4 import assess_batch4_manifest, write_batch4_report
+from benchmarks.archive.v030.v030_batch4 import assess_batch4_manifest, write_batch4_report
 
 
 def _manifest(experiment: str) -> dict[str, object]:
@@ -103,7 +103,7 @@ def test_e2_null_coordinate_values_are_never_eligible() -> None:
 
 
 def test_v2_derivers_replace_placeholders_with_scored_contracts() -> None:
-    module = importlib.import_module("hl_mem.evaluation.v030_batch4_v2_manifest")
+    module = importlib.import_module("benchmarks.archive.v030.v030_batch4_v2_manifest")
     e2_case = _manifest("E2")["cases"][0]
     for claim in e2_case["input"]["claims"]:
         claim.update({"subject_entity_id": "same", "predicate": "fact", "value": "publish release", "qualifiers": {}})
@@ -121,7 +121,7 @@ def test_v2_derivers_replace_placeholders_with_scored_contracts() -> None:
 
 
 def test_v2_e2_hard_validator_overrides_semantic_votes() -> None:
-    replay = importlib.import_module("hl_mem.evaluation.v030_batch4_v2_replay")
+    replay = importlib.import_module("benchmarks.archive.v030.v030_batch4_v2_replay")
     case = {
         "case_id": "unsafe",
         "input": {"historical_decision": "equivalent", "hard_validator": {"safe": False}},
@@ -134,7 +134,7 @@ def test_v2_e2_hard_validator_overrides_semantic_votes() -> None:
 
 
 def test_v2_e4_behavior_pass_cannot_override_synthetic_evidence_cap() -> None:
-    replay = importlib.import_module("hl_mem.evaluation.v030_batch4_v2_replay")
+    replay = importlib.import_module("benchmarks.archive.v030.v030_batch4_v2_replay")
     manifest = {
         "source_audit": {"synthetic_query_ratio": 1.0},
         "preregistration": {"synthetic_ratio_max": 0.5},
@@ -146,7 +146,7 @@ def test_v2_e4_behavior_pass_cannot_override_synthetic_evidence_cap() -> None:
 
 
 def test_v2_volcano_pair_adapter_fills_current_required_columns() -> None:
-    clone = importlib.import_module("hl_mem.evaluation.v030_e2_clone_replay")
+    clone = importlib.import_module("benchmarks.archive.v030.v030_e2_clone_replay")
     source = {"left_claim_id": "left", "right_claim_id": "right", "reviewed_at": "2026-08-25T00:00:00Z"}
 
     values = clone.prepare_export_values(

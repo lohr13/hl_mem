@@ -4,7 +4,7 @@ import importlib
 import importlib.util
 from typing import Any
 
-MODULE = "evaluation.tools.v0300_latest_wins_arms"
+MODULE = "benchmarks.archive.v030.tools.v0300_latest_wins_arms"
 
 
 def _runner() -> Any:

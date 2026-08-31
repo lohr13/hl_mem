@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from hl_mem.evaluation.v030_plan_price import assess_e5_manifest, assess_e6_manifest, write_sealed_report
+from benchmarks.archive.v030.v030_plan_price import assess_e5_manifest, assess_e6_manifest, write_sealed_report
 
 
 def _manifest(experiment: str, cases: list[dict]) -> dict:

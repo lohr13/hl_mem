@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from hl_mem.evaluation.v030_scorers import evaluate_decision_gate, score_decisions, wilson_interval
+from benchmarks.archive.v030.v030_scorers import evaluate_decision_gate, score_decisions, wilson_interval
 
 
 def _case(case_id: str, decision: str, *, source: str = "local", winner: str | None = None) -> dict:

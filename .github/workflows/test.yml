@@ -127,7 +127,7 @@ jobs:
       - name: Build wheel and source distribution
         run: uv run --frozen python -m build
       - name: Verify wheel contents
-        run: uv run --frozen python scripts/check_wheel_contents.py dist/*.whl
+        run: uv run --frozen python scripts/check_wheel_contents.py --reject-v030 dist/*.whl
       - name: Verify import in a clean environment
         run: |
           python -m venv .build-venv

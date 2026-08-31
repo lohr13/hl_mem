@@ -12,14 +12,14 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from hl_mem.domain.instruments import InstrumentReference
-from hl_mem.domain.plan_fulfillment import select_plan_match
-from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner
-from hl_mem.evaluation.v030_corpus import load_manifest
-from hl_mem.evaluation.v030_plan_price_corpus import (
+from benchmarks.archive.v030.v030_corpus import load_manifest
+from benchmarks.archive.v030.v030_plan_price_corpus import (
     assess_e5_v2_manifest,
     assess_e6_v2_manifest,
 )
+from hl_mem.domain.instruments import InstrumentReference
+from hl_mem.domain.plan_fulfillment import select_plan_match
+from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner
 
 Progress = Callable[[str], None]
 _E5_OUTCOMES = ("complete", "cancel", "replace", "partial", "ambiguous")

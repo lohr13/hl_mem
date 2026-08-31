@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from hl_mem.domain.instruments import InstrumentReference
-from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner
-from hl_mem.evaluation.v030_plan_price_corpus import (
+from benchmarks.archive.v030.v030_plan_price_corpus import (
     assess_e5_v2_manifest,
     assess_e6_v2_manifest,
     derive_e5_case,
     derive_e6_pair,
 )
-from hl_mem.evaluation.v030_plan_price_manifest import synthetic_e6_cases
-from hl_mem.evaluation.v030_plan_price_replay import (
+from benchmarks.archive.v030.v030_plan_price_manifest import synthetic_e6_cases
+from benchmarks.archive.v030.v030_plan_price_replay import (
     deterministic_e5_decision,
     qwen_e5_docket,
     request_hashes_for_docket,
     score_e5_predictions,
     score_e6_predictions,
 )
+from hl_mem.domain.instruments import InstrumentReference
+from hl_mem.evaluation.local_qwen_runner import LocalQwenRunner
 
 
 def _reference(entity_id: str = "instrument:01", ticker: str = "T01") -> InstrumentReference:

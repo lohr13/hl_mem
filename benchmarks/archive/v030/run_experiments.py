@@ -16,30 +16,30 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Mapping, cast
 
-from hl_mem.domain.governance import L1Policy, decide_l1, is_terminal_conflict_status
-from hl_mem.evaluation.v030_batch4 import assess_batch4_manifest, write_batch4_report
-from hl_mem.evaluation.v030_batch4_v2_manifest import build_batch4_v2_manifests
-from hl_mem.evaluation.v030_batch4_v2_replay import (
+from benchmarks.archive.v030.v030_batch4 import assess_batch4_manifest, write_batch4_report
+from benchmarks.archive.v030.v030_batch4_v2_manifest import build_batch4_v2_manifests
+from benchmarks.archive.v030.v030_batch4_v2_replay import (
     run_e2_v2,
     run_e3_v2,
     run_e4_v2,
 )
-from hl_mem.evaluation.v030_batch4_v2_replay import write_v2_report as write_batch4_v2_report
-from hl_mem.evaluation.v030_corpus import EXPERIMENTS, load_manifest, validate_manifest
-from hl_mem.evaluation.v030_e2_clone_replay import attach_recall_comparison, run_e2_clone_rehearsal
-from hl_mem.evaluation.v030_plan_price import (
+from benchmarks.archive.v030.v030_batch4_v2_replay import write_v2_report as write_batch4_v2_report
+from benchmarks.archive.v030.v030_corpus import EXPERIMENTS, load_manifest, validate_manifest
+from benchmarks.archive.v030.v030_e2_clone_replay import attach_recall_comparison, run_e2_clone_rehearsal
+from benchmarks.archive.v030.v030_plan_price import (
     assess_e5_manifest,
     assess_e6_manifest,
     write_sealed_report,
 )
-from hl_mem.evaluation.v030_plan_price_manifest import instrument_references
-from hl_mem.evaluation.v030_plan_price_replay import (
+from benchmarks.archive.v030.v030_plan_price_manifest import instrument_references
+from benchmarks.archive.v030.v030_plan_price_replay import (
     load_v2_manifest,
     run_e5_v2,
     run_e6_v2,
     write_v2_report,
 )
-from hl_mem.evaluation.v030_scorers import evaluate_decision_gate, score_decisions
+from benchmarks.archive.v030.v030_scorers import evaluate_decision_gate, score_decisions
+from hl_mem.domain.governance import L1Policy, decide_l1, is_terminal_conflict_status
 from hl_mem.workers.auto_resolve_conflicts import AutoDecision, decide_l0
 
 

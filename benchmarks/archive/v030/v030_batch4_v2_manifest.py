@@ -10,11 +10,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from benchmarks.archive.v030.v030_corpus import SCHEMA_VERSION, manifest_sha256, validate_manifest, write_manifest
 from hl_mem.domain.action_coordinates import project_action_qualifiers
 from hl_mem.domain.claims.dedup import dedup_structural_gate
 from hl_mem.domain.entity import typed_builtin_seeds
 from hl_mem.domain.entity_coordinates import normalize_typed_alias
-from hl_mem.evaluation.v030_corpus import SCHEMA_VERSION, manifest_sha256, validate_manifest, write_manifest
 
 _E3_TEXT = {
     "correction": "The user corrected the earlier setting: always use port 8090.",

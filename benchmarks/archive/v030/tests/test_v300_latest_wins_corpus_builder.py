@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from evaluation.tools.v0300_latest_wins_corpus import generate_latest_wins_suite
+from benchmarks.archive.v030.tools.v0300_latest_wins_corpus import generate_latest_wins_suite
 from hl_mem.evaluation.state_counterexample_corpus import file_sha256
 
 EXPECTED_VALIDATION_QUOTAS = {

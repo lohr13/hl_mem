@@ -8,12 +8,12 @@ from typing import Any
 
 import pytest
 
-from evaluation.tools.v0300_state_corpus_builder import (
+from benchmarks.archive.v030.tools.v0300_state_corpus_builder import (
     build_bundle_payload,
     generate_corpus,
     generate_sealed_generation,
 )
-from evaluation.tools.v0300_state_corpus_builder import main as corpus_builder_main
+from benchmarks.archive.v030.tools.v0300_state_corpus_builder import main as corpus_builder_main
 from hl_mem.evaluation.state_counterexample_corpus import (
     aggregate_dev_statistics,
     open_readonly_event_database,

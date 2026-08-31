@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from hl_mem.evaluation.v030_corpus import (
+from benchmarks.archive.v030 import run_experiments as experiment_runner
+from benchmarks.archive.v030.v030_corpus import (
     build_manifest,
     load_manifest,
     redact_text,
     validate_manifest,
     write_manifest,
 )
-from scripts import run_v030_experiments as experiment_runner
 
 run_baseline = experiment_runner.run_baseline
 run_e1_experiment = experiment_runner.run_e1_experiment
