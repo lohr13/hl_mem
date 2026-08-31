@@ -82,7 +82,7 @@ def test_run_once_extracts_and_completes(tmp_path) -> None:
     path = tmp_path / "worker.db"
     connection = Database(path).open()
     queue(connection)
-    settings = Settings(database_path=str(path), embedding_dim=8)
+    settings = replace(Settings.for_test(), database_path=str(path), embedding_dim=8)
     result = Worker(settings).run_once()
     assert result["status"] == "succeeded" and result["claims"] == 1
     job = connection.execute(
@@ -123,7 +123,7 @@ def test_failed_extraction_job_keeps_partial_written_claim_count(tmp_path, monke
     path = tmp_path / "partial-write.db"
     connection = Database(path).open()
     queue(connection, max_attempts=1)
-    settings = Settings(database_path=str(path), embedding_dim=8)
+    settings = replace(Settings.for_test(), database_path=str(path), embedding_dim=8)
     original_store = worker_module.IngestService.store_extracted
     call_count = 0
 
@@ -205,7 +205,7 @@ def test_llm_extraction_audit_records_prompt_hash(tmp_path) -> None:
     audit = RecordingAudit()
     extractor = LLMExtractor(NoClaimsLLMClient(), ChunkingPolicy(10_000, 0, 2))
     worker = Worker(
-        Settings(database_path=str(path), embedding_dim=8),
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
         extractor=extractor,
         embedder=FakeEmbedder(8),
         image_describer=None,
@@ -225,7 +225,7 @@ def test_worker_carries_actual_llm_extractor_version_to_claim(tmp_path) -> None:
     queue(connection)
     extractor = CustomVersionLLMExtractor(OneClaimLLMClient(), ChunkingPolicy(10_000, 0, 2))
     worker = Worker(
-        Settings(database_path=str(path), embedding_dim=8),
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
         extractor=extractor,
         embedder=FakeEmbedder(8),
         image_describer=None,
@@ -255,7 +255,7 @@ def test_explicit_memory_does_not_claim_llm_prompt_provenance(tmp_path) -> None:
     audit = RecordingAudit()
     extractor = LLMExtractor(NoClaimsLLMClient(), ChunkingPolicy(10_000, 0, 2))
     worker = Worker(
-        Settings(database_path=str(path), embedding_dim=8),
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
         extractor=extractor,
         embedder=FakeEmbedder(8),
         image_describer=None,
@@ -280,7 +280,7 @@ def test_explicit_memory_without_bypass_payload_records_actual_llm_provenance(tm
     audit = RecordingAudit()
     extractor = CustomVersionLLMExtractor(OneClaimLLMClient(), ChunkingPolicy(10_000, 0, 2))
     worker = Worker(
-        Settings(database_path=str(path), embedding_dim=8),
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
         extractor=extractor,
         embedder=FakeEmbedder(8),
         image_describer=None,
@@ -299,7 +299,7 @@ def test_failure_retries_then_becomes_dead(tmp_path) -> None:
     connection = Database(path).open()
     queue(connection, max_attempts=2)
     worker = Worker(
-        Settings(database_path=str(path), embedding_dim=8),
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
         extractor=BrokenExtractor(),
     )
     assert worker.run_once()["status"] == "pending"
@@ -311,7 +311,7 @@ def test_dead_429_extraction_is_deferred_but_other_http_errors_are_not(tmp_path)
     connection = Database(path).open()
     queue(connection, job_id="rate-limited", event_id="event-429", max_attempts=1)
     rate_limited = Worker(
-        Settings(database_path=str(path), embedding_dim=8),
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
         extractor=HTTPErrorExtractor(429),
         connection=connection,
     )
@@ -336,7 +336,7 @@ def test_dead_429_extraction_is_deferred_but_other_http_errors_are_not(tmp_path)
 
     queue(connection, job_id="server-error", event_id="event-500", max_attempts=1)
     server_error = Worker(
-        Settings(database_path=str(path), embedding_dim=8),
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
         extractor=HTTPErrorExtractor(500),
         connection=connection,
     )
@@ -377,7 +377,7 @@ def test_maintenance_requeues_due_deferred_extraction_and_success_closes_it(tmp_
     assert json.loads(retry_job["payload_json"])["event_id"] == "deferred-event"
 
     worker = Worker(
-        Settings(database_path=str(path), embedding_dim=8),
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
         connection=connection,
     )
     assert worker.run_once()["status"] == "succeeded"
@@ -460,7 +460,7 @@ def test_lost_lease_never_reports_success(tmp_path, monkeypatch) -> None:
     path = tmp_path / "lost-lease.db"
     connection = Database(path).open()
     queue(connection)
-    worker = Worker(Settings(database_path=str(path), embedding_dim=8))
+    worker = Worker(replace(Settings.for_test(), database_path=str(path), embedding_dim=8))
     monkeypatch.setattr(worker.jobs, "complete_jobs", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(worker.jobs, "fail_jobs", lambda *_args, **_kwargs: 0)
 

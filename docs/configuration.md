@@ -183,7 +183,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `embedding.connect_timeout` | 数值 | `5.0` | 任意数值 | `embedding_connect_timeout` |
 | `embedding.dim` | 整数 | `2048` | 任意整数 | `embedding_dim` |
 | `embedding.max_attempts` | 整数 | `3` | 任意整数 | `embedding_max_attempts` |
-| `embedding.mode` | 字符串 | `"fake"` | `fake`、`real` | `embedder_mode` |
+| `embedding.mode` | 字符串 | `"real"` | `fake`、`real` | `embedder_mode` |
 | `embedding.model` | 字符串 | `"text-embedding-v4"` | 任意字符串 | `embedding_model` |
 | `embedding.read_timeout` | 数值 | `30.0` | 任意数值 | `embedding_read_timeout` |
 | `embedding.text_type` | 字符串 | 未设置 | `document`、`query`；可省略 | `embedding_text_type` |
@@ -209,7 +209,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `extraction.delta_repair_enabled` | 布尔值 | `false` | `true`、`false` | `extraction_delta_repair_enabled` |
 | `extraction.lesson_signal_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `lesson_signal_mode` |
 | `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
-| `extraction.mode` | 字符串 | `"fake"` | `fake`、`real`、`llm` | `extractor_mode` |
+| `extraction.mode` | 字符串 | `"llm"` | `fake`、`real`、`llm` | `extractor_mode` |
 | `extraction.pre_filter` | 布尔值 | `false` | `true`、`false` | `extract_pre_filter` |
 | `extraction.soft_split_enabled` | 布尔值 | `false` | `true`、`false` | `extraction_soft_split_enabled` |
 | `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
@@ -292,6 +292,12 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 
 `enforce` 只允许唯一逻辑计划组的严格坐标匹配；complete/cancel/replace 只关闭 `valid_to`，partial 使用 Decimal
 累计。任何坐标缺失、多组匹配、超量或单位变化都不关闭计划。
+
+### `[plugins]`
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `plugins.enabled` | 字符串 数组 | `[]` | 任意字符串 数组 | `plugins_enabled` |
 
 ### `[price]`
 

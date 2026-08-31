@@ -1,6 +1,7 @@
 # HL-Mem 常用配置示例。
 # 未列出的字段使用代码默认值；完整字段见 docs/configuration.md。
 # 复制为当前工作目录下的 hl_mem.toml 后再启动服务。
+schema_version = 1
 
 [database]
 path = "var/hl_mem.db"
@@ -16,7 +17,6 @@ timeout = 90
 max_attempts = 3
 
 [embedding]
-# 推荐启用值（不是代码默认值；代码默认 mode = "fake"）。
 mode = "real"
 base_url = "https://dashscope.aliyuncs.com"
 model = "qwen3.7-text-embedding"
@@ -24,21 +24,20 @@ dim = 2048
 api_mode = "native"
 
 [reranker]
-# 推荐启用值（不是代码默认值；代码默认 mode = "off"）。
-mode = "on"
+# 可选增强；默认关闭。
+mode = "off"
 base_url = "https://dashscope.aliyuncs.com"
 model = "qwen3-rerank"
 
 [image_describer]
-# 推荐启用值（不是代码默认值；代码默认 mode = "off"）。
-mode = "on"
+# 可选扩展；默认关闭。
+mode = "off"
 provider = "dashscope"
 base_url = "https://coding.dashscope.aliyuncs.com/v1"
 model = "qwen3.7-plus"
 timeout_seconds = 20.0
 
 [extraction]
-# 推荐启用值（不是代码默认值；代码默认 mode = "fake"）。
 mode = "llm"
 pre_filter = false
 chunk_target_chars = 12000
@@ -62,12 +61,12 @@ dense_enabled = true
 entity_constraint_mode = "observe"
 dedup_threshold = 0.95
 dedup_candidate_limit = 100
-# A/B 中 2 次正确复活、0 误伤且 p95 仅 12.7ms；默认启用受控 archived-only 冷路径。
-resurrection_mode = "auto"
+# 自动复活会改变可见状态，必须显式启用。
+resurrection_mode = "off"
 resurrection_candidate_limit = 3
 resurrection_min_term_coverage = 0.8
 packed_context_token_budget = 2000
-query_expansion_mode = "auto"
+query_expansion_mode = "off"
 query_expansion_model = "glm-4.7"
 # Leave both fields and QUERY_EXPANSION_API_KEY unset to inherit the [llm] line.
 # For an independent line, set both fields and add QUERY_EXPANSION_API_KEY to .env.
@@ -147,6 +146,9 @@ latest_wins_slots = ["config.version"]
 
 [relation]
 discovery_mode = "off"
+
+[plugins]
+enabled = []
 
 [hermes]
 enabled = false

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -12,7 +13,7 @@ from hl_mem.storage.database import Database
 
 
 def test_mcp_exposes_minimal_memory_tool_contract(tmp_path) -> None:
-    server = McpMemoryServer(tmp_path / "mcp.db")
+    server = McpMemoryServer(replace(Settings.for_test(), database_path=str(tmp_path / "mcp.db")))
     assert set(server.list_tools()) == {
         "memory_recall",
         "memory_save",

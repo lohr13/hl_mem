@@ -509,7 +509,7 @@ def test_backfill_cli_mode_overrides_settings(tmp_path, monkeypatch, capsys) -> 
     database.close()
     before = database_path.read_bytes()
     settings = replace(
-        Settings(),
+        Settings.for_test(),
         database_path=str(database_path),
         embedding_dim=8,
         index_text_mode="legacy",
@@ -528,7 +528,7 @@ def test_backfill_cli_mode_overrides_settings(tmp_path, monkeypatch, capsys) -> 
 def test_backfill_cli_dry_run_does_not_create_missing_database(tmp_path, monkeypatch) -> None:
     """dry-run 必须只读打开，不能通过 Database 自动创建或 migration。"""
     database_path = tmp_path / "missing.db"
-    settings = replace(Settings(), database_path=str(database_path), embedding_dim=8)
+    settings = replace(Settings.for_test(), database_path=str(database_path), embedding_dim=8)
     monkeypatch.setattr(cli_module, "load_settings", lambda *_: settings)
 
     with pytest.raises(sqlite3.OperationalError):
@@ -544,7 +544,7 @@ def test_backfill_cli_exits_nonzero_on_failure(tmp_path, monkeypatch, capsys) ->
     _insert_claim(connection)
     connection.close()
     settings = replace(
-        Settings(),
+        Settings.for_test(),
         database_path=str(database_path),
         embedding_dim=8,
     )
@@ -582,7 +582,7 @@ def test_backfill_cli_exits_nonzero_on_integrity_failure(tmp_path, monkeypatch, 
     connection.execute("DELETE FROM claims_fts_docsize WHERE id=?", (rowid,))
     connection.commit()
     database.close()
-    settings = replace(Settings(), database_path=str(database_path), embedding_dim=8)
+    settings = replace(Settings.for_test(), database_path=str(database_path), embedding_dim=8)
     monkeypatch.setattr(cli_module, "load_settings", lambda *_: settings)
 
     with pytest.raises(SystemExit, match="1"):

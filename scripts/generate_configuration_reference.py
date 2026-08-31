@@ -512,4 +512,4 @@ if __name__ == "__main__":
             "IMAGE_API_KEY": "sk-reference-image",
         },
     )
-    (ROOT / "docs" / "configuration.md").write_text(generate(), encoding="utf-8")
+    (ROOT / "docs" / "configuration.md").write_text(generate(), encoding="utf-8", newline="\n")

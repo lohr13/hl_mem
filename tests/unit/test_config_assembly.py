@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from hl_mem import components
@@ -15,7 +16,7 @@ from hl_mem.workers.worker import Worker
 
 
 def test_api_worker_mcp_and_provider_reuse_same_settings(tmp_path: Path) -> None:
-    settings = Settings(database_path=str(tmp_path / "shared.db"))
+    settings = replace(Settings.for_test(), database_path=str(tmp_path / "shared.db"))
 
     app = create_app(settings)
     worker = Worker(settings)
@@ -39,9 +40,9 @@ def test_initialize_process_loads_aliases_from_settings(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    components.initialize_process(Settings(entity_aliases_path=str(aliases_path)))
+    components.initialize_process(replace(Settings.for_test(), entity_aliases_path=str(aliases_path)))
     try:
         assert normalize_entity_id("PROJECT") == "hl_mem"
         assert normalize_entity_id("Ｉ") == "user"
     finally:
-        components.initialize_process(Settings())
+        components.initialize_process(Settings.for_test())

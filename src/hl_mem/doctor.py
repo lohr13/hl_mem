@@ -385,7 +385,7 @@ def run_doctor(
     environ: Mapping[str, str] | None = None,
 ) -> list[CheckResult]:
     """执行全部诊断并返回结构化结果。"""
-    settings = load_settings(config_path, env_path, environ=environ)
+    settings = load_settings(config_path, env_path, environ=environ, validate_runtime=False)
     resolved_database = database_path or Path(settings.database_path)
     daemon_probe = _probe_daemon(settings)
     return [

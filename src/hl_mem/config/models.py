@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import Field, dataclass, field, fields
 from enum import StrEnum
-from typing import Any, Literal
+from types import MappingProxyType
+from typing import Any, Final, Literal
 
 from hl_mem.config.secrets import is_placeholder_secret
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.errors import ConfigurationError
+
+CONFIG_SCHEMA_VERSION: Final[Literal[1]] = 1
+_PLUGIN_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 
 EmbedderMode = Literal["fake", "real"]
 EmbeddingApiMode = Literal["compatible", "native"]
@@ -101,7 +106,7 @@ class DatabaseConfig:
 class ExtractionConfig:
     """Configuration owned by the extraction boundary."""
 
-    embedder_mode: EmbedderMode = field(default="fake", metadata={"toml": "embedding.mode"})
+    embedder_mode: EmbedderMode = field(default="real", metadata={"toml": "embedding.mode"})
 
     embedding_dim: int = field(default=2048, metadata={"toml": "embedding.dim"})
 
@@ -151,7 +156,7 @@ class ExtractionConfig:
 
     reranker_model: str = field(default="qwen3-rerank", metadata={"toml": "reranker.model"})
 
-    extractor_mode: ExtractorMode = field(default="fake", metadata={"toml": "extraction.mode"})
+    extractor_mode: ExtractorMode = field(default="llm", metadata={"toml": "extraction.mode"})
 
     extract_pre_filter: bool = field(default=False, metadata={"toml": "extraction.pre_filter"})
 
@@ -842,7 +847,12 @@ class ObservabilityConfig:
 class PluginsConfig:
     """Configuration owned by the plugins boundary."""
 
-    pass
+    plugins_enabled: tuple[str, ...] = field(default=(), metadata={"toml": "plugins.enabled"})
+    plugin_options: Mapping[str, Mapping[str, Any]] = field(
+        default_factory=lambda: MappingProxyType({}),
+        repr=False,
+        metadata={"plugin_namespace": "plugins"},
+    )
 
 
 @dataclass(frozen=True)
@@ -857,6 +867,8 @@ class Settings(
     PluginsConfig,
 ):
     """Validated immutable snapshot composed from typed configuration groups."""
+
+    schema_version: Literal[1] = field(default=CONFIG_SCHEMA_VERSION, metadata={"schema_version": True})
 
     @classmethod
     def for_test(cls) -> "Settings":
@@ -898,6 +910,13 @@ class Settings(
 
     def validate(self) -> None:
         """校验配置组合以及已启用组件的密钥。"""
+        if self.schema_version != CONFIG_SCHEMA_VERSION:
+            raise ConfigurationError(f"unsupported schema_version {self.schema_version}")
+        if len(set(self.plugins_enabled)) != len(self.plugins_enabled):
+            raise ConfigurationError("plugins.enabled must not contain duplicate plugin IDs")
+        plugin_ids = (*self.plugins_enabled, *self.plugin_options)
+        if any(_PLUGIN_ID_PATTERN.fullmatch(plugin_id) is None for plugin_id in plugin_ids):
+            raise ConfigurationError("plugins must use lowercase IDs matching [a-z0-9][a-z0-9._-]{0,63}")
         if self.max_request_body < 0:
             raise ConfigurationError("server.max_request_body must be non-negative")
         if self.fts_language not in {"auto", "zh", "en"}:
@@ -912,38 +931,6 @@ class Settings(
             VectorBackend(self.vector_backend)
         except ValueError as error:
             raise ConfigurationError("recall.vector_backend must be 'sqlite_scan' or 'sqlite_vec'") from error
-        query_expansion_line = self.query_expansion_line_overrides()
-        required_secrets: dict[str, tuple[str | None, list[str]]] = {}
-        llm_disable_modes: list[str] = []
-        if self.extractor_mode != "fake":
-            llm_disable_modes.append("extraction.mode='fake'")
-        if self.query_expansion_mode != "off":
-            if query_expansion_line is None:
-                llm_disable_modes.append("recall.query_expansion_mode='off'")
-            else:
-                required_secrets["QUERY_EXPANSION_API_KEY"] = (
-                    query_expansion_line[2],
-                    ["recall.query_expansion_mode='off'"],
-                )
-        if self.relation_discovery_mode != "off":
-            llm_disable_modes.append("relation.discovery_mode='off'")
-        if llm_disable_modes:
-            required_secrets["LLM_API_KEY"] = (self.llm_api_key, llm_disable_modes)
-        if self.embedder_mode == "real":
-            required_secrets["EMBEDDING_API_KEY"] = (self.embedding_api_key, ["embedding.mode='fake'"])
-        if self.reranker_mode in {"on", "real"}:
-            required_secrets["RERANKER_API_KEY"] = (self.reranker_api_key, ["reranker.mode='off'"])
-        if self.image_describer_mode == "on":
-            required_secrets["IMAGE_API_KEY"] = (self.image_describer_api_key, ["image_describer.mode='off'"])
-        invalid_secrets = [
-            name for name, (value, _disable_modes) in required_secrets.items() if is_placeholder_secret(value)
-        ]
-        if invalid_secrets:
-            recovery = "; ".join(f"{name} -> {', '.join(required_secrets[name][1])}" for name in invalid_secrets)
-            raise ConfigurationError(
-                "missing or placeholder API key(s) for enabled component(s): "
-                f"{', '.join(invalid_secrets)}; add each key to .env or disable its TOML mode: {recovery}"
-            )
         if self.database_pool_size < 1 or self.database_busy_timeout_seconds < 1:
             raise ConfigurationError("database pool size and busy timeout must be positive")
         if self.entity_aliases_path is not None and not self.entity_aliases_path.strip():
@@ -1245,6 +1232,52 @@ class Settings(
         if self.extractor_mode not in {"fake", "real", "llm"}:
             raise ConfigurationError("extraction.mode must be 'fake', 'real', or 'llm'")
 
+    def validate_runtime(self) -> None:
+        """Reject test doubles and incomplete enabled services in production."""
+        self.validate()
+        if self.extractor_mode == "fake":
+            raise ConfigurationError("extraction.mode must not use Fake in a production configuration")
+        if self.embedder_mode == "fake":
+            raise ConfigurationError("embedding.mode must not use Fake in a production configuration")
+        if self.reranker_mode == "fake":
+            raise ConfigurationError("reranker.mode must not use Fake in a production configuration")
+        if not self.llm_base_url.strip() or not self.llm_model.strip():
+            raise ConfigurationError("llm.base_url and llm.model are required for production extraction")
+        if not self.embedding_base_url.strip() or not self.embedding_model.strip():
+            raise ConfigurationError("embedding.base_url and embedding.model are required in production")
+
+        query_expansion_line = self.query_expansion_line_overrides()
+        required_secrets: dict[str, tuple[str | None, list[str]]] = {}
+        llm_recovery = ["configure a production LLM service"]
+        if self.query_expansion_mode != "off":
+            if query_expansion_line is None:
+                llm_recovery.append("recall.query_expansion_mode='off'")
+            else:
+                required_secrets["QUERY_EXPANSION_API_KEY"] = (
+                    query_expansion_line[2],
+                    ["recall.query_expansion_mode='off'"],
+                )
+        if self.relation_discovery_mode != "off":
+            llm_recovery.append("relation.discovery_mode='off'")
+        required_secrets["LLM_API_KEY"] = (self.llm_api_key, llm_recovery)
+        required_secrets["EMBEDDING_API_KEY"] = (
+            self.embedding_api_key,
+            ["configure a production Embedding service"],
+        )
+        if self.reranker_mode in {"on", "real"}:
+            required_secrets["RERANKER_API_KEY"] = (self.reranker_api_key, ["reranker.mode='off'"])
+        if self.image_describer_mode == "on":
+            required_secrets["IMAGE_API_KEY"] = (self.image_describer_api_key, ["image_describer.mode='off'"])
+        invalid_secrets = [
+            name for name, (value, _disable_modes) in required_secrets.items() if is_placeholder_secret(value)
+        ]
+        if invalid_secrets:
+            recovery = "; ".join(f"{name} -> {', '.join(required_secrets[name][1])}" for name in invalid_secrets)
+            raise ConfigurationError(
+                "missing or placeholder API key(s) for enabled component(s): "
+                f"{', '.join(invalid_secrets)}; add each key to .env or update its TOML mode: {recovery}"
+            )
+
     def _validate(self) -> None:
         """兼容旧调用方，委托公开配置校验入口。"""
         self.validate()
@@ -1252,6 +1285,8 @@ class Settings(
     def snapshot(self) -> dict[str, Any]:
         """返回可用于健康检查和审计的非敏感配置。"""
         return {
+            "schema_version": self.schema_version,
+            "plugins_enabled": list(self.plugins_enabled),
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
             "embedding_api_mode": self.embedding_api_mode,

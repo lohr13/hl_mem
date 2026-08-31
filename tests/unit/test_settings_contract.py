@@ -13,18 +13,21 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 209
+    assert len(fields(Settings)) == 212
+    assert settings.schema_version == 1
+    assert settings.plugins_enabled == ()
+    assert settings.plugin_options == {}
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_reasoning_effort is None
     assert settings.llm_max_tokens is None
     assert settings.llm_timeout == 90
     assert settings.llm_structured_mode == "json_object"
     assert settings.llm_thinking_control == "auto"
-    assert settings.extractor_mode == "fake"
+    assert settings.extractor_mode == "llm"
     assert settings.verification_mode == "off"
     assert settings.extraction_soft_split_enabled is False
     assert settings.extraction_delta_repair_enabled is False
-    assert settings.embedder_mode == "fake"
+    assert settings.embedder_mode == "real"
     assert settings.embedding_api_mode == "compatible"
     assert settings.reranker_mode == "off"
     assert settings.image_describer_mode == "off"

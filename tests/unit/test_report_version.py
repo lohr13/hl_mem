@@ -13,16 +13,25 @@ from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 
 
-def _write_no_key_config(path: Path, database_path: Path) -> None:
+def _write_model_config(path: Path, database_path: Path) -> None:
     path.write_text(
         "\n".join(
             (
+                "schema_version = 1",
                 "[database]",
                 f'path = "{database_path.as_posix()}"',
+                "[llm]",
+                'provider = "openai_compatible"',
+                'base_url = "https://llm.example.test/v1"',
+                'model = "quality-llm"',
                 "[extraction]",
-                'mode = "fake"',
+                'mode = "llm"',
                 "[embedding]",
-                'mode = "fake"',
+                'mode = "real"',
+                'base_url = "https://embedding.example.test/v1"',
+                'model = "quality-embedding"',
+                "dim = 2048",
+                'api_mode = "compatible"',
                 "[reranker]",
                 'mode = "off"',
                 "[image_describer]",
@@ -39,11 +48,15 @@ def _write_no_key_config(path: Path, database_path: Path) -> None:
 
 
 def test_report_version_cli_stores_fixed_event_and_claim_without_llm_job(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database_path = tmp_path / "probe.db"
     config = tmp_path / "hl_mem.toml"
-    _write_no_key_config(config, database_path)
+    _write_model_config(config, database_path)
+    monkeypatch.setenv("LLM_API_KEY", "llm-secret")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "embedding-secret")
 
     main(["--config", str(config), "report-version", "--namespace", "default", "--subject", "HL-Mem"])
 
@@ -122,7 +135,7 @@ def test_report_version_is_idempotent_per_version_and_rollback_creates_new_occur
 @pytest.mark.parametrize("forged", [("--version", "9.9.9"), ("--producer-contract", "fake-v1")])
 def test_cli_exposes_no_free_version_or_producer_argument(tmp_path: Path, forged: tuple[str, str]) -> None:
     config = tmp_path / "hl_mem.toml"
-    _write_no_key_config(config, tmp_path / "memory.db")
+    _write_model_config(config, tmp_path / "memory.db")
 
     with pytest.raises(SystemExit) as caught:
         main(["--config", str(config), "report-version", "--subject", "HL-Mem", *forged])

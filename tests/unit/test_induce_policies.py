@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from hl_mem.experience.service import ExperienceService
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
@@ -42,7 +44,7 @@ def test_daily_policy_induction_is_idempotent_and_worker_dispatches(tmp_path) ->
     assert enqueue_daily_policy_induction(connection, "2026-07-22T04:00:00+00:00", "03:30")
     assert not enqueue_daily_policy_induction(connection, "2026-07-22T05:00:00+00:00", "03:30")
 
-    worker = Worker(Settings(database_path=str(path), embedding_dim=2))
+    worker = Worker(replace(Settings.for_test(), database_path=str(path), embedding_dim=2))
     assert dispatch_job(worker, {"job_type": "induce_policies"}) == {
         "clusters": 0,
         "policies_induced": 0,
@@ -102,7 +104,8 @@ def test_retention_worker_purges_explicit_or_all_existing_namespaces(
 ) -> None:
     path = tmp_path / "retention-worker.db"
     worker = Worker(
-        Settings(
+        replace(
+            Settings.for_test(),
             database_path=str(path),
             embedding_dim=2,
             retention_days=30,

@@ -3,6 +3,7 @@
 # so unset an old LLM_API_KEY or explicitly replace it with the intended Bailian key.
 # Reader and judge follow llm.model by default. Set HL_MEM_EVAL_QA_MODEL only when
 # an evaluation-only model override is needed.
+schema_version = 1
 
 [database]
 path = "var/benchmark_lme/deepseek_v4_flash.db"

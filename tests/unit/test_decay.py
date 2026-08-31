@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -283,7 +284,7 @@ def test_decay_rollout_grace_exempts_preexisting_unaccessed(tmp_path):
 
 
 def test_worker_decay_dispatch(tmp_path):
-    worker = Worker(Settings(database_path=str(tmp_path / "worker.db"), embedding_dim=2))
+    worker = Worker(replace(Settings.for_test(), database_path=str(tmp_path / "worker.db"), embedding_dim=2))
     assert dispatch_job(worker, {"job_type": "decay_access"}) == {
         "decayed": 0,
         "archived": 0,

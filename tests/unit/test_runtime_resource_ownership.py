@@ -91,7 +91,7 @@ def test_fastapi_lifespan_closes_owned_connections(tmp_path: Path) -> None:
 
 
 def test_mcp_close_closes_owned_connections(tmp_path: Path) -> None:
-    server = McpMemoryServer(tmp_path / "mcp-owner.db")
+    server = McpMemoryServer(replace(Settings.for_test(), database_path=str(tmp_path / "mcp-owner.db")))
     connection = server.database.open_worker()
     try:
         server.close()

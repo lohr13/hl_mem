@@ -41,9 +41,15 @@ def test_typed_groups_own_every_configuration_field_once() -> None:
         for config_field in fields(group):
             assert config_field.name not in owners
             owners[config_field.name] = group.__name__
-            assert set(config_field.metadata) in ({"toml"}, {"secret_env"})
+            assert set(config_field.metadata) in ({"toml"}, {"secret_env"}, {"plugin_namespace"})
 
-    assert owners == {config_field.name: owners[config_field.name] for config_field in fields(Settings)}
+    root_fields = {item.name for item in fields(Settings) if item.metadata.get("schema_version")}
+    assert root_fields == {"schema_version"}
+    assert owners == {
+        config_field.name: owners[config_field.name]
+        for config_field in fields(Settings)
+        if config_field.name not in root_fields
+    }
 
 
 def test_domain_constants_remain_available_from_config_package() -> None:

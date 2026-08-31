@@ -47,7 +47,11 @@ def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
     database.open()
     database.close()
     config_path = tmp_path / "hl_mem.toml"
-    config_path.write_text('[recall]\nquery_expansion_mode = "off"\n', encoding="utf-8")
+    config_path.write_text(
+        'schema_version = 1\n[extraction]\nmode = "fake"\n[embedding]\nmode = "fake"\n'
+        '[recall]\nquery_expansion_mode = "off"\n',
+        encoding="utf-8",
+    )
     env_path = tmp_path / ".env"
     env_path.write_text("", encoding="utf-8")
     monkeypatch.setattr(
@@ -188,10 +192,10 @@ def test_enabled_components_reject_placeholder_secrets() -> None:
         reranker_api_key="reranker-real-key",
     )
     with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
-        settings.validate()
+        settings.validate_runtime()
 
     with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
-        Settings(extractor_mode="real", llm_api_key="your-key").validate()
+        Settings(extractor_mode="real", llm_api_key="your-key").validate_runtime()
 
 
 def test_hermes_check_uses_user_plugin_root_even_with_agent_checkout(

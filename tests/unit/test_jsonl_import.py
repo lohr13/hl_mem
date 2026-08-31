@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -195,7 +196,7 @@ def test_worker_rebuilds_claim_from_imported_archive(tmp_path: Path) -> None:
     target = tmp_path / "target.db"
     _write_archive(archive, [_event("event-1", "我喜欢 SQLite")])
     import_database(target, archive)
-    worker = Worker(Settings(database_path=str(target)))
+    worker = Worker(replace(Settings.for_test(), database_path=str(target)))
     try:
         result = worker.run_once()
         claim = worker.connection.execute("SELECT predicate,value_json,status FROM claims").fetchone()
@@ -215,7 +216,7 @@ def test_import_cli_outputs_report_and_skip_flag(
     archive = tmp_path / "events.jsonl"
     target = tmp_path / "target.db"
     _write_archive(archive, [_event("event-1")])
-    monkeypatch.setattr(cli_module, "load_settings", lambda *_: Settings())
+    monkeypatch.setattr(cli_module, "load_settings", lambda *_: Settings.for_test())
 
     cli_module.main(
         [

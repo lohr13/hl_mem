@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import fields
 from pathlib import Path
 
@@ -13,24 +14,184 @@ from hl_mem.errors import ConfigurationError
 from hl_mem.settings import Settings, VectorBackend
 
 
-def _write(path: Path, content: str = "") -> Path:
+def _write(path: Path, content: str = "", *, versioned: bool = True) -> Path:
+    if versioned and path.suffix == ".toml" and not content.lstrip().startswith("schema_version"):
+        content = _v1(content)
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def _v1(body: str = "") -> str:
+    return "schema_version = 1\n" + body
+
+
+def _load_structural_settings(
+    config_path: Path | None = None,
+    env_path: Path | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Settings:
+    return load_settings(config_path, env_path, environ=environ, validate_runtime=False)
+
+
+def _load_runtime_settings(
+    config_path: Path | None = None,
+    env_path: Path | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Settings:
+    return load_settings(config_path, env_path, environ=environ, validate_runtime=True)
+
+
+def test_unversioned_config_requires_migration(tmp_path: Path) -> None:
+    path = _write(tmp_path / "legacy.toml", "[database]\npath='memory.db'\n", versioned=False)
+
+    with pytest.raises(ConfigurationError, match=r"schema_version.*hl-mem config migrate"):
+        _load_structural_settings(path, environ={})
+
+
+def test_future_config_fails_without_guessing(tmp_path: Path) -> None:
+    path = _write(tmp_path / "future.toml", "schema_version = 2\n")
+
+    with pytest.raises(ConfigurationError, match=r"unsupported schema_version 2"):
+        _load_structural_settings(path, environ={})
+
+
+def test_v1_production_profile_loads_with_explicit_model_services(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "production.toml",
+        _v1("""
+[llm]
+provider = "openai_compatible"
+base_url = "https://llm.example.test/v1"
+model = "quality-llm"
+
+[extraction]
+mode = "llm"
+
+[embedding]
+mode = "real"
+base_url = "https://embedding.example.test/v1"
+model = "quality-embedding"
+dim = 2048
+api_mode = "compatible"
+"""),
+    )
+
+    settings = _load_runtime_settings(
+        path,
+        tmp_path / ".env",
+        environ={"LLM_API_KEY": "llm-secret", "EMBEDDING_API_KEY": "embedding-secret"},
+    )
+
+    assert settings.schema_version == 1
+    assert settings.extractor_mode == "llm"
+    assert settings.embedder_mode == "real"
+
+
+def test_v1_production_profile_does_not_inherit_provider_defaults(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "implicit-provider.toml",
+        _v1('[extraction]\nmode = "llm"\n[embedding]\nmode = "real"\n'),
+    )
+
+    with pytest.raises(ConfigurationError, match=r"explicitly set.*llm\.provider.*embedding\.base_url"):
+        _load_runtime_settings(path, environ={})
+
+
+@pytest.mark.parametrize(
+    ("section", "mode"),
+    (("extraction", "fake"), ("embedding", "fake")),
+)
+def test_v1_production_profile_rejects_fake_modes(tmp_path: Path, section: str, mode: str) -> None:
+    extraction_mode = mode if section == "extraction" else "llm"
+    embedding_mode = mode if section == "embedding" else "real"
+    path = _write(
+        tmp_path / f"fake-{section}.toml",
+        _v1(f"""
+[llm]
+provider = "openai_compatible"
+base_url = "https://llm.example.test/v1"
+model = "quality-llm"
+
+[extraction]
+mode = "{extraction_mode}"
+
+[embedding]
+mode = "{embedding_mode}"
+base_url = "https://embedding.example.test/v1"
+model = "quality-embedding"
+dim = 2048
+api_mode = "compatible"
+"""),
+    )
+
+    with pytest.raises(ConfigurationError, match=rf"{section}\.mode.*Fake|Fake.*{section}\.mode"):
+        _load_runtime_settings(
+            path,
+            tmp_path / ".env",
+            environ={"LLM_API_KEY": "llm-secret", "EMBEDDING_API_KEY": "embedding-secret"},
+        )
+
+
+def test_test_factory_is_the_only_fake_profile() -> None:
+    settings = Settings.for_test()
+
+    assert settings.extractor_mode == "fake"
+    assert settings.embedder_mode == "fake"
+    settings.validate()
+
+
+def test_v1_plugin_namespace_is_typed_and_immutable(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "plugins.toml",
+        _v1("""
+[plugins]
+enabled = ["example-reranker"]
+
+[plugins.example-reranker]
+threshold = 0.75
+labels = ["trusted", "local"]
+"""),
+    )
+
+    settings = _load_structural_settings(path, environ={})
+
+    assert settings.plugins_enabled == ("example-reranker",)
+    assert settings.plugin_options["example-reranker"]["threshold"] == 0.75
+    assert settings.plugin_options["example-reranker"]["labels"] == ("trusted", "local")
+    with pytest.raises(TypeError):
+        settings.plugin_options["example-reranker"]["threshold"] = 0.5  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        '[plugins]\nenabled = ["duplicate", "duplicate"]\n',
+        '[plugins]\nenabled = ["Bad ID"]\n',
+        '[plugins."Bad ID"]\nvalue = true\n',
+    ),
+)
+def test_v1_plugin_namespace_fails_closed_for_invalid_ids(tmp_path: Path, body: str) -> None:
+    path = _write(tmp_path / "invalid-plugin.toml", _v1(body))
+
+    with pytest.raises(ConfigurationError, match="plugins"):
+        _load_structural_settings(path, environ={})
 
 
 def test_missing_default_and_explicit_config_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ConfigurationError, match=r"hl_mem\.toml.*does not exist"):
-        load_settings(environ={})
+        _load_structural_settings(environ={})
     missing = tmp_path / "missing.toml"
     with pytest.raises(ConfigurationError, match=r"missing\.toml.*does not exist"):
-        load_settings(missing, environ={})
+        _load_structural_settings(missing, environ={})
 
 
 def test_empty_toml_uses_static_defaults(tmp_path: Path) -> None:
     config_path = _write(tmp_path / "empty.toml")
 
-    assert load_settings(config_path, tmp_path / ".env", environ={"LLM_API_KEY": "test-key"}) == Settings(
+    assert _load_structural_settings(config_path, tmp_path / ".env", environ={"LLM_API_KEY": "test-key"}) == Settings(
         database_path=str((tmp_path / "var" / "hl_mem.db").resolve()), llm_api_key="test-key"
     )
 
@@ -42,7 +203,7 @@ def test_negative_max_request_body_is_rejected_from_toml(tmp_path: Path) -> None
     )
 
     with pytest.raises(ConfigurationError) as caught:
-        load_settings(config_path, tmp_path / ".env", environ={})
+        _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert str(caught.value) == f"{config_path}: server.max_request_body must be non-negative"
 
@@ -53,7 +214,7 @@ def test_zero_max_request_body_loads_from_toml(tmp_path: Path) -> None:
         "[server]\nmax_request_body = 0\n[recall]\nquery_expansion_mode = 'off'\n",
     )
 
-    assert load_settings(config_path, tmp_path / ".env", environ={}).max_request_body == 0
+    assert _load_structural_settings(config_path, tmp_path / ".env", environ={}).max_request_body == 0
 
 
 def test_old_toml_without_llm_max_tokens_keeps_default(tmp_path: Path) -> None:
@@ -62,7 +223,7 @@ def test_old_toml_without_llm_max_tokens_keeps_default(tmp_path: Path) -> None:
         '[recall]\nquery_expansion_mode = "off"\n',
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.llm_max_tokens is None
     assert settings.llm_reasoning_effort is None
@@ -75,7 +236,7 @@ def test_llm_max_tokens_loads_from_toml(tmp_path: Path) -> None:
         '[llm]\nmax_tokens = 4000\n[recall]\nquery_expansion_mode = "off"\n',
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.llm_max_tokens == 4000
 
@@ -86,7 +247,7 @@ def test_llm_reasoning_effort_loads_from_toml(tmp_path: Path) -> None:
         '[llm]\nreasoning_effort = "low"\n[recall]\nquery_expansion_mode = "off"\n',
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.llm_reasoning_effort == "low"
 
@@ -97,7 +258,7 @@ def test_llm_thinking_control_loads_from_toml(tmp_path: Path) -> None:
         '[llm]\nthinking_control = "chat_template_kwargs"\n' '[recall]\nquery_expansion_mode = "off"\n',
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.llm_thinking_control == "chat_template_kwargs"
 
@@ -105,7 +266,7 @@ def test_llm_thinking_control_loads_from_toml(tmp_path: Path) -> None:
 def test_release_example_config_matches_approved_modes() -> None:
     config_path = Path(__file__).parents[2] / "config.example.toml"
 
-    settings = load_settings(
+    settings = _load_runtime_settings(
         config_path,
         config_path.with_name(".env.example"),
         environ={
@@ -133,7 +294,7 @@ def test_retired_conflict_auto_modes_are_rejected_fail_closed(tmp_path: Path, re
     )
 
     with pytest.raises(ConfigurationError) as caught:
-        load_settings(config_path, tmp_path / ".env", environ={})
+        _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert str(caught.value) == f"{config_path}: conflict.auto_mode: expected one of 'off', 'l0_only'"
 
@@ -145,7 +306,7 @@ def test_retired_maintenance_judge_table_is_rejected_fail_closed(tmp_path: Path)
     )
 
     with pytest.raises(ConfigurationError) as caught:
-        load_settings(config_path, tmp_path / ".env", environ={})
+        _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert str(caught.value) == f"{config_path}: maintenance_judge: unknown TOML table"
 
@@ -157,7 +318,7 @@ def test_supported_conflict_auto_modes_still_load(tmp_path: Path, active_mode: s
         f'[conflict]\nauto_mode = "{active_mode}"\n[recall]\nquery_expansion_mode = "off"\n',
     )
 
-    assert load_settings(config_path, tmp_path / ".env", environ={}).conflict_auto_mode == active_mode
+    assert _load_structural_settings(config_path, tmp_path / ".env", environ={}).conflict_auto_mode == active_mode
 
 
 def test_hermes_on_demand_recall_timeout_loads_from_toml(tmp_path: Path) -> None:
@@ -166,7 +327,7 @@ def test_hermes_on_demand_recall_timeout_loads_from_toml(tmp_path: Path) -> None
         "[hermes]\non_demand_recall_timeout_seconds = 6.5\n" "[recall]\nquery_expansion_mode = 'off'\n",
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.hermes_on_demand_recall_timeout_seconds == 6.5
 
@@ -177,7 +338,7 @@ def test_extraction_soft_split_flag_loads_from_toml_and_defaults_off(tmp_path: P
         "[extraction]\nsoft_split_enabled = true\n" "[recall]\nquery_expansion_mode = 'off'\n",
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert Settings().extraction_soft_split_enabled is False
     assert settings.extraction_soft_split_enabled is True
@@ -189,7 +350,7 @@ def test_extraction_delta_repair_flag_loads_from_toml_and_defaults_off(tmp_path:
         "[extraction]\ndelta_repair_enabled = true\n" "[recall]\nquery_expansion_mode = 'off'\n",
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert Settings().extraction_delta_repair_enabled is False
     assert settings.extraction_delta_repair_enabled is True
@@ -204,7 +365,7 @@ query_expansion_mode = "off"
 """,
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.resurrection_mode == "auto"
     assert settings.decay_model == "activation_halflife"
@@ -223,7 +384,7 @@ model = "legacy_linear"
 """,
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.resurrection_mode == "off"
     assert settings.decay_model == "legacy_linear"
@@ -256,7 +417,7 @@ latest_wins_slots = ["config.version"]
 """,
     )
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.database_path == str((tmp_path / "custom.db").resolve())
     assert settings.database_pool_size == 4
@@ -277,7 +438,7 @@ def test_latest_wins_toml_cannot_authorize_a_slot_outside_the_code_allowlist(tmp
     )
 
     with pytest.raises(ConfigurationError, match=r"state\.latest_wins_slots.*config\.version"):
-        load_settings(config_path, tmp_path / ".env", environ={})
+        _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
 
 @pytest.mark.parametrize(
@@ -300,7 +461,7 @@ def test_structural_errors_include_path_and_full_key(
     config_path = _write(tmp_path / "invalid.toml", content)
 
     with pytest.raises(ConfigurationError) as caught:
-        load_settings(config_path, environ={})
+        _load_structural_settings(config_path, environ={})
 
     message = str(caught.value)
     assert str(config_path) in message
@@ -325,7 +486,7 @@ def test_dotenv_secrets_are_overridden_only_by_same_process_names(tmp_path: Path
         ),
     )
 
-    settings = load_settings(
+    settings = _load_structural_settings(
         config_path,
         env_path,
         environ={
@@ -355,7 +516,7 @@ def test_query_expansion_line_loads_from_recall_and_generic_secret_env(tmp_path:
     )
     env_path = _write(tmp_path / ".env", "QUERY_EXPANSION_API_KEY=qe-secret")
 
-    settings = load_settings(config_path, env_path, environ={})
+    settings = _load_structural_settings(config_path, env_path, environ={})
 
     assert settings.query_expansion_provider == "dashscope"
     assert settings.query_expansion_base_url == "https://qe.example.com/v1"
@@ -379,7 +540,7 @@ def test_relative_database_path_uses_real_config_target_directory(
     linked_config.symlink_to(canonical_config)
     monkeypatch.chdir(source_dir)
 
-    settings = load_settings(linked_config, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(linked_config, tmp_path / ".env", environ={})
 
     assert settings.database_path == str((canonical_dir / "data" / "memory.db").resolve())
 
@@ -399,7 +560,7 @@ def test_posix_rejects_windows_absolute_database_paths(
     monkeypatch.setattr(sys, "platform", "linux")
 
     with pytest.raises(ConfigurationError, match=r"database\.path.*Windows absolute path.*POSIX"):
-        load_settings(config_path, tmp_path / ".env", environ={})
+        _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
 
 def test_windows_rejects_posix_absolute_database_path(
@@ -414,7 +575,7 @@ def test_windows_rejects_posix_absolute_database_path(
     monkeypatch.setattr(sys, "platform", "win32")
 
     with pytest.raises(ConfigurationError, match=r"database\.path.*POSIX absolute path.*Windows"):
-        load_settings(config_path, tmp_path / ".env", environ={})
+        _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
 
 @pytest.mark.parametrize(
@@ -442,17 +603,35 @@ def test_native_absolute_database_path_is_preserved(
     )
     monkeypatch.setattr(sys, "platform", platform)
 
-    settings = load_settings(config_path, tmp_path / ".env", environ={})
+    settings = _load_structural_settings(config_path, tmp_path / ".env", environ={})
 
     assert settings.database_path == expected
 
 
 def test_placeholder_error_is_redacted(tmp_path: Path) -> None:
-    config_path = _write(tmp_path / "enabled.toml", "[extraction]\nmode = 'real'\n")
+    config_path = _write(
+        tmp_path / "enabled.toml",
+        """
+[llm]
+provider = "openai_compatible"
+base_url = "https://llm.example.test/v1"
+model = "quality-llm"
+[extraction]
+mode = "llm"
+[embedding]
+mode = "real"
+base_url = "https://embedding.example.test/v1"
+model = "quality-embedding"
+dim = 2048
+api_mode = "compatible"
+[recall]
+query_expansion_mode = "off"
+""",
+    )
     env_path = _write(tmp_path / ".env", "LLM_API_KEY=sk-xxx\n")
 
     with pytest.raises(ConfigurationError) as caught:
-        load_settings(config_path, env_path, environ={})
+        _load_runtime_settings(config_path, env_path, environ={"EMBEDDING_API_KEY": "embedding-secret"})
 
     message = str(caught.value)
     assert str(config_path) in message
@@ -465,9 +644,17 @@ def test_missing_enabled_component_keys_explain_env_and_toml_recovery(tmp_path: 
         tmp_path / "enabled.toml",
         """
 [extraction]
-mode = "real"
+mode = "llm"
+[llm]
+provider = "openai_compatible"
+base_url = "https://llm.example.test/v1"
+model = "quality-llm"
 [embedding]
 mode = "real"
+base_url = "https://embedding.example.test/v1"
+model = "quality-embedding"
+dim = 2048
+api_mode = "compatible"
 [reranker]
 mode = "on"
 [image_describer]
@@ -480,18 +667,23 @@ discovery_mode = "off"
     )
 
     with pytest.raises(ConfigurationError) as caught:
-        load_settings(config_path, tmp_path / ".env", environ={})
+        _load_runtime_settings(config_path, tmp_path / ".env", environ={})
 
     message = str(caught.value)
     for secret_name in ("LLM_API_KEY", "EMBEDDING_API_KEY", "RERANKER_API_KEY", "IMAGE_API_KEY"):
         assert secret_name in message
     assert ".env" in message
-    assert "extraction.mode='fake'" in message
-    assert "embedding.mode='fake'" in message
+    assert "configure a production LLM service" in message
+    assert "configure a production Embedding service" in message
     assert "reranker.mode='off'" in message
     assert "image_describer.mode='off'" in message
 
 
 def test_every_settings_field_declares_exactly_one_source() -> None:
     for settings_field in fields(Settings):
-        assert set(settings_field.metadata) in ({"toml"}, {"secret_env"})
+        assert set(settings_field.metadata) in (
+            {"toml"},
+            {"secret_env"},
+            {"plugin_namespace"},
+            {"schema_version"},
+        )

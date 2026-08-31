@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tomllib
 import types
@@ -12,9 +13,22 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
-from hl_mem.config.models import Settings, iter_config_fields
+from hl_mem.config.models import CONFIG_SCHEMA_VERSION, Settings, iter_config_fields
 from hl_mem.config.secrets import read_secret_values
 from hl_mem.errors import ConfigurationError
+
+_PLUGIN_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_REQUIRED_RUNTIME_PATHS = (
+    "extraction.mode",
+    "embedding.mode",
+    "llm.provider",
+    "llm.base_url",
+    "llm.model",
+    "embedding.base_url",
+    "embedding.model",
+    "embedding.dim",
+    "embedding.api_mode",
+)
 
 
 def _resolve_database_path(raw_path: str, resolved_config_path: Path, platform: str) -> str:
@@ -117,6 +131,8 @@ def _toml_schema() -> tuple[dict[str, Field[Any]], frozenset[str], dict[str, Fie
     table_paths: set[str] = set()
     secret_fields: dict[str, Field[Any]] = {}
     for settings_field in iter_config_fields():
+        if settings_field.metadata.get("schema_version") or settings_field.metadata.get("plugin_namespace"):
+            continue
         if set(settings_field.metadata) not in ({"toml"}, {"secret_env"}):
             raise RuntimeError(
                 f"Settings.{settings_field.name} must declare exactly one supported configuration source"
@@ -175,11 +191,61 @@ def _flatten_toml(
     return flattened
 
 
+def _freeze_toml(value: Any) -> Any:
+    if isinstance(value, dict):
+        return types.MappingProxyType({key: _freeze_toml(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_toml(item) for item in value)
+    return value
+
+
+def _read_schema_version(data: Mapping[str, Any], path: Path) -> int:
+    if "schema_version" not in data:
+        raise ConfigurationError(f"{path}: schema_version is required; run 'hl-mem config migrate --config {path}'")
+    version = data["schema_version"]
+    if type(version) is not int:
+        raise ConfigurationError(f"{path}: schema_version: expected int")
+    if version != CONFIG_SCHEMA_VERSION:
+        raise ConfigurationError(
+            f"{path}: unsupported schema_version {version}; supported version is {CONFIG_SCHEMA_VERSION}"
+        )
+    return version
+
+
+def _split_plugin_namespace(
+    data: Mapping[str, Any],
+    path: Path,
+) -> tuple[dict[str, Any], Mapping[str, Mapping[str, Any]]]:
+    core_data = dict(data)
+    core_data.pop("schema_version", None)
+    raw_plugins = core_data.get("plugins")
+    if raw_plugins is None:
+        return core_data, types.MappingProxyType({})
+    if not isinstance(raw_plugins, dict):
+        raise ConfigurationError(f"{path}: plugins: expected TOML table")
+
+    core_plugins: dict[str, Any] = {}
+    if "enabled" in raw_plugins:
+        core_plugins["enabled"] = raw_plugins["enabled"]
+    options: dict[str, Mapping[str, Any]] = {}
+    for plugin_id, raw_options in raw_plugins.items():
+        if plugin_id == "enabled":
+            continue
+        if _PLUGIN_ID_PATTERN.fullmatch(plugin_id) is None:
+            raise ConfigurationError(f"{path}: plugins.{plugin_id}: plugin ID must match [a-z0-9][a-z0-9._-]{{0,63}}")
+        if not isinstance(raw_options, dict):
+            raise ConfigurationError(f"{path}: plugins.{plugin_id}: expected TOML table")
+        options[plugin_id] = _freeze_toml(raw_options)
+    core_data["plugins"] = core_plugins
+    return core_data, types.MappingProxyType(options)
+
+
 def load_settings(
     config_path: Path | None = None,
     env_path: Path | None = None,
     *,
     environ: Mapping[str, str] | None = None,
+    validate_runtime: bool = True,
 ) -> Settings:
     """加载并校验唯一配置快照，不创建组件或修改进程环境。"""
     resolved_config_path = Path(config_path) if config_path is not None else Path.cwd() / "hl_mem.toml"
@@ -195,16 +261,21 @@ def load_settings(
     except OSError as error:
         raise ConfigurationError(f"{resolved_config_path}: failed to read configuration: {error}") from error
 
+    schema_version = _read_schema_version(toml_data, resolved_config_path)
+    core_toml_data, plugin_options = _split_plugin_namespace(toml_data, resolved_config_path)
     toml_fields, table_paths, secret_fields = _toml_schema()
     flattened = _flatten_toml(
-        toml_data,
+        core_toml_data,
         resolved_config_path,
         toml_fields,
         table_paths,
         secret_fields,
     )
     annotations = get_type_hints(Settings)
-    values: dict[str, Any] = {}
+    values: dict[str, Any] = {
+        "schema_version": schema_version,
+        "plugin_options": plugin_options,
+    }
     for key_path, value in flattened.items():
         settings_field = toml_fields[key_path]
         values[settings_field.name] = _coerce_toml_value(
@@ -228,9 +299,19 @@ def load_settings(
         if secret_name in secret_values:
             values[settings_field.name] = secret_values[secret_name]
 
+    if validate_runtime:
+        missing_paths = [path for path in _REQUIRED_RUNTIME_PATHS if path not in flattened]
+        if missing_paths:
+            raise ConfigurationError(
+                f"{resolved_config_path}: production configuration must explicitly set: " + ", ".join(missing_paths)
+            )
+
     settings = Settings(**values)
     try:
-        settings.validate()
+        if validate_runtime:
+            settings.validate_runtime()
+        else:
+            settings.validate()
     except ConfigurationError as error:
         raise ConfigurationError(f"{resolved_config_path}: {error}") from error
     return settings

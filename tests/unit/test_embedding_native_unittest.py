@@ -195,6 +195,7 @@ class ConfigurationAndRecallTests(unittest.TestCase):
             config.write_text(
                 "\n".join(
                     (
+                        "schema_version = 1",
                         "[embedding]",
                         'mode = "real"',
                         'base_url = "https://dashscope.aliyuncs.com"',
@@ -207,7 +208,12 @@ class ConfigurationAndRecallTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            settings = load_settings(config, root / ".env", environ={"EMBEDDING_API_KEY": "key"})
+            settings = load_settings(
+                config,
+                root / ".env",
+                environ={"EMBEDDING_API_KEY": "key"},
+                validate_runtime=False,
+            )
 
         embedder = make_embedder(settings)
         self.assertEqual(settings.embedding_api_mode, "native")
@@ -235,6 +241,7 @@ class ConfigurationAndRecallTests(unittest.TestCase):
             config.write_text(
                 "\n".join(
                     (
+                        "schema_version = 1",
                         "[embedding]",
                         'mode = "real"',
                         'base_url = "https://dashscope.aliyuncs.com"',
@@ -250,7 +257,12 @@ class ConfigurationAndRecallTests(unittest.TestCase):
             )
 
             try:
-                settings = load_settings(config, root / ".env", environ={"EMBEDDING_API_KEY": "key"})
+                settings = load_settings(
+                    config,
+                    root / ".env",
+                    environ={"EMBEDDING_API_KEY": "key"},
+                    validate_runtime=False,
+                )
             except ConfigurationError as error:
                 self.fail(f"explicit embedding.text_type should load: {error}")
 
@@ -265,6 +277,7 @@ class ConfigurationAndRecallTests(unittest.TestCase):
             config.write_text(
                 "\n".join(
                     (
+                        "schema_version = 1",
                         "[embedding]",
                         'mode = "real"',
                         'base_url = "https://dashscope.aliyuncs.com"',
@@ -280,7 +293,12 @@ class ConfigurationAndRecallTests(unittest.TestCase):
             )
 
             try:
-                settings = load_settings(config, root / ".env", environ={"EMBEDDING_API_KEY": "key"})
+                settings = load_settings(
+                    config,
+                    root / ".env",
+                    environ={"EMBEDDING_API_KEY": "key"},
+                    validate_runtime=False,
+                )
             except ConfigurationError as error:
                 self.fail(f"empty embedding.text_type should load: {error}")
 
@@ -292,10 +310,10 @@ class ConfigurationAndRecallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = root / "hl_mem.toml"
-            config.write_text('[embedding]\ntext_type = "invalid"\n', encoding="utf-8")
+            config.write_text('schema_version = 1\n[embedding]\ntext_type = "invalid"\n', encoding="utf-8")
 
             with self.assertRaisesRegex(ConfigurationError, r"embedding\.text_type: expected"):
-                load_settings(config, root / ".env", environ={})
+                load_settings(config, root / ".env", environ={}, validate_runtime=False)
 
     def test_settings_reject_invalid_embedding_api_mode(self) -> None:
         with self.assertRaisesRegex(ConfigurationError, "embedding.api_mode"):

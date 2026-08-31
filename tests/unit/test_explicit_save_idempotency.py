@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from hl_mem.application.ingest import IngestService
 from hl_mem.errors import ConflictError, ValidationError
 from hl_mem.mcp.server import McpMemoryServer, get_tool_schemas
+from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 
 
@@ -120,7 +123,7 @@ def test_mcp_memory_save_contract_and_true_created_state(tmp_path) -> None:
     assert properties["idempotency_key"]["maxLength"] == 200
     assert properties["namespace"]["maxLength"] == 100
 
-    server = McpMemoryServer(tmp_path / "mcp.db")
+    server = McpMemoryServer(replace(Settings.for_test(), database_path=str(tmp_path / "mcp.db")))
     arguments = {
         "text": "记住 SQLite",
         "subject": "项目",
@@ -138,7 +141,7 @@ def test_mcp_memory_save_contract_and_true_created_state(tmp_path) -> None:
 
 
 def test_mcp_memory_save_rejects_conflict_and_oversized_key(tmp_path) -> None:
-    server = McpMemoryServer(tmp_path / "mcp-conflict.db")
+    server = McpMemoryServer(replace(Settings.for_test(), database_path=str(tmp_path / "mcp-conflict.db")))
     server.call_tool(
         "memory_save",
         {"text": "第一版", "idempotency_key": "mcp-conflict"},
