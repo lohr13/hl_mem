@@ -1491,19 +1491,6 @@ def _cached_ingest_diagnostics(
     }
 
 
-class _UnlimitedBenchmarkBudget:
-    """Benchmark 统计真实 usage，但不把多个 case 绑定到在线日预算。"""
-
-    def can_spend(self, _tokens: int) -> bool:
-        return True
-
-    def record_usage(self, _tokens: int) -> None:
-        return None
-
-    def get_stats(self) -> dict[str, int]:
-        return {"used": 0, "limit": 0, "remaining": 0}
-
-
 def _data_inspection_code(error: httpx.HTTPStatusError) -> str | None:
     """Return the provider code only for an explicit content-inspection rejection."""
     response = error.response
@@ -1638,7 +1625,6 @@ def _ingest_case(
         extractor=extractor,
         embedder=embedder,
         image_describer=None,
-        budget=_UnlimitedBenchmarkBudget(),
         audit_logger=NullAuditLogger(),
     )
     try:

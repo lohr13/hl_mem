@@ -14,6 +14,8 @@ FORBIDDEN_IMPORTS: dict[str, frozenset[str]] = {
     "domain": frozenset({"storage", "api", "workers", "recall", "ingest", "llm", "application"}),
     "storage": frozenset({"api", "workers", "application"}),
     "application": frozenset({"api"}),
+    "plugins": frozenset({"api", "workers", "storage", "application"}),
+    "security": frozenset({"api", "workers", "storage", "application", "recall", "ingest", "llm"}),
 }
 
 

@@ -147,6 +147,9 @@ discovery_mode = "off"
 
 [plugins]
 enabled = []
+# Third-party options live under [plugins.<id>] and must never contain secrets.
+# [plugins.acme.models]
+# region = "cn"
 
 [hermes]
 enabled = false

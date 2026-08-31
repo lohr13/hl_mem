@@ -8,7 +8,8 @@ import socket
 import sqlite3
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -25,7 +26,8 @@ from hl_mem.compatibility import (
 )
 from hl_mem.config_loader import load_settings
 from hl_mem.errors import ConfigurationError
-from hl_mem.http_utils import retry_http
+from hl_mem.llm.types import LLMMessage, LLMRequest
+from hl_mem.observability.usage import USAGE_LEDGER_SCHEMA_VERSION, default_usage_ledger_path
 from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.backup import validate_upgrade_recovery_set
 
@@ -82,6 +84,9 @@ _CHECK_CODES = {
     "Embedding API": "embedding",
     "LLM API": "llm",
     "Reranker API": "reranker",
+    "Provider 插件": "provider_plugins",
+    "Provider 信任": "provider_trust",
+    "Provider 用量账本": "usage_ledger",
     "服务端口": "server_port",
     "Daemon 兼容性": "daemon_contract",
     "Hermes 插件": "hermes_files",
@@ -183,32 +188,57 @@ def _check_secrets(settings: Settings) -> CheckResult:
     return CheckResult(CheckStatus.OK, "密钥配置", "已启用组件的独立密钥有效")
 
 
-def _post(
-    name: str,
-    url: str,
-    key: str | None,
-    payload: dict[str, object],
-    timeout: float,
-    max_attempts: int,
-) -> CheckResult:
-    if is_placeholder_secret(key):
-        return CheckResult(CheckStatus.WARN, name, "缺少有效 API key，跳过")
+def _check_provider_plugins(settings: Settings) -> list[CheckResult]:
     try:
+        registry = components.make_provider_registry(settings)
+    except ConfigurationError as error:
+        resolution = CheckResult(CheckStatus.FAIL, "Provider 插件", str(error))
+    else:
+        capabilities = ", ".join(
+            f"{item['capability']}:{item['name']}@{item['plugin_id']}" for item in registry.health_snapshot()
+        )
+        resolution = CheckResult(CheckStatus.OK, "Provider 插件", capabilities or "未注册 Provider")
+    if settings.plugins_enabled:
+        trust = CheckResult(
+            CheckStatus.WARN,
+            "Provider 信任",
+            "启用的第三方 Provider 在宿主进程内运行，必须仅安装可信发行包：" + ", ".join(settings.plugins_enabled),
+        )
+    else:
+        trust = CheckResult(CheckStatus.OK, "Provider 信任", "仅使用内置 Provider；未加载第三方代码")
+    return [resolution, trust]
 
-        def send_request() -> httpx.Response:
-            response = httpx.post(
-                url,
-                headers={"Authorization": f"Bearer {key}"},
-                json=payload,
-                timeout=timeout,
-            )
-            response.raise_for_status()
-            return response
 
-        response = retry_http(send_request, max_attempts=max_attempts)
-    except (httpx.HTTPError, ValueError) as error:
-        return CheckResult(CheckStatus.FAIL, name, f"最小请求失败：{error}")
-    return CheckResult(CheckStatus.OK, name, f"请求成功（HTTP {response.status_code}）")
+def _check_usage_ledger(settings: Settings) -> CheckResult:
+    path = default_usage_ledger_path(settings.database_path)
+    if not path.is_file():
+        return CheckResult(CheckStatus.WARN, "Provider 用量账本", "尚未创建；首次真实 Provider 调用时初始化")
+    try:
+        with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as connection:
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if version != USAGE_LEDGER_SCHEMA_VERSION:
+                return CheckResult(
+                    CheckStatus.FAIL,
+                    "Provider 用量账本",
+                    f"schema={version}，要求 {USAGE_LEDGER_SCHEMA_VERSION}",
+                )
+            now = datetime.now(timezone.utc).isoformat()
+            row = connection.execute(
+                "SELECT COALESCE(SUM(CASE WHEN attempts=0 THEN 1 ELSE 0 END),0),"
+                "COALESCE(SUM(CASE WHEN attempts>0 THEN 1 ELSE 0 END),0) "
+                "FROM usage_reservations WHERE state='active' AND lease_expires_at<?",
+                (now,),
+            ).fetchone()
+            expired_unsent, expired_ambiguous = int(row[0]), int(row[1])
+    except (OSError, sqlite3.Error, TypeError, ValueError) as error:
+        return CheckResult(CheckStatus.FAIL, "Provider 用量账本", f"无法只读检查：{error}")
+    status = CheckStatus.WARN if expired_unsent or expired_ambiguous else CheckStatus.OK
+    return CheckResult(
+        status,
+        "Provider 用量账本",
+        f"schema={version}；expired_unsent={expired_unsent}；expired_ambiguous={expired_ambiguous}；"
+        "doctor 未执行恢复",
+    )
 
 
 def _check_embedding(settings: Settings) -> CheckResult:
@@ -230,22 +260,17 @@ def _check_embedding(settings: Settings) -> CheckResult:
 def _check_llm(settings: Settings) -> CheckResult:
     if settings.extractor_mode == "fake":
         return CheckResult(CheckStatus.WARN, "LLM API", "extractor=fake，跳过")
-    base_url = settings.llm_base_url.rstrip("/")
+    client = None
     try:
-        return _post(
-            "LLM API",
-            f"{base_url}/chat/completions",
-            settings.llm_api_key,
-            {
-                "model": settings.llm_model,
-                "messages": [{"role": "user", "content": "ping"}],
-                "max_tokens": 1,
-            },
-            settings.llm_timeout,
-            settings.llm_max_attempts,
-        )
-    except ValueError as error:
-        return CheckResult(CheckStatus.FAIL, "LLM API", f"配置值无效：{error}")
+        client = components.make_llm_client(settings, operation="doctor")
+        client.complete(LLMRequest([LLMMessage("user", "ping")]), timeout_seconds=settings.llm_timeout)
+        return CheckResult(CheckStatus.OK, "LLM API", "请求成功")
+    except (RuntimeError, ValueError, KeyError, TypeError) as error:
+        return CheckResult(CheckStatus.FAIL, "LLM API", f"最小请求失败：{error}")
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
 
 
 def _check_reranker(settings: Settings) -> CheckResult:
@@ -272,10 +297,16 @@ def _check_reranker(settings: Settings) -> CheckResult:
 
 def probe_model_components(settings: Settings) -> list[CheckResult]:
     """Probe every model path enabled by a prospective production configuration."""
-    results = [_check_llm(settings), _check_embedding(settings)]
-    if settings.reranker_mode in {"on", "real"}:
-        results.append(_check_reranker(settings))
-    return results
+    with tempfile.TemporaryDirectory(prefix="hl-mem-provider-probe-", ignore_cleanup_errors=True) as temporary:
+        probe_settings = replace(
+            settings,
+            database_path=str(Path(temporary) / "probe.db"),
+            llm_max_tokens=1,
+        )
+        results = [_check_llm(probe_settings), _check_embedding(probe_settings)]
+        if probe_settings.reranker_mode in {"on", "real"}:
+            results.append(_check_reranker(probe_settings))
+        return results
 
 
 def _check_port() -> CheckResult:
@@ -288,8 +319,6 @@ def _check_port() -> CheckResult:
 
 
 def _probe_daemon(settings: Settings) -> DaemonProbe:
-    """Read health evidence once; this probe never mutates or negotiates state."""
-
     url = f"{settings.hermes_url.rstrip('/')}/healthz"
     try:
         response = httpx.get(url, timeout=1.0)
@@ -447,7 +476,6 @@ def run_doctor(
     backup_path: Path | None = None,
     manifest_path: Path | None = None,
 ) -> list[CheckResult]:
-    """执行全部诊断并返回结构化结果。"""
     try:
         settings = load_settings(config_path, env_path, environ=environ, validate_runtime=False)
     except (ConfigurationError, OSError, ValueError) as error:
@@ -461,7 +489,7 @@ def run_doctor(
         readiness = CheckResult(CheckStatus.OK, "生产就绪", "配置与已启用组件密钥完整")
 
     if backup_path is None and manifest_path is None:
-        recovery = CheckResult(CheckStatus.WARN, "恢复集", "未提供 backup/manifest，跳过恢复能力验证")
+        recovery = CheckResult(CheckStatus.WARN, "恢复集", "未提供 backup/manifest，跳过恢复验证")
     elif backup_path is None or manifest_path is None:
         recovery = CheckResult(CheckStatus.FAIL, "恢复集", "backup 与 manifest 必须同时提供")
     else:
@@ -487,6 +515,8 @@ def run_doctor(
         _check_fts_rebuild(resolved_database),
         recovery,
         _check_secrets(settings),
+        *_check_provider_plugins(settings),
+        _check_usage_ledger(settings),
         *probe_model_components(settings),
         _check_port(),
         _check_daemon_compatibility(daemon_probe),
@@ -525,7 +555,6 @@ def handle_doctor_command(args: argparse.Namespace) -> bool:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """运行 doctor 命令并打印逐项结果和汇总。"""
     parser = argparse.ArgumentParser(prog="hl-mem doctor")
     parser.add_argument("--db", type=Path)
     parser.add_argument("--config", type=Path)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 import httpx
@@ -59,6 +59,16 @@ def classify_provider_error(error: Exception) -> tuple[str, int | None, str | No
     return type(error).__name__, None, None
 
 
+@dataclass(frozen=True)
+class LLMClientOptions:
+    """Generation controls applied consistently to each logical completion."""
+
+    max_tokens: int | None = None
+    enable_thinking: bool = False
+    thinking_control: str = "auto"
+    reasoning_effort: str | None = None
+
+
 class LLMClient:
     """Preserve the logical completion API while governing every HTTP sequence."""
 
@@ -69,10 +79,7 @@ class LLMClient:
         provider_name: str,
         provider: LLMProviderAdapter,
         governed: GovernedProviderCall[LLMResponse],
-        max_tokens: int | None = None,
-        enable_thinking: bool = False,
-        thinking_control: str = "auto",
-        reasoning_effort: str | None = None,
+        options: LLMClientOptions | None = None,
         span_recorder: LLMSpanRecorder | None = None,
         operation: str = "other",
         owned_runtime: object | None = None,
@@ -86,10 +93,11 @@ class LLMClient:
         self.timeout = httpx.Timeout(endpoint.timeout_seconds)
         self.max_attempts = endpoint.max_attempts
         self._governed = governed
-        self._max_tokens = max_tokens
-        self._enable_thinking = enable_thinking
-        self._thinking_control = thinking_control
-        self._reasoning_effort = reasoning_effort
+        resolved_options = options or LLMClientOptions()
+        self._max_tokens = resolved_options.max_tokens
+        self._enable_thinking = resolved_options.enable_thinking
+        self._thinking_control = resolved_options.thinking_control
+        self._reasoning_effort = resolved_options.reasoning_effort
         self._span_recorder = span_recorder
         self._operation = operation
         self._owned_runtime = owned_runtime

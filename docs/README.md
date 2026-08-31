@@ -20,6 +20,7 @@
 - [MCP stdio](mcp.md)
 - [Configuration](configuration.md)
 - [Compatibility policy](compatibility.md)
+- [Provider Plugin API](provider-plugins.md)
 - [Capability matrix](capability-matrix.md)
 - [Changelog](CHANGELOG.md)
 - [Handoff](HANDOFF.md)
@@ -29,7 +30,6 @@
 ## 设计与历史
 
 - [Architecture Decision Records](adr/)
-- [Current feature design](design/)
 - [Historical archive](archive/)
 
 归档索引会说明文档的历史状态和当前规范来源。归档中的模型、路径、配置和评测数字可能已经过期。

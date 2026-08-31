@@ -272,6 +272,9 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `dedup.scan_limit` | `200` | 每轮维护最多审查的 pending `dedup_pairs` 数量 |
 | `relation.discovery_mode` | `off` | 关系发现：`off` 或只生成提案的 `audit` |
 
+LLM、Embedding 与 Reranker 可通过受治理的 [Provider Plugin API](docs/provider-plugins.md) 扩展；图片 Provider
+使用同一机制但仍为 Experimental。插件必须显式加入 `plugins.enabled`，在宿主进程内运行且不具备沙箱隔离。
+
 真实组件和外部调用路径必须提供各自密钥；失败时不会自动切换为 fake。任意 `HL_MEM_*` 环境变量都不再参与应用 `Settings` 配置。
 `Settings` 与 `config.example.toml` 的 `recall.default_limit` / `recall.relevance_reranker_floor` 均为 `5` / `0.15`；
 示例部署仅把 `recall.relevance_relative_drop` 从代码默认 `0.15` 显式调整为 `0.30`，并保持

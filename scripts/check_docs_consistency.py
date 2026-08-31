@@ -116,12 +116,20 @@ def main() -> int:
         changelog = read("docs/CHANGELOG.md")
         agents_md = read("AGENTS.md")
         config_schema = json.loads(read("docs/config-schema.json"))
+        provider_api = json.loads(read("docs/provider-plugin-api.json"))
+        provider_docs = read("docs/provider-plugins.md")
 
         errors: list[str] = []
         if project_version != version:
             errors.append(f"  pyproject.toml version: found '{project_version}', expected '{version}'")
         if not isinstance(config_schema, dict) or config_schema.get("schema_version") != 1:
             errors.append("  config schema snapshot: expected schema_version 1")
+        if not isinstance(provider_api, dict) or provider_api.get("api_version") != 1:
+            errors.append("  Provider Plugin API snapshot: expected api_version 1")
+        if provider_api.get("entry_point_group") != "hl_mem.providers":
+            errors.append("  Provider Plugin API snapshot: expected hl_mem.providers entry-point group")
+        if "not sandboxed" not in provider_docs or "plugins.enabled" not in provider_docs:
+            errors.append("  Provider Plugin API docs: trust and allowlist boundaries are missing")
         errors += check_value(
             readme,
             r"shields\.io/badge/version-v?(\d+\.\d+\.\d+)-",

@@ -192,6 +192,7 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `embedding.max_attempts` | 整数 | `3` | 任意整数 | `embedding_max_attempts` |
 | `embedding.mode` | 字符串 | `"real"` | 生产仅 `real`；`fake` 仅供测试 | `embedder_mode` |
 | `embedding.model` | 字符串 | `"text-embedding-v4"` | 任意字符串 | `embedding_model` |
+| `embedding.provider` | 字符串 | `"dashscope"` | 任意字符串 | `embedding_provider` |
 | `embedding.read_timeout` | 数值 | `30.0` | 任意数值 | `embedding_read_timeout` |
 | `embedding.text_type` | 字符串 | 未设置 | `document`、`query`；可省略 | `embedding_text_type` |
 
@@ -253,7 +254,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `image_describer.max_parts` | 整数 | `4` | >= 1 | `image_max_parts` |
 | `image_describer.mode` | 字符串 | `"off"` | `off`、`on` | `image_describer_mode` |
 | `image_describer.model` | 字符串 | `"qwen3.7-plus"` | 任意字符串 | `image_describer_model` |
-| `image_describer.provider` | 字符串 | `"dashscope"` | `dashscope` | `image_describer_provider` |
+| `image_describer.provider` | 字符串 | `"dashscope"` | 任意字符串 | `image_describer_provider` |
 | `image_describer.timeout_seconds` | 数值 | `20.0` | > 0 | `image_describer_timeout_seconds` |
 
 ### `[index]`
@@ -276,7 +277,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.max_attempts` | 整数 | `3` | >= 1 | `llm_max_attempts` |
 | `llm.max_tokens` | 整数 | 未设置 | 正整数；输出上限保险丝，截断可能导致 JSON 不完整（`finish=length`），结构化提取将“快速失败”并由上层重试/降级 | `llm_max_tokens` |
 | `llm.model` | 字符串 | `"qwen3.7-plus"` | 非空字符串 | `llm_model` |
-| `llm.provider` | 字符串 | `"dashscope"` | `dashscope`、`zhipu`、`openai_compatible` | `llm_provider` |
+| `llm.provider` | 字符串 | `"dashscope"` | 任意字符串 | `llm_provider` |
 | `llm.reasoning_effort` | 字符串 | 未设置 | `low`、`high`、`max`；可省略 | `llm_reasoning_effort` |
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |
@@ -389,7 +390,7 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 | `reranker.base_url` | 字符串 | `"https://dashscope.aliyuncs.com"` | 任意字符串 | `reranker_base_url` |
 | `reranker.mode` | 字符串 | `"off"` | 生产为 `off`、`on` 或 `real`；`fake` 仅供测试 | `reranker_mode` |
 | `reranker.model` | 字符串 | `"qwen3-rerank"` | 任意字符串 | `reranker_model` |
-| `reranker.provider` | 字符串 | `"dashscope"` | `dashscope` | `reranker_provider` |
+| `reranker.provider` | 字符串 | `"dashscope"` | 任意字符串 | `reranker_provider` |
 
 Reranker 的具体型号通过 `reranker.model` 配置；API 密钥由 `RERANKER_API_KEY` 提供。升级时以当前 `Settings` 或部署
 TOML 为准，活文档不固定具体型号。
@@ -460,6 +461,14 @@ Pending dedup pairs below the current `dedup.threshold` can be reported read-onl
 `[state]` 控制白名单状态 slot 的确定性 latest-wins 关链；当前仅支持 `config.version`。默认 `observe` 只记录
 建议，不改变 claim 或 conflict case；设置 `latest_wins_mode = "off"` 可完全关闭建议和动作。`enforce` 只执行
 已通过冻结门禁的确定性动作，灰区仍保持并存。
+
+### `[usage]`
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `usage.daily_cost_limit_microunits` | 整数 | `0` | 任意整数 | `usage_daily_cost_limit_microunits` |
+| `usage.daily_request_limit` | 整数 | `0` | 任意整数 | `usage_daily_request_limit` |
+| `usage.reservation_lease_seconds` | 整数 | `300` | 任意整数 | `usage_reservation_lease_seconds` |
 
 ### `[worker]`
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from dataclasses import fields, replace
+from dataclasses import replace
 from unittest.mock import patch
 
 from hl_mem.components import make_extractor
@@ -304,7 +304,6 @@ class EntailmentSettingsTests(unittest.TestCase):
     def test_settings_adds_disabled_verification_mode(self) -> None:
         settings = Settings()
 
-        self.assertEqual(len(fields(Settings)), 206)
         self.assertEqual(settings.verification_mode, "off")
         self.assertEqual(settings.snapshot()["verification_mode"], "off")
 

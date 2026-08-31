@@ -808,9 +808,8 @@ class LLMExtractor:
     ) -> None:
         self.llm_client = llm_client
         self.model = llm_client.model
-        self.provider_name = getattr(llm_client, "provider_name", None)
-        if self.provider_name is None:
-            self.provider_name = llm_client.provider.name
+        provider_name = getattr(llm_client, "provider_name", None)
+        self.provider_name: str = provider_name if isinstance(provider_name, str) and provider_name else "unknown"
         self.schema_retries = schema_retries
         if self.schema_retries < 0:
             raise ValueError("schema_retries must be non-negative")

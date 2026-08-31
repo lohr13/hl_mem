@@ -17,7 +17,7 @@ import httpx
 import tomli_w
 
 from hl_mem.config.loader import load_settings_data
-from hl_mem.config.models import EmbeddingApiMode, LLMProvider, Settings
+from hl_mem.config.models import EmbeddingApiMode, Settings
 from hl_mem.config.secrets import merge_secret_file, redact_secret_text
 from hl_mem.doctor import CheckStatus, probe_model_components
 from hl_mem.errors import ConfigurationError
@@ -137,7 +137,7 @@ def _collect_init_settings() -> tuple[Settings, dict[str, str]]:
         raise ConfigurationError("Reranker choice must be y or n")
 
     values: dict[str, Any] = {
-        "llm_provider": cast(LLMProvider, provider_value),
+        "llm_provider": provider_value,
         "llm_base_url": llm_base_url,
         "llm_model": llm_model,
         "llm_api_key": llm_key,

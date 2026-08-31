@@ -157,6 +157,10 @@ fail before startup. Common keys are listed below.
 | `dedup.scan_limit` | `200` | Maximum pending `dedup_pairs` reviewed per maintenance pass |
 | `relation.discovery_mode` | `off` | `off` or proposal-only `audit` |
 
+LLM, Embedding, and Reranker integrations can be extended through the governed
+[Provider Plugin API](docs/provider-plugins.md). Image Providers use the same API as an experimental contract. Plugins
+must be explicitly allowlisted and run as trusted, unsandboxed code inside the host process.
+
 Real components and external-call paths must be supplied with their own key; there is no automatic fake fallback.
 `HL_MEM_*` environment variables no longer participate in application `Settings` configuration. `Settings` and
 `config.example.toml` both use `5` / `0.15` for `recall.default_limit` / `recall.relevance_reranker_floor`; the example

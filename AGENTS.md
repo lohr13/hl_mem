@@ -13,6 +13,7 @@ HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯
 - **LLM 提取**：API 密钥通过 .env 配置，provider/model 通过 TOML 配置，使用结构化 JSON 输出
 - **Embedding**：API 密钥通过 .env 配置，provider/model/维度通过 TOML 配置
 - **Reranker**：API 密钥通过 .env 配置，provider/model 通过 TOML 配置
+- **Provider 插件**：`hl_mem.providers` Entry Point + 显式 allowlist；LLM/Embedding/Reranker 稳定，Image Experimental；宿主统一治理 HTTP 与用量
 - **分类体系**：SLOT_REGISTRY（15 operational slot + 40 topic tags；Phase 18 已接入检索，soft boost 默认开启，独立 tag channel 默认关闭待评测）
 - **TTL**：retention 纯函数（scope × importance 三档）
 - **近重复治理**：摄入层确定性 near-copy 复用 + 维护层 `dedup_pairs` 轮转审查 + 召回层有界动态折叠；旧 DedupJudge 保持 audit-only
@@ -47,14 +48,14 @@ src/hl_mem/
 │   ├── extractors.py          # FakeExtractor / LLMExtractor
 │   ├── chunking.py            # 结构感知分块
 │   ├── embedder.py            # Embedding 向量化
-│   ├── event_filter.py        # 事件预过滤
-│   └── budget.py              # Token 预算控制
+│   └── event_filter.py        # 事件预过滤
 ├── llm/                    # LLM 客户端（Provider 解耦）
 │   ├── client.py              # LLMClient
 │   ├── providers.py           # 百炼/智谱/OpenAI-compatible
 │   └── types.py               # LLMRequest/LLMResponse
+├── plugins/                # 公共 Provider 契约、发现、Registry、宿主传输与用量代理
 ├── recall/                 # 召回层
-│   ├── staged_pipeline.py     # 三通道 RRF (FTS + Dense + Tag)
+│   ├── staged_pipeline.py     # FTS + Dense RRF、soft boost 与可选 Reranker
 │   ├── trace.py               # SearchTrace 可观测性
 │   ├── ranking.py             # 多因子排序
 │   ├── reranker.py            # Reranker 重排
@@ -89,7 +90,7 @@ src/hl_mem/
 │   └── service.py             # Episode/Trace/Policy
 ├── evaluation/             # Benchmark / LongMemEval
 ├── observability/          # 审计日志与 LLM spans
-├── security/               # retention 策略
+├── security/               # 图片输入边界与 retention 策略
 ├── adapters/hermes/        # Hermes 集成
 │   ├── provider.py            # HermesMemoryProvider
 │   └── plugin/                # 薄委托层

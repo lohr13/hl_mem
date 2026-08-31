@@ -56,6 +56,7 @@ services own use cases and transaction boundaries; repositories own persistence.
 ```text
 src/hl_mem/
 ├── adapters/hermes/          # Hermes provider, client, episode mapping, thin plugin delegate
+├── plugins/                  # Provider contracts, allowlisted discovery, frozen Registry, governed runtime
 ├── api/
 │   ├── server.py             # FastAPI assembly, middleware, exception mapping, 17 REST routes
 │   └── schemas.py            # Pydantic request and response contracts
@@ -109,7 +110,7 @@ src/hl_mem/
 │   ├── reranker.py           # Optional reranking (model configured via TOML)
 │   ├── staged_pipeline.py    # FTS + dense + optional tag channel and RRF
 │   └── trace.py              # SearchTrace diagnostics and metrics
-├── security/                 # Retention and content policy
+├── security/                 # Image input boundary, retention and content policy
 ├── storage/
 │   ├── backup.py             # Online SQLite backup
 │   ├── claims.py             # Claim repository

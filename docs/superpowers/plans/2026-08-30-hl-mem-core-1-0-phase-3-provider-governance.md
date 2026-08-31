@@ -633,7 +633,7 @@ git commit -m "feat: isolate experimental Image Providers"
 - Clean-wheel integration installs the built HL-Mem wheel and the fixture plugin into a fresh environment, enables it in v1 config, resolves one stable capability, and proves a manifest conflict prevents server construction before network traffic.
 - CI runs config/OpenAPI/MCP/Provider-API snapshots together and adds the clean-wheel plugin test. No network service is contacted.
 
-- [ ] **Step 1: Add failing API snapshot, doctor, runtime-coverage, and wheel tests**
+- [x] **Step 1: Add failing API snapshot, doctor, runtime-coverage, and wheel tests**
 
 ```python
 def test_every_actual_provider_request_has_one_final_usage_event(runtime_harness) -> None:
@@ -644,14 +644,14 @@ def test_every_actual_provider_request_has_one_final_usage_event(runtime_harness
 
 Also assert disabled plugins are not imported by doctor, conflicts fail app/MCP/Worker construction, experimental labels are visible, and health output is secret-free.
 
-- [ ] **Step 2: Run focused closure tests and observe missing diagnostics/snapshot/package proof**
+- [x] **Step 2: Run focused closure tests and observe missing diagnostics/snapshot/package proof**
 
 ```powershell
 uv run --frozen --extra sqlite-vec python -m pytest tests/unit/test_doctor.py tests/integration/test_provider_runtime_coverage.py tests/integration/test_provider_plugin_wheel.py -q --tb=short
 uv run --frozen python scripts/check_provider_plugin_api.py
 ```
 
-- [ ] **Step 3: Implement diagnostics and generate stable snapshots/docs**
+- [x] **Step 3: Implement diagnostics and generate stable snapshots/docs**
 
 ```powershell
 uv run --frozen python scripts/check_provider_plugin_api.py --write
@@ -662,7 +662,7 @@ uv run --frozen python scripts/generate_configuration_reference.py
 
 Document exact trust, allowlist, configuration, secret, version, conflict, budget, recovery, and Image experimental boundaries. Do not market plugins as sandboxed.
 
-- [ ] **Step 4: Run the complete Phase 3 gate**
+- [x] **Step 4: Run the complete Phase 3 gate**
 
 ```powershell
 uv run --frozen --extra sqlite-vec python -m pytest tests/unit/test_provider_plugin_contracts.py tests/unit/test_provider_manifest.py tests/unit/test_provider_discovery.py tests/unit/test_provider_registry.py tests/unit/test_usage_governor.py tests/unit/test_provider_transport.py tests/unit/test_governed_provider_call.py tests/unit/test_llm_provider_equivalence.py tests/unit/test_embedding_provider_equivalence.py tests/unit/test_reranker_provider_equivalence.py tests/unit/test_image_input_guard.py tests/unit/test_image_provider_preview.py tests/unit/test_doctor.py tests/integration/test_provider_runtime_coverage.py tests/integration/test_provider_plugin_wheel.py -q --tb=short
@@ -681,7 +681,7 @@ uv run --frozen --extra sqlite-vec python scripts/check_mcp_snapshot.py
 uv build
 ```
 
-- [ ] **Step 5: Review scope and commit Phase 3 closeout**
+- [x] **Step 5: Review scope and commit Phase 3 closeout**
 
 ```powershell
 git diff --check
@@ -696,13 +696,13 @@ Confirm the branch contains no plugin route/job/migration/storage hook, no main-
 
 ## Phase 3 Completion Record
 
-- [ ] Stable public Provider contracts cover LLM, Embedding, and Reranker; Image is visibly experimental.
-- [ ] Disabled distributions are never imported; enabled missing/duplicate/incompatible/conflicting plugins fail before traffic.
-- [ ] Built-in and external adapters use one Registry and business code receives only host proxies.
-- [ ] All four real network paths use host-owned timeout, retry, error normalization, redaction, metrics, audit, and atomic usage governance.
-- [ ] Every actual retry attempt is durably accounted; no Embedding logical-call double counting exists.
-- [ ] Expired unsent reservations release; sent/ambiguous reservations settle conservatively.
-- [ ] Plugin TOML is non-secret, namespace-confined, schema-validated, and cannot override host security.
-- [ ] Image redirects, DNS/IPs, local paths, MIME/magic, size, and materialization are host-validated before plugin code.
-- [ ] Provider API/config/OpenAPI/MCP snapshots, doctor, clean-wheel external plugin, focused tests, full strict suite, formatting, typing, imports, complexity, docs, and build all pass.
+- [x] Stable public Provider contracts cover LLM, Embedding, and Reranker; Image is visibly experimental.
+- [x] Disabled distributions are never imported; enabled missing/duplicate/incompatible/conflicting plugins fail before traffic.
+- [x] Built-in and external adapters use one Registry and business code receives only host proxies.
+- [x] All four real network paths use host-owned timeout, retry, error normalization, redaction, metrics, audit, and atomic usage governance.
+- [x] Every actual retry attempt is durably accounted; no Embedding logical-call double counting exists.
+- [x] Expired unsent reservations release; sent/ambiguous reservations settle conservatively.
+- [x] Plugin TOML is non-secret, namespace-confined, schema-validated, and cannot override host security.
+- [x] Image redirects, DNS/IPs, local paths, MIME/magic, size, and materialization are host-validated before plugin code.
+- [x] Provider API/config/OpenAPI/MCP snapshots, doctor, clean-wheel external plugin, focused tests, full strict suite, formatting, typing, imports, complexity, docs, and build all pass.
 - [ ] Only after this record is complete: author `2026-08-30-hl-mem-core-1-0-phase-4-automation.md` against merged Phase 3 code.

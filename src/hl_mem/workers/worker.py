@@ -184,6 +184,9 @@ class Worker:
         self.filter = event_filter or EventFilter()
         self.provider_runtime = provider_runtime
         self._owns_provider_runtime = False
+        if self.provider_runtime is None and self.settings.plugins_enabled:
+            self.provider_runtime = components.create_provider_runtime(self.settings)
+            self._owns_provider_runtime = True
         self.extractor = extractor or self._make_extractor()
         self._owns_image_describer = image_describer is _UNSET
         self.image_describer = image_describer if image_describer is not _UNSET else self._make_image_describer()

@@ -5,11 +5,13 @@ from __future__ import annotations
 import inspect
 import logging
 import re
+from dataclasses import replace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.settings import Settings
 
 
 def _route_endpoint(app: FastAPI, path: str):
@@ -28,6 +30,26 @@ def test_healthz_endpoint_is_async(tmp_path) -> None:
     app = create_app(tmp_path / "health-async.db")
 
     assert inspect.iscoroutinefunction(_route_endpoint(app, "/healthz"))
+
+
+def test_healthz_provider_inventory_is_bounded_and_secret_free(tmp_path) -> None:
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(tmp_path / "health-providers.db"),
+        embedder_mode="real",
+        embedding_api_key="never-expose-this-key",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    providers = response.json()["providers"]
+    assert providers
+    assert all(set(item) == {"plugin_id", "capability", "name", "stability", "health"} for item in providers)
+    serialized = response.text
+    assert "never-expose-this-key" not in serialized
+    assert settings.embedding_base_url not in serialized
 
 
 def test_request_lifecycle_logs_healthz_with_query_id(caplog, tmp_path) -> None:

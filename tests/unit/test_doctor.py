@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -23,12 +25,16 @@ from hl_mem.doctor import (
     _check_daemon_compatibility,
     _check_hermes,
     _check_plugin_compatibility,
+    _check_provider_plugins,
+    _check_usage_ledger,
     _check_wire_compatibility,
     count_code_migrations,
     probe_model_components,
     run_doctor,
 )
 from hl_mem.errors import ConfigurationError
+from hl_mem.observability.usage import UsageAmount, UsageGovernor, UsageIdentity, UsageLimits
+from hl_mem.plugins.contracts import ProviderCapability
 from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.backup import backup_database
 from hl_mem.storage.database import Database
@@ -116,7 +122,56 @@ def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
         env_path=env_path,
         environ={},
     )
-    assert len(results) == 15
+    assert len(results) == 18
+
+
+def test_provider_doctor_reports_resolution_and_trust_without_disabled_imports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = replace(Settings.for_test(), database_path=str(tmp_path / "memory.db"))
+    calls = 0
+    original = doctor_module.components.make_provider_registry
+
+    def registry(_settings):
+        nonlocal calls
+        calls += 1
+        return original(Settings.for_test(), entry_points=())
+
+    monkeypatch.setattr(doctor_module.components, "make_provider_registry", registry)
+    results = _check_provider_plugins(settings)
+
+    assert calls == 1
+    assert [(item.code, item.status) for item in results] == [
+        ("provider_plugins", CheckStatus.OK),
+        ("provider_trust", CheckStatus.OK),
+    ]
+    assert "dashscope" in results[0].detail
+
+
+def test_usage_ledger_doctor_is_read_only_and_previews_expired_recovery(tmp_path: Path) -> None:
+    database_path = tmp_path / "memory.db"
+    ledger_path = tmp_path / "memory.budget.db"
+    missing = _check_usage_ledger(replace(Settings.for_test(), database_path=str(database_path)))
+    assert (missing.status, ledger_path.exists()) == (CheckStatus.WARN, False)
+
+    def old_now() -> datetime:
+        return datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+    governor = UsageGovernor(ledger_path, UsageLimits(), lease_seconds=1, now=old_now)
+    identity = UsageIdentity(ProviderCapability.LLM, "test", "hl-mem.builtin", "dashscope", "model")
+    governor.reserve(identity, UsageAmount(requests=1))
+    sent = governor.reserve(identity, UsageAmount(requests=1))
+    governor.mark_attempt(sent.id)
+
+    result = _check_usage_ledger(replace(Settings.for_test(), database_path=str(database_path)))
+
+    assert result.status is CheckStatus.WARN
+    assert "expired_unsent=1" in result.detail
+    assert "expired_ambiguous=1" in result.detail
+    with sqlite3.connect(ledger_path) as connection:
+        assert connection.execute("SELECT count(*) FROM usage_events").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM usage_reservations WHERE state='active'").fetchone()[0] == 2
 
 
 def test_invalid_config_is_a_structured_failure(tmp_path: Path) -> None:

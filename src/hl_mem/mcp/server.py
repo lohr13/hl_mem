@@ -242,13 +242,17 @@ class McpMemoryServer:
         self.settings = settings
         self.provider_runtime = provider_runtime
         self._owns_provider_runtime = False
-        if self.provider_runtime is None and (
+        has_provider_line = bool(
             settings.llm_api_key
             or settings.query_expansion_api_key
             or (settings.embedder_mode == "real" and settings.embedding_api_key)
             or (settings.reranker_mode in {"on", "real"} and settings.reranker_api_key)
-        ):
-            self.provider_runtime = components.create_provider_runtime(settings)
+        )
+        if self.provider_runtime is None and (has_provider_line or settings.plugins_enabled):
+            self.provider_runtime = components.create_provider_runtime(
+                settings,
+                create_usage=has_provider_line,
+            )
             self._owns_provider_runtime = True
         self.embedder = embedder or components.make_embedder(settings, runtime=self.provider_runtime)
         self.reranker = (

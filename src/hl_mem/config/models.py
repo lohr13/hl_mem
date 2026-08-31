@@ -3,26 +3,20 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 from dataclasses import Field, dataclass, field, fields
 from enum import StrEnum
-from types import MappingProxyType
 from typing import Any, Final, Literal
 
 from hl_mem.config.lifecycle import DecayModel as DecayModel
 from hl_mem.config.lifecycle import ExpiredCleanupMode as ExpiredCleanupMode
 from hl_mem.config.lifecycle import FeedbackLifecycleMode as FeedbackLifecycleMode
 from hl_mem.config.lifecycle import LifecycleConfig as LifecycleConfig
+from hl_mem.config.plugin_settings import PluginsConfig as PluginsConfig
 from hl_mem.config.secrets import is_placeholder_secret
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.errors import ConfigurationError
 
 CONFIG_SCHEMA_VERSION: Final[Literal[1]] = 1
-_PLUGIN_ID_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?")
-_SECRET_PLUGIN_OPTION_PARTS = frozenset(
-    {"api_key", "authorization", "credential", "credentials", "password", "secret", "token"}
-)
-
 EmbedderMode = Literal["fake", "real"]
 EmbeddingApiMode = Literal["compatible", "native"]
 EmbeddingTextType = Literal["", "document", "query"] | None
@@ -79,21 +73,6 @@ def _validate_runtime_modes(settings: "Settings") -> None:
         raise ConfigurationError("extraction.lesson_signal_mode must be 'off', 'observe', or 'enforce'")
     if settings.conflict_auto_mode not in {"off", "l0_only"}:
         raise ConfigurationError("conflict.auto_mode must be 'off' or 'l0_only'")
-
-
-def _find_secret_plugin_option(value: Mapping[str, Any], prefix: str) -> str | None:
-    for key, child in value.items():
-        child_path = f"{prefix}.{key}"
-        normalized = key.casefold().replace("-", "_")
-        if normalized in _SECRET_PLUGIN_OPTION_PARTS or any(
-            part in _SECRET_PLUGIN_OPTION_PARTS for part in normalized.split("_")
-        ):
-            return child_path
-        if isinstance(child, Mapping):
-            nested = _find_secret_plugin_option(child, child_path)
-            if nested is not None:
-                return nested
-    return None
 
 
 @dataclass(frozen=True)
@@ -633,18 +612,6 @@ class ObservabilityConfig:
 
 
 @dataclass(frozen=True)
-class PluginsConfig:
-    """Configuration owned by the plugins boundary."""
-
-    plugins_enabled: tuple[str, ...] = field(default=(), metadata={"toml": "plugins.enabled"})
-    plugin_options: Mapping[str, Mapping[str, Any]] = field(
-        default_factory=lambda: MappingProxyType({}),
-        repr=False,
-        metadata={"plugin_namespace": "plugins"},
-    )
-
-
-@dataclass(frozen=True)
 class Settings(
     DatabaseConfig,
     ExtractionConfig,
@@ -697,26 +664,15 @@ class Settings(
         """校验配置组合以及已启用组件的密钥。"""
         if self.schema_version != CONFIG_SCHEMA_VERSION:
             raise ConfigurationError(f"unsupported schema_version {self.schema_version}")
-        if len(set(self.plugins_enabled)) != len(self.plugins_enabled):
-            raise ConfigurationError("plugins.enabled must not contain duplicate plugin IDs")
-        plugin_ids = (*self.plugins_enabled, *self.plugin_options)
-        if any(_PLUGIN_ID_PATTERN.fullmatch(plugin_id) is None for plugin_id in plugin_ids):
-            raise ConfigurationError("plugins must use lowercase IDs with 1-64 safe characters")
-        for plugin_id, options in self.plugin_options.items():
-            secret_path = _find_secret_plugin_option(options, f"plugins.{plugin_id}")
-            if secret_path is not None:
-                raise ConfigurationError(f"{secret_path}: plugin options must not contain secrets")
-        provider_names = {
-            "llm.provider": self.llm_provider,
-            "embedding.provider": self.embedding_provider,
-            "reranker.provider": self.reranker_provider,
-            "image_describer.provider": self.image_describer_provider,
-        }
+        providers = [
+            ("llm.provider", self.llm_provider),
+            ("embedding.provider", self.embedding_provider),
+            ("reranker.provider", self.reranker_provider),
+            ("image_describer.provider", self.image_describer_provider),
+        ]
         if self.query_expansion_provider is not None:
-            provider_names["recall.query_expansion_provider"] = self.query_expansion_provider
-        for provider_path, provider_name in provider_names.items():
-            if _PLUGIN_ID_PATTERN.fullmatch(provider_name) is None:
-                raise ConfigurationError(f"{provider_path} contains an invalid provider name")
+            providers.append(("recall.query_expansion_provider", self.query_expansion_provider))
+        self.validate_plugins(providers)
         if self.max_request_body < 0:
             raise ConfigurationError("server.max_request_body must be non-negative")
         if type(self.usage_daily_request_limit) is not int:

@@ -48,6 +48,7 @@ def _freeze(value: Any) -> Any:
 @dataclass(frozen=True)
 class _Registration:
     plugin_id: str
+    stability: str
     factory: ProviderFactory
     plugin_options: Mapping[str, Any]
     builtin: bool
@@ -80,14 +81,37 @@ class ProviderRegistry:
                 f"provider capability {key.capability.value}:{key.name} is declared by both "
                 f"{existing_id!r} and {plugin.manifest.id!r}"
             )
+        specifications = {spec.key: spec for spec in plugin.manifest.capabilities}
         for key, factory in plugin.factories.items():
-            self._registrations[key] = _Registration(plugin.manifest.id, factory, options, builtin)
+            self._registrations[key] = _Registration(
+                plugin.manifest.id,
+                specifications[key].stability.value,
+                factory,
+                options,
+                builtin,
+            )
 
     def freeze(self) -> None:
         self._frozen = True
 
     def keys(self) -> tuple[ProviderKey, ...]:
         return tuple(sorted(self._registrations, key=lambda key: (key.capability.value, key.name)))
+
+    def health_snapshot(self) -> tuple[dict[str, str], ...]:
+        """Return bounded public inventory without config, endpoints, models, or secrets."""
+        if not self._frozen:
+            raise PluginConflictError("provider registry must be frozen before reporting health")
+        return tuple(
+            {
+                "plugin_id": registration.plugin_id,
+                "capability": key.capability.value,
+                "name": key.name,
+                "stability": registration.stability,
+                "health": "registered",
+            }
+            for key in self.keys()
+            for registration in (self._registrations[key],)
+        )
 
     def plugin_id_for(self, key: ProviderKey) -> str:
         """Return the immutable owner identity used by host governance."""

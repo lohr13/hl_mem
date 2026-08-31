@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hl-mem-test-provider"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = ["hl-mem>=0.36.1,<2"]
+
+[project.entry-points."hl_mem.providers"]
+"fixture.provider" = "hl_mem_test_provider:plugin"
+"fixture.conflict" = "hl_mem_test_provider:conflict_plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hl_mem_test_provider"]

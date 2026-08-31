@@ -184,8 +184,21 @@ jobs:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
       - run: uv sync --frozen
-      - name: Check config, OpenAPI, and MCP contracts
+      - name: Check config, Provider, OpenAPI, and MCP contracts
         run: |
           uv run --frozen python scripts/check_config_schema_snapshot.py
+          uv run --frozen python scripts/check_provider_plugin_api.py
           uv run --frozen python scripts/check_openapi_snapshot.py
           uv run --frozen python scripts/check_mcp_snapshot.py
+
+  provider-plugin-wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
+      - run: uv sync --frozen
+      - name: Build and install an external Provider wheel
+        run: uv run --frozen python -m pytest tests/integration/test_provider_plugin_wheel.py -q --tb=short

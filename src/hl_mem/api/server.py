@@ -150,7 +150,11 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         or (settings.embedder_mode == "real" and settings.embedding_api_key)
         or (settings.reranker_mode in {"on", "real"} and settings.reranker_api_key)
     )
-    provider_runtime = components.create_provider_runtime(settings) if has_provider_line else None
+    provider_runtime = (
+        components.create_provider_runtime(settings, create_usage=has_provider_line)
+        if has_provider_line or settings.plugins_enabled
+        else None
+    )
     embedder = components.make_embedder(settings, runtime=provider_runtime)
     reranker = components.make_reranker(settings, runtime=provider_runtime)
     audit = audit or NullAuditLogger()
@@ -276,6 +280,8 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
             "reranker": ("off" if reranker is None else "fake" if isinstance(reranker, FakeReranker) else "real"),
             "settings": settings.snapshot(),
             "components": components.component_health(),
+            "providers": ([] if provider_runtime is None else list(provider_runtime.registry.health_snapshot())),
+            "provider_usage": None if provider_runtime is None else provider_runtime.usage_snapshot(),
             "vector_search": SearchTracer.vector_search_metrics(),
             "recall_side_effects": recall_side_effect_health(connection, recall_side_effects),
             "monitoring": monitoring_snapshot(

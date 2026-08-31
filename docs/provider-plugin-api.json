@@ -1,0 +1,648 @@
+{
+  "api_version": 1,
+  "entry_point_group": "hl_mem.providers",
+  "enums": {
+    "ProviderCapability": [
+      "llm",
+      "embedding",
+      "reranker",
+      "image_describer"
+    ],
+    "ProviderStability": [
+      "stable",
+      "experimental"
+    ],
+    "StructuredOutputMode": [
+      "json_schema",
+      "json_object"
+    ]
+  },
+  "experimental": {
+    "capabilities": [
+      "image_describer"
+    ],
+    "dataclasses": {
+      "ImageProviderResult": [
+        {
+          "default": "<required>",
+          "name": "caption",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "ocr_text",
+          "type": "str | None"
+        },
+        {
+          "default": "<required>",
+          "name": "model",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "confidence",
+          "type": "float | None"
+        },
+        {
+          "default": null,
+          "name": "input_tokens",
+          "type": "int | None"
+        },
+        {
+          "default": null,
+          "name": "output_tokens",
+          "type": "int | None"
+        }
+      ],
+      "ValidatedImageInput": [
+        {
+          "default": "<required>",
+          "name": "data",
+          "type": "bytes"
+        },
+        {
+          "default": "<required>",
+          "name": "media_type",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "sha256",
+          "type": "str"
+        }
+      ]
+    },
+    "protocols": {
+      "ImageProviderAdapter": {
+        "build_request": {
+          "parameters": [
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "self",
+              "type": "inspect._empty"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "endpoint",
+              "type": "hl_mem.plugins.contracts.ProviderEndpoint"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "image",
+              "type": "hl_mem.plugins.contracts.ValidatedImageInput"
+            }
+          ],
+          "return": "hl_mem.plugins.contracts.ProviderRequest"
+        },
+        "parse_response": {
+          "parameters": [
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "self",
+              "type": "inspect._empty"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "response",
+              "type": "hl_mem.plugins.contracts.ProviderResponse"
+            }
+          ],
+          "return": "hl_mem.plugins.contracts.ImageProviderResult"
+        }
+      }
+    },
+    "stability": "experimental"
+  },
+  "public_exports": [
+    "EmbeddingInvocation",
+    "EmbeddingProviderAdapter",
+    "EmbeddingResult",
+    "ImageProviderAdapter",
+    "ImageProviderResult",
+    "LLMCapabilities",
+    "LLMInvocation",
+    "LLMProviderAdapter",
+    "LLMRequest",
+    "LLMResponse",
+    "PROVIDER_API_VERSION",
+    "PROVIDER_ENTRY_POINT_GROUP",
+    "ProviderCallError",
+    "ProviderCapability",
+    "ProviderCapabilitySpec",
+    "ProviderEndpoint",
+    "ProviderFactoryContext",
+    "ProviderKey",
+    "ProviderManifest",
+    "ProviderPlugin",
+    "ProviderRequest",
+    "ProviderResponse",
+    "ProviderStability",
+    "RerankInvocation",
+    "RerankResult",
+    "RerankerProviderAdapter",
+    "StructuredOutputMode",
+    "ValidatedImageInput"
+  ],
+  "stable": {
+    "capabilities": [
+      "llm",
+      "embedding",
+      "reranker"
+    ],
+    "dataclasses": {
+      "EmbeddingInvocation": [
+        {
+          "default": "<required>",
+          "name": "texts",
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "<required>",
+          "name": "dimensions",
+          "type": "int | None"
+        },
+        {
+          "default": "<required>",
+          "name": "api_mode",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "text_type",
+          "type": "str | None"
+        }
+      ],
+      "EmbeddingResult": [
+        {
+          "default": "<required>",
+          "name": "vectors",
+          "type": "tuple[tuple[float, ...], ...]"
+        },
+        {
+          "default": null,
+          "name": "input_tokens",
+          "type": "int | None"
+        }
+      ],
+      "LLMCapabilities": [
+        {
+          "default": "<required>",
+          "name": "json_object",
+          "type": "bool"
+        },
+        {
+          "default": "<required>",
+          "name": "json_schema_strict",
+          "type": "bool"
+        }
+      ],
+      "LLMInvocation": [
+        {
+          "default": "<required>",
+          "name": "request",
+          "type": "LLMRequest"
+        },
+        {
+          "default": "<required>",
+          "name": "mode",
+          "type": "StructuredOutputMode"
+        },
+        {
+          "default": null,
+          "name": "max_tokens",
+          "type": "int | None"
+        },
+        {
+          "default": false,
+          "name": "enable_thinking",
+          "type": "bool"
+        },
+        {
+          "default": "auto",
+          "name": "thinking_control",
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "reasoning_effort",
+          "type": "str | None"
+        }
+      ],
+      "LLMRequest": [
+        {
+          "default": "<required>",
+          "name": "messages",
+          "type": "list[LLMMessage]"
+        },
+        {
+          "default": null,
+          "name": "structured_output",
+          "type": "StructuredOutputSpec | None"
+        }
+      ],
+      "LLMResponse": [
+        {
+          "default": "<required>",
+          "name": "content",
+          "type": "str | dict[str, Any]"
+        },
+        {
+          "default": "<required>",
+          "name": "finish_reason",
+          "type": "str | None"
+        },
+        {
+          "default": "<required>",
+          "name": "usage_total_tokens",
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "raw_request_id",
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "input_tokens",
+          "type": "int | None"
+        },
+        {
+          "default": null,
+          "name": "output_tokens",
+          "type": "int | None"
+        },
+        {
+          "default": null,
+          "name": "cached_tokens",
+          "type": "int | None"
+        }
+      ],
+      "ProviderCapabilitySpec": [
+        {
+          "default": "<required>",
+          "name": "name",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "capability",
+          "type": "ProviderCapability"
+        },
+        {
+          "default": "<required>",
+          "name": "stability",
+          "type": "ProviderStability"
+        }
+      ],
+      "ProviderEndpoint": [
+        {
+          "default": "<required>",
+          "name": "base_url",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "api_key",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "model",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "timeout_seconds",
+          "type": "float"
+        },
+        {
+          "default": "<required>",
+          "name": "max_attempts",
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "connect_timeout_seconds",
+          "type": "float | None"
+        }
+      ],
+      "ProviderFactoryContext": [
+        {
+          "default": "<required>",
+          "name": "key",
+          "type": "ProviderKey"
+        },
+        {
+          "default": "<required>",
+          "name": "core_options",
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": "<required>",
+          "name": "plugin_options",
+          "type": "Mapping[str, Any]"
+        }
+      ],
+      "ProviderKey": [
+        {
+          "default": "<required>",
+          "name": "capability",
+          "type": "ProviderCapability"
+        },
+        {
+          "default": "<required>",
+          "name": "name",
+          "type": "str"
+        }
+      ],
+      "ProviderManifest": [
+        {
+          "default": "<required>",
+          "name": "id",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "version",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "api_version",
+          "type": "int"
+        },
+        {
+          "default": "<required>",
+          "name": "requires_hl_mem",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "capabilities",
+          "type": "tuple[ProviderCapabilitySpec, ...]"
+        },
+        {
+          "default": "<required>",
+          "name": "config_schema",
+          "type": "Mapping[str, Any]"
+        }
+      ],
+      "ProviderPlugin": [
+        {
+          "default": "<required>",
+          "name": "manifest",
+          "type": "ProviderManifest"
+        },
+        {
+          "default": "<required>",
+          "name": "factories",
+          "type": "Mapping[ProviderKey, ProviderFactory]"
+        }
+      ],
+      "ProviderRequest": [
+        {
+          "default": "<required>",
+          "name": "method",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "url",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "headers",
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "<required>",
+          "name": "json_body",
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": "<required>",
+          "name": "timeout_seconds",
+          "type": "float"
+        },
+        {
+          "default": null,
+          "name": "connect_timeout_seconds",
+          "type": "float | None"
+        }
+      ],
+      "ProviderResponse": [
+        {
+          "default": "<required>",
+          "name": "status_code",
+          "type": "int"
+        },
+        {
+          "default": "<required>",
+          "name": "headers",
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "<required>",
+          "name": "json_body",
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": "<required>",
+          "name": "attempts",
+          "type": "int"
+        },
+        {
+          "default": "<required>",
+          "name": "request_id",
+          "type": "str | None"
+        }
+      ],
+      "RerankInvocation": [
+        {
+          "default": "<required>",
+          "name": "query",
+          "type": "str"
+        },
+        {
+          "default": "<required>",
+          "name": "documents",
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "<required>",
+          "name": "top_n",
+          "type": "int"
+        }
+      ],
+      "RerankResult": [
+        {
+          "default": "<required>",
+          "name": "results",
+          "type": "tuple[tuple[int, float], ...]"
+        },
+        {
+          "default": null,
+          "name": "input_tokens",
+          "type": "int | None"
+        },
+        {
+          "default": null,
+          "name": "output_tokens",
+          "type": "int | None"
+        }
+      ]
+    },
+    "protocols": {
+      "EmbeddingProviderAdapter": {
+        "build_request": {
+          "parameters": [
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "self",
+              "type": "inspect._empty"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "endpoint",
+              "type": "hl_mem.plugins.contracts.ProviderEndpoint"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "invocation",
+              "type": "hl_mem.plugins.contracts.EmbeddingInvocation"
+            }
+          ],
+          "return": "hl_mem.plugins.contracts.ProviderRequest"
+        },
+        "parse_response": {
+          "parameters": [
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "self",
+              "type": "inspect._empty"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "response",
+              "type": "hl_mem.plugins.contracts.ProviderResponse"
+            }
+          ],
+          "return": "hl_mem.plugins.contracts.EmbeddingResult"
+        }
+      },
+      "LLMProviderAdapter": {
+        "build_request": {
+          "parameters": [
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "self",
+              "type": "inspect._empty"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "endpoint",
+              "type": "hl_mem.plugins.contracts.ProviderEndpoint"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "invocation",
+              "type": "hl_mem.plugins.contracts.LLMInvocation"
+            }
+          ],
+          "return": "hl_mem.plugins.contracts.ProviderRequest"
+        },
+        "is_structured_mode_unsupported": {
+          "parameters": [
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "self",
+              "type": "inspect._empty"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "error",
+              "type": "hl_mem.errors.ProviderCallError"
+            }
+          ],
+          "return": "builtins.bool"
+        },
+        "parse_response": {
+          "parameters": [
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "self",
+              "type": "inspect._empty"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "response",
+              "type": "hl_mem.plugins.contracts.ProviderResponse"
+            }
+          ],
+          "return": "hl_mem.llm.types.LLMResponse"
+        }
+      },
+      "RerankerProviderAdapter": {
+        "build_request": {
+          "parameters": [
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "self",
+              "type": "inspect._empty"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "endpoint",
+              "type": "hl_mem.plugins.contracts.ProviderEndpoint"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "invocation",
+              "type": "hl_mem.plugins.contracts.RerankInvocation"
+            }
+          ],
+          "return": "hl_mem.plugins.contracts.ProviderRequest"
+        },
+        "parse_response": {
+          "parameters": [
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "self",
+              "type": "inspect._empty"
+            },
+            {
+              "default": "<required>",
+              "kind": "POSITIONAL_OR_KEYWORD",
+              "name": "response",
+              "type": "hl_mem.plugins.contracts.ProviderResponse"
+            }
+          ],
+          "return": "hl_mem.plugins.contracts.RerankResult"
+        }
+      }
+    },
+    "stability": "stable"
+  }
+}

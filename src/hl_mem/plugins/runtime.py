@@ -58,6 +58,9 @@ class ProviderRuntime:
             self.transport,
         )
 
+    def usage_snapshot(self) -> dict[str, object] | None:
+        return None if self._governor is None else self._governor.snapshot()
+
     def close(self) -> None:
         if self._owns_client and self._client is not None:
             self._client.close()

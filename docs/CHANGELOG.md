@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Core 1.0 Phase 3：受治理的 Provider 扩展与统一调用面
+
+- 新增版本化 `hl_mem.providers` Entry Point、显式 allowlist、Manifest/配置 Schema/版本协商和冲突即失败的冻结
+  Registry；内置与第三方 LLM、Embedding、Reranker 走同一稳定契约，Image 契约明确标为 Experimental。
+- 四条真实模型调用统一由宿主执行 HTTP、重试、错误归一化、审计、指标与原子用量预留/结算；Embedding 按实际批次、
+  Reranker 按文档数、Image 按图片数记账，Fake/关闭路径不产生用量事件。
+- 图片输入在插件执行前完成 base64、文件 allow-root、HTTPS 跳转、公网 DNS、流式大小、MIME/扩展名/魔数与哈希
+  校验；插件仅接收字节、MIME 和哈希。
+- `doctor` 新增插件解析、进程内信任和只读用量账本检查；`/healthz` 新增脱敏 Provider 清单与聚合用量。
+- 新增 Provider API 快照、独立外部插件 wheel 安装门禁和四调用路径完整结算门禁。Provider 插件不提供路由、任务、
+  migration、存储或安全策略扩展点。
+
 ### Core 1.0 Phase 2：配置与启动边界
 
 - 配置升级为显式 `schema_version = 1`；生产启动要求完整的模型服务与独立密钥，Fake 提取、Embedding 和 Reranker

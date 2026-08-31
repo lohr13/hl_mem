@@ -16,7 +16,7 @@ from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.image_describer import GovernedImageDescriber
 from hl_mem.ingest.llm_extractor import ExtractionModes, LLMExtractor
 from hl_mem.ingest.verifier import EntailmentVerifier
-from hl_mem.llm.client import LLMClient
+from hl_mem.llm.client import LLMClient, LLMClientOptions
 from hl_mem.llm.types import StructuredOutputMode
 from hl_mem.observability.llm_spans import LLMSpanRecorder
 from hl_mem.plugins.contracts import ProviderCapability, ProviderEndpoint
@@ -161,10 +161,12 @@ def make_llm_client(
             operation,
             endpoint.model,
         ),
-        max_tokens=settings.llm_max_tokens,
-        enable_thinking=settings.enable_llm_thinking,
-        thinking_control=settings.llm_thinking_control,
-        reasoning_effort=settings.llm_reasoning_effort,
+        options=LLMClientOptions(
+            max_tokens=settings.llm_max_tokens,
+            enable_thinking=settings.enable_llm_thinking,
+            thinking_control=settings.llm_thinking_control,
+            reasoning_effort=settings.llm_reasoning_effort,
+        ),
         span_recorder=span_recorder if span_recorder is not None else LLMSpanRecorder(connection),
         operation=operation,
         owned_runtime=resolved_runtime if runtime is None else None,
