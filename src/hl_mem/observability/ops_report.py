@@ -27,6 +27,7 @@ _DURATION = re.compile(r"([1-9][0-9]*)([hd])$")
 _SUCCESS = frozenset({"success", "ok", "settled", "imported"})
 _AMOUNTS = ("requests", "input_tokens", "output_tokens", "embedding_items", "rerank_documents", "images")
 OPS_REPORT_SCHEMA_VERSION: Final[int] = 1
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,12 @@ def _utc(value: datetime) -> datetime:
 def _iso(value: datetime | str) -> str:
     parsed = datetime.fromisoformat(value) if isinstance(value, str) else value
     return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _utc_microseconds(value: str) -> int:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    delta = parsed - _EPOCH
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
 
 
 def parse_report_window(value: str, *, now: datetime) -> ReportWindow:
@@ -119,6 +126,7 @@ class UsageLedgerReader:
             connection = sqlite3.connect(f"file:{quoted_path}?mode=ro", uri=True)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA query_only=ON")
+            connection.create_function("hl_mem_utc_microseconds", 1, _utc_microseconds, deterministic=True)
             self._validate_schema(connection)
             return connection
         except OpsReportError:
@@ -191,25 +199,26 @@ class UsageLedgerReader:
         usage_day: date | None = None,
     ) -> dict[str, object]:
         clauses = ["state='active'"]
-        parameters: dict[str, str] = {"cutoff": _iso(at)}
+        parameters: dict[str, str | int] = {"cutoff_microseconds": _utc_microseconds(_iso(at))}
         if created_until is not None:
             clauses.append("created_at<=:created_until")
             parameters["created_until"] = _iso(created_until)
         if usage_day is not None:
             clauses.append("usage_date=:usage_day")
             parameters["usage_day"] = usage_day.isoformat()
+        lease_microseconds = "hl_mem_utc_microseconds(lease_expires_at)"
         row = connection.execute(
             "SELECT "
-            "COUNT(CASE WHEN julianday(lease_expires_at)<=julianday(:cutoff) THEN 1 END) expired_count, "
-            "COUNT(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN 1 END) active_count, "
-            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_requests ELSE 0 END),0) requests, "
-            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_input_tokens ELSE 0 END),0) input_tokens, "
-            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_output_tokens ELSE 0 END),0) output_tokens, "
-            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_embedding_items ELSE 0 END),0) embedding_items, "
-            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_rerank_documents ELSE 0 END),0) rerank_documents, "
-            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_images ELSE 0 END),0) images, "
-            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) THEN reserved_cost_microunits ELSE 0 END),0) cost_microunits, "
-            "COALESCE(SUM(CASE WHEN julianday(lease_expires_at)>julianday(:cutoff) AND reserved_cost_microunits IS NULL THEN 1 ELSE 0 END),0) unknown_costs "
+            f"COUNT(CASE WHEN {lease_microseconds}<=:cutoff_microseconds THEN 1 END) expired_count, "
+            f"COUNT(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN 1 END) active_count, "
+            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_requests ELSE 0 END),0) requests, "
+            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_input_tokens ELSE 0 END),0) input_tokens, "
+            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_output_tokens ELSE 0 END),0) output_tokens, "
+            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_embedding_items ELSE 0 END),0) embedding_items, "
+            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_rerank_documents ELSE 0 END),0) rerank_documents, "
+            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_images ELSE 0 END),0) images, "
+            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_cost_microunits ELSE 0 END),0) cost_microunits, "
+            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds AND reserved_cost_microunits IS NULL THEN 1 ELSE 0 END),0) unknown_costs "
             f"FROM usage_reservations WHERE {' AND '.join(clauses)}",
             parameters,
         ).fetchone()

@@ -394,3 +394,30 @@ def test_health_summary_normalizes_offset_reservation_leases_before_aggregation(
     summary = UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(), now=NOW)
 
     assert summary["stale_reservations"] == 1
+
+
+def test_health_summary_keeps_microsecond_lease_ordering_across_offsets(tmp_path: Path) -> None:
+    path = tmp_path / "usage.budget.db"
+    now = datetime(2026, 8, 30, 13, 0, 0, 500, tzinfo=timezone.utc)
+    governor = _governor(path, Clock(now), lease_seconds=300)
+    late = governor.reserve(IDENTITY, UsageAmount(requests=2))
+    equal = governor.reserve(IDENTITY, UsageAmount(requests=3))
+    early = governor.reserve(IDENTITY, UsageAmount(requests=5))
+    with sqlite3.connect(path) as connection:
+        connection.executemany(
+            "UPDATE usage_reservations SET lease_expires_at=? WHERE id=?",
+            (
+                ("2026-08-30T15:00:00.000700+02:00", late.id),
+                ("2026-08-30T13:00:00.000500+00:00", equal.id),
+                ("2026-08-30T15:00:00.000499+02:00", early.id),
+            ),
+        )
+
+    summary = UsageLedgerReader(path).health_summary(
+        day=now.date(),
+        limits=UsageLimits(daily_requests=10),
+        now=now,
+    )
+
+    assert summary["stale_reservations"] == 2
+    assert summary["utilization"]["requests"] == Decimal("0.2")
