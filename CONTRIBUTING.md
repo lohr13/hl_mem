@@ -72,6 +72,9 @@ uv lock --check
 所有第三方 GitHub Actions 必须固定到完整提交 SHA，并在行尾保留对应版本注释。依赖漏洞或疑似密钥泄漏
 不得通过忽略失败来绕过；需要例外时必须记录可审计的风险判断和失效日期。
 
+RC 观察从不可变 tag 的发布时间开始。任何生产代码、配置、schema、migration 或稳定契约修复都必须发布
+`rc2` 或更高候选并从第 1 天重新观察；只有不改变 tagged artifact 和可执行行为的文档修正可以保留原候选。
+
 ## 代码与数据规则
 
 - Python 使用完整类型标注；Black 行宽 120，isort 使用 Black profile。

@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a focused capability or product improvement
+title: "[Feature]: "
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user problem independently of a preferred implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: contract-impact
+    attributes:
+      label: Stable-contract impact
+      description: Does this require changing stable REST, MCP, CLI, config, backup, or Provider Plugin API behavior?
+      options:
+        - No; optional behavior or internal implementation only
+        - Yes; backward-compatible addition
+        - Yes; incompatible change
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: value
+    attributes:
+      label: Expected value and cost
+      description: Explain measurable benefit, expected users, dependencies, runtime cost, and maintenance cost.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: List existing features, plugins, or simpler approaches already considered.

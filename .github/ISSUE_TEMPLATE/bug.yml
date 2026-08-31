@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible HL-Mem defect
+title: "[Bug]: "
+labels: ["type:bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: HL-Mem version
+      description: Paste the exact output of `hl-mem --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest deterministic steps, inputs, and expected versus actual behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: data-impact
+    attributes:
+      label: Data or migration impact
+      options:
+        - No known data impact
+        - Read or recall result is wrong
+        - Write or lifecycle state is wrong
+        - Migration, backup, or restore is affected
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted diagnostics
+      description: Include relevant logs or `hl-mem doctor --json` output after removing memory content and credentials.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed API keys, memory content, database files, and other private data.
+          required: true

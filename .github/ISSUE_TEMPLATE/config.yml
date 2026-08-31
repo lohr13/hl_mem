@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: https://github.com/lohr13/hl_mem/security/advisories/new
+    about: Follow SECURITY.md and report vulnerabilities privately.

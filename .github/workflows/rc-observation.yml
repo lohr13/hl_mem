@@ -1,0 +1,91 @@
+name: RC observation
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    name: Observe latest Core 1.0 RC
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Resolve immutable latest RC
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq \
+            '[.[] | select(.draft == false and .prerelease == true and (.tag_name | test("^v1\\.0\\.0rc[1-9][0-9]*$")))] | sort_by(.published_at) | last | .tag_name // empty')
+          test -n "$TAG"
+          git checkout --detach "refs/tags/$TAG"
+          COMMIT=$(git rev-parse HEAD)
+          test "$(git rev-list -n 1 "$TAG")" = "$COMMIT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
+      - run: uv sync --frozen --extra sqlite-vec
+      - name: Quality smoke
+        env:
+          HL_MEM_ENV: test
+        run: uv run --frozen python scripts/run_quality_smoke.py
+      - name: Public recall
+        env:
+          HL_MEM_ENV: test
+        run: uv run --frozen python -m tests.eval.ci_gate
+      - name: Migration release gate
+        env:
+          HL_MEM_ENV: test
+        run: >-
+          uv run --frozen python -m pytest tests/release/test_migration_release_gate.py
+          tests/test_migration_upgrade.py -q --tb=short
+      - name: Security policy checks
+        run: |
+          uv run --frozen python scripts/check_actions_pinned.py
+          uv lock --check
+      - name: Write dated observation evidence
+        id: evidence
+        env:
+          RC_TAG: ${{ steps.release.outputs.tag }}
+          RC_COMMIT: ${{ steps.release.outputs.commit }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          UTC_DATE=$(date -u +%F)
+          export UTC_DATE
+          mkdir -p observation
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "tag": os.environ["RC_TAG"],
+              "commit": os.environ["RC_COMMIT"],
+              "utc_date": os.environ["UTC_DATE"],
+              "run_url": os.environ["RUN_URL"],
+              "quality_smoke": "passed",
+              "public_recall": "passed",
+              "migration": "passed",
+              "security": "passed",
+          }
+          Path("observation/rc-observation.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          echo "name=rc-observation-${RC_TAG}-${UTC_DATE}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.evidence.outputs.name }}
+          path: observation/rc-observation.json
+          if-no-files-found: error
+          retention-days: 90

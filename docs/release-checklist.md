@@ -34,6 +34,9 @@ do not reuse artifacts from another run.
 
 ## Seven-day observation
 
+- [ ] The observation uses the immutable RC tag; no workflow checks out a moving branch as the candidate.
+- [ ] Any production code, config, schema, migration, or stable-contract fix created a new RC and restarted day 1.
+- [ ] Documentation-only corrections kept the same RC only when tagged artifacts and executable behavior were unchanged.
 - [ ] UTC day 1 evidence: `________________`.
 - [ ] UTC day 2 evidence: `________________`.
 - [ ] UTC day 3 evidence: `________________`.
