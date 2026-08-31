@@ -1,5 +1,6 @@
 import json
 import logging
+import sqlite3
 import threading
 import time
 from dataclasses import replace
@@ -18,6 +19,7 @@ from hl_mem.adapters.hermes.provider import (
     _validation_response_body,
 )
 from hl_mem.application.context_packet import retrieval_bundle_to_dict
+from hl_mem.observability.ops_report import UsageLedgerReader
 from hl_mem.recall.injection import InjectionContext
 from hl_mem.settings import Settings
 
@@ -39,6 +41,35 @@ def test_provider_runtime_health_snapshot_is_daily_and_compact(tmp_path: Path) -
         }
     finally:
         runtime.close()
+
+
+def test_provider_runtime_health_snapshot_uses_two_daily_aggregate_queries(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from hl_mem.plugins.runtime import create_provider_runtime
+
+    runtime = create_provider_runtime(
+        replace(Settings.for_test(), database_path=str(tmp_path / "memory.db")),
+        create_usage=True,
+    )
+    statements: list[str] = []
+    connect = UsageLedgerReader._connect
+
+    def traced_connect(reader: UsageLedgerReader) -> sqlite3.Connection:
+        connection = connect(reader)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(UsageLedgerReader, "_connect", traced_connect)
+    try:
+        runtime.usage_health_snapshot()
+    finally:
+        runtime.close()
+
+    assert len(statements) == 2
+    assert "FROM usage_events WHERE usage_date=" in statements[0]
+    assert "FROM usage_reservations WHERE state='active'" in statements[1]
 
 
 class Response:

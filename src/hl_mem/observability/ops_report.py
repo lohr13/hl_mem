@@ -389,6 +389,8 @@ def _worker_snapshot(
             timestamp = _report_timestamp(worker_runtime.get(key))
             if timestamp is not None:
                 process_timestamps.append(timestamp)
+    heartbeat_at: str | None
+    source: str | None
     if process_timestamps:
         heartbeat_at, source = max(process_timestamps), "process"
     else:
@@ -459,7 +461,10 @@ def build_ops_report(
         warnings.add("unknown_usage")
     else:
         reservations = cast(dict[str, object], usage["reservations"])
-        if int(reservations["expired_count"]) > 0:
+        expired_count = reservations["expired_count"]
+        if not isinstance(expired_count, int):
+            raise OpsReportError("usage ledger has an unsupported schema")
+        if expired_count > 0:
             warnings.add("expired_reservation")
         budget = cast(dict[str, dict[str, object]], usage["budget"])
         if any(

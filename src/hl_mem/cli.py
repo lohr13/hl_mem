@@ -44,7 +44,7 @@ from hl_mem.observability.usage_types import default_usage_ledger_path
 from hl_mem.settings import Settings
 from hl_mem.storage.backup import backup_database, validate_backup
 from hl_mem.storage.claims import ClaimRepository
-from hl_mem.storage.database import Database
+from hl_mem.storage.database import Database, known_migration_versions
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.backfill_index_text import backfill_index_text
@@ -145,6 +145,19 @@ def _print_ops_report(report: dict[str, object], *, as_json: bool) -> None:
         print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
 
+def _validate_ops_report_database(connection: sqlite3.Connection) -> None:
+    tables = {
+        str(row["name"])
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    required_tables = {"schema_migrations", "jobs", "conflict_cases"}
+    if not required_tables.issubset(tables):
+        raise OpsReportError("main database has an unsupported schema")
+    applied = {str(row["version"]) for row in connection.execute("SELECT version FROM schema_migrations")}
+    if not applied.issubset(known_migration_versions()):
+        raise OpsReportError("main database schema is newer than supported")
+
+
 def _run_ops_report(settings: Settings, *, since: str, as_json: bool, parser: argparse.ArgumentParser) -> None:
     try:
         window = parse_report_window(since, now=datetime.now(timezone.utc))
@@ -154,6 +167,7 @@ def _run_ops_report(settings: Settings, *, since: str, as_json: bool, parser: ar
     connection: sqlite3.Connection | None = None
     try:
         connection = _open_readonly_database(database_path)
+        _validate_ops_report_database(connection)
         report = build_ops_report(
             connection,
             database_path=database_path,

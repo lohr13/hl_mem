@@ -42,6 +42,12 @@ _PRE_GUARD_DATA_MIGRATIONS = (
 )
 
 
+def known_migration_versions() -> frozenset[str]:
+    """Return every migration marker this binary can safely read."""
+    migration_dir = Path(__file__).with_name("migrations")
+    return frozenset((*_PRE_GUARD_DATA_MIGRATIONS, *(path.stem for path in migration_dir.glob("*.sql"))))
+
+
 def register_entity_sqlite_functions(connection: sqlite3.Connection) -> None:
     connection.create_function("hl_mem_normalize_alias", 1, normalize_typed_alias, deterministic=True)
     connection.create_function("hl_mem_audit_dimension", 1, current_audit_dimension)

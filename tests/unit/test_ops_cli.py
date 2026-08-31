@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -118,6 +119,33 @@ def test_ops_report_fails_safely_for_corrupt_usage_ledger(
 
     assert captured.value.code == 1
     assert capsys.readouterr().err.strip() == "ops report unavailable"
+
+
+@pytest.mark.parametrize("database_kind", ("missing", "corrupt", "future_migration"))
+def test_ops_report_fails_closed_without_leaking_or_rewriting_invalid_main_database(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    database_kind: str,
+) -> None:
+    config = _config(tmp_path)
+    database_path = tmp_path / "memory.db"
+    if database_kind == "corrupt":
+        database_path.write_text("not a database", encoding="utf-8")
+    elif database_kind == "future_migration":
+        _seed_database(tmp_path)
+        with sqlite3.connect(database_path) as connection:
+            connection.execute("INSERT INTO schema_migrations(version) VALUES ('999_future_feature')")
+    before = _database_fingerprint(tmp_path)
+
+    with pytest.raises(SystemExit) as captured:
+        main(["--config", str(config), "--env-file", str(tmp_path / ".env"), "ops", "report", "--json"])
+
+    output = capsys.readouterr()
+    assert captured.value.code == 1
+    assert output.out == ""
+    assert output.err.strip() == "ops report unavailable"
+    assert str(database_path) not in output.err
+    assert _database_fingerprint(tmp_path) == before
 
 
 def test_ops_report_schema_checker_validates_real_empty_and_seeded_reports() -> None:
