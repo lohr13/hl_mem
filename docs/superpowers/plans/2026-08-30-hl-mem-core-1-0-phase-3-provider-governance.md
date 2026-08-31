@@ -38,7 +38,7 @@
 - Create: `src/hl_mem/plugins/__init__.py`
 - Create: `src/hl_mem/plugins/contracts.py`
 - Create: `src/hl_mem/plugins/manifest.py`
-- Modify: `src/hl_mem/llm/types.py`
+- Reuse: `src/hl_mem/llm/types.py`
 - Modify: `src/hl_mem/errors.py`
 - Modify: `pyproject.toml`
 - Modify: `uv.lock`
@@ -60,7 +60,7 @@
 - `validate_manifest(manifest, *, core_version) -> None` validates PEP 440 versions/specifiers, IDs, unique capability keys, stability, and a local object JSON Schema. Remote `$ref`, secret-like property names, and schemas without explicit `additionalProperties` are rejected.
 - Add direct runtime dependencies `packaging>=24,<27` and `jsonschema>=4.23,<5`; remove `jsonschema` from the dev-only group to avoid duplicate ownership.
 
-- [ ] **Step 1: Write failing public-contract and manifest tests**
+- [x] **Step 1: Write failing public-contract and manifest tests**
 
 ```python
 def test_provider_request_repr_never_exposes_headers_or_body() -> None:
@@ -77,7 +77,7 @@ def test_image_capability_cannot_claim_stable_status() -> None:
 
 Also cover invalid PEP 440, API major mismatch, unsatisfied `requires_hl_mem`, duplicate keys, remote `$ref`, secret-like config properties, and missing `additionalProperties`.
 
-- [ ] **Step 2: Run the tests and observe missing `hl_mem.plugins` modules**
+- [x] **Step 2: Run the tests and observe missing `hl_mem.plugins` modules**
 
 Run:
 
@@ -87,11 +87,11 @@ uv run --frozen python -m pytest tests/unit/test_provider_plugin_contracts.py te
 
 Expected: collection fails because the public plugin package does not exist.
 
-- [ ] **Step 3: Implement immutable contracts and strict manifest validation**
+- [x] **Step 3: Implement immutable contracts and strict manifest validation**
 
 Keep HTTP implementation details out of public types. Convert mappings to immutable copies at construction, bound diagnostic strings, and expose explicit `__all__` from `hl_mem.plugins`; do not re-export internal discovery or registry helpers.
 
-- [ ] **Step 4: Lock dependencies and run type/contract tests**
+- [x] **Step 4: Lock dependencies and run type/contract tests**
 
 ```powershell
 uv lock
@@ -99,7 +99,7 @@ uv run --frozen python -m pytest tests/unit/test_provider_plugin_contracts.py te
 uv run --frozen python -m mypy src/hl_mem/plugins src/hl_mem/llm/types.py --ignore-missing-imports
 ```
 
-- [ ] **Step 5: Commit the public type surface**
+- [x] **Step 5: Commit the public type surface**
 
 ```powershell
 git add pyproject.toml uv.lock src/hl_mem/plugins src/hl_mem/llm/types.py src/hl_mem/errors.py tests/unit/test_provider_plugin_contracts.py tests/unit/test_provider_manifest.py
@@ -130,7 +130,7 @@ git commit -m "feat: define the Provider Plugin API"
 - `discover_plugins(enabled, options, *, entry_points=None, core_version=__version__) -> tuple[ProviderPlugin, ...]` filters Entry Point metadata by exact name before `load()`. Disabled distributions are never imported.
 - Each enabled ID must have exactly one Entry Point, and its loaded zero-argument factory must return a `ProviderPlugin` whose manifest ID equals the Entry Point name.
 - `ProviderRegistry.register(plugin, *, builtin=False) -> None`, `freeze() -> None`, `keys() -> tuple[ProviderKey, ...]`, and package-internal typed adapter construction methods are deterministic and fail closed after freeze.
-- `ProviderFactoryContext(capability, provider_name, core_options, plugin_options)` is frozen; the two option mappings are immutable, non-secret mappings. A factory has signature `Callable[[ProviderFactoryContext], ProviderAdapterProtocol]`.
+- `ProviderFactoryContext(key, core_options, plugin_options)` is frozen; the two option mappings are immutable, non-secret mappings. A factory has signature `Callable[[ProviderFactoryContext], ProviderAdapterProtocol]`.
 - `build_provider_registry(settings, *, entry_points=None) -> ProviderRegistry` registers one built-in plugin first, then enabled external plugins, validates each plugin's options with its manifest JSON Schema, detects all conflicts, and freezes only after the complete set is valid.
 - Built-in manifest ID is `hl-mem.builtin`. It registers current LLM names `dashscope`, `zhipu`, and `openai_compatible`, Embedding name `dashscope`, Reranker name `dashscope`, and experimental Image name `dashscope`.
 - Provider selection fields become validated provider-name strings. Add `embedding.provider = "dashscope"`; keep it optional in `REQUIRED_RUNTIME_PATHS` so Phase 2 schema-v1 files remain loadable.
