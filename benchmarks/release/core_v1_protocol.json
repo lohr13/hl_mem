@@ -1,0 +1,9 @@
+{
+  "baseline_tag": "v0.36.1",
+  "max_metric_regression": 0.01,
+  "p95_limit": "max(baseline_ms + 150, baseline_ms * 1.25)",
+  "protocol_version": "hl-mem-core-1.0-public-v1",
+  "required_external_model_calls": 0,
+  "required_forbidden_hits": 0,
+  "required_http_success_rate": 1.0
+}
