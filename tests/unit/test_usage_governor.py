@@ -217,6 +217,27 @@ def test_finite_cost_limit_rejects_unknown_estimate(tmp_path: Path) -> None:
         governor.reserve(IDENTITY, UsageAmount(requests=1, cost_microunits=None))
 
 
+def test_unknown_actual_cost_only_reserves_cost_for_attempts_that_ran(tmp_path: Path) -> None:
+    path = tmp_path / "usage.db"
+    governor = _governor(path)
+    reservation = governor.reserve(IDENTITY, UsageAmount(requests=3, cost_microunits=6))
+    governor.mark_attempt(reservation.id)
+    governor.mark_attempt(reservation.id)
+    governor.settle(
+        reservation.id,
+        UsageAmount(requests=2, cost_microunits=None),
+        status="success",
+        latency_ms=1.0,
+    )
+
+    with sqlite3.connect(path) as connection:
+        cost, unknown = connection.execute(
+            "SELECT cost_microunits,unknown_cost FROM usage_events WHERE reservation_id=?",
+            (reservation.id,),
+        ).fetchone()
+    assert (cost, unknown) == (4, 1)
+
+
 def test_request_and_known_cost_limits_include_active_reservations(tmp_path: Path) -> None:
     governor = _governor(tmp_path / "usage.db", limits=UsageLimits(1, 0, 10))
     governor.reserve(IDENTITY, UsageAmount(requests=1, cost_microunits=7))

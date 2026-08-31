@@ -271,13 +271,17 @@ git commit -m "feat: add atomic Provider usage governance"
 
 - Create: `src/hl_mem/plugins/transport.py`
 - Create: `src/hl_mem/plugins/proxies.py`
-- Modify: `src/hl_mem/http_utils.py`
+- Reuse: `src/hl_mem/http_utils.py`
 - Modify: `src/hl_mem/monitoring/metrics.py`
-- Modify: `src/hl_mem/observability/audit.py`
+- Reuse: `src/hl_mem/observability/audit.py`
+- Modify: `src/hl_mem/observability/usage.py`
+- Modify: `src/hl_mem/plugins/contracts.py`
 - Create: `tests/unit/test_provider_transport.py`
 - Create: `tests/unit/test_governed_provider_call.py`
 - Create: `tests/unit/test_http_utils.py`
-- Modify: `tests/unit/test_llm_spans.py`
+- Reuse: `tests/unit/test_llm_spans.py`
+- Modify: `tests/unit/test_usage_governor.py`
+- Modify: `tests/unit/test_provider_plugin_contracts.py`
 
 **Interfaces:**
 
@@ -290,7 +294,7 @@ git commit -m "feat: add atomic Provider usage governance"
 - Provider metrics add `plugin_id`, `provider`, `model`, `attempts`, and usage counters while retaining existing health aggregation behavior.
 - Audit contains only labels, counters, latency, safe error class/code, and reservation ID; it never stores prompt, documents, vectors, response body, credentials, or plugin options.
 
-- [ ] **Step 1: Write failing transport ownership and settlement tests**
+- [x] **Step 1: Write failing transport ownership and settlement tests**
 
 ```python
 def test_retry_marks_and_accounts_for_each_actual_attempt() -> None:
@@ -308,26 +312,26 @@ def test_pre_send_adapter_failure_releases_reservation() -> None:
 
 Cover 400 no retry, 429 retry, timeout exhausted, response JSON parse failure, actual-over-estimate, unknown outcome, secret redaction, and exactly one metric/audit final event per governed logical request.
 
-- [ ] **Step 2: Run focused tests and observe four paths bypass the absent host transport**
+- [x] **Step 2: Run focused tests and observe four paths bypass the absent host transport**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_provider_transport.py tests/unit/test_governed_provider_call.py tests/unit/test_llm_spans.py -q --tb=short
 ```
 
-- [ ] **Step 3: Implement transport and the generic governed-call primitive**
+- [x] **Step 3: Implement transport and the generic governed-call primitive**
 
 Keep capability parsing outside transport. The common primitive accepts a parser callback that returns `(value, UsageAmount)` so LLM, Embedding, Reranker, and Image use one finalization algorithm without a generic hook system.
 
-- [ ] **Step 4: Run retry, diagnostics, metrics, and usage regressions**
+- [x] **Step 4: Run retry, diagnostics, metrics, and usage regressions**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_provider_transport.py tests/unit/test_governed_provider_call.py tests/unit/test_http_utils.py tests/unit/test_monitoring.py tests/unit/test_audit.py tests/unit/test_usage_governor.py -q --tb=short
 ```
 
-- [ ] **Step 5: Commit the host transport**
+- [x] **Step 5: Commit the host transport**
 
 ```powershell
-git add src/hl_mem/plugins/transport.py src/hl_mem/plugins/proxies.py src/hl_mem/http_utils.py src/hl_mem/monitoring/metrics.py src/hl_mem/observability/audit.py tests/unit/test_provider_transport.py tests/unit/test_governed_provider_call.py tests/unit/test_llm_spans.py
+git add src/hl_mem/plugins/transport.py src/hl_mem/plugins/proxies.py src/hl_mem/monitoring/metrics.py src/hl_mem/observability/usage.py src/hl_mem/plugins/contracts.py tests/unit/test_provider_transport.py tests/unit/test_governed_provider_call.py tests/unit/test_http_utils.py tests/unit/test_usage_governor.py tests/unit/test_provider_plugin_contracts.py
 git commit -m "feat: govern Provider HTTP transport"
 ```
 

@@ -431,6 +431,10 @@ class UsageGovernor:
         unknown_cost = stored_cost is None
         if stored_cost is None:
             stored_cost = reserved.cost_microunits
+            if stored_cost is not None and reserved.requests > 0:
+                accounted_requests = actual.requests or int(row["attempts"])
+                accounted_requests = min(accounted_requests, reserved.requests)
+                stored_cost = math.ceil(stored_cost * accounted_requests / reserved.requests)
         connection.execute(
             "INSERT INTO usage_events ("
             "reservation_id,usage_date,capability,operation,plugin_id,provider,model,"
@@ -525,6 +529,7 @@ class UsageGovernor:
     def settle_unknown(
         self,
         reservation_id: str,
+        actual: UsageAmount | None = None,
         *,
         status: str,
         latency_ms: float,
@@ -532,7 +537,7 @@ class UsageGovernor:
     ) -> None:
         self._settle(
             reservation_id,
-            None,
+            actual,
             kind="unknown",
             status=status,
             latency_ms=latency_ms,

@@ -24,6 +24,17 @@ class ProviderCall:
     provider_code: str | None = None
     fallback: bool = False
     timestamp: float = 0.0
+    plugin_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    attempts: int = 1
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    embedding_items: int = 0
+    rerank_documents: int = 0
+    images: int = 0
+    cost_microunits: int | None = None
 
 
 class ProviderMetrics:
@@ -46,6 +57,11 @@ class ProviderMetrics:
             calls = list(self._calls)
         counts = Counter(call.status for call in calls)
         errors = Counter(call.error_class for call in calls if call.error_class)
+        providers = Counter(
+            (call.plugin_id, call.provider, call.model)
+            for call in calls
+            if call.plugin_id is not None and call.provider is not None and call.model is not None
+        )
         latencies = sorted(call.latency_ms for call in calls)
 
         def percentile(value: float) -> float:
@@ -64,6 +80,21 @@ class ProviderMetrics:
             "p99_ms": percentile(0.99),
             "status_counts": dict(counts),
             "error_counts": dict(errors),
+            "attempts": sum(call.attempts for call in calls),
+            "usage": {
+                "requests": sum(call.requests for call in calls),
+                "input_tokens": sum(call.input_tokens for call in calls),
+                "output_tokens": sum(call.output_tokens for call in calls),
+                "embedding_items": sum(call.embedding_items for call in calls),
+                "rerank_documents": sum(call.rerank_documents for call in calls),
+                "images": sum(call.images for call in calls),
+                "cost_microunits": sum(call.cost_microunits or 0 for call in calls),
+                "unknown_cost_calls": sum(call.cost_microunits is None and call.requests > 0 for call in calls),
+            },
+            "providers": [
+                {"plugin_id": plugin_id, "provider": provider, "model": model, "calls": count}
+                for (plugin_id, provider, model), count in sorted(providers.items())
+            ],
         }
 
 

@@ -94,8 +94,8 @@ class ProviderRequest:
 @dataclass(frozen=True)
 class ProviderResponse:
     status_code: int
-    headers: Mapping[str, str]
-    json_body: Mapping[str, Any]
+    headers: Mapping[str, str] = field(repr=False)
+    json_body: Mapping[str, Any] = field(repr=False)
     attempts: int
     request_id: str | None
 

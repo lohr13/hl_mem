@@ -48,6 +48,10 @@ def test_provider_request_repr_and_error_never_expose_sensitive_payloads() -> No
     assert "private memory" not in rendered
     assert request.method == "POST"
 
+    response = ProviderResponse(200, {"Set-Cookie": "private-cookie"}, {"answer": "private memory"}, 1, None)
+    assert "private-cookie" not in repr(response)
+    assert "private memory" not in repr(response)
+
 
 def test_provider_call_error_has_bounded_normalized_diagnostics() -> None:
     error = ProviderCallError(
