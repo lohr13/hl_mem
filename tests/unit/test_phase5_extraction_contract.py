@@ -6,12 +6,20 @@ import json
 import pytest
 
 from hl_mem.ingest.chunking import ChunkingPolicy
+from hl_mem.ingest.extraction.prompts import ENGLISH_SYSTEM_PROMPT as INTERNAL_ENGLISH_SYSTEM_PROMPT
+from hl_mem.ingest.extraction.prompts import SYSTEM_PROMPT as INTERNAL_SYSTEM_PROMPT
+from hl_mem.ingest.extraction.repair import repair_extraction_json as internal_repair_extraction_json
+from hl_mem.ingest.extraction.schema import ExtractionResponseSchema as InternalExtractionResponseSchema
 from hl_mem.ingest.llm_extractor import (
+    ENGLISH_SYSTEM_PROMPT,
     LLM_EXTRACTOR_VERSION,
     PROMPT_HASH,
+    SYSTEM_PROMPT,
     LLMExtractor,
     compute_prompt_hash,
 )
+from hl_mem.ingest.repair import repair_extraction_json
+from hl_mem.ingest.schemas import ExtractionResponseSchema
 from hl_mem.llm.types import LLMRequest, LLMResponse
 
 
@@ -95,3 +103,10 @@ def test_public_extractor_compatibility_helpers_are_frozen() -> None:
         }
     )
     assert LLMExtractor._merge_chunk_claims([[claim], [claim]]) == [claim]
+
+
+def test_extraction_contract_modules_have_one_canonical_implementation() -> None:
+    assert SYSTEM_PROMPT is INTERNAL_SYSTEM_PROMPT
+    assert ENGLISH_SYSTEM_PROMPT is INTERNAL_ENGLISH_SYSTEM_PROMPT
+    assert ExtractionResponseSchema is InternalExtractionResponseSchema
+    assert repair_extraction_json is internal_repair_extraction_json
