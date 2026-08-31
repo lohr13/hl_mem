@@ -14,16 +14,19 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, Mapping, cast
 from urllib.parse import quote
 
 from hl_mem.errors import OpsReportError
 from hl_mem.observability.usage import USAGE_LEDGER_SCHEMA_VERSION
 from hl_mem.observability.usage_types import UsageLimits
+from hl_mem.settings import Settings
+from hl_mem.storage.jobs import JobRepository
 
 _DURATION = re.compile(r"([1-9][0-9]*)([hd])$")
 _SUCCESS = frozenset({"success", "ok", "settled", "imported"})
 _AMOUNTS = ("requests", "input_tokens", "output_tokens", "embedding_items", "rerank_documents", "images")
+OPS_REPORT_SCHEMA_VERSION: Final[int] = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,9 +248,21 @@ class UsageLedgerReader:
         total_cost, reserved_cost = totals["cost_microunits"], reserved["cost_microunits"]
         cost = None if total_cost is None or reserved_cost is None else int(total_cost) + int(reserved_cost)
         return {
-            "requests": {"limit": limits.daily_requests, "used": requests, "utilization": _utilization(limits.daily_requests, requests)},
-            "tokens": {"limit": limits.daily_tokens, "used": tokens, "utilization": _utilization(limits.daily_tokens, tokens)},
-            "cost_microunits": {"limit": limits.daily_cost_microunits, "used": cost, "utilization": _utilization(limits.daily_cost_microunits, cost)},
+            "requests": {
+                "limit": limits.daily_requests,
+                "used": requests,
+                "utilization": _utilization(limits.daily_requests, requests),
+            },
+            "tokens": {
+                "limit": limits.daily_tokens,
+                "used": tokens,
+                "utilization": _utilization(limits.daily_tokens, tokens),
+            },
+            "cost_microunits": {
+                "limit": limits.daily_cost_microunits,
+                "used": cost,
+                "utilization": _utilization(limits.daily_cost_microunits, cost),
+            },
         }
 
     def report(self, window: ReportWindow, *, limits: UsageLimits) -> dict[str, object]:
@@ -307,3 +322,169 @@ class UsageLedgerReader:
             "unknown_outcomes": totals["unknown_outcomes"],
             "unknown_costs": totals["unknown_costs"],
         }
+
+
+def _report_timestamp(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _file_size(path: Path, *, required: bool) -> int:
+    try:
+        return path.stat().st_size
+    except FileNotFoundError:
+        if required:
+            raise OpsReportError("main database does not exist") from None
+        return 0
+    except OSError as error:
+        raise OpsReportError("database file metadata is unreadable") from error
+
+
+def _usage_limits(settings: Settings) -> UsageLimits:
+    return UsageLimits(
+        daily_requests=settings.usage_daily_request_limit,
+        daily_tokens=settings.daily_token_limit,
+        daily_cost_microunits=settings.usage_daily_cost_limit_microunits,
+    )
+
+
+def _usage_snapshot(path: Path, *, window: ReportWindow, settings: Settings) -> tuple[dict[str, object], bool]:
+    try:
+        return UsageLedgerReader(path).report(window, limits=_usage_limits(settings)), False
+    except OpsReportError:
+        return {
+            "window": {"since": _iso(window.since), "until": _iso(window.until)},
+            "groups": [],
+            "totals": None,
+            "reservations": None,
+            "budget": None,
+        }, True
+
+
+def _worker_snapshot(
+    worker_runtime: Mapping[str, object] | None,
+    *,
+    job_heartbeat: object,
+    now: datetime,
+    poll_interval: float,
+) -> dict[str, object]:
+    process_timestamps: list[str] = []
+    if worker_runtime is not None:
+        for key in (
+            "heartbeat_at",
+            "last_maintenance_completed_at",
+            "last_maintenance_started_at",
+            "started_at",
+            "stopped_at",
+        ):
+            timestamp = _report_timestamp(worker_runtime.get(key))
+            if timestamp is not None:
+                process_timestamps.append(timestamp)
+    if process_timestamps:
+        heartbeat_at, source = max(process_timestamps), "process"
+    else:
+        heartbeat_at, source = _report_timestamp(job_heartbeat), "job_heartbeat"
+    if heartbeat_at is None:
+        return {"state": "unknown", "source": None, "heartbeat_at": None}
+    age_seconds = max(
+        0.0,
+        (now.astimezone(timezone.utc) - datetime.fromisoformat(heartbeat_at)).total_seconds(),
+    )
+    state = "inactive" if age_seconds > 2 * poll_interval else "active"
+    return {"state": state, "source": source, "heartbeat_at": heartbeat_at}
+
+
+def _json_value(value: object) -> object:
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def build_ops_report(
+    connection: sqlite3.Connection,
+    *,
+    database_path: Path,
+    usage_path: Path,
+    settings: Settings,
+    window: ReportWindow,
+    now: datetime,
+    worker_runtime: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Assemble a stable, content-free operational report from read-only inputs."""
+    current = _utc(now)
+    window = ReportWindow(_utc(window.since), _utc(window.until))
+    database_size = _file_size(database_path, required=True)
+    file_sizes = {
+        "database": {"size_bytes": database_size},
+        "wal": {"size_bytes": _file_size(Path(f"{database_path}-wal"), required=False)},
+        "shm": {"size_bytes": _file_size(Path(f"{database_path}-shm"), required=False)},
+        "usage": {"size_bytes": _file_size(usage_path, required=False)},
+    }
+
+    connection.execute("BEGIN")
+    try:
+        from hl_mem.application.health import conflict_backlog_snapshot
+
+        jobs = JobRepository(connection).report_snapshot(
+            window,
+            now=current,
+            lease_seconds=settings.worker_job_lease_minutes * 60,
+        )
+        conflicts = conflict_backlog_snapshot(connection, now=current)
+    finally:
+        connection.rollback()
+
+    usage, usage_unknown = _usage_snapshot(usage_path, window=window, settings=settings)
+    worker = _worker_snapshot(
+        worker_runtime,
+        job_heartbeat=jobs["latest_heartbeat_at"],
+        now=current,
+        poll_interval=settings.worker_poll_interval,
+    )
+    warnings: set[str] = set()
+    if usage_unknown:
+        warnings.add("unknown_usage")
+    else:
+        reservations = cast(dict[str, object], usage["reservations"])
+        if int(reservations["expired_count"]) > 0:
+            warnings.add("expired_reservation")
+        budget = cast(dict[str, dict[str, object]], usage["budget"])
+        if any(
+            utilization is not None and Decimal(str(utilization)) >= Decimal("0.8")
+            for value in budget.values()
+            if (utilization := value["utilization"]) is not None
+        ):
+            warnings.add("budget_near_limit")
+    if int(jobs["failed_count"]) + int(jobs["dead_count"]) > 0:
+        warnings.add("failed_jobs")
+    if int(jobs["expired_running_leases"]) > 0:
+        warnings.add("stale_running_jobs")
+    if worker["state"] == "inactive":
+        warnings.add("worker_inactive")
+    elif worker["state"] == "unknown":
+        warnings.add("worker_unknown")
+    if file_sizes["wal"]["size_bytes"] > max(database_size, 256 * 1024 * 1024):
+        warnings.add("large_wal")
+    report = {
+        "schema_version": OPS_REPORT_SCHEMA_VERSION,
+        "generated_at": _iso(current),
+        "window": {"since": _iso(window.since), "until": _iso(window.until)},
+        "usage": usage,
+        "jobs": jobs,
+        "conflicts": conflicts,
+        "worker": worker,
+        "files": file_sizes,
+        "warnings": sorted(warnings),
+    }
+    return cast(dict[str, object], _json_value(report))

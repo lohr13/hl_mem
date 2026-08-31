@@ -15,6 +15,39 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _report_timestamp(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _report_age(value: object, now: datetime) -> int | None:
+    timestamp = _report_timestamp(value)
+    if timestamp is None:
+        return None
+    return max(0, int((now.astimezone(timezone.utc) - datetime.fromisoformat(timestamp)).total_seconds()))
+
+
+def _safe_failure_category(value: object) -> str | None:
+    """Classify a stored error without exposing its unbounded message."""
+    if not isinstance(value, str) or not value:
+        return None
+    lowered = value.casefold()
+    if "timeout" in lowered:
+        return "timeout"
+    if "locked" in lowered or "busy" in lowered:
+        return "database_busy"
+    if "connection" in lowered or "network" in lowered:
+        return "connection"
+    return "other"
+
+
 class JobRepository:
     """提供任务写入、租约和终态更新。"""
 
@@ -189,6 +222,67 @@ class JobRepository:
             if row["status"] in counts:
                 counts[row["status"]] = row["count"]
         return counts
+
+    def report_snapshot(
+        self,
+        window: Any,
+        *,
+        now: datetime,
+        lease_seconds: int,
+    ) -> dict[str, Any]:
+        """Return content-free job and recall-side-effect health aggregates."""
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        current = now.astimezone(timezone.utc).isoformat()
+        statuses = {name: 0 for name in ("pending", "running", "succeeded", "failed", "dead")}
+        for row in self.connection.execute("SELECT status,COUNT(*) AS count FROM jobs GROUP BY status").fetchall():
+            status = str(row["status"])
+            if status in statuses:
+                statuses[status] = int(row["count"])
+        types = {
+            str(row["job_type"]): int(row["count"])
+            for row in self.connection.execute(
+                "SELECT job_type,COUNT(*) AS count FROM jobs GROUP BY job_type ORDER BY job_type"
+            ).fetchall()
+        }
+        pending = self.connection.execute(
+            "SELECT MIN(created_at) AS oldest FROM jobs WHERE status='pending'"
+        ).fetchone()
+        oldest_pending_age_seconds = _report_age(pending["oldest"] if pending is not None else None, now)
+        expired_running_leases = int(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status='running' AND leased_until IS NOT NULL AND leased_until<=?",
+                (current,),
+            ).fetchone()[0]
+        )
+        heartbeat = self.connection.execute(
+            "SELECT MAX(heartbeat_at) FROM jobs WHERE heartbeat_at IS NOT NULL"
+        ).fetchone()[0]
+        last_failure = self.connection.execute(
+            "SELECT last_error FROM jobs WHERE status IN ('failed','dead') "
+            "AND updated_at>=? AND updated_at<=? ORDER BY updated_at DESC,id DESC LIMIT 1",
+            (
+                window.since.astimezone(timezone.utc).isoformat(),
+                window.until.astimezone(timezone.utc).isoformat(),
+            ),
+        ).fetchone()
+        recall_side_effect_backlog = int(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM deferred_tasks WHERE status='pending' "
+                "AND task_type IN ('record_recall_access','record_recall_exposures')"
+            ).fetchone()[0]
+        )
+        return {
+            "counts_by_status": statuses,
+            "counts_by_type": types,
+            "failed_count": statuses["failed"],
+            "dead_count": statuses["dead"],
+            "oldest_pending_age_seconds": oldest_pending_age_seconds,
+            "expired_running_leases": expired_running_leases,
+            "last_safe_failure_category": _safe_failure_category(last_failure["last_error"] if last_failure else None),
+            "latest_heartbeat_at": _report_timestamp(heartbeat),
+            "recall_side_effect_backlog": recall_side_effect_backlog,
+        }
 
     def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
         """按更新时间倒序返回任务及其进度。"""
