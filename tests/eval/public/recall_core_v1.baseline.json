@@ -1,0 +1,151 @@
+{
+  "case_count": 32,
+  "dataset_sha256": "00490041287a1991dca39d7aec1e97f7e588fe16aac8a55c91f8e4cc0d0eb6ca",
+  "fixture_id": "core-recall-public-v1",
+  "fixture_sha256": "71f0aa6ca46da8e997702d3e8beae96442126fe75564a0f61413d3df77995ca0",
+  "http_success_rate": 1.0,
+  "metrics": {
+    "hard_abstention_f1": 0.0,
+    "hard_abstention_precision": 0.0,
+    "hard_abstention_recall": 0.0,
+    "hit_at_1": 0.9166666666666666,
+    "hit_at_5": 0.9583333333333334,
+    "low_confidence_rate": 0.3125,
+    "mrr": 0.9305555555555556,
+    "ndcg_at_5": 0.9375,
+    "no_answer_f1": 0.888888888888889,
+    "no_answer_precision": 0.8,
+    "no_answer_recall": 1.0,
+    "precision_at_3": 0.3194444444444444,
+    "recall_at_1": 0.9166666666666666,
+    "recall_at_5": 0.9583333333333334,
+    "soft_abstention_f1": 0.888888888888889,
+    "soft_abstention_precision": 0.8,
+    "soft_abstention_recall": 1.0
+  },
+  "protocol_sha256": "d38b022cf0d531fa9bf88a325b1650ebc52249570fd797ecdb4ccb681edf0d81",
+  "protocol_version": "core-recall-public-v1",
+  "schema_version": 3,
+  "slice_counts": {
+    "exact_entity": 8,
+    "historical": 4,
+    "no_answer": 8,
+    "paraphrase": 8,
+    "preference": 4
+  },
+  "slices": {
+    "exact_entity": {
+      "count": 8,
+      "metrics": {
+        "hard_abstention_f1": 0.0,
+        "hard_abstention_precision": 0.0,
+        "hard_abstention_recall": 0.0,
+        "hit_at_1": 0.75,
+        "hit_at_5": 0.875,
+        "low_confidence_rate": 0.25,
+        "mrr": 0.7916666666666666,
+        "ndcg_at_5": 0.8125,
+        "no_answer_f1": 0.0,
+        "no_answer_precision": 0.0,
+        "no_answer_recall": 0.0,
+        "precision_at_3": 0.29166666666666663,
+        "recall_at_1": 0.75,
+        "recall_at_5": 0.875,
+        "soft_abstention_f1": 0.0,
+        "soft_abstention_precision": 0.0,
+        "soft_abstention_recall": 0.0
+      }
+    },
+    "historical": {
+      "count": 4,
+      "metrics": {
+        "hard_abstention_f1": 0.0,
+        "hard_abstention_precision": 0.0,
+        "hard_abstention_recall": 0.0,
+        "hit_at_1": 1.0,
+        "hit_at_5": 1.0,
+        "low_confidence_rate": 0.0,
+        "mrr": 1.0,
+        "ndcg_at_5": 1.0,
+        "no_answer_f1": 0.0,
+        "no_answer_precision": 0.0,
+        "no_answer_recall": 0.0,
+        "precision_at_3": 0.3333333333333333,
+        "recall_at_1": 1.0,
+        "recall_at_5": 1.0,
+        "soft_abstention_f1": 0.0,
+        "soft_abstention_precision": 0.0,
+        "soft_abstention_recall": 0.0
+      }
+    },
+    "no_answer": {
+      "count": 8,
+      "metrics": {
+        "hard_abstention_f1": 0.0,
+        "hard_abstention_precision": 0.0,
+        "hard_abstention_recall": 0.0,
+        "hit_at_1": 0.0,
+        "hit_at_5": 0.0,
+        "low_confidence_rate": 1.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0,
+        "no_answer_f1": 1.0,
+        "no_answer_precision": 1.0,
+        "no_answer_recall": 1.0,
+        "precision_at_3": 0.0,
+        "recall_at_1": 0.0,
+        "recall_at_5": 0.0,
+        "soft_abstention_f1": 1.0,
+        "soft_abstention_precision": 1.0,
+        "soft_abstention_recall": 1.0
+      }
+    },
+    "paraphrase": {
+      "count": 8,
+      "metrics": {
+        "hard_abstention_f1": 0.0,
+        "hard_abstention_precision": 0.0,
+        "hard_abstention_recall": 0.0,
+        "hit_at_1": 1.0,
+        "hit_at_5": 1.0,
+        "low_confidence_rate": 0.0,
+        "mrr": 1.0,
+        "ndcg_at_5": 1.0,
+        "no_answer_f1": 0.0,
+        "no_answer_precision": 0.0,
+        "no_answer_recall": 0.0,
+        "precision_at_3": 0.3333333333333333,
+        "recall_at_1": 1.0,
+        "recall_at_5": 1.0,
+        "soft_abstention_f1": 0.0,
+        "soft_abstention_precision": 0.0,
+        "soft_abstention_recall": 0.0
+      }
+    },
+    "preference": {
+      "count": 4,
+      "metrics": {
+        "hard_abstention_f1": 0.0,
+        "hard_abstention_precision": 0.0,
+        "hard_abstention_recall": 0.0,
+        "hit_at_1": 1.0,
+        "hit_at_5": 1.0,
+        "low_confidence_rate": 0.0,
+        "mrr": 1.0,
+        "ndcg_at_5": 1.0,
+        "no_answer_f1": 0.0,
+        "no_answer_precision": 0.0,
+        "no_answer_recall": 0.0,
+        "precision_at_3": 0.3333333333333333,
+        "recall_at_1": 1.0,
+        "recall_at_5": 1.0,
+        "soft_abstention_f1": 0.0,
+        "soft_abstention_precision": 0.0,
+        "soft_abstention_recall": 0.0
+      }
+    }
+  },
+  "status": "public_release_baseline",
+  "total_forbidden_hits": 0,
+  "warning": "Synthetic zero-network regression evidence; not a real-provider quality score."
+}

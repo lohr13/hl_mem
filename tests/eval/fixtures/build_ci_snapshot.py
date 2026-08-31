@@ -21,7 +21,7 @@ from hl_mem.storage.evidence import EvidenceRepository
 from tests.eval.dataset import EvalCase, load_cases
 from tests.eval.eval_runner import _sha256_utf8_lf
 
-FIXTURE_ID = "recall-v019-ci-v1"
+FIXTURE_ID = "core-recall-public-v1"
 FIXED_TIME = "2026-01-01T00:00:00+00:00"
 
 

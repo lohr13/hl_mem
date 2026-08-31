@@ -29,15 +29,19 @@ def check(
     """返回全部门禁失败原因。"""
     failures: list[str] = []
     status = baseline.get("status")
+    fixture_statuses = {"ci_fixture", "public_release_baseline"}
+    allowed_statuses = {"ready", "public_release_baseline"}
+    if allow_ci_fixture:
+        allowed_statuses.add("ci_fixture")
     if status == "ci_fixture" and not allow_ci_fixture:
         return ["ci_fixture baseline 不能用于正式发布决策"]
-    if status not in ({"ready", "ci_fixture"} if allow_ci_fixture else {"ready"}):
+    if status not in allowed_statuses:
         return ["baseline 尚未用对应的冻结 snapshot 初始化"]
     if report.get("schema_version") != baseline.get("schema_version"):
         failures.append("report schema_version 与 baseline 不一致")
     if report.get("artifacts", {}).get("dataset_sha256") != baseline.get("dataset_sha256"):
         failures.append("数据集哈希与 baseline 不一致")
-    if status == "ci_fixture":
+    if status in fixture_statuses:
         current_fixture = report.get("artifacts", {}).get("fixture", {})
         if current_fixture.get("fixture_sha256") != baseline.get("fixture_sha256"):
             failures.append("CI fixture 摘要与 baseline 不一致")

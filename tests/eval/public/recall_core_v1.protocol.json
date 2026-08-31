@@ -1,0 +1,21 @@
+{
+  "embedding": {
+    "dim": 2048,
+    "model": "fake",
+    "provider": "fake"
+  },
+  "extractor": {
+    "model": "fake-v1",
+    "provider": "fake"
+  },
+  "index_text_mode": "legacy",
+  "max_metric_regression": 0.01,
+  "max_slice_regression": 0.05,
+  "protocol_version": "core-recall-public-v1",
+  "required_forbidden_hits": 0,
+  "required_http_success_rate": 1.0,
+  "reranker": {
+    "mode": "off"
+  },
+  "top_k": 5
+}

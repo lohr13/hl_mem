@@ -1,4 +1,4 @@
-"""在无 API key 环境运行 recall_v2 契约与确定性 fixture gate。"""
+"""Run the required zero-network public recall release gate."""
 
 from __future__ import annotations
 
@@ -6,189 +6,163 @@ import argparse
 import json
 import tempfile
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from hl_mem.settings import Settings
 from tests.eval.eval_runner import _load_rows, _sha256_utf8_lf, run
 from tests.eval.fixtures.build_ci_snapshot import build_ci_snapshot
-from tests.eval.gate_check import GATED_METRICS, check
+from tests.eval.gate_check import check
 
 EVAL_ROOT = Path(__file__).parent
-DEFAULT_DATASET = EVAL_ROOT / "datasets" / "recall_v2.jsonl"
-DEFAULT_DATASET_MANIFEST = EVAL_ROOT / "datasets" / "recall_v2.manifest.json"
-DEFAULT_RELEASE_CONFIG = EVAL_ROOT / "release_config_v019.json"
-DEFAULT_GATE = EVAL_ROOT / "gate_v019.json"
-DEFAULT_REPAIR_MANIFEST = EVAL_ROOT / "repair_manifest_v019.json"
-DEFAULT_BASELINE = EVAL_ROOT / "baselines" / "baseline_v019_ci.json"
-BASELINE_WARNING = "not valid for release decisions; regenerate with real providers in Phase 2"
+PUBLIC_ROOT = EVAL_ROOT / "public"
+DEFAULT_DATASET = PUBLIC_ROOT / "recall_core_v1.jsonl"
+DEFAULT_MANIFEST = PUBLIC_ROOT / "recall_core_v1.manifest.json"
+DEFAULT_PROTOCOL = PUBLIC_ROOT / "recall_core_v1.protocol.json"
+DEFAULT_BASELINE = PUBLIC_ROOT / "recall_core_v1.baseline.json"
+BASELINE_STATUS = "public_release_baseline"
 
 
 def _load(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
-        raise ValueError(f"{path} 顶层必须是 JSON object")
+        raise ValueError(f"{path} must contain a JSON object")
     return value
+
+
+def _write(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _validate_contracts(
     dataset: Path,
-    dataset_manifest: dict[str, Any],
-    release_config: dict[str, Any],
-    gate: dict[str, Any],
-    repair_manifest: dict[str, Any],
-    baseline: dict[str, Any],
+    manifest: dict[str, Any],
+    protocol_path: Path,
+    protocol: dict[str, Any],
 ) -> list[str]:
-    failures: list[str] = []
     rows = _load_rows(dataset)
     slice_counts = dict(sorted(Counter(str(row["slice"]) for row in rows).items()))
-    if dataset_manifest.get("dataset_sha256_algorithm") != "sha256-utf8-lf-v1":
-        failures.append("dataset manifest 未声明 sha256-utf8-lf-v1")
-    if dataset_manifest.get("dataset_sha256") != _sha256_utf8_lf(dataset):
-        failures.append("dataset LF 摘要与 manifest 不一致")
-    if dataset_manifest.get("case_count") != len(rows):
-        failures.append("dataset case_count 与 manifest 不一致")
-    if dataset_manifest.get("slice_counts") != slice_counts:
-        failures.append("dataset slice_counts 与 manifest 不一致")
-
-    expected_metrics = list(GATED_METRICS)
-    compatibility = gate.get("compatibility_gate", {})
-    candidate = gate.get("candidate_non_regression", {})
-    if compatibility.get("metrics") != expected_metrics:
-        failures.append("compatibility gate 主指标与冻结定义不一致")
-    if candidate.get("metrics") != expected_metrics:
-        failures.append("candidate gate 主指标与冻结定义不一致")
-    if float(compatibility.get("max_regression", -1)) != 0.01:
-        failures.append("compatibility gate 阈值不是 0.01")
-    if float(candidate.get("max_regression", -1)) != 0.01:
-        failures.append("candidate gate 阈值不是 0.01")
-    slice_gate = gate.get("slice_non_regression", {})
-    if float(slice_gate.get("max_regression", -1)) != 0.05:
-        failures.append("slice gate 阈值不是 0.05")
-    if slice_gate.get("critical_slices") != ["historical", "preference", "no_answer"]:
-        failures.append("critical slices 与冻结定义不一致")
-    win_condition = gate.get("win_condition", {})
-    if float(win_condition.get("min_improvement", -1)) != 0.02:
-        failures.append("win condition 阈值不是 0.02")
-    if win_condition.get("metrics") != ["recall_at_5 OR mrr"]:
-        failures.append("win condition 指标与冻结定义不一致")
-
-    if release_config.get("embedding") != {"provider": "fake", "model": "fake", "dim": 2048}:
-        failures.append("release config 的 fake embedding 配置不一致")
-    if release_config.get("reranker") != {"mode": "off", "model": "gte-rerank-v2"}:
-        failures.append("release config 的 reranker 配置不一致")
-    if release_config.get("experiment") != {
-        "variable": "index_text_mode",
-        "control": "legacy",
-        "candidate": "answerable",
-    }:
-        failures.append("release config 的实验变量定义不一致")
-    if release_config.get("artifact_gate", {}).get("require_equal_except") != ["index_text_mode"]:
-        failures.append("release config 未限定只有 index_text_mode 可不同")
-
-    repairs = repair_manifest.get("repairs")
-    repair_ids = (
-        [repair.get("claim_id") for repair in repairs if isinstance(repair, dict)] if isinstance(repairs, list) else []
-    )
-    if repair_ids != [
-        "697dc55a33c84a78a536ca5eb2296ad9",
-        "e78d567879c740a28d342d6b872ba9a0",
-    ]:
-        failures.append("repair manifest 必须且只能包含批准的 2 条 claim")
-
-    if baseline.get("status") != "ci_fixture":
-        failures.append("CI baseline status 必须是 ci_fixture")
-    if baseline.get("warning") != BASELINE_WARNING:
-        failures.append("CI baseline 缺少非发布证据警告")
-    required_baseline_metrics = {*GATED_METRICS, "hit_at_5", "low_confidence_rate"}
-    if not required_baseline_metrics <= set(baseline.get("metrics", {})):
-        failures.append("CI baseline 缺少主指标、hit_at_5 或 low_confidence_rate")
-    return failures
-
-
-def _validate_runtime_config(report: dict[str, Any], release_config: dict[str, Any]) -> list[str]:
     failures: list[str] = []
-    config = report.get("config", {})
-    settings = config.get("settings", {})
-    fixture = report.get("artifacts", {}).get("fixture", {})
-    embedding = release_config["embedding"]
-    reranker = release_config["reranker"]
-    if config.get("embedder") != embedding["provider"]:
-        failures.append("报告 embedder provider 与 release config 不一致")
-    if fixture.get("embedding_model") != embedding["model"]:
-        failures.append("fixture embedding model 与 release config 不一致")
-    if int(settings.get("embedding_dim", -1)) != embedding["dim"]:
-        failures.append("报告 embedding dim 与 release config 不一致")
-    if config.get("reranker") != reranker["mode"]:
-        failures.append("报告 reranker mode 与 release config 不一致")
-    if fixture.get("index_text_mode") != release_config["experiment"]["control"]:
-        failures.append("fixture index_text_mode 不是 legacy control")
-    if fixture.get("extractor_provider") != "fake":
-        failures.append("fixture 未使用 fake extractor")
+    if manifest.get("dataset_sha256_algorithm") != "sha256-utf8-lf-v1":
+        failures.append("manifest dataset hash algorithm must be sha256-utf8-lf-v1")
+    if manifest.get("dataset_sha256") != _sha256_utf8_lf(dataset):
+        failures.append("dataset hash does not match manifest")
+    if manifest.get("protocol_sha256") != _sha256_utf8_lf(protocol_path):
+        failures.append("protocol hash does not match manifest")
+    if manifest.get("case_count") != len(rows):
+        failures.append("dataset case count does not match manifest")
+    if manifest.get("slice_counts") != slice_counts:
+        failures.append("dataset slice counts do not match manifest")
+    expected = {
+        "protocol_version": "core-recall-public-v1",
+        "top_k": 5,
+        "embedding": {"provider": "fake", "model": "fake", "dim": 2048},
+        "extractor": {"provider": "fake", "model": "fake-v1"},
+        "reranker": {"mode": "off"},
+        "index_text_mode": "legacy",
+        "max_metric_regression": 0.01,
+        "max_slice_regression": 0.05,
+        "required_http_success_rate": 1.0,
+        "required_forbidden_hits": 0,
+    }
+    if protocol != expected:
+        failures.append("public recall protocol does not match the frozen v1 contract")
     return failures
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="运行 recall_v2 离线 CI fixture gate")
+def _settings(protocol: dict[str, Any]) -> Settings:
+    embedding = protocol["embedding"]
+    return replace(
+        Settings.for_test(),
+        embedder_mode=str(embedding["provider"]),
+        embedding_dim=int(embedding["dim"]),
+        extractor_mode=str(protocol["extractor"]["provider"]),
+        reranker_mode=str(protocol["reranker"]["mode"]),
+        index_text_mode=str(protocol["index_text_mode"]),
+    )
+
+
+def _baseline(report: dict[str, Any], protocol: dict[str, Any], protocol_path: Path) -> dict[str, Any]:
+    fixture = report["artifacts"]["fixture"]
+    return {
+        "status": BASELINE_STATUS,
+        "schema_version": report["schema_version"],
+        "protocol_version": protocol["protocol_version"],
+        "protocol_sha256": _sha256_utf8_lf(protocol_path),
+        "dataset_sha256": report["artifacts"]["dataset_sha256"],
+        "fixture_id": fixture["fixture_id"],
+        "fixture_sha256": fixture["fixture_sha256"],
+        "case_count": report["case_count"],
+        "slice_counts": report["slice_counts"],
+        "metrics": report["metrics"],
+        "slices": report["slices"],
+        "http_success_rate": report["http_success_rate"],
+        "total_forbidden_hits": report["total_forbidden_hits"],
+        "warning": "Synthetic zero-network regression evidence; not a real-provider quality score.",
+    }
+
+
+def _run_report(dataset: Path, protocol: dict[str, Any], protocol_path: Path) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="hl-mem-public-recall-") as temporary_directory:
+        snapshot = Path(temporary_directory) / "recall-core-v1.db"
+        build_ci_snapshot(snapshot, dataset)
+        report = run(snapshot, dataset, int(protocol["top_k"]), settings=_settings(protocol))
+    report["artifacts"]["protocol_sha256"] = _sha256_utf8_lf(protocol_path)
+    report["protocol_version"] = protocol["protocol_version"]
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
-    parser.add_argument("--dataset-manifest", type=Path, default=DEFAULT_DATASET_MANIFEST)
-    parser.add_argument("--release-config", type=Path, default=DEFAULT_RELEASE_CONFIG)
-    parser.add_argument("--gate", type=Path, default=DEFAULT_GATE)
-    parser.add_argument("--repair-manifest", type=Path, default=DEFAULT_REPAIR_MANIFEST)
+    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--report", type=Path)
-    arguments = parser.parse_args()
+    parser.add_argument("--write-baseline", type=Path)
+    arguments = parser.parse_args(argv)
 
-    dataset_manifest = _load(arguments.dataset_manifest)
-    release_config = _load(arguments.release_config)
-    gate = _load(arguments.gate)
-    repair_manifest = _load(arguments.repair_manifest)
-    baseline = _load(arguments.baseline)
-    failures = _validate_contracts(
-        arguments.dataset,
-        dataset_manifest,
-        release_config,
-        gate,
-        repair_manifest,
-        baseline,
-    )
-    with tempfile.TemporaryDirectory(prefix="hl-mem-ci-recall-gate-") as temporary_directory:
-        snapshot = Path(temporary_directory) / "recall-v019-ci.db"
-        build_ci_snapshot(snapshot, arguments.dataset)
-        settings = Settings(
-            embedder_mode="fake",
-            embedding_dim=2048,
-            extractor_mode="fake",
-            reranker_mode="off",
-            index_text_mode="legacy",
-        )
-        report = run(snapshot, arguments.dataset, top_k=5, settings=settings)
+    try:
+        manifest = _load(arguments.manifest)
+        protocol = _load(arguments.protocol)
+        failures = _validate_contracts(arguments.dataset, manifest, arguments.protocol, protocol)
+        if failures:
+            raise ValueError("; ".join(failures))
+        report = _run_report(arguments.dataset, protocol, arguments.protocol)
         if arguments.report:
-            arguments.report.parent.mkdir(parents=True, exist_ok=True)
-            arguments.report.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-        failures.extend(_validate_runtime_config(report, release_config))
-        failures.extend(
-            check(
-                report,
-                baseline,
-                tolerance=float(gate["compatibility_gate"]["max_regression"]),
-                slice_tolerance=float(gate["slice_non_regression"]["max_regression"]),
-                allow_ci_fixture=True,
-            )
+            _write(arguments.report, report)
+        if arguments.write_baseline:
+            if arguments.write_baseline.exists():
+                raise FileExistsError(f"baseline already exists: {arguments.write_baseline}")
+            _write(arguments.write_baseline, _baseline(report, protocol, arguments.protocol))
+            print(f"Public recall baseline written: {arguments.write_baseline}")
+            return 0
+        baseline = _load(arguments.baseline)
+        if baseline.get("status") != BASELINE_STATUS:
+            raise ValueError(f"baseline status must be {BASELINE_STATUS}")
+        if baseline.get("protocol_sha256") != _sha256_utf8_lf(arguments.protocol):
+            raise ValueError("baseline protocol hash does not match frozen protocol")
+        failures = check(
+            report,
+            baseline,
+            tolerance=float(protocol["max_metric_regression"]),
+            slice_tolerance=float(protocol["max_slice_regression"]),
         )
+    except (FileNotFoundError, FileExistsError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        print(f"Recall public fixture gate: FAILED\n- {error}")
+        return 1
+
     if failures:
-        print("Recall CI fixture gate: FAILED")
+        print("Recall public fixture gate: FAILED")
         for failure in failures:
             print(f"- {failure}")
         return 1
     metrics = report["metrics"]
     print(
-        "Recall CI fixture gate: PASSED | "
+        "Recall public fixture gate: PASSED | "
         f"Recall@5={metrics['recall_at_5']:.4f} MRR={metrics['mrr']:.4f} "
-        f"P@3={metrics['precision_at_3']:.4f} "
         f"no-answer P/R={metrics['no_answer_precision']:.4f}/{metrics['no_answer_recall']:.4f}"
     )
     return 0

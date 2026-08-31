@@ -10,7 +10,7 @@ import pytest
 
 from tests.eval.dataset import BindingError, bind_cases, load_cases
 
-RECALL_V2_DATASET = Path(__file__).parent / "datasets" / "recall_v2.jsonl"
+PUBLIC_RECALL_DATASET = Path(__file__).parent / "public" / "recall_core_v1.jsonl"
 
 
 def _connection() -> sqlite3.Connection:
@@ -159,12 +159,8 @@ def test_empty_case_does_not_require_binding(tmp_path: Path) -> None:
     assert bound.relevant_claim_ids == ()
 
 
-@pytest.mark.skipif(
-    not RECALL_V2_DATASET.is_file(),
-    reason="private recall_v2 dataset is not available",
-)
-def test_recall_v2_dataset_contains_declared_80_cases() -> None:
-    cases = load_cases(RECALL_V2_DATASET)
+def test_public_recall_dataset_contains_declared_32_cases() -> None:
+    cases = load_cases(PUBLIC_RECALL_DATASET)
 
-    assert len(cases) == 80
-    assert len({case.case_id for case in cases}) == 80
+    assert len(cases) == 32
+    assert len({case.case_id for case in cases}) == 32

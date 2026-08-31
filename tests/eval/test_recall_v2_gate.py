@@ -8,8 +8,15 @@ import pytest
 
 from hl_mem.core.vector import pack_vector
 from hl_mem.settings import Settings
-from tests.eval import eval_runner
+from tests.eval import ci_gate, eval_runner
 from tests.eval.gate_check import check
+
+
+def test_public_recall_gate_runs_without_private_artifacts(tmp_path: Path) -> None:
+    report = tmp_path / "public-recall-report.json"
+
+    assert ci_gate.main(["--report", str(report)]) == 0
+    assert report.is_file()
 
 
 def test_score_consumes_answerability_and_reports_min_relevance() -> None:

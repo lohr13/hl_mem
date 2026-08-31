@@ -91,3 +91,15 @@ bash scripts/hlmem-python.sh -m tests.eval.fixtures.build_snapshot \
 快照使用 SQLite backup API；manifest 只保存 hash、migration、数量和状态计数。绑定使用稳定 memory ID，或在兼容
 fixture 中使用同一 Claim 内全部命中的 `claim_keywords` / 分组 `claim_keyword_groups`；关键词仅用于绑定和诊断，
 不能替代真实相关性 gold。
+## Required public recall gate
+
+`public/recall_core_v1.jsonl` is the tracked, synthetic, zero-network Core 1.0 regression corpus. Its manifest binds the
+dataset and protocol hashes, and its baseline is reproducible with fake providers. It is release evidence for stable
+retrieval behavior, not a claim about real-provider semantic quality.
+
+```bash
+bash scripts/hlmem-python.sh -m tests.eval.ci_gate
+```
+
+The command is mandatory in CI. Missing or modified dataset, manifest, protocol, or baseline artifacts fail loudly;
+private evaluation data is never used as a fallback.

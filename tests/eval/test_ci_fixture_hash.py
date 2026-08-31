@@ -3,23 +3,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from tests.eval.dataset import load_cases
-from tests.eval.eval_runner import DEFAULT_DATASET, _sha256_utf8_lf
+from tests.eval.eval_runner import _sha256_utf8_lf
 from tests.eval.fixtures.build_ci_snapshot import _claim_specs, _fixture_sha256
 
-BASELINE = Path(__file__).parent / "baselines" / "baseline_v019_ci.json"
+PUBLIC = Path(__file__).parent / "public"
+DATASET = PUBLIC / "recall_core_v1.jsonl"
+BASELINE = PUBLIC / "recall_core_v1.baseline.json"
 
 
-@pytest.mark.skipif(
-    not DEFAULT_DATASET.is_file() or not BASELINE.is_file(),
-    reason="private recall_v2 dataset or baseline is not available",
-)
 def test_ci_fixture_hash_is_stable_across_newline_styles(tmp_path: Path) -> None:
-    canonical = DEFAULT_DATASET.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
-    specs = _claim_specs(load_cases(DEFAULT_DATASET))
+    canonical = DATASET.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    specs = _claim_specs(load_cases(DATASET))
     baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+
+    assert baseline["status"] == "public_release_baseline"
+    assert baseline["fixture_id"] == "core-recall-public-v1"
 
     dataset_hashes: set[str] = set()
     fixture_hashes: set[str] = set()
