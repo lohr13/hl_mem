@@ -44,6 +44,20 @@ bash scripts/hlmem-python.sh scripts/check_mcp_snapshot.py
 构建发布产物后运行 `python scripts/check_wheel_contents.py --reject-v030 dist/*.whl`。稳定的 `hl-mem eval`
 必须随 wheel 安装；`benchmarks/archive/` 只为历史复现保留，不属于普通 CI 或发布支持面。
 
+提交前可先运行快速契约门禁：
+
+```powershell
+uv run --frozen ruff check .
+uv run --frozen python -m tests.eval.ci_gate
+uv run --frozen python -m pytest tests/release/test_migration_release_gate.py tests/unit/test_config_loader.py tests/unit/test_provider_registry.py tests/unit/test_request_size_limit.py tests/unit/test_phase5_api_contract.py tests/unit/test_phase5_extraction_contract.py tests/unit/test_phase5_recall_contract.py -q --tb=short
+```
+
+快速门禁只提供早期反馈；发布权威仍是 Python 3.12-3.14 全矩阵，以及覆盖率不低于 80% 的完整测试：
+
+```powershell
+uv run --frozen --extra sqlite-vec python -W error::ResourceWarning -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term --cov-fail-under=80
+```
+
 ## 代码与数据规则
 
 - Python 使用完整类型标注；Black 行宽 120，isort 使用 Black profile。
