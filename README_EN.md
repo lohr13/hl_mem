@@ -154,7 +154,12 @@ fail before startup. Common keys are listed below.
 | `recall.resurrection_mode` | `off` | Set `auto` explicitly to enable the bounded archived-only cold path |
 | `recall.query_expansion_mode` | `off` | `off`, `auto`, or `always` |
 | `decay.model` | `activation_halflife` | Decays activation by scope-specific half-life without changing confidence during routine decay |
+| `dedup.enabled` | `true` | Enables deterministic near-copy review without LLM calls or Claim merging |
+| `dedup.llm_enabled` | `false` | Explicitly enables LLM dedup under the shared budget and audit controls |
 | `dedup.scan_limit` | `200` | Maximum pending `dedup_pairs` reviewed per maintenance pass |
+| `worker.semantic_conflict_consolidation_enabled` | `false` | Explicitly enables audit-only LLM conflict classification |
+| `worker.policy_induction_enabled` | `false` | Explicitly enables automatic Policy publication from Episodes |
+| `worker.reclassify_enabled` | `false` | Explicitly enables LLM Claim reclassification |
 | `relation.discovery_mode` | `off` | `off` or proposal-only `audit` |
 
 LLM, Embedding, and Reranker integrations can be extended through the governed
@@ -354,10 +359,10 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v0.36.1 with 57 immutable, forward-only migrations. Migrations 055–056 add Claim-mutation audit triggers
-and portable audit context; migration 057 retires non-terminal legacy conflict-judge jobs and requeues their linked open
-cases. Stop all writers and back up both the primary database and tombstone sidecar before upgrading; old binaries must
-not reopen an upgraded database.
+The current baseline is v0.36.1 with 59 immutable, forward-only migrations. Migrations 055–057 add Claim-mutation
+auditing and retire the legacy conflict judge; migration 058 terminates pending pre-upgrade semantic work, and migration
+059 adds provenance to relation edges. Stop all writers and back up both the primary database and tombstone sidecar
+before upgrading; old binaries must not reopen an upgraded database.
 
 ## Documentation
 

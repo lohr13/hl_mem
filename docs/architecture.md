@@ -35,7 +35,7 @@ flowchart TB
     X --> D
     S --> I[Ingest: filter / extract / embed]
     S --> R[Recall: FTS / dense / tag / relation / rerank]
-    W[Workers: TTL / decay / consolidate / deduplicate / derive] --> S
+    W[Workers: deterministic maintenance / gated semantic jobs] --> S
     I --> L[External model providers]
     R --> L
     W --> L
@@ -127,15 +127,17 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 57 immutable SQL migrations (001-057)
+│   └── migrations/           # 59 immutable SQL migrations (001-059)
 ├── workers/
-│   ├── worker.py             # Job leasing, progress, heartbeat, maintenance loop
+│   ├── worker.py             # Job leasing, progress, heartbeat, maintenance orchestration
+│   ├── automation.py         # Typed enablement policy for semantic and deferred tasks
+│   ├── maintenance.py        # Deterministic maintenance and explicit semantic scheduling
 │   ├── auto_resolve_conflicts.py # Bounded deterministic L0 conflict orchestration
 │   ├── job_handlers.py       # Job handlers, registry, and dispatch boundary
 │   ├── integrity.py          # Bounded dangling-reference reporting
 │   ├── ttl.py                # Importance-aware expiry
 │   ├── decay.py              # Activation/legacy decay and archival
-│   ├── consolidate.py        # LLM semantic consolidation
+│   ├── consolidate.py        # Audit-only LLM semantic conflict classification
 │   ├── deduplicate.py        # Cross-subject semantic deduplication
 │   ├── backfill_expires_at.py# TTL backfill utility
 │   ├── discover_relations.py # Relation proposal discovery
@@ -440,7 +442,7 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 57 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 59 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used
@@ -453,7 +455,9 @@ pending dedup candidates. Migrations 047–049 add assertion kind and dedup inje
 legacy tags FTS table. Migrations 050–054 add the governance action ledger, conflict policy versioning, typed canonical
 entities and Claim links, plan outcomes, and slot-aware dedup strategy metadata. Migrations 055–056 add portable
 database-boundary auditing for Claim UPDATE/DELETE mutations. Migration 057 retires non-terminal legacy conflict-judge
-jobs, clears their leases, and marks linked open cases dirty without modifying succeeded/dead history. They run automatically on first open;
+jobs, clears their leases, and marks linked open cases dirty without modifying succeeded/dead history. Migration 058
+terminates pending semantic jobs and abandons pending resurrection work disabled by the Core 1.0 defaults; migration 059
+adds immutable provenance to relation edges and binds approved-Proposal edges to their source Proposal. They run automatically on first open;
 schema migration never adjudicates conflicts, applies dedup pairs, or closes plans. The optional `sqlite_vec.py` data migration owns the dimension-specific
 derived vector table; the default remains exact `sqlite_scan`.
 

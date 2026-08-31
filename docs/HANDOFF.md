@@ -10,7 +10,7 @@
 - **发布状态**：B1–B3 已提交，B4 本地实施并通过门禁；未 push、未打 tag、未部署
 - **服务**：FastAPI 默认监听 8200；非敏感配置只从工作目录 `hl_mem.toml` 读取
 - **存储**：SQLite WAL + FTS5 + 向量 BLOB；默认 `sqlite_scan`，可选 `sqlite_vec`
-- **Schema**：57 migrations（SQL 001–057），只允许向前迁移
+- **Schema**：59 migrations（SQL 001–059），只允许向前迁移
 - **密钥**：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`RERANKER_API_KEY`、`IMAGE_API_KEY`
 
 ## v0.36.0 发版默认
@@ -38,6 +38,8 @@
 
 - migration 055–056 为每次 Claim UPDATE/DELETE 增加数据库边界审计，记录 changed fields 与调用来源；migration
   057 把遗留非终态冲突判官 job 标为 dead、清租约，并重新 dirty 其关联开放案；已终态历史不改。
+- migration 058 终止旧 pending 语义 job 并废弃旧 pending resurrection task；migration 059 为关系边增加不可变
+  provenance，并将批准提案与正式落边放进同一事务。
 - reclassify 跳过证据完备的 `report-version` 确定性探针；legacy slot backfill 注册同一组 SQLite 函数。
 - compact 提取改为 coverage-first 的 12–30 条高密度协议，schema `maxItems=30`；Zhipu 可显式透传
   `reasoning_effort`，通用 provider 支持可选 `max_tokens` 保险丝与 llama.cpp thinking 方言。
@@ -100,7 +102,7 @@
 ## 下一步
 
 Windows B4 发版预检已通过：Black 检查 592 个仓库文件，isort、Ruff、mypy（236 个 source files）、docs
-consistency（v0.36.0 / 57 migrations）、OpenAPI、MCP snapshot 与 complexity ratchet 均为绿。冲突相关 targeted
+consistency（v0.36.0 / SQL 001–057）、OpenAPI、MCP snapshot 与 complexity ratchet 均为绿。冲突相关 targeted
 suite 覆盖 B1–B4、migration 057 与 CLI 管理面，结果为 **154 passed**。本批按约束未跑全量 pytest；全量回归由
 GitHub Actions 验证。
 

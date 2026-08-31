@@ -360,9 +360,9 @@ git commit -m "feat: require memory relation provenance"
 
 **Files:**
 
-- Modify: `docs/config.md`
+- Modify: `docs/configuration.md`
 - Modify: `docs/capability-matrix.md`
-- Modify: `docs/operations.md`
+- Modify: `docs/architecture.md`
 - Modify: `docs/compatibility.md`
 - Modify: relevant OpenAPI/MCP/config snapshots only when generated behavior changed
 
@@ -418,7 +418,7 @@ hl-mem doctor
 ```powershell
 git diff --check
 git status --short
-git add docs/config.md docs/capability-matrix.md docs/operations.md docs/compatibility.md
+git add docs/configuration.md docs/capability-matrix.md docs/architecture.md docs/compatibility.md
 git commit -m "docs: define automation and relation governance"
 ```
 

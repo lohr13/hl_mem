@@ -269,7 +269,12 @@ REST 的完整请求契约见 [API 文档](docs/api.md)。
 | `recall.resurrection_mode` | `off` | 显式设为 `auto` 才启用有界 archived-only 冷路径 |
 | `recall.query_expansion_mode` | `off` | 多查询召回：`off`、`auto` 或 `always` |
 | `decay.model` | `activation_halflife` | 按 scope 半衰期衰减 activation，不因日常衰减改写 confidence |
+| `dedup.enabled` | `true` | 开启确定性 near-copy 审查；不调用 LLM，不合并 Claim |
+| `dedup.llm_enabled` | `false` | 显式开启 LLM dedup；仍受统一预算和审计约束 |
 | `dedup.scan_limit` | `200` | 每轮维护最多审查的 pending `dedup_pairs` 数量 |
+| `worker.semantic_conflict_consolidation_enabled` | `false` | 显式开启只写审计结果的 LLM 冲突分类 |
+| `worker.policy_induction_enabled` | `false` | 显式开启从 Episode 自动发布派生 Policy |
+| `worker.reclassify_enabled` | `false` | 显式开启 LLM Claim 重分类 |
 | `relation.discovery_mode` | `off` | 关系发现：`off` 或只生成提案的 `audit` |
 
 LLM、Embedding 与 Reranker 可通过受治理的 [Provider Plugin API](docs/provider-plugins.md) 扩展；图片 Provider
@@ -431,8 +436,8 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
 
-当前基线为 v0.36.1，共 57 个不可变、仅向前执行的 SQL Migration。migration 055–056 增加 Claim mutation 审计账本
-触发器与可移植审计上下文；migration 057 退役遗留的非终态冲突判官 job，并重新排队其关联开放案。升级前仍须
+当前基线为 v0.36.1，共 59 个不可变、仅向前执行的 SQL Migration。migration 055–057 增加 Claim mutation 审计并
+退役遗留冲突判官；migration 058 终止升级前遗留的 pending 语义任务，migration 059 为关系边增加来源闭环。升级前仍须
 停止写入者并备份主库与 tombstone sidecar，旧二进制不得再打开已升级数据库。
 
 ## 文档

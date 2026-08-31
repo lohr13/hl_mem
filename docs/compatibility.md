@@ -39,6 +39,11 @@ experimental wherever they are exposed.
 Internal SQLite tables are not a public SQL API. SQLite migrations are immutable after release and forward-only, and
 supported forward migrations preserve application-managed data.
 
+The Core 1.0 automation migration terminates only pending semantic jobs and abandons pending resurrection tasks that are
+disabled by the new defaults; running and terminal jobs are not rewritten. The relation-provenance migration preserves
+existing edges as `legacy`. New application-managed edges record `deterministic`, `manual`, or `approved_proposal`
+provenance, and Proposal approval creates the edge and marks the Proposal applied in one transaction.
+
 Before an irreversible upgrade, the CLI requires a verified pre-upgrade recovery set: the main database backup, its
 backup manifest, the separately preserved authoritative tombstone ledger (`<database>.tombstones.db`), the prior
 configuration, and the old binary. The database backup and manifest must pass validation, and the ledger identity and
