@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hl-mem.local/schemas/provider-live-smoke-result-v1.json",
+  "title": "HL-Mem Provider Live Smoke Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "passed",
+    "fixture_sha256",
+    "config_fingerprint",
+    "labels",
+    "counters",
+    "latency_ms",
+    "price_book",
+    "error_categories",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "passed": {"type": "boolean"},
+    "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "config_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package_version", "plugins", "models"],
+      "properties": {
+        "package_version": {"type": "string", "maxLength": 64},
+        "plugins": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 64}},
+        "models": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["llm", "embedding", "reranker"],
+          "properties": {
+            "llm": {"type": "string", "maxLength": 200},
+            "embedding": {"type": "string", "maxLength": 200},
+            "reranker": {"type": "string", "maxLength": 200}
+          }
+        }
+      }
+    },
+    "counters": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "latency_ms": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0}
+    },
+    "price_book": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "fingerprint", "effective_date", "source_urls"],
+      "properties": {
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "effective_date": {"type": "string", "format": "date"},
+        "source_urls": {"type": "array", "maxItems": 16, "items": {"type": "string", "format": "uri"}}
+      }
+    },
+    "error_categories": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 64}},
+    "checks": {
+      "type": "object",
+      "additionalProperties": {"type": "boolean"}
+    }
+  }
+}

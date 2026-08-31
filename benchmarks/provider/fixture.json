@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "occurred_at": "2026-08-31T08:00:00+00:00",
+  "text": "Atlas Hub 型号 AH-1 使用石墨黑外壳。Atlas Hub 计划于 2026-09-15 维护窗口升级。用户偏好中英双语的简短告警。Nova Sensor 与 Atlas Hub 配套使用。",
+  "expected_claim_count": 4,
+  "recalls": [
+    {"label": "ordinary", "query": "Atlas Hub 外壳", "intent": "current_state"},
+    {"label": "entity", "query": "Atlas Hub", "intent": "current_state"},
+    {"label": "temporal", "query": "2026-09-15 维护窗口", "intent": "historical", "as_of": "2026-09-16T00:00:00+00:00"},
+    {"label": "preference", "query": "用户偏好什么告警风格", "intent": "preference"}
+  ],
+  "recording_extraction": {
+    "should_memorize": true,
+    "claims": [
+      {
+        "subject": "Atlas Hub",
+        "value": "型号 AH-1 使用石墨黑外壳",
+        "action": "使用",
+        "object": "石墨黑外壳",
+        "kind": "fact",
+        "confidence": 0.96,
+        "notability": "high",
+        "evidence_quote": "Atlas Hub 型号 AH-1 使用石墨黑外壳",
+        "source_event_indices": [0]
+      },
+      {
+        "subject": "Atlas Hub",
+        "value": "计划于 2026-09-15 维护窗口升级",
+        "action": "升级",
+        "object": "维护窗口",
+        "kind": "plan",
+        "confidence": 0.94,
+        "notability": "high",
+        "evidence_quote": "Atlas Hub 计划于 2026-09-15 维护窗口升级",
+        "source_event_indices": [0]
+      },
+      {
+        "subject": "用户",
+        "value": "中英双语的简短告警",
+        "action": "偏好",
+        "object": "告警风格",
+        "kind": "preference",
+        "confidence": 0.98,
+        "notability": "high",
+        "evidence_quote": "用户偏好中英双语的简短告警",
+        "source_event_indices": [0]
+      },
+      {
+        "subject": "Nova Sensor",
+        "value": "与 Atlas Hub 配套使用",
+        "action": "配套使用",
+        "object": "Atlas Hub",
+        "kind": "architecture",
+        "confidence": 0.93,
+        "notability": "medium",
+        "evidence_quote": "Nova Sensor 与 Atlas Hub 配套使用",
+        "source_event_indices": [0]
+      }
+    ]
+  }
+}
