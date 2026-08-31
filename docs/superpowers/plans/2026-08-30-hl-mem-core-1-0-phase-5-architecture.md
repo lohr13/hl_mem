@@ -310,7 +310,7 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
   ```powershell
   uv run --frozen pytest tests/unit/test_phase5_api_contract.py tests/unit/test_session_context.py tests/unit/test_dry_run_extract.py tests/unit/test_context_packet.py tests/unit/test_experience_api.py tests/unit/test_daily_memory_api.py tests/unit/test_forget_api.py -q
   uv run --frozen python scripts/check_openapi_snapshot.py
-  uv run --frozen python scripts/check_mcp_contract_snapshot.py
+  uv run --frozen python scripts/check_mcp_snapshot.py
   ```
 
   Expected: all PASS with no snapshot update.
@@ -366,7 +366,8 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
   Run:
 
   ```powershell
-  uv run --frozen pytest tests/unit/test_benchmark.py tests/eval/test_state_lifecycle_scorer.py benchmarks/archive/v030/tests -q
+  uv run --frozen pytest tests/unit/test_benchmark.py tests/eval/test_state_lifecycle_scorer.py -q
+  uv run --frozen python -m pytest benchmarks/archive/v030/tests -q
   uv run --frozen python -m build
   $wheel = Get-ChildItem dist/*.whl | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   uv run --frozen python scripts/check_wheel_contents.py $wheel.FullName
@@ -387,7 +388,7 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
 **Files:**
 - Modify: `scripts/complexity_budget.json`
 - Modify: `docs/architecture.md`
-- Modify: `docs/development.md`
+- Modify: `CONTRIBUTING.md`
 - Modify: `docs/superpowers/plans/2026-08-30-hl-mem-core-1-0-roadmap.md`
 
 **Interfaces:**
@@ -400,7 +401,7 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
 
 - [ ] **Step 2: Document the resulting boundaries**
 
-  Update architecture and development docs to state where extraction parsing/post-processing, recall enrichment/delivery, HTTP routes, stable evaluation, and archived research live. Update the roadmap Phase 5 status only after all gates pass.
+  Update architecture and contributing docs to state where extraction parsing/post-processing, recall enrichment/delivery, HTTP routes, stable evaluation, and archived research live. Update the roadmap Phase 5 status only after all gates pass.
 
 - [ ] **Step 3: Run formatting, static, architecture, and contract gates**
 
@@ -412,11 +413,11 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
   uv run --frozen isort --check-only --gitignore .
   uv run --frozen mypy src
   uv run --frozen python scripts/check_complexity_budget.py --ratchet
-  uv run --frozen python scripts/check_import_boundaries.py
-  uv run --frozen python scripts/check_config_snapshot.py
+  uv run --frozen python scripts/check_imports.py
+  uv run --frozen python scripts/check_config_schema_snapshot.py
   uv run --frozen python scripts/check_openapi_snapshot.py
-  uv run --frozen python scripts/check_mcp_contract_snapshot.py
-  uv run --frozen python scripts/check_docs.py
+  uv run --frozen python scripts/check_mcp_snapshot.py
+  uv run --frozen python scripts/check_docs_consistency.py
   ```
 
   Expected: every command exits 0. Complexity allowances for `llm_extractor.py`, `application/recall.py`, `api/server.py`, and `workers/worker.py` are strictly lower than at `df172ac`.
@@ -448,7 +449,7 @@ The old `hl_mem.ingest.schemas` and `hl_mem.ingest.repair` modules are retained 
   Run `git diff df172ac --check`, `git diff --stat df172ac`, and `git status --short`. Confirm the user draft is the only untracked main-worktree file and is absent from every commit. Commit the documentation and final budget adjustments:
 
   ```powershell
-  git add scripts/complexity_budget.json docs/architecture.md docs/development.md docs/superpowers/plans/2026-08-30-hl-mem-core-1-0-roadmap.md
+  git add scripts/complexity_budget.json docs/architecture.md CONTRIBUTING.md docs/superpowers/plans/2026-08-30-hl-mem-core-1-0-roadmap.md
   git commit -m "docs: close Core 1.0 phase 5"
   ```
 

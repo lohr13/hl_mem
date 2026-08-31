@@ -125,13 +125,12 @@
   },
   {
     "path": "src/hl_mem/workers/worker.py",
-    "max_lines": 963,
+    "max_lines": 750,
     "max_params": {
       "Worker.__init__": 17
     },
     "max_callable_lines": {
-      "Worker._extract_window": 235,
-      "Worker._run_maintenance": 203
+      "Worker._extract_window": 235
     }
   }
 ]

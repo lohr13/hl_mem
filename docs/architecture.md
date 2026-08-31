@@ -58,7 +58,8 @@ src/hl_mem/
 ├── adapters/hermes/          # Hermes provider, client, episode mapping, thin plugin delegate
 ├── plugins/                  # Provider contracts, allowlisted discovery, frozen Registry, governed runtime
 ├── api/
-│   ├── server.py             # FastAPI assembly, middleware, exception mapping, 17 REST routes
+│   ├── routes/               # Memory, recall, experience, and maintenance route registration
+│   ├── server.py             # FastAPI assembly, lifecycle, middleware, and exception mapping
 │   └── schemas.py            # Pydantic request and response contracts
 ├── application/
 │   ├── answerability.py      # Shared supported/hard/soft abstention semantics
@@ -67,7 +68,9 @@ src/hl_mem/
 │   ├── entity_resolution.py  # Typed canonical-entity projection and rekey orchestration
 │   ├── ingest.py             # IngestService and atomic Claim write path
 │   ├── plan_fulfillment.py   # Result-to-plan reconciliation and governance CAS
-│   ├── recall.py             # RecallService orchestration and context packing
+│   ├── recall.py             # RecallService orchestration and compatibility patch points
+│   ├── recall_delivery.py    # Pure context candidate, packing, and bundle transformations
+│   ├── recall_enrichment.py  # Repository-backed evidence and relation result enrichment
 │   ├── forget.py             # Explicit-forget adapter over DeletionService
 │   └── restore.py            # Restore replay orchestration before database visibility
 ├── core/
@@ -84,7 +87,7 @@ src/hl_mem/
 │   ├── recall.py             # Recall intents and domain rules
 │   ├── relations.py          # Memory relationship model
 │   └── temporal.py           # Dual-time visibility
-├── evaluation/               # Benchmarks, metrics, reports, LongMemEval adapter
+├── evaluation/               # Installed stable eval runner, metrics, smoke gates, and adapters
 ├── experience/
 │   └── service.py            # Episode, Trace, reward, Policy operations
 ├── ingest/
@@ -93,8 +96,9 @@ src/hl_mem/
 │   ├── admission.py          # Pure deterministic Claim admission policy
 │   ├── embedder.py           # Fake/real embedding implementations
 │   ├── event_filter.py       # Event value filtering
+│   ├── extraction/           # Prompt, schema, repair, parsing, and deterministic post-processing
 │   ├── extractors.py         # Fake/LLM extractor interface
-│   └── llm_extractor.py      # Compact extraction and full-schema post-processing
+│   └── llm_extractor.py      # Provider-call orchestration and compatibility facade
 ├── llm/
 │   ├── client.py             # Provider-independent LLM client
 │   ├── providers.py          # Bailian, Zhipu, OpenAI-compatible providers
@@ -154,6 +158,9 @@ src/hl_mem/
 ├── settings.py               # Thin compatibility facade over typed config models
 └── cli.py                    # Maintenance, backup, import/export, evaluation CLI
 ```
+
+Repository-only historical experiments live under `benchmarks/archive/`. They are excluded from wheels and source
+distributions; the supported `hl-mem eval` implementation remains under `src/hl_mem/evaluation/`.
 
 ## 4. Memory Model
 

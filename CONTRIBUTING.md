@@ -41,6 +41,9 @@ bash scripts/hlmem-python.sh scripts/check_mcp_snapshot.py
 行为变化必须有回归测试。涉及 OpenAPI 或 MCP 契约的有意变化，先审查 diff，再分别使用对应脚本的
 `--update` 更新 snapshot。
 
+构建发布产物后运行 `python scripts/check_wheel_contents.py --reject-v030 dist/*.whl`。稳定的 `hl-mem eval`
+必须随 wheel 安装；`benchmarks/archive/` 只为历史复现保留，不属于普通 CI 或发布支持面。
+
 ## 代码与数据规则
 
 - Python 使用完整类型标注；Black 行宽 120，isort 使用 Black profile。
