@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+import hl_mem.ingest.llm_extractor as extractor_module
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.extraction.prompts import ENGLISH_SYSTEM_PROMPT as INTERNAL_ENGLISH_SYSTEM_PROMPT
 from hl_mem.ingest.extraction.prompts import SYSTEM_PROMPT as INTERNAL_SYSTEM_PROMPT
@@ -110,3 +111,22 @@ def test_extraction_contract_modules_have_one_canonical_implementation() -> None
     assert ENGLISH_SYSTEM_PROMPT is INTERNAL_ENGLISH_SYSTEM_PROMPT
     assert ExtractionResponseSchema is InternalExtractionResponseSchema
     assert repair_extraction_json is internal_repair_extraction_json
+
+
+def test_public_static_helpers_delegate_to_focused_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentinel = {"delegated": True}
+    monkeypatch.setattr(extractor_module, "parse_json_response", lambda raw: {**sentinel, "raw": raw})
+    monkeypatch.setattr(extractor_module, "merge_chunk_claims", lambda chunks: [sentinel, chunks])
+    monkeypatch.setattr(
+        extractor_module,
+        "claim_from_payload",
+        lambda item, *, preserve_subject, aliases: (item, preserve_subject, aliases),
+    )
+
+    assert LLMExtractor._parse_json("wire") == {**sentinel, "raw": "wire"}
+    assert LLMExtractor._merge_chunk_claims([[sentinel]]) == [sentinel, [[sentinel]]]
+    item = {"value": "PG"}
+    projected, preserve_subject, aliases = LLMExtractor._claim(item, preserve_subject=True)
+    assert projected is item
+    assert preserve_subject is True
+    assert aliases["pg"] == "PostgreSQL"

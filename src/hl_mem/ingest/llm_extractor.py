@@ -7,16 +7,14 @@ import json
 import logging
 import re
 import unicodedata
-from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from pydantic import ValidationError as PydanticValidationError
 
 from hl_mem.domain.action_coordinates import project_action_qualifiers
 from hl_mem.domain.claims.attributes import (
     _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS,
-    ALLOWED_TOPIC_TAGS,
     ATTRIBUTE_ALIASES,
     ATTRIBUTE_HINTS,
     MUTUALLY_EXCLUSIVE_SLOTS,
@@ -27,8 +25,6 @@ from hl_mem.domain.claims.attributes import (
     normalize_canonical_attribute,
     normalize_predicate,
     normalize_topic_tags,
-    predicate_for_canonical_attribute,
-    reconcile_canonical_attribute,
     validate_slot_instance,
 )
 from hl_mem.domain.claims.query_tags import extract_query_tags
@@ -37,10 +33,7 @@ from hl_mem.domain.entity import (
     _FILE_SUBJECT_PATTERN,
     _PASCAL_CASE_SUBJECT_PATTERN,
     DEFAULT_ENTITY_ALIASES,
-    invalid_subject_reason,
-    isolated_subject_id,
     normalize_entity_alias,
-    normalize_entity_id,
 )
 from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
 from hl_mem.llm.client import LLMClient
@@ -74,6 +67,18 @@ from .chunking import (
     bisect_extraction_chunk,
     split_extraction_content,
 )
+from .extraction.parsing import (
+    count_repairs,
+    is_claim_count_overflow,
+    looks_like_truncated_json,
+    parse_json_response,
+    parse_legacy_defaults,
+    schema_error_details,
+    schema_error_paths,
+    schema_retry_instruction,
+    uses_compact_schema,
+)
+from .extraction.postprocessing import claim_from_payload, merge_chunk_claims
 from .extraction.prompts import (
     ENGLISH_SYSTEM_PROMPT,
     LEGACY_ENGLISH_SYSTEM_PROMPT,
@@ -88,7 +93,7 @@ from .extraction.schema import (
     ExtractionResponseSchema,
     temporal_gate_extraction_response_json_schema,
 )
-from .extractors import AssertionKind, ExtractedClaim
+from .extractors import ExtractedClaim
 from .relative_time import infer_occurrence, relative_time_rules_fingerprint
 from .verifier import EntailmentVerifier
 
@@ -1536,164 +1541,42 @@ class LLMExtractor:
         reasons = list(dict.fromkeys(reason for _decision, reason in self._memorize_decisions if reason))
         return "；".join(reasons) or "no_chunks"
 
-    @classmethod
-    def _count_repairs(cls, original: Any, repaired: Any) -> int:
-        """递归统计确定性修复改变的叶子字段数。"""
-        if isinstance(original, dict) and isinstance(repaired, dict):
-            return sum(
-                cls._count_repairs(original.get(key), repaired.get(key)) for key in original.keys() | repaired.keys()
-            )
-        if isinstance(original, list) and isinstance(repaired, list):
-            return sum(cls._count_repairs(left, right) for left, right in zip(original, repaired, strict=False)) + abs(
-                len(original) - len(repaired)
-            )
-        return int(original != repaired)
+    @staticmethod
+    def _count_repairs(original: Any, repaired: Any) -> int:
+        return count_repairs(original, repaired)
 
     @staticmethod
     def _looks_like_truncated_json(content: str | dict[str, Any]) -> bool:
-        """识别空响应或括号未闭合的明显 JSON 截断。"""
-        if isinstance(content, dict):
-            return False
-        text = str(content).strip()
-        if not text:
-            return True
-        return (text.startswith("{") and text.count("{") > text.count("}")) or (
-            text.startswith("[") and text.count("[") > text.count("]")
-        )
+        return looks_like_truncated_json(content)
 
     @staticmethod
     def _merge_chunk_claims(chunks: list[list[ExtractedClaim]]) -> list[ExtractedClaim]:
-        """按规范化事实字段稳定合并同一次分块提取的结果。"""
-        merged: list[ExtractedClaim] = []
-        positions: dict[tuple[str, str, str, str, str], int] = {}
-        for claims in chunks:
-            for claim in claims:
-                key = (
-                    unicodedata.normalize("NFKC", claim.subject).strip().casefold(),
-                    unicodedata.normalize("NFKC", claim.predicate).strip().casefold(),
-                    unicodedata.normalize("NFKC", claim.canonical_slot or "").strip().casefold(),
-                    unicodedata.normalize("NFKC", str(claim.value)).strip().casefold(),
-                    unicodedata.normalize(
-                        "NFKC",
-                        json.dumps(
-                            claim.qualifiers,
-                            ensure_ascii=False,
-                            sort_keys=True,
-                            default=str,
-                        ),
-                    ),
-                )
-                if key in positions:
-                    position = positions[key]
-                    existing = merged[position]
-                    indices = tuple(dict.fromkeys((*existing.source_event_indices, *claim.source_event_indices)))
-                    merged[position] = replace(existing, source_event_indices=indices)
-                    continue
-                positions[key] = len(merged)
-                merged.append(claim)
-        return merged
+        return merge_chunk_claims(chunks)
 
     @staticmethod
     def _uses_compact_schema(payload: dict[str, Any]) -> bool:
-        """区分当前 7 字段响应与需要兼容的旧响应。"""
-        claims = payload.get("claims")
-        if not isinstance(claims, list):
-            return False
-        if not claims:
-            return set(payload).issubset({"claims", "should_memorize"})
-        compact_markers = {"kind", "notability", "evidence_quote"}
-        return any(isinstance(item, dict) and compact_markers.intersection(item) for item in claims)
+        return uses_compact_schema(payload)
 
     @staticmethod
     def _parse_legacy_defaults(payload: dict[str, Any]) -> dict[str, Any]:
-        """仅对带有旧版核心字段签名的响应补齐后来新增的字段。"""
-        compatible = dict(payload)
-        claims = compatible.get("claims")
-        if not isinstance(claims, list):
-            return compatible
-        normalized_claims: list[Any] = []
-        for item in claims:
-            if not isinstance(item, dict):
-                normalized_claims.append(item)
-                continue
-            claim = dict(item)
-            legacy_core = {"predicate", "value"}
-            versioned_fields = {"canonical_attribute", "scope", "importance"}
-            if not legacy_core.issubset(claim) or not versioned_fields.isdisjoint(claim):
-                normalized_claims.append(claim)
-                continue
-            defaults = deepcopy(_LEGACY_CLAIM_DEFAULTS)
-            missing = [key for key in defaults if key not in claim]
-            for key in missing:
-                claim[key] = defaults[key]
-            if missing:
-                current_audit().emit(
-                    "extract",
-                    "legacy_schema_defaults",
-                    "applied",
-                    detail={"fields": missing},
-                )
-            normalized_claims.append(claim)
-        compatible["claims"] = normalized_claims
-        return compatible
+        return parse_legacy_defaults(payload, _LEGACY_CLAIM_DEFAULTS)
 
     @staticmethod
     def _schema_error_paths(error: Exception) -> list[str]:
-        """提取可安全回传给模型的 schema 错误路径与类型。"""
-        if isinstance(error, PydanticValidationError):
-            return [f"{'.'.join(str(part) for part in item['loc'])}:{item['type']}" for item in error.errors()]
-        return [f"response:{type(error).__name__}"]
+        return schema_error_paths(error)
 
     @staticmethod
     def _is_claim_count_overflow(error: BaseException) -> bool:
-        """识别 claims 根数组超过 schema 上限，供密度自适应分块使用。"""
-        current: BaseException | None = error
-        visited: set[int] = set()
-        while current is not None and id(current) not in visited:
-            visited.add(id(current))
-            if isinstance(current, PydanticValidationError) and any(
-                tuple(item["loc"]) == ("claims",) and item["type"] == "too_long" for item in current.errors()
-            ):
-                return True
-            current = current.__cause__ or current.__context__
-        return False
+        return is_claim_count_overflow(error)
 
     @staticmethod
     def _schema_error_details(error: Exception, payload: Any) -> list[dict[str, Any]]:
-        """提取错误路径、非法值和该字段允许值，供 schema 重试使用。"""
-        if not isinstance(error, PydanticValidationError):
-            return [
-                {
-                    "path": "response",
-                    "error_type": type(error).__name__,
-                    "invalid_value": payload,
-                    "allowed_values": ["valid JSON object matching the supplied schema"],
-                }
-            ]
-        details: list[dict[str, Any]] = []
-        for item in error.errors():
-            path = ".".join(str(part) for part in item["loc"])
-            if "topic_tags" in item["loc"]:
-                allowed_values: list[str] = sorted(ALLOWED_TOPIC_TAGS)
-            elif item["loc"] and item["loc"][-1] == "kind":
-                allowed_values = sorted(_KIND_MAP)
-            elif item["loc"] and item["loc"][-1] == "notability":
-                allowed_values = sorted(_NOTABILITY_IMPORTANCE)
-            elif item["loc"] and item["loc"][-1] == "sensitivity":
-                allowed_values = ["normal", "sensitive", "restricted"]
-            elif item["loc"] and item["loc"][-1] == "entities":
-                allowed_values = ["JSON array of strings", "null (claim entities only)"]
-            else:
-                allowed_values = [str(item.get("ctx", {}).get("expected", "value matching the JSON schema"))]
-            details.append(
-                {
-                    "path": path,
-                    "error_type": item["type"],
-                    "invalid_value": item.get("input"),
-                    "allowed_values": allowed_values,
-                }
-            )
-        return details
+        return schema_error_details(
+            error,
+            payload,
+            kind_values=set(_KIND_MAP),
+            notability_values=set(_NOTABILITY_IMPORTANCE),
+        )
 
     @staticmethod
     def _schema_retry_instruction(
@@ -1701,146 +1584,15 @@ class LLMExtractor:
         schema_errors: list[dict[str, Any]],
         language: Literal["zh", "en"] = "zh",
     ) -> str:
-        """构建包含上次 JSON 和可操作错误详情的 schema 重试指令。"""
-        if language == "en":
-            return (
-                "\nThe previous output did not match the schema. Produce a complete JSON response based on it and "
-                "correct only the errors below.\n"
-                "<previous_invalid_json>\n"
-                f"{json.dumps(previous_output, ensure_ascii=False, default=str)}\n"
-                "</previous_invalid_json>\n"
-                "<schema_errors>\n"
-                f"{json.dumps(schema_errors, ensure_ascii=False, default=str)}\n"
-                "</schema_errors>"
-            )
-        return (
-            "\n上一次输出不符合 schema。请基于上次输出生成完整 JSON，只修正下列错误。\n"
-            "<previous_invalid_json>\n"
-            f"{json.dumps(previous_output, ensure_ascii=False, default=str)}\n"
-            "</previous_invalid_json>\n"
-            "<schema_errors>\n"
-            f"{json.dumps(schema_errors, ensure_ascii=False, default=str)}\n"
-            "</schema_errors>"
-        )
+        return schema_retry_instruction(previous_output, schema_errors, language)
 
     @staticmethod
     def _parse_json(raw: Any) -> dict[str, Any]:
-        if isinstance(raw, dict):
-            return raw
-        text = str(raw).strip()
-        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
-        if fenced:
-            text = fenced.group(1)
-        try:
-            value = json.loads(text)
-        except json.JSONDecodeError as error:
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            if not match:
-                raise ValueError("LLM response does not contain valid JSON") from error
-            value = json.loads(match.group())
-        if not isinstance(value, dict):
-            raise ValueError("LLM response must be a JSON object")
-        return value
+        return parse_json_response(raw)
 
     @staticmethod
     def _claim(item: dict[str, Any], *, preserve_subject: bool = False) -> ExtractedClaim:
-        value = str(item.get("value", "")).strip()
-        value = ALIASES.get(value.casefold(), value)
-        predicate = str(item.get("predicate", "事实")).strip()
-        predicate = normalize_predicate(predicate)
-        original_subject = str(item.get("subject", "用户"))
-        subject = (
-            re.sub(r"\s+", " ", unicodedata.normalize("NFKC", original_subject).strip())
-            if preserve_subject
-            else normalize_entity_id(original_subject)
-        )
-        entities = list(item.get("entities") or [])
-        invalid_reason = invalid_subject_reason(original_subject)
-        if invalid_reason is not None:
-            replacement = next(
-                (normalize_entity_id(entity) for entity in entities if invalid_subject_reason(entity) is None),
-                None,
-            )
-            subject = replacement or isolated_subject_id(original_subject, predicate, value)
-            if original_subject not in entities:
-                entities.append(original_subject)
-            current_audit().emit(
-                "extract",
-                "subject_guard",
-                "replaced" if replacement else "isolated",
-                detail={
-                    "original_subject": original_subject,
-                    "normalized_subject": normalize_entity_id(original_subject),
-                    "replacement_subject": subject,
-                    "reason_code": invalid_reason,
-                    "isolation_reason": None if replacement else "invalid_subject_isolated",
-                },
-            )
-        qualifiers = item.get("qualifiers") or {}
-        inferred_attribute = infer_canonical_attribute(predicate, subject, value, qualifiers)
-        canonical_attribute, _attribute_reason = reconcile_canonical_attribute(
-            predicate=predicate,
-            llm_attribute=str(item.get("canonical_attribute", "")),
-            inferred_attribute=inferred_attribute,
-            subject=subject,
-            value=value,
-            qualifiers=qualifiers,
-        )
-        projected_predicate = predicate_for_canonical_attribute(canonical_attribute, predicate)
-        current_audit().emit(
-            "extract",
-            "predicate_normalized",
-            "changed" if projected_predicate != predicate else "preserved",
-            detail={
-                "llm_predicate": predicate,
-                "normalized_predicate": projected_predicate,
-                "canonical_attribute": canonical_attribute,
-                "reason_code": (
-                    "canonical_attribute_projection" if projected_predicate != predicate else "llm_preserved"
-                ),
-            },
-        )
-        predicate = projected_predicate
-        qualifiers = project_action_qualifiers(
-            value,
-            qualifiers,
-            is_plan=canonical_attribute.startswith("plan.") or predicate == "计划",
-        )
-        volatility = item.get("volatility", "stable")
-        scope = item.get("scope", "permanent")
-        scope = scope if scope in {"temporal", "permanent"} else "permanent"
-        try:
-            confidence = min(1.0, max(0.0, float(item.get("confidence", 0.5))))
-        except (TypeError, ValueError):
-            confidence = 0.5
-        try:
-            importance = min(1.0, max(0.0, float(item.get("importance", 0.5))))
-        except (TypeError, ValueError):
-            importance = 0.5
-        return ExtractedClaim(
-            predicate=predicate,
-            value=value,
-            confidence=confidence,
-            volatility=volatility if volatility in {"stable", "ephemeral"} else "stable",
-            subject=subject,
-            qualifiers=qualifiers,
-            reason=str(item.get("reason", "")),
-            scope=scope,
-            importance=importance,
-            canonical_attribute=canonical_attribute,
-            canonical_slot=validate_slot_instance(item.get("canonical_slot"), qualifiers),
-            topic_tags=normalize_topic_tags(item.get("topic_tags")),
-            occurred_start=item.get("occurred_start"),
-            occurred_end=item.get("occurred_end"),
-            entities=entities or None,
-            memory_layer=("episodic" if item.get("memory_layer") == "episodic" else "durable"),
-            assertion_kind=(
-                cast(AssertionKind, item.get("assertion_kind"))
-                if item.get("assertion_kind") in {"unknown", "observation", "inference"}
-                else "unknown"
-            ),
-            source_event_indices=tuple(item.get("source_event_indices") or ()),
-        )
+        return claim_from_payload(item, preserve_subject=preserve_subject, aliases=ALIASES)
 
     def _system_prompt_for_language(self, language: Literal["zh", "en"]) -> str:
         prompt = ENGLISH_SYSTEM_PROMPT if language == "en" else SYSTEM_PROMPT
