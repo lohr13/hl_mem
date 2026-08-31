@@ -285,6 +285,53 @@ def test_empty_valid_ledger_reports_zeroes_and_unlimited_budget(tmp_path: Path) 
     assert all(item["utilization"] is None for item in report["budget"].values())
 
 
+def test_historical_report_excludes_reservations_created_after_window_until(tmp_path: Path) -> None:
+    path = tmp_path / "usage.budget.db"
+    clock = Clock(WINDOW.until + timedelta(hours=1))
+    governor = _governor(path, clock, lease_seconds=3600)
+    governor.reserve(IDENTITY, UsageAmount(requests=2, input_tokens=12, cost_microunits=13))
+
+    report = UsageLedgerReader(path).report(WINDOW, limits=UsageLimits(10, 100, 1_000))
+
+    assert report["reservations"] == {
+        "active_count": 0,
+        "expired_count": 0,
+        "reserved": {
+            "requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "embedding_items": 0,
+            "rerank_documents": 0,
+            "images": 0,
+            "cost_microunits": 0,
+        },
+    }
+    assert report["budget"] == {
+        "requests": {"limit": 10, "used": 0, "utilization": Decimal("0")},
+        "tokens": {"limit": 100, "used": 0, "utilization": Decimal("0")},
+        "cost_microunits": {"limit": 1_000, "used": 0, "utilization": Decimal("0")},
+    }
+
+
+def test_health_summary_does_not_use_report_group_or_percentile_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "usage.budget.db"
+    _seed_ledger(path)
+
+    def fail_if_grouped(value: dict[str, object]) -> dict[str, object]:
+        raise AssertionError("health summary must not build report groups or percentiles")
+
+    monkeypatch.setattr(UsageLedgerReader, "_finish", staticmethod(fail_if_grouped))
+
+    assert UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(), now=NOW) == {
+        "failures": 2,
+        "stale_reservations": 1,
+        "utilization": {"requests": None, "tokens": None, "cost_microunits": None},
+        "unknown_outcomes": 1,
+        "unknown_costs": 1,
+    }
+
+
 def _set_newer_schema(path: Path) -> None:
     _governor(path, Clock(NOW))
     with sqlite3.connect(path) as connection:

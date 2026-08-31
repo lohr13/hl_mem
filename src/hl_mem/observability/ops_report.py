@@ -179,8 +179,25 @@ class UsageLedgerReader:
         value["error_categories"] = dict(sorted(value["error_categories"].items()))
         return value
 
-    def _reservations(self, connection: sqlite3.Connection, *, at: datetime) -> dict[str, object]:
-        rows = connection.execute("SELECT * FROM usage_reservations WHERE state='active' ORDER BY id").fetchall()
+    def _reservations(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        at: datetime,
+        created_until: datetime | None = None,
+        usage_day: date | None = None,
+    ) -> dict[str, object]:
+        clauses = ["state='active'"]
+        parameters: list[str] = []
+        if created_until is not None:
+            clauses.append("created_at<=?")
+            parameters.append(_iso(created_until))
+        if usage_day is not None:
+            clauses.append("usage_date=?")
+            parameters.append(usage_day.isoformat())
+        rows = connection.execute(
+            f"SELECT * FROM usage_reservations WHERE {' AND '.join(clauses)} ORDER BY id", parameters
+        ).fetchall()
         reserved: dict[str, Any] = _empty_amount()
         active, expired = 0, 0
         cutoff = _iso(at)
@@ -191,6 +208,33 @@ class UsageLedgerReader:
                 active += 1
                 _add_amount(reserved, row, prefix="reserved_")
         return {"active_count": active, "expired_count": expired, "reserved": reserved}
+
+    @staticmethod
+    def _daily_totals(connection: sqlite3.Connection, day: date) -> dict[str, Any]:
+        row = connection.execute(
+            "SELECT COALESCE(SUM(requests),0) requests, "
+            "COALESCE(SUM(input_tokens),0) input_tokens, "
+            "COALESCE(SUM(output_tokens),0) output_tokens, "
+            "COALESCE(SUM(embedding_items),0) embedding_items, "
+            "COALESCE(SUM(rerank_documents),0) rerank_documents, "
+            "COALESCE(SUM(images),0) images, "
+            "COALESCE(SUM(cost_microunits),0) cost_microunits, "
+            "COALESCE(SUM(CASE WHEN status IN ('success','ok','settled','imported') THEN 0 ELSE 1 END),0) errors, "
+            "COALESCE(SUM(unknown_outcome),0) unknown_outcomes, "
+            "COALESCE(SUM(CASE WHEN unknown_cost<>0 OR cost_microunits IS NULL THEN 1 ELSE 0 END),0) unknown_costs "
+            "FROM usage_events WHERE usage_date=?",
+            (day.isoformat(),),
+        ).fetchone()
+        assert row is not None
+        totals: dict[str, Any] = _empty_amount()
+        for field in _AMOUNTS:
+            totals[field] = int(row[field])
+        totals["total_tokens"] = int(totals["input_tokens"]) + int(totals["output_tokens"])
+        totals["cost_microunits"] = None if int(row["unknown_costs"]) else int(row["cost_microunits"])
+        totals["errors"] = int(row["errors"])
+        totals["unknown_outcomes"] = int(row["unknown_outcomes"])
+        totals["unknown_costs"] = int(row["unknown_costs"])
+        return totals
 
     @staticmethod
     def _budget(totals: dict[str, Any], reservations: dict[str, Any], limits: UsageLimits) -> dict[str, dict[str, Any]]:
@@ -231,7 +275,7 @@ class UsageLedgerReader:
             finished_totals = self._finish(totals)
             for field in ("capability", "plugin_id", "provider", "model", "status"):
                 finished_totals.pop(field)
-            reservations = self._reservations(connection, at=window.until)
+            reservations = self._reservations(connection, at=window.until, created_until=window.until)
             return {
                 "window": {"since": _iso(window.since), "until": _iso(window.until)},
                 "groups": finished_groups,
@@ -246,13 +290,13 @@ class UsageLedgerReader:
 
     def health_summary(self, *, day: date, limits: UsageLimits, now: datetime) -> dict[str, object]:
         current = _utc(now)
-        start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
-        report = self.report(ReportWindow(start, start + timedelta(days=1) - timedelta(microseconds=1)), limits=limits)
-        totals = cast(dict[str, Any], report["totals"])
-        assert isinstance(totals, dict)
         connection = self._connect()
         try:
-            reservations = cast(dict[str, Any], self._reservations(connection, at=current))
+            totals = self._daily_totals(connection, day)
+            reservations = cast(
+                dict[str, Any],
+                self._reservations(connection, at=current, created_until=current, usage_day=day),
+            )
         finally:
             connection.close()
         budget = self._budget(totals, reservations, limits)
