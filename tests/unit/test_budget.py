@@ -3,45 +3,6 @@ from datetime import date
 from hl_mem.ingest.budget import TokenBudget
 
 
-class _TrackingConnection:
-    def __init__(self) -> None:
-        self.closed = False
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return None
-
-    def execute(self, *_args):
-        return self
-
-    def fetchone(self):
-        return None
-
-    def close(self) -> None:
-        self.closed = True
-
-
-def test_constructor_and_stats_close_short_lived_connections(tmp_path, monkeypatch) -> None:
-    connections = []
-
-    def connect(_budget):
-        connection = _TrackingConnection()
-        connections.append(connection)
-        return connection
-
-    monkeypatch.setattr(TokenBudget, "_connect", connect)
-
-    budget = TokenBudget(10, tmp_path / "budget.db")
-    assert len(connections) == 1
-    assert connections[0].closed is True
-
-    assert budget.get_stats()["used_tokens"] == 0
-    assert len(connections) == 2
-    assert connections[1].closed is True
-
-
 def test_budget_records_persists_and_exhausts(tmp_path) -> None:
     path = tmp_path / "budget.json"
     budget = TokenBudget(10, path)
@@ -67,3 +28,16 @@ def test_unlimited_budget_never_exhausts(tmp_path) -> None:
     assert budget.can_spend(999_999_999)
     stats = budget.get_stats()
     assert stats["remaining_tokens"] == -1
+
+
+def test_budget_facade_uses_the_versioned_usage_schema(tmp_path) -> None:
+    path = tmp_path / "budget.db"
+    TokenBudget(10, path).record_usage(3)
+
+    import sqlite3
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"usage_reservations", "usage_events"} <= tables

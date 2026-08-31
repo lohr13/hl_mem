@@ -13,7 +13,7 @@ from hl_mem.settings import Settings
 def test_settings_contract_has_authoritative_defaults() -> None:
     settings = Settings()
 
-    assert len(fields(Settings)) == 206
+    assert len(fields(Settings)) == 210
     assert settings.schema_version == 1
     assert settings.plugins_enabled == ()
     assert settings.plugin_options == {}
@@ -43,6 +43,9 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.decay_model == "activation_halflife"
     assert settings.dedup_threshold == 0.92
     assert settings.daily_token_limit == 500_000
+    assert settings.usage_daily_request_limit == 0
+    assert settings.usage_daily_cost_limit_microunits == 0
+    assert settings.usage_reservation_lease_seconds == 300
     assert settings.conflict_auto_resolve_enabled is True
     assert settings.conflict_auto_mode == "l0_only"
     assert settings.conflict_maintenance_max_cases == 50
@@ -179,7 +182,7 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
     [
         ({"feedback_lifecycle_mode": "invalid"}, "retention.feedback_lifecycle_mode"),
         ({"feedback_min_samples": 0}, "recall.feedback_min_samples"),
-        ({"llm_provider": "invalid"}, "llm.provider"),
+        ({"llm_provider": "Bad Provider"}, "llm.provider"),
         ({"llm_reasoning_effort": "medium"}, "llm.reasoning_effort"),
         ({"llm_thinking_control": "invalid"}, "llm.thinking_control"),
         ({"llm_max_tokens": 0}, "llm.max_tokens"),
@@ -195,7 +198,8 @@ def test_dedup_thresholds_have_independent_contracts() -> None:
         ({"hermes_on_demand_recall_timeout_seconds": 0}, "hermes.on_demand_recall_timeout_seconds"),
         ({"dedup_threshold": 2.0}, "dedup.threshold"),
         ({"index_text_mode": "invalid"}, "index.text_mode"),
-        ({"reranker_provider": "invalid"}, "reranker.provider"),
+        ({"reranker_provider": "Bad Provider"}, "reranker.provider"),
+        ({"usage_reservation_lease_seconds": 0}, "usage.reservation_lease_seconds"),
         ({"verification_mode": "invalid"}, "extraction.verification_mode"),
         ({"conflict_maintenance_max_cases": 0}, "worker.conflict_maintenance_max_cases"),
         ({"conflict_maintenance_budget_ms": 49}, "worker.conflict_maintenance_budget_ms"),

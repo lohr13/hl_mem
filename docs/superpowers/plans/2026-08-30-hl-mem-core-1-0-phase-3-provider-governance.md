@@ -191,12 +191,16 @@ git commit -m "feat: add allowlisted Provider discovery"
 
 - Create: `src/hl_mem/observability/usage.py`
 - Modify: `src/hl_mem/observability/__init__.py`
+- Modify: `src/hl_mem/errors.py`
 - Modify: `src/hl_mem/config/models.py`
 - Modify: `src/hl_mem/ingest/budget.py`
-- Modify: `src/hl_mem/ingest/__init__.py`
+- Reuse: `src/hl_mem/ingest/__init__.py`
 - Create: `tests/unit/test_usage_governor.py`
 - Modify: `tests/unit/test_budget.py`
 - Modify: `tests/unit/test_settings_contract.py`
+- Modify: `tests/unit/test_config_loader.py`
+- Modify: `tests/unit/test_comprehensive_fixes.py`
+- Modify: `docs/config-schema.json`
 
 **Interfaces:**
 
@@ -214,7 +218,7 @@ git commit -m "feat: add allowlisted Provider discovery"
 - New settings are `usage.daily_request_limit = 0`, `usage.daily_cost_limit_microunits = 0`, and `usage.reservation_lease_seconds = 300`; the existing `worker.daily_token_limit` supplies `UsageLimits.daily_tokens`.
 - `TokenBudget` becomes a deprecated internal facade over `UsageGovernor` only until Task 5 removes its final callers; no production path may call `can_spend()` followed by `record_usage()` after Task 5.
 
-- [ ] **Step 1: Write failing atomicity, overrun, and recovery tests**
+- [x] **Step 1: Write failing atomicity, overrun, and recovery tests**
 
 ```python
 def test_concurrent_reservations_cannot_both_spend_the_last_tokens(tmp_path: Path) -> None:
@@ -234,17 +238,17 @@ def test_expired_sent_reservation_is_settled_unknown_not_released(tmp_path: Path
 
 Also test actual usage above reservation, idempotent same finalization, contradictory finalization, natural-day reset, unlimited values, unknown cost, multi-process SQLite connections, and one-time legacy import.
 
-- [ ] **Step 2: Run tests and observe the check-then-record race**
+- [x] **Step 2: Run tests and observe the check-then-record race**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_usage_governor.py tests/unit/test_budget.py -q --tb=short
 ```
 
-- [ ] **Step 3: Implement the versioned sidecar and transaction protocol**
+- [x] **Step 3: Implement the versioned sidecar and transaction protocol**
 
 Use one fresh SQLite connection per public operation, `busy_timeout=5000`, WAL, `user_version`, exact integer counters, and UTC dates. Do not store prompt text, response text, URLs, headers, keys, plugin options, or image hashes.
 
-- [ ] **Step 4: Add settings, facade coverage, and schema snapshot**
+- [x] **Step 4: Add settings, facade coverage, and schema snapshot**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_usage_governor.py tests/unit/test_budget.py tests/unit/test_settings_contract.py tests/unit/test_config_loader.py -q --tb=short
@@ -252,7 +256,7 @@ uv run --frozen python scripts/check_config_schema_snapshot.py --write
 uv run --frozen python scripts/check_config_schema_snapshot.py
 ```
 
-- [ ] **Step 5: Commit the atomic ledger**
+- [x] **Step 5: Commit the atomic ledger**
 
 ```powershell
 git add src/hl_mem/observability src/hl_mem/config/models.py src/hl_mem/ingest/budget.py src/hl_mem/ingest/__init__.py tests/unit/test_usage_governor.py tests/unit/test_budget.py tests/unit/test_settings_contract.py docs/config-schema.json

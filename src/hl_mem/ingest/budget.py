@@ -1,15 +1,26 @@
-"""进程安全的每日 LLM token 预算控制。"""
+"""旧 Worker token 预算接口到原子用量账本的临时兼容层。"""
 
 from __future__ import annotations
 
-import sqlite3
-from datetime import date
+from collections.abc import Callable, Mapping
+from datetime import date, datetime, time, timezone
 from pathlib import Path
-from typing import Callable
+from typing import cast
+
+from hl_mem.observability.usage import UsageAmount, UsageGovernor, UsageIdentity, UsageLimits
+from hl_mem.plugins.contracts import ProviderCapability
+
+_LEGACY_IDENTITY = UsageIdentity(
+    ProviderCapability.LLM,
+    "legacy_worker_budget",
+    "hl-mem.builtin",
+    "legacy",
+    "legacy",
+)
 
 
 class TokenBudget:
-    """使用 SQLite 事务维护单机多进程安全的每日 token 预算。"""
+    """Task 5 前保留的旧接口；持久化与原子结算由 UsageGovernor 负责。"""
 
     def __init__(
         self,
@@ -20,62 +31,40 @@ class TokenBudget:
         self.daily_limit = daily_limit
         self.path = Path(path)
         self._today = today
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = self._connect()
-        try:
-            with connection:
-                connection.execute(
-                    "CREATE TABLE IF NOT EXISTS token_budget ("
-                    "budget_date TEXT PRIMARY KEY, used_tokens INTEGER NOT NULL CHECK (used_tokens >= 0))"
-                )
-        finally:
-            connection.close()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=5.0)
-        connection.execute("PRAGMA busy_timeout=5000")
-        return connection
+        self._governor = UsageGovernor(
+            self.path,
+            UsageLimits(0, daily_limit, 0),
+            now=lambda: datetime.combine(self._today(), time.min, timezone.utc),
+        )
 
     def can_spend(self, estimated_tokens: int) -> bool:
-        """检查今日剩余预算是否足以覆盖预计 token。daily_limit<=0 表示无限制。"""
+        """兼容旧的非预留检查；Task 5 会删除最后一个生产调用方。"""
+
         if estimated_tokens < 0:
             raise ValueError("estimated_tokens must be non-negative")
-        if self.daily_limit <= 0:
-            return True
-        return int(self.get_stats()["used_tokens"]) + estimated_tokens <= self.daily_limit
+        remaining_values = cast(Mapping[str, object], self._governor.snapshot()["remaining"])
+        remaining = cast(int, remaining_values["tokens"])
+        return remaining < 0 or estimated_tokens <= remaining
 
     def record_usage(self, actual_tokens: int) -> None:
-        """在即时事务中原子累计今日实际 token 用量。"""
+        """通过一次原子预留与结算记录旧 Worker token 用量。"""
+
         if actual_tokens < 0:
             raise ValueError("actual_tokens must be non-negative")
-        current = self._today().isoformat()
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "INSERT INTO token_budget(budget_date,used_tokens) VALUES (?,?) "
-                "ON CONFLICT(budget_date) DO UPDATE SET used_tokens=used_tokens+excluded.used_tokens",
-                (current, actual_tokens),
-            )
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+        amount = UsageAmount(input_tokens=actual_tokens)
+        reservation = self._governor.reserve(_LEGACY_IDENTITY, UsageAmount())
+        self._governor.settle(reservation.id, amount, status="legacy", latency_ms=0.0)
 
     def get_stats(self) -> dict[str, int | str]:
-        """返回今日预算上限、已用量和剩余额度。daily_limit<=0 时剩余为 -1（无限制）。"""
-        current = self._today().isoformat()
-        connection = self._connect()
-        try:
-            row = connection.execute("SELECT used_tokens FROM token_budget WHERE budget_date=?", (current,)).fetchone()
-        finally:
-            connection.close()
-        used = int(row[0]) if row else 0
-        remaining = -1 if self.daily_limit <= 0 else max(0, self.daily_limit - used)
+        """返回旧接口所需的今日 token 统计。"""
+
+        snapshot = self._governor.snapshot()
+        settled_values = cast(Mapping[str, object], snapshot["settled"])
+        remaining_values = cast(Mapping[str, object], snapshot["remaining"])
+        used = cast(int, settled_values["total_tokens"])
+        remaining = cast(int, remaining_values["tokens"])
         return {
-            "date": current,
+            "date": str(snapshot["date"]),
             "daily_limit": self.daily_limit,
             "used_tokens": used,
             "remaining_tokens": remaining,

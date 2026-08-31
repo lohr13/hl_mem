@@ -232,6 +232,24 @@ provider = "vendor_image"
     assert settings.image_describer_provider == "vendor_image"
 
 
+def test_v1_loads_usage_governance_limits(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "usage.toml",
+        _v1("""
+[usage]
+daily_request_limit = 200
+daily_cost_limit_microunits = 500000
+reservation_lease_seconds = 120
+"""),
+    )
+
+    settings = _load_structural_settings(path, environ={})
+
+    assert settings.usage_daily_request_limit == 200
+    assert settings.usage_daily_cost_limit_microunits == 500_000
+    assert settings.usage_reservation_lease_seconds == 120
+
+
 @pytest.mark.parametrize(
     "body",
     (

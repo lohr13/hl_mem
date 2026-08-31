@@ -49,6 +49,18 @@ class ProviderNotFoundError(ProviderPluginError):
     """配置引用了未注册的 Provider。"""
 
 
+class UsageGovernanceError(ConfigurationError):
+    """Provider 用量治理失败。"""
+
+
+class UsageLimitExceededError(UsageGovernanceError):
+    """一次用量预留将超过已配置限制。"""
+
+
+class UsageReservationError(UsageGovernanceError):
+    """用量预留不存在、状态无效或发生矛盾终结。"""
+
+
 class ExternalServiceError(HlMemError, RuntimeError):
     """外部服务调用失败。"""
 

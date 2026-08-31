@@ -604,6 +604,21 @@ class IntegrationConfig:
 class ObservabilityConfig:
     """Configuration owned by the observability boundary."""
 
+    usage_daily_request_limit: int = field(
+        default=0,
+        metadata={"toml": "usage.daily_request_limit"},
+    )
+
+    usage_daily_cost_limit_microunits: int = field(
+        default=0,
+        metadata={"toml": "usage.daily_cost_limit_microunits"},
+    )
+
+    usage_reservation_lease_seconds: int = field(
+        default=300,
+        metadata={"toml": "usage.reservation_lease_seconds"},
+    )
+
     alert_webhook_url: str | None = field(default=None, metadata={"toml": "alert.webhook_url"})
 
     alert_dedupe_seconds: float = field(default=300.0, metadata={"toml": "alert.dedupe_seconds"})
@@ -704,6 +719,12 @@ class Settings(
                 raise ConfigurationError(f"{provider_path} contains an invalid provider name")
         if self.max_request_body < 0:
             raise ConfigurationError("server.max_request_body must be non-negative")
+        if type(self.usage_daily_request_limit) is not int:
+            raise ConfigurationError("usage.daily_request_limit must be an integer")
+        if type(self.usage_daily_cost_limit_microunits) is not int:
+            raise ConfigurationError("usage.daily_cost_limit_microunits must be an integer")
+        if type(self.usage_reservation_lease_seconds) is not int or self.usage_reservation_lease_seconds <= 0:
+            raise ConfigurationError("usage.reservation_lease_seconds must be a positive integer")
         if self.fts_language not in {"auto", "zh", "en"}:
             raise ConfigurationError("recall.fts_language must be 'auto', 'zh', or 'en'")
         if self.resurrection_mode not in {"off", "auto"}:
@@ -1058,6 +1079,9 @@ class Settings(
         return {
             "schema_version": self.schema_version,
             "plugins_enabled": list(self.plugins_enabled),
+            "usage_daily_request_limit": self.usage_daily_request_limit,
+            "usage_daily_cost_limit_microunits": self.usage_daily_cost_limit_microunits,
+            "usage_reservation_lease_seconds": self.usage_reservation_lease_seconds,
             "embedder_mode": self.embedder_mode,
             "embedding_dim": self.embedding_dim,
             "embedding_provider": self.embedding_provider,

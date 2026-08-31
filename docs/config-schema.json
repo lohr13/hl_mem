@@ -1415,6 +1415,27 @@
       "type": "array[string]"
     },
     {
+      "default": 0,
+      "path": "usage.daily_cost_limit_microunits",
+      "required_in_production": false,
+      "settings_field": "usage_daily_cost_limit_microunits",
+      "type": "integer"
+    },
+    {
+      "default": 0,
+      "path": "usage.daily_request_limit",
+      "required_in_production": false,
+      "settings_field": "usage_daily_request_limit",
+      "type": "integer"
+    },
+    {
+      "default": 300,
+      "path": "usage.reservation_lease_seconds",
+      "required_in_production": false,
+      "settings_field": "usage_reservation_lease_seconds",
+      "type": "integer"
+    },
+    {
       "default": 30,
       "path": "worker.audit_retention_days",
       "required_in_production": false,

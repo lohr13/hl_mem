@@ -399,7 +399,7 @@ def test_budget_uses_sqlite_atomic_updates(tmp_path) -> None:
     second.record_usage(4)
     assert first.get_stats()["used_tokens"] == 7
     with sqlite3.connect(path) as connection:
-        assert connection.execute("SELECT used_tokens FROM token_budget").fetchone()[0] == 7
+        assert connection.execute("SELECT SUM(input_tokens) FROM usage_events").fetchone()[0] == 7
 
 
 def test_experience_schema_has_status_checks(tmp_path) -> None:
