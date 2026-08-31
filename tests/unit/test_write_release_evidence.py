@@ -84,3 +84,37 @@ def test_pip_audit_list_accepts_zero_vulnerabilities(tmp_path: Path) -> None:
         "dependencies": 1,
         "vulnerabilities": 0,
     }
+
+
+def test_pip_audit_current_object_accepts_zero_vulnerabilities(tmp_path: Path) -> None:
+    audit = tmp_path / "pip-audit.json"
+    audit.write_text(
+        json.dumps(
+            {
+                "dependencies": [{"name": "example", "version": "1.0", "vulns": []}],
+                "fixes": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert write_release_evidence.validate_pip_audit(audit) == {
+        "dependencies": 1,
+        "vulnerabilities": 0,
+    }
+
+
+def test_pip_audit_current_object_rejects_vulnerabilities(tmp_path: Path) -> None:
+    audit = tmp_path / "pip-audit.json"
+    audit.write_text(
+        json.dumps(
+            {
+                "dependencies": [{"name": "example", "version": "1.0", "vulns": [{"id": "CVE-TEST"}]}],
+                "fixes": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="1 vulnerabilities"):
+        write_release_evidence.validate_pip_audit(audit)

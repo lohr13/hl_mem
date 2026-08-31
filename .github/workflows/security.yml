@@ -66,14 +66,11 @@ jobs:
         run: |
           test "$AUDIT_OUTCOME" = "success"
           python - <<'PY'
-          import json
           from pathlib import Path
+          from scripts.write_release_evidence import validate_pip_audit
 
-          payload = json.loads(Path("security-artifacts/pip-audit.json").read_text(encoding="utf-8"))
-          vulnerabilities = [vulnerability for dependency in payload for vulnerability in dependency.get("vulns", [])]
-          if vulnerabilities:
-              raise SystemExit(f"pip-audit reported {len(vulnerabilities)} known vulnerabilities")
-          print(f"pip-audit passed for {len(payload)} dependencies")
+          result = validate_pip_audit(Path("security-artifacts/pip-audit.json"))
+          print(f"pip-audit passed for {result['dependencies']} dependencies")
           PY
 
   secrets:

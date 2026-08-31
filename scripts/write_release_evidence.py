@@ -64,18 +64,24 @@ def _junit_summary(path: Path) -> dict[str, int]:
     return summary
 
 
-def _json_status(name: str, path: Path) -> dict[str, Any]:
+def validate_pip_audit(path: Path) -> dict[str, int]:
+    """Validate both legacy-list and current-object pip-audit JSON."""
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if name == "pip-audit" and isinstance(payload, list):
-        vulnerabilities = [
-            vulnerability
-            for dependency in payload
-            if isinstance(dependency, dict)
-            for vulnerability in dependency.get("vulns", [])
-        ]
-        if vulnerabilities:
-            raise ValueError(f"pip-audit reports {len(vulnerabilities)} vulnerabilities")
-        return {"dependencies": len(payload), "vulnerabilities": 0}
+    dependencies = (
+        payload if isinstance(payload, list) else payload.get("dependencies") if isinstance(payload, dict) else None
+    )
+    if not isinstance(dependencies, list) or any(not isinstance(dependency, dict) for dependency in dependencies):
+        raise ValueError(f"pip-audit JSON has invalid dependencies: {path}")
+    vulnerabilities = [vulnerability for dependency in dependencies for vulnerability in dependency.get("vulns", [])]
+    if vulnerabilities:
+        raise ValueError(f"pip-audit reports {len(vulnerabilities)} vulnerabilities")
+    return {"dependencies": len(dependencies), "vulnerabilities": 0}
+
+
+def _json_status(name: str, path: Path) -> dict[str, Any]:
+    if name == "pip-audit":
+        return validate_pip_audit(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"JSON evidence must be an object: {path}")
     if payload.get("ok") is False:
@@ -90,15 +96,6 @@ def _json_status(name: str, path: Path) -> dict[str, Any]:
             raise ValueError("public-recall HTTP success rate is not 1.0")
         if int(payload.get("total_forbidden_hits", -1)) != 0:
             raise ValueError("public-recall contains forbidden hits")
-    if name == "pip-audit" and "dependencies" in payload:
-        vulnerabilities = [
-            vulnerability
-            for dependency in payload.get("dependencies", [])
-            if isinstance(dependency, dict)
-            for vulnerability in dependency.get("vulns", [])
-        ]
-        if vulnerabilities:
-            raise ValueError(f"pip-audit reports {len(vulnerabilities)} vulnerabilities")
     return {"keys": sorted(payload)}
 
 
