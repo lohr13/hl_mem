@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
+
+import pytest
 
 import hl_mem.application.recall as recall_module
 from hl_mem.application.recall import RecallService
@@ -31,3 +34,30 @@ def test_recall_service_keeps_thin_compatibility_method_signatures() -> None:
         if isinstance(method, staticmethod):
             method = method.__func__
         assert list(inspect.signature(method).parameters) == parameter_names
+
+
+def test_recall_compatibility_methods_delegate_to_focused_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = object()
+    service = object.__new__(RecallService)
+    service.connection = connection  # type: ignore[assignment]
+    sentinel: list[dict[str, Any]] = [{"delegated": True}]
+
+    monkeypatch.setattr(recall_module, "context_candidates", lambda claims, observations, policies: sentinel)
+    monkeypatch.setattr(
+        recall_module,
+        "assemble_recall_observations",
+        lambda received_connection, claim_ids: (
+            sentinel if received_connection is connection and claim_ids == ["c"] else []
+        ),
+    )
+    monkeypatch.setattr(
+        recall_module,
+        "assemble_recall_results",
+        lambda received_connection, claims, namespace, **_kwargs: (
+            sentinel if received_connection is connection and claims == [{"id": "c"}] and namespace == "n" else []
+        ),
+    )
+
+    assert RecallService._context_candidates([], [], []) is sentinel
+    assert service._assemble_observations(["c"]) is sentinel
+    assert service._assemble_results([{"id": "c"}], "n") is sentinel

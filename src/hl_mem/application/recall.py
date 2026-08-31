@@ -17,9 +17,7 @@ from hl_mem.application._procedure_recall_flow import ProcedureRecallFlow as _Pr
 from hl_mem.application.answerability import Answerability
 from hl_mem.application.context_packet import (
     ContextPacketAssembler,
-    MemoryType,
     RetrievalBundle,
-    RetrievalBundleItem,
     apply_freshness_decisions,
     estimate_tokens,
     pack_retrieval_bundle,
@@ -29,6 +27,14 @@ from hl_mem.application.context_packet import (
 )
 from hl_mem.application.ingest import new_id
 from hl_mem.application.recall_access import is_access_recording_eligible
+from hl_mem.application.recall_delivery import (
+    assemble_context,
+    bundle_from_context_items,
+    context_candidates,
+    context_from_packed_bundle,
+)
+from hl_mem.application.recall_enrichment import assemble_observations as assemble_recall_observations
+from hl_mem.application.recall_enrichment import assemble_results as assemble_recall_results
 from hl_mem.application.recall_side_effects import RecallSideEffectSink
 from hl_mem.application.resurrection import ResurrectionService
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
@@ -65,7 +71,7 @@ from hl_mem.recall.trace import QueryExpansionTrace, SearchPhaseMetrics, SearchT
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.events import EventRepository
-from hl_mem.storage.evidence import DerivationRepository, EvidenceRepository
+from hl_mem.storage.evidence import EvidenceRepository
 
 LOGGER = logging.getLogger(__name__)
 _RESPONSE_FORMATS = frozenset({"legacy", "context_packet", "both", "retrieval_bundle"})
@@ -1007,20 +1013,7 @@ class RecallService:
         return answerability
 
     def _assemble_observations(self, claim_ids: list[str]) -> list[dict[str, Any]]:
-        """查询与召回 Claim 相关的活跃派生记忆。"""
-        observations = DerivationRepository(self.connection).list_active_for_claims(claim_ids)
-        if not observations:
-            return []
-        evidence_repo = EvidenceRepository(self.connection)
-        by_kind: dict[str, list[str]] = {}
-        for observation in observations:
-            by_kind.setdefault(str(observation.get("kind") or "observation"), []).append(str(observation["id"]))
-        evidence: dict[str, list[dict[str, str]]] = {}
-        for kind, derived_ids in by_kind.items():
-            evidence.update(evidence_repo.batch_get_links_for_derived(kind, derived_ids))
-        for observation in observations:
-            observation["evidence"] = evidence.get(str(observation["id"]), [])
-        return observations
+        return assemble_recall_observations(self.connection, claim_ids)
 
     @staticmethod
     def _context_candidates(
@@ -1028,14 +1021,7 @@ class RecallService:
         observations: list[dict[str, Any]],
         policies: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """按稳定优先级返回尚未预算裁剪的 context candidates。"""
-        all_items: list[dict[str, Any]] = (
-            [{"type": "claim", "data": item, "priority": 2} for item in claims]
-            + [{"type": "observation", "data": item, "priority": 1} for item in observations]
-            + [{"type": "policy", "data": item, "priority": 0} for item in policies]
-        )
-        all_items.sort(key=lambda item: -item["priority"] if isinstance(item.get("priority"), int) else 0)
-        return all_items
+        return context_candidates(claims, observations, policies)
 
     @staticmethod
     def _assemble_context(
@@ -1044,19 +1030,14 @@ class RecallService:
         policies: list[dict[str, Any]],
         token_budget: int,
     ) -> dict[str, Any]:
-        """按优先级跨类型组装受 token 预算约束的上下文。"""
-        all_items = RecallService._context_candidates(claims, observations, policies)
-        packed = budget_pack(all_items, token_budget)
-        used = 0
-        for item in packed:
-            data = item.get("data", item)
-            memory_type = str(item.get("type") or data.get("memory_type") or data.get("type") or "")
-            used += estimate_tokens(_context_text(memory_type, data))
-        return {
-            "context_items": packed,
-            "used_tokens_estimate": used,
-            "truncated": len(packed) < len(all_items),
-        }
+        return assemble_context(
+            claims,
+            observations,
+            policies,
+            token_budget,
+            packer=budget_pack,
+            text_for=_context_text,
+        )
 
     @staticmethod
     def _bundle_from_context_items(
@@ -1064,35 +1045,11 @@ class RecallService:
         answerability: Answerability,
         context_items: list[dict[str, Any]],
     ) -> RetrievalBundle:
-        """把有序 context candidates 投影为可缓存、无 receipt 的 RetrievalBundle。"""
-        items: list[RetrievalBundleItem] = []
-        for wrapped in context_items:
-            data = wrapped.get("data", wrapped)
-            memory_type = str(wrapped.get("type") or data.get("memory_type") or data.get("type") or "")
-            raw_evidence = data.get("evidence") or []
-            evidence = tuple(reference for reference in raw_evidence if isinstance(reference, Mapping))
-            raw_score = data.get("_score", data.get("score"))
-            score: float | None
-            try:
-                score = float(raw_score) if raw_score is not None else None
-            except (TypeError, ValueError):
-                score = None
-            items.append(
-                RetrievalBundleItem(
-                    cast(MemoryType, memory_type),
-                    str(data["id"]),
-                    str(data.get("text") or "") if memory_type == "claim" else _context_text(memory_type, data),
-                    evidence,
-                    score,
-                    str(data["role"]) if memory_type == "claim" and data.get("role") else None,
-                    str(data["action"]) if memory_type == "claim" and data.get("action") else None,
-                    str(data["object"]) if memory_type == "claim" and data.get("object") else None,
-                )
-            )
-        return RetrievalBundle(
-            query_id=query_id,
-            answerability=answerability,
-            items=tuple(items),
+        return bundle_from_context_items(
+            query_id,
+            answerability,
+            context_items,
+            text_for=_context_text,
         )
 
     @staticmethod
@@ -1100,32 +1057,7 @@ class RecallService:
         context_items: list[dict[str, Any]],
         bundle: RetrievalBundle,
     ) -> dict[str, Any]:
-        """Project the already decorated and packed bundle back to legacy packed-context shape."""
-        remaining = list(context_items)
-        selected: list[dict[str, Any]] = []
-        for bundle_item in bundle.items:
-            match_index = next(
-                (
-                    index
-                    for index, wrapped in enumerate(remaining)
-                    if str(wrapped.get("type") or wrapped.get("data", wrapped).get("memory_type") or "")
-                    == bundle_item.type
-                    and str(wrapped.get("data", wrapped).get("id") or "") == bundle_item.id
-                ),
-                None,
-            )
-            if match_index is None:
-                continue
-            wrapped = remaining.pop(match_index)
-            data = dict(wrapped.get("data", wrapped))
-            if bundle_item.type == "claim":
-                data["text"] = bundle_item.text
-            selected.append({**wrapped, "data": data} if "data" in wrapped else data)
-        return {
-            "context_items": selected,
-            "used_tokens_estimate": int(bundle.used_tokens_estimate or 0),
-            "truncated": bool(bundle.truncated),
-        }
+        return context_from_packed_bundle(context_items, bundle)
 
     def _materialize_context_packet(self, bundle: RetrievalBundle) -> dict[str, Any]:
         """有限重试 exposure 批量落库，并把最终失败收敛为 degraded packet。"""
@@ -1228,65 +1160,13 @@ class RecallService:
         claims: list[dict[str, Any]],
         namespace: str = "default",
     ) -> list[dict[str, Any]]:
-        if not claims:
-            return []
-        evidence_repo = EvidenceRepository(self.connection)
-        claim_repo = ClaimRepository(self.connection)
-        claim_ids = [claim["id"] for claim in claims]
-        evidence_claim_ids = [
-            str(claim_id) for claim in claims for claim_id in [claim["id"], *(claim.get("_equivalent_claim_ids") or [])]
-        ]
-        all_evidence = self._batch_evidence(evidence_repo, evidence_claim_ids)
-        superseded_ids = [claim["superseded_by_id"] for claim in claims if claim.get("superseded_by_id")]
-        replacement_map = self._batch_replacements(claim_repo, superseded_ids)
-        relations_map = self._batch_relations(claim_ids)
-        rivals_map = self._batch_rivals(claims, namespace)
-        results: list[dict[str, Any]] = []
-        for claim in claims:
-            evidence: list[dict[str, str]] = []
-            evidence_keys: set[tuple[str, str]] = set()
-            for claim_id in [claim["id"], *(claim.get("_equivalent_claim_ids") or [])]:
-                for item in all_evidence.get(str(claim_id), []):
-                    key = (item["type"], item["id"])
-                    if key not in evidence_keys:
-                        evidence_keys.add(key)
-                        evidence.append(item)
-            superseded_by_id = claim.get("superseded_by_id")
-            replacement = replacement_map.get(str(superseded_by_id)) if superseded_by_id else None
-            result: dict[str, Any] = {
-                "type": "claim",
-                "memory_type": "claim",
-                "id": claim["id"],
-                "text": _claim_index_text(claim),
-                "score": float(claim.get("_score", 0.0)),
-                "score_path": str(claim.get("_score_path", "reranker_fallback")),
-                "reranker_raw_score": claim.get("_reranker_raw_score"),
-                "features": dict(claim.get("_features") or {}),
-                "equivalent_claim_ids": list(claim.get("_equivalent_claim_ids") or []),
-                "status": claim["status"],
-                "assertion_kind": claim.get("assertion_kind") or "unknown",
-                "confidence": claim["confidence"],
-                "canonical_attribute": claim.get("canonical_attribute"),
-                "canonical_slot": claim.get("canonical_slot"),
-                "topic_tags": list(claim.get("topic_tags") or []),
-                "valid_from": claim["valid_from"],
-                "valid_to": claim.get("valid_to"),
-                "recorded_from": claim.get("recorded_from"),
-                "recorded_to": claim.get("recorded_to"),
-                "replacement": replacement,
-                "evidence": evidence,
-                "relations": relations_map.get(claim["id"], []),
-            }
-            relation = _claim_relation(claim)
-            if relation is not None:
-                result.update(zip(("role", "action", "object"), relation, strict=True))
-            for field_name in ("occurred_start", "occurred_end", "entities"):
-                if claim.get(field_name):
-                    result[field_name] = claim[field_name]
-            if claim["status"] == "disputed" and claim.get("conflict_key"):
-                result["conflicts"] = rivals_map.get(claim["id"], [])
-            results.append(result)
-        return results
+        return assemble_recall_results(
+            self.connection,
+            claims,
+            namespace,
+            claim_text=_claim_index_text,
+            claim_relation=_claim_relation,
+        )
 
     def _recall_experience(
         self,
@@ -1333,49 +1213,3 @@ class RecallService:
             tracer,
             total_started,
         ).run()
-
-    @staticmethod
-    def _batch_evidence(
-        evidence_repo: EvidenceRepository,
-        claim_ids: list[str],
-    ) -> dict[str, list[dict[str, str]]]:
-        """批量加载 claim 的证据链接。"""
-        return evidence_repo.batch_get_links_for_derived("claim", claim_ids)
-
-    @staticmethod
-    def _batch_replacements(
-        claim_repo: ClaimRepository,
-        superseded_ids: list[str],
-    ) -> dict[str, dict[str, Any]]:
-        """批量加载被替代 claim 的替代项。"""
-        claims = claim_repo.batch_get_claims(superseded_ids)
-        return {
-            claim_id: {
-                "id": claim["id"],
-                "text": _claim_index_text(claim),
-                "valid_from": claim["valid_from"],
-            }
-            for claim_id, claim in claims.items()
-        }
-
-    def _batch_relations(self, claim_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-        """批量加载 claim 的关系。"""
-        from hl_mem.domain.relations import get_relations_batch
-
-        return get_relations_batch(self.connection, claim_ids)
-
-    def _batch_rivals(
-        self,
-        claims: list[dict[str, Any]],
-        namespace: str,
-    ) -> dict[str, list[dict[str, Any]]]:
-        """批量加载 disputed claim 的同 namespace 冲突项并精确映射。"""
-        disputed_claims = [claim for claim in claims if claim["status"] == "disputed" and claim.get("conflict_key")]
-        if not disputed_claims:
-            return {}
-        unique_keys = list(dict.fromkeys(claim["conflict_key"] for claim in disputed_claims))
-        rivals_by_key = ClaimRepository(self.connection).find_disputed_rivals(unique_keys, namespace)
-        return {
-            claim["id"]: [rival for rival in rivals_by_key[claim["conflict_key"]] if rival["id"] != claim["id"]]
-            for claim in disputed_claims
-        }
