@@ -15,7 +15,7 @@ from typing import Any
 
 from hl_mem.application.ingest import IngestService
 from hl_mem.application.recall import RecallService
-from hl_mem.domain.relations import add_relation, get_relations
+from hl_mem.domain.relations import RelationProvenance, add_relation, get_relations
 from hl_mem.evaluation.metrics import mrr, recall_at_k
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.ingest.extractors import FakeExtractor
@@ -23,6 +23,7 @@ from hl_mem.protocols import ClaimRow, RelationProposal
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
+from hl_mem.storage.relation_proposals import RelationProposalRepository
 from hl_mem.workers.discover_relations import discover_relations
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -99,6 +100,8 @@ def seed_case(connection: Any, case: dict[str, Any], embedder: FakeEmbedder) -> 
             claim_ids[str(relation["from_event_id"])],
             claim_ids[str(relation["to_event_id"])],
             str(relation["type"]),
+            provenance=RelationProvenance.DETERMINISTIC,
+            created_at=FIXED_TIME,
         )
     connection.commit()
     return claim_ids
@@ -167,15 +170,19 @@ def run_case(case: dict[str, Any], database_path: Path) -> dict[str, Any]:
                     float(relation["confidence"]),
                 ),
                 from_claim_id,
-                mode="auto",
+                mode="audit",
                 pool_limit=10,
                 max_proposals=1,
-                auto_apply_confidence=0.9,
-                conflict_confidence=0.9,
             )
-            actual = get_relations(connection, from_claim_id, direction="from")
-            passed = counts["applied"] == 1 and any(
-                item["relation"] == case["expected"]["relation_type"] for item in actual
+            proposals = RelationProposalRepository(connection).get_pending_proposals(limit=2)
+            official = get_relations(connection, from_claim_id, direction="from")
+            passed = counts["proposals"] == 1 and counts["rejected"] == 0 and len(proposals) == 1 and not official
+            passed = passed and all(
+                (
+                    proposals[0]["source_claim_id"] == from_claim_id,
+                    proposals[0]["target_claim_id"] == to_claim_id,
+                    proposals[0]["relation"] == case["expected"]["relation_type"],
+                )
             )
             return {
                 "id": case["id"],

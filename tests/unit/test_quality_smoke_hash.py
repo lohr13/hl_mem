@@ -4,11 +4,15 @@ import json
 
 import pytest
 
+from hl_mem.ingest.embedder import FakeEmbedder
+from hl_mem.storage.database import Database
 from scripts.run_quality_smoke import (
     BASELINE_SCHEMA_VERSION,
     HASH_ALGORITHM,
     compare_baseline,
     dataset_hash,
+    run_case,
+    seed_case,
     write_baseline,
 )
 
@@ -35,6 +39,66 @@ def test_write_baseline_records_hash_contract(tmp_path) -> None:
     payload = json.loads(baseline.read_text(encoding="utf-8"))
     assert payload["schema_version"] == BASELINE_SCHEMA_VERSION
     assert payload["hash_algorithm"] == HASH_ALGORITHM
+
+
+def test_seed_case_marks_fixture_relations_as_deterministic(tmp_path) -> None:
+    database = Database(tmp_path / "quality-smoke.db")
+    case = {
+        "id": "relation-provenance",
+        "input": {
+            "memories": [
+                {"id": "source-event", "text": "记住 压测结果支持启用缓存。"},
+                {"id": "target-event", "text": "记住 启用缓存可以降低接口延迟。"},
+            ],
+            "relation": {
+                "from_event_id": "source-event",
+                "to_event_id": "target-event",
+                "type": "supports",
+            },
+        },
+    }
+    try:
+        connection = database.open()
+        seed_case(connection, case, FakeEmbedder(dim=64))
+        relation = connection.execute("SELECT provenance,proposal_id FROM memory_relations").fetchone()
+    finally:
+        database.close()
+
+    assert tuple(relation) == ("deterministic", None)
+
+
+def test_relation_discovery_case_scores_a_pending_audit_proposal(tmp_path) -> None:
+    database_path = tmp_path / "relation-discovery.db"
+    case = {
+        "id": "relation-discovery",
+        "type": "relation_discovery",
+        "input": {
+            "memories": [
+                {"id": "source-event", "text": "记住 压测结果支持启用缓存。"},
+                {"id": "target-event", "text": "记住 启用缓存可以降低接口延迟。"},
+            ],
+            "discovery": {
+                "from_event_id": "source-event",
+                "to_event_id": "target-event",
+                "type": "supports",
+                "confidence": 0.95,
+            },
+        },
+        "expected": {"relation_type": "supports"},
+    }
+
+    result = run_case(case, database_path)
+    database = Database(database_path)
+    try:
+        connection = database.open()
+        proposal = connection.execute("SELECT relation,status FROM relation_proposals").fetchone()
+        official_relation_count = connection.execute("SELECT count(*) FROM memory_relations").fetchone()[0]
+    finally:
+        database.close()
+
+    assert result["passed"] is True
+    assert tuple(proposal) == ("supports", "pending")
+    assert official_relation_count == 0
 
 
 @pytest.mark.parametrize(
