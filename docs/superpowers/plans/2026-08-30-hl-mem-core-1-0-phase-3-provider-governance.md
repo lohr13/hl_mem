@@ -492,7 +492,7 @@ git commit -m "refactor: govern actual Embedding batches"
 - Invalid result indexes and malformed result envelopes remain contained as reranker errors; recall continues its existing RRF fallback without hiding the ledger/audit failure.
 - `FakeReranker` remains test-only and outside Registry.
 
-- [ ] **Step 1: Add failing request/result/fallback equivalence tests**
+- [x] **Step 1: Add failing request/result/fallback equivalence tests**
 
 ```python
 def test_invalid_plugin_rerank_index_cannot_escape_host_validation(runtime: ProviderRuntime) -> None:
@@ -504,23 +504,23 @@ def test_invalid_plugin_rerank_index_cannot_escape_host_validation(runtime: Prov
 
 Cover empty input, score ordering, 429/5xx retry, auth failure, malformed JSON, plugin collision, and recall fallback.
 
-- [ ] **Step 2: Run tests and observe the current direct DashScope client**
+- [x] **Step 2: Run tests and observe the current direct DashScope client**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_reranker_provider_equivalence.py tests/unit/test_reranker.py tests/unit/test_reranker_registry.py tests/unit/test_relevance_gate.py -q --tb=short
 ```
 
-- [ ] **Step 3: Implement Registry-backed Reranker and host validation**
+- [x] **Step 3: Implement Registry-backed Reranker and host validation**
 
 Delete the local `RERANKER_PROVIDERS` mapping after the built-in adapter is registered in `plugins/builtin.py`; keep the public component factory as the only product assembly path.
 
-- [ ] **Step 4: Run recall and health regressions**
+- [x] **Step 4: Run recall and health regressions**
 
 ```powershell
 uv run --frozen python -m pytest tests/unit/test_reranker_provider_equivalence.py tests/unit/test_reranker.py tests/unit/test_reranker_registry.py tests/unit/test_relevance_gate.py tests/unit/test_p1_1_component_degradation.py tests/integration/test_e2e.py -q --tb=short
 ```
 
-- [ ] **Step 5: Commit Reranker governance**
+- [x] **Step 5: Commit Reranker governance**
 
 ```powershell
 git add src/hl_mem/recall/reranker.py src/hl_mem/components.py src/hl_mem/protocols.py src/hl_mem/plugins/builtin.py tests/fixtures/providers/reranker_dashscope.json tests/unit/test_reranker_provider_equivalence.py tests/unit/test_reranker.py tests/unit/test_reranker_registry.py tests/unit/test_relevance_gate.py

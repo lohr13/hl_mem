@@ -246,11 +246,14 @@ class McpMemoryServer:
             settings.llm_api_key
             or settings.query_expansion_api_key
             or (settings.embedder_mode == "real" and settings.embedding_api_key)
+            or (settings.reranker_mode in {"on", "real"} and settings.reranker_api_key)
         ):
             self.provider_runtime = components.create_provider_runtime(settings)
             self._owns_provider_runtime = True
         self.embedder = embedder or components.make_embedder(settings, runtime=self.provider_runtime)
-        self.reranker = reranker if reranker is not None else components.make_reranker(settings)
+        self.reranker = (
+            reranker if reranker is not None else components.make_reranker(settings, runtime=self.provider_runtime)
+        )
         self.recall_side_effects = RecallSideEffectDispatcher(self.database, settings=settings)
         self.deferred_llm_spans = DeferredLLMSpanRecorder(self.recall_side_effects)
 

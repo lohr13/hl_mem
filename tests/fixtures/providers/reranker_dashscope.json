@@ -1,0 +1,35 @@
+{
+  "request": {
+    "input": {
+      "documents": [
+        "first",
+        "second"
+      ],
+      "query": "query"
+    },
+    "model": "qwen3-rerank",
+    "parameters": {
+      "return_documents": false,
+      "top_n": 2
+    }
+  },
+  "response": {
+    "output": {
+      "results": [
+        {
+          "index": 1,
+          "relevance_score": 0.9
+        },
+        {
+          "index": 0,
+          "relevance_score": 0.4
+        }
+      ]
+    },
+    "usage": {
+      "input_tokens": 5,
+      "output_tokens": 1
+    }
+  },
+  "url": "https://example.test/api/v1/services/rerank/text-rerank/text-rerank"
+}

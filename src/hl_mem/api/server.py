@@ -148,10 +148,11 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
         settings.llm_api_key
         or settings.query_expansion_api_key
         or (settings.embedder_mode == "real" and settings.embedding_api_key)
+        or (settings.reranker_mode in {"on", "real"} and settings.reranker_api_key)
     )
     provider_runtime = components.create_provider_runtime(settings) if has_provider_line else None
     embedder = components.make_embedder(settings, runtime=provider_runtime)
-    reranker = components.make_reranker(settings)
+    reranker = components.make_reranker(settings, runtime=provider_runtime)
     audit = audit or NullAuditLogger()
     deferred_audit = DeferredAuditLogger(audit, recall_side_effects)
     deferred_llm_spans = DeferredLLMSpanRecorder(recall_side_effects)

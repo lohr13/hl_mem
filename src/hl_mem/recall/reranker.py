@@ -1,19 +1,31 @@
-"""DashScope 重排客户端、测试替身与配置工厂。"""
+"""Governed Reranker Provider adapter, facade, and explicit fake."""
 
 from __future__ import annotations
 
-import time
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Callable
 
-import httpx
+from hl_mem.errors import ProviderCallError
+from hl_mem.observability.usage import UsageAmount
+from hl_mem.plugins.contracts import (
+    ProviderEndpoint,
+    ProviderFactoryContext,
+    ProviderRequest,
+    ProviderResponse,
+    RerankerProviderAdapter,
+    RerankInvocation,
+)
+from hl_mem.plugins.contracts import RerankResult as ProviderRerankResult
+from hl_mem.plugins.proxies import GovernedProviderCall
 
-from hl_mem.errors import ConfigurationError
-from hl_mem.http_utils import retry_http
-from hl_mem.llm.client import classify_provider_error
-from hl_mem.monitoring.metrics import DEFAULT_PROVIDER_METRICS, ProviderCall
-from hl_mem.protocols import RerankerProtocol
-from hl_mem.settings import Settings
+
+class InvalidRerankResponse(ValueError):
+    """The Provider response cannot be represented by the stable result contract."""
+
+
+class InvalidResultIndex(ValueError):
+    """A Provider returned an index outside the host-supplied document set."""
 
 
 @dataclass
@@ -23,116 +35,191 @@ class RerankResult:
     error_class: str | None = None
 
 
+class DashScopeRerankerProvider:
+    """Translate neutral rerank calls to DashScope's native endpoint."""
+
+    name = "dashscope"
+
+    def build_request(self, endpoint: ProviderEndpoint, invocation: RerankInvocation) -> ProviderRequest:
+        return ProviderRequest(
+            "POST",
+            f"{endpoint.base_url.rstrip('/')}/api/v1/services/rerank/text-rerank/text-rerank",
+            {"Authorization": f"Bearer {endpoint.api_key}"},
+            {
+                "model": endpoint.model,
+                "input": {"query": invocation.query, "documents": list(invocation.documents)},
+                "parameters": {"top_n": invocation.top_n, "return_documents": False},
+            },
+            endpoint.timeout_seconds,
+            endpoint.connect_timeout_seconds,
+        )
+
+    def parse_response(self, response: ProviderResponse) -> ProviderRerankResult:
+        try:
+            output = response.json_body.get("output")
+            if not isinstance(output, Mapping):
+                raise InvalidRerankResponse("reranker response output must be an object")
+            raw_results = output.get("results")
+            if not isinstance(raw_results, (list, tuple)):
+                raise InvalidRerankResponse("reranker response results must be an array")
+            results: list[tuple[int, float]] = []
+            for item in raw_results:
+                if not isinstance(item, Mapping):
+                    raise InvalidRerankResponse("reranker result must be an object")
+                raw_index = item.get("index")
+                raw_score = item.get("relevance_score")
+                if type(raw_index) is not int:
+                    raise InvalidRerankResponse("reranker result index must be an integer")
+                if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
+                    raise InvalidRerankResponse("reranker relevance score must be numeric")
+                score = float(raw_score)
+                if not math.isfinite(score):
+                    raise InvalidRerankResponse("reranker relevance score must be finite")
+                results.append((raw_index, score))
+            usage = response.json_body.get("usage")
+            input_tokens: int | None = None
+            output_tokens: int | None = None
+            if isinstance(usage, Mapping):
+                if usage.get("input_tokens") is not None:
+                    input_tokens = int(usage["input_tokens"])
+                if usage.get("output_tokens") is not None:
+                    output_tokens = int(usage["output_tokens"])
+                if (input_tokens is not None and input_tokens < 0) or (output_tokens is not None and output_tokens < 0):
+                    raise InvalidRerankResponse("reranker token usage must be non-negative")
+            return ProviderRerankResult(tuple(results), input_tokens, output_tokens)
+        except InvalidRerankResponse:
+            raise
+        except (KeyError, TypeError, ValueError) as error:
+            raise InvalidRerankResponse("reranker response envelope is invalid") from error
+
+
 class DashScopeReranker:
-    """DashScope qwen3-rerank client, HTTP only, graceful degradation."""
+    """Gracefully contain invalid results while exposing transport failures to recall."""
 
     def __init__(
         self,
-        api_key: str,
-        base_url: str = "https://dashscope.aliyuncs.com",
-        model: str = "qwen3-rerank",
-        timeout: float = 10.0,
-        client: httpx.Client | None = None,
+        *,
+        endpoint: ProviderEndpoint,
+        provider: RerankerProviderAdapter,
+        governed: GovernedProviderCall[list[tuple[int, float]]],
+        owned_runtime: object | None = None,
     ) -> None:
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.timeout = timeout
-        self._client = client
+        self.endpoint = endpoint
+        self.api_key = endpoint.api_key
+        self.base_url = endpoint.base_url.rstrip("/")
+        self.model = endpoint.model
+        self.timeout = endpoint.timeout_seconds
+        self.max_attempts = endpoint.max_attempts
+        self.provider = provider
+        self._governed = governed
+        self._owned_runtime = owned_runtime
         self.last_outcome = "empty"
         self.last_error_class: str | None = None
         self.last_result = RerankResult()
 
+    def close(self) -> None:
+        runtime = self._owned_runtime
+        if runtime is not None:
+            close = getattr(runtime, "close", None)
+            if callable(close):
+                close()
+            self._owned_runtime = None
+
     def rerank(self, query: str, documents: list[str], top_n: int = 20) -> list[tuple[int, float]]:
-        """Return document indexes and relevance scores, or an empty list on failure."""
         if not documents:
-            self.last_outcome, self.last_error_class = "empty", None
-            self.last_result = RerankResult([], self.last_outcome)
+            self._set_result([], "empty", None)
             return []
+        invocation = RerankInvocation(query, tuple(documents), top_n)
+        estimate = UsageAmount(requests=1, rerank_documents=len(documents))
+        usage_status = "usage_unknown"
 
-        def send_request() -> httpx.Response:
-            post = self._client.post if self._client is not None else httpx.post
-            response = post(
-                f"{self.base_url}/api/v1/services/rerank/text-rerank/text-rerank",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
-                    "model": self.model,
-                    "input": {"query": query, "documents": documents},
-                    "parameters": {"top_n": top_n, "return_documents": False},
-                },
-                timeout=self.timeout,
+        def parse(response: ProviderResponse) -> tuple[list[tuple[int, float]], UsageAmount]:
+            nonlocal usage_status
+            parsed = self.provider.parse_response(response)
+            ranked = self._validate_results(parsed.results, document_count=len(documents))
+            if parsed.input_tokens is not None or parsed.output_tokens is not None:
+                usage_status = "success"
+            return (
+                ranked,
+                UsageAmount(
+                    requests=1,
+                    input_tokens=parsed.input_tokens or 0,
+                    output_tokens=parsed.output_tokens or 0,
+                    rerank_documents=len(documents),
+                ),
             )
-            response.raise_for_status()
-            return response
 
-        started = time.perf_counter()
         try:
-            response = retry_http(send_request)
-        except Exception as error:
-            DEFAULT_PROVIDER_METRICS.record(
-                ProviderCall(
-                    "reranker",
-                    "rerank",
-                    "error",
-                    (time.perf_counter() - started) * 1000,
-                    error_class=classify_provider_error(error)[0],
-                    fallback=True,
-                )
+            ranked = self._governed.execute_factory(
+                lambda: self.provider.build_request(self.endpoint, invocation),
+                estimate,
+                parse,
+                max_attempts=self.max_attempts,
+                settlement_status=lambda _value: usage_status,
             )
+        except ProviderCallError as error:
+            self._set_result([], "error", error.category)
             raise
-        results = response.json()["output"]["results"]
-        ranked = [(int(item["index"]), float(item["relevance_score"])) for item in results]
-        if any(index < 0 or index >= len(documents) for index, _ in ranked):
-            self.last_outcome, self.last_error_class = "error", "InvalidResultIndex"
-            self.last_result = RerankResult([], self.last_outcome, self.last_error_class)
+        except Exception as error:
+            self._set_result([], "error", type(error).__name__)
             return []
-        ranked = sorted(ranked, key=lambda item: item[1], reverse=True)
-        self.last_outcome, self.last_error_class = (
-            ("success" if ranked else "empty"),
-            None,
-        )
-        self.last_result = RerankResult(ranked, self.last_outcome)
-        DEFAULT_PROVIDER_METRICS.record(
-            ProviderCall("reranker", "rerank", "success", (time.perf_counter() - started) * 1000)
-        )
+        self._set_result(ranked, "success" if ranked else "empty", None)
         return ranked
+
+    @staticmethod
+    def _validate_results(
+        results: tuple[tuple[int, float], ...],
+        *,
+        document_count: int,
+    ) -> list[tuple[int, float]]:
+        indexes: set[int] = set()
+        ranked: list[tuple[int, float]] = []
+        for raw_index, raw_score in results:
+            if type(raw_index) is not int or raw_index < 0 or raw_index >= document_count:
+                raise InvalidResultIndex("reranker result index is outside the document set")
+            if raw_index in indexes:
+                raise InvalidResultIndex("reranker result indexes must be unique")
+            if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
+                raise InvalidRerankResponse("reranker relevance score must be numeric")
+            score = float(raw_score)
+            if not math.isfinite(score):
+                raise InvalidRerankResponse("reranker relevance score must be finite")
+            indexes.add(raw_index)
+            ranked.append((raw_index, score))
+        return sorted(ranked, key=lambda item: item[1], reverse=True)
+
+    def _set_result(self, results: list[tuple[int, float]], outcome: str, error_class: str | None) -> None:
+        self.last_outcome = outcome
+        self.last_error_class = error_class
+        self.last_result = RerankResult(results, outcome, error_class)
 
 
 class FakeReranker:
-    """Test stub: returns input order with decreasing fake scores."""
+    """Explicit test stub that returns input order with decreasing scores."""
 
     def rerank(self, query: str, documents: list[str], top_n: int = 20) -> list[tuple[int, float]]:
-        results = [(i, 1.0 - i * 0.01) for i in range(min(len(documents), top_n))]
+        results = [(index, 1.0 - index * 0.01) for index in range(min(len(documents), top_n))]
         self.last_outcome = "success" if results else "empty"
         self.last_error_class = None
         self.last_result = RerankResult(results, self.last_outcome)
         return results
 
 
+def make_builtin_reranker_provider(context: ProviderFactoryContext) -> DashScopeRerankerProvider:
+    if context.key.name != "dashscope":
+        raise ValueError(f"unsupported built-in Reranker provider {context.key.name!r}")
+    return DashScopeRerankerProvider()
+
+
 Reranker = DashScopeReranker
 
-RERANKER_PROVIDERS: dict[str, Callable[..., RerankerProtocol]] = {
-    "dashscope": DashScopeReranker,
-}
-
-
-def make_reranker(
-    settings: Settings,
-    provider_types: dict[str, Callable[..., RerankerProtocol]] | None = None,
-) -> RerankerProtocol | None:
-    """根据模式与 provider registry 创建重排器，并保留开发环境降级策略。"""
-    if settings.reranker_mode == "off":
-        return None
-    if settings.reranker_mode == "fake":
-        return FakeReranker()
-    if not settings.reranker_api_key:
-        raise ConfigurationError(f"HL_MEM_RERANKER={settings.reranker_mode} but RERANKER_API_KEY is missing")
-    registry = provider_types or RERANKER_PROVIDERS
-    provider_type = registry.get(settings.reranker_provider)
-    if provider_type is None:
-        raise ConfigurationError(f"unsupported reranker provider: {settings.reranker_provider}")
-    return provider_type(
-        settings.reranker_api_key,
-        settings.reranker_base_url,
-        settings.reranker_model,
-    )
+__all__ = [
+    "DashScopeReranker",
+    "DashScopeRerankerProvider",
+    "FakeReranker",
+    "InvalidRerankResponse",
+    "InvalidResultIndex",
+    "RerankResult",
+    "Reranker",
+    "make_builtin_reranker_provider",
+]

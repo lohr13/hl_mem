@@ -26,7 +26,6 @@ from hl_mem.compatibility import (
 from hl_mem.config_loader import load_settings
 from hl_mem.errors import ConfigurationError
 from hl_mem.http_utils import retry_http
-from hl_mem.recall.reranker import DashScopeReranker
 from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.backup import validate_upgrade_recovery_set
 
@@ -254,14 +253,18 @@ def _check_reranker(settings: Settings) -> CheckResult:
         return CheckResult(CheckStatus.WARN, "Reranker API", "reranker=off，跳过")
     if is_placeholder_secret(settings.reranker_api_key):
         return CheckResult(CheckStatus.FAIL, "Reranker API", "缺少有效 API key")
+    reranker = None
     try:
-        results = DashScopeReranker(
-            settings.reranker_api_key or "",
-            settings.reranker_base_url,
-            settings.reranker_model,
-        ).rerank("ping", ["ping"], top_n=1)
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+        reranker = components.make_reranker(settings)
+        if reranker is None:
+            return CheckResult(CheckStatus.FAIL, "Reranker API", "reranker 未启用")
+        results = reranker.rerank("ping", ["ping"], top_n=1)
+    except (httpx.HTTPError, RuntimeError, ValueError, KeyError, TypeError) as error:
         return CheckResult(CheckStatus.FAIL, "Reranker API", f"最小请求失败：{error}")
+    finally:
+        close = getattr(reranker, "close", None)
+        if callable(close):
+            close()
     if not results:
         return CheckResult(CheckStatus.FAIL, "Reranker API", "最小请求未返回结果")
     return CheckResult(CheckStatus.OK, "Reranker API", "请求成功")

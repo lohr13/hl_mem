@@ -28,8 +28,7 @@ from hl_mem.protocols import (
     RerankerProtocol,
 )
 from hl_mem.recall.query_expansion import QueryExpander
-from hl_mem.recall.reranker import DashScopeReranker
-from hl_mem.recall.reranker import make_reranker as make_registered_reranker
+from hl_mem.recall.reranker import DashScopeReranker, FakeReranker
 from hl_mem.settings import Settings
 
 _EXTRACTOR_REGISTRY: dict[str, str] = {
@@ -38,7 +37,6 @@ _EXTRACTOR_REGISTRY: dict[str, str] = {
     "tool_result": "llm",
 }
 
-Reranker = DashScopeReranker
 _COMPONENT_HEALTH: dict[str, dict[str, str | None]] = {}
 
 
@@ -179,8 +177,42 @@ def make_embedder(
     )
 
 
-def make_reranker(settings: Settings) -> RerankerProtocol | None:
-    return make_registered_reranker(settings, {"dashscope": Reranker})
+def make_reranker(
+    settings: Settings,
+    *,
+    runtime: ProviderRuntime | None = None,
+) -> RerankerProtocol | None:
+    if settings.reranker_mode == "off":
+        return None
+    if settings.reranker_mode == "fake":
+        return FakeReranker()
+    if not settings.reranker_api_key:
+        raise ConfigurationError("RERANKER_API_KEY is required")
+    resolved_runtime = runtime or create_provider_runtime(settings)
+    try:
+        provider = resolved_runtime.registry.create_reranker(settings.reranker_provider, {})
+        endpoint = ProviderEndpoint(
+            base_url=settings.reranker_base_url,
+            api_key=settings.reranker_api_key,
+            model=settings.reranker_model,
+            timeout_seconds=10.0,
+            max_attempts=3,
+        )
+        return DashScopeReranker(
+            endpoint=endpoint,
+            provider=provider,
+            governed=resolved_runtime.governed_call(
+                ProviderCapability.RERANKER,
+                settings.reranker_provider,
+                "rerank",
+                endpoint.model,
+            ),
+            owned_runtime=resolved_runtime if runtime is None else None,
+        )
+    except Exception:
+        if runtime is None:
+            resolved_runtime.close()
+        raise
 
 
 def make_query_expander(
