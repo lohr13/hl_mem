@@ -19,6 +19,7 @@ from hl_mem.adapters.hermes.conflict_notice import ManualConflictNotice
 from hl_mem.adapters.hermes.episode_mapper import EpisodeMapper
 from hl_mem.adapters.hermes.http_client import HLMemHttpClient
 from hl_mem.adapters.hermes.prefetch import PrefetchCache
+from hl_mem.adapters.hermes.provenance import derive_turn_provenance
 from hl_mem.adapters.hermes.renderer import render_context
 from hl_mem.application.context_packet import (
     RetrievalBundle,
@@ -171,6 +172,8 @@ class HLMemProvider:
         self._mapper = EpisodeMapper()
         self._session_id = ""
         self._hermes_home = hermes_home or resolved_settings.hermes_home or ""
+        self._platform: str | None = None
+        self._agent_context: str | None = None
         self._delivery_lock = threading.Lock()
         self._delivery_receipts: deque[DeliveryReceipt] = deque(maxlen=MAX_DELIVERY_RECEIPTS)
         self._pending_injections: deque[_PendingInjection] = deque()
@@ -354,6 +357,10 @@ class HLMemProvider:
         if session_id is not None:
             self._session_id = session_id
             self._hermes_home = str(kwargs.get("hermes_home") or self._hermes_home)
+            platform = kwargs.get("platform")
+            agent_context = kwargs.get("agent_context")
+            self._platform = platform if isinstance(platform, str) else None
+            self._agent_context = agent_context if isinstance(agent_context, str) else None
             return
         if not self._can_call():
             return
@@ -410,6 +417,15 @@ class HLMemProvider:
         self._session_id = active_session
         try:
             turn_id = str(kwargs.get("turn_id") or uuid.uuid4().hex)
+            messages = kwargs.get("messages")
+            turn_provenance = derive_turn_provenance(
+                messages if isinstance(messages, list) else [],
+                platform=self._platform,
+                agent_context=self._agent_context,
+            )
+            assistant_metadata: dict[str, Any] = {"turn_id": turn_id}
+            if turn_provenance.external_tools:
+                assistant_metadata["external_source_tools"] = list(turn_provenance.external_tools)
             events = [
                 self._hermes_event_payload(
                     "user",
@@ -417,13 +433,17 @@ class HLMemProvider:
                     namespace=namespace,
                     metadata={"turn_id": turn_id},
                     idempotency_key=f"hermes-turn:{active_session}:{turn_id}:user",
+                    origin_class=turn_provenance.user_origin,
+                    session_kind=turn_provenance.session_kind,
                 ),
                 self._hermes_event_payload(
                     "assistant",
                     assistant_content or "",
                     namespace=namespace,
-                    metadata={"turn_id": turn_id},
+                    metadata=assistant_metadata,
                     idempotency_key=f"hermes-turn:{active_session}:{turn_id}:assistant",
+                    origin_class=turn_provenance.assistant_origin,
+                    session_kind=turn_provenance.session_kind,
                 ),
             ]
             if self._sync_post("/v1/events/batch", {"events": events}):
@@ -1045,6 +1065,8 @@ class HLMemProvider:
         namespace: str = "default",
         metadata: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        origin_class: str = "unknown",
+        session_kind: str = "unknown",
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "event_type": "message",
@@ -1052,6 +1074,8 @@ class HLMemProvider:
             "content": {"text": content},
             "session_id": self._session_id or None,
             "namespace": _trusted_namespace(namespace),
+            "origin_class": origin_class,
+            "session_kind": session_kind,
         }
         if qualifiers:
             payload["content"]["qualifiers"] = qualifiers
