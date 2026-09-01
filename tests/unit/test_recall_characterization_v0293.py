@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 import hl_mem.application.recall as recall_module
-from hl_mem.application.recall import RecallService
+from hl_mem.application.recall import RecallRequest, RecallService
 from hl_mem.domain.recall import RecallIntent
 from hl_mem.ingest.embedder import FakeEmbedder
 from hl_mem.recall.procedure_pipeline import MemoryCandidate
@@ -134,6 +134,47 @@ def _access_counts(connection: Any) -> list[int]:
         int(connection.execute("SELECT access_count FROM claims WHERE id=?", (claim_id,)).fetchone()[0])
         for claim_id in CLAIM_IDS
     ]
+
+
+def test_query_planning_private_seam_freezes_constructor_and_prepared_shape(tmp_path: Any) -> None:
+    database = Database(tmp_path / "query-planning-seam.db")
+    connection = database.open()
+    embedder = _CountingFakeEmbedder()
+    service = RecallService(
+        connection,
+        embedder,
+        settings=_settings(query_expansion_mode="off", entity_constraint_mode="off"),
+    )
+    request = RecallRequest(
+        query="tea preference",
+        limit=2,
+        as_of=None,
+        intent=RecallIntent.CURRENT_STATE,
+        known_as_of=None,
+        query_id="query-planning-seam",
+        token_budget=None,
+        context_mode=None,
+        namespace="default",
+        session_id=None,
+        debug=True,
+        response_format="legacy",
+        ranking_now=NOW,
+        injection_context=None,
+    )
+    session = service._resolve_recall_request(request)
+
+    expansion = recall_module._QueryExpansionSession(service, session)
+
+    assert expansion.prepare() is expansion
+    assert [(item.text, item.source, item.weight) for item in expansion.weighted_queries] == [
+        ("tea preference", "original", 1.0)
+    ]
+    assert len(expansion.query_blobs) == 1
+    assert expansion.low_recall_expander is None
+    assert expansion.entity_plan.scope_mode == "off"
+    assert expansion.entity_fallback_reason is None
+    assert embedder.calls == ["tea preference"]
+    database.close()
 
 
 @pytest.mark.parametrize(

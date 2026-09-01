@@ -8,7 +8,7 @@ import logging
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -46,10 +46,9 @@ from hl_mem.protocols import (
     IntentRouterProtocol,
     RerankerProtocol,
     WeightedQuery,
-    embed_query,
 )
 from hl_mem.recall.echo_suppression import EchoRequest, EchoSuppressionPolicy
-from hl_mem.recall.entity_query import prepare_entity_query, prepare_wide_query
+from hl_mem.recall.entity_query import QueryEntityPlan
 from hl_mem.recall.freshness_annotation import (
     DEFAULT_FRESHNESS_ANNOTATION_METRICS,
     FreshnessAnnotationPolicy,
@@ -60,6 +59,7 @@ from hl_mem.recall.freshness_annotation import (
 from hl_mem.recall.injection import InjectionContext
 from hl_mem.recall.procedure_pipeline import recall_procedure as recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
+from hl_mem.recall.query_planning import LowRecallExpander, QueryPlanningSession, load_session_context
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.relevance import (
@@ -68,10 +68,9 @@ from hl_mem.recall.relevance import (
     should_enforce_relevance,
 )
 from hl_mem.recall.staged_pipeline import EntityScopeFallback
-from hl_mem.recall.trace import QueryExpansionTrace, SearchPhaseMetrics, SearchTrace, SearchTracer
+from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
-from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import EvidenceRepository
 
 LOGGER = logging.getLogger(__name__)
@@ -128,9 +127,6 @@ class EnrichedSelection:
     policies: list[dict[str, Any]] = field(default_factory=list)
     packet_candidates: list[dict[str, Any]] = field(default_factory=list)
     answerability: Answerability = "no_evidence"
-
-
-_LowRecallExpander = Callable[[int, int], tuple[list[WeightedQuery], list[bytes]]]
 
 
 def _freshness_item(memory_type: str, item_id: str, text: str, metadata: Mapping[str, Any]) -> FreshnessItem:
@@ -275,50 +271,7 @@ def budget_pack(items: list[dict[str, Any]], token_budget: int) -> list[dict[str
     return packed
 
 
-def _session_context(
-    connection: sqlite3.Connection,
-    namespace: str,
-    session_id: str,
-    *,
-    max_events: int,
-    token_budget: int,
-) -> tuple[tuple[tuple[str, str], ...], bool, str | None, str]:
-    """读取并按粗略 token 预算装入同命名空间会话的用户/助手文本。"""
-    before = {"occurred_at": "\U0010ffff", "id": "\U0010ffff"}
-    events = EventRepository(connection).get_recent_events(
-        namespace,
-        session_id,
-        before,
-        max_events + 1,
-        ("user", "assistant"),
-    )
-    truncated = len(events) > max_events
-    selected: list[tuple[str, str]] = []
-    used = 0
-    for event in events[:max_events]:
-        role = str(event.get("actor_type") or "")
-        if role not in {"user", "assistant"}:
-            continue
-        try:
-            content = json.loads(str(event.get("content_json") or "{}"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        text = content if isinstance(content, str) else content.get("text") if isinstance(content, dict) else None
-        if not isinstance(text, str) or not text.strip():
-            continue
-        normalized = text.strip()
-        cost = max(1, (len(normalized) + 1) // 2)
-        if used + cost > token_budget:
-            truncated = True
-            continue
-        selected.append((role, normalized))
-        used += cost
-    selected.reverse()
-    context = tuple(selected)
-    if not context:
-        return (), truncated, None, "empty"
-    serialized = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-    return context, truncated, hashlib.sha256(serialized.encode("utf-8")).hexdigest(), "ok"
+_session_context = load_session_context
 
 
 def _now() -> str:
@@ -326,172 +279,42 @@ def _now() -> str:
 
 
 class _QueryExpansionSession:
-    """一次 recall 的 query expansion 状态与 deadline。"""
+    """Compatibility wrapper for the existing application-level patch seam."""
 
     def __init__(self, service: RecallService, recall: _RecallSession) -> None:
-        self.service = service
-        self.recall = recall
-        self.deadline = time.monotonic() + service.settings.query_expansion_total_timeout_seconds
-        self.tracer = recall.tracer
-        self.session_context: tuple[tuple[str, str], ...] = ()
-        request = recall.request
-        self.entity_plan, weighted_query, query_blob = prepare_entity_query(
-            service.connection,
-            service.embedder,
-            request.query,
-            request.namespace,
-            service.settings.entity_constraint_mode,
-            dense_enabled=service.settings.recall_dense_enabled,
+        self._planning = QueryPlanningSession(
+            service,
+            recall,
+            monotonic=time.monotonic,
+            context_reader=_session_context,
         )
-        self.entity_plan.record(self.tracer.trace)
-        self.weighted_queries = [weighted_query]
-        self.query_blobs = [query_blob]
-        self.low_recall_expander: _LowRecallExpander | None = None
-        self.entity_fallback_reason: str | None = None
 
     def prepare(self) -> _QueryExpansionSession:
-        request = self.recall.request
-        service = self.service
-        context_available = service.settings.query_context_mode != "off"
-        initial_trigger = QueryExpander.trigger_for(
-            request.query,
-            service.settings.query_expansion_mode,
-            context_available=context_available,
-        )
-        additions_made = False
-        if initial_trigger is not None and service.query_expander is not None:
-            additions, blobs = self.expand_for(initial_trigger)
-            additions_made = bool(additions)
-            self.weighted_queries.extend(additions)
-            self.query_blobs.extend(blobs)
-        if (
-            service.settings.query_expansion_mode == "auto"
-            and not additions_made
-            and service.query_expander is not None
-        ):
-            self.low_recall_expander = self._expand_for_low_recall
+        self._planning.prepare()
         return self
 
     def prepare_wide_fallback(self, reason: str) -> None:
-        request = self.recall.request
-        weighted, blob, calls = prepare_wide_query(
-            self.service.embedder,
-            request.query,
-            self.weighted_queries[0],
-            self.query_blobs[0],
-            dense_enabled=self.service.settings.recall_dense_enabled,
-        )
-        self.weighted_queries, self.query_blobs = [weighted], [blob]
-        self.tracer.trace.entity_fallback_embedding_calls += calls
-        self.low_recall_expander = None
-        self.entity_fallback_reason = reason
-        self.tracer.trace.entity_fallback_reason = reason
-        self.tracer.trace.entity_filter_mode = "wide"
+        self._planning.prepare_wide_fallback(reason)
 
-    def expand_for(self, trigger: str) -> tuple[list[WeightedQuery], list[bytes]]:
-        request = self.recall.request
-        service = self.service
-        trace_source = {
-            "short_query": "llm_short",
-            "coreference": "llm_coreference",
-            "low_recall": "llm_low_recall",
-            "low_fts_recall": "llm_low_recall",
-            "always": "llm_short",
-        }.get(trigger, "llm_short")
-        self.tracer.trace.expansion_trigger = trigger
-        if service.query_expander is None or time.monotonic() >= self.deadline:
-            self.tracer.trace.expansions.append(QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout"))
-            return [], []
-        self.session_context = ()
-        self.tracer.trace.context_outcome = "disabled"
-        if trigger == "coreference" and service.settings.query_context_mode == "coreference":
-            if not request.session_id:
-                self.tracer.trace.context_outcome = "missing_session"
-                return [], []
-            if time.monotonic() >= self.deadline:
-                self.tracer.trace.context_outcome = "deadline_exhausted"
-                return [], []
-            try:
-                self.session_context, context_truncated, context_hash, context_outcome = _session_context(
-                    service.connection,
-                    request.namespace,
-                    request.session_id,
-                    max_events=service.settings.query_context_max_events,
-                    token_budget=service.settings.query_context_token_budget,
-                )
-            except Exception as error:
-                LOGGER.warning("session context read failed: %s", type(error).__name__)
-                self.tracer.trace.context_outcome = "read_error"
-                return [], []
-            self.tracer.trace.context_event_count = len(self.session_context)
-            self.tracer.trace.context_truncated = context_truncated
-            self.tracer.trace.context_hash = context_hash
-            self.tracer.trace.context_outcome = context_outcome
-            if not self.session_context:
-                return [], []
-            if time.monotonic() >= self.deadline:
-                self.tracer.trace.context_outcome = "deadline_exhausted"
-                return [], []
-        remaining = max(0.001, self.deadline - time.monotonic())
-        result = service.query_expander.expand(
-            request.query,
-            intent=self.recall.selected_intent,
-            max_expansions=service.settings.query_expansion_max,
-            timeout_seconds=min(service.settings.query_expansion_timeout_seconds, remaining),
-            token_ceiling=service.settings.query_expansion_token_ceiling,
-            source=trigger,
-            session_context=self.session_context,
-        )
-        self.tracer.trace.expansion_total_tokens += result.input_tokens + result.output_tokens
-        if not result.expansions:
-            self.tracer.trace.expansions.append(
-                QueryExpansionTrace.from_text(
-                    "",
-                    trace_source,
-                    0.6,
-                    input_tokens=result.input_tokens,
-                    output_tokens=result.output_tokens,
-                    latency_ms=result.latency_ms,
-                    outcome=result.outcome,
-                    error_class=result.error_class,
-                    attempts=result.attempts,
-                    http_status=result.http_status,
-                    provider_code=result.provider_code,
-                )
-            )
-            return [], []
-        additions = [WeightedQuery(item.text, item.source, item.weight) for item in result.expansions]
-        for item in additions:
-            self.tracer.trace.expansions.append(
-                QueryExpansionTrace.from_text(
-                    item.text,
-                    item.source,
-                    item.weight,
-                    input_tokens=result.input_tokens,
-                    output_tokens=result.output_tokens,
-                    latency_ms=result.latency_ms,
-                )
-            )
-        return additions, [
-            embed_query(service.embedder, item.text) if service.settings.recall_dense_enabled else b""
-            for item in additions
-        ]
+    @property
+    def entity_plan(self) -> QueryEntityPlan:
+        return self._planning.entity_plan
 
-    def _expand_for_low_recall(
-        self,
-        candidate_count: int,
-        fts_candidate_count: int,
-    ) -> tuple[list[WeightedQuery], list[bytes]]:
-        service = self.service
-        trigger = QueryExpander.trigger_for(
-            self.recall.request.query,
-            "auto",
-            candidate_count=candidate_count,
-            candidate_floor=service.settings.query_expansion_candidate_floor,
-            fts_candidate_count=fts_candidate_count,
-            context_available=service.settings.query_context_mode != "off",
-        )
-        return self.expand_for(trigger) if trigger is not None else ([], [])
+    @property
+    def weighted_queries(self) -> list[WeightedQuery]:
+        return self._planning.weighted_queries
+
+    @property
+    def query_blobs(self) -> list[bytes]:
+        return self._planning.query_blobs
+
+    @property
+    def low_recall_expander(self) -> LowRecallExpander | None:
+        return self._planning.low_recall_expander
+
+    @property
+    def entity_fallback_reason(self) -> str | None:
+        return self._planning.entity_fallback_reason
 
 
 class RecallService:
