@@ -69,6 +69,7 @@ src/hl_mem/
 │   ├── ingest.py             # IngestService and atomic Claim write path
 │   ├── plan_fulfillment.py   # Result-to-plan reconciliation and governance CAS
 │   ├── recall.py             # RecallService orchestration and compatibility patch points
+│   ├── recall_side_effects.py # Recall access/exposure transactions, retries, and audits
 │   ├── recall_delivery.py    # Pure context candidate, packing, and bundle transformations
 │   ├── recall_enrichment.py  # Repository-backed evidence and relation result enrichment
 │   ├── forget.py             # Explicit-forget adapter over DeletionService
@@ -109,6 +110,7 @@ src/hl_mem/
 ├── recall/
 │   ├── observation.py        # Derived-memory assembly
 │   ├── entity_query.py       # Query mention resolution and observe/enforce constraints
+│   ├── query_planning.py     # Query expansion, embeddings, and entity-plan preparation
 │   ├── ranking.py            # Multi-factor ranking
 │   ├── relation_expansion.py # One-hop relation expansion
 │   ├── reranker.py           # Optional reranking (model configured via TOML)

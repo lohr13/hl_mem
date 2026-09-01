@@ -2,6 +2,20 @@
 
 ## 未发布（目标 v1.1.0）
 
+### Phase 3：外部 Provider 实证与 Recall 职责收口
+
+- 独立构建 `hl-mem-provider-dashscope` 参考插件，仅依赖公开 `hl_mem.plugins` 契约并提供 LLM、Embedding、
+  Reranker 三类稳定适配器；干净 Python 3.12 环境验证了未启用不导入、显式 allowlist、版本协商、故障隔离和
+  内置 Provider 健康保持，未增加新的公共插件能力。
+- 真实混合链路使用智谱 Coding Plan 完成 LLM 提取，并由外部插件完成 DashScope Embedding 与 Reranker；固定
+  持久化、四类召回、受控重排失败回退、预算结算和预留释放全部通过。该验证未调用外部插件的 LLM 适配器，
+  不把一次合成冒烟表述为质量或可用性基准。
+- 将 Recall 查询规划迁入 `recall.query_planning`，访问/曝光写副作用迁入现有
+  `application.recall_side_effects`，`RecallService` 保持编排和兼容 patch point；未改变候选、排序、交付或公共
+  REST/MCP/CLI 语义。
+- Provider 冒烟将 `expected_claim_count` 解释为可持久化事实下界，允许真实模型对同一证据做更细的安全拆分；
+  召回与持久化固定检查仍必须全部通过，避免把模型粒度波动误判为 Provider 链路故障。
+
 ### Phase 2：精确实体召回
 
 - 高置信实体查询在 FTS/Dense 候选截断前限定到唯一 typed canonical entity；历史 alias、歧义、多实体、链接不完整

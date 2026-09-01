@@ -44,3 +44,16 @@ settlement, budget, and temporary-database check passed.
 
 This is integration evidence for one bounded synthetic run. It is not a benchmark of recall quality, Provider
 availability, or future billing.
+
+## Recorded external-plugin evidence
+
+The sanitized [2026-09-01 mixed result](results/1.1.0-external-plugin-summary.json) records a clean installation of the
+independent `hl-mem-provider-dashscope` wheel. The built-in Zhipu adapter supplied the Coding Plan LLM while the external
+plugin supplied both DashScope Embedding and Reranker adapters. The run settled 1 LLM request, 10 embedding items, and
+15 reranked documents at a conservative price-book estimate of 760,000 microunits (CNY 0.76), with zero active
+reservations. Every persistence, recall, controlled-failure fallback, settlement, budget, and temporary-database check
+passed.
+
+This proves the public Provider contract, Entry Point discovery, host governance, and two real external model paths for
+one bounded synthetic run. It does not claim that the external LLM adapter was exercised against a live service, nor is
+it a benchmark of recall quality, Provider availability, or future billing.
