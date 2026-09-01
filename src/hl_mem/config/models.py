@@ -678,8 +678,6 @@ class Settings(
             ("reranker.provider", self.reranker_provider),
             ("image_describer.provider", self.image_describer_provider),
         ]
-        if self.query_expansion_provider is not None:
-            providers.append(("recall.query_expansion_provider", self.query_expansion_provider))
         self.validate_plugins(providers)
         if self.max_request_body < 0:
             raise ConfigurationError("server.max_request_body must be non-negative")
@@ -840,6 +838,12 @@ class Settings(
             raise ConfigurationError("recall.tag_boost_weight must be between 0 and 1")
         if self.query_expansion_mode not in {"off", "auto", "always"}:
             raise ConfigurationError("recall.query_expansion_mode must be 'off', 'auto', or 'always'")
+        if self.query_expansion_mode != "off":
+            if self.query_expansion_provider is not None:
+                self.validate_plugins(
+                    [("recall.query_expansion_provider", self.query_expansion_provider)]
+                )
+            self.query_expansion_line_overrides()
         if self.query_context_mode not in {"off", "coreference"}:
             raise ConfigurationError("recall.query_context_mode must be 'off' or 'coreference'")
         if not 0 <= self.query_expansion_max <= 2:
@@ -1004,10 +1008,10 @@ class Settings(
         if not self.embedding_base_url.strip() or not self.embedding_model.strip():
             raise ConfigurationError("embedding.base_url and embedding.model are required in production")
 
-        query_expansion_line = self.query_expansion_line_overrides()
         required_secrets: dict[str, tuple[str | None, list[str]]] = {}
         llm_recovery = ["configure a production LLM service"]
         if self.query_expansion_mode != "off":
+            query_expansion_line = self.query_expansion_line_overrides()
             if query_expansion_line is None:
                 llm_recovery.append("recall.query_expansion_mode='off'")
             else:

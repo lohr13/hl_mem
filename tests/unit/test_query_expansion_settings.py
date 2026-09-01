@@ -8,6 +8,73 @@ from hl_mem.llm.providers import DashScopeProvider, ZhipuProvider
 from hl_mem.settings import Settings
 
 
+_PARKED_DEDICATED_LINES = (
+    {
+        "query_expansion_base_url": "https://qe.example.com/v1",
+        "query_expansion_api_key": "qe-secret",
+    },
+    {
+        "query_expansion_provider": "dashscope",
+        "query_expansion_api_key": "qe-secret",
+    },
+    {
+        "query_expansion_provider": "dashscope",
+        "query_expansion_base_url": "https://qe.example.com/v1",
+    },
+    {
+        "query_expansion_provider": "unsupported",
+        "query_expansion_base_url": "https://qe.example.com/v1",
+        "query_expansion_api_key": "qe-secret",
+    },
+)
+_INCOMPLETE_DEDICATED_LINES = _PARKED_DEDICATED_LINES[:3]
+
+
+def _production_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "extractor_mode": "real",
+        "embedder_mode": "real",
+        "reranker_mode": "off",
+        "llm_api_key": "llm-secret",
+        "embedding_api_key": "embedding-secret",
+        "query_expansion_mode": "off",
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
+@pytest.mark.parametrize("overrides", _PARKED_DEDICATED_LINES)
+def test_disabled_query_expansion_ignores_parked_dedicated_line(
+    overrides: dict[str, str],
+) -> None:
+    settings = _production_settings(**overrides)
+
+    settings.validate()
+    settings.validate_runtime()
+
+    assert make_query_expander(settings) is None
+
+
+@pytest.mark.parametrize("overrides", _INCOMPLETE_DEDICATED_LINES)
+def test_active_query_expansion_rejects_invalid_dedicated_line(
+    overrides: dict[str, str],
+) -> None:
+    settings = _production_settings(query_expansion_mode="auto", **overrides)
+
+    with pytest.raises(ConfigurationError):
+        settings.validate()
+
+
+def test_zero_query_expansion_limit_does_not_resolve_parked_line() -> None:
+    settings = Settings(
+        query_expansion_mode="auto",
+        query_expansion_max=0,
+        query_expansion_provider="dashscope",
+    )
+
+    assert make_query_expander(settings) is None
+
+
 def test_query_expander_uses_dedicated_model(tmp_path) -> None:
     settings = Settings(
         database_path=str(tmp_path / "memory.db"),
