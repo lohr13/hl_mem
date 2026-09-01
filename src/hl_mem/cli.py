@@ -33,6 +33,10 @@ from hl_mem.daily_cli import add_daily_commands, handle_daily_command
 from hl_mem.doctor import add_doctor_command, handle_doctor_command
 from hl_mem.errors import ConflictError
 from hl_mem.evaluation.runner import BenchmarkRunner
+from hl_mem.model_coordinate_repair_cli import (
+    add_model_coordinate_repair_command,
+    handle_model_coordinate_repair_command,
+)
 from hl_mem.observability.ops_cli import add_ops_command, handle_ops_command, open_readonly_database
 from hl_mem.settings import Settings
 from hl_mem.storage.backup import backup_database, validate_backup
@@ -538,6 +542,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     restore.add_argument("--confirm-overwrite", action="store_true")
     _add_conflicts_parser(commands)
     add_claim_explain_command(commands)
+    add_model_coordinate_repair_command(commands)
     dedup = commands.add_parser("dedup")
     dedup.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     dedup_commands = dedup.add_subparsers(dest="dedup_command", required=True)
@@ -610,6 +615,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.db is not None:
         settings = replace(settings, database_path=str(args.db))
     if handle_ops_command(args, settings, parser):
+        return
+    if handle_model_coordinate_repair_command(args, settings):
         return
     if args.command == "report-version":
         return print(report_version_cli(settings, args.namespace, args.subject))
