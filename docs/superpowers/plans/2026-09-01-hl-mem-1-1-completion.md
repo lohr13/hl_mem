@@ -366,8 +366,8 @@ uv run --frozen python -m pytest tests/unit/test_compatibility_contracts.py -q -
 - [ ] Run all local gates from a clean worktree:
 
 ```powershell
-uv sync --frozen
-uv run --frozen python -W error::ResourceWarning -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term-missing --cov-fail-under=80
+uv sync --frozen --extra sqlite-vec
+uv run --frozen --extra sqlite-vec python -W error::ResourceWarning -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term-missing --cov-fail-under=80
 uv run --frozen ruff check .
 uv run --frozen black --check .
 uv run --frozen isort --check-only .
