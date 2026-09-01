@@ -54,6 +54,7 @@ def test_public_config_schema_is_secret_free_and_production_only() -> None:
     assert "fake" not in fields["extraction.mode"]["production_choices"]
     assert "fake" not in fields["embedding.mode"]["production_choices"]
     assert "fake" not in fields["reranker.mode"]["production_choices"]
+    assert fields["recall.entity_constraint_mode"]["default"] == "enforce"
     assert all(set(item) == {"environment", "settings_field"} for item in schema["secrets"])
 
 
@@ -154,6 +155,15 @@ def test_test_factory_is_the_only_fake_profile() -> None:
     assert settings.extractor_mode == "fake"
     assert settings.embedder_mode == "fake"
     settings.validate()
+
+
+@pytest.mark.parametrize("mode", ("off", "observe"))
+def test_entity_constraint_preserves_explicit_non_default_mode(tmp_path: Path, mode: str) -> None:
+    path = _write(tmp_path / f"entity-{mode}.toml", f'[recall]\nentity_constraint_mode = "{mode}"\n')
+
+    settings = _load_structural_settings(path, environ={})
+
+    assert settings.entity_constraint_mode == mode
 
 
 def test_semantic_automation_defaults_are_explicit_and_safe() -> None:
@@ -437,7 +447,7 @@ def test_release_example_config_matches_approved_modes() -> None:
     assert settings.hermes_manual_conflict_notice is True
     assert settings.dedup_audit_only is True
     assert settings.lesson_signal_mode == "observe"
-    assert settings.entity_constraint_mode == "observe"
+    assert settings.entity_constraint_mode == "enforce"
 
 
 @pytest.mark.parametrize("retired_mode", ("observe", "enforce"))

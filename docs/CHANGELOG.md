@@ -2,6 +2,13 @@
 
 ## 未发布（目标 v1.1.0）
 
+### Phase 2：精确实体召回
+
+- 高置信实体查询在 FTS/Dense 候选截断前限定到唯一 typed canonical entity；历史 alias、歧义、多实体、链接不完整
+  或存储异常自动回退原始宽召回，不新增召回通道、LLM 调用或正常查询 Embedding 调用。
+- `recall.entity_constraint_mode` 默认从 `observe` 改为 `enforce`；显式 `observe` 与 `off` 保持原语义，配置迁移不重写
+  用户选择。Trace 只记录实体范围、计数、耗时和回退原因，不保存查询或残余文本。
+
 ### Phase 1：Provider 运行观测与真实链路证据
 
 - 新增只读 `hl-mem ops report`，聚合 Provider 调用量、Token、费用、延迟和失败，以及 Worker、任务、数据库与

@@ -704,7 +704,7 @@
       "type": "string"
     },
     {
-      "default": "observe",
+      "default": "enforce",
       "path": "recall.entity_constraint_mode",
       "production_choices": [
         "off",

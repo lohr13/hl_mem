@@ -154,11 +154,11 @@ def test_settings_contract_includes_bypass_and_recall_fields() -> None:
     assert settings.recall_default_limit == 5
     assert settings.recall_vector_scan_limit == 200
     assert settings.recall_dense_enabled is True
-    assert settings.entity_constraint_mode == "observe"
+    assert settings.entity_constraint_mode == "enforce"
     assert settings.snapshot()["recall_default_limit"] == 5
     assert settings.snapshot()["recall_vector_scan_limit"] == 200
     assert settings.snapshot()["recall_dense_enabled"] is True
-    assert settings.snapshot()["entity_constraint_mode"] == "observe"
+    assert settings.snapshot()["entity_constraint_mode"] == "enforce"
     assert RecallInput(query="memory").limit is None
 
 

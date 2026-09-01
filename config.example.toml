@@ -56,8 +56,8 @@ text_version = "v2"
 default_limit = 5
 vector_scan_limit = 200
 dense_enabled = true
-# E4 行为门禁通过但证据等级不足；只跑 shadow，不在 RRF 前硬过滤。
-entity_constraint_mode = "observe"
+# 高置信实体范围在候选截断前生效；不确定情况自动回退宽召回。
+entity_constraint_mode = "enforce"
 dedup_threshold = 0.95
 dedup_candidate_limit = 100
 # 自动复活会改变可见状态，必须显式启用。

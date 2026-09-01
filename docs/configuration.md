@@ -44,8 +44,9 @@ v1.0.0rc1 的受限 assertion 门控没有配置键；存量 `unknown` 只可观
   诱饵误报 0、误转 permanent 0（合成语料）；未过的门禁仅为判分模型双序一致性，属评测装备限制而非信号质量缺陷。
   该改动只影响新提取 claim 的重要性打分，非破坏性、可随时改回 `"observe"` 回滚。如果你的 agent 使用场景中
   纠错/防错类记忆的价值密度高（运维、交易纪律、协作规范等），建议开启。
-- `recall.entity_constraint_mode="observe"`：E4 行为门禁通过，但冻结查询 100% 为 snapshot-derived synthetic，证据
-  等级不足；取得满足预注册真实查询占比的语料前不启用 hard filter。
+- `recall.entity_constraint_mode="enforce"`：仅当查询中的全部 active mention 唯一解析到同一 typed canonical entity，
+  且 Claim link coverage 完整时，才在 FTS/Dense 候选截断前限定实体范围；历史 alias、歧义、多实体、链接不完整或
+  存储异常均回退宽召回。可显式设为 `observe` 做 shadow 对照，或设为 `off` 完全关闭解析。
 - `hermes.manual_conflict_notice=true`：只提示 residual `manual_required_count`，同一会话首次或计数变化时显示；
   可设为 `false` 立即关闭。
 
@@ -352,7 +353,7 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 | `recall.echo_pending_similarity_threshold` | 数值 | `0.95` | 0.0 - 1.0 | `echo_pending_similarity_threshold` |
 | `recall.echo_session_window_seconds` | 整数 | `1800` | 60 - 14400 | `echo_session_window_seconds` |
 | `recall.echo_suppression_mode` | 字符串 | `"enforce"` | `off`、`observe`、`enforce` | `echo_suppression_mode` |
-| `recall.entity_constraint_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `entity_constraint_mode` |
+| `recall.entity_constraint_mode` | 字符串 | `"enforce"` | `off`、`observe`、`enforce` | `entity_constraint_mode` |
 | `recall.expansion_circuit_failure_threshold` | 整数 | `5` | >= 1 | `expansion_circuit_failure_threshold` |
 | `recall.expansion_circuit_open_seconds` | 数值 | `60.0` | > 0 | `expansion_circuit_open_seconds` |
 | `recall.feedback_min_samples` | 整数 | `3` | >= 1 | `feedback_min_samples` |

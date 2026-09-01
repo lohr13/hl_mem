@@ -281,7 +281,7 @@ class RetrievalConfig:
 
     recall_candidate_floor: int = field(default=50, metadata={"toml": "recall.candidate_floor"})
 
-    entity_constraint_mode: EntityConstraintMode = _toml_field("observe", "recall.entity_constraint_mode")
+    entity_constraint_mode: EntityConstraintMode = _toml_field("enforce", "recall.entity_constraint_mode")
 
     recall_dedup_threshold: float = field(default=0.95, metadata={"toml": "recall.dedup_threshold"})
 
