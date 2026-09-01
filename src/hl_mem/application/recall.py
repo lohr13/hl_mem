@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from hl_mem.application import recall_delivery as _recall_delivery
 from hl_mem.application._procedure_recall_flow import ProcedureRecallFlow as _ProcedureRecallFlow
 from hl_mem.application.answerability import Answerability
 from hl_mem.application.context_packet import (
@@ -33,7 +34,6 @@ from hl_mem.application.recall_delivery import (
     context_candidates,
     context_from_packed_bundle,
 )
-from hl_mem.application.recall_delivery import budget_pack_by_type as budget_pack_by_type
 from hl_mem.application.recall_enrichment import assemble_observations as assemble_recall_observations
 from hl_mem.application.recall_enrichment import assemble_results as assemble_recall_results
 from hl_mem.application.recall_side_effects import RecallSideEffectSink
@@ -75,6 +75,7 @@ from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import EvidenceRepository
 
 LOGGER = logging.getLogger(__name__)
+budget_pack_by_type = _recall_delivery.budget_pack_by_type
 _RESPONSE_FORMATS = frozenset({"legacy", "context_packet", "both", "retrieval_bundle"})
 _SIDE_EFFECT_LOCK = threading.Lock()
 _SIDE_EFFECT_HEALTH: dict[str, dict[str, int | str | None]] = {
