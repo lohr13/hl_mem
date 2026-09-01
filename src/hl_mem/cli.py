@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from hl_mem import __version__
+from hl_mem import __version__, model_coordinate_repair_cli
 from hl_mem.adapters.hermes.deployment import deploy_plugin, print_deployment_result
 from hl_mem.application import conflict_backlog, conflict_repairs
 from hl_mem.application.conflicts import DEFAULT_HUMAN_RESOLVER, ResolutionService
@@ -33,10 +33,6 @@ from hl_mem.daily_cli import add_daily_commands, handle_daily_command
 from hl_mem.doctor import add_doctor_command, handle_doctor_command
 from hl_mem.errors import ConflictError
 from hl_mem.evaluation.runner import BenchmarkRunner
-from hl_mem.model_coordinate_repair_cli import (
-    add_model_coordinate_repair_command,
-    handle_model_coordinate_repair_command,
-)
 from hl_mem.observability.ops_cli import add_ops_command, handle_ops_command, open_readonly_database
 from hl_mem.settings import Settings
 from hl_mem.storage.backup import backup_database, validate_backup
@@ -542,7 +538,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     restore.add_argument("--confirm-overwrite", action="store_true")
     _add_conflicts_parser(commands)
     add_claim_explain_command(commands)
-    add_model_coordinate_repair_command(commands)
+    model_coordinate_repair_cli.add_model_coordinate_repair_command(commands)
     dedup = commands.add_parser("dedup")
     dedup.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     dedup_commands = dedup.add_subparsers(dest="dedup_command", required=True)
@@ -616,7 +612,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         settings = replace(settings, database_path=str(args.db))
     if handle_ops_command(args, settings, parser):
         return
-    if handle_model_coordinate_repair_command(args, settings):
+    if model_coordinate_repair_cli.handle_model_coordinate_repair_command(args, settings):
         return
     if args.command == "report-version":
         return print(report_version_cli(settings, args.namespace, args.subject))
