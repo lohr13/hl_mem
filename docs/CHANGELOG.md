@@ -1,5 +1,18 @@
 # HL-Mem 变更记录
 
+## v1.1.0（开发中）
+
+### Phase 1：Provider 运行观测与真实链路证据
+
+- 新增只读 `hl-mem ops report`，聚合 Provider 调用量、Token、费用、延迟和失败，以及 Worker、任务、数据库与
+  WAL 状态；`/healthz` 保持低成本聚合，不执行模型探测。
+- 新增宿主拥有的可选 CNY 价格表；调用在发送前按保守上界原子预留，按实际用量结算，无法确定费用时继续
+  fail-closed，价格文件和来源信息不会进入插件或运行事件。
+- 2026-09-01 完成一次脱敏的内置 Provider 冒烟：LLM 使用智谱 GLM-5.3-Flash（Coding Plan 配额），Embedding 与
+  Reranker 使用 DashScope Qwen 模型；共结算 1 次 LLM 请求、9 个 Embedding item 和 16 个重排文档，价格表聚合
+  费用为 732,077 microunits（CNY 0.732077），活动预留为 0，固定持久化、召回、受控重排失败回退及预算检查
+  全部通过。该证据只代表一次有界合成链路验证，不作为召回质量、服务可用性或未来账单承诺。
+
 ## v1.0.0rc1（2026-08-31）
 
 ### Core 1.0 Phase 6：可审计发布候选

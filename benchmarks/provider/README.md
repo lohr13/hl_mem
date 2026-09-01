@@ -33,3 +33,14 @@ hashes/fingerprints, bounded labels, and safe categories only. `passed=true` req
 true. It never contains fixture/provider response text, credentials, service endpoints, database paths, or temporary-root
 paths. Price-book provenance is limited to the validated effective date and declared HTTPS source URLs; userinfo, query,
 and fragment components are rejected.
+
+## Recorded built-in evidence
+
+The sanitized [2026-09-01 built-in result](results/1.1.0-builtin-summary.json) records one disposable run against the
+built-in adapters. The LLM was Zhipu GLM-5.3-Flash under Coding Plan quota; embedding and reranking used DashScope
+Qwen models. The run settled 1 LLM request, 9 embedding items, and 16 reranked documents at an aggregate price-book
+cost of 732,077 microunits (CNY 0.732077), with zero active reservations. Every fixed persistence, recall, fallback,
+settlement, budget, and temporary-database check passed.
+
+This is integration evidence for one bounded synthetic run. It is not a benchmark of recall quality, Provider
+availability, or future billing.
