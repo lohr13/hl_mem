@@ -606,6 +606,7 @@ def _run_case(case: dict[str, Any], base_settings: Settings, mode: str, root: Pa
             "expected_scope": str(case["expected_scope"]),
             "actual_scope": _case_scope(trace),
             "scope_signal": str(trace.get("entity_filter_mode") or "off"),
+            "fallback_reason": trace.get("entity_fallback_reason"),
             "confidence_class": str(
                 (trace.get("entity_resolution") or {}).get("confidence_class", "low")
                 if isinstance(trace.get("entity_resolution"), dict)
@@ -621,7 +622,7 @@ def _run_case(case: dict[str, Any], base_settings: Settings, mode: str, root: Pa
             "embedding_calls": query_embedder.call_count,
             "llm_calls": 0,
             "reranker_calls": 0,
-            "channel_counts": dict(trace.get("candidate_counts") or {}),
+            "channel_counts": dict(trace.get("entity_scope_counts") or {}),
             "latency_ms": latency_ms,
         }
     finally:
