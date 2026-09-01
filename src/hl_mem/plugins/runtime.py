@@ -104,7 +104,9 @@ def create_provider_runtime(
     registry = build_provider_registry(settings, entry_points=entry_points)
     estimator: UsageCostEstimator | None
     if _validated_estimator is _ESTIMATOR_UNSET:
-        estimator = UsagePriceBook.load(Path(settings.usage_price_book_path)) if settings.usage_price_book_path else None
+        estimator = (
+            UsagePriceBook.load(Path(settings.usage_price_book_path)) if settings.usage_price_book_path else None
+        )
     else:
         estimator = cast(UsageCostEstimator | None, _validated_estimator)
     governor = None

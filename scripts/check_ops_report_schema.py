@@ -81,7 +81,12 @@ def _report(*, seeded: bool) -> dict[str, object]:
                 UsageAmount(requests=1, input_tokens=2, cost_microunits=3),
             )
             governor.mark_attempt(reservation.id)
-            governor.settle(reservation.id, UsageAmount(requests=1, input_tokens=2, cost_microunits=3), status="success", latency_ms=1)
+            governor.settle(
+                reservation.id,
+                UsageAmount(requests=1, input_tokens=2, cost_microunits=3),
+                status="success",
+                latency_ms=1,
+            )
         connection = sqlite3.connect(f"{database_path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA query_only=ON")
@@ -108,7 +113,9 @@ def main() -> int:
     args = parser.parse_args()
     generated = build_schema()
     if args.write:
-        SCHEMA_PATH.write_text(json.dumps(generated, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        SCHEMA_PATH.write_text(
+            json.dumps(generated, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     if not SCHEMA_PATH.is_file():
         print("ops report schema missing; run scripts/check_ops_report_schema.py --write")
         return 1

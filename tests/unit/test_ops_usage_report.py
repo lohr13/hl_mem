@@ -314,7 +314,9 @@ def test_historical_report_excludes_reservations_created_after_window_until(tmp_
     }
 
 
-def test_health_summary_does_not_use_report_group_or_percentile_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_health_summary_does_not_use_report_group_or_percentile_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "usage.budget.db"
     _seed_ledger(path)
 
@@ -348,9 +350,7 @@ def _set_newer_schema(path: Path) -> None:
         ),
     ],
 )
-def test_reader_rejects_corrupt_or_newer_ledgers_without_writing(
-    tmp_path: Path, create: object, message: str
-) -> None:
+def test_reader_rejects_corrupt_or_newer_ledgers_without_writing(tmp_path: Path, create: object, message: str) -> None:
     path = tmp_path / "invalid.budget.db"
     create(path)  # type: ignore[operator]
     before = (os.stat(path).st_size, os.stat(path).st_mtime_ns)
@@ -365,9 +365,7 @@ def test_health_summary_has_only_daily_health_fields(tmp_path: Path) -> None:
     path = tmp_path / "usage.budget.db"
     _seed_ledger(path)
 
-    summary = UsageLedgerReader(path).health_summary(
-        day=NOW.date(), limits=UsageLimits(10, 100, 1_000), now=NOW
-    )
+    summary = UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(10, 100, 1_000), now=NOW)
 
     assert summary == {
         "failures": 2,
@@ -387,9 +385,7 @@ def test_health_summary_normalizes_offset_reservation_leases_before_aggregation(
     governor = _governor(path, Clock(NOW), lease_seconds=300)
     governor.reserve(IDENTITY, UsageAmount(requests=1))
     with sqlite3.connect(path) as connection:
-        connection.execute(
-            "UPDATE usage_reservations SET lease_expires_at='2026-08-30T14:00:00+02:00'"
-        )
+        connection.execute("UPDATE usage_reservations SET lease_expires_at='2026-08-30T14:00:00+02:00'")
 
     summary = UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(), now=NOW)
 

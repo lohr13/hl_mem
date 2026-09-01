@@ -21,9 +21,7 @@ from hl_mem.plugins.contracts import ProviderCapability
 _V1_CAPABILITIES = ("llm", "embedding", "reranker", "image_describer")
 _V1_LABEL_PATTERN = r"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$"
 _V1_MODEL_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9._:/-]{0,198}[A-Za-z0-9])?$"
-_V1_HTTPS_URL_PATTERN = (
-    r"^https://(?:[^/?#@\s]+@)?(?:\[[0-9A-Fa-f:.]+\]|[^/?#:@\s]+)(?::[0-9]+)?(?:[/?#].*)?$"
-)
+_V1_HTTPS_URL_PATTERN = r"^https://(?:[^/?#@\s]+@)?(?:\[[0-9A-Fa-f:.]+\]|[^/?#:@\s]+)(?::[0-9]+)?(?:[/?#].*)?$"
 _RATE_KEYS = (
     "request",
     "million_input_tokens",
@@ -76,9 +74,7 @@ _PRICE_BOOK_SCHEMA_V1: dict[str, object] = {
                         "type": "object",
                         "additionalProperties": False,
                         "required": list(_RATE_KEYS),
-                        "properties": {
-                            key: {"type": "integer", "minimum": 0} for key in _RATE_KEYS
-                        },
+                        "properties": {key: {"type": "integer", "minimum": 0} for key in _RATE_KEYS},
                     },
                 },
             },
@@ -174,9 +170,7 @@ class UsagePriceBook:
             key = (capability, model, provider_value)
             if key in rules:
                 provider_label = provider_value if provider_value is not None else "generic"
-                raise ConfigurationError(
-                    f"duplicate usage price rule for {capability.value}/{model}/{provider_label}"
-                )
+                raise ConfigurationError(f"duplicate usage price rule for {capability.value}/{model}/{provider_label}")
             rates = raw_rule["rates_microunits"]
             if not isinstance(rates, dict):
                 raise ConfigurationError("usage price book rates_microunits must be an object")

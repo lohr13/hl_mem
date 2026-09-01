@@ -143,9 +143,7 @@ def test_exact_provider_rule_precedes_generic_and_matching_is_exact(tmp_path: Pa
     )
 
     assert book.price(_identity(), UsageAmount(requests=1), phase="reserve").cost_microunits == 20
-    assert (
-        book.price(_identity(provider="other"), UsageAmount(requests=1), phase="reserve").cost_microunits == 10
-    )
+    assert book.price(_identity(provider="other"), UsageAmount(requests=1), phase="reserve").cost_microunits == 10
     assert book.price(_identity(model="QWEN"), UsageAmount(requests=1), phase="reserve").cost_microunits is None
 
 
@@ -287,9 +285,10 @@ def test_fingerprint_covers_effective_date_and_source_metadata(tmp_path: Path) -
     second = deepcopy(first)
     second["source_urls"] = ["https://pricing.example.test/revised"]
 
-    assert _load(_write_book(tmp_path / "first.json", first)).fingerprint != _load(
-        _write_book(tmp_path / "second.json", second)
-    ).fingerprint
+    assert (
+        _load(_write_book(tmp_path / "first.json", first)).fingerprint
+        != _load(_write_book(tmp_path / "second.json", second)).fingerprint
+    )
 
 
 def test_missing_or_malformed_price_book_fails_with_config_context(tmp_path: Path) -> None:

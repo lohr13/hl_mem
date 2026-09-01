@@ -106,9 +106,7 @@ def test_ops_report_rejects_invalid_window_with_argparse_exit_two(tmp_path: Path
     assert captured.value.code == 2
 
 
-def test_ops_report_fails_safely_for_corrupt_usage_ledger(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_ops_report_fails_safely_for_corrupt_usage_ledger(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     config = _config(tmp_path)
     database_path = _seed_database(tmp_path)
     ledger_path = default_usage_ledger_path(database_path)
