@@ -162,7 +162,7 @@ hl-mem hermes install --hermes-home <HERMES_HOME>
 hl-mem hermes upgrade --hermes-home <HERMES_HOME>
 ```
 
-省略 `--hermes-home` 时会从环境变量和常见目录探测 Hermes 根目录。两条命令在目标副本一致时均保持 no-op；`install` 遇到漂移会拒绝覆盖，`upgrade` 会先备份既有插件文件再刷新。`hlmem doctor` 可区分路径正确、路径错误和副本漂移，并分别诊断 daemon、插件与 Context Packet wire 的静态 major 兼容性；它不会执行动态协商或自动升级。插件安装到 `<HERMES_HOME>/plugins/hl_mem/`，并固定读取该目录根下的 `hl_mem.toml` 与 `.env`，不依赖 Hermes 进程 CWD。实际安装或升级后必须重启所有已导入 hl_mem 的 Hermes gateway/CLI 进程；不得用仍持有旧 editable checkout 模块的进程验证新配置。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
+省略 `--hermes-home` 时会从环境变量和常见目录探测 Hermes 根目录。两条命令在目标副本一致时均保持 no-op；`install` 遇到漂移会拒绝覆盖，`upgrade` 会先备份既有插件文件再刷新。`hlmem doctor` 可区分路径正确、路径错误和副本漂移，并分别诊断 daemon、插件与 Context Packet wire 的静态 major 兼容性；它不会执行动态协商或自动升级。插件安装到 `<HERMES_HOME>/plugins/hl_mem/`，并固定读取 `<HERMES_HOME>/hl_mem.toml` 与 `<HERMES_HOME>/.env`，不依赖 Hermes 进程 CWD，也不会读取源码仓库中的 `.env`。安装命令只报告这两个文件的绝对路径和是否存在，不读取、比较或复制密钥；按其输出的 `hl-mem doctor --config ... --env-file ...` 命令检查实际运行配置。实际安装或升级后必须重启所有已导入 hl_mem 的 Hermes gateway/CLI 进程；不得用仍持有旧 editable checkout 模块的进程验证新配置。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
 
 ### 常驻部署与 systemd
 

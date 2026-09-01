@@ -89,6 +89,38 @@ def test_cli_hermes_install_dry_run_does_not_write(tmp_path: Path, capsys: pytes
     assert not target.exists()
 
 
+@pytest.mark.parametrize(
+    ("action", "dry_run"),
+    [("install", False), ("upgrade", False), ("install", True)],
+)
+@pytest.mark.parametrize("configuration_present", [False, True])
+def test_cli_hermes_reports_owned_configuration_paths_without_secret_values(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    action: str,
+    dry_run: bool,
+    configuration_present: bool,
+) -> None:
+    config_path = (tmp_path / "hl_mem.toml").resolve()
+    env_path = (tmp_path / ".env").resolve()
+    if configuration_present:
+        config_path.write_text("schema_version = 1\n", encoding="utf-8")
+        env_path.write_text("LLM_API_KEY=must-not-be-printed\n", encoding="utf-8")
+
+    arguments = ["hermes", action, "--hermes-home", str(tmp_path)]
+    if dry_run:
+        arguments.append("--dry-run")
+    cli_main(arguments)
+
+    output = capsys.readouterr().out
+    state = "present" if configuration_present else "missing"
+    assert f"Hermes config ({state}): {config_path}" in output
+    assert f"Hermes secrets ({state}): {env_path}" in output
+    assert f'hl-mem doctor --config "{config_path}" --env-file "{env_path}"' in output
+    assert "Repository .env is not used by the Hermes plugin." in output
+    assert "must-not-be-printed" not in output
+
+
 def test_cli_hermes_install_refuses_to_overwrite_drift(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

@@ -22,6 +22,7 @@ class DeploymentResult:
     """一次 Hermes 插件部署的结构化结果。"""
 
     action: DeploymentAction
+    hermes_home: Path
     target_dir: Path
     changed: bool
     dry_run: bool
@@ -81,6 +82,17 @@ def _print_restart_requirement() -> None:
     print("Do not validate a new hl_mem.toml against a process that imported an older editable checkout.")
 
 
+def _print_configuration_ownership(result: DeploymentResult) -> None:
+    config_path = (result.hermes_home / "hl_mem.toml").resolve()
+    env_path = (result.hermes_home / ".env").resolve()
+    config_state = "present" if config_path.is_file() else "missing"
+    env_state = "present" if env_path.is_file() else "missing"
+    print(f"Hermes config ({config_state}): {config_path}")
+    print(f"Hermes secrets ({env_state}): {env_path}")
+    print(f'Validate: hl-mem doctor --config "{config_path}" --env-file "{env_path}"')
+    print("Repository .env is not used by the Hermes plugin.")
+
+
 def deploy_plugin(
     action: DeploymentAction,
     hermes_home: str | Path | None = None,
@@ -92,15 +104,15 @@ def deploy_plugin(
     resolved_home = find_hermes_home(hermes_home)
     target_dir = (resolved_home / "plugins" / "hl_mem").resolve()
     if plugin_files_match(target_dir):
-        return DeploymentResult(action, target_dir, changed=False, dry_run=dry_run)
+        return DeploymentResult(action, resolved_home, target_dir, changed=False, dry_run=dry_run)
     if action == "install" and target_dir.exists():
         raise RuntimeError(f"Hermes plugin at {target_dir} differs from the packaged copy; run hl-mem hermes upgrade")
     if dry_run:
-        return DeploymentResult(action, target_dir, changed=True, dry_run=True)
+        return DeploymentResult(action, resolved_home, target_dir, changed=True, dry_run=True)
 
     backup_dir = backup_existing(target_dir) if action == "upgrade" else None
     _copy_plugin(target_dir)
-    return DeploymentResult(action, target_dir, changed=True, dry_run=False, backup_dir=backup_dir)
+    return DeploymentResult(action, resolved_home, target_dir, changed=True, dry_run=False, backup_dir=backup_dir)
 
 
 def print_deployment_result(result: DeploymentResult) -> None:
@@ -118,6 +130,7 @@ def print_deployment_result(result: DeploymentResult) -> None:
         else:
             backup = result.backup_dir if result.backup_dir is not None else "not required"
         print(f"Backup: {backup}")
+    _print_configuration_ownership(result)
     if not result.dry_run:
         _print_restart_requirement()
 
@@ -148,6 +161,7 @@ def script_main(argv: Sequence[str] | None = None) -> int:
         print(f"Target (absolute): {target_dir}")
         print(f"Backup: {result.backup_dir if result.backup_dir else 'not required'}")
         print("Verification: source and installed files match")
+        _print_configuration_ownership(result)
         _print_restart_requirement()
         return 0
     except Exception as error:
