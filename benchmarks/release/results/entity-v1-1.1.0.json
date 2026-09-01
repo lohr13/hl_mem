@@ -1,0 +1,638 @@
+{
+  "case_count": 24,
+  "cases": [
+    {
+      "actual_claim_ids": [
+        "claim:entity-01-unique-active:target"
+      ],
+      "actual_scope": "entity",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-01-unique-active:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-01-unique-active",
+      "latency_ms": 2.816000021994114,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-02-chinese-alias:target"
+      ],
+      "actual_scope": "entity",
+      "category": "multilingual_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-02-chinese-alias:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-02-chinese-alias",
+      "latency_ms": 2.5813999818637967,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-03-longer-ascii:target"
+      ],
+      "actual_scope": "entity",
+      "category": "alias_in_longer_text",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-03-longer-ascii:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-03-longer-ascii",
+      "latency_ms": 2.5505999801680446,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-04-longer-chinese:target"
+      ],
+      "actual_scope": "entity",
+      "category": "alias_in_longer_text",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-04-longer-chinese:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-04-longer-chinese",
+      "latency_ms": 2.737000002525747,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-05-historical-alias:decoy-00",
+        "claim:entity-05-historical-alias:decoy-01",
+        "claim:entity-05-historical-alias:decoy-02",
+        "claim:entity-05-historical-alias:decoy-03",
+        "claim:entity-05-historical-alias:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "historical_alias",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-05-historical-alias:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-05-historical-alias",
+      "latency_ms": 3.8075000047683716,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "wide",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-06-cross-type:decoy-00",
+        "claim:entity-06-cross-type:decoy-01",
+        "claim:entity-06-cross-type:decoy-02",
+        "claim:entity-06-cross-type:decoy-03",
+        "claim:entity-06-cross-type:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "cross_type_same_name",
+      "channel_counts": {},
+      "confidence_class": "ambiguous",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-06-cross-type:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-06-cross-type",
+      "latency_ms": 3.8754999404773116,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "wide",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-07-same-span:decoy-00",
+        "claim:entity-07-same-span:decoy-01",
+        "claim:entity-07-same-span:decoy-02",
+        "claim:entity-07-same-span:decoy-03",
+        "claim:entity-07-same-span:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "same_span_ambiguity",
+      "channel_counts": {},
+      "confidence_class": "ambiguous",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-07-same-span:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-07-same-span",
+      "latency_ms": 3.768899943679571,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "wide",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-08-overlap:decoy-00",
+        "claim:entity-08-overlap:decoy-01",
+        "claim:entity-08-overlap:decoy-02",
+        "claim:entity-08-overlap:decoy-03",
+        "claim:entity-08-overlap:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "overlapping_alias",
+      "channel_counts": {},
+      "confidence_class": "ambiguous",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-08-overlap:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-08-overlap",
+      "latency_ms": 4.2357000056654215,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "wide",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-09-multiple-entities:decoy-00",
+        "claim:entity-09-multiple-entities:decoy-01",
+        "claim:entity-09-multiple-entities:decoy-02",
+        "claim:entity-09-multiple-entities:decoy-03",
+        "claim:entity-09-multiple-entities:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "multiple_entities",
+      "channel_counts": {},
+      "confidence_class": "ambiguous",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-09-multiple-entities:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-09-multiple-entities",
+      "latency_ms": 3.9453000063076615,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "wide",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-10-no-entity:decoy-00",
+        "claim:entity-10-no-entity:decoy-01",
+        "claim:entity-10-no-entity:decoy-02",
+        "claim:entity-10-no-entity:decoy-03",
+        "claim:entity-10-no-entity:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "no_entity",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-10-no-entity:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-10-no-entity",
+      "latency_ms": 3.9552999660372734,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "wide",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-11-incomplete-links:decoy-00",
+        "claim:entity-11-incomplete-links:decoy-01",
+        "claim:entity-11-incomplete-links:decoy-02",
+        "claim:entity-11-incomplete-links:decoy-03",
+        "claim:entity-11-incomplete-links:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "incomplete_links",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-11-incomplete-links:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-11-incomplete-links",
+      "latency_ms": 3.702400019392371,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "wide",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-12-empty-residual:target"
+      ],
+      "actual_scope": "entity",
+      "category": "empty_residual",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-12-empty-residual:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-12-empty-residual",
+      "latency_ms": 2.831999910995364,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-13-temporal-current:target"
+      ],
+      "actual_scope": "entity",
+      "category": "temporal_current",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-13-temporal-current:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-13-temporal-current",
+      "latency_ms": 2.5138999335467815,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-14-temporal-history:current",
+        "claim:entity-14-temporal-history:target"
+      ],
+      "actual_scope": "entity",
+      "category": "temporal_historical",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-14-temporal-history:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": true,
+      "id": "entity-14-temporal-history",
+      "latency_ms": 2.53649998921901,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-15-namespace:target"
+      ],
+      "actual_scope": "entity",
+      "category": "namespace_isolation",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-15-namespace:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-15-namespace",
+      "latency_ms": 2.332999953068793,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-16-storage-failure:decoy-00",
+        "claim:entity-16-storage-failure:decoy-01",
+        "claim:entity-16-storage-failure:decoy-02",
+        "claim:entity-16-storage-failure:decoy-03",
+        "claim:entity-16-storage-failure:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "storage_failure",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-16-storage-failure:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-16-storage-failure",
+      "latency_ms": 3.7970999255776405,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "wide",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-17-project:target"
+      ],
+      "actual_scope": "entity",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-17-project:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-17-project",
+      "latency_ms": 2.2982999216765165,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-18-person:target"
+      ],
+      "actual_scope": "entity",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-18-person:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-18-person",
+      "latency_ms": 2.4335000198334455,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-19-device:target"
+      ],
+      "actual_scope": "entity",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-19-device:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-19-device",
+      "latency_ms": 2.4747999850660563,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-20-target-role:target"
+      ],
+      "actual_scope": "entity",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-20-target-role:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-20-target-role",
+      "latency_ms": 2.3853000020608306,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-21-repeat-mention:target"
+      ],
+      "actual_scope": "entity",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-21-repeat-mention:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-21-repeat-mention",
+      "latency_ms": 2.3104000138118863,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-22-punctuation:target"
+      ],
+      "actual_scope": "entity",
+      "category": "alias_in_longer_text",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-22-punctuation:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-22-punctuation",
+      "latency_ms": 2.3485999554395676,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-23-chinese-project:target"
+      ],
+      "actual_scope": "entity",
+      "category": "multilingual_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-23-chinese-project:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": true,
+      "hit_at_5": true,
+      "id": "entity-23-chinese-project",
+      "latency_ms": 2.4800999090075493,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "enforce",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-24-inactive:decoy-00",
+        "claim:entity-24-inactive:decoy-01",
+        "claim:entity-24-inactive:decoy-02",
+        "claim:entity-24-inactive:decoy-03",
+        "claim:entity-24-inactive:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "historical_alias",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-24-inactive:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-24-inactive",
+      "latency_ms": 3.9140000008046627,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "wide",
+      "wide_equivalent": true
+    }
+  ],
+  "commit": "c0ad9af0787f2f1f26881c18ddd2b649bd443465",
+  "embedding_calls": 24,
+  "external_model_calls": 0,
+  "fixture_sha256": "2292d1e6354c7d507e629f0fa239949d71e75ed3ca106f7a9fa72ae774ea3205",
+  "latency_ms": {
+    "p50": 2.5813999818637967,
+    "p95": 3.9552999660372734
+  },
+  "llm_calls": 0,
+  "metrics": {
+    "cross_entity_top_1_count": 0,
+    "hit_at_1": 0.5833333333333334,
+    "hit_at_5": 0.625
+  },
+  "mode": "enforce",
+  "package_version": "1.0.0rc1",
+  "protocol_id": "hl-mem-entity-v1",
+  "python_version": "3.14.4",
+  "reranker_calls": 0,
+  "schema_version": 1
+}

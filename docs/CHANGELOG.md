@@ -8,6 +8,9 @@
   或存储异常自动回退原始宽召回，不新增召回通道、LLM 调用或正常查询 Embedding 调用。
 - `recall.entity_constraint_mode` 默认从 `observe` 改为 `enforce`；显式 `observe` 与 `off` 保持原语义，配置迁移不重写
   用户选择。Trace 只记录实体范围、计数、耗时和回退原因，不保存查询或残余文本。
+- 24 案冻结合成门禁中，15 个高置信实体案例全部 Top 5 命中，跨实体 Top 1 从 15 降为 0，9 个宽召回案例与
+  1.0 基线一致；Embedding 调用仍为每题 1 次，LLM/Reranker/外部调用为 0。Core 1.0 的 Recall@1、Recall@5、
+  MRR 分别保持 `0.75`、`0.7917`、`0.7639`，不将该合成结果表述为真实总体 Recall。
 
 ### Phase 1：Provider 运行观测与真实链路证据
 
