@@ -23,6 +23,13 @@
   费用为 732,077 microunits（CNY 0.732077），活动预留为 0，固定持久化、召回、受控重排失败回退及预算检查
   全部通过。该证据只代表一次有界合成链路验证，不作为召回质量、服务可用性或未来账单承诺。
 
+## v1.0.0（2026-09-01）
+
+- 将已完成真实 Provider、摄入、召回、迁移与恢复验证的 `1.0.0rc1` 提升为首个稳定版；运行时行为、数据库
+  schema、公共 REST/MCP/CLI 与 Provider 契约均未改变。
+- 删除与常规 Tests、release-gates 和每日 quality smoke 重复的 RC 日期证据工作流及远端 artifact 验证器；
+  稳定发布改为本地真实链路观察后，由同一稳定提交的一次常规 GitHub Tests 结果把关。
+
 ## v1.0.0rc1（2026-08-31）
 
 ### Core 1.0 Phase 6：可审计发布候选
@@ -31,7 +38,7 @@
   fixture 缺失而跳过，空库、历史库和重复 migration 均进入发布证据。
 - 新增确定性的发布证据清单、`v0.36.1` 冻结 Benchmark、依赖漏洞扫描、CycloneDX SBOM、CodeQL、完整
   Git 历史密钥扫描和全 SHA 固定的 GitHub Actions。发布门禁只验证，不自动上传 PyPI。
-- `1.0.0rc1` 必须连续观察七个 UTC 日期且没有未关闭 P0/P1，才允许提升为稳定版；SQLite 仍只支持
+- `1.0.0rc1` 通过本地真实部署观察与稳定提交的常规 GitHub Tests 后允许提升为稳定版；SQLite 仍只支持
   备份恢复，不提供 schema downgrade。
 - `report-version` 可记录严格的 `MAJOR.MINOR.PATCHrcN` 运行时版本；预发布版本仍保留在 latest-wins
   灰区，不获得稳定版本自动关链权限。
