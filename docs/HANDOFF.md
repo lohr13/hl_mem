@@ -27,7 +27,7 @@
 - 发布证据聚合、CodeQL、依赖审计、SBOM、Git 历史密钥扫描及完整 SHA Action 固定已接入。
 - 1.1 增加只读运行报告与统一费用观测、高置信实体约束、真实外部 Provider 插件实证，并完成 Recall 与
   LLMExtractor 职责拆分；未增加 Graph、额外实体 LLM 或新的权威存储。
-- 本地全量门禁为 2701 passed、4 skipped、108 subtests，覆盖率 87.48%；Python 3.12、3.13、3.14
+- 本地全量门禁为 2996 passed、4 skipped、108 subtests，覆盖率 87.88%；Python 3.12、3.13、3.14
   全新环境的 wheel 安装、导入和 CLI 启动均通过。
 
 ## 当前发布状态
