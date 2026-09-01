@@ -340,6 +340,36 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 `enforce` 只接受已存在 typed instrument 的 exchange-qualified code 或唯一显式 alias；解析器不能创建 canonical ID。
 缺 target 时价格序列继续返回 `uncertain:price_target_missing`。
 
+### `[provenance]`
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `provenance.mode` | 字符串 | `"enforce"` | `observe`、`enforce` | `provenance_mode` |
+
+`enforce` applies deterministic source/session admission. `observe` records the
+same decisions without changing extraction or Claim semantics. Neither mode
+adds model calls or attempts fact verification.
+
+Event 只新增 `origin_class` 和 `session_kind` 两个来源字段。旧客户端未提供时，两者均保存为 `unknown` 并保持
+1.0 行为。当前受控值如下：
+
+| 场景 | `origin_class` | `session_kind` | `enforce` 行为 |
+|---|---|---|---|
+| 交互用户原话 | `direct_user` | `interactive` | 正常提取与写入 |
+| Agent 自身输出 | `agent` | `interactive` | 正常提取与写入 |
+| 外部 Tool 原文或转述 | `external` / `external_derived` | `interactive` | 可保存；Claim 降为 low authority，并保留观察时间和证据 |
+| cron 自动会话 | `system` | `cron` | 可保存为低权威时效观察，不自动成为永久规则 |
+| heartbeat / subagent | `system` | 对应 session | Event 保留；在模型调用前阻止自动 Claim 提取 |
+| 旧宿主或未知来源 | `unknown` | `unknown` | 完全保持旧行为 |
+
+Hermes 只从结构化 `platform` / `agent_context` 映射 interactive、cron、heartbeat 或 subagent；没有该元数据时为
+`unknown`，不会根据消息正文猜测 session 类型。
+
+用户显式要求记忆外部信息只保护保留意图，不会把来源升级为已验证事实。系统不使用 LLM 猜测来源，也不执行
+事实核查或历史回填。只读命令 `hl-mem explain claim <claim-id> [--json]` 显示当前 Claim 状态、直接 Evidence、
+安全来源提示和当前治理解释；它不输出 Claim 正文、工具结果、URL 凭据/路径/查询或配置密钥，也不重建已经过期的
+历史准入审计。
+
 ### `[recall]`
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
@@ -469,36 +499,6 @@ TOML 为准，活文档不固定具体型号。
 Expired Claims are eligible only after `expired_claim_retention_days`, with no downstream evidence consumer and no open conflict. Maintenance defaults to `observe`; `on` processes one bounded batch through the tombstone-backed `DeletionService`. Offline-copy apply requires the exact dry-run `--expected-count`.
 
 Pending dedup pairs below the current `dedup.threshold` can be reported read-only and terminally classified with `dedup drain-below-floor --apply --expected-count <exact-count>`; the drain never changes Claims.
-
-### `[provenance]`
-
-| TOML key | Type | Default | Allowed values | Settings field |
-|---|---|---|---|---|
-| `provenance.mode` | string | `"enforce"` | `observe`, `enforce` | `provenance_mode` |
-
-`enforce` applies deterministic source/session admission. `observe` records the
-same decisions without changing extraction or Claim semantics. Neither mode
-adds model calls or attempts fact verification.
-
-Event 只新增 `origin_class` 和 `session_kind` 两个来源字段。旧客户端未提供时，两者均保存为 `unknown` 并保持
-1.0 行为。当前受控值如下：
-
-| 场景 | `origin_class` | `session_kind` | `enforce` 行为 |
-|---|---|---|---|
-| 交互用户原话 | `direct_user` | `interactive` | 正常提取与写入 |
-| Agent 自身输出 | `agent` | `interactive` | 正常提取与写入 |
-| 外部 Tool 原文或转述 | `external` / `external_derived` | `interactive` | 可保存；Claim 降为 low authority，并保留观察时间和证据 |
-| cron 自动会话 | `system` | `cron` | 可保存为低权威时效观察，不自动成为永久规则 |
-| heartbeat / subagent | `system` | 对应 session | Event 保留；在模型调用前阻止自动 Claim 提取 |
-| 旧宿主或未知来源 | `unknown` | `unknown` | 完全保持旧行为 |
-
-Hermes 只从结构化 `platform` / `agent_context` 映射 interactive、cron、heartbeat 或 subagent；没有该元数据时为
-`unknown`，不会根据消息正文猜测 session 类型。
-
-用户显式要求记忆外部信息只保护保留意图，不会把来源升级为已验证事实。系统不使用 LLM 猜测来源，也不执行
-事实核查或历史回填。只读命令 `hl-mem explain claim <claim-id> [--json]` 显示当前 Claim 状态、直接 Evidence、
-安全来源提示和当前治理解释；它不输出 Claim 正文、工具结果、URL 凭据/路径/查询或配置密钥，也不重建已经过期的
-历史准入审计。
 
 ### `[server]`
 
