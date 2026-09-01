@@ -76,7 +76,6 @@ def test_enforce_pushes_scope_into_both_existing_channels_before_results_return(
     ]
     assert collected.entity_scope_applied is True
     assert collected.entity_scope_counts == {"fts": 1, "dense": 1}
-    assert collected.fallback_reason is None
     assert collected.filtered_ids == frozenset()
 
 
@@ -98,7 +97,7 @@ def test_observe_reads_wide_and_keeps_shadow_filter_instrumentation() -> None:
     assert collected.filtered_ids == frozenset({"other"})
 
 
-def test_scoped_storage_error_retries_the_whole_query_once_wide() -> None:
+def test_scoped_storage_error_returns_control_without_an_internal_wide_read() -> None:
     class FailingScopedRepository(_RecordingRepository):
         def search_claims_fts(self, *_args: object, **kwargs: object) -> list[dict[str, object]]:
             entity_id = kwargs.get("entity_id")
@@ -109,21 +108,19 @@ def test_scoped_storage_error_retries_the_whole_query_once_wide() -> None:
 
     repository = FailingScopedRepository(_connection())
 
-    collected = collect_query_channels(
-        repository,
-        WeightedQuery("deployment", "original", 1.0),
-        b"vector",
-        0,
-        _request("enforce", "agent:target"),
-    )
+    with pytest.raises(sqlite3.OperationalError, match="scoped read failed"):
+        collect_query_channels(
+            repository,
+            WeightedQuery("deployment", "original", 1.0),
+            b"vector",
+            0,
+            _request("enforce", "agent:target"),
+        )
 
-    assert repository.calls == [("fts", "agent:target"), ("fts", None), ("dense", None)]
-    assert collected.entity_scope_applied is False
-    assert collected.fallback_reason == "storage_error"
-    assert all(len(channel) == 2 for _, channel, _, _ in collected.channels)
+    assert repository.calls == [("fts", "agent:target")]
 
 
-def test_scoped_dense_error_discards_partial_scoped_fts_before_wide_retry() -> None:
+def test_scoped_dense_error_does_not_issue_an_internal_wide_read() -> None:
     class FailingScopedDenseRepository(_RecordingRepository):
         def search_claims_vector(self, *_args: object, **kwargs: object) -> list[dict[str, object]]:
             entity_id = kwargs.get("entity_id")
@@ -134,35 +131,35 @@ def test_scoped_dense_error_discards_partial_scoped_fts_before_wide_retry() -> N
 
     repository = FailingScopedDenseRepository(_connection())
 
-    collected = collect_query_channels(
-        repository,
-        WeightedQuery("deployment", "original", 1.0),
-        b"vector",
-        0,
-        _request("enforce", "agent:target"),
-    )
-
-    assert repository.calls == [
-        ("fts", "agent:target"),
-        ("dense", "agent:target"),
-        ("fts", None),
-        ("dense", None),
-    ]
-    assert collected.fallback_reason == "storage_error"
-    assert all([claim["id"] for claim in channel] == ["other", "target"] for _, channel, _, _ in collected.channels)
-
-
-def test_failed_wide_retry_reraises_the_original_scoped_database_error() -> None:
-    class AlwaysFailingRepository(_RecordingRepository):
-        def search_claims_fts(self, *_args: object, **kwargs: object) -> list[dict[str, object]]:
-            entity_id = kwargs.get("entity_id")
-            raise sqlite3.OperationalError("scoped failure" if entity_id is not None else "wide failure")
-
-    with pytest.raises(sqlite3.OperationalError, match="scoped failure"):
+    with pytest.raises(sqlite3.OperationalError, match="scoped dense read failed"):
         collect_query_channels(
-            AlwaysFailingRepository(_connection()),
+            repository,
             WeightedQuery("deployment", "original", 1.0),
             b"vector",
             0,
             _request("enforce", "agent:target"),
         )
+
+    assert repository.calls == [
+        ("fts", "agent:target"),
+        ("dense", "agent:target"),
+    ]
+
+
+def test_unscoped_storage_error_propagates_without_retry() -> None:
+    class AlwaysFailingRepository(_RecordingRepository):
+        def search_claims_fts(self, *_args: object, **kwargs: object) -> list[dict[str, object]]:
+            entity_id = kwargs.get("entity_id")
+            self.calls.append(("fts", str(entity_id) if entity_id is not None else None))
+            raise sqlite3.OperationalError("wide failure")
+
+    repository = AlwaysFailingRepository(_connection())
+    with pytest.raises(sqlite3.OperationalError, match="wide failure"):
+        collect_query_channels(
+            repository,
+            WeightedQuery("deployment", "original", 1.0),
+            b"vector",
+            0,
+            _request("wide", None),
+        )
+    assert repository.calls == [("fts", None)]

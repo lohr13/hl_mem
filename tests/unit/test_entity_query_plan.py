@@ -141,6 +141,26 @@ def test_multiple_mentions_of_one_entity_scope_but_multiple_entities_do_not() ->
     assert multiple_plan.fallback_reason == "multiple_entities"
 
 
+def test_alias_scan_overflow_fails_wide_instead_of_hiding_a_second_entity() -> None:
+    connection = _connection()
+    _add_entity(connection, "agent:alpha", "agent", "VeryLongAlpha")
+    _add_entity(connection, "project:z", "project", "Z")
+    connection.execute(
+        "INSERT INTO canonical_entities VALUES ('agent:filler','default','agent','Synthetic filler','active')"
+    )
+    connection.executemany(
+        "INSERT INTO entity_aliases VALUES (?, 'default', ?, 'agent', 'agent:filler', 1, 'user_explicit', NULL)",
+        [(f"proof:filler:{index}", f"filler-{index:04d}") for index in range(1023)],
+    )
+
+    plan = plan_query_entity(connection, "VeryLongAlpha Z status", "default", "enforce")
+
+    assert plan.entity_id is None
+    assert plan.search_query == "VeryLongAlpha Z status"
+    assert plan.scope_mode == "wide"
+    assert plan.fallback_reason == "resolution_error"
+
+
 def test_nfkc_boundaries_empty_residual_and_chinese_mentions_are_deterministic() -> None:
     connection = _connection()
     _add_entity(connection, "agent:pony", "agent", "Pony")

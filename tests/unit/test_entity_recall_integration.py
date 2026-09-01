@@ -173,9 +173,12 @@ def test_scoped_storage_failure_retries_original_wide_query_with_one_fallback_em
 ) -> None:
     service, connection, embedder = _seed_service(tmp_path)
     original = ClaimRepository.search_claims_fts
+    calls: list[str | None] = []
 
     def fail_scoped(self: ClaimRepository, *args: object, **kwargs: object):
-        if kwargs.get("entity_id") is not None:
+        entity_id = kwargs.get("entity_id")
+        calls.append(str(entity_id) if entity_id is not None else None)
+        if entity_id is not None:
             raise sqlite3.OperationalError("forced scoped read failure")
         return original(self, *args, **kwargs)
 
@@ -184,10 +187,34 @@ def test_scoped_storage_failure_retries_original_wide_query_with_one_fallback_em
     result = service.recall("Pony deployment status", limit=5, debug=True, ranking_now=NOW)
 
     assert embedder.texts == ["deployment status", "Pony deployment status"]
+    assert calls == ["agent:pony", None]
     trace = result["search_trace"]
     assert trace["entity_filter_mode"] == "wide"
     assert trace["entity_fallback_reason"] == "storage_error"
     assert trace["entity_fallback_embedding_calls"] == 1
+    connection.close()
+
+
+def test_failed_wide_retry_reraises_original_scoped_storage_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, connection, embedder = _seed_service(tmp_path)
+    calls: list[str | None] = []
+
+    def fail_every_read(self: ClaimRepository, *args: object, **kwargs: object):
+        entity_id = kwargs.get("entity_id")
+        calls.append(str(entity_id) if entity_id is not None else None)
+        message = "scoped failure" if entity_id is not None else "wide failure"
+        raise sqlite3.OperationalError(message)
+
+    monkeypatch.setattr(ClaimRepository, "search_claims_fts", fail_every_read)
+
+    with pytest.raises(sqlite3.OperationalError, match="scoped failure"):
+        service.recall("Pony deployment status", limit=5, ranking_now=NOW)
+
+    assert calls == ["agent:pony", None]
+    assert embedder.texts == ["deployment status", "Pony deployment status"]
     connection.close()
 
 

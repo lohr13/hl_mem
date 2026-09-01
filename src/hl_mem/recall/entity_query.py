@@ -21,6 +21,7 @@ EntityFallbackReason = Literal[
     "storage_error",
     "mode_off",
 ]
+_MAX_ACTIVE_ALIASES = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,10 +156,12 @@ def resolve_query_entity(
             "entity.display_name FROM entity_aliases AS alias JOIN canonical_entities AS entity "
             "ON entity.namespace_key=alias.namespace_key AND entity.id=alias.canonical_entity_id "
             "WHERE alias.namespace_key=? AND alias.valid_to IS NULL AND entity.status='active' "
-            "ORDER BY length(alias.alias_normalized) DESC,alias.alias_normalized,alias.entity_type LIMIT 1024",
-            (namespace,),
+            "ORDER BY length(alias.alias_normalized) DESC,alias.alias_normalized,alias.entity_type LIMIT ?",
+            (namespace, _MAX_ACTIVE_ALIASES + 1),
         ).fetchall()
     except sqlite3.Error:
+        return QueryEntityResolution(resolution_reason="resolution_error")
+    if len(rows) > _MAX_ACTIVE_ALIASES:
         return QueryEntityResolution(resolution_reason="resolution_error")
     matches: list[tuple[int, int, sqlite3.Row]] = []
     for row in rows:

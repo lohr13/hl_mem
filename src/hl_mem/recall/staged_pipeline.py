@@ -58,11 +58,12 @@ RRF_K = 60
 
 
 class EntityScopeFallback(RuntimeError):
-    """A scoped read succeeded only after the storage layer retried wide."""
+    """A scoped read failed and the application must retry the original query wide."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, original_error: sqlite3.Error) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.original_error = original_error
 
 
 @dataclass(frozen=True)
@@ -344,17 +345,22 @@ def _collect_candidates(
 
     def collect_query(item: WeightedQuery, blob: bytes, index: int) -> None:
         nonlocal fts_us, dense_us
-        collected = collect_query_channels(repo, item, blob, index, channel_request)
+        scope_started = time.perf_counter_ns()
+        try:
+            collected = collect_query_channels(repo, item, blob, index, channel_request)
+        except sqlite3.Error as error:
+            if config.entity_scope_mode != "entity" or config.entity_scope_id is None:
+                raise
+            if tracer is not None:
+                tracer.trace.entity_scope_us += (time.perf_counter_ns() - scope_started) // 1000
+                tracer.trace.entity_fallback_reason = "storage_error"
+                tracer.trace.entity_filter_mode = "wide"
+            raise EntityScopeFallback("storage_error", error) from error
         if tracer is not None:
             tracer.trace.entity_scope_us += collected.entity_scope_us
             if collected.entity_scope_applied:
                 for channel, count in collected.entity_scope_counts.items():
                     tracer.trace.entity_scope_counts[channel] = tracer.trace.entity_scope_counts.get(channel, 0) + count
-            if collected.fallback_reason is not None:
-                tracer.trace.entity_fallback_reason = collected.fallback_reason
-                tracer.trace.entity_filter_mode = "wide"
-        if collected.fallback_reason is not None:
-            raise EntityScopeFallback(collected.fallback_reason)
         query_channels.extend(collected.channels)
         fts_us += collected.fts_us
         dense_us += collected.dense_us

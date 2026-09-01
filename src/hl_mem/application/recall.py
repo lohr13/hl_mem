@@ -921,7 +921,10 @@ class RecallService:
             claims = self._run_claim_pipeline(session, expansion)
         except EntityScopeFallback as fallback:
             expansion.prepare_wide_fallback(fallback.reason)
-            claims = self._run_claim_pipeline(session, expansion)
+            try:
+                claims = self._run_claim_pipeline(session, expansion)
+            except sqlite3.Error:
+                raise fallback.original_error
         selection = self._postprocess_selection(session, claims)
         if (
             selected_intent in {RecallIntent.TOOL, RecallIntent.PROCEDURE}

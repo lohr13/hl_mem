@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -32,7 +31,6 @@ class CollectedChannels:
     entity_scope_applied: bool
     entity_scope_counts: dict[str, int]
     entity_scope_us: int
-    fallback_reason: str | None
 
 
 def collect_query_channels(
@@ -82,20 +80,8 @@ def collect_query_channels(
             dense_us = (time.perf_counter_ns() - started) // 1000
         return fts, dense, fts_us, dense_us
 
-    fallback_reason = None
-    try:
-        raw_fts, raw_dense, fts_us, dense_us = read(request.entity_scope_id if scoped else None)
-        entity_scope_us = (time.perf_counter_ns() - scope_started) // 1000 if scoped else 0
-    except sqlite3.Error as scoped_error:
-        if not scoped:
-            raise
-        entity_scope_us = (time.perf_counter_ns() - scope_started) // 1000
-        try:
-            raw_fts, raw_dense, fts_us, dense_us = read(None)
-        except sqlite3.Error:
-            raise scoped_error
-        scoped = False
-        fallback_reason = "storage_error"
+    raw_fts, raw_dense, fts_us, dense_us = read(request.entity_scope_id if scoped else None)
+    entity_scope_us = (time.perf_counter_ns() - scope_started) // 1000 if scoped else 0
 
     filtered_ids: set[str] = set()
     if request.entity_scope_mode == "observe" and request.entity_scope_id is not None:
@@ -128,5 +114,4 @@ def collect_query_channels(
         scoped,
         counts,
         entity_scope_us,
-        fallback_reason,
     )
