@@ -2,7 +2,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 1.1.0](https://img.shields.io/badge/version-1.1.0-blue.svg)](docs/CHANGELOG.md)
+[![Version: 1.1.0rc1](https://img.shields.io/badge/version-1.1.0rc1-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -357,9 +357,9 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 
 - **Stable:** events and evidence, atomic writes, LLM extraction, embeddings, FTS + Dense + RRF, dual-time filtering, TTL/decay/archival, conflicts and deduplication, REST, Hermes, backups, and auditing.
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
-- **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
+- **Experimental:** image evidence and other explicitly marked preview capabilities; disabled by default, with no low-quality fallback.
 
-The current baseline is v1.1.0 with 60 immutable, forward-only migrations. Migrations 055–057 add Claim-mutation
+The current baseline is v1.1.0rc1 with 60 immutable, forward-only migrations. Migrations 055–057 add Claim-mutation
 auditing and retire the legacy conflict judge; migration 058 terminates pending pre-upgrade semantic work, and migration
 059 adds provenance to relation edges. Migration 060 adds legacy-safe Event origin/session fields. Stop all writers and
 back up both the primary database and tombstone sidecar
