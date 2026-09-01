@@ -183,6 +183,27 @@ def test_report_prefers_process_heartbeat_and_flags_large_wal(tmp_path: Path) ->
     assert "large_wal" in report["warnings"]
 
 
+def test_report_treats_explicitly_stopped_worker_as_inactive_despite_fresh_heartbeat(
+    tmp_path: Path,
+) -> None:
+    connection, database_path = _seeded_connection(tmp_path)
+    try:
+        report = build_ops_report(
+            connection,
+            **_inputs(tmp_path, database_path),
+            worker_runtime={"running": False, "heartbeat_at": NOW.isoformat()},
+        )
+    finally:
+        connection.close()
+
+    assert report["worker"] == {
+        "state": "inactive",
+        "source": "process",
+        "heartbeat_at": NOW.isoformat(),
+    }
+    assert "worker_inactive" in report["warnings"]
+
+
 def test_report_warns_for_expired_reservations_and_near_budget(tmp_path: Path) -> None:
     connection, database_path = _seeded_connection(tmp_path)
     usage_path = tmp_path / "usage.budget.db"

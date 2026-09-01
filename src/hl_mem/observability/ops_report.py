@@ -19,12 +19,22 @@ from urllib.parse import quote
 
 from hl_mem.errors import OpsReportError
 from hl_mem.observability.usage import USAGE_LEDGER_SCHEMA_VERSION
-from hl_mem.observability.usage_types import UsageLimits
+from hl_mem.observability.usage_types import UsageIdentity, UsageLimits
+from hl_mem.plugins.contracts import ProviderCapability
 from hl_mem.settings import Settings
 from hl_mem.storage.jobs import JobRepository
 
 _DURATION = re.compile(r"([1-9][0-9]*)([hd])$")
-_SUCCESS = frozenset({"success", "ok", "settled", "imported"})
+_SUCCESS_STATUSES = ("success", "ok", "settled", "imported", "estimated", "usage_unknown")
+_SUCCESS = frozenset(_SUCCESS_STATUSES)
+_EVENT_STATUS_ORDER = (*_SUCCESS_STATUSES, "error", "failed", "unknown")
+_EVENT_STATUSES = frozenset(_EVENT_STATUS_ORDER)
+_SAFE_ERROR_CATEGORIES = frozenset(
+    (
+        "ConnectionLost LeaseExpired RuntimeError Timeout TypeError ValueError auth circuit_open "
+        "deadline_timeout http_error http_timeout invalid_response provider_error quota rate_limit upstream"
+    ).split()
+)
 _AMOUNTS = ("requests", "input_tokens", "output_tokens", "embedding_items", "rerank_documents", "images")
 OPS_REPORT_SCHEMA_VERSION: Final[int] = 1
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -50,6 +60,8 @@ def _utc(value: datetime) -> datetime:
 
 def _iso(value: datetime | str) -> str:
     parsed = datetime.fromisoformat(value) if isinstance(value, str) else value
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp must be valid offset-aware ISO")
     return parsed.astimezone(timezone.utc).isoformat()
 
 
@@ -93,15 +105,53 @@ def _empty_amount() -> dict[str, int | None]:
 
 def _add_amount(target: dict[str, Any], row: sqlite3.Row, *, prefix: str = "") -> bool:
     for field in _AMOUNTS:
-        target[field] = int(target[field]) + int(row[f"{prefix}{field}"])
+        target[field] = int(target[field]) + _ledger_int(row[f"{prefix}{field}"])
     target["total_tokens"] = int(target["input_tokens"]) + int(target["output_tokens"])
     cost = row[f"{prefix}cost_microunits"]
-    unknown = cost is None or ("unknown_cost" in row.keys() and int(row["unknown_cost"]) != 0)
+    unknown = cost is None or ("unknown_cost" in row.keys() and _ledger_int(row["unknown_cost"]) != 0)
     if unknown:
         target["cost_microunits"] = None
     elif target["cost_microunits"] is not None:
-        target["cost_microunits"] = int(target["cost_microunits"]) + int(cost)
+        target["cost_microunits"] = int(target["cost_microunits"]) + _ledger_int(cost)
     return unknown
+
+
+def _event_key(row: sqlite3.Row) -> tuple[str, str, str, str, str]:
+    capability = row["capability"]
+    plugin_id = row["plugin_id"]
+    provider = row["provider"]
+    model = row["model"]
+    status = row["status"]
+    if not all(isinstance(value, str) for value in (capability, plugin_id, provider, model, status)):
+        raise ValueError("usage ledger labels must be strings")
+    identity = UsageIdentity(
+        ProviderCapability(capability),
+        "report",
+        plugin_id,
+        provider,
+        model,
+    )
+    if status not in _EVENT_STATUSES:
+        raise ValueError("usage ledger status is unsupported")
+    return identity.capability.value, identity.plugin_id, identity.provider, identity.model, status
+
+
+def _safe_error_category(value: object) -> str | None:
+    if value is None:
+        return None
+    return value if isinstance(value, str) and value in _SAFE_ERROR_CATEGORIES else "other"
+
+
+def _ledger_int(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("usage ledger counter is invalid")
+    return value
+
+
+def _ledger_float(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        raise ValueError("usage ledger measurement is invalid")
+    return float(value)
 
 
 def _percentiles(samples: list[tuple[float, int]]) -> dict[str, float | None]:
@@ -140,10 +190,10 @@ class UsageLedgerReader:
             if connection is not None:
                 connection.close()
             raise
-        except (OSError, sqlite3.Error) as error:
+        except (OSError, OverflowError, TypeError, ValueError, sqlite3.Error):
             if connection is not None:
                 connection.close()
-            raise OpsReportError("usage ledger is unreadable") from error
+            raise OpsReportError("usage ledger is unreadable") from None
 
     @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -177,19 +227,21 @@ class UsageLedgerReader:
     def _add_event(target: dict[str, Any], row: sqlite3.Row) -> None:
         unknown_cost = _add_amount(target, row)
         success = str(row["status"]) in _SUCCESS
-        unknown_outcome = int(row["unknown_outcome"]) != 0
+        unknown_outcome = _ledger_int(row["unknown_outcome"]) != 0
+        created_at = _iso(row["created_at"])
         if success:
             target["successes"] += 1
         else:
             target["errors"] += 1
-            failure_at = _iso(str(row["created_at"]))
+            failure_at = created_at
             if target["last_failure_at"] is None or failure_at > target["last_failure_at"]:
                 target["last_failure_at"] = failure_at
-            if row["error_class"] is not None:
-                target["error_categories"][str(row["error_class"])] += 1
+            error_category = _safe_error_category(row["error_class"])
+            if error_category is not None:
+                target["error_categories"][error_category] += 1
         target["unknown_outcomes"] += int(unknown_outcome)
         target["unknown_costs"] += int(unknown_cost)
-        target["_latencies"].append((float(row["latency_ms"]), int(row["id"])))
+        target["_latencies"].append((_ledger_float(row["latency_ms"]), _ledger_int(row["id"])))
 
     @staticmethod
     def _finish(value: dict[str, Any]) -> dict[str, object]:
@@ -243,6 +295,8 @@ class UsageLedgerReader:
 
     @staticmethod
     def _daily_totals(connection: sqlite3.Connection, day: date) -> dict[str, Any]:
+        success_placeholders = ",".join("?" for _ in _SUCCESS_STATUSES)
+        status_placeholders = ",".join("?" for _ in _EVENT_STATUS_ORDER)
         row = connection.execute(
             "SELECT COALESCE(SUM(requests),0) requests, "
             "COALESCE(SUM(input_tokens),0) input_tokens, "
@@ -251,13 +305,27 @@ class UsageLedgerReader:
             "COALESCE(SUM(rerank_documents),0) rerank_documents, "
             "COALESCE(SUM(images),0) images, "
             "COALESCE(SUM(cost_microunits),0) cost_microunits, "
-            "COALESCE(SUM(CASE WHEN status IN ('success','ok','settled','imported') THEN 0 ELSE 1 END),0) errors, "
+            f"COALESCE(SUM(CASE WHEN status IN ({success_placeholders}) THEN 0 ELSE 1 END),0) errors, "
             "COALESCE(SUM(unknown_outcome),0) unknown_outcomes, "
-            "COALESCE(SUM(CASE WHEN unknown_cost<>0 OR cost_microunits IS NULL THEN 1 ELSE 0 END),0) unknown_costs "
+            "COALESCE(SUM(CASE WHEN unknown_cost<>0 OR cost_microunits IS NULL THEN 1 ELSE 0 END),0) unknown_costs, "
+            "COALESCE(SUM(CASE WHEN "
+            "typeof(requests)<>'integer' OR requests<0 OR "
+            "typeof(input_tokens)<>'integer' OR input_tokens<0 OR "
+            "typeof(output_tokens)<>'integer' OR output_tokens<0 OR "
+            "typeof(embedding_items)<>'integer' OR embedding_items<0 OR "
+            "typeof(rerank_documents)<>'integer' OR rerank_documents<0 OR "
+            "typeof(images)<>'integer' OR images<0 OR "
+            "(cost_microunits IS NOT NULL AND (typeof(cost_microunits)<>'integer' OR cost_microunits<0)) OR "
+            "typeof(unknown_outcome)<>'integer' OR unknown_outcome NOT IN (0,1) OR "
+            "typeof(unknown_cost)<>'integer' OR unknown_cost NOT IN (0,1) OR "
+            f"typeof(status)<>'text' OR status NOT IN ({status_placeholders}) "
+            "THEN 1 ELSE 0 END),0) invalid_rows "
             "FROM usage_events WHERE usage_date=?",
-            (day.isoformat(),),
+            (*_SUCCESS_STATUSES, *_EVENT_STATUS_ORDER, day.isoformat()),
         ).fetchone()
         assert row is not None
+        if int(row["invalid_rows"]) != 0:
+            raise OpsReportError("usage ledger is unreadable")
         totals: dict[str, Any] = _empty_amount()
         for field in _AMOUNTS:
             totals[field] = int(row[field])
@@ -306,13 +374,7 @@ class UsageLedgerReader:
             groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
             totals: dict[str, Any] = self._new_group(("", "", "", "", ""))
             for row in rows:
-                key = (
-                    str(row["capability"]),
-                    str(row["plugin_id"]),
-                    str(row["provider"]),
-                    str(row["model"]),
-                    str(row["status"]),
-                )
+                key = _event_key(row)
                 self._add_event(groups.setdefault(key, self._new_group(key)), row)
                 self._add_event(totals, row)
             finished_groups = [self._finish(groups[key]) for key in sorted(groups)]
@@ -327,8 +389,10 @@ class UsageLedgerReader:
                 "reservations": reservations,
                 "budget": self._budget(finished_totals, reservations, limits),
             }
-        except sqlite3.Error as error:
-            raise OpsReportError("usage ledger is unreadable") from error
+        except OpsReportError:
+            raise
+        except (OverflowError, TypeError, ValueError, sqlite3.Error):
+            raise OpsReportError("usage ledger is unreadable") from None
         finally:
             connection.close()
 
@@ -341,8 +405,10 @@ class UsageLedgerReader:
                 dict[str, Any],
                 self._reservations(connection, at=current, created_until=current, usage_day=day),
             )
-        except sqlite3.Error as error:
-            raise OpsReportError("usage ledger is unreadable") from error
+        except OpsReportError:
+            raise
+        except (OverflowError, TypeError, ValueError, sqlite3.Error):
+            raise OpsReportError("usage ledger is unreadable") from None
         finally:
             connection.close()
         budget = self._budget(totals, reservations, limits)
@@ -420,6 +486,12 @@ def _worker_snapshot(
             timestamp = _report_timestamp(worker_runtime.get(key))
             if timestamp is not None:
                 process_timestamps.append(timestamp)
+        if worker_runtime.get("running") is False:
+            return {
+                "state": "inactive",
+                "source": "process",
+                "heartbeat_at": max(process_timestamps) if process_timestamps else None,
+            }
     heartbeat_at: str | None
     source: str | None
     if process_timestamps:

@@ -256,6 +256,101 @@ def test_report_groups_finalized_events_with_exact_totals_and_boundary_inclusion
         assert connection.execute("PRAGMA user_version").fetchone()[0] == version_before
 
 
+@pytest.mark.parametrize(
+    "status",
+    ("success", "ok", "settled", "imported", "estimated", "usage_unknown"),
+)
+def test_each_producer_success_status_is_successful_in_report_and_health(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    path = tmp_path / f"{status}.budget.db"
+    governor = _governor(path, Clock(NOW))
+    _settle(
+        governor,
+        UsageAmount(requests=1, input_tokens=2, cost_microunits=3),
+        status=status,
+        latency_ms=4,
+    )
+
+    report = UsageLedgerReader(path).report(WINDOW, limits=UsageLimits())
+    health = UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(), now=NOW)
+
+    assert report["totals"]["successes"] == 1
+    assert report["totals"]["errors"] == 0
+    assert report["groups"][0]["status"] == status
+    assert health["failures"] == 0
+
+
+@pytest.mark.parametrize(
+    ("column", "bad_value"),
+    (
+        ("requests", "private-number-content"),
+        ("latency_ms", "NaN"),
+        ("created_at", "2026-08-30T12:30:private-timestamp-content+00:00"),
+        ("status", "private status content"),
+        ("capability", "private capability content"),
+        ("provider", "private provider content"),
+    ),
+)
+def test_report_wraps_corrupt_event_values_without_disclosure(
+    tmp_path: Path,
+    column: str,
+    bad_value: str,
+) -> None:
+    path = tmp_path / "corrupt-event.budget.db"
+    governor = _governor(path, Clock(NOW))
+    _settle(governor, UsageAmount(requests=1), status="success", latency_ms=1)
+    with sqlite3.connect(path) as connection:
+        connection.execute(f"UPDATE usage_events SET {column}=?", (bad_value,))
+
+    with pytest.raises(OpsReportError, match="^usage ledger is unreadable$") as raised:
+        UsageLedgerReader(path).report(WINDOW, limits=UsageLimits())
+
+    assert bad_value not in str(raised.value)
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("column", "bad_value"),
+    (("requests", "private-number-content"), ("status", "private status content")),
+)
+def test_health_wraps_corrupt_daily_values_without_disclosure(
+    tmp_path: Path,
+    column: str,
+    bad_value: str,
+) -> None:
+    path = tmp_path / "corrupt-health.budget.db"
+    governor = _governor(path, Clock(NOW))
+    _settle(governor, UsageAmount(requests=1), status="success", latency_ms=1)
+    with sqlite3.connect(path) as connection:
+        connection.execute(f"UPDATE usage_events SET {column}=?", (bad_value,))
+
+    with pytest.raises(OpsReportError, match="^usage ledger is unreadable$") as raised:
+        UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(), now=NOW)
+
+    assert bad_value not in str(raised.value)
+
+
+def test_report_normalizes_untrusted_error_class_to_finite_category(tmp_path: Path) -> None:
+    path = tmp_path / "unsafe-error-category.budget.db"
+    governor = _governor(path, Clock(NOW))
+    _settle(
+        governor,
+        UsageAmount(requests=1),
+        status="failed",
+        latency_ms=1,
+        error_class="Timeout",
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute("UPDATE usage_events SET error_class='private_claim_text'")
+
+    report = UsageLedgerReader(path).report(WINDOW, limits=UsageLimits())
+
+    assert report["totals"]["error_categories"] == {"other": 1}
+    assert "private_claim_text" not in str(report)
+
+
 def test_empty_valid_ledger_reports_zeroes_and_unlimited_budget(tmp_path: Path) -> None:
     path = tmp_path / "empty.budget.db"
     _governor(path, Clock(NOW))
