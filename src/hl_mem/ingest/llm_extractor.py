@@ -61,7 +61,7 @@ from .chunking import (
 )
 from .extraction.model_coordinates import (
     MODEL_TASK_SOURCE_MARKERS,
-    project_extraction_model_coordinates,
+    project_model_coordinates,
 )
 from .extraction.orchestrator import (
     ExtractionOrchestrator,
@@ -644,12 +644,7 @@ class LLMExtractor:
             elif key == "plan":
                 candidate = source_bounded(value[:200])
             elif key == "task" and attribute == "choice.model":
-                matches = [
-                    marker
-                    for marker in _MODEL_TASK_SOURCE_MARKERS
-                    if marker.casefold() in normalized_value and marker.casefold() in normalized_evidence
-                ]
-                candidate = matches[0] if len(matches) == 1 else None
+                candidate = None
             else:
                 candidate = source_bounded(subject)
             if candidate is not None:
@@ -734,7 +729,7 @@ class LLMExtractor:
         fallback_attribute = PREDICATE_ATTRIBUTE_MAP[predicate][1]
         if inferred_attribute not in {"custom.unknown", fallback_attribute}:
             canonical_attribute = inferred_attribute
-        model_coordinate = project_extraction_model_coordinates(
+        model_coordinate = project_model_coordinates(
             canonical_attribute,
             subject,
             candidate.value,

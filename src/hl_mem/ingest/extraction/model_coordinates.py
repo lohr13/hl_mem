@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 _TASK_ALIASES: dict[str, tuple[str, ...]] = {
     "reader": ("reader", "阅读"),
+    "answering": ("question answering", "answering", "qa", "问答", "回答"),
     "judge": ("judge", "评审", "裁判"),
     "extraction": ("memory_extraction", "memory extraction", "extractor", "extraction", "提取", "抽取"),
     "embedding": ("embedding", "嵌入"),
@@ -38,9 +39,23 @@ _CURRENTNESS_MARKERS = (
     "switched to",
 )
 
-_HL_MEM_EXTRACTION_SUBJECT = re.compile(
-    r"^hl[_-]?mem(?:的)?(?:本地|local)?(?:记忆|memory)?(?:提取|抽取|extractor|extraction)"
-    r"(?:任务|模型|配置|服务|task|model|config|service|pipeline)?$"
+_HL_MEM_SUBJECT_PREFIX = re.compile(r"^hl(?:[_\-\s]?mem)(?:['’]s|的)?", re.IGNORECASE)
+_SUBJECT_DECORATORS = (
+    "configuration",
+    "pipeline",
+    "runtime",
+    "service",
+    "config",
+    "memory",
+    "model",
+    "local",
+    "task",
+    "本地",
+    "记忆",
+    "任务",
+    "模型",
+    "配置",
+    "服务",
 )
 
 
@@ -55,13 +70,20 @@ def _normalize(value: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value).strip().casefold())
 
 
+def _contains_alias(text: str, alias: str) -> bool:
+    if alias.isascii() and all(character.isalnum() or character in {"_", " "} for character in alias):
+        return re.search(rf"(?<![a-z0-9_]){re.escape(alias)}(?![a-z0-9_])", text) is not None
+    return alias in text
+
+
 def _matched_tasks(subject: str, value: str, evidence_quote: str) -> tuple[str, ...]:
     evidence = _normalize(evidence_quote)
     public_claim = _normalize(f"{subject} {value}")
     return tuple(
         task
         for task, aliases in _TASK_ALIASES.items()
-        if any(alias in evidence and alias in public_claim for alias in aliases)
+        if any(_contains_alias(evidence, alias) for alias in aliases)
+        and any(_contains_alias(public_claim, alias) for alias in aliases)
     )
 
 
@@ -72,19 +94,27 @@ def _is_current(value: str, evidence_quote: str) -> bool:
 
 
 def _canonical_hl_mem_subject(subject: str, task: str | None) -> str:
-    if task != "extraction":
+    if task is None:
         return subject
-    compact = re.sub(r"[\s./]+", "", _normalize(subject))
-    return "hl_mem" if _HL_MEM_EXTRACTION_SUBJECT.fullmatch(compact) else subject
+    normalized = _normalize(subject)
+    match = _HL_MEM_SUBJECT_PREFIX.match(normalized)
+    if match is None:
+        return subject
+    remainder = normalized[match.end() :]
+    removable = sorted((*_TASK_ALIASES[task], *_SUBJECT_DECORATORS), key=len, reverse=True)
+    for marker in removable:
+        remainder = remainder.replace(marker, "")
+    remainder = re.sub(r"[\s._/:'’\-]+", "", remainder)
+    return "hl_mem" if not remainder else subject
 
 
-def project_extraction_model_coordinates(
+def project_model_coordinates(
     attribute: str,
     subject: str,
     value: str,
     evidence_quote: str,
 ) -> ModelCoordinateProjection:
-    """Project only source-proven model-task coordinates; ambiguity stays uncoordinated."""
+    """Project source-proven model-task coordinates; ambiguity stays uncoordinated."""
     if attribute != "choice.model":
         return ModelCoordinateProjection(subject, None, False)
     tasks = _matched_tasks(subject, value, evidence_quote)

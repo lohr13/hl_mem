@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from hl_mem.ingest.chunking import ChunkingPolicy
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.types import LLMRequest, LLMResponse
@@ -84,3 +86,56 @@ def test_multiple_model_tasks_fail_closed() -> None:
     assert claim.canonical_attribute == "choice.model"
     assert claim.canonical_slot is None
     assert claim.qualifiers == {}
+
+
+@pytest.mark.parametrize(
+    ("subject", "statement", "task"),
+    [
+        (
+            "HL-Mem answering model",
+            "HL-Mem answering model currently uses glm-5.3-flash",
+            "answering",
+        ),
+        (
+            "HL-Mem embedding model",
+            "HL-Mem embedding model currently uses text-embedding-v4",
+            "embedding",
+        ),
+        (
+            "HL-Mem reranker",
+            "HL-Mem reranker currently uses qwen3-reranker",
+            "reranker",
+        ),
+    ],
+)
+def test_hl_mem_model_tasks_get_distinct_typed_coordinates(
+    subject: str,
+    statement: str,
+    task: str,
+) -> None:
+    claim = _extract(subject=subject, value=statement, evidence=statement)
+
+    assert claim.subject == "hl_mem"
+    assert claim.canonical_attribute == "choice.model"
+    assert claim.canonical_slot == "choice.model"
+    assert claim.qualifiers == {"task": task, "state_change": True}
+
+
+def test_answering_and_extraction_meanings_fail_closed() -> None:
+    statement = "HL-Mem extraction and answering models currently use glm-5.3-flash"
+
+    claim = _extract(subject="HL-Mem model", value=statement, evidence=statement)
+
+    assert claim.canonical_attribute == "choice.model"
+    assert claim.canonical_slot is None
+    assert claim.qualifiers == {}
+
+
+def test_arbitrary_task_decorated_subject_is_not_normalized() -> None:
+    statement = "Acme answering model currently uses glm-5.3-flash"
+
+    claim = _extract(subject="Acme answering model", value=statement, evidence=statement)
+
+    assert claim.subject == "Acme answering model"
+    assert claim.canonical_slot == "choice.model"
+    assert claim.qualifiers == {"task": "answering", "state_change": True}
