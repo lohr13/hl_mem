@@ -7,6 +7,7 @@ from pydantic import ValidationError as PydanticValidationError
 from hl_mem.api.schemas import EventInput
 from hl_mem.application.ingest import IngestService
 from hl_mem.errors import ConflictError
+from hl_mem.protocols import ImageDescription, ImageLocator
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
@@ -75,6 +76,50 @@ def test_event_provenance_participates_in_idempotent_payload(tmp_path) -> None:
             {**event, "origin_class": "external"},
             idempotency_key="provenance-key",
         )
+    database.close()
+
+
+@pytest.mark.parametrize(
+    "source_origin,expected_origin",
+    [("direct_user", "direct_user"), ("external", "external_derived")],
+)
+def test_image_description_event_inherits_source_provenance(
+    tmp_path,
+    source_origin: str,
+    expected_origin: str,
+) -> None:
+    database = Database(tmp_path / f"image-{source_origin}.db")
+    repository = EventRepository(database.open())
+    source_event = {
+        "id": f"source-{source_origin}",
+        "event_type": "message",
+        "actor_type": "user",
+        "content": {"text": "image"},
+        "occurred_at": "2026-09-01T00:00:00+00:00",
+        "recorded_at": "2026-09-01T00:00:00+00:00",
+        "origin_class": source_origin,
+        "session_kind": "interactive",
+    }
+    repository.insert_event(source_event)
+
+    derived = repository.insert_image_description_event(
+        source_event,
+        0,
+        ImageDescription(
+            caption="diagram",
+            ocr_text="",
+            model="vision-test",
+            confidence=0.9,
+            locator=ImageLocator(
+                uri="https://example.test/image.png",
+                media_type="image/png",
+                sha256="abc123",
+            ),
+        ),
+    )
+
+    assert derived["origin_class"] == expected_origin
+    assert derived["session_kind"] == "interactive"
     database.close()
 
 

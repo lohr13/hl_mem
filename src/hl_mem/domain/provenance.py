@@ -90,7 +90,7 @@ def aggregate_event_provenance(events: Sequence[Mapping[str, object]]) -> Proven
     return ProvenanceSummary(
         origin_class=origin,
         session_kind=session,
-        external=origin in {"external", "external_derived"},
+        external=any(item.origin_class in {"external", "external_derived"} for item in validated),
         automated=session in {"cron", "heartbeat", "subagent"} or origin == "system",
         explicit_memory=any(event.get("event_type") == "explicit_memory" for event in events),
     )
@@ -124,23 +124,13 @@ def decide_claim_admission(
     summary = extraction.summary
     if not extraction.allowed:
         return ClaimAdmission(False, extraction.reason_code, summary)
-    if mode == "observe" or (
-        summary.origin_class == "unknown" and summary.session_kind == "unknown"
-    ):
+    if mode == "observe" or (summary.origin_class == "unknown" and summary.session_kind == "unknown"):
         return ClaimAdmission(True, extraction.reason_code, summary, preserve_existing=True)
-    restricted = (
-        summary.external
-        or summary.origin_class == "system"
-        or summary.session_kind == "cron"
-    )
+    restricted = summary.external or summary.origin_class == "system" or summary.session_kind == "cron"
     if not restricted:
         return ClaimAdmission(True, extraction.reason_code, summary, preserve_existing=True)
-    governed_kind: Literal["observation", "inference"] = (
-        "inference" if assertion_kind == "inference" else "observation"
-    )
-    governed_scope: Literal["temporal", "permanent"] = (
-        "permanent" if summary.explicit_memory else "temporal"
-    )
+    governed_kind: Literal["observation", "inference"] = "inference" if assertion_kind == "inference" else "observation"
+    governed_scope: Literal["temporal", "permanent"] = "permanent" if summary.explicit_memory else "temporal"
     return ClaimAdmission(
         True,
         "restricted_source",

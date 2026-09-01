@@ -24,12 +24,18 @@ def test_event_provenance_rejects_values_outside_closed_contract(field: str) -> 
 
 
 def test_aggregate_event_provenance_uses_most_conservative_source_and_session() -> None:
-    summary = aggregate_event_provenance(
-        [_event(), _event("external_derived", "interactive"), _event("agent", "cron")]
-    )
+    summary = aggregate_event_provenance([_event(), _event("external_derived", "interactive"), _event("agent", "cron")])
 
     assert summary.origin_class == "external_derived"
     assert summary.session_kind == "cron"
+    assert summary.external is True
+    assert summary.automated is True
+
+
+def test_aggregate_event_provenance_preserves_external_signal_when_system_is_stricter() -> None:
+    summary = aggregate_event_provenance([_event("external", "interactive"), _event("system", "cron")])
+
+    assert summary.origin_class == "system"
     assert summary.external is True
     assert summary.automated is True
 

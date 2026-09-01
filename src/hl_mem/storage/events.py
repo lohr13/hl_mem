@@ -9,6 +9,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
+from hl_mem.domain.provenance import validate_event_provenance
 from hl_mem.protocols import ImageDescription
 from hl_mem.recall.lexicalizer import prepare_fts_document, prepare_fts_query
 from hl_mem.settings import Settings
@@ -100,6 +101,12 @@ class EventRepository:
             if existing is None:
                 raise RuntimeError(f"idempotent image description event disappeared: {existing_id}")
             return existing
+        source_provenance = validate_event_provenance(source_event)
+        derived_origin = (
+            "external_derived"
+            if source_provenance.origin_class in {"external", "external_derived"}
+            else source_provenance.origin_class
+        )
         event_id = uuid.uuid4().hex
         event = {
             "id": event_id,
@@ -124,6 +131,8 @@ class EventRepository:
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             "source_uri": description.locator.uri,
             "sensitivity": source_event.get("sensitivity", "normal"),
+            "origin_class": derived_origin,
+            "session_kind": source_provenance.session_kind,
         }
         self.insert_event(event, commit=commit)
         stored = self.get_event(event_id)
