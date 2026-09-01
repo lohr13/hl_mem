@@ -78,6 +78,33 @@ def _seed_legacy_extraction_model(connection) -> str:
     return result.claim_id
 
 
+def _seed_model_claim(connection, *, task: str | None, value: str) -> str:
+    event_id = f"model-{task or 'unresolved'}-{value}"
+    event = _event(event_id)
+    EventRepository(connection).insert_event(event)
+    qualifiers: dict[str, object] = {"state_change": True}
+    if task is not None:
+        qualifiers["task"] = task
+    result = IngestService.store_extracted(
+        connection,
+        ExtractedClaim(
+            predicate="使用",
+            value=value,
+            subject="HL-Mem" if task is not None else "HL-Mem model",
+            qualifiers=qualifiers,
+            canonical_attribute="choice.model",
+            canonical_slot="choice.model" if task is not None else None,
+            assertion_kind="observation",
+        ),
+        event,
+        NOW,
+        FakeEmbedder(8),
+        authority="high",
+    )
+    assert result.claim_id is not None
+    return result.claim_id
+
+
 def test_runtime_report_supersedes_legacy_extraction_model_without_provider_calls(tmp_path) -> None:
     settings = _settings(tmp_path / "runtime.db")
     database = Database(settings=settings)
@@ -119,6 +146,41 @@ def test_runtime_report_supersedes_legacy_extraction_model_without_provider_call
     )
     assert recalled["results"][0]["id"] == report.claim_id
     assert "glm-5.3-flash" in recalled["results"][0]["text"]
+    database.close()
+
+
+def test_runtime_report_supersedes_only_the_matching_complete_task_coordinate(tmp_path) -> None:
+    settings = _settings(tmp_path / "task-isolation.db")
+    database = Database(settings=settings)
+    connection = database.open()
+    old_extraction_id = _seed_model_claim(connection, task="extraction", value="qwen-old-extractor")
+    answering_id = _seed_model_claim(connection, task="answering", value="qwen-answering")
+    embedding_id = _seed_model_claim(connection, task="embedding", value="text-embedding-v4")
+    reranker_id = _seed_model_claim(connection, task="reranker", value="qwen-reranker")
+    unresolved_id = _seed_model_claim(connection, task=None, value="unknown-model")
+
+    report = report_extraction_runtime(connection, settings)
+
+    statuses = {
+        row["id"]: row["status"]
+        for row in connection.execute(
+            "SELECT id,status FROM claims WHERE id IN (?,?,?,?,?,?)",
+            (
+                old_extraction_id,
+                answering_id,
+                embedding_id,
+                reranker_id,
+                unresolved_id,
+                report.claim_id,
+            ),
+        ).fetchall()
+    }
+    assert statuses[old_extraction_id] == "superseded"
+    assert statuses[report.claim_id] == "active"
+    assert statuses[answering_id] == "active"
+    assert statuses[embedding_id] == "active"
+    assert statuses[reranker_id] == "active"
+    assert statuses[unresolved_id] == "active"
     database.close()
 
 
