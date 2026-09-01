@@ -87,7 +87,7 @@ def test_explain_claim_human_output_has_fixed_safe_sections(
     main(["--config", str(config), "--env-file", str(env_file), "explain", "claim", "claim-1"])
 
     output = capsys.readouterr().out
-    assert [line.rstrip(":") for line in output.splitlines() if line.endswith(":" )] == [
+    assert [line.rstrip(":") for line in output.splitlines() if line.endswith(":")] == [
         "Claim",
         "Provenance",
         "Evidence",

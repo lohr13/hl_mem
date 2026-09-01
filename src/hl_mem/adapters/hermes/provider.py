@@ -52,6 +52,8 @@ HERMES_RECALL_TOOL_DESCRIPTION = (
     "known environment facts; when prior decisions or rationale are needed. Skip when memories already injected into "
     "the current conversation are sufficient."
 )
+
+
 @dataclass(frozen=True, slots=True)
 class DeliveryReceipt:
     """Hermes 内部 delivery 记录；不进入 Context Packet wire schema。"""

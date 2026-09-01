@@ -88,6 +88,7 @@ class _ClaimDraftContext:
     index_text_mode: IndexTextMode
     trusted_projector_slot: str | None
 
+
 def _prepare_governed_claim(
     connection: sqlite3.Connection,
     extracted: ExtractedClaim,
@@ -455,7 +456,6 @@ class IngestService:
         audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
         if not governed.admission.preserve_existing:
             audit_events.append(provenance_audit_event(event, governed))
-
         result_id = claim["id"]
         connection.execute("BEGIN IMMEDIATE")
         try:

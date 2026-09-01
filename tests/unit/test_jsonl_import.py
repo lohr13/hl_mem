@@ -207,9 +207,7 @@ def test_jsonl_import_preserves_provenance_and_defaults_legacy_archives(tmp_path
     cli_module.export_database(target, exported)
 
     with sqlite3.connect(target) as connection:
-        rows = connection.execute(
-            "SELECT id,origin_class,session_kind FROM events ORDER BY id"
-        ).fetchall()
+        rows = connection.execute("SELECT id,origin_class,session_kind FROM events ORDER BY id").fetchall()
     assert rows == [("known", "external", "cron"), ("legacy", "unknown", "unknown")]
     records = [json.loads(line) for line in exported.read_text(encoding="utf-8").splitlines()]
     exported_events = {record["data"]["id"]: record["data"] for record in records if record["type"] == "event"}

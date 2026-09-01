@@ -126,9 +126,7 @@ def capture_runtime_identity(
 
         package_version = __version__
     resolved_path = (
-        Path(package_path).expanduser().resolve()
-        if package_path is not None
-        else Path(__file__).resolve().parents[2]
+        Path(package_path).expanduser().resolve() if package_path is not None else Path(__file__).resolve().parents[2]
     )
     return RuntimeIdentity(
         package_version=package_version,

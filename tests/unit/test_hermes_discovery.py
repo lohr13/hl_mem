@@ -95,9 +95,7 @@ def test_plugin_registration_records_loaded_runtime_success(
     monkeypatch.setattr(
         plugin,
         "write_runtime_status",
-        lambda home, _identity, *, status, exception_type=None: records.append(
-            (Path(home), status, exception_type)
-        ),
+        lambda home, _identity, *, status, exception_type=None: records.append((Path(home), status, exception_type)),
     )
 
     plugin.register(Context())

@@ -7,7 +7,6 @@ from hl_mem.errors import ConfigurationError
 from hl_mem.llm.providers import DashScopeProvider, ZhipuProvider
 from hl_mem.settings import Settings
 
-
 _PARKED_DEDICATED_LINES = (
     {
         "query_expansion_base_url": "https://qe.example.com/v1",

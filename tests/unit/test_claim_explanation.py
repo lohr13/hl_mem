@@ -20,7 +20,19 @@ def _connection(tmp_path: Path) -> sqlite3.Connection:
     connection.execute(
         "INSERT INTO claims(id,namespace_key,predicate,value_json,recorded_from,status,source_authority,"
         "assertion_kind,scope,expires_at,superseded_by_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        ("claim-1", "default", "fact", '"private claim body"', NOW, "active", "low", "observation", "temporal", None, None),
+        (
+            "claim-1",
+            "default",
+            "fact",
+            '"private claim body"',
+            NOW,
+            "active",
+            "low",
+            "observation",
+            "temporal",
+            None,
+            None,
+        ),
     )
     return connection
 
