@@ -58,8 +58,26 @@ def _has_open_conflict(connection: sqlite3.Connection, claim_id: str) -> bool:
     return row is not None
 
 
+def _timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
 def _is_older(candidate: sqlite3.Row, winner: sqlite3.Row) -> bool:
-    return str(candidate["recorded_from"]) < str(winner["recorded_from"])
+    candidate_recorded = _timestamp(candidate["recorded_from"])
+    winner_recorded = _timestamp(winner["recorded_from"])
+    candidate_valid = _timestamp(candidate["valid_from"] or candidate["observed_at"] or candidate["recorded_from"])
+    winner_valid = _timestamp(winner["valid_from"] or winner["observed_at"] or winner["recorded_from"])
+    if candidate_recorded is None or winner_recorded is None or candidate_valid is None or winner_valid is None:
+        return False
+    return candidate_recorded < winner_recorded and candidate_valid <= winner_valid
 
 
 def _source_proves_extraction(connection: sqlite3.Connection, candidate: sqlite3.Row) -> bool:
@@ -98,7 +116,7 @@ def inspect_model_coordinate_history(
         return _blocked_preview(namespace, len(winners))
     winner = winners[0]
     rows = connection.execute(
-        "SELECT id,subject_entity_id,value_json,recorded_from,source_authority FROM claims "
+        "SELECT id,subject_entity_id,value_json,valid_from,observed_at,recorded_from,source_authority FROM claims "
         "WHERE namespace_key=? AND status='active' AND canonical_attribute='choice.model' "
         "AND id<>? AND COALESCE(json_extract(qualifiers_json,'$.runtime_config'),0)<>1 "
         "AND (canonical_slot IS NULL OR conflict_key IS NULL OR subject_canonical_entity_id IS NULL) "

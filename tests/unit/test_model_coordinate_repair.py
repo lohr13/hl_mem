@@ -79,7 +79,7 @@ def _seed_uncoordinated(
     return result.claim_id
 
 
-def _seed_history(connection) -> tuple[str, str, str, str]:
+def _seed_history(connection) -> tuple[str, str, str, str, str]:
     extraction_id = _seed_uncoordinated(
         connection,
         claim_id="old-extraction",
@@ -106,14 +106,25 @@ def _seed_history(connection) -> tuple[str, str, str, str]:
         statement="HL-Mem extraction model currently uses future-model",
         recorded_at=FUTURE,
     )
-    return extraction_id, answering_id, missing_evidence_id, future_id
+    future_valid_id = _seed_uncoordinated(
+        connection,
+        claim_id="future-valid-extraction",
+        subject="HL-Mem extraction model",
+        statement="HL-Mem extraction model currently uses future-valid-model",
+    )
+    connection.execute(
+        "UPDATE claims SET valid_from=?,observed_at=? WHERE id=?",
+        (FUTURE, FUTURE, future_valid_id),
+    )
+    connection.commit()
+    return extraction_id, answering_id, missing_evidence_id, future_id, future_valid_id
 
 
 def test_history_inspection_is_read_only_and_selects_only_proven_older_extraction(tmp_path) -> None:
     settings = _settings(tmp_path / "inspect.db")
     database = Database(settings=settings)
     connection = database.open()
-    extraction_id, answering_id, missing_evidence_id, future_id = _seed_history(connection)
+    extraction_id, answering_id, missing_evidence_id, future_id, future_valid_id = _seed_history(connection)
     winner = report_extraction_runtime(connection, settings)
     before_changes = connection.total_changes
 
@@ -125,7 +136,7 @@ def test_history_inspection_is_read_only_and_selects_only_proven_older_extractio
     assert preview["winner_claim_id"] == winner.claim_id
     assert preview["candidate_claim_count"] == 1
     assert preview["candidate_claim_ids"] == [extraction_id]
-    assert preview["excluded_claim_ids"] == sorted([answering_id, missing_evidence_id, future_id])
+    assert preview["excluded_claim_ids"] == sorted([answering_id, missing_evidence_id, future_id, future_valid_id])
     database.close()
 
 
@@ -133,7 +144,7 @@ def test_history_repair_is_count_guarded_transactional_and_idempotent(tmp_path) 
     settings = _settings(tmp_path / "apply.db")
     database = Database(settings=settings)
     connection = database.open()
-    extraction_id, answering_id, _, _ = _seed_history(connection)
+    extraction_id, answering_id, _, _, _ = _seed_history(connection)
     winner = report_extraction_runtime(connection, settings)
 
     with pytest.raises(ConflictError, match="count mismatch"):
