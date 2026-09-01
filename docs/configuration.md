@@ -469,6 +469,16 @@ Expired Claims are eligible only after `expired_claim_retention_days`, with no d
 
 Pending dedup pairs below the current `dedup.threshold` can be reported read-only and terminally classified with `dedup drain-below-floor --apply --expected-count <exact-count>`; the drain never changes Claims.
 
+### `[provenance]`
+
+| TOML key | Type | Default | Allowed values | Settings field |
+|---|---|---|---|---|
+| `provenance.mode` | string | `"enforce"` | `observe`, `enforce` | `provenance_mode` |
+
+`enforce` applies deterministic source/session admission. `observe` records the
+same decisions without changing extraction or Claim semantics. Neither mode
+adds model calls or attempts fact verification.
+
 ### `[server]`
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |

@@ -629,6 +629,17 @@
       "type": "string"
     },
     {
+      "default": "enforce",
+      "path": "provenance.mode",
+      "production_choices": [
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "provenance_mode",
+      "type": "string"
+    },
+    {
       "default": 50,
       "path": "recall.candidate_floor",
       "required_in_production": false,

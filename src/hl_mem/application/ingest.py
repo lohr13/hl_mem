@@ -50,6 +50,7 @@ from hl_mem.domain.entity import (
     isolated_subject_id,
     normalize_entity_id,
 )
+from hl_mem.domain.provenance import validate_event_provenance
 from hl_mem.errors import ConflictError, ValidationError
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.lifecycle import assert_transition
@@ -205,6 +206,8 @@ def _canonical_event_payload(
         "metadata": event.get("metadata") or {},
         "source_uri": event.get("source_uri"),
         "sensitivity": event.get("sensitivity", "normal"),
+        "origin_class": event.get("origin_class", "unknown"),
+        "session_kind": event.get("session_kind", "unknown"),
     }
     if include_id:
         payload["id"] = event.get("id")
@@ -269,6 +272,7 @@ class IngestService:
         timestamp_value = datetime.fromisoformat(timestamp)
         prepared: list[tuple[dict[str, Any], dict[str, Any], str | None]] = []
         for index, event in enumerate(events_to_ingest):
+            provenance = validate_event_provenance(event)
             key = event.get("idempotency_key")
             event_id = event.get("id") or new_id()
             content = event.get("content", {})
@@ -287,6 +291,8 @@ class IngestService:
                 content=content,
                 occurred_at=event.get("occurred_at") or timestamp,
                 recorded_at=recorded_at,
+                origin_class=provenance.origin_class,
+                session_kind=provenance.session_kind,
             )
             prepared.append((event, stored_event, key))
         results: list[dict[str, Any]] = []

@@ -1528,6 +1528,19 @@
             ],
             "title": "Occurred At"
           },
+          "origin_class": {
+            "default": "unknown",
+            "enum": [
+              "direct_user",
+              "agent",
+              "external",
+              "external_derived",
+              "system",
+              "unknown"
+            ],
+            "title": "Origin Class",
+            "type": "string"
+          },
           "project_id": {
             "anyOf": [
               {
@@ -1557,6 +1570,18 @@
               }
             ],
             "title": "Session Id"
+          },
+          "session_kind": {
+            "default": "unknown",
+            "enum": [
+              "interactive",
+              "cron",
+              "heartbeat",
+              "subagent",
+              "unknown"
+            ],
+            "title": "Session Kind",
+            "type": "string"
           },
           "source_uri": {
             "anyOf": [

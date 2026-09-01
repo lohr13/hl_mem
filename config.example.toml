@@ -156,6 +156,9 @@ latest_wins_slots = ["config.version"]
 [relation]
 discovery_mode = "off"
 
+[provenance]
+mode = "enforce"
+
 [plugins]
 enabled = []
 # Third-party options live under [plugins.<id>] and must never contain secrets.

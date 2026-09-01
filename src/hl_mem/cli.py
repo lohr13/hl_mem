@@ -68,6 +68,8 @@ EVENT_ARCHIVE_COLUMNS = (
     "content_hash",
     "sensitivity",
     "metadata_json",
+    "origin_class",
+    "session_kind",
 )
 
 
@@ -102,6 +104,8 @@ def _normalized_archive_event(event: dict[str, Any]) -> dict[str, Any]:
     defaults = {
         "tenant_id": "default",
         "sensitivity": "normal",
+        "origin_class": "unknown",
+        "session_kind": "unknown",
     }
     return {column: stored[column] if column in stored else defaults.get(column) for column in EVENT_ARCHIVE_COLUMNS}
 

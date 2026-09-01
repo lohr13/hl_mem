@@ -899,3 +899,16 @@ def test_every_settings_field_declares_exactly_one_source() -> None:
             {"plugin_namespace"},
             {"schema_version"},
         )
+
+
+def test_provenance_mode_defaults_to_enforce_and_loads_observe(tmp_path: Path) -> None:
+    default = Settings()
+    configured = _load_structural_settings(
+        _write(tmp_path / "provenance.toml", '[provenance]\nmode = "observe"\n'),
+        environ={},
+    )
+
+    assert default.provenance_mode == "enforce"
+    assert configured.provenance_mode == "observe"
+    with pytest.raises(ConfigurationError, match="provenance.mode"):
+        Settings(provenance_mode="invalid").validate()

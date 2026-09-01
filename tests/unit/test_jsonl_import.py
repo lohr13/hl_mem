@@ -191,6 +191,32 @@ def test_duplicate_event_id_with_different_metadata_is_rejected(tmp_path: Path) 
         connection.close()
 
 
+def test_jsonl_import_preserves_provenance_and_defaults_legacy_archives(tmp_path: Path) -> None:
+    archive = tmp_path / "events.jsonl"
+    exported = tmp_path / "exported.jsonl"
+    target = tmp_path / "target.db"
+    _write_archive(
+        archive,
+        [
+            {**_event("known"), "origin_class": "external", "session_kind": "cron"},
+            _event("legacy"),
+        ],
+    )
+
+    import_database(target, archive, skip_extraction_jobs=True)
+    cli_module.export_database(target, exported)
+
+    with sqlite3.connect(target) as connection:
+        rows = connection.execute(
+            "SELECT id,origin_class,session_kind FROM events ORDER BY id"
+        ).fetchall()
+    assert rows == [("known", "external", "cron"), ("legacy", "unknown", "unknown")]
+    records = [json.loads(line) for line in exported.read_text(encoding="utf-8").splitlines()]
+    exported_events = {record["data"]["id"]: record["data"] for record in records if record["type"] == "event"}
+    assert exported_events["known"]["origin_class"] == "external"
+    assert exported_events["legacy"]["session_kind"] == "unknown"
+
+
 def test_worker_rebuilds_claim_from_imported_archive(tmp_path: Path) -> None:
     archive = tmp_path / "events.jsonl"
     target = tmp_path / "target.db"

@@ -45,6 +45,7 @@ PriceTargetMode = Literal["off", "audit", "observe", "enforce"]
 PlanFulfillmentMode = Literal["off", "audit", "observe", "enforce"]
 EntityConstraintMode = Literal["off", "observe", "enforce"]
 LessonSignalMode = Literal["off", "observe", "enforce"]
+ProvenanceMode = Literal["observe", "enforce"]
 
 
 class VectorBackend(StrEnum):
@@ -499,6 +500,8 @@ class GovernanceConfig:
 
     entity_aliases_path: str | None = field(default=None, metadata={"toml": "entity.aliases_path"})
 
+    provenance_mode: ProvenanceMode = field(default="enforce", metadata={"toml": "provenance.mode"})
+
     price_target_mode: PriceTargetMode = field(default="enforce", metadata={"toml": "price.target_mode"})
 
     plan_fulfillment_mode: PlanFulfillmentMode = field(default="enforce", metadata={"toml": "plan.fulfillment_mode"})
@@ -844,6 +847,8 @@ class Settings(
                     [("recall.query_expansion_provider", self.query_expansion_provider)]
                 )
             self.query_expansion_line_overrides()
+        if self.provenance_mode not in {"observe", "enforce"}:
+            raise ConfigurationError("provenance.mode must be 'observe' or 'enforce'")
         if self.query_context_mode not in {"off", "coreference"}:
             raise ConfigurationError("recall.query_context_mode must be 'off' or 'coreference'")
         if not 0 <= self.query_expansion_max <= 2:
