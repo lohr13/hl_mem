@@ -29,6 +29,7 @@ class GovernedProviderCall(Generic[T]):
         audit: Any = None,
         *,
         estimator: UsageCostEstimator | None = None,
+        _reservation_guard: Callable[[UsageIdentity, UsageAmount], None] | None = None,
     ) -> None:
         self.identity = identity
         self.governor = governor
@@ -36,6 +37,7 @@ class GovernedProviderCall(Generic[T]):
         self.metrics = metrics or DEFAULT_PROVIDER_METRICS
         self.audit = audit if audit is not None else current_audit()
         self.estimator = estimator
+        self._reservation_guard = _reservation_guard
 
     def execute(
         self,
@@ -66,7 +68,10 @@ class GovernedProviderCall(Generic[T]):
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
         priced_estimate = self._price(estimate, phase="reserve")
-        reservation = self.governor.reserve(self.identity, priced_estimate.scale(max_attempts))
+        reservation_amount = priced_estimate.scale(max_attempts)
+        if self._reservation_guard is not None:
+            self._reservation_guard(self.identity, reservation_amount)
+        reservation = self.governor.reserve(self.identity, reservation_amount)
         started = time.perf_counter()
         marked_attempts = 0
 

@@ -12,6 +12,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import tomllib
 from collections.abc import Callable, Iterable, Mapping
@@ -19,7 +20,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -80,6 +81,36 @@ class LiveSmokeLimits:
             value = getattr(self, name)
             if type(value) is not int or value < 0 or value > hard_cap:
                 raise ValueError(f"{name} must be a non-negative integer within the hard cap {hard_cap}")
+
+
+class _LiveSmokeReservationGuard:
+    """Monotonically reserve the smoke's worst-case Provider allowance."""
+
+    def __init__(self, limits: LiveSmokeLimits) -> None:
+        self._limits = limits
+        self._lock = threading.Lock()
+        self._reserved = {
+            "llm_requests": 0,
+            "embedding_items": 0,
+            "rerank_documents": 0,
+            "cost_microunits": 0,
+        }
+
+    def reserve(self, identity: UsageIdentity, amount: UsageAmount) -> None:
+        if amount.cost_microunits is None:
+            raise LiveSmokeBudgetError("cost_microunits cannot be reserved safely")
+        delta = {
+            "llm_requests": amount.requests if identity.capability is ProviderCapability.LLM else 0,
+            "embedding_items": (amount.embedding_items if identity.capability is ProviderCapability.EMBEDDING else 0),
+            "rerank_documents": (amount.rerank_documents if identity.capability is ProviderCapability.RERANKER else 0),
+            "cost_microunits": amount.cost_microunits,
+        }
+        with self._lock:
+            proposed = {name: self._reserved[name] + value for name, value in delta.items()}
+            for name, value in proposed.items():
+                if value > getattr(self._limits, name):
+                    raise LiveSmokeBudgetError(f"{name} would exceed the live smoke limit")
+            self._reserved = proposed
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,21 +369,114 @@ def _assert_final_limits(counters: Mapping[str, int], limits: LiveSmokeLimits) -
         raise LiveSmokeBudgetError("final ledger contains active reservations")
 
 
+def _failed_pipeline_evidence(
+    runtime: Any,
+    connection: sqlite3.Connection | None,
+    latencies: Mapping[str, float],
+    execution_counts: Mapping[str, int],
+) -> tuple[dict[str, int], dict[str, float], list[str], dict[str, bool]] | None:
+    usage = runtime.governor.snapshot()
+    settled = usage["settled"]
+    reserved = usage["reserved"]
+    ledger = sqlite3.connect(runtime.governor.path)
+    ledger.row_factory = sqlite3.Row
+    try:
+        active = ledger.execute(
+            "SELECT COUNT(*) reservations,COALESCE(SUM(attempts),0) attempts,"
+            "COALESCE(SUM(CASE WHEN capability='llm' THEN reserved_requests ELSE 0 END),0) llm_requests "
+            "FROM usage_reservations WHERE state='active'"
+        ).fetchone()
+    finally:
+        ledger.close()
+    if int(settled["requests"]) + int(active["attempts"]) == 0:
+        return None
+
+    persisted = {
+        "claims": 0,
+        "evidence_links": 0,
+        "canonical_entities": 0,
+        "claim_entity_links": 0,
+        "vectors": 0,
+    }
+    if connection is not None:
+        try:
+            persisted = _safe_counts(connection)
+        except sqlite3.Error:
+            pass
+    settled_cost = settled["cost_microunits"]
+    reserved_cost = reserved["cost_microunits"]
+    counters = {
+        "llm_requests": int(usage["counts_by_capability"].get("llm", 0)) + int(active["llm_requests"]),
+        "embedding_items": int(settled["embedding_items"]) + int(reserved["embedding_items"]),
+        "rerank_documents": int(settled["rerank_documents"]) + int(reserved["rerank_documents"]),
+        "cost_microunits": int(settled_cost or 0) + int(reserved_cost or 0),
+        "active_reservations": int(active["reservations"]),
+        **persisted,
+        **execution_counts,
+    }
+    checks = {
+        "extract_ingest": False,
+        "claim_persistence": False,
+        "evidence_persistence": False,
+        "entity_persistence": False,
+        "vector_persistence": False,
+        "ordinary_recall": False,
+        "entity_recall": False,
+        "temporal_recall": False,
+        "preference_recall": False,
+        "reranker_success": False,
+        "reranker_failure_fallback": False,
+        "usage_settled": int(usage["unknown_cost_count"]) == 0,
+        "reservations_released": int(active["reservations"]) == 0,
+    }
+    fixed_latencies = {name: max(0.0, float(latencies.get(name, 0.0))) for name in ("ingest", "recall")}
+    return counters, fixed_latencies, ["provider_pipeline_failure"], checks
+
+
 def _run_pipeline(
     settings: Any,
     fixture: Mapping[str, Any],
     dependencies: _LiveSmokeDependencies,
+    reservation_guard: Callable[[UsageIdentity, UsageAmount], None],
 ) -> tuple[dict[str, int], dict[str, float], list[str], dict[str, bool], tuple[str, ...], str]:
     client: httpx.Client | None = None
     runtime = None
     database: Database | None = None
+    connection: sqlite3.Connection | None = None
     extractor: LLMExtractor | None = None
     embedder: Any = None
     reranker: Any = None
-    latencies: dict[str, float] = {}
+    latencies = {"ingest": 0.0, "recall": 0.0}
+    execution_counts = {
+        "recall_results": 0,
+        "reranker_successful_recalls": 0,
+        "ordinary_recall_results": 0,
+        "entity_recall_results": 0,
+        "temporal_recall_results": 0,
+        "preference_recall_results": 0,
+    }
+    plugins: tuple[str, ...] = ()
+    provider_kind = "mixed"
+    active_stage: str | None = None
+    stage_started = 0.0
     try:
         client = dependencies.client_factory()
-        runtime = create_provider_runtime(settings, entry_points=dependencies.entry_points, client=client)
+        runtime = create_provider_runtime(
+            settings,
+            entry_points=dependencies.entry_points,
+            client=client,
+            _reservation_guard=reservation_guard,
+        )
+        plugins = tuple(item["plugin_id"] for item in runtime.registry.health_snapshot())
+        selected_plugins = {
+            runtime.registry.plugin_id_for(ProviderKey(ProviderCapability.LLM, settings.llm_provider)),
+            runtime.registry.plugin_id_for(ProviderKey(ProviderCapability.EMBEDDING, settings.embedding_provider)),
+            runtime.registry.plugin_id_for(ProviderKey(ProviderCapability.RERANKER, settings.reranker_provider)),
+        }
+        provider_kinds = {
+            "builtin" if plugin_id == "hl-mem.builtin" else "external_plugin" for plugin_id in selected_plugins
+        }
+        provider_kind = next(iter(provider_kinds)) if len(provider_kinds) == 1 else "mixed"
         initialize_process(settings)
         embedder = make_embedder(settings, runtime=runtime)
         reranker = make_reranker(settings, runtime=runtime)
@@ -377,7 +501,8 @@ def _run_pipeline(
             "occurred_at": str(fixture["occurred_at"]),
             "sensitivity": "normal",
         }
-        started = time.perf_counter()
+        active_stage = "ingest"
+        stage_started = time.perf_counter()
         event_result = IngestService(connection).ingest_event(event, idempotency_key="provider-live-smoke-v1")
         stored_event = EventRepository(connection, settings).get_event(str(event_result["id"]))
         if stored_event is None:
@@ -388,9 +513,10 @@ def _run_pipeline(
         )
         now = datetime.now(timezone.utc).isoformat()
         stored = [IngestService.store_extracted(connection, claim, stored_event, now, embedder) for claim in claims]
-        latencies["ingest"] = (time.perf_counter() - started) * 1000
+        latencies["ingest"] = (time.perf_counter() - stage_started) * 1000
 
-        started = time.perf_counter()
+        active_stage = "recall"
+        stage_started = time.perf_counter()
         recall_total = 0
         recall_counts: dict[str, int] = {}
         reranker_successful_recalls = 0
@@ -406,6 +532,8 @@ def _run_pipeline(
             label = str(recall["label"])
             recall_counts[label] = int(response["total"])
             recall_total += recall_counts[label]
+            execution_counts[f"{label}_recall_results"] = recall_counts[label]
+            execution_counts["recall_results"] = recall_total
             trace = response["search_trace"]
             if trace["reranker_error_class"] is None and any(
                 candidate["rerank_rank"] is not None for candidate in trace["candidates"].values()
@@ -420,12 +548,15 @@ def _run_pipeline(
         )
         fallback_total = int(fallback["total"])
         recall_total += fallback_total
-        latencies["recall"] = (time.perf_counter() - started) * 1000
+        execution_counts["recall_results"] = recall_total
+        execution_counts["reranker_successful_recalls"] = reranker_successful_recalls
+        latencies["recall"] = (time.perf_counter() - stage_started) * 1000
+        active_stage = None
 
         persisted = _safe_counts(connection)
         usage = runtime.governor.snapshot()
-        settled = usage["settled"]
-        counts_by_capability = usage["counts_by_capability"]
+        settled = cast(Mapping[str, Any], usage["settled"])
+        counts_by_capability = cast(Mapping[str, Any], usage["counts_by_capability"])
         budget_path = runtime.governor.path
         counters = {
             "llm_requests": int(counts_by_capability.get("llm", 0)),
@@ -460,17 +591,17 @@ def _run_pipeline(
             "usage_settled": usage["unknown_cost_count"] == 0,
             "reservations_released": counters["active_reservations"] == 0,
         }
-        plugins = tuple(item["plugin_id"] for item in runtime.registry.health_snapshot())
-        selected_plugins = {
-            runtime.registry.plugin_id_for(ProviderKey(ProviderCapability.LLM, settings.llm_provider)),
-            runtime.registry.plugin_id_for(ProviderKey(ProviderCapability.EMBEDDING, settings.embedding_provider)),
-            runtime.registry.plugin_id_for(ProviderKey(ProviderCapability.RERANKER, settings.reranker_provider)),
-        }
-        provider_kinds = {
-            "builtin" if plugin_id == "hl-mem.builtin" else "external_plugin" for plugin_id in selected_plugins
-        }
-        provider_kind = next(iter(provider_kinds)) if len(provider_kinds) == 1 else "mixed"
         return counters, latencies, [_SAFE_LABEL], checks, plugins, provider_kind
+    except Exception:
+        if active_stage is not None:
+            latencies[active_stage] = (time.perf_counter() - stage_started) * 1000
+        if runtime is None:
+            raise
+        failure = _failed_pipeline_evidence(runtime, connection, latencies, execution_counts)
+        if failure is None:
+            raise
+        counters, failed_latencies, error_categories, checks = failure
+        return counters, failed_latencies, error_categories, checks, plugins, provider_kind
     finally:
         if extractor is not None:
             extractor.llm_client.close()
@@ -507,16 +638,18 @@ def _run_live_smoke(
         price_path: _file_identity(price_path),
     }
     try:
-        result = _run_live_smoke_impl(
+        result, failure_written = _run_live_smoke_impl(
             config_path,
             env_path=env_path,
             price_path=price_path,
             input_identities=input_identities,
             limits=limits,
             dependencies=dependencies,
+            failure_output=output_path,
         )
         _verify_input_identities(input_identities)
-        _atomic_write_json(output_path, result)
+        if not failure_written:
+            _atomic_write_json(output_path, result)
     finally:
         _verify_input_identities(input_identities)
     return result
@@ -530,7 +663,8 @@ def _run_live_smoke_impl(
     input_identities: Mapping[Path, _FileIdentity],
     limits: LiveSmokeLimits,
     dependencies: _LiveSmokeDependencies,
-) -> dict[str, object]:
+    failure_output: Path,
+) -> tuple[dict[str, object], bool]:
     result: dict[str, object]
     with tempfile.TemporaryDirectory(
         prefix="hl-mem-provider-smoke-",
@@ -582,16 +716,25 @@ def _run_live_smoke_impl(
         if Path(settings.usage_price_book_path or "").resolve() != copied_price.resolve():
             raise LiveSmokeSafetyError("loaded price book path is not owned by the new temporary root")
         _preflight(settings, loaded_price_book, fixture, limits)
+        reservation_guard = _LiveSmokeReservationGuard(limits)
         try:
             counters, latency, error_categories, checks, plugins, provider_kind = _run_pipeline(
-                settings, fixture, dependencies
+                settings,
+                fixture,
+                dependencies,
+                reservation_guard.reserve,
             )
         except UsageLimitExceededError as error:
             if "cost estimate" in str(error):
                 raise LiveSmokeBudgetError("provider ledger has unknown cost under the active money limit") from error
             raise LiveSmokeBudgetError("provider ledger rejected a call within the smoke limits") from error
-        _assert_final_limits(counters, limits)
-        checks = {**checks, "final_budget": True, "temporary_database": True}
+        try:
+            _assert_final_limits(counters, limits)
+            final_budget = True
+        except LiveSmokeBudgetError:
+            final_budget = False
+            error_categories = ["provider_pipeline_failure"]
+        checks = {**checks, "final_budget": final_budget, "temporary_database": True}
         result = {
             "schema_version": 1,
             "passed": all(checks.values()),
@@ -622,8 +765,13 @@ def _run_live_smoke_impl(
         }
         schema = json.loads(_RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
         Draft202012Validator(schema, format_checker=FormatChecker()).validate(result)
+        failure_written = False
+        if not result["passed"]:
+            _verify_input_identities(input_identities)
+            _atomic_write_json(failure_output, result)
+            failure_written = True
 
-    return result
+    return result, failure_written
 
 
 def run_live_smoke(

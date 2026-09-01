@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from hl_mem.errors import ConfigurationError
 from hl_mem.observability.ops_report import UsageLedgerReader
 from hl_mem.observability.pricing import UsageCostEstimator, UsagePriceBook
 from hl_mem.observability.usage import (
+    UsageAmount,
     UsageGovernor,
     UsageIdentity,
     UsageLimits,
@@ -38,6 +40,7 @@ class ProviderRuntime:
     _estimator: UsageCostEstimator | None = None
     _client: httpx.Client | None = None
     _owns_client: bool = False
+    _reservation_guard: Callable[[UsageIdentity, UsageAmount], None] | None = None
 
     @property
     def governor(self) -> UsageGovernor:
@@ -64,6 +67,7 @@ class ProviderRuntime:
             self.governor,
             self.transport,
             estimator=self._estimator,
+            _reservation_guard=self._reservation_guard,
         )
 
     def usage_snapshot(self) -> dict[str, object] | None:
@@ -98,6 +102,7 @@ def create_provider_runtime(
     client: httpx.Client | None = None,
     create_usage: bool = True,
     _validated_estimator: UsageCostEstimator | None | object = _ESTIMATOR_UNSET,
+    _reservation_guard: Callable[[UsageIdentity, UsageAmount], None] | None = None,
 ) -> ProviderRuntime:
     """Validate Providers, recover reservations, and create process-owned state."""
 
@@ -130,6 +135,7 @@ def create_provider_runtime(
         _estimator=estimator,
         _client=resolved_client,
         _owns_client=client is None,
+        _reservation_guard=_reservation_guard,
     )
 
 
