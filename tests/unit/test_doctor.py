@@ -88,6 +88,16 @@ def _disable_network_probes(monkeypatch: pytest.MonkeyPatch) -> None:
         "_check_plugin_compatibility",
         lambda _settings: CheckResult(CheckStatus.WARN, "Hermes 插件兼容性", "not installed"),
     )
+    monkeypatch.setattr(
+        doctor_module,
+        "_check_hermes_runtime",
+        lambda _settings: CheckResult(
+            CheckStatus.WARN,
+            "Hermes loaded runtime",
+            "not installed",
+            code="hermes_runtime",
+        ),
+    )
 
 
 def _copy_packaged_plugin(target: Path) -> None:
