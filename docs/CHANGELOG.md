@@ -2,6 +2,13 @@
 
 ## 未发布（目标 v1.1.0）
 
+### Phase 4：提取职责收口与遗留清理
+
+- `LLMExtractor` 保持兼容门面和 Claim 准入/投影语义；分块、schema 重试、截断二分、soft split、delta repair、
+  运行状态与调用计量迁入聚焦的 extraction 内部模块，现有 Prompt、调用顺序和静态兼容 helper 保持不变。
+- 删除不提供仓储语义的 PostgreSQL 连通性探针；当前能力文档不再展示已于 1.0 退役的 extraction pre-filter 与
+  独立 Tag 候选通道。SQLite 仍是唯一受支持的权威存储，Tag soft boost 保留。
+
 ### Phase 3：外部 Provider 实证与 Recall 职责收口
 
 - 独立构建 `hl-mem-provider-dashscope` 参考插件，仅依赖公开 `hl_mem.plugins` 契约并提供 LLM、Embedding、

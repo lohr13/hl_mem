@@ -114,7 +114,7 @@ src/hl_mem/
 │   ├── ranking.py            # Multi-factor ranking
 │   ├── relation_expansion.py # One-hop relation expansion
 │   ├── reranker.py           # Optional reranking (model configured via TOML)
-│   ├── staged_pipeline.py    # FTS + dense + optional tag channel and RRF
+│   ├── staged_pipeline.py    # FTS + dense, RRF, entity constraint, and tag soft boost
 │   └── trace.py              # SearchTrace diagnostics and metrics
 ├── security/                 # Image input boundary, retention and content policy
 ├── storage/
@@ -490,8 +490,8 @@ cannot alter the verified image.
 
 All runtime paths, provider models, timeouts, and feature modes come from one validated `Settings` snapshot loaded from
 `hl_mem.toml`. Only five provider credentials come from `.env` or same-named process environment variables. Image file
-inputs remain disabled unless explicitly enabled and constrained to configured allow-roots. PostgreSQL is only an
-experimental connectivity probe and does not implement HL-Mem storage semantics.
+inputs remain disabled unless explicitly enabled and constrained to configured allow-roots. SQLite is the only supported
+authoritative store; the product does not advertise an incomplete PostgreSQL backend.
 
 ### Development and deployment commands
 

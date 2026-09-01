@@ -434,7 +434,7 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 
 - **Stable**：事件与证据链、原子写入、LLM 提取、Embedding、FTS + Dense + RRF、双时间过滤、TTL/衰减/归档、冲突与去重、REST、Hermes、备份与审计。
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
-- **Experimental**：图片证据、提取预过滤、独立 Tag 通道、PostgreSQL 连通性探针。
+- **Experimental**：图片证据与其他显式标记的预览能力；默认关闭，不提供低质量回退。
 
 当前基线为 v1.0.0，共 59 个不可变、仅向前执行的 SQL Migration。migration 055–057 增加 Claim mutation 审计并
 退役遗留冲突判官；migration 058 终止升级前遗留的 pending 语义任务，migration 059 为关系边增加来源闭环。升级前仍须

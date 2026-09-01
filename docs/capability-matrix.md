@@ -34,7 +34,6 @@
 | Lesson signal | beta | `observe` | 否 | 是，仅 qualifier/audit | 保留旧 prompt；observe 不提升 importance/scope，临时与敏感规则优先 | 新 prompt 须在冻结集达到 high precision/recall 与诱饵误报门禁且一般提取下降不超过 1pp |
 | LLM Claim 提取 | stable | `fake`（部署推荐显式设为 `llm`） | 是 | 是 | retry 后失败则 Job 失败，可重试；原始 Event 保留；恰好命中 20 条上限时告警但不伪造余项 | compact/legacy schema 共用 AdmissionPolicy；双语复合事实、关系与枚举原子性保持一致；解析、后处理投影、证据与调用可观测性受回归保护 |
 | Extraction entailment verification | beta | `off`（可配置 `audit`/`enforce`） | 启用后是 | 是，仅 audit | verifier 失败时 fail-open，保留原始提取结果并记录错误 | 冻结评测集质量稳定、额外延迟与 token 成本达到 SLO 后再考虑真正 enforce |
-| Extraction pre-filter | experimental | `off` | 否 | 开启后写 audit | 规则异常时 `error_fallback` 到正常提取 | 生产回放证明显著节省调用且事实漏失低于既定阈值 |
 | Embedding | stable | `fake`（部署推荐显式设为 `real`） | real 模式是 | 是 | compatible/native 调用失败按 retry 策略报错；不写伪向量 | native 默认不传 `text_type`；query/document 可显式启用，sparse/instruct 实验变体默认关闭；维度、provider、重建和失败恢复持续受保护 |
 | FTS + Dense + RRF 混合召回 | stable | `on` | Dense 查询本身否 | 是，受控更新访问统计 | 某个可选通道无候选时使用其余通道；核心错误明确失败 | 保持中文/英文、时间、作用域和排序回归 |
 | 查询实体约束 | beta | `enforce` | 否 | 否，仅 trace | 仅唯一 typed entity 且 link coverage 完整时在候选截断前限定范围；历史 alias、歧义、多实体、链接不完整或存储异常均宽搜；`observe`/`off` 可显式回滚 | 24 案确定性回归与 Core 召回门禁持续全绿，并用后续真实流量验证跨实体错误率后再晋级 stable |
@@ -43,7 +42,6 @@
 | SQLite 向量后端 | stable | `sqlite_scan` | 否 | `sqlite_vec` 写派生索引 | scan 使用两阶段精确回表；sqlite-vec dirty 时查询回退 scan，启动自动修复投影；缺少显式选择的 extra 时配置报错 | 两后端召回与时间可见性语义持续一致，规模化延迟、投影修复和扩展兼容性受回归保护 |
 | Tag soft boost | stable | `on` | 否 | 否 | 无 tag 命中即零 boost | 离线排名不回退并保持可解释权重 |
 | 证据关系图 | beta | 确定性边 `on`；LLM 发现 `off` | 发现阶段可选 LLM | 是 | 正式边必须是 `deterministic`、`manual` 或 `approved_proposal`；存量边只读标记 `legacy`；普通召回不做无界遍历 | 来源、双时间、失效、幂等批准与一至两跳收益门禁持续全绿 |
-| 独立 Tag channel | experimental | `off` | 否 | 否 | 关闭或无结果时保持 FTS + Dense 双通道 | 评测证明对主要数据集净增益且无显著延迟/噪声 |
 | Reranker | beta | `off`（可配置 fake/on/real） | real 模式是 | 否 | retry/超时后保留融合前排序 | 相关性净增益、P95 和 API 故障率达到 SLO |
 | 双时间与作用域过滤 | stable | `on` | 否 | 是 | 不降级；非法时间/作用域明确失败 | 保持历史查询、可见性与并发回归 |
 | TTL / decay / archive | stable | `auto` | 否 | 是 | 单 Job 失败可重试，CAS/事务避免部分更新 | 保持扫描完整性、双时间和访问 bonus 回归 |
