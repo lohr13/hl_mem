@@ -59,6 +59,10 @@ from .chunking import (
     ChunkingPolicy,
     ExtractionChunk,
 )
+from .extraction.model_coordinates import (
+    MODEL_TASK_SOURCE_MARKERS,
+    project_extraction_model_coordinates,
+)
 from .extraction.orchestrator import (
     ExtractionOrchestrator,
     ExtractionOrchestratorConfig,
@@ -192,33 +196,7 @@ _KIND_TOPIC_TAG = {
 }
 _NOTABILITY_IMPORTANCE = {"high": 0.9, "medium": 0.6, "low": 0.3}
 _ENV_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
-_MODEL_TASK_SOURCE_MARKERS = (
-    "reader",
-    "judge",
-    "extractor",
-    "embedding",
-    "reranker",
-    "summarization",
-    "compression",
-    "translation",
-    "code generation",
-    "image generation",
-    "vision",
-    "阅读",
-    "评审",
-    "裁判",
-    "提取",
-    "嵌入",
-    "重排",
-    "摘要",
-    "压缩",
-    "翻译",
-    "代码生成",
-    "图像生成",
-    "视觉",
-    "验证",
-    "测试",
-)
+_MODEL_TASK_SOURCE_MARKERS = MODEL_TASK_SOURCE_MARKERS
 _TECH_ENTITY_RE = re.compile(
     r"(?ix)(?<![A-Za-z0-9_])(?:"
     r"PostgreSQL|SQLite|MySQL|Redis|FastAPI|Uvicorn|PyTorch|Django|Flask|"
@@ -756,12 +734,23 @@ class LLMExtractor:
         fallback_attribute = PREDICATE_ATTRIBUTE_MAP[predicate][1]
         if inferred_attribute not in {"custom.unknown", fallback_attribute}:
             canonical_attribute = inferred_attribute
-        qualifiers = self._infer_compact_qualifiers(
+        model_coordinate = project_extraction_model_coordinates(
             canonical_attribute,
             subject,
             candidate.value,
             candidate.evidence_quote,
         )
+        subject = model_coordinate.subject
+        qualifiers: dict[str, Any] = self._infer_compact_qualifiers(
+            canonical_attribute,
+            subject,
+            candidate.value,
+            candidate.evidence_quote,
+        )
+        if model_coordinate.task is not None:
+            qualifiers["task"] = model_coordinate.task
+        if model_coordinate.state_change:
+            qualifiers["state_change"] = True
         qualifiers.update({"lesson_signal": lesson_signal} if enforce_lesson_signal else {})
         qualifiers = project_action_qualifiers(candidate.value, qualifiers, is_plan=candidate.kind == "plan")
         canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
