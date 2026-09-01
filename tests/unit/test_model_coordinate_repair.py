@@ -197,13 +197,15 @@ def test_history_repair_is_count_guarded_transactional_and_idempotent(tmp_path) 
     ).fetchone()
     assert tuple(row) == ("superseded", winner.claim_id)
     assert connection.execute("SELECT status FROM claims WHERE id=?", (answering_id,)).fetchone()[0] == "active"
-    assert (
-        connection.execute(
-            "SELECT count(*) FROM audit_log WHERE phase='claim_mutation' AND claim_id=?",
-            (extraction_id,),
-        ).fetchone()[0]
-        >= 1
-    )
+    audit_row = connection.execute(
+        "SELECT tenant_id,related_claim_id,detail_json FROM audit_log "
+        "WHERE phase='claim_mutation' AND action='updated' AND claim_id=? ORDER BY id DESC LIMIT 1",
+        (extraction_id,),
+    ).fetchone()
+    assert audit_row is not None
+    assert audit_row["tenant_id"] == "default"
+    assert audit_row["related_claim_id"] == winner.claim_id
+    assert json.loads(audit_row["detail_json"])["source"] == "model_coordinate_history_repair"
     second_preview = inspect_model_coordinate_history(connection)
     assert second_preview["candidate_claim_count"] == 0
     database.close()

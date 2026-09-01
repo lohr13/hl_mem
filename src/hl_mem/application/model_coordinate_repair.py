@@ -11,6 +11,7 @@ from typing import Any
 from hl_mem.application.conflict_queries import OPEN_CASE_STATUSES
 from hl_mem.errors import ConflictError
 from hl_mem.ingest.extraction.model_coordinates import project_model_coordinates
+from hl_mem.observability.audit import audit_scope
 from hl_mem.storage._shared import decode_json
 from hl_mem.storage.claims import ClaimRepository
 
@@ -210,17 +211,22 @@ def apply_model_coordinate_history_repair(
         changed_at = str(winner["valid_from"] or winner["observed_at"] or winner["recorded_from"])
         mutation_time = recorded_at or datetime.now(timezone.utc).isoformat()
         repository = ClaimRepository(connection)
-        for claim_id in preview["candidate_claim_ids"]:
-            result = repository.supersede_with_inline(
-                str(claim_id),
-                winner_id,
-                winner_value,
-                changed_at,
-                mutation_time,
-                commit=False,
-            )
-            if not result.applied:
-                raise ConflictError(f"model coordinate repair compare-and-set failed: {claim_id}")
+        with audit_scope(
+            tenant_id=namespace,
+            related_claim_id=winner_id,
+            claim_mutation_source="model_coordinate_history_repair",
+        ):
+            for claim_id in preview["candidate_claim_ids"]:
+                result = repository.supersede_with_inline(
+                    str(claim_id),
+                    winner_id,
+                    winner_value,
+                    changed_at,
+                    mutation_time,
+                    commit=False,
+                )
+                if not result.applied:
+                    raise ConflictError(f"model coordinate repair compare-and-set failed: {claim_id}")
         connection.commit()
     except Exception:
         if connection.in_transaction:
