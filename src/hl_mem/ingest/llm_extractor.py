@@ -88,11 +88,13 @@ from .extraction.prompts import (
     SYSTEM_PROMPT,
 )
 from .extraction.repair import ENUM_MAPPINGS, TOPIC_TAG_ZH_TO_EN, repair_extraction_json
+from .extraction.run_state import ExtractionRunState
 from .extraction.schema import (
     CompactExtractionResponseSchema,
     ExtractionResponseSchema,
     temporal_gate_extraction_response_json_schema,
 )
+from .extraction.verification import VerificationCoordinator
 from .extractors import ExtractedClaim
 from .relative_time import infer_occurrence, relative_time_rules_fingerprint
 from .verifier import EntailmentVerifier
@@ -531,16 +533,78 @@ class LLMExtractor:
         self.lesson_signal_mode = lesson_signals.validate_lesson_signal_mode(modes.lesson_signal_mode)
         self.verification_claim_threshold = modes.verification_claim_threshold
         self.verification_empty_text_threshold = modes.verification_empty_text_threshold
-        self.last_usage_tokens = 0
-        self.last_input_tokens = 0
-        self.last_output_tokens = 0
-        self._schema_retry_count = 0
-        self._repair_count = 0
-        self._llm_call_count = 0
-        self._memorize_decisions: list[tuple[bool, str]] = []
-        self._last_schema_errors: list[dict[str, Any]] = []
-        self._secret_rejections: dict[str, int] = {}
-        self._relation_metadata_counts: dict[str, int] = {}
+        self._run_state = ExtractionRunState()
+        self._verification = VerificationCoordinator(
+            verifier=self.verifier,
+            mode=self.verification_mode,
+            claim_threshold=self.verification_claim_threshold,
+            empty_text_threshold=self.verification_empty_text_threshold,
+            audit_getter=current_audit,
+        )
+
+    @property
+    def last_usage_tokens(self) -> int:
+        return self._run_state.total_tokens
+
+    @last_usage_tokens.setter
+    def last_usage_tokens(self, value: int) -> None:
+        self._run_state.total_tokens = value
+
+    @property
+    def last_input_tokens(self) -> int:
+        return self._run_state.input_tokens
+
+    @last_input_tokens.setter
+    def last_input_tokens(self, value: int) -> None:
+        self._run_state.input_tokens = value
+
+    @property
+    def last_output_tokens(self) -> int:
+        return self._run_state.output_tokens
+
+    @last_output_tokens.setter
+    def last_output_tokens(self, value: int) -> None:
+        self._run_state.output_tokens = value
+
+    @property
+    def _schema_retry_count(self) -> int:
+        return self._run_state.schema_retry_count
+
+    @_schema_retry_count.setter
+    def _schema_retry_count(self, value: int) -> None:
+        self._run_state.schema_retry_count = value
+
+    @property
+    def _repair_count(self) -> int:
+        return self._run_state.repair_count
+
+    @_repair_count.setter
+    def _repair_count(self, value: int) -> None:
+        self._run_state.repair_count = value
+
+    @property
+    def _llm_call_count(self) -> int:
+        return self._run_state.llm_call_count
+
+    @_llm_call_count.setter
+    def _llm_call_count(self, value: int) -> None:
+        self._run_state.llm_call_count = value
+
+    @property
+    def _memorize_decisions(self) -> list[tuple[bool, str]]:
+        return self._run_state.memorize_decisions
+
+    @property
+    def _last_schema_errors(self) -> list[dict[str, Any]]:
+        return self._run_state.schema_errors
+
+    @property
+    def _secret_rejections(self) -> dict[str, int]:
+        return self._run_state.secret_rejections
+
+    @property
+    def _relation_metadata_counts(self) -> dict[str, int]:
+        return self._run_state.relation_metadata_counts
 
     @property
     def last_relation_metadata(self) -> dict[str, int]:
@@ -554,16 +618,7 @@ class LLMExtractor:
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
         """同步分块提取事实，并在输出截断或 claim 数超限时递归二分恢复。"""
-        self.last_usage_tokens = 0
-        self.last_input_tokens = 0
-        self.last_output_tokens = 0
-        self._schema_retry_count = 0
-        self._repair_count = 0
-        self._llm_call_count = 0
-        self._memorize_decisions = []
-        self._last_schema_errors = []
-        self._secret_rejections = {}
-        self._relation_metadata_counts = {}
+        self._run_state = ExtractionRunState()
         event_context = context or {}
         chunks = split_extraction_content(content, self.chunking_policy)
         chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
@@ -822,74 +877,15 @@ class LLMExtractor:
         source_text: str,
     ) -> list[ExtractedClaim]:
         """按 rollout 策略执行 audit-only 验证，并始终原样返回 claims。"""
-        if self.verifier is None or self.verification_mode == "off":
-            return claims
-        if not claims:
-            if len(source_text) > self.verification_empty_text_threshold:
-                current_audit().emit(
-                    "extract",
-                    "possible_under_extraction",
-                    "observed",
-                    detail={
-                        "source_length": len(source_text),
-                        "length_threshold": self.verification_empty_text_threshold,
-                        "verification_mode": self.verification_mode,
-                    },
-                )
-            return claims
-        should_verify = self.verification_mode == "enforce" or len(claims) > self.verification_claim_threshold
-        if not should_verify:
-            return claims
-        try:
-            results = self.verifier.verify_batch(claims, source_text)
-        except Exception as error:
-            self._record_verifier_usage()
-            self._emit_verification_failure(error, len(claims))
-            return claims
-        self._record_verifier_usage()
-        try:
-            if len(results) != len(claims):
-                raise ValueError("verifier result count does not match claim count")
-            for claim_index, (claim, result) in enumerate(zip(claims, results, strict=True)):
-                current_audit().emit(
-                    "extract",
-                    "entailment_checked",
-                    result.support_label,
-                    detail={
-                        "claim_index": claim_index,
-                        "claim_subject": claim.subject[:100],
-                        "claim_predicate": claim.predicate[:100],
-                        "claim_value": claim.value[:100],
-                        "rationale": result.rationale[:512],
-                        "verification_mode": self.verification_mode,
-                    },
-                )
-        except Exception as error:
-            self._emit_verification_failure(error, len(claims))
-        return claims
+        return self._verification.verify(claims, source_text, self._run_state)
 
     def _emit_verification_failure(self, error: Exception, claim_count: int) -> None:
         """记录安全、截断后的 fail-open verifier 错误。"""
-        current_audit().emit(
-            "extract",
-            "entailment_verification_failed",
-            "error",
-            detail={
-                "error_class": type(error).__name__,
-                "error": str(error).replace("\n", " ")[:256],
-                "claim_count": claim_count,
-                "verification_mode": self.verification_mode,
-            },
-        )
+        self._verification.emit_failure(error, claim_count)
 
     def _record_verifier_usage(self) -> None:
         """把额外审计调用计入提取器预算与诊断指标。"""
-        if self.verifier is None:
-            return
-        self.last_usage_tokens += int(getattr(self.verifier, "last_usage_tokens", 0))
-        self.last_input_tokens += int(getattr(self.verifier, "last_input_tokens", 0))
-        self.last_output_tokens += int(getattr(self.verifier, "last_output_tokens", 0))
-        self._llm_call_count += int(getattr(self.verifier, "last_call_count", 0))
+        self._verification.record_usage(self._run_state)
 
     @staticmethod
     def _infer_compact_qualifiers(
