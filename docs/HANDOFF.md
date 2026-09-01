@@ -1,12 +1,12 @@
 # HL-Mem 项目交接状态
 
-> 最后更新：2026-09-01
+> 最后更新：2026-09-02
 
 ## 当前状态
 
-- **分支**：`main`（1.1.0rc1 发布线）
-- **版本**：v1.1.0rc1
-- **阶段**：RC 发布与 Hermes 真实部署观察
+- **分支**：`main`（1.1.0rc2 发布线）
+- **版本**：v1.1.0rc2
+- **阶段**：RC2 发布与 Hermes 真实部署观察
 - **Schema**：60 migrations；全部不可变、仅向前执行
 - **运行时**：Python 3.12–3.14；SQLite 为权威存储
 - **发布原则**：候选版本完成本地真实链路观察，稳定提交通过常规 GitHub Tests 后创建不可变标签
@@ -29,15 +29,15 @@
   LLMExtractor 职责拆分；未增加 Graph、额外实体 LLM 或新的权威存储。
 - 1.1 增加 Event 来源/session 治理、Hermes 确定性传播、自动会话门控、只读 `explain claim` 与有界 Context
   来源提示；不新增模型调用，不执行事实核验或历史回填。
-- 最终本地全量门禁为 3081 passed、4 skipped，严格 `ResourceWarning` 门禁通过；Python 3.12、3.13、3.14
-  全新环境的 wheel 安装、导入和 CLI 启动均通过。
+- RC2 对自然提取声明补充来源约束的 canonical 坐标，并在服务启动时幂等记录当前提取 Provider/模型；该路径
+  零外部调用、不新增 schema，并已在生产数据库在线副本验证旧模型替代与任务隔离。
 
 ## 当前发布状态
 
 - Git 历史中的已删除 `.env.bak_glm` 含两条真实凭据形状。测试假阳性已按精确 fingerprint 基线化；这两条
   真实凭据未加入忽略列表；维护者已明确接受其仍有效的残余风险，本项不记为安全清单通过。
-- 不可变标签 `v1.0.0rc1` 指向 `d99ed926b1951011013905dd858893d95d407ed1`；GitHub Release 为非草稿
-  prerelease，PyPI wheel 与 sdist 已通过 Trusted Publishing 上传。
+- 不可变标签 `v1.1.0rc1` 指向 `69a32cee99d66668d6d008fd5f51f8a762ea4962`；GitHub Release 与 PyPI
+  预发行包均已发布，RC2 只在其后追加本交接文档所列坐标修复。
 - Core 1.0 release-gates、Tests 与 Security 已通过并保存在 GitHub Actions；本地真实 Provider、摄入、召回与
   用量链路已完成冒烟观察。
 - `v1.0.0` 仅包含版本、发布政策与文档调整，不改变 RC 已验证的可执行行为或数据库 schema。
@@ -50,6 +50,6 @@
 
 ## 下一步
 
-1. 使用不可变 `v1.1.0rc1` 标签，由 Hermes 部署观察并由 PyPI Trusted Publishing 发布预发行包。
+1. 使用不可变 `v1.1.0rc2` 标签，由 Hermes 部署观察并由 PyPI Trusted Publishing 发布预发行包。
 2. RC 仅接受兼容缺陷与安全修复；如需修复则发布新的 RC，不移动既有标签。
 3. 真实部署稳定后发布 `v1.1.0`，继续保持 1.x 兼容和恢复边界。

@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v1.1.0rc1
-- Updated: 2026-09-01
+- Document baseline: v1.1.0rc2
+- Updated: 2026-09-02
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
