@@ -27,6 +27,8 @@ from benchmarks.provider.live_smoke import (
     run_live_smoke,
 )
 from hl_mem.errors import ProviderCallError
+from hl_mem.ingest.embedder import Embedder
+from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import LLMCapabilities, LLMResponse
 from hl_mem.observability.pricing import UsagePriceBook
 from hl_mem.observability.usage import UsageAmount, UsageGovernor, UsageIdentity, UsageLimits
@@ -47,7 +49,10 @@ from hl_mem.plugins.contracts import (
     RerankResult,
 )
 from hl_mem.plugins.proxies import GovernedProviderCall
+from hl_mem.plugins.runtime import ProviderRuntime
 from hl_mem.plugins.transport import ProviderTransport
+from hl_mem.recall.reranker import DashScopeReranker
+from hl_mem.storage.database import Database
 from scripts.check_wheel_contents import check_wheel
 
 LIMITS = LiveSmokeLimits()
@@ -293,6 +298,31 @@ def _recording_dependencies(tmp_path: Path, recorder: _RecordingTransport, clien
         client_factory=client_factory,
         temp_parent=tmp_path,
     )
+
+
+def _install_close_probes(monkeypatch: pytest.MonkeyPatch, failing: str) -> tuple[list[str], str]:
+    calls: list[str] = []
+    raised: set[str] = set()
+    secret = f"do-not-leak-cleanup-{failing}"
+    for label, target in (
+        ("llm_client", LLMClient),
+        ("reranker", DashScopeReranker),
+        ("embedder", Embedder),
+        ("database", Database),
+        ("runtime", ProviderRuntime),
+        ("http_client", httpx.Client),
+    ):
+        original = target.close
+
+        def close(self: object, *, _label: str = label, _original: Any = original) -> None:
+            calls.append(_label)
+            _original(self)
+            if _label == failing and _label not in raised:
+                raised.add(_label)
+                raise RuntimeError(secret)
+
+        monkeypatch.setattr(target, "close", close)
+    return calls, secret
 
 
 def _run_with_recording_providers(
@@ -1061,13 +1091,17 @@ def test_schema_retry_is_denied_when_its_transport_allowance_would_exceed_smoke_
     assert result["error_categories"] == ["provider_pipeline_failure"]
 
 
-def test_first_call_guard_failure_writes_no_artifact(tmp_path: Path) -> None:
+def test_first_call_guard_and_cleanup_failure_preserve_original_error_without_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config = _write_config(tmp_path, llm_max_attempts=10)
     price_book = _write_price_book(tmp_path)
     env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
     recorder = _RecordingTransport()
     clients: list[httpx.Client] = []
     output = tmp_path / "result.json"
+    calls, _secret = _install_close_probes(monkeypatch, "http_client")
 
     with pytest.raises(LiveSmokeBudgetError, match="llm_requests"):
         _run_live_smoke(
@@ -1081,6 +1115,7 @@ def test_first_call_guard_failure_writes_no_artifact(tmp_path: Path) -> None:
 
     assert recorder.requests == []
     assert not output.exists()
+    assert "http_client" in calls
 
 
 def test_success_evidence_accumulates_actual_transport_retries(tmp_path: Path) -> None:
@@ -1269,6 +1304,73 @@ def test_failure_artifact_is_written_before_temporary_ledger_cleanup(
 
     assert result["passed"] is False
     assert observed_live_ledger is True
+
+
+@pytest.mark.parametrize(
+    "failing_close",
+    ("llm_client", "reranker", "embedder", "database", "runtime", "http_client"),
+)
+def test_successful_pipeline_cleanup_failure_keeps_sanitized_evidence_and_closes_every_resource(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failing_close: str,
+) -> None:
+    config = _write_config(tmp_path)
+    price_book = _write_price_book(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    recorder = _RecordingTransport()
+    clients: list[httpx.Client] = []
+    output = tmp_path / "result.json"
+    calls, secret = _install_close_probes(monkeypatch, failing_close)
+
+    result = _run_live_smoke(
+        config,
+        output,
+        env_file=env_file,
+        price_book=price_book,
+        limits=LIMITS,
+        dependencies=_recording_dependencies(tmp_path, recorder, clients),
+    )
+
+    Draft202012Validator(
+        json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8")),
+        format_checker=FormatChecker(),
+    ).validate(result)
+    assert result["passed"] is False
+    assert result["error_categories"] == ["provider_pipeline_failure"]
+    assert result["counters"]["llm_requests"] >= 1
+    assert result["counters"]["active_reservations"] == 0
+    assert set(calls) >= {"llm_client", "reranker", "embedder", "database", "runtime", "http_client"}
+    assert secret not in json.dumps(result, ensure_ascii=False)
+    assert json.loads(output.read_text(encoding="utf-8")) == result
+
+
+def test_failed_pipeline_cleanup_failure_preserves_pipeline_evidence_and_continues_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _write_config(tmp_path)
+    price_book = _write_price_book(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    recorder = _RecordingTransport(invalid_embedding_count=True)
+    clients: list[httpx.Client] = []
+    calls, secret = _install_close_probes(monkeypatch, "database")
+
+    result = _run_live_smoke(
+        config,
+        tmp_path / "result.json",
+        env_file=env_file,
+        price_book=price_book,
+        limits=LIMITS,
+        dependencies=_recording_dependencies(tmp_path, recorder, clients),
+    )
+
+    assert result["passed"] is False
+    assert result["error_categories"] == ["provider_pipeline_failure"]
+    assert result["counters"]["llm_requests"] >= 1
+    assert result["counters"]["embedding_items"] >= 1
+    assert set(calls) >= {"llm_client", "reranker", "embedder", "database", "runtime", "http_client"}
+    assert secret not in json.dumps(result, ensure_ascii=False)
 
 
 def test_live_smoke_preserves_inputs_and_removes_temporary_root(tmp_path: Path) -> None:

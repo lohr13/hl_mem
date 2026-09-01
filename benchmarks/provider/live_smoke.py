@@ -433,6 +433,19 @@ def _failed_pipeline_evidence(
     return counters, fixed_latencies, ["provider_pipeline_failure"], checks
 
 
+def _close_all(resources: Iterable[Any]) -> bool:
+    failed = False
+    for resource in resources:
+        close = getattr(resource, "close", None)
+        if not callable(close):
+            continue
+        try:
+            close()
+        except Exception:
+            failed = True
+    return failed
+
+
 def _run_pipeline(
     settings: Any,
     fixture: Mapping[str, Any],
@@ -459,6 +472,8 @@ def _run_pipeline(
     provider_kind = "mixed"
     active_stage: str | None = None
     stage_started = 0.0
+    outcome: tuple[dict[str, int], dict[str, float], list[str], dict[str, bool], tuple[str, ...], str] | None = None
+    pending_error: Exception | None = None
     try:
         client = dependencies.client_factory()
         runtime = create_provider_runtime(
@@ -591,30 +606,38 @@ def _run_pipeline(
             "usage_settled": usage["unknown_cost_count"] == 0,
             "reservations_released": counters["active_reservations"] == 0,
         }
-        return counters, latencies, [_SAFE_LABEL], checks, plugins, provider_kind
-    except Exception:
+        outcome = counters, latencies, [_SAFE_LABEL], checks, plugins, provider_kind
+    except Exception as error:
         if active_stage is not None:
             latencies[active_stage] = (time.perf_counter() - stage_started) * 1000
         if runtime is None:
-            raise
-        failure = _failed_pipeline_evidence(runtime, connection, latencies, execution_counts)
-        if failure is None:
-            raise
-        counters, failed_latencies, error_categories, checks = failure
-        return counters, failed_latencies, error_categories, checks, plugins, provider_kind
+            pending_error = error
+        else:
+            failure = _failed_pipeline_evidence(runtime, connection, latencies, execution_counts)
+            if failure is None:
+                pending_error = error
+            else:
+                counters, failed_latencies, error_categories, checks = failure
+                outcome = counters, failed_latencies, error_categories, checks, plugins, provider_kind
     finally:
-        if extractor is not None:
-            extractor.llm_client.close()
-        for service in (reranker, embedder):
-            close = getattr(service, "close", None)
-            if callable(close):
-                close()
-        if database is not None:
-            database.close()
-        if runtime is not None:
-            runtime.close()
-        if client is not None:
-            client.close()
+        cleanup_failed = _close_all(
+            (
+                extractor.llm_client if extractor is not None else None,
+                reranker,
+                embedder,
+                database,
+                runtime,
+                client,
+            )
+        )
+    if outcome is None:
+        if pending_error is None:
+            raise RuntimeError("live smoke pipeline ended without an outcome")
+        raise pending_error
+    if cleanup_failed:
+        counters, completed_latencies, _errors, checks, plugins, provider_kind = outcome
+        return counters, completed_latencies, ["provider_pipeline_failure"], checks, plugins, provider_kind
+    return outcome
 
 
 def _run_live_smoke(
@@ -737,7 +760,7 @@ def _run_live_smoke_impl(
         checks = {**checks, "final_budget": final_budget, "temporary_database": True}
         result = {
             "schema_version": 1,
-            "passed": all(checks.values()),
+            "passed": all(checks.values()) and "provider_pipeline_failure" not in error_categories,
             "provider_kind": provider_kind,
             "core_commit": core_commit,
             "run_at_utc": datetime.now(timezone.utc).isoformat(),
