@@ -20,3 +20,19 @@ P95 latency must not exceed `max(baseline + 150 ms, baseline × 1.25)`.
 
 Latency is recorded as environment-specific evidence. Functional fields and hashes must be identical across two
 runs of the same package; only latency fields may vary.
+
+## Exact-entity regression protocol
+
+The companion `hl-mem-entity-v1` protocol contains 24 deterministic synthetic cases for entity-scoped retrieval.
+It covers unique and multilingual aliases, ambiguity, overlap, multiple entities, incomplete links, temporal views,
+namespace isolation, and a controlled entity-resolution storage failure. It is a targeted regression fixture, not a
+statistical claim about production Recall.
+
+Run the frozen 1.0 behavior in observe mode:
+
+```powershell
+uv run --frozen python benchmarks/release/entity_v1.py --mode observe --output Temp/entity-v1.json
+```
+
+The result stores stable IDs, scope decisions, channel counts, call counts, and timings. It does not store query or
+Claim content. The protocol performs no external model calls; each case makes one deterministic test embedding call.
