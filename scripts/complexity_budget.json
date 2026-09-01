@@ -50,7 +50,7 @@
   },
   {
     "path": "src/hl_mem/ingest/llm_extractor.py",
-    "max_lines": 1620
+    "max_lines": 1094
   },
   {
     "path": "src/hl_mem/observability/audit.py",
