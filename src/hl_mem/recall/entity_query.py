@@ -9,6 +9,26 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 ConfidenceClass = Literal["high", "low", "ambiguous"]
+EntityScopeMode = Literal["entity", "observe", "wide", "off"]
+EntityFallbackReason = Literal[
+    "no_mention",
+    "ambiguous_alias",
+    "multiple_entities",
+    "incomplete_links",
+    "resolution_error",
+    "storage_error",
+    "mode_off",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class QueryEntityMention:
+    start: int
+    end: int
+    alias: str
+    entity_id: str
+    entity_type: str
+    proof_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,13 +40,32 @@ class QueryEntityResolution:
     proof_ids: tuple[str, ...] = ()
     rewrite_terms: tuple[str, ...] = ()
     filter_entity_id: str | None = None
+    mention_spans: tuple[QueryEntityMention, ...] = ()
+    resolution_reason: EntityFallbackReason | None = "no_mention"
 
 
 @dataclass(frozen=True, slots=True)
 class QueryEntityPlan:
     resolution: QueryEntityResolution
-    rewrite: str | None
-    filter_mode: str
+    entity_id: str | None
+    residual_query: str
+    search_query: str
+    scope_mode: EntityScopeMode
+    fallback_reason: EntityFallbackReason | None
+
+    @property
+    def rewrite(self) -> str | None:
+        """Compatibility view for the pre-1.1 query-expansion session."""
+
+        if self.scope_mode != "entity":
+            return None
+        return self.residual_query or None
+
+    @property
+    def filter_mode(self) -> str:
+        """Compatibility view for the existing staged-pipeline configuration."""
+
+        return "enforce" if self.scope_mode == "entity" else self.scope_mode
 
     def record(self, trace: Any) -> None:
         trace.entity_mentions = list(self.resolution.mentions)
@@ -34,7 +73,17 @@ class QueryEntityPlan:
             "confidence_class": self.resolution.confidence_class,
             "entity_types": list(self.resolution.entity_types),
             "resolved_ids": list(self.resolution.resolved_ids),
-            "rewrite_terms": list(self.resolution.rewrite_terms),
+            "mention_count": len(self.resolution.mention_spans),
+            "mention_spans": [
+                {
+                    "start": mention.start,
+                    "end": mention.end,
+                    "entity_id": mention.entity_id,
+                    "entity_type": mention.entity_type,
+                    "proof_id": mention.proof_id,
+                }
+                for mention in self.resolution.mention_spans
+            ],
         }
         trace.entity_proof_ids = list(self.resolution.proof_ids)
         trace.entity_filter_mode = self.filter_mode
@@ -50,6 +99,24 @@ def _mention_spans(query: str, alias: str) -> list[tuple[int, int]]:
     escaped = re.escape(alias)
     pattern = rf"(?<!\w){escaped}(?!\w)" if alias.isascii() else escaped
     return [(match.start(), match.end()) for match in re.finditer(pattern, query)]
+
+
+def _spans_overlap(left: tuple[int, int], right: tuple[int, int]) -> bool:
+    return left != right and left[0] < right[1] and left[1] > right[0]
+
+
+def _residual_query(normalized_query: str, mentions: tuple[QueryEntityMention, ...]) -> str:
+    cursor = 0
+    retained: list[str] = []
+    for mention in mentions:
+        retained.append(normalized_query[cursor : mention.start])
+        cursor = mention.end
+    retained.append(normalized_query[cursor:])
+    without_mentions = "".join(retained)
+    collapsed = "".join(
+        " " if unicodedata.category(character)[0] in {"P", "Z"} else character for character in without_mentions
+    )
+    return " ".join(collapsed.split())
 
 
 def _link_coverage_complete(connection: sqlite3.Connection, namespace: str, entity_id: str) -> bool:
@@ -88,33 +155,71 @@ def resolve_query_entity(
             (namespace,),
         ).fetchall()
     except sqlite3.Error:
-        return QueryEntityResolution()
+        return QueryEntityResolution(resolution_reason="resolution_error")
     matches: list[tuple[int, int, sqlite3.Row]] = []
     for row in rows:
         for start, end in _mention_spans(normalized, str(row["alias_normalized"])):
             matches.append((start, end, row))
     if not matches:
         return QueryEntityResolution()
-    longest: dict[tuple[int, int], list[sqlite3.Row]] = {}
-    occupied: list[tuple[int, int]] = []
-    for start, end, row in sorted(matches, key=lambda item: (-(item[1] - item[0]), item[0], item[1])):
-        same_span = (start, end) in longest
-        if not same_span and any(start < used_end and end > used_start for used_start, used_end in occupied):
-            continue
-        if not same_span:
-            occupied.append((start, end))
-        longest.setdefault((start, end), []).append(row)
-    selected = [row for span in sorted(longest) for row in longest[span]]
+    grouped: dict[tuple[int, int], list[sqlite3.Row]] = {}
+    for start, end, row in matches:
+        grouped.setdefault((start, end), []).append(row)
+    spans = sorted(grouped)
+    overlapping = any(_spans_overlap(left, right) for index, left in enumerate(spans) for right in spans[index + 1 :])
+    selected = [row for span in spans for row in grouped[span]]
     entity_ids = tuple(sorted({str(row["canonical_entity_id"]) for row in selected}))
-    ambiguous = any(len({str(row["canonical_entity_id"]) for row in group}) > 1 for group in longest.values())
-    ambiguous = ambiguous or len(entity_ids) != 1
+    same_span_ambiguous = any(
+        len({(str(row["canonical_entity_id"]), str(row["entity_type"])) for row in group}) > 1
+        for group in grouped.values()
+    )
     proof_ids = tuple(sorted({str(row["id"]) for row in selected}))
     rewrite_terms = tuple(sorted({str(row["display_name"]) for row in selected}))
-    confidence: ConfidenceClass = "ambiguous" if ambiguous else "low"
+    mentions: list[QueryEntityMention] = []
+    if not overlapping:
+        for start, end in spans:
+            group = grouped[(start, end)]
+            targets = {(str(row["canonical_entity_id"]), str(row["entity_type"])): row for row in group}
+            if len(targets) != 1:
+                continue
+            (entity_id, entity_type), row = next(iter(targets.items()))
+            mentions.append(
+                QueryEntityMention(
+                    start,
+                    end,
+                    str(row["alias_normalized"]),
+                    entity_id,
+                    entity_type,
+                    str(row["id"]),
+                )
+            )
+    reason: EntityFallbackReason | None
+    if overlapping or same_span_ambiguous:
+        reason = "ambiguous_alias"
+    elif len(entity_ids) != 1:
+        reason = "multiple_entities"
+    else:
+        reason = "incomplete_links"
+    confidence: ConfidenceClass = "ambiguous" if reason in {"ambiguous_alias", "multiple_entities"} else "low"
     filter_id = None
-    if not ambiguous and _link_coverage_complete(connection, namespace, entity_ids[0]):
-        confidence = "high"
-        filter_id = entity_ids[0]
+    if reason == "incomplete_links":
+        try:
+            complete = _link_coverage_complete(connection, namespace, entity_ids[0])
+        except sqlite3.Error:
+            return QueryEntityResolution(
+                mentions=tuple(sorted({str(row["alias_normalized"]) for row in selected})),
+                resolved_ids=entity_ids,
+                entity_types=tuple(sorted({str(row["entity_type"]) for row in selected})),
+                confidence_class="low",
+                proof_ids=proof_ids,
+                rewrite_terms=rewrite_terms,
+                mention_spans=tuple(mentions),
+                resolution_reason="resolution_error",
+            )
+        if complete:
+            confidence = "high"
+            filter_id = entity_ids[0]
+            reason = None
     return QueryEntityResolution(
         mentions=tuple(sorted({str(row["alias_normalized"]) for row in selected})),
         resolved_ids=entity_ids,
@@ -123,6 +228,8 @@ def resolve_query_entity(
         proof_ids=proof_ids,
         rewrite_terms=rewrite_terms,
         filter_entity_id=filter_id,
+        mention_spans=tuple(mentions),
+        resolution_reason=reason,
     )
 
 
@@ -132,28 +239,23 @@ def plan_query_entity(
     namespace: str,
     mode: str,
 ) -> QueryEntityPlan:
-    """Resolve before expansion and produce a deterministic wide-search rewrite when needed."""
+    """Resolve before expansion and produce a fail-wide immutable query plan."""
 
-    try:
-        resolution = resolve_query_entity(connection, query, namespace) if mode != "off" else QueryEntityResolution()
-    except sqlite3.Error:
-        resolution = QueryEntityResolution()
-    filter_mode = "off"
-    rewrite = None
-    if resolution.mentions:
-        if mode == "observe":
-            filter_mode = "observe"
-        elif resolution.confidence_class == "high":
-            filter_mode = mode
-        elif resolution.rewrite_terms:
-            filter_mode = "rewrite"
-            existing = query.casefold()
-            additions = [term for term in resolution.rewrite_terms if term.casefold() not in existing]
-            rewritten = " ".join((query, *additions)).strip()
-            rewrite = rewritten if rewritten != query else None
-        else:
-            filter_mode = "wide"
-    return QueryEntityPlan(resolution, rewrite, filter_mode)
+    if mode not in {"off", "observe", "enforce"}:
+        raise ValueError("entity constraint mode must be off, observe, or enforce")
+    if mode == "off":
+        resolution = QueryEntityResolution(resolution_reason="mode_off")
+        return QueryEntityPlan(resolution, None, "", query, "off", "mode_off")
+    resolution = resolve_query_entity(connection, query, namespace)
+    fallback_reason = resolution.resolution_reason
+    normalized = unicodedata.normalize("NFKC", query).casefold()
+    residual = _residual_query(normalized, resolution.mention_spans)
+    if resolution.confidence_class != "high" or resolution.filter_entity_id is None:
+        return QueryEntityPlan(resolution, None, residual, query, "wide", fallback_reason)
+    if mode == "observe":
+        return QueryEntityPlan(resolution, resolution.filter_entity_id, residual, query, "observe", None)
+    search_query = residual or query
+    return QueryEntityPlan(resolution, resolution.filter_entity_id, residual, search_query, "entity", None)
 
 
 def filter_entity_candidates(

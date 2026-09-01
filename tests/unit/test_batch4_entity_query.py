@@ -144,7 +144,7 @@ def test_entity_constraint_filters_existing_channels_only_in_enforce_mode() -> N
     assert observe_trace.trace.entity_filtered_count == 1
 
 
-def test_low_confidence_entity_rewrites_original_without_extra_rrf_channels() -> None:
+def test_low_confidence_entity_keeps_original_without_extra_rrf_channels() -> None:
     connection = _connection()
     connection.execute("DELETE FROM claim_entity_links")
     recall = SimpleNamespace(
@@ -164,4 +164,4 @@ def test_low_confidence_entity_rewrites_original_without_extra_rrf_channels() ->
     expansion = _QueryExpansionSession(service, recall)
 
     assert len(expansion.weighted_queries) == 1
-    assert expansion.weighted_queries[0].text == "pony settings Local Pony"
+    assert expansion.weighted_queries[0].text == "pony settings"
