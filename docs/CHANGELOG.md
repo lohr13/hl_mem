@@ -2,6 +2,19 @@
 
 ## v1.1.0（2026-09-01）
 
+### 来源治理、可解释性与发布硬化
+
+- Event 新增 `origin_class` 与 `session_kind` 两个受控字段；旧 API、旧归档和历史行默认 `unknown`，不做历史
+  重分类。Hermes 从结构化 session/tool 元数据确定性标记来源；外部 Tool 后的 Agent 转述保持
+  `external_derived`，不使用 LLM 猜测来源或核验事实。
+- `[provenance].mode="enforce"` 下，外部/cron 内容仍可保存，但只形成低权威、带时间和 Evidence 的观察；
+  heartbeat/subagent Event 保留，自动提取在任何模型调用前终止。`observe` 只记录决策，未知宿主保持 1.0 行为。
+- 新增只读 `hl-mem explain claim <id> [--json]`；Context Packet 的既有 `evidence[]` 可携带有界来源提示，Hermes
+  对外部或自动来源只增加一条计入 token 预算的安全说明。Claim 正文、Tool 输出、URL 凭据/路径/查询和密钥
+  不进入解释或提示。
+- Query Expansion 在 `mode=off` 时忽略停放的线路覆盖，活动模式仍 fail-closed；Hermes install/doctor 明示
+  `<HERMES_HOME>` 配置归属，并检测 gateway 进程内已加载版本与当前安装/Git 身份的分叉。
+
 ### Phase 4：提取职责收口与遗留清理
 
 - `LLMExtractor` 保持兼容门面和 Claim 准入/投影语义；分块、schema 重试、截断二分、soft split、delta repair、

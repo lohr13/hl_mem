@@ -359,9 +359,10 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence, extraction pre-filtering, the independent tag channel, and a PostgreSQL connectivity probe.
 
-The current baseline is v1.1.0 with 59 immutable, forward-only migrations. Migrations 055–057 add Claim-mutation
+The current baseline is v1.1.0 with 60 immutable, forward-only migrations. Migrations 055–057 add Claim-mutation
 auditing and retire the legacy conflict judge; migration 058 terminates pending pre-upgrade semantic work, and migration
-059 adds provenance to relation edges. Stop all writers and back up both the primary database and tombstone sidecar
+059 adds provenance to relation edges. Migration 060 adds legacy-safe Event origin/session fields. Stop all writers and
+back up both the primary database and tombstone sidecar
 before upgrading; old binaries must not reopen an upgraded database.
 
 ## Documentation

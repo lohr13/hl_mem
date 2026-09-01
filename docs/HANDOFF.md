@@ -7,7 +7,7 @@
 - **分支**：`develop/1.1`（本地候选，尚未推送）
 - **版本**：v1.1.0
 - **阶段**：功能与工程门禁收口；待本地完整验证后由维护者批准发布
-- **Schema**：59 migrations；全部不可变、仅向前执行
+- **Schema**：60 migrations；全部不可变、仅向前执行
 - **运行时**：Python 3.12–3.14；SQLite 为权威存储
 - **发布原则**：候选版本完成本地真实链路观察，稳定提交通过常规 GitHub Tests 后创建不可变标签
 
@@ -27,6 +27,8 @@
 - 发布证据聚合、CodeQL、依赖审计、SBOM、Git 历史密钥扫描及完整 SHA Action 固定已接入。
 - 1.1 增加只读运行报告与统一费用观测、高置信实体约束、真实外部 Provider 插件实证，并完成 Recall 与
   LLMExtractor 职责拆分；未增加 Graph、额外实体 LLM 或新的权威存储。
+- 1.1 增加 Event 来源/session 治理、Hermes 确定性传播、自动会话门控、只读 `explain claim` 与有界 Context
+  来源提示；不新增模型调用，不执行事实核验或历史回填。
 - 本地全量门禁为 2996 passed、4 skipped、108 subtests，覆盖率 87.88%；Python 3.12、3.13、3.14
   全新环境的 wheel 安装、导入和 CLI 启动均通过。
 

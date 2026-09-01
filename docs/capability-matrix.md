@@ -25,6 +25,7 @@
 | 名称 | 成熟度 | 默认模式 | 外部 API | 写数据库 | 降级行为 | 晋级标准 |
 |---|---|---:|---|---|---|---|
 | Event 幂等摄入与证据链 | stable | `on` | 否 | 是 | 写入或约束失败时事务回滚并返回具体错误 | 保持跨版本事务、幂等、并发和证据完整性回归 |
+| 来源与 Session 治理 | beta | `enforce` | 否 | 是，Event 两字段与审计 | `unknown` 保持旧行为；外部内容保留但降权；heartbeat/subagent 在模型调用前停提取；`observe` 不改结果 | 宿主标签、无额外模型调用、来源不洗白、Context 隐私和长期运行回归持续全绿 |
 | Claim assertion 门控 | beta | `unknown`（legacy） | 否 | 是 | unknown 只可观测，不授权 supersede 或过滤注入 | 新写入分类精度和时间关链生产回放持续满足门禁 |
 | 确定性时间关链 | beta | `temporal-v1` 窄规则 | 否 | 是 | 仅 observation 的原子状态/显式价格更正可自动；非互斥 slot 保持共存；灰区转人工 pair case | 固定 14 条 correct 保持 precision 1.0，合法共存误接链持续为 0 |
 | `config.version` latest-wins | beta | `observe` | 否 | 是，仅 audit；`enforce` 才关链 | 仅可信 `report-version` proof 与 exact coordinate 可授权；灰区并存可见且不建人工队列；`off` 停止新建议和动作 | ADR-0004 两份独立 400 案保持 exact 800/800、eligible 320/320、危险误关链和跨坐标动作均为 0 |

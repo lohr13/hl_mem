@@ -34,6 +34,18 @@ Beta and experimental contracts may change only in a minor release, provided the
 includes migration instructions. Experimental contracts have no compatibility window and must be visibly marked as
 experimental wherever they are exposed.
 
+The v1.1 Event provenance and session-governance contract is Beta. `origin_class` and `session_kind` are additive Event
+fields with `unknown` defaults, so v1.0 clients and imported archives preserve their prior behavior. `observe` is
+behavior-compatible shadowing; `enforce` applies deterministic admission without adding model calls. External evidence
+may still form a Claim, but remains low-authority and source-attributed. Heartbeat and subagent Events remain durable while
+automatic extraction is blocked before any model call. This contract tracks declared origin; it does not verify facts,
+infer sentence-level lineage, backfill historical Events, or treat a user's retention request as truth confirmation.
+
+`hl-mem explain claim` is a stable read-only CLI surface. Its output describes current persisted state and direct
+Evidence; it does not promise reconstruction of historical admission after bounded audit retention. Context Packet keeps
+its existing top-level schema and adds provenance only inside the already-open `evidence[]` object. Direct-user and legacy
+unknown rendering remain byte-equivalent; external or automated evidence may add one bounded source caution.
+
 ### SQLite upgrades and rollback
 
 Internal SQLite tables are not a public SQL API. SQLite migrations are immutable after release and forward-only, and
@@ -43,6 +55,9 @@ The Core 1.0 automation migration terminates only pending semantic jobs and aban
 disabled by the new defaults; running and terminal jobs are not rewritten. The relation-provenance migration preserves
 existing edges as `legacy`. New application-managed edges record `deterministic`, `manual`, or `approved_proposal`
 provenance, and Proposal approval creates the edge and marks the Proposal applied in one transaction.
+Migration 060 adds the two Event provenance columns with `unknown` defaults and does not reclassify historical rows.
+Rollback after opening a database at migration 060 follows the recovery-set procedure below; schema downgrade is not
+supported.
 
 Before an irreversible upgrade, the CLI requires a verified pre-upgrade recovery set: the main database backup, its
 backup manifest, the separately preserved authoritative tombstone ledger (`<database>.tombstones.db`), the prior

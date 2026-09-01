@@ -133,7 +133,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 59 immutable SQL migrations (001-059)
+│   └── migrations/           # 60 immutable SQL migrations (001-060)
 ├── workers/
 │   ├── worker.py             # Job leasing, progress, heartbeat, maintenance orchestration
 │   ├── automation.py         # Typed enablement policy for semantic and deferred tasks
@@ -192,6 +192,13 @@ preference behavior; tags improve discovery without becoming hard schema.
 Context Packet v1 is a delivery projection rather than another stored memory type. It freezes the final ordered,
 token-budgeted items for one recall, carries evidence and answerability, and assigns a fresh `feedback_id` to each
 delivered item so later feedback can be attributed to that exposure.
+
+Event provenance is deliberately small: `origin_class` records the declared information origin and `session_kind`
+records the host session category. Hermes derives these labels from structured host/tool metadata; extraction never asks
+an LLM to guess them. Claim Evidence links remain the single lineage mechanism. At write time, the most conservative
+linked Event controls source authority and automated-session admission; at recall time, one batch query projects only
+bounded origin/session/time/host hints into `evidence[]`. External information remains storable but cannot be washed into
+trusted user knowledge by an Agent paraphrase. Direct-user and legacy-unknown packets remain unchanged.
 
 Answerability is shared across the application API, Context Packet, benchmark readers, and evaluation runners:
 `no_evidence` is hard abstention with no retrieval candidate, while `low_confidence` is soft abstention with candidates
@@ -451,7 +458,7 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 59 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 60 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used
@@ -466,7 +473,9 @@ entities and Claim links, plan outcomes, and slot-aware dedup strategy metadata.
 database-boundary auditing for Claim UPDATE/DELETE mutations. Migration 057 retires non-terminal legacy conflict-judge
 jobs, clears their leases, and marks linked open cases dirty without modifying succeeded/dead history. Migration 058
 terminates pending semantic jobs and abandons pending resurrection work disabled by the Core 1.0 defaults; migration 059
-adds immutable provenance to relation edges and binds approved-Proposal edges to their source Proposal. They run automatically on first open;
+adds immutable provenance to relation edges and binds approved-Proposal edges to their source Proposal. Migration 060
+adds `origin_class` and `session_kind` to Events with legacy-safe `unknown` defaults and no historical reclassification.
+They run automatically on first open;
 schema migration never adjudicates conflicts, applies dedup pairs, or closes plans. The optional `sqlite_vec.py` data migration owns the dimension-specific
 derived vector table; the default remains exact `sqlite_scan`.
 

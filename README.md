@@ -164,6 +164,10 @@ hl-mem hermes upgrade --hermes-home <HERMES_HOME>
 
 省略 `--hermes-home` 时会从环境变量和常见目录探测 Hermes 根目录。两条命令在目标副本一致时均保持 no-op；`install` 遇到漂移会拒绝覆盖，`upgrade` 会先备份既有插件文件再刷新。`hlmem doctor` 可区分路径正确、路径错误和副本漂移，并分别诊断 daemon、插件与 Context Packet wire 的静态 major 兼容性；它不会执行动态协商或自动升级。插件安装到 `<HERMES_HOME>/plugins/hl_mem/`，并固定读取 `<HERMES_HOME>/hl_mem.toml` 与 `<HERMES_HOME>/.env`，不依赖 Hermes 进程 CWD，也不会读取源码仓库中的 `.env`。安装命令只报告这两个文件的绝对路径和是否存在，不读取、比较或复制密钥；按其输出的 `hl-mem doctor --config ... --env-file ...` 命令检查实际运行配置。实际安装或升级后必须重启所有已导入 hl_mem 的 Hermes gateway/CLI 进程；不得用仍持有旧 editable checkout 模块的进程验证新配置。适配器通过本地 HTTP 提供超时、熔断、预取和 Episode/Trace 同步。
 
+Gateway 每次成功加载或注册失败都会写入脱敏运行时身份，`doctor` 会在进程内版本、包路径或 Git 身份与当前安装
+分叉时告警。Hermes 还会从结构化 session/tool 元数据确定性标记来源：外部 Tool 内容经 Agent 转述后仍保持外部
+来源，不会自动洗白为用户确认事实。
+
 ### 常驻部署与 systemd
 
 常驻部署使用 `scripts/healthcheck.py` 探测 `/healthz`，将重启和告警交给 systemd、Windows 计划任务或容器编排平台。
@@ -436,8 +440,9 @@ thinking；benchmark reader 与生产 recall/context packing 是不同契约。�
 - **Beta**：多查询召回、关系候选发现、反馈驱动维护、提取蕴含审计、语义去重审计、MCP Server、Benchmark 与 LongMemEval。
 - **Experimental**：图片证据与其他显式标记的预览能力；默认关闭，不提供低质量回退。
 
-当前基线为 v1.1.0，共 59 个不可变、仅向前执行的 SQL Migration。migration 055–057 增加 Claim mutation 审计并
-退役遗留冲突判官；migration 058 终止升级前遗留的 pending 语义任务，migration 059 为关系边增加来源闭环。升级前仍须
+当前基线为 v1.1.0，共 60 个不可变、仅向前执行的 SQL Migration。migration 055–057 增加 Claim mutation 审计并
+退役遗留冲突判官；migration 058 终止升级前遗留的 pending 语义任务，migration 059 为关系边增加来源闭环，
+migration 060 为 Event 增加 legacy-safe 来源/session 字段。升级前仍须
 停止写入者并备份主库与 tombstone sidecar，旧二进制不得再打开已升级数据库。
 
 ## 文档
