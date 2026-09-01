@@ -239,7 +239,8 @@ hl-mem --db copy.db expired cleanup --apply --expected-count 4508 --limit 100
 
 ```bash
 hl-mem --db copy.db coordinates repair-model-history
-hl-mem --db copy.db coordinates repair-model-history --apply --expected-count 3
+hl-mem --db copy.db coordinates repair-model-history --apply --expected-count 3 \
+  --selection-token <token-from-dry-run>
 ```
 
 该命令只处理有原始 Evidence、明确属于 HL-Mem 提取任务且早于当前运行配置的未归一声明；不改写正文，不处理

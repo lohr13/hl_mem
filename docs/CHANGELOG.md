@@ -5,10 +5,11 @@
 ### 类型化模型坐标与历史替代
 
 - 将 RC2 的来源约束坐标解析扩展到回答、Reader、Judge、Embedding、Reranker 等受控任务；只有原始 Evidence
-  与 Claim 同时证明唯一任务时才形成 `choice.model + task` 坐标，模糊声明继续保留但不参与自动替代。
+  与任务限定主体同时证明唯一任务时才形成 `choice.model + task` 坐标，模型名本身不作为任务证据，模糊声明继续保留但不参与自动替代。
 - 当前声明继续复用既有原子 conflict/state-change 事务，只替代完整同主体、同 slot、同 task 的旧声明；未扩大
   `state_latest_wins`，未增加 Worker、Migration、配置或任何模型调用。
-- 新增 `hl-mem coordinates repair-model-history`：默认只读，`--apply` 必须同时提供 `--expected-count`；仅把有
+- 新增 `hl-mem coordinates repair-model-history`：默认只读，`--apply` 必须同时提供 `--expected-count` 和只读结果的
+  `--selection-token`，候选或权威新值变化即拒绝执行；仅把有
   原始 Evidence、明确属于 HL-Mem 提取任务且早于唯一运行配置投影的存量声明纳入替代链，不改写或删除历史正文。
 - TTL 到期与 expired history 回收保持原样；RC3 处理的是未到期但已被同坐标权威新值替代的声明。
 

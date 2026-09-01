@@ -139,3 +139,15 @@ def test_arbitrary_task_decorated_subject_is_not_normalized() -> None:
     assert claim.subject == "Acme answering model"
     assert claim.canonical_slot == "choice.model"
     assert claim.qualifiers == {"task": "answering", "state_change": True}
+
+
+@pytest.mark.parametrize("model", ["text-embedding-v4", "qwen3-reranker"])
+def test_model_identifier_alone_does_not_prove_the_operational_task(model: str) -> None:
+    statement = f"HL-Mem currently uses {model}"
+
+    claim = _extract(subject="HL-Mem", value=statement, evidence=statement)
+
+    assert claim.subject == "hl_mem"
+    assert claim.canonical_attribute == "choice.model"
+    assert claim.canonical_slot is None
+    assert claim.qualifiers == {}

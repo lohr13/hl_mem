@@ -125,6 +125,29 @@ def test_history_inspection_is_read_only_and_selects_only_proven_older_extractio
     database = Database(settings=settings)
     connection = database.open()
     extraction_id, answering_id, missing_evidence_id, future_id, future_valid_id = _seed_history(connection)
+    other_entity_id = _seed_uncoordinated(
+        connection,
+        claim_id="other-entity",
+        subject="HL-Mem extraction model",
+        statement="HL-Mem extraction model currently uses other-entity-model",
+    )
+    inference_id = _seed_uncoordinated(
+        connection,
+        claim_id="inference",
+        subject="HL-Mem extraction model",
+        statement="HL-Mem extraction model currently uses inferred-model",
+    )
+    connection.execute(
+        "INSERT INTO canonical_entities(id,namespace_key,entity_type,canonical_key,display_name,status,created_at,updated_at) "
+        "VALUES('project:other','default','project','other','Other','active',?,?)",
+        (OLD, OLD),
+    )
+    connection.execute(
+        "UPDATE claims SET subject_canonical_entity_id='project:other' WHERE id=?",
+        (other_entity_id,),
+    )
+    connection.execute("UPDATE claims SET assertion_kind='inference' WHERE id=?", (inference_id,))
+    connection.commit()
     winner = report_extraction_runtime(connection, settings)
     before_changes = connection.total_changes
 
@@ -136,7 +159,10 @@ def test_history_inspection_is_read_only_and_selects_only_proven_older_extractio
     assert preview["winner_claim_id"] == winner.claim_id
     assert preview["candidate_claim_count"] == 1
     assert preview["candidate_claim_ids"] == [extraction_id]
-    assert preview["excluded_claim_ids"] == sorted([answering_id, missing_evidence_id, future_id, future_valid_id])
+    assert len(preview["selection_token"]) == 64
+    assert preview["excluded_claim_ids"] == sorted(
+        [answering_id, missing_evidence_id, future_id, future_valid_id, other_entity_id, inference_id]
+    )
     database.close()
 
 
@@ -146,13 +172,22 @@ def test_history_repair_is_count_guarded_transactional_and_idempotent(tmp_path) 
     connection = database.open()
     extraction_id, answering_id, _, _, _ = _seed_history(connection)
     winner = report_extraction_runtime(connection, settings)
+    preview = inspect_model_coordinate_history(connection)
 
     with pytest.raises(ConflictError, match="count mismatch"):
-        apply_model_coordinate_history_repair(connection, expected_count=2)
+        apply_model_coordinate_history_repair(
+            connection,
+            expected_count=2,
+            expected_selection_token=preview["selection_token"],
+        )
 
     assert connection.execute("SELECT status FROM claims WHERE id=?", (extraction_id,)).fetchone()[0] == "active"
 
-    result = apply_model_coordinate_history_repair(connection, expected_count=1)
+    result = apply_model_coordinate_history_repair(
+        connection,
+        expected_count=1,
+        expected_selection_token=preview["selection_token"],
+    )
 
     assert result["dry_run"] is False
     assert result["applied_claim_count"] == 1
@@ -189,7 +224,50 @@ def test_history_repair_fails_closed_without_one_authoritative_winner(tmp_path) 
     assert preview["status"] == "blocked"
     assert preview["blocker"] == "authoritative_winner_count:0"
     with pytest.raises(ConflictError, match="authoritative winner"):
-        apply_model_coordinate_history_repair(connection, expected_count=0)
+        apply_model_coordinate_history_repair(
+            connection,
+            expected_count=0,
+            expected_selection_token="0" * 64,
+        )
+    database.close()
+
+
+def test_history_repair_rejects_same_count_selection_drift(tmp_path) -> None:
+    settings = _settings(tmp_path / "selection-drift.db")
+    database = Database(settings=settings)
+    connection = database.open()
+    first_id = _seed_uncoordinated(
+        connection,
+        claim_id="first",
+        subject="HL-Mem extraction model",
+        statement="HL-Mem extraction model currently uses first-model",
+    )
+    second_id = _seed_uncoordinated(
+        connection,
+        claim_id="second",
+        subject="HL-Mem extraction model",
+        statement="HL-Mem extraction model currently uses second-model",
+        with_evidence=False,
+    )
+    report_extraction_runtime(connection, settings)
+    preview = inspect_model_coordinate_history(connection)
+    assert preview["candidate_claim_ids"] == [first_id]
+    connection.execute(
+        "UPDATE evidence_links SET derived_id=?,evidence_id=? WHERE derived_id=?",
+        (second_id, "event-second", first_id),
+    )
+    connection.commit()
+
+    replacement = inspect_model_coordinate_history(connection)
+    assert replacement["candidate_claim_count"] == 1
+    assert replacement["candidate_claim_ids"] == [second_id]
+    with pytest.raises(ConflictError, match="selection changed"):
+        apply_model_coordinate_history_repair(
+            connection,
+            expected_count=1,
+            expected_selection_token=preview["selection_token"],
+        )
+    assert connection.execute("SELECT status FROM claims WHERE id=?", (second_id,)).fetchone()[0] == "active"
     database.close()
 
 
@@ -224,6 +302,19 @@ def test_coordinate_repair_cli_defaults_to_read_only_and_requires_count_for_appl
     with pytest.raises(ConflictError, match="expected-count"):
         cli_module.main(["coordinates", "repair-model-history", "--db", settings.database_path, "--apply"])
 
+    with pytest.raises(ConflictError, match="selection-token"):
+        cli_module.main(
+            [
+                "coordinates",
+                "repair-model-history",
+                "--db",
+                settings.database_path,
+                "--apply",
+                "--expected-count",
+                "1",
+            ]
+        )
+
     cli_module.main(
         [
             "coordinates",
@@ -233,6 +324,8 @@ def test_coordinate_repair_cli_defaults_to_read_only_and_requires_count_for_appl
             "--apply",
             "--expected-count",
             "1",
+            "--selection-token",
+            preview["selection_token"],
         ]
     )
 

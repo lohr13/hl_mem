@@ -25,14 +25,18 @@ def add_model_coordinate_repair_command(commands: Any) -> None:
     repair.add_argument("--namespace", default="default")
     repair.add_argument("--apply", action="store_true")
     repair.add_argument("--expected-count", type=int)
+    repair.add_argument("--selection-token")
 
 
 def handle_model_coordinate_repair_command(args: Any, settings: Settings) -> bool:
     if getattr(args, "command", None) != "coordinates":
         return False
     expected_count = getattr(args, "expected_count", None)
+    selection_token = getattr(args, "selection_token", None)
     if args.apply and expected_count is None:
         raise ConflictError("--expected-count is required with --apply")
+    if args.apply and selection_token is None:
+        raise ConflictError("--selection-token is required with --apply")
     if not args.apply:
         connection = open_readonly_database(Path(settings.database_path))
         try:
@@ -41,11 +45,13 @@ def handle_model_coordinate_repair_command(args: Any, settings: Settings) -> boo
             connection.close()
     else:
         assert expected_count is not None
+        assert selection_token is not None
         database = Database(settings=settings)
         try:
             result = apply_model_coordinate_history_repair(
                 database.open(),
                 expected_count=expected_count,
+                expected_selection_token=selection_token,
                 namespace=args.namespace,
             )
         finally:

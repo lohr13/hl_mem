@@ -22,7 +22,7 @@ TTL expiry is a separate lifecycle concern. RC3 does not change it.
 
 Generalize the RC2 source-bounded projection into one pure resolver for the closed operational-model task registry. The resolver recognizes extraction, answering, reader, judge, embedding, reranking, summarization, compression, translation, code generation, image generation, vision, verification, and testing aliases.
 
-For `choice.model`, a task is accepted only when exactly one task meaning is present in both original Evidence and the Claim's public subject/value. Task-decorated HL-Mem subjects are normalized to `hl_mem` only when they match a closed grammar. Arbitrary named subjects remain unchanged. Currentness produces the existing non-coordinate `state_change=true` signal only when supported by Evidence.
+For `choice.model`, a task is accepted only when exactly one task meaning is present in both original Evidence and the Claim's task-decorated subject. A model identifier in the value is not task evidence. Task-decorated HL-Mem subjects are normalized to `hl_mem` only when they match a closed grammar. Arbitrary named subjects remain unchanged. Currentness produces the existing non-coordinate `state_change=true` signal only when supported by Evidence.
 
 The resolver validates the slot after qualifiers are complete. Ambiguous or unsupported statements remain storable but receive no operational slot or conflict key. The LLM prompt and output schema do not change.
 
@@ -45,7 +45,7 @@ These are separate chains. Missing or ambiguous task coordinates never trigger a
 
 Add a CLI application service that treats the unique active runtime-config extraction Claim as the authoritative winner. It inspects older active Claims and selects only candidates whose stored Evidence independently resolves to the same complete extraction coordinate.
 
-Dry-run is read-only and reports the winner, candidate IDs, exclusions, and expected count. Apply requires `--expected-count`, repeats the selection in one immediate transaction, fails closed if the target set changed, and uses the existing repository supersede operation. It does not rewrite Claim text, invent coordinates, delete rows, or touch unrelated task families. The mutation remains visible through existing audit and supersede history.
+Dry-run is read-only and reports the winner, candidate IDs, exclusions, expected count, and a digest of the exact selection. Apply requires both `--expected-count` and `--selection-token`, repeats the selection in one immediate transaction, fails closed if the target set or winner changed, and uses the existing repository supersede operation. It does not rewrite Claim text, invent coordinates, delete rows, or touch unrelated task families. The mutation remains visible through existing audit and supersede history.
 
 The command is manual and explicit. Package installation, startup, migration, and Worker maintenance never run it automatically.
 

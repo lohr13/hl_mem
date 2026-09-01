@@ -207,7 +207,8 @@ current runtime projection with an exact count guard:
 
 ```bash
 hl-mem --db copy.db coordinates repair-model-history
-hl-mem --db copy.db coordinates repair-model-history --apply --expected-count 3
+hl-mem --db copy.db coordinates repair-model-history --apply --expected-count 3 \
+  --selection-token <token-from-dry-run>
 ```
 
 The command selects only older, source-proven HL-Mem extraction statements. It does not rewrite content, touch answering,

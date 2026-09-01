@@ -49,7 +49,7 @@
 
 - [ ] Add failing tests for read-only dry-run, exact candidate selection, exclusions, stale expected count, transactional apply, idempotence, and cross-task isolation.
 - [ ] Implement the smallest read-only inspection result and transactional apply service using existing repositories.
-- [ ] Add `hl-mem coordinates repair-model-history`; default to dry-run and require `--apply --expected-count N` for mutation.
+- [ ] Add `hl-mem coordinates repair-model-history`; default to dry-run and require `--apply --expected-count N --selection-token TOKEN` for mutation.
 - [ ] Verify CLI JSON/text output contains IDs and counts but no secrets or sensitive Evidence text.
 - [ ] Run focused database, audit, CLI, migration, formatting, typing, and complexity gates.
 - [ ] Commit the repair tool independently.
@@ -66,4 +66,3 @@
 - [ ] Merge to `main`, rerun focused/full release evidence on the merged SHA, and push `main`.
 - [ ] Wait for GitHub Tests and Security for the exact SHA.
 - [ ] Create and push annotated `v1.1.0rc3`; wait for Publish and release gates, then verify PyPI wheel/sdist and GitHub release.
-

@@ -76,14 +76,14 @@ def _contains_alias(text: str, alias: str) -> bool:
     return alias in text
 
 
-def _matched_tasks(subject: str, value: str, evidence_quote: str) -> tuple[str, ...]:
+def _matched_tasks(subject: str, evidence_quote: str) -> tuple[str, ...]:
     evidence = _normalize(evidence_quote)
-    public_claim = _normalize(f"{subject} {value}")
+    normalized_subject = _normalize(subject)
     return tuple(
         task
         for task, aliases in _TASK_ALIASES.items()
         if any(_contains_alias(evidence, alias) for alias in aliases)
-        and any(_contains_alias(public_claim, alias) for alias in aliases)
+        and any(_contains_alias(normalized_subject, alias) for alias in aliases)
     )
 
 
@@ -117,7 +117,7 @@ def project_model_coordinates(
     """Project source-proven model-task coordinates; ambiguity stays uncoordinated."""
     if attribute != "choice.model":
         return ModelCoordinateProjection(subject, None, False)
-    tasks = _matched_tasks(subject, value, evidence_quote)
+    tasks = _matched_tasks(subject, evidence_quote)
     task = tasks[0] if len(tasks) == 1 else None
     return ModelCoordinateProjection(
         _canonical_hl_mem_subject(subject, task),

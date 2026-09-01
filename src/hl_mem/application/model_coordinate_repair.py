@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -102,7 +103,27 @@ def _blocked_preview(namespace: str, winner_count: int) -> dict[str, Any]:
         "candidate_claim_count": 0,
         "candidate_claim_ids": [],
         "excluded_claim_ids": [],
+        "selection_token": None,
     }
+
+
+def _selection_token(namespace: str, winner: sqlite3.Row, candidate_ids: list[str]) -> str:
+    payload = json.dumps(
+        {
+            "namespace": namespace,
+            "winner": {
+                "id": str(winner["id"]),
+                "value_json": str(winner["value_json"]),
+                "valid_from": winner["valid_from"],
+                "recorded_from": winner["recorded_from"],
+            },
+            "candidate_ids": sorted(candidate_ids),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def inspect_model_coordinate_history(
@@ -116,7 +137,8 @@ def inspect_model_coordinate_history(
         return _blocked_preview(namespace, len(winners))
     winner = winners[0]
     rows = connection.execute(
-        "SELECT id,subject_entity_id,value_json,valid_from,observed_at,recorded_from,source_authority FROM claims "
+        "SELECT id,subject_entity_id,subject_canonical_entity_id,value_json,canonical_slot,assertion_kind,"
+        "valid_from,observed_at,recorded_from,source_authority FROM claims "
         "WHERE namespace_key=? AND status='active' AND canonical_attribute='choice.model' "
         "AND id<>? AND COALESCE(json_extract(qualifiers_json,'$.runtime_config'),0)<>1 "
         "AND (canonical_slot IS NULL OR conflict_key IS NULL OR subject_canonical_entity_id IS NULL) "
@@ -132,6 +154,9 @@ def inspect_model_coordinate_history(
         eligible = (
             _is_older(row, winner)
             and candidate_authority <= winner_authority
+            and row["assertion_kind"] in {"observation", "unknown"}
+            and row["subject_canonical_entity_id"] in {None, "project:hl_mem"}
+            and row["canonical_slot"] in {None, "choice.model"}
             and not _has_open_conflict(connection, claim_id)
             and _source_proves_extraction(connection, row)
         )
@@ -145,6 +170,7 @@ def inspect_model_coordinate_history(
         "candidate_claim_count": len(candidates),
         "candidate_claim_ids": sorted(candidates),
         "excluded_claim_ids": sorted(excluded),
+        "selection_token": _selection_token(namespace, winner, candidates),
     }
 
 
@@ -152,6 +178,7 @@ def apply_model_coordinate_history_repair(
     connection: sqlite3.Connection,
     *,
     expected_count: int,
+    expected_selection_token: str,
     namespace: str = "default",
     recorded_at: str | None = None,
 ) -> dict[str, Any]:
@@ -170,6 +197,8 @@ def apply_model_coordinate_history_repair(
             raise ConflictError(
                 f"model coordinate repair count mismatch: expected {expected_count}, found {actual_count}"
             )
+        if preview["selection_token"] != expected_selection_token:
+            raise ConflictError("model coordinate repair selection changed since dry-run")
         winner_id = str(preview["winner_claim_id"])
         winner = connection.execute(
             "SELECT value_json,valid_from,observed_at,recorded_from FROM claims WHERE id=?",
