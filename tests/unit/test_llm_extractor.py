@@ -162,6 +162,19 @@ def test_compact_model_slot_does_not_forge_task_from_generic_subject() -> None:
 
 
 def test_compact_model_slot_keeps_explicit_source_bounded_task() -> None:
+    value = "HL-Mem judge 模型使用 qwen3.7-plus"
+    extractor = LLMExtractor(
+        _FakeLLMClient(_compact_choice_claim(subject="HL-Mem judge 模型", value=value, evidence_quote=value)),
+        ChunkingPolicy(10_000, 0, 2),
+    )
+
+    claim = extractor.extract(value)[0]
+
+    assert claim.canonical_slot == "choice.model"
+    assert claim.qualifiers == {"task": "judge"}
+
+
+def test_compact_model_slot_rejects_task_only_present_in_statement_body() -> None:
     value = "用户决定使用 qwen3.7-plus 作为 judge 模型"
     extractor = LLMExtractor(
         _FakeLLMClient(_compact_choice_claim(subject="用户", value=value, evidence_quote=value)),
@@ -170,8 +183,8 @@ def test_compact_model_slot_keeps_explicit_source_bounded_task() -> None:
 
     claim = extractor.extract(value)[0]
 
-    assert claim.canonical_slot == "choice.model"
-    assert claim.qualifiers == {"task": "judge"}
+    assert claim.canonical_slot is None
+    assert claim.qualifiers == {}
 
 
 def test_compact_required_subject_qualifier_must_be_explicit_in_evidence_quote() -> None:
