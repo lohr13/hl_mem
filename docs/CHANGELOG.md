@@ -1,5 +1,12 @@
 # HL-Mem 变更记录
 
+## v1.0.0（2026-09-01）
+
+- 将已完成真实 Provider、摄入、召回、迁移与恢复验证的 `1.0.0rc1` 提升为首个稳定版；运行时行为、数据库
+  schema、公共 REST/MCP/CLI 与 Provider 契约均未改变。
+- 删除与常规 Tests、release-gates 和每日 quality smoke 重复的 RC 日期证据工作流及远端 artifact 验证器；
+  稳定发布改为本地真实链路观察后，由同一稳定提交的一次常规 GitHub Tests 结果把关。
+
 ## v1.0.0rc1（2026-08-31）
 
 ### Core 1.0 Phase 6：可审计发布候选
