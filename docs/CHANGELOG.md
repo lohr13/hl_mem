@@ -15,7 +15,7 @@
 - Query Expansion 在 `mode=off` 时忽略停放的线路覆盖，活动模式仍 fail-closed；Hermes install/doctor 明示
   `<HERMES_HOME>` 配置归属，并检测 gateway 进程内已加载版本与当前安装/Git 身份的分叉。
 
-- `hl-mem ops report` 在 Hermes 已启用时优先读取受 64 KiB 上限保护的 `/healthz` Worker 快照；服务不可达时仍回退到只读任务心跳，避免空闲 Worker 被误报为停止，且不读取或输出业务正文。
+- `hl-mem ops report` 在 Hermes 已启用时优先读取受 64 KiB 上限保护的 `/healthz` Worker 快照；服务不可达时仍回退到只读任务心跳，避免空闲 Worker 被误报为停止。失败告警只覆盖所选报告窗口，历史 dead 任务仍保留计数但不形成永久告警；两条路径均不读取或输出业务正文。
 
 ### Phase 4：提取职责收口与遗留清理
 

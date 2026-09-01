@@ -165,6 +165,26 @@ def test_report_warns_without_claim_or_error_text_and_reports_backlogs(tmp_path:
     assert "provider raw error" not in encoded
 
 
+def test_report_keeps_historical_dead_jobs_visible_without_permanent_failure_warning(tmp_path: Path) -> None:
+    connection, database_path = _seeded_connection(tmp_path)
+    try:
+        _insert_job(
+            connection,
+            job_id="historical-dead",
+            job_type="extract_event",
+            status="dead",
+            created_at=NOW - timedelta(days=2),
+            last_error="historical provider failure",
+        )
+        report = build_ops_report(connection, **_inputs(tmp_path, database_path))
+    finally:
+        connection.close()
+
+    assert report["jobs"]["dead_count"] == 1
+    assert report["jobs"]["last_safe_failure_category"] is None
+    assert "failed_jobs" not in report["warnings"]
+
+
 def test_report_prefers_process_heartbeat_and_flags_large_wal(tmp_path: Path) -> None:
     connection, database_path = _seeded_connection(tmp_path)
     try:

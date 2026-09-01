@@ -575,7 +575,7 @@ def build_ops_report(
             if (utilization := value["utilization"]) is not None
         ):
             warnings.add("budget_near_limit")
-    if int(jobs["failed_count"]) + int(jobs["dead_count"]) > 0:
+    if jobs["last_safe_failure_category"] is not None:
         warnings.add("failed_jobs")
     if int(jobs["expired_running_leases"]) > 0:
         warnings.add("stale_running_jobs")
