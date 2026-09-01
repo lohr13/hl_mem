@@ -13,6 +13,7 @@ import pytest
 import hl_mem.cli as cli_module
 import hl_mem.doctor as doctor_module
 import hl_mem.observability.provider_diagnostics as provider_diagnostics
+from hl_mem.adapters.hermes.runtime_status import RuntimeIdentity, runtime_status_path, write_runtime_status
 from hl_mem.compatibility import (
     CONTEXT_PACKET_SCHEMA_MAJOR,
     CONTEXT_PACKET_SCHEMA_MINOR,
@@ -25,6 +26,7 @@ from hl_mem.doctor import (
     DaemonProbe,
     _check_daemon_compatibility,
     _check_hermes,
+    _check_hermes_runtime,
     _check_plugin_compatibility,
     _check_provider_plugins,
     _check_usage_ledger,
@@ -123,7 +125,7 @@ def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
         env_path=env_path,
         environ={},
     )
-    assert len(results) == 18
+    assert len(results) == 19
 
 
 def test_provider_doctor_reports_resolution_and_trust_without_disabled_imports(
@@ -869,3 +871,60 @@ def test_hermes_check_reports_plugin_drift(tmp_path: Path) -> None:
         "Hermes 插件",
         "检测到插件副本漂移，运行 hl-mem hermes upgrade",
     )
+
+
+def test_hermes_runtime_check_warns_without_loaded_runtime_evidence(
+    tmp_path: Path,
+) -> None:
+    result = _check_hermes_runtime(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.WARN
+    assert result.code == "hermes_runtime"
+    assert "restart" in result.detail.lower()
+
+
+def test_hermes_runtime_check_accepts_matching_loaded_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = RuntimeIdentity("1.1.0", str((tmp_path / "package").resolve()), "a" * 40)
+    write_runtime_status(tmp_path, identity, status="registered")
+    monkeypatch.setattr(doctor_module, "capture_runtime_identity", lambda: identity)
+
+    result = _check_hermes_runtime(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.OK
+    assert "1.1.0" in result.detail
+
+
+@pytest.mark.parametrize("failure", ["identity", "registration", "malformed"])
+def test_hermes_runtime_check_fails_closed_with_restart_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    current = RuntimeIdentity("1.1.0", str((tmp_path / "package").resolve()), "a" * 40)
+    if failure == "identity":
+        write_runtime_status(
+            tmp_path,
+            RuntimeIdentity("1.0.0", current.package_path, "b" * 40),
+            status="registered",
+        )
+    elif failure == "registration":
+        write_runtime_status(
+            tmp_path,
+            current,
+            status="registration_failed",
+            exception_type="RuntimeError",
+        )
+    else:
+        path = runtime_status_path(tmp_path)
+        path.parent.mkdir(parents=True)
+        path.write_text('{"secret": "must-not-surface"}', encoding="utf-8")
+    monkeypatch.setattr(doctor_module, "capture_runtime_identity", lambda: current)
+
+    result = _check_hermes_runtime(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.FAIL
+    assert "restart" in result.detail.lower()
+    assert "must-not-surface" not in result.detail

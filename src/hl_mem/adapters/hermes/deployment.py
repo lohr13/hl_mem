@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal, Sequence
 
 from hl_mem.adapters.hermes.discovery import find_hermes_home
+from hl_mem.adapters.hermes.runtime_status import runtime_status_path
 
 PLUGIN_FILES = ("__init__.py", "plugin.yaml", "contract.json")
 PLUGIN_SOURCE_DIR = Path(__file__).resolve().parent / "plugin"
@@ -91,6 +92,7 @@ def _print_configuration_ownership(result: DeploymentResult) -> None:
     print(f"Hermes secrets ({env_state}): {env_path}")
     print(f'Validate: hl-mem doctor --config "{config_path}" --env-file "{env_path}"')
     print("Repository .env is not used by the Hermes plugin.")
+    print(f"Hermes runtime evidence: {runtime_status_path(result.hermes_home)}")
 
 
 def deploy_plugin(

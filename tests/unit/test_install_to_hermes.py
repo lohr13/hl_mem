@@ -118,6 +118,7 @@ def test_cli_hermes_reports_owned_configuration_paths_without_secret_values(
     assert f"Hermes secrets ({state}): {env_path}" in output
     assert f'hl-mem doctor --config "{config_path}" --env-file "{env_path}"' in output
     assert "Repository .env is not used by the Hermes plugin." in output
+    assert f"Hermes runtime evidence: {(tmp_path / 'state' / 'hl_mem-runtime.json').resolve()}" in output
     assert "must-not-be-printed" not in output
 
 

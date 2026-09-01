@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def test_find_hermes_home_does_not_prefer_agent_source_checkout(
     tmp_path: Path,
@@ -74,3 +76,55 @@ def test_discovery_imports_without_project_or_third_party_dependencies() -> None
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "find_hermes_home"
+
+
+def test_plugin_registration_records_loaded_runtime_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = importlib.import_module("hl_mem.adapters.hermes.plugin")
+    records: list[tuple[Path, str, str | None]] = []
+
+    class Context:
+        def register_memory_provider(self, provider: object) -> None:
+            assert provider is sentinel
+
+    sentinel = object()
+    monkeypatch.setattr(plugin, "_resolve_config_paths", lambda *_args: (tmp_path / "hl_mem.toml", tmp_path / ".env"))
+    monkeypatch.setattr(plugin, "create_provider", lambda **_kwargs: sentinel)
+    monkeypatch.setattr(
+        plugin,
+        "write_runtime_status",
+        lambda home, _identity, *, status, exception_type=None: records.append(
+            (Path(home), status, exception_type)
+        ),
+    )
+
+    plugin.register(Context())
+
+    assert records == [(tmp_path, "registered", None)]
+
+
+def test_plugin_registration_preserves_original_failure_when_status_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = importlib.import_module("hl_mem.adapters.hermes.plugin")
+
+    class RegistrationFailure(RuntimeError):
+        pass
+
+    class Context:
+        def register_memory_provider(self, _provider: object) -> None:
+            raise RegistrationFailure("original registration failure")
+
+    monkeypatch.setattr(plugin, "_resolve_config_paths", lambda *_args: (tmp_path / "hl_mem.toml", tmp_path / ".env"))
+    monkeypatch.setattr(plugin, "create_provider", lambda **_kwargs: object())
+
+    def fail_status(*_args: object, **_kwargs: object) -> None:
+        raise OSError("status write failure")
+
+    monkeypatch.setattr(plugin, "write_runtime_status", fail_status)
+
+    with pytest.raises(RegistrationFailure, match="original registration failure"):
+        plugin.register(Context())

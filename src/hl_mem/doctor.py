@@ -16,6 +16,7 @@ import httpx
 
 from hl_mem.adapters.hermes.deployment import PLUGIN_FILES, plugin_files_match, plugin_files_present
 from hl_mem.adapters.hermes.discovery import find_hermes_home
+from hl_mem.adapters.hermes.runtime_status import capture_runtime_identity, read_runtime_status
 from hl_mem.compatibility import (
     CONTEXT_PACKET_SCHEMA_MAJOR,
     DAEMON_CONTRACT_MAJOR,
@@ -302,6 +303,64 @@ def _check_hermes(settings: Settings) -> CheckResult:
     return CheckResult(CheckStatus.FAIL, "Hermes 插件", f"应安装到 {expected}")
 
 
+def _check_hermes_runtime(settings: Settings) -> CheckResult:
+    """Compare bounded gateway registration evidence with this CLI runtime."""
+    name = "Hermes loaded runtime"
+    code = "hermes_runtime"
+    try:
+        hermes_home = find_hermes_home(settings.hermes_home)
+    except RuntimeError:
+        return CheckResult(CheckStatus.WARN, name, "Hermes home unavailable; restart status not observed", code=code)
+    if not hermes_home.exists():
+        return CheckResult(CheckStatus.WARN, name, "Hermes home unavailable; restart status not observed", code=code)
+    try:
+        registration = read_runtime_status(hermes_home)
+    except (OSError, ValueError):
+        return CheckResult(
+            CheckStatus.FAIL,
+            name,
+            "Runtime registration evidence is malformed; restart Hermes after reinstalling the plugin",
+            code=code,
+        )
+    if registration is None:
+        return CheckResult(
+            CheckStatus.WARN,
+            name,
+            "No loaded-runtime evidence yet; restart Hermes to record the active HL-Mem package",
+            code=code,
+        )
+    if registration.status == "registration_failed":
+        return CheckResult(
+            CheckStatus.FAIL,
+            name,
+            "Last registration failed "
+            f"({registration.exception_type}, count={registration.failure_count}); restart Hermes after repair",
+            code=code,
+        )
+    current = capture_runtime_identity()
+    mismatches: list[str] = []
+    if registration.package_version != current.package_version:
+        mismatches.append("version")
+    if Path(registration.package_path).resolve() != Path(current.package_path).resolve():
+        mismatches.append("package path")
+    if registration.git_sha != current.git_sha:
+        mismatches.append("Git revision")
+    if mismatches:
+        return CheckResult(
+            CheckStatus.FAIL,
+            name,
+            f"Loaded runtime differs in {', '.join(mismatches)}; restart Hermes to load the current package",
+            code=code,
+        )
+    revision = registration.git_sha[:12] if registration.git_sha is not None else "wheel"
+    return CheckResult(
+        CheckStatus.OK,
+        name,
+        f"loaded version={registration.package_version}, revision={revision}, registration succeeded",
+        code=code,
+    )
+
+
 def run_doctor(
     database_path: Path | None = None,
     config_path: Path | None = None,
@@ -375,6 +434,7 @@ def run_doctor(
         port_check,
         _check_daemon_compatibility(daemon_probe),
         _check_hermes(settings),
+        _check_hermes_runtime(settings),
         _check_plugin_compatibility(settings),
         _check_wire_compatibility(daemon_probe),
     ]
