@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from hl_mem.application.ingest import IngestService
+from hl_mem.application.recall import RecallService
 from hl_mem.application.runtime_config_report import report_extraction_runtime
 from hl_mem.domain.claims.conflicts import compute_conflict_key
 from hl_mem.ingest.embedder import FakeEmbedder
@@ -98,7 +99,7 @@ def test_runtime_report_supersedes_legacy_extraction_model_without_provider_call
     assert rows[old_id]["status"] == "superseded"
     assert rows[report.claim_id]["status"] == "active"
     current = rows[report.claim_id]
-    assert current["value_json"] == '"glm-5.3-flash"'
+    assert current["value_json"] == '"HL-Mem LLM 提取任务使用 zhipu/glm-5.3-flash"'
     assert current["subject_canonical_entity_id"] == "project:hl_mem"
     assert current["canonical_slot"] == "choice.model"
     event = connection.execute(
@@ -111,6 +112,13 @@ def test_runtime_report_supersedes_legacy_extraction_model_without_provider_call
         "unknown",
     )
     assert "api_key" not in event["content_json"].casefold()
+    recall_settings = replace(settings, extractor_mode="fake", reranker_mode="off")
+    recalled = RecallService(connection, FakeEmbedder(8), settings=recall_settings).recall(
+        "HL-Mem 用什么 LLM 提取",
+        limit=5,
+    )
+    assert recalled["results"][0]["id"] == report.claim_id
+    assert "glm-5.3-flash" in recalled["results"][0]["text"]
     database.close()
 
 
@@ -136,6 +144,25 @@ def test_runtime_report_is_idempotent_while_same_projection_is_active(tmp_path) 
     database.close()
 
 
+def test_runtime_report_ignores_transport_only_changes(tmp_path) -> None:
+    settings = _settings(tmp_path / "transport-change.db")
+    database = Database(settings=settings)
+    connection = database.open()
+
+    first = report_extraction_runtime(connection, settings)
+    second = report_extraction_runtime(
+        connection,
+        replace(settings, llm_base_url="https://gateway.example.invalid/v1"),
+    )
+
+    assert first.stored is True
+    assert second.stored is False
+    assert second.reason == "unchanged"
+    assert second.claim_id == first.claim_id
+    assert connection.execute("SELECT count(*) FROM events WHERE event_type='runtime_config_report'").fetchone()[0] == 1
+    database.close()
+
+
 def test_runtime_report_records_model_change_and_rollback(tmp_path) -> None:
     settings = _settings(tmp_path / "rollback.db")
     database = Database(settings=settings)
@@ -155,7 +182,7 @@ def test_runtime_report_records_model_change_and_rollback(tmp_path) -> None:
     assert rows[first.claim_id]["status"] == "superseded"
     assert rows[second.claim_id]["status"] == "superseded"
     assert rows[third.claim_id]["status"] == "active"
-    assert rows[third.claim_id]["value_json"] == '"glm-5.3-flash"'
+    assert rows[third.claim_id]["value_json"] == '"HL-Mem LLM 提取任务使用 zhipu/glm-5.3-flash"'
     assert connection.execute("SELECT count(*) FROM events WHERE event_type='runtime_config_report'").fetchone()[0] == 3
     database.close()
 

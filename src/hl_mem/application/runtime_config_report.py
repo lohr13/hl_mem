@@ -28,12 +28,9 @@ class RuntimeConfigReport:
 
 def _route_fingerprint(settings: Settings) -> str:
     route = {
-        "base_url": settings.llm_base_url,
         "model": settings.llm_model,
         "provider": settings.llm_provider,
-        "reasoning_effort": settings.llm_reasoning_effort,
-        "structured_mode": settings.llm_structured_mode,
-        "thinking_control": settings.llm_thinking_control,
+        "producer_contract": _PRODUCER_CONTRACT,
     }
     payload = json.dumps(route, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -92,7 +89,7 @@ def report_extraction_runtime(
         db,
         ExtractedClaim(
             predicate=SLOT_REGISTRY["choice.model"].predicate,
-            value=settings.llm_model,
+            value=f"HL-Mem LLM 提取任务使用 {settings.llm_provider}/{settings.llm_model}",
             subject="HL-Mem",
             qualifiers={
                 "task": "extraction",

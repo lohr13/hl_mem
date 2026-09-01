@@ -31,6 +31,7 @@ from hl_mem.application.recall_side_effects import (
     DeferredLLMSpanRecorder,
     RecallSideEffectDispatcher,
 )
+from hl_mem.application.runtime_config_report import report_extraction_runtime
 from hl_mem.compatibility import compatibility_manifest
 from hl_mem.errors import ConflictError, NotFoundError, ValidationError
 from hl_mem.http_utils import HL_MEM_VERSION_HEADER
@@ -122,7 +123,7 @@ def create_app(settings: Settings | str | Path, audit: Any = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.db = database
-        database.open_worker()
+        report_extraction_runtime(database.open_worker(), settings)
         try:
             yield
         finally:
