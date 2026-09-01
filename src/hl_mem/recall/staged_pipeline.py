@@ -316,14 +316,14 @@ def _collect_candidates(
     dense_us = 0
     entity_filtered_ids: set[str] = set()
     channel_request = ChannelRequest(
-        candidate_limit,
-        reference,
-        selected_intent,
-        known_as_of,
-        namespace,
-        config.dense_enabled,
-        config.entity_constraint_mode,
-        config.entity_filter_id,
+        candidate_limit=candidate_limit,
+        reference=reference,
+        selected_intent=selected_intent,
+        known_as_of=known_as_of,
+        namespace=namespace,
+        dense_enabled=config.dense_enabled,
+        entity_constraint_mode=config.entity_constraint_mode,
+        entity_scope_id=config.entity_filter_id,
     )
 
     def collect_query(item: WeightedQuery, blob: bytes, index: int) -> None:

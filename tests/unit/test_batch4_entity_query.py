@@ -81,10 +81,22 @@ class _Repo:
         self.claims = [_claim("other", None), _claim("pony-claim", "agent:pony")]
 
     def search_claims_fts(self, *_args, **_kwargs):
-        return self.claims
+        entity_id = _kwargs.get("entity_id")
+        return [
+            claim
+            for claim in self.claims
+            if entity_id is None
+            or entity_id in {claim.get("subject_canonical_entity_id"), claim.get("canonical_target_entity_id")}
+        ]
 
     def search_claims_vector(self, *_args, **_kwargs):
-        return self.claims
+        entity_id = _kwargs.get("entity_id")
+        return [
+            claim
+            for claim in self.claims
+            if entity_id is None
+            or entity_id in {claim.get("subject_canonical_entity_id"), claim.get("canonical_target_entity_id")}
+        ]
 
     def helpful_rates(self, _claim_ids, _min_samples):
         return {}
@@ -104,7 +116,7 @@ def _tracer() -> SearchTracer:
     )
 
 
-def test_entity_constraint_filters_existing_channels_only_in_enforce_mode() -> None:
+def test_entity_constraint_scopes_channels_before_limit_only_in_enforce_mode() -> None:
     connection = _connection()
     assert [item["id"] for item in filter_entity_candidates(connection, _Repo(connection).claims, "agent:pony")] == [
         "pony-claim"
@@ -122,7 +134,7 @@ def test_entity_constraint_filters_existing_channels_only_in_enforce_mode() -> N
     )
     assert [item["id"] for item in enforced] == ["pony-claim"]
     assert enforce_trace.trace.entity_filter_mode == "enforce"
-    assert enforce_trace.trace.entity_filtered_count == 1
+    assert enforce_trace.trace.entity_filtered_count == 0
     assert {channel for candidate in enforce_trace.trace.candidates.values() for channel in candidate.channels} <= {
         "fts",
         "dense",
