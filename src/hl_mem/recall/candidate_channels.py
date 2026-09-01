@@ -19,7 +19,7 @@ class ChannelRequest:
     known_as_of: str | None
     namespace: str
     dense_enabled: bool
-    entity_constraint_mode: str
+    entity_scope_mode: str
     entity_scope_id: str | None
 
 
@@ -31,6 +31,7 @@ class CollectedChannels:
     filtered_ids: frozenset[str]
     entity_scope_applied: bool
     entity_scope_counts: dict[str, int]
+    entity_scope_us: int
     fallback_reason: str | None
 
 
@@ -44,7 +45,8 @@ def collect_query_channels(
     """Collect one weighted query without introducing a new retrieval channel or score."""
 
     label = "original" if index == 0 else f"expansion_{index}"
-    scoped = request.entity_constraint_mode in {"entity", "enforce"} and request.entity_scope_id is not None
+    scoped = request.entity_scope_mode in {"entity", "enforce"} and request.entity_scope_id is not None
+    scope_started = time.perf_counter_ns() if scoped else 0
 
     def read(entity_id: str | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int]:
         started = time.perf_counter_ns()
@@ -83,9 +85,11 @@ def collect_query_channels(
     fallback_reason = None
     try:
         raw_fts, raw_dense, fts_us, dense_us = read(request.entity_scope_id if scoped else None)
+        entity_scope_us = (time.perf_counter_ns() - scope_started) // 1000 if scoped else 0
     except sqlite3.Error as scoped_error:
         if not scoped:
             raise
+        entity_scope_us = (time.perf_counter_ns() - scope_started) // 1000
         try:
             raw_fts, raw_dense, fts_us, dense_us = read(None)
         except sqlite3.Error:
@@ -94,7 +98,7 @@ def collect_query_channels(
         fallback_reason = "storage_error"
 
     filtered_ids: set[str] = set()
-    if request.entity_constraint_mode == "observe" and request.entity_scope_id is not None:
+    if request.entity_scope_mode == "observe" and request.entity_scope_id is not None:
         shadow_fts = apply_entity_constraint(
             getattr(repo, "connection", None),
             raw_fts,
@@ -123,5 +127,6 @@ def collect_query_channels(
         frozenset(filtered_ids),
         scoped,
         counts,
+        entity_scope_us,
         fallback_reason,
     )

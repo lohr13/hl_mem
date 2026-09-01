@@ -8,6 +8,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from hl_mem.protocols import EmbedderProtocol, WeightedQuery, embed_query
+
 ConfidenceClass = Literal["high", "low", "ambiguous"]
 EntityScopeMode = Literal["entity", "observe", "wide", "off"]
 EntityFallbackReason = Literal[
@@ -87,6 +89,8 @@ class QueryEntityPlan:
         }
         trace.entity_proof_ids = list(self.resolution.proof_ids)
         trace.entity_filter_mode = self.filter_mode
+        trace.entity_residual_term_count = len(self.residual_query.split()) if self.residual_query else 0
+        trace.entity_fallback_reason = self.fallback_reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +260,38 @@ def plan_query_entity(
         return QueryEntityPlan(resolution, resolution.filter_entity_id, residual, query, "observe", None)
     search_query = residual or query
     return QueryEntityPlan(resolution, resolution.filter_entity_id, residual, search_query, "entity", None)
+
+
+def prepare_entity_query(
+    connection: sqlite3.Connection,
+    embedder: EmbedderProtocol,
+    query: str,
+    namespace: str,
+    mode: str,
+    *,
+    dense_enabled: bool,
+) -> tuple[QueryEntityPlan, WeightedQuery, bytes]:
+    """Plan first so a normal query creates exactly one search embedding."""
+
+    plan = plan_query_entity(connection, query, namespace, mode)
+    weighted = WeightedQuery(plan.search_query, "original", 1.0)
+    blob = embed_query(embedder, plan.search_query) if dense_enabled else b""
+    return plan, weighted, blob
+
+
+def prepare_wide_query(
+    embedder: EmbedderProtocol,
+    original_query: str,
+    current_query: WeightedQuery,
+    current_blob: bytes,
+    *,
+    dense_enabled: bool,
+) -> tuple[WeightedQuery, bytes, int]:
+    """Prepare one original-query retry and count only a newly required embedding."""
+
+    if dense_enabled and current_query.text != original_query:
+        return WeightedQuery(original_query, "original", 1.0), embed_query(embedder, original_query), 1
+    return WeightedQuery(original_query, "original", 1.0), current_blob, 0
 
 
 def filter_entity_candidates(

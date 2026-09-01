@@ -6,10 +6,75 @@ from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from hl_mem.application.answerability import Answerability
-from hl_mem.application.context_packet import MemoryType, RetrievalBundle, RetrievalBundleItem, estimate_tokens
+from hl_mem.application.context_packet import (
+    MemoryType,
+    RetrievalBundle,
+    RetrievalBundleItem,
+    estimate_tokens,
+    render_memory_text,
+)
+from hl_mem.domain.recall import RecallIntent
+from hl_mem.recall.procedure_pipeline import MemoryCandidate
 
 ContextText = Callable[[str, Mapping[str, Any]], str]
 ContextPacker = Callable[[list[dict[str, Any]], int], list[dict[str, Any]]]
+
+
+def budget_pack_by_type(
+    candidates: list[MemoryCandidate],
+    intent: RecallIntent,
+    token_budget: int,
+) -> tuple[list[MemoryCandidate], dict[str, int], int]:
+    """Pack Tool/Procedure candidates by type quota, then reflow unused budget."""
+    ratios = (
+        {"policy": 0.35, "episode": 0.25, "trace": 0.15, "claim": 0.25}
+        if intent is RecallIntent.TOOL
+        else {"policy": 0.40, "episode": 0.20, "trace": 0.25, "claim": 0.15}
+    )
+    quotas = {kind: int(token_budget * ratio) for kind, ratio in ratios.items()}
+    grouped = {kind: [item for item in candidates if item.memory_type == kind] for kind in ratios}
+    packed: list[MemoryCandidate] = []
+    used_by_type = {kind: 0 for kind in ratios}
+    remaining = {kind: list(items) for kind, items in grouped.items()}
+
+    def candidate_text(item: MemoryCandidate) -> str:
+        return (
+            render_memory_text(
+                item.text,
+                role=item.role,
+                action=item.action,
+                object_=item.object,
+            )
+            if item.memory_type == "claim"
+            else item.text
+        )
+
+    def take(kind: str, allowance: int) -> int:
+        used = 0
+        retained: list[MemoryCandidate] = []
+        for item in remaining[kind]:
+            cost = estimate_tokens(candidate_text(item))
+            if used + cost <= allowance:
+                packed.append(item)
+                used += cost
+            else:
+                retained.append(item)
+        remaining[kind] = retained
+        used_by_type[kind] += used
+        return used
+
+    for kind, quota in quotas.items():
+        take(kind, quota)
+    total_used = sum(used_by_type.values())
+    reflow_budget = max(0, token_budget - total_used)
+    reflow_used = 0
+    for kind in ("policy", "episode", "claim", "trace"):
+        used = take(kind, reflow_budget)
+        reflow_used += used
+        reflow_budget -= used
+    order = {id(item): index for index, item in enumerate(candidates)}
+    packed.sort(key=lambda item: order[id(item)])
+    return packed, quotas, reflow_used
 
 
 def context_candidates(

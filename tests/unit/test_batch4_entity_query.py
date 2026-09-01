@@ -130,7 +130,7 @@ def test_entity_constraint_scopes_channels_before_limit_only_in_enforce_mode() -
         None,
         now="2026-01-02T00:00:00+00:00",
         tracer=enforce_trace,
-        recall_config=RecallConfig(entity_constraint_mode="enforce", entity_filter_id="agent:pony"),
+        recall_config=RecallConfig(entity_scope_mode="entity", entity_scope_id="agent:pony"),
     )
     assert [item["id"] for item in enforced] == ["pony-claim"]
     assert enforce_trace.trace.entity_filter_mode == "enforce"
@@ -149,7 +149,7 @@ def test_entity_constraint_scopes_channels_before_limit_only_in_enforce_mode() -
         None,
         now="2026-01-02T00:00:00+00:00",
         tracer=observe_trace,
-        recall_config=RecallConfig(entity_constraint_mode="observe", entity_filter_id="agent:pony"),
+        recall_config=RecallConfig(entity_scope_mode="observe", entity_scope_id="agent:pony"),
     )
     assert {item["id"] for item in observed} == {"other", "pony-claim"}
     assert observe_trace.trace.entity_filter_mode == "observe"

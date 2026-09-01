@@ -32,7 +32,7 @@ def _request(mode: str, entity_id: str | None) -> ChannelRequest:
         known_as_of=None,
         namespace="default",
         dense_enabled=True,
-        entity_constraint_mode=mode,
+        entity_scope_mode=mode,
         entity_scope_id=entity_id,
     )
 

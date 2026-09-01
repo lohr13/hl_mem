@@ -33,6 +33,7 @@ from hl_mem.application.recall_delivery import (
     context_candidates,
     context_from_packed_bundle,
 )
+from hl_mem.application.recall_delivery import budget_pack_by_type as budget_pack_by_type
 from hl_mem.application.recall_enrichment import assemble_observations as assemble_recall_observations
 from hl_mem.application.recall_enrichment import assemble_results as assemble_recall_results
 from hl_mem.application.recall_side_effects import RecallSideEffectSink
@@ -48,7 +49,7 @@ from hl_mem.protocols import (
     embed_query,
 )
 from hl_mem.recall.echo_suppression import EchoRequest, EchoSuppressionPolicy
-from hl_mem.recall.entity_query import plan_query_entity
+from hl_mem.recall.entity_query import prepare_entity_query, prepare_wide_query
 from hl_mem.recall.freshness_annotation import (
     DEFAULT_FRESHNESS_ANNOTATION_METRICS,
     FreshnessAnnotationPolicy,
@@ -57,7 +58,6 @@ from hl_mem.recall.freshness_annotation import (
     FreshnessRequest,
 )
 from hl_mem.recall.injection import InjectionContext
-from hl_mem.recall.procedure_pipeline import MemoryCandidate
 from hl_mem.recall.procedure_pipeline import recall_procedure as recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
@@ -67,6 +67,7 @@ from hl_mem.recall.relevance import (
     evaluate_relevance,
     should_enforce_relevance,
 )
+from hl_mem.recall.staged_pipeline import EntityScopeFallback
 from hl_mem.recall.trace import QueryExpansionTrace, SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
@@ -319,63 +320,6 @@ def _session_context(
     return context, truncated, hashlib.sha256(serialized.encode("utf-8")).hexdigest(), "ok"
 
 
-def budget_pack_by_type(
-    candidates: list[MemoryCandidate],
-    intent: RecallIntent,
-    token_budget: int,
-) -> tuple[list[MemoryCandidate], dict[str, int], int]:
-    """按 Tool/Procedure 类型配额装箱，并将未使用预算按固定顺序回流。"""
-    ratios = (
-        {"policy": 0.35, "episode": 0.25, "trace": 0.15, "claim": 0.25}
-        if intent is RecallIntent.TOOL
-        else {"policy": 0.40, "episode": 0.20, "trace": 0.25, "claim": 0.15}
-    )
-    quotas = {kind: int(token_budget * ratio) for kind, ratio in ratios.items()}
-    grouped = {kind: [item for item in candidates if item.memory_type == kind] for kind in ratios}
-    packed: list[MemoryCandidate] = []
-    used_by_type = {kind: 0 for kind in ratios}
-    remaining = {kind: list(items) for kind, items in grouped.items()}
-
-    def candidate_text(item: MemoryCandidate) -> str:
-        return (
-            render_memory_text(
-                item.text,
-                role=item.role,
-                action=item.action,
-                object_=item.object,
-            )
-            if item.memory_type == "claim"
-            else item.text
-        )
-
-    def take(kind: str, allowance: int) -> int:
-        used = 0
-        retained: list[MemoryCandidate] = []
-        for item in remaining[kind]:
-            cost = estimate_tokens(candidate_text(item))
-            if used + cost <= allowance:
-                packed.append(item)
-                used += cost
-            else:
-                retained.append(item)
-        remaining[kind] = retained
-        used_by_type[kind] += used
-        return used
-
-    for kind, quota in quotas.items():
-        take(kind, quota)
-    total_used = sum(used_by_type.values())
-    reflow_budget = max(0, token_budget - total_used)
-    reflow_used = 0
-    for kind in ("policy", "episode", "claim", "trace"):
-        used = take(kind, reflow_budget)
-        reflow_used += used
-        reflow_budget -= used
-    order = {id(item): index for index, item in enumerate(candidates)}
-    packed.sort(key=lambda item: order[id(item)])
-    return packed, quotas, reflow_used
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -390,22 +334,19 @@ class _QueryExpansionSession:
         self.tracer = recall.tracer
         self.session_context: tuple[tuple[str, str], ...] = ()
         request = recall.request
-        self.weighted_queries = [WeightedQuery(request.query, "original", 1.0)]
-        self.query_blobs = [
-            embed_query(service.embedder, request.query) if service.settings.recall_dense_enabled else b""
-        ]
-        self.entity_plan = plan_query_entity(
-            service.connection, request.query, request.namespace, service.settings.entity_constraint_mode
+        self.entity_plan, weighted_query, query_blob = prepare_entity_query(
+            service.connection,
+            service.embedder,
+            request.query,
+            request.namespace,
+            service.settings.entity_constraint_mode,
+            dense_enabled=service.settings.recall_dense_enabled,
         )
         self.entity_plan.record(self.tracer.trace)
-        if service.settings.entity_constraint_mode == "enforce" and self.entity_plan.rewrite:
-            self.weighted_queries[0] = WeightedQuery(self.entity_plan.rewrite, "original", 1.0)
-            self.query_blobs[0] = (
-                embed_query(service.embedder, self.entity_plan.rewrite)
-                if service.settings.recall_dense_enabled
-                else b""
-            )
+        self.weighted_queries = [weighted_query]
+        self.query_blobs = [query_blob]
         self.low_recall_expander: _LowRecallExpander | None = None
+        self.entity_fallback_reason: str | None = None
 
     def prepare(self) -> _QueryExpansionSession:
         request = self.recall.request
@@ -429,6 +370,22 @@ class _QueryExpansionSession:
         ):
             self.low_recall_expander = self._expand_for_low_recall
         return self
+
+    def prepare_wide_fallback(self, reason: str) -> None:
+        request = self.recall.request
+        weighted, blob, calls = prepare_wide_query(
+            self.service.embedder,
+            request.query,
+            self.weighted_queries[0],
+            self.query_blobs[0],
+            dense_enabled=self.service.settings.recall_dense_enabled,
+        )
+        self.weighted_queries, self.query_blobs = [weighted], [blob]
+        self.tracer.trace.entity_fallback_embedding_calls += calls
+        self.low_recall_expander = None
+        self.entity_fallback_reason = reason
+        self.tracer.trace.entity_fallback_reason = reason
+        self.tracer.trace.entity_filter_mode = "wide"
 
     def expand_for(self, trigger: str) -> tuple[list[WeightedQuery], list[bytes]]:
         request = self.recall.request
@@ -629,7 +586,10 @@ class RecallService:
         expansion: _QueryExpansionSession,
     ) -> list[dict[str, Any]]:
         request = session.request
-        expansion_enabled = len(expansion.weighted_queries) > 1
+        planned_query_changed = expansion.weighted_queries[0].text != request.query
+        expansion_enabled = len(expansion.weighted_queries) > 1 or planned_query_changed
+        scope_mode = "wide" if expansion.entity_fallback_reason is not None else expansion.entity_plan.scope_mode
+        scope_id = None if expansion.entity_fallback_reason is not None else expansion.entity_plan.entity_id
         return hybrid_claims(
             ClaimRepository(
                 self.connection,
@@ -656,8 +616,8 @@ class RecallService:
                 dedup_candidate_limit=self.settings.recall_dedup_candidate_limit,
                 feedback_min_samples=self.settings.feedback_min_samples,
                 decay_model=self.settings.decay_model,
-                entity_constraint_mode=self.settings.entity_constraint_mode,
-                entity_filter_id=expansion.entity_plan.resolution.filter_entity_id,
+                entity_scope_mode=scope_mode,
+                entity_scope_id=scope_id,
             ),
             relation_connection=self.connection,
             relation_config=self.relation_config,
@@ -956,7 +916,12 @@ class RecallService:
         total_started = session.total_started
         expansion = self._prepare_queries(session)
 
-        selection = self._postprocess_selection(session, self._run_claim_pipeline(session, expansion))
+        try:
+            claims = self._run_claim_pipeline(session, expansion)
+        except EntityScopeFallback as fallback:
+            expansion.prepare_wide_fallback(fallback.reason)
+            claims = self._run_claim_pipeline(session, expansion)
+        selection = self._postprocess_selection(session, claims)
         if (
             selected_intent in {RecallIntent.TOOL, RecallIntent.PROCEDURE}
             and self.settings.procedure_recall_mode != "off"

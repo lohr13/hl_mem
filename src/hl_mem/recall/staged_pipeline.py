@@ -57,6 +57,14 @@ from hl_mem.storage.claims import ClaimRepository
 RRF_K = 60
 
 
+class EntityScopeFallback(RuntimeError):
+    """A scoped read succeeded only after the storage layer retried wide."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class RecallConfig:
     """召回管线使用的完整排序配置。"""
@@ -71,8 +79,16 @@ class RecallConfig:
     dedup_candidate_limit: int = 100
     feedback_min_samples: int = field(default_factory=lambda: Settings().feedback_min_samples)
     decay_model: str = "legacy_linear"
-    entity_constraint_mode: str = "off"
-    entity_filter_id: str | None = None
+    entity_scope_mode: str = "off"
+    entity_scope_id: str | None = None
+
+    @property
+    def entity_constraint_mode(self) -> str:
+        return self.entity_scope_mode
+
+    @property
+    def entity_filter_id(self) -> str | None:
+        return self.entity_scope_id
 
 
 @dataclass
@@ -322,19 +338,29 @@ def _collect_candidates(
         known_as_of=known_as_of,
         namespace=namespace,
         dense_enabled=config.dense_enabled,
-        entity_constraint_mode=config.entity_constraint_mode,
-        entity_scope_id=config.entity_filter_id,
+        entity_scope_mode=config.entity_scope_mode,
+        entity_scope_id=config.entity_scope_id,
     )
 
     def collect_query(item: WeightedQuery, blob: bytes, index: int) -> None:
         nonlocal fts_us, dense_us
         collected = collect_query_channels(repo, item, blob, index, channel_request)
+        if tracer is not None:
+            tracer.trace.entity_scope_us += collected.entity_scope_us
+            if collected.entity_scope_applied:
+                for channel, count in collected.entity_scope_counts.items():
+                    tracer.trace.entity_scope_counts[channel] = tracer.trace.entity_scope_counts.get(channel, 0) + count
+            if collected.fallback_reason is not None:
+                tracer.trace.entity_fallback_reason = collected.fallback_reason
+                tracer.trace.entity_filter_mode = "wide"
+        if collected.fallback_reason is not None:
+            raise EntityScopeFallback(collected.fallback_reason)
         query_channels.extend(collected.channels)
         fts_us += collected.fts_us
         dense_us += collected.dense_us
         entity_filtered_ids.update(collected.filtered_ids)
         if tracer is not None:
-            legacy = weighted_queries is None
+            legacy = len(queries) == 1
             for name, results, _, _ in collected.channels:
                 tracer.record_channel(name.split(":")[-1] if legacy and index == 0 else name, results)
 
@@ -370,8 +396,10 @@ def _collect_candidates(
     if tracer is not None:
         tracer.trace.query_tags = query_tags
         tracer.trace.query_slot_hints = query_slot_hints
-        if config.entity_filter_id is not None:
-            tracer.trace.entity_filter_mode = config.entity_constraint_mode
+        if config.entity_scope_id is not None:
+            tracer.trace.entity_filter_mode = (
+                "enforce" if config.entity_scope_mode == "entity" else config.entity_scope_mode
+            )
             tracer.trace.entity_filtered_count = len(entity_filtered_ids)
         tracer.trace.tag_boost_applied = bool(effective_tag_boost_enabled and query_tags)
 
