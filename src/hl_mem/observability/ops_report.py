@@ -24,10 +24,8 @@ _DURATION = re.compile(r"([1-9][0-9]*)([hd])$")
 _SUCCESS = frozenset("success ok settled imported estimated usage_unknown".split())
 _RESERVATION_STATES = frozenset({"active", "released", "settled"})
 _SAFE_ERROR_CATEGORIES = frozenset(
-    (
-        "ConnectionLost LeaseExpired RuntimeError Timeout TypeError ValueError auth circuit_open "
-        "deadline_timeout http_error http_timeout invalid_response provider_error quota rate_limit upstream"
-    ).split()
+    "ConnectionLost LeaseExpired RuntimeError Timeout TypeError ValueError auth circuit_open "
+    "deadline_timeout http_error http_timeout invalid_response provider_error quota rate_limit upstream".split()
 )
 _AMOUNTS = ("requests", "input_tokens", "output_tokens", "embedding_items", "rerank_documents", "images")
 OPS_REPORT_SCHEMA_VERSION: Final[int] = 1
@@ -182,12 +180,11 @@ def _validate_reservation_row(row: sqlite3.Row) -> tuple[str, date, datetime, da
     lease_expires_at = _ledger_timestamp(row["lease_expires_at"])
     if row["finalized_at"] is not None:
         _ledger_timestamp(row["finalized_at"])
-    if state == "active":
-        for field in ("attempts", *tuple(f"reserved_{name}" for name in _AMOUNTS)):
-            _ledger_int(row[field])
-        cost = row["reserved_cost_microunits"]
-        if cost is not None:
-            _ledger_int(cost)
+    for field in ("attempts", *tuple(f"reserved_{name}" for name in _AMOUNTS)):
+        _ledger_int(row[field])
+    cost = row["reserved_cost_microunits"]
+    if cost is not None:
+        _ledger_int(cost)
     return state, usage_day, created_at, lease_expires_at
 
 
@@ -298,7 +295,15 @@ class UsageLedgerReader:
         reserved: dict[str, Any] = _empty_amount()
         active_count = 0
         expired_count = 0
-        for row in connection.execute("SELECT * FROM usage_reservations ORDER BY id"):
+        rows = (
+            connection.execute("SELECT * FROM usage_reservations ORDER BY id")
+            if usage_day is None
+            else connection.execute(
+                "SELECT * FROM usage_reservations WHERE usage_date=? AND state='active'",
+                (usage_day.isoformat(),),
+            )
+        )
+        for row in rows:
             state, row_day, created_at, lease_expires_at = _validate_reservation_row(row)
             if state != "active" or (created_cutoff is not None and created_at > created_cutoff):
                 continue
@@ -319,15 +324,9 @@ class UsageLedgerReader:
     def _daily_totals(connection: sqlite3.Connection, day: date) -> dict[str, Any]:
         totals: dict[str, Any] = _empty_amount()
         totals.update(errors=0, unknown_outcomes=0, unknown_costs=0)
-        rows = connection.execute(
-            "SELECT * FROM usage_events WHERE usage_date=? OR typeof(usage_date)<>'text' "
-            "OR date(usage_date) IS NULL OR date(usage_date)<>usage_date ORDER BY id",
-            (day.isoformat(),),
-        )
+        rows = connection.execute("SELECT * FROM usage_events WHERE usage_date=?", (day.isoformat(),))
         for row in rows:
             _validate_event_row(row)
-            if _ledger_date(row["usage_date"]) != day:
-                continue
             unknown_cost = _add_amount(totals, row)
             totals["errors"] += int(row["status"] not in _SUCCESS)
             totals["unknown_outcomes"] += int(_ledger_flag(row["unknown_outcome"]))
@@ -396,6 +395,7 @@ class UsageLedgerReader:
             connection.close()
 
     def health_summary(self, *, day: date, limits: UsageLimits, now: datetime) -> dict[str, object]:
+        # Health validates only today's events and active reservations; report() performs the deep reservation scan.
         current = _utc(now)
         connection = self._connect()
         try:

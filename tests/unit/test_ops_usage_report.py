@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import hl_mem.observability.ops_report as ops_report
 from hl_mem.errors import OpsReportError
 from hl_mem.observability.ops_report import ReportWindow, UsageLedgerReader, parse_report_window
 from hl_mem.observability.usage import UsageGovernor
@@ -352,7 +353,6 @@ def test_report_wraps_corrupt_event_values_without_disclosure(
         ("attempts", -1),
         ("unknown_outcome", 2),
         ("unknown_cost", 2),
-        ("usage_date", "private-date-content"),
         ("created_at", "private-timestamp-content"),
         ("status", "private status content"),
         ("capability", "private capability content"),
@@ -379,10 +379,25 @@ def test_health_wraps_corrupt_daily_values_without_disclosure(
     assert str(bad_value) not in str(raised.value)
 
 
+def test_health_ignores_an_event_moved_outside_its_day_while_report_deep_checks_it(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "other-day-event.budget.db"
+    governor = _governor(path, Clock(NOW))
+    _settle(governor, UsageAmount(requests=1), status="success", latency_ms=1)
+    with sqlite3.connect(path) as connection:
+        connection.execute("UPDATE usage_events SET usage_date='private-date-content'")
+
+    health = UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(), now=NOW)
+
+    assert health["failures"] == 0
+    with pytest.raises(OpsReportError, match="^usage ledger is unreadable$"):
+        UsageLedgerReader(path).report(WINDOW, limits=UsageLimits())
+
+
 @pytest.mark.parametrize(
     ("column", "bad_value"),
     (
-        ("state", "private-state-content"),
         ("created_at", "private-created-at-content"),
         ("lease_expires_at", "private-lease-content"),
         ("finalized_at", "private-finalized-content"),
@@ -391,7 +406,6 @@ def test_health_wraps_corrupt_daily_values_without_disclosure(
         ("plugin_id", "private plugin content"),
         ("provider", "private provider content"),
         ("model", "private model content"),
-        ("usage_date", "private-date-content"),
         ("reserved_requests", "private-number-content"),
         ("reserved_input_tokens", -1),
         ("reserved_cost_microunits", "private-cost-content"),
@@ -421,10 +435,36 @@ def test_report_and_health_reject_corrupt_reservations_before_filtering(
 
 @pytest.mark.parametrize(
     ("column", "bad_value"),
+    (("state", "private-state-content"), ("usage_date", "private-date-content")),
+)
+def test_report_deep_checks_reservations_excluded_from_daily_health(
+    tmp_path: Path,
+    column: str,
+    bad_value: str,
+) -> None:
+    path = tmp_path / "excluded-reservation.budget.db"
+    governor = _governor(path, Clock(NOW))
+    governor.reserve(IDENTITY, UsageAmount(requests=1))
+    with sqlite3.connect(path) as connection:
+        connection.execute(f"UPDATE usage_reservations SET {column}=?", (bad_value,))
+
+    health = UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(), now=NOW)
+
+    assert health["stale_reservations"] == 0
+    with pytest.raises(OpsReportError, match="^usage ledger is unreadable$"):
+        UsageLedgerReader(path).report(WINDOW, limits=UsageLimits())
+
+
+@pytest.mark.parametrize(
+    ("column", "bad_value"),
     (
         ("created_at", "private-created-at-content"),
         ("finalized_at", "private-finalized-content"),
         ("provider", "private provider content"),
+        ("reserved_requests", "private-number-content"),
+        ("reserved_input_tokens", -1),
+        ("reserved_cost_microunits", "private-cost-content"),
+        ("attempts", -1),
     ),
 )
 def test_report_validates_inactive_reservations_too(
@@ -584,6 +624,59 @@ def test_health_summary_has_only_daily_health_fields(tmp_path: Path) -> None:
         "unknown_outcomes": 1,
         "unknown_costs": 1,
     }
+
+
+def test_health_uses_indexes_and_skips_one_hundred_thousand_released_reservations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "large-history.budget.db"
+    governor = _governor(path, Clock(NOW), lease_seconds=300)
+    governor.reserve(IDENTITY, UsageAmount(requests=1))
+    _settle(governor, UsageAmount(requests=1), status="success", latency_ms=1)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<100000) "
+            "INSERT INTO usage_reservations("
+            "id,usage_date,capability,operation,plugin_id,provider,model,reserved_requests,"
+            "reserved_input_tokens,reserved_output_tokens,reserved_embedding_items,"
+            "reserved_rerank_documents,reserved_images,reserved_cost_microunits,attempts,"
+            "lease_expires_at,state,final_signature,created_at,finalized_at) "
+            "SELECT printf('history-%06d',n),'2026-08-29','llm','extract','hl-mem.builtin',"
+            "'dashscope','qwen',1,0,0,0,0,0,0,0,'2026-08-29T13:00:00+00:00','released',"
+            "'released','2026-08-29T12:00:00+00:00','2026-08-29T12:01:00+00:00' FROM seq"
+        )
+        event_plan = " ".join(
+            str(row[3])
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM usage_events WHERE usage_date=?",
+                (NOW.date().isoformat(),),
+            )
+        )
+        reservation_plan = " ".join(
+            str(row[3])
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM usage_reservations WHERE usage_date=? AND state='active'",
+                (NOW.date().isoformat(),),
+            )
+        )
+
+    validated_reservations = 0
+    validate_reservation = ops_report._validate_reservation_row
+
+    def count_validation(row: sqlite3.Row):
+        nonlocal validated_reservations
+        validated_reservations += 1
+        return validate_reservation(row)
+
+    monkeypatch.setattr(ops_report, "_validate_reservation_row", count_validation)
+
+    summary = UsageLedgerReader(path).health_summary(day=NOW.date(), limits=UsageLimits(), now=NOW)
+
+    assert "USING INDEX idx_usage_events_date_capability" in event_plan
+    assert "USING INDEX idx_usage_reservations_active" in reservation_plan
+    assert validated_reservations == 1
+    assert summary["stale_reservations"] == 0
 
 
 def test_health_summary_normalizes_offset_reservation_leases_before_aggregation(tmp_path: Path) -> None:

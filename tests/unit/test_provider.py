@@ -74,7 +74,9 @@ def test_provider_runtime_health_snapshot_uses_two_validated_ledger_reads(
     assert len(statements) == 2
     assert "FROM usage_events WHERE usage_date=" in statements[0]
     assert "SELECT *" in statements[0]
-    assert "FROM usage_reservations ORDER BY id" in statements[1]
+    assert " OR " not in statements[0]
+    assert "FROM usage_reservations WHERE usage_date=" in statements[1]
+    assert "state='active'" in statements[1]
     assert "SELECT *" in statements[1]
     assert all("SUM(" not in statement and "COUNT(" not in statement for statement in statements)
 
