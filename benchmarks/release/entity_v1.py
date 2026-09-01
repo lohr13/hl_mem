@@ -600,6 +600,13 @@ def _run_case(case: dict[str, Any], base_settings: Settings, mode: str, root: Pa
                 top_entities.extend(str(value) for value in row if value is not None)
         expected_ids = [str(value) for value in case["expected_claim_ids"]]
         forbidden = {str(value) for value in case["forbidden_entity_ids"]}
+        channel_counts = {"fts": 0, "dense": 0}
+        for candidate in (trace.get("candidates") or {}).values():
+            if not isinstance(candidate, dict):
+                continue
+            for channel in channel_counts:
+                if channel in (candidate.get("channels") or {}):
+                    channel_counts[channel] += 1
         return {
             "id": str(case["id"]),
             "category": str(case["category"]),
@@ -622,7 +629,7 @@ def _run_case(case: dict[str, Any], base_settings: Settings, mode: str, root: Pa
             "embedding_calls": query_embedder.call_count,
             "llm_calls": 0,
             "reranker_calls": 0,
-            "channel_counts": dict(trace.get("entity_scope_counts") or {}),
+            "channel_counts": channel_counts,
             "latency_ms": latency_ms,
         }
     finally:
