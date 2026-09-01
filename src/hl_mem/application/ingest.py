@@ -24,6 +24,11 @@ from hl_mem.application._ingest_resolution import (
 from hl_mem.application.ingest_coordinates import IngestCoordinateProjection
 from hl_mem.application.ingest_evidence import link_source_events as _link_source_events
 from hl_mem.application.latest_wins import begin_latest_wins, finish_latest_wins
+from hl_mem.application.provenance_admission import (
+    GovernedClaimInput,
+    govern_claim_input,
+    provenance_audit_event,
+)
 from hl_mem.config import INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import (
@@ -72,6 +77,40 @@ class _ClaimDraft:
 
     claim: dict[str, Any]
     qualifiers: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _ClaimDraftContext:
+    policy: TTLPolicy | None
+    ttl_days: int | None
+    now: str
+    embedder: EmbedderProtocol
+    index_text_mode: IndexTextMode
+    trusted_projector_slot: str | None
+
+def _prepare_governed_claim(
+    connection: sqlite3.Connection,
+    extracted: ExtractedClaim,
+    event: dict[str, Any],
+    source_events: Sequence[dict[str, Any]] | None,
+    authority: str | None,
+    context: _ClaimDraftContext,
+) -> tuple[list[dict[str, Any]], GovernedClaimInput, _ClaimDraft | StoreClaimResult]:
+    evidence_events = IngestService._validate_source_events(event, source_events)
+    governed = govern_claim_input(connection, extracted, authority, evidence_events)
+    if not governed.admission.allowed:
+        return evidence_events, governed, StoreClaimResult(None, "skipped", governed.admission.reason_code)
+    draft = _build_claim_drafts(
+        governed.extracted,
+        event,
+        context.now,
+        context.embedder,
+        governed.authority,
+        IngestService._retention_policy(context.policy, context.ttl_days),
+        context.index_text_mode,
+        context.trusted_projector_slot,
+    )
+    return evidence_events, governed, draft
 
 
 @dataclass(frozen=True)
@@ -397,24 +436,25 @@ class IngestService:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
         claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
-        evidence_events = IngestService._validate_source_events(event, source_events)
-        effective_policy = IngestService._retention_policy(policy, ttl_days)
-        draft = _build_claim_drafts(
+        evidence_events, governed, draft = _prepare_governed_claim(
+            connection,
             extracted,
             event,
-            now,
-            embedder,
+            source_events,
             authority,
-            effective_policy,
-            index_text_mode,
-            _trusted_projector_slot,
+            _ClaimDraftContext(policy, ttl_days, now, embedder, index_text_mode, _trusted_projector_slot),
         )
         if isinstance(draft, StoreClaimResult):
-            IngestService._emit_rejected_claim(audit, draft, event, extracted)
+            if not governed.admission.preserve_existing:
+                provenance_event = provenance_audit_event(event, governed)
+                audit.emit(*provenance_event[0], **provenance_event[1])
+            IngestService._emit_rejected_claim(audit, draft, event, governed.extracted)
             return draft
         claim, qualifiers = draft.claim, draft.qualifiers
         namespace = claim["namespace_key"]
         audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        if not governed.admission.preserve_existing:
+            audit_events.append(provenance_audit_event(event, governed))
 
         result_id = claim["id"]
         connection.execute("BEGIN IMMEDIATE")

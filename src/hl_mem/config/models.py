@@ -501,7 +501,6 @@ class GovernanceConfig:
     entity_aliases_path: str | None = field(default=None, metadata={"toml": "entity.aliases_path"})
 
     provenance_mode: ProvenanceMode = field(default="enforce", metadata={"toml": "provenance.mode"})
-
     price_target_mode: PriceTargetMode = field(default="enforce", metadata={"toml": "price.target_mode"})
 
     plan_fulfillment_mode: PlanFulfillmentMode = field(default="enforce", metadata={"toml": "plan.fulfillment_mode"})
@@ -843,9 +842,7 @@ class Settings(
             raise ConfigurationError("recall.query_expansion_mode must be 'off', 'auto', or 'always'")
         if self.query_expansion_mode != "off":
             if self.query_expansion_provider is not None:
-                self.validate_plugins(
-                    [("recall.query_expansion_provider", self.query_expansion_provider)]
-                )
+                self.validate_plugins([("recall.query_expansion_provider", self.query_expansion_provider)])
             self.query_expansion_line_overrides()
         if self.provenance_mode not in {"observe", "enforce"}:
             raise ConfigurationError("provenance.mode must be 'observe' or 'enforce'")

@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 
 import hl_mem.workers.worker as worker_module
 from hl_mem.ingest.chunking import ChunkingPolicy
@@ -55,6 +56,8 @@ def queue(
     *,
     event_type="message",
     content=None,
+    origin_class="unknown",
+    session_kind="unknown",
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     EventRepository(connection).insert_event(
@@ -65,6 +68,8 @@ def queue(
             "content_json": json.dumps(content or {"text": "记住使用 SQLite"}, ensure_ascii=False),
             "occurred_at": now,
             "recorded_at": now,
+            "origin_class": origin_class,
+            "session_kind": session_kind,
         }
     )
     JobRepository(connection).insert_job(
@@ -77,6 +82,76 @@ def queue(
             "max_attempts": max_attempts,
         }
     )
+
+
+class CountingExtractor:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def extract(self, _content):
+        self.calls += 1
+        return [ExtractedClaim(predicate="uses", value="SQLite", subject="hl_mem")]
+
+
+@pytest.mark.parametrize("session_kind", ["heartbeat", "subagent"])
+def test_worker_blocks_automated_session_before_extractor_call(tmp_path, session_kind) -> None:
+    path = tmp_path / f"{session_kind}.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(path),
+        embedding_dim=8,
+        provenance_mode="enforce",
+    )
+    connection = Database(path, settings=settings).open()
+    queue(connection, origin_class="system", session_kind=session_kind)
+    extractor = CountingExtractor()
+
+    result = Worker(settings, extractor=extractor, embedder=FakeEmbedder(8)).run_once()
+
+    assert result["status"] == "succeeded"
+    assert result["claims"] == 0
+    assert extractor.calls == 0
+    assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 0
+
+
+def test_worker_observe_mode_keeps_automated_extraction_flow(tmp_path) -> None:
+    path = tmp_path / "observe-heartbeat.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(path),
+        embedding_dim=8,
+        provenance_mode="observe",
+    )
+    connection = Database(path, settings=settings).open()
+    queue(connection, origin_class="system", session_kind="heartbeat")
+    extractor = CountingExtractor()
+
+    result = Worker(settings, extractor=extractor, embedder=FakeEmbedder(8)).run_once()
+
+    assert result["status"] == "succeeded"
+    assert extractor.calls == 1
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
+
+
+def test_worker_rechecks_provenance_for_already_queued_job(tmp_path) -> None:
+    path = tmp_path / "queued-regate.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(path),
+        embedding_dim=8,
+        provenance_mode="enforce",
+    )
+    connection = Database(path, settings=settings).open()
+    queue(connection, origin_class="direct_user", session_kind="interactive")
+    connection.execute("UPDATE events SET origin_class='system',session_kind='subagent' WHERE id='event'")
+    connection.commit()
+    extractor = CountingExtractor()
+
+    result = Worker(settings, extractor=extractor, embedder=FakeEmbedder(8)).run_once()
+
+    assert result["status"] == "succeeded"
+    assert extractor.calls == 0
 
 
 def test_run_once_extracts_and_completes(tmp_path) -> None:

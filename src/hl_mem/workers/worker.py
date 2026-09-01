@@ -41,6 +41,7 @@ from hl_mem.workers.maintenance import (
     build_deterministic_maintenance,
     build_semantic_schedules,
 )
+from hl_mem.workers.provenance import provenance_extraction_rejection
 from hl_mem.workers.scheduling import lease_deadline as _lease_deadline
 from hl_mem.workers.scheduling import utc_now as _now
 
@@ -399,6 +400,12 @@ class Worker:
             job_id=job_id,
             tenant_id=first.get("tenant_id", "default"),
         ):
+            provenance_rejection = provenance_extraction_rejection(
+                self.audit, source_batch, mode=self.settings.provenance_mode
+            )
+            if provenance_rejection is not None:
+                report_writes("claims_written", 0, 0, 0)
+                return provenance_rejection
             prepared: list[tuple[dict[str, Any], dict[str, Any]]] = []
             for event in source_batch:
                 content = self._prepare_event(events, event)

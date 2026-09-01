@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TypeVar
 
 from hl_mem.domain.provenance import OriginClass, SessionKind
 
@@ -12,6 +13,7 @@ MAX_EXTERNAL_TOOL_NAMES = 8
 MAX_EXTERNAL_TOOL_NAME_LENGTH = 64
 _UNSAFE_TOOL_NAME = re.compile(r"[^A-Za-z0-9_.:-]+")
 _UNTRUSTED_WRAPPER = "<untrusted_tool_result"
+_MessageT = TypeVar("_MessageT")
 
 
 @dataclass(frozen=True)
@@ -37,7 +39,7 @@ def session_kind_from_host(platform: object, agent_context: object) -> SessionKi
     return "unknown"
 
 
-def _after_latest_user(messages: Sequence[object]) -> Sequence[object]:
+def messages_after_latest_user(messages: Sequence[_MessageT]) -> Sequence[_MessageT]:
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
         if isinstance(message, Mapping) and message.get("role") == "user":
@@ -75,7 +77,7 @@ def _safe_tool_name(value: object) -> str:
 
 def _external_tools(messages: Sequence[object]) -> tuple[str, ...]:
     names: list[str] = []
-    for item in _after_latest_user(messages):
+    for item in messages_after_latest_user(messages):
         if not isinstance(item, Mapping) or not _is_external_tool_message(item):
             continue
         name = _safe_tool_name(item.get("name") or item.get("tool_name"))
