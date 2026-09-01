@@ -36,7 +36,11 @@ from hl_mem.application.recall_delivery import (
 )
 from hl_mem.application.recall_enrichment import assemble_observations as assemble_recall_observations
 from hl_mem.application.recall_enrichment import assemble_results as assemble_recall_results
-from hl_mem.application.recall_side_effects import RecallSideEffectSink
+from hl_mem.application.recall_side_effects import (
+    RecallSideEffectCoordinator,
+    RecallSideEffectSink,
+    emit_recall_failure,
+)
 from hl_mem.application.resurrection import ResurrectionService
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
@@ -894,58 +898,40 @@ class RecallService:
             data["feedback_id"] = packet_item["feedback_id"]
 
     def _submit_exposures(self, query_id: str, exposures: list[tuple[Any, ...]]) -> int:
-        if self.side_effect_sink is None or not self.side_effect_sink.submit_exposures(query_id, exposures):
-            raise RuntimeError("recall exposure submission rejected")
-        return len(exposures)
+        return self._side_effect_coordinator().submit_exposures(query_id, exposures)
 
     def _submit_access(self, query_id: str, claims: list[dict[str, Any]]) -> None:
-        try:
-            claim_ids = [claim["id"] for claim in claims]
-            accessed_at = _now()
-            assert self.side_effect_sink is not None
-            if not self.side_effect_sink.submit_access(query_id, claim_ids, accessed_at):
-                raise RuntimeError("recall access submission rejected")
-        except Exception as error:
-            _record_side_effect_failure("access_record", error)
-            LOGGER.exception("recall side effect failed: access_record")
+        self._side_effect_coordinator().submit_access(query_id, claims)
 
     def _record_access(self, claims: list[dict[str, Any]]) -> None:
-        try:
-            claim_ids = [claim["id"] for claim in claims]
-            self._run_side_effect_with_retry(lambda: ClaimRepository(self.connection).record_access(claim_ids, _now()))
-        except Exception as error:
-            _record_side_effect_failure("access_record", error)
-            LOGGER.exception("recall side effect failed: access_record")
-            self._emit_failure("access_record", "access_record_failed", error, len(claims))
+        self._side_effect_coordinator().record_access(claims)
 
     def _run_side_effect_with_retry(self, operation: Any) -> Any:
-        """仅对 SQLite busy/locked 做 Settings 控制的有限退避重试。"""
-        attempts = self.settings.recall_side_effect_max_attempts
-        for attempt in range(attempts):
-            try:
-                return operation()
-            except sqlite3.OperationalError as error:
-                busy = "busy" in str(error).lower() or "locked" in str(error).lower()
-                if not busy or attempt + 1 >= attempts:
-                    raise
-                time.sleep(self.settings.recall_side_effect_backoff_seconds * (attempt + 1))
-        raise RuntimeError("unreachable recall side-effect retry state")
+        return self._side_effect_coordinator().run_with_retry(lambda _connection: operation())
+
+    def _side_effect_coordinator(self) -> RecallSideEffectCoordinator:
+        return RecallSideEffectCoordinator(
+            self.connection,
+            self.settings,
+            self.side_effect_sink,
+            now=_now,
+            sleep=time.sleep,
+            audit_provider=current_audit,
+            failure_recorder=_record_side_effect_failure,
+            logger=LOGGER,
+        )
 
     @staticmethod
     def _emit_failure(operation: str, outcome: str, error: Exception, claim_count: int) -> None:
-        try:
-            current_audit().emit(
-                "recall",
-                operation,
-                outcome,
-                detail={
-                    "error_class": type(error).__name__,
-                    "claim_count": claim_count,
-                },
-            )
-        except Exception as audit_error:
-            _record_side_effect_failure("audit_emit", audit_error)
-            LOGGER.exception("recall failure audit emission failed")
+        emit_recall_failure(
+            operation,
+            outcome,
+            error,
+            claim_count,
+            audit_provider=current_audit,
+            failure_recorder=_record_side_effect_failure,
+            logger=LOGGER,
+        )
 
     def _assemble_results(
         self,

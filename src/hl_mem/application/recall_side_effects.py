@@ -7,19 +7,23 @@ import hashlib
 import json
 import logging
 import queue
+import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Iterator, Protocol
+from typing import Any, Iterator, Protocol, TypeVar
 
 from hl_mem.observability.audit import audit_context
 from hl_mem.observability.llm_spans import LLMSpanRecorder
 from hl_mem.settings import Settings
+from hl_mem.storage.claims import ClaimRepository
 from hl_mem.storage.database import Database
 from hl_mem.storage.deferred_tasks import DeferredTaskRepository
 
 LOGGER = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class RecallSideEffectSink(Protocol):
@@ -41,6 +45,114 @@ class RecallSideEffectSink(Protocol):
         as_of: str,
         known_as_of: str | None,
     ) -> bool: ...
+
+
+class RecallMutationSink(Protocol):
+    """The access/exposure subset used by request coordination."""
+
+    def submit_access(self, query_id: str, claim_ids: list[str], accessed_at: str) -> bool: ...
+
+    def submit_exposures(self, query_id: str, exposures: list[tuple[Any, ...]]) -> bool: ...
+
+
+def emit_recall_failure(
+    operation: str,
+    outcome: str,
+    error: Exception,
+    claim_count: int,
+    *,
+    audit_provider: Callable[[], Any],
+    failure_recorder: Callable[[str, Exception], None],
+    logger: logging.Logger,
+) -> None:
+    """Emit a safe recall failure audit without letting audit failure escape."""
+
+    try:
+        audit_provider().emit(
+            "recall",
+            operation,
+            outcome,
+            detail={
+                "error_class": type(error).__name__,
+                "claim_count": claim_count,
+            },
+        )
+    except Exception as audit_error:
+        failure_recorder("audit_emit", audit_error)
+        logger.exception("recall failure audit emission failed")
+
+
+class RecallSideEffectCoordinator:
+    """Coordinate synchronous and deferred recall mutations behind one boundary."""
+
+    def __init__(
+        self,
+        connection: Any,
+        settings: Settings,
+        sink: RecallMutationSink | None,
+        *,
+        now: Callable[[], str],
+        sleep: Callable[[float], None],
+        audit_provider: Callable[[], Any],
+        failure_recorder: Callable[[str, Exception], None],
+        logger: logging.Logger,
+    ) -> None:
+        self.connection = connection
+        self.settings = settings
+        self.sink = sink
+        self._now = now
+        self._sleep = sleep
+        self._audit_provider = audit_provider
+        self._failure_recorder = failure_recorder
+        self._logger = logger
+
+    def submit_exposures(self, query_id: str, exposures: list[tuple[Any, ...]]) -> int:
+        if self.sink is None or not self.sink.submit_exposures(query_id, exposures):
+            raise RuntimeError("recall exposure submission rejected")
+        return len(exposures)
+
+    def submit_access(self, query_id: str, claims: list[dict[str, Any]]) -> None:
+        try:
+            claim_ids = [claim["id"] for claim in claims]
+            if self.sink is None or not self.sink.submit_access(query_id, claim_ids, self._now()):
+                raise RuntimeError("recall access submission rejected")
+        except Exception as error:
+            self._failure_recorder("access_record", error)
+            self._logger.exception("recall side effect failed: access_record")
+
+    def record_access(self, claims: list[dict[str, Any]]) -> None:
+        try:
+            claim_ids = [claim["id"] for claim in claims]
+            self.run_with_retry(lambda connection: ClaimRepository(connection).record_access(claim_ids, self._now()))
+        except Exception as error:
+            self._failure_recorder("access_record", error)
+            self._logger.exception("recall side effect failed: access_record")
+            self.emit_failure("access_record", "access_record_failed", error, len(claims))
+
+    def run_with_retry(self, operation: Callable[[Any], T]) -> T:
+        """Retry only SQLite busy/locked failures with the existing linear backoff."""
+
+        attempts = self.settings.recall_side_effect_max_attempts
+        for attempt in range(attempts):
+            try:
+                return operation(self.connection)
+            except sqlite3.OperationalError as error:
+                busy = "busy" in str(error).lower() or "locked" in str(error).lower()
+                if not busy or attempt + 1 >= attempts:
+                    raise
+                self._sleep(self.settings.recall_side_effect_backoff_seconds * (attempt + 1))
+        raise RuntimeError("unreachable recall side-effect retry state")
+
+    def emit_failure(self, operation: str, outcome: str, error: Exception, claim_count: int) -> None:
+        emit_recall_failure(
+            operation,
+            outcome,
+            error,
+            claim_count,
+            audit_provider=self._audit_provider,
+            failure_recorder=self._failure_recorder,
+            logger=self._logger,
+        )
 
 
 @dataclass(frozen=True, slots=True)
