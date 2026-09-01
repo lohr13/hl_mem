@@ -29,7 +29,7 @@
   LLMExtractor 职责拆分；未增加 Graph、额外实体 LLM 或新的权威存储。
 - 1.1 增加 Event 来源/session 治理、Hermes 确定性传播、自动会话门控、只读 `explain claim` 与有界 Context
   来源提示；不新增模型调用，不执行事实核验或历史回填。
-- 本地全量门禁为 3077 passed、4 skipped、108 subtests，覆盖率 88.10%；Python 3.12、3.13、3.14
+- 本地全量门禁为 3077 passed、4 skipped、108 subtests，覆盖率 88.09%；Python 3.12、3.13、3.14
   全新环境的 wheel 安装、导入和 CLI 启动均通过。
 
 ## 当前发布状态
