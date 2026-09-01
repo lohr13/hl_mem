@@ -259,6 +259,11 @@ def _forecast(fixture: Mapping[str, Any]) -> dict[str, int]:
     }
 
 
+def _accepted_claim_count(actual: int, expected_minimum: int) -> bool:
+    """Keep Provider smoke focused on pipeline health, not exact extraction granularity."""
+    return actual >= expected_minimum
+
+
 def _preflight(
     settings: Any,
     price_book: UsagePriceBook,
@@ -590,7 +595,7 @@ def _run_pipeline(
         }
         fallback_trace = fallback["search_trace"]
         checks = {
-            "extract_ingest": len(claims) == int(fixture["expected_claim_count"])
+            "extract_ingest": _accepted_claim_count(len(claims), int(fixture["expected_claim_count"]))
             and all(item.status == "stored" for item in stored),
             "claim_persistence": persisted["claims"] >= int(fixture["expected_claim_count"]),
             "evidence_persistence": persisted["evidence_links"] >= int(fixture["expected_claim_count"]),

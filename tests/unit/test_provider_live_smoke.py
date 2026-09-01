@@ -21,6 +21,7 @@ from benchmarks.provider.live_smoke import (
     LiveSmokeBudgetError,
     LiveSmokeLimits,
     LiveSmokeSafetyError,
+    _accepted_claim_count,
     _LiveSmokeDependencies,
     _run_live_smoke,
     main,
@@ -58,6 +59,18 @@ from scripts.check_wheel_contents import check_wheel
 LIMITS = LiveSmokeLimits()
 FIXTURE_PATH = Path(__file__).parents[2] / "benchmarks" / "provider" / "fixture.json"
 RESULT_SCHEMA_PATH = Path(__file__).parents[2] / "benchmarks" / "provider" / "result_schema.json"
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected_minimum", "accepted"),
+    ((3, 4, False), (4, 4, True), (5, 4, True)),
+)
+def test_provider_smoke_expected_claim_count_is_a_minimum(
+    actual: int,
+    expected_minimum: int,
+    accepted: bool,
+) -> None:
+    assert _accepted_claim_count(actual, expected_minimum) is accepted
 
 
 class _RecordingLLMAdapter:
