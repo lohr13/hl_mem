@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PROTOCOL_PATH = ROOT / "benchmarks" / "release" / "entity_v1_protocol.json"
 BASELINE_PATH = ROOT / "benchmarks" / "release" / "results" / "entity-v1-baseline.json"
 PHASE_2_PATH = ROOT / "benchmarks" / "release" / "results" / "entity-v1-1.1.0.json"
-PHASE_2_IMPLEMENTATION_COMMIT = "8db12e1a84937b220a55ddc9c3cb9119962caddf"
+PHASE_2_IMPLEMENTATION_COMMIT = "d283e07f474ea219afafc3780682e8cfb19fb9c8"
 
 REQUIRED_CATEGORIES = {
     "unique_active_alias",
@@ -87,8 +87,8 @@ def _assert_phase_2_targets(candidate: dict[str, Any], baseline: dict[str, Any],
     assert all(case["hit_at_5"] is True for case in scoped_cases)
     assert all(case["forbidden_top_1"] is False for case in scoped_cases)
     assert all(case["fallback_reason"] is None for case in scoped_cases)
-    assert all(set(case["channel_counts"]) == {"fts", "dense"} for case in scoped_cases)
-    assert all(min(case["channel_counts"].values()) >= 1 for case in scoped_cases)
+    assert all(set(case["channel_counts"]) == {"fts", "dense"} for case in candidate_cases.values())
+    assert all(min(case["channel_counts"].values()) >= 1 for case in candidate_cases.values())
     assert candidate["metrics"]["cross_entity_top_1_count"] == 0
     assert all(case["actual_scope"] == "wide" for case in wide_cases)
     assert all(case["fallback_reason"] is not None for case in wide_cases)
