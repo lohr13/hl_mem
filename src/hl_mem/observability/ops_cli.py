@@ -8,12 +8,15 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.request import urlopen
 
 from hl_mem.errors import OpsReportError
 from hl_mem.observability.ops_report import build_ops_report, parse_report_window
 from hl_mem.observability.usage_types import default_usage_ledger_path
 from hl_mem.settings import Settings
 from hl_mem.storage.database import known_migration_versions
+
+_MAX_HEALTH_RESPONSE_BYTES = 64 * 1024
 
 
 def open_readonly_database(database_path: Path) -> sqlite3.Connection:
@@ -52,6 +55,27 @@ def _validate_database(connection: sqlite3.Connection) -> None:
         raise OpsReportError("main database schema is newer than supported")
 
 
+def _fetch_worker_runtime(settings: Settings) -> dict[str, object] | None:
+    """Read the configured daemon's bounded health snapshot when Hermes uses it."""
+    if not settings.hermes_enabled:
+        return None
+    try:
+        with urlopen(f"{settings.hermes_url.rstrip('/')}/healthz", timeout=1.0) as response:
+            raw = response.read(_MAX_HEALTH_RESPONSE_BYTES + 1)
+        if len(raw) > _MAX_HEALTH_RESPONSE_BYTES:
+            return None
+        payload = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    monitoring = payload.get("monitoring")
+    if not isinstance(monitoring, dict):
+        return None
+    worker = monitoring.get("worker")
+    return worker if isinstance(worker, dict) else None
+
+
 def _run_report(
     settings: Settings,
     *,
@@ -75,6 +99,7 @@ def _run_report(
             settings=settings,
             window=window,
             now=window.until,
+            worker_runtime=_fetch_worker_runtime(settings),
         )
     except (OSError, sqlite3.Error, OpsReportError):
         print("ops report unavailable", file=sys.stderr)

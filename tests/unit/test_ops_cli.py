@@ -7,12 +7,16 @@ import json
 import sqlite3
 import subprocess
 import sys
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from hl_mem.cli import main
+from hl_mem.observability import ops_cli
 from hl_mem.observability.usage_types import default_usage_ledger_path
+from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 
 
@@ -95,6 +99,65 @@ def test_ops_report_human_mode_uses_fixed_safe_sections(tmp_path: Path, capsys: 
     ]
     assert "test-secret" not in output
     assert "quality-llm" not in output
+
+
+def test_ops_report_prefers_live_daemon_worker_status(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write('\n[hermes]\nenabled = true\nurl = "http://127.0.0.1:8200"\n')
+    _seed_database(tmp_path)
+    heartbeat = datetime.now(timezone.utc).isoformat()
+    monkeypatch.setattr(
+        ops_cli,
+        "_fetch_worker_runtime",
+        lambda _settings: {"running": True, "heartbeat_at": heartbeat},
+    )
+
+    main(["--config", str(config), "--env-file", str(tmp_path / ".env"), "ops", "report", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["worker"] == {"state": "active", "source": "process", "heartbeat_at": heartbeat}
+    assert "worker_inactive" not in payload["warnings"]
+
+
+def test_live_worker_probe_is_bounded_and_extracts_only_worker_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    worker = {"running": True, "heartbeat_at": datetime.now(timezone.utc).isoformat()}
+
+    class Response:
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _limit: int) -> bytes:
+            return json.dumps({"monitoring": {"worker": worker}, "ignored": "content"}).encode()
+
+    monkeypatch.setattr(ops_cli, "urlopen", lambda _url, timeout: Response())
+    settings = replace(Settings.for_test(), hermes_enabled=True, hermes_url="http://daemon.test")
+
+    assert ops_cli._fetch_worker_runtime(settings) == worker
+
+
+def test_live_worker_probe_rejects_oversized_health_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, limit: int) -> bytes:
+            return b"x" * limit
+
+    monkeypatch.setattr(ops_cli, "urlopen", lambda _url, timeout: Response())
+    settings = replace(Settings.for_test(), hermes_enabled=True, hermes_url="http://daemon.test")
+
+    assert ops_cli._fetch_worker_runtime(settings) is None
 
 
 def test_ops_report_rejects_invalid_window_with_argparse_exit_two(tmp_path: Path) -> None:
