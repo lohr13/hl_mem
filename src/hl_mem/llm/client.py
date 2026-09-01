@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -24,6 +25,9 @@ from hl_mem.plugins.contracts import (
 from hl_mem.plugins.proxies import GovernedProviderCall
 
 from .types import LLMRequest, LLMResponse, StructuredOutputMode
+
+_INPUT_PROTOCOL_OVERHEAD_TOKENS = 64
+_INPUT_MESSAGE_OVERHEAD_TOKENS = 8
 
 
 def classify_provider_error(error: Exception) -> tuple[str, int | None, str | None]:
@@ -220,9 +224,30 @@ class LLMClient:
         return "success"
 
     def _estimate_usage(self, request: LLMRequest) -> UsageAmount:
-        input_tokens = max(1, sum(len(message.content) for message in request.messages) // 2)
+        # One token per serialized UTF-8 byte is intentionally conservative for
+        # provider-neutral reservation. Fixed framing allowances cover chat and
+        # protocol tokens that are not present in the message text itself.
+        input_tokens = _INPUT_PROTOCOL_OVERHEAD_TOKENS
+        for message in request.messages:
+            serialized = json.dumps(
+                {"role": message.role, "content": message.content},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            input_tokens += len(serialized) + _INPUT_MESSAGE_OVERHEAD_TOKENS
+        if request.structured_output is not None:
+            structured = json.dumps(
+                {
+                    "name": request.structured_output.name,
+                    "schema": request.structured_output.schema,
+                    "preferred_mode": request.structured_output.preferred_mode.value,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            input_tokens += len(structured)
         output_tokens = self._max_tokens if self._max_tokens is not None else max(256, min(4096, input_tokens))
-        unknown_units = {"input_tokens"}
+        unknown_units: set[str] = set()
         if self._max_tokens is None:
             unknown_units.add("output_tokens")
         return UsageAmount(

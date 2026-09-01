@@ -191,6 +191,7 @@ def test_token_priced_llm_reservation_fails_closed_before_network(tmp_path: Path
         provider="openai_compatible",
         model="model",
         million_input_tokens=1,
+        million_output_tokens=1,
     )
     client, runtime, http_client = _client(
         tmp_path,
@@ -203,6 +204,75 @@ def test_token_priced_llm_reservation_fails_closed_before_network(tmp_path: Path
         with pytest.raises(UsageLimitExceededError, match="cost"):
             client.complete(_request())
         assert not called
+    finally:
+        runtime.close()
+        http_client.close()
+
+
+def test_bounded_llm_estimate_is_conservative_and_fully_priceable(tmp_path: Path) -> None:
+    client, runtime, http_client = _client(
+        tmp_path,
+        lambda request: httpx.Response(500, request=request),
+        provider="openai_compatible",
+        llm_max_tokens=64,
+    )
+    request = LLMRequest(
+        messages=[
+            LLMMessage(role="system", content="é"),
+            LLMMessage(role="user", content="你好，HL-Mem"),
+        ]
+    )
+    try:
+        estimate = client._estimate_usage(request)
+        encoded_content_bytes = sum(len(message.content.encode("utf-8")) for message in request.messages)
+        legacy_estimate = max(1, sum(len(message.content) for message in request.messages) // 2)
+
+        assert estimate.input_tokens > encoded_content_bytes
+        assert estimate.input_tokens >= legacy_estimate
+        assert estimate.output_tokens == 64
+        assert estimate.unknown_units == frozenset()
+    finally:
+        runtime.close()
+        http_client.close()
+
+
+def test_bounded_token_priced_llm_reserves_before_network(tmp_path: Path) -> None:
+    called = False
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "choices": [{"message": {"content": "{}"}}],
+                "usage": {"prompt_tokens": 9, "completion_tokens": 2, "total_tokens": 11},
+            },
+        )
+
+    price_book = write_usage_price_book(
+        tmp_path / "prices.json",
+        capability="llm",
+        provider="openai_compatible",
+        model="model",
+        million_input_tokens=1,
+        million_output_tokens=1,
+    )
+    client, runtime, http_client = _client(
+        tmp_path,
+        handle,
+        provider="openai_compatible",
+        llm_max_tokens=64,
+        usage_price_book_path=str(price_book),
+        usage_daily_cost_limit_microunits=10,
+    )
+    try:
+        client.complete(_request())
+        assert called
+        snapshot = runtime.governor.snapshot()
+        assert snapshot["settled"]["requests"] == 1
+        assert snapshot["settled"]["cost_microunits"] == 2
     finally:
         runtime.close()
         http_client.close()

@@ -494,6 +494,54 @@ def test_model_probe_includes_only_enabled_model_paths(monkeypatch: pytest.Monke
     assert [item.name for item in with_reranker] == ["LLM API", "Embedding API", "Reranker API"]
 
 
+def test_model_probe_uses_a_bounded_minimal_json_completion(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class ProbeRuntime:
+        def close(self) -> None:
+            captured["runtime_closed"] = True
+
+    class ProbeClient:
+        def complete(self, request, *, timeout_seconds=None):
+            captured["request"] = request
+            captured["timeout_seconds"] = timeout_seconds
+
+        def close(self) -> None:
+            captured["client_closed"] = True
+
+    def create_runtime(settings: Settings, **_kwargs: object) -> ProbeRuntime:
+        captured["max_tokens"] = settings.llm_max_tokens
+        return ProbeRuntime()
+
+    monkeypatch.setattr(doctor_module.components, "create_provider_runtime", create_runtime)
+    monkeypatch.setattr(doctor_module.components, "make_llm_client", lambda *_args, **_kwargs: ProbeClient())
+    monkeypatch.setattr(
+        doctor_module,
+        "_check_embedding",
+        lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
+    )
+
+    results = probe_model_components(
+        Settings(
+            extractor_mode="llm",
+            llm_api_key="live-llm-key",
+            embedder_mode="fake",
+            reranker_mode="off",
+        )
+    )
+
+    request = captured["request"]
+    assert isinstance(request, doctor_module.LLMRequest)
+    assert captured["max_tokens"] == 64
+    assert request.structured_output is None
+    assert len(request.messages) == 1
+    assert "JSON" in request.messages[0].content
+    assert "{}" in request.messages[0].content
+    assert [item.status for item in results] == [CheckStatus.OK, CheckStatus.OK]
+    assert captured["client_closed"] is True
+    assert captured["runtime_closed"] is True
+
+
 def test_run_doctor_loads_one_price_book_and_shares_one_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

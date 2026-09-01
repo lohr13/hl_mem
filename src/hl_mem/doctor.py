@@ -299,7 +299,10 @@ def _check_llm(settings: Settings, runtime: ProviderRuntime | None = None) -> Ch
     client = None
     try:
         client = components.make_llm_client(settings, operation="doctor", runtime=runtime)
-        client.complete(LLMRequest([LLMMessage("user", "ping")]), timeout_seconds=settings.llm_timeout)
+        client.complete(
+            LLMRequest([LLMMessage("user", "Return only the smallest valid JSON object: {}")]),
+            timeout_seconds=settings.llm_timeout,
+        )
         return CheckResult(CheckStatus.OK, "LLM API", "请求成功")
     except Exception:
         return CheckResult(CheckStatus.FAIL, "LLM API", "minimal request failed")
@@ -341,7 +344,7 @@ def probe_model_components(
         probe_settings = replace(
             settings,
             database_path=str(Path(temporary) / "probe.db"),
-            llm_max_tokens=1,
+            llm_max_tokens=64,
         )
         try:
             if estimator is _ESTIMATOR_UNSET:
