@@ -37,14 +37,13 @@ from hl_mem.config.cli import add_config_command, handle_config_command
 from hl_mem.config_loader import load_settings
 from hl_mem.daily_cli import add_daily_commands, handle_daily_command
 from hl_mem.doctor import add_doctor_command, handle_doctor_command
-from hl_mem.errors import ConflictError, OpsReportError
+from hl_mem.errors import ConflictError
 from hl_mem.evaluation.runner import BenchmarkRunner
-from hl_mem.observability.ops_report import build_ops_report, parse_report_window
-from hl_mem.observability.usage_types import default_usage_ledger_path
+from hl_mem.observability.ops_cli import add_ops_command, handle_ops_command, open_readonly_database
 from hl_mem.settings import Settings
 from hl_mem.storage.backup import backup_database, validate_backup
 from hl_mem.storage.claims import ClaimRepository
-from hl_mem.storage.database import Database, known_migration_versions
+from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
 from hl_mem.storage.jobs import JobRepository
 from hl_mem.workers.backfill_index_text import backfill_index_text
@@ -117,72 +116,6 @@ def _archive_event_matches_existing(connection: sqlite3.Connection, event: dict[
         return False
     expected = _normalized_archive_event(event)
     return all(existing[column] == expected[column] for column in EVENT_ARCHIVE_COLUMNS)
-
-
-def _open_readonly_database(database_path: Path) -> sqlite3.Connection:
-    """以 SQLite 强制只读模式打开现有数据库，且不运行 migration。"""
-    connection = sqlite3.connect(f"{database_path.resolve().as_uri()}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA query_only=ON")
-    return connection
-
-
-def _print_ops_report(report: dict[str, object], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(report, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
-        return
-    sections = (
-        ("Summary", {key: report[key] for key in ("schema_version", "generated_at", "window")}),
-        ("Providers", report["usage"]),
-        ("Jobs", report["jobs"]),
-        ("Worker", report["worker"]),
-        ("Storage", report["files"]),
-        ("Conflicts", report["conflicts"]),
-        ("Warnings", report["warnings"]),
-    )
-    for title, value in sections:
-        print(f"{title}:")
-        print(json.dumps(value, ensure_ascii=False, sort_keys=True))
-
-
-def _validate_ops_report_database(connection: sqlite3.Connection) -> None:
-    tables = {
-        str(row["name"])
-        for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
-    required_tables = {"schema_migrations", "jobs", "conflict_cases"}
-    if not required_tables.issubset(tables):
-        raise OpsReportError("main database has an unsupported schema")
-    applied = {str(row["version"]) for row in connection.execute("SELECT version FROM schema_migrations")}
-    if not applied.issubset(known_migration_versions()):
-        raise OpsReportError("main database schema is newer than supported")
-
-
-def _run_ops_report(settings: Settings, *, since: str, as_json: bool, parser: argparse.ArgumentParser) -> None:
-    try:
-        window = parse_report_window(since, now=datetime.now(timezone.utc))
-    except ValueError as error:
-        parser.error(str(error))
-    database_path = Path(settings.database_path)
-    connection: sqlite3.Connection | None = None
-    try:
-        connection = _open_readonly_database(database_path)
-        _validate_ops_report_database(connection)
-        report = build_ops_report(
-            connection,
-            database_path=database_path,
-            usage_path=default_usage_ledger_path(database_path),
-            settings=settings,
-            window=window,
-            now=window.until,
-        )
-    except (OSError, sqlite3.Error, OpsReportError):
-        print("ops report unavailable", file=sys.stderr)
-        raise SystemExit(1) from None
-    finally:
-        if connection is not None:
-            connection.close()
-    _print_ops_report(report, as_json=as_json)
 
 
 def export_database(
@@ -473,7 +406,7 @@ def drain_dedup_backlog(
     if apply and expected_count is None:
         raise ConflictError("--expected-count is required with --apply")
     if not apply:
-        connection = _open_readonly_database(Path(database_path))
+        connection = open_readonly_database(Path(database_path))
         try:
             preview = inspect_below_floor_pairs(connection, threshold=threshold)
         finally:
@@ -520,7 +453,7 @@ def cleanup_expired_history(
     if apply and expected_count is None:
         raise ConflictError("--expected-count is required with --apply")
     if not apply:
-        connection = _open_readonly_database(Path(database_path))
+        connection = open_readonly_database(Path(database_path))
         try:
             preview = inspect_expired_claims(
                 connection,
@@ -640,11 +573,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     backfill.add_argument("--dry-run", action="store_true")
     backfill.add_argument("--cursor")
     backfill.add_argument("--mode", choices=("legacy", "value_only", "natural", "answerable"))
-    ops = commands.add_parser("ops")
-    ops_commands = ops.add_subparsers(dest="ops_command", required=True)
-    ops_report = ops_commands.add_parser("report")
-    ops_report.add_argument("--since", default="24h")
-    ops_report.add_argument("--json", action="store_true")
+    add_ops_command(commands)
     add_doctor_command(commands)
     add_config_command(commands)
     hermes = commands.add_parser("hermes", help="安装或升级 Hermes 插件")
@@ -681,8 +610,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     settings = load_settings(args.config, args.env_file)
     if args.db is not None:
         settings = replace(settings, database_path=str(args.db))
-    if args.command == "ops":
-        _run_ops_report(settings, since=args.since, as_json=args.json, parser=parser)
+    if handle_ops_command(args, settings, parser):
         return
     if args.command == "report-version":
         return print(report_version_cli(settings, args.namespace, args.subject))
@@ -712,7 +640,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         connection: sqlite3.Connection | None = None
         try:
             if args.dry_run:
-                connection = _open_readonly_database(database_path)
+                connection = open_readonly_database(database_path)
             else:
                 database = Database(settings=settings)
                 connection = database.open()

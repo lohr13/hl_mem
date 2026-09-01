@@ -12,6 +12,7 @@ import pytest
 
 import hl_mem.cli as cli_module
 import hl_mem.doctor as doctor_module
+import hl_mem.observability.provider_diagnostics as provider_diagnostics
 from hl_mem.compatibility import (
     CONTEXT_PACKET_SCHEMA_MAJOR,
     CONTEXT_PACKET_SCHEMA_MINOR,
@@ -131,14 +132,14 @@ def test_provider_doctor_reports_resolution_and_trust_without_disabled_imports(
 ) -> None:
     settings = replace(Settings.for_test(), database_path=str(tmp_path / "memory.db"))
     calls = 0
-    original = doctor_module.components.make_provider_registry
+    original = provider_diagnostics.components.make_provider_registry
 
     def registry(_settings):
         nonlocal calls
         calls += 1
         return original(Settings.for_test(), entry_points=())
 
-    monkeypatch.setattr(doctor_module.components, "make_provider_registry", registry)
+    monkeypatch.setattr(provider_diagnostics.components, "make_provider_registry", registry)
     results = _check_provider_plugins(settings)
 
     assert calls == 1
@@ -174,7 +175,7 @@ def test_provider_doctor_normalizes_registry_failures_without_disclosure(
             raise error_type(sensitive)
         return BrokenRegistry()
 
-    monkeypatch.setattr(doctor_module.components, "make_provider_registry", registry)
+    monkeypatch.setattr(provider_diagnostics.components, "make_provider_registry", registry)
 
     results = _check_provider_plugins(Settings.for_test())
 
@@ -472,18 +473,18 @@ def test_placeholder_secret_detection() -> None:
 
 def test_model_probe_includes_only_enabled_model_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        doctor_module,
-        "_check_llm",
+        provider_diagnostics,
+        "check_llm",
         lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "LLM API", "ok"),
     )
     monkeypatch.setattr(
-        doctor_module,
-        "_check_embedding",
+        provider_diagnostics,
+        "check_embedding",
         lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
     )
     monkeypatch.setattr(
-        doctor_module,
-        "_check_reranker",
+        provider_diagnostics,
+        "check_reranker",
         lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "Reranker API", "ok"),
     )
 
@@ -513,11 +514,11 @@ def test_model_probe_uses_a_bounded_minimal_json_completion(monkeypatch: pytest.
         captured["max_tokens"] = settings.llm_max_tokens
         return ProbeRuntime()
 
-    monkeypatch.setattr(doctor_module.components, "create_provider_runtime", create_runtime)
-    monkeypatch.setattr(doctor_module.components, "make_llm_client", lambda *_args, **_kwargs: ProbeClient())
+    monkeypatch.setattr(provider_diagnostics.components, "create_provider_runtime", create_runtime)
+    monkeypatch.setattr(provider_diagnostics.components, "make_llm_client", lambda *_args, **_kwargs: ProbeClient())
     monkeypatch.setattr(
-        doctor_module,
-        "_check_embedding",
+        provider_diagnostics,
+        "check_embedding",
         lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
     )
 
@@ -531,7 +532,7 @@ def test_model_probe_uses_a_bounded_minimal_json_completion(monkeypatch: pytest.
     )
 
     request = captured["request"]
-    assert isinstance(request, doctor_module.LLMRequest)
+    assert isinstance(request, provider_diagnostics.LLMRequest)
     assert captured["max_tokens"] == 64
     assert request.structured_output is None
     assert len(request.messages) == 1
@@ -598,8 +599,8 @@ def test_run_doctor_loads_one_price_book_and_shares_one_runtime(
         return CheckResult(CheckStatus.OK, "model", "ok")
 
     monkeypatch.setattr(UsagePriceBook, "load", classmethod(counting_load))
-    monkeypatch.setattr(doctor_module, "_check_llm", checked)
-    monkeypatch.setattr(doctor_module, "_check_embedding", checked)
+    monkeypatch.setattr(provider_diagnostics, "check_llm", checked)
+    monkeypatch.setattr(provider_diagnostics, "check_embedding", checked)
     monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
 
     results = run_doctor(
@@ -643,7 +644,7 @@ def test_run_doctor_invalid_price_book_skips_all_model_probes(
         port_calls += 1
         return CheckResult(CheckStatus.WARN, "服务端口", "invalid price book reached port probe")
 
-    monkeypatch.setattr(doctor_module.components, "create_provider_runtime", unexpected_runtime)
+    monkeypatch.setattr(provider_diagnostics.components, "create_provider_runtime", unexpected_runtime)
     monkeypatch.setattr(doctor_module, "_probe_daemon", unexpected_daemon)
     monkeypatch.setattr(doctor_module, "_check_port", unexpected_port)
 
@@ -688,9 +689,9 @@ def test_invalid_price_book_preserves_enabled_model_check_codes_without_probing(
 
         return unexpected
 
-    monkeypatch.setattr(doctor_module, "_check_llm", checked("llm"))
-    monkeypatch.setattr(doctor_module, "_check_embedding", checked("embedding"))
-    monkeypatch.setattr(doctor_module, "_check_reranker", checked("reranker"))
+    monkeypatch.setattr(provider_diagnostics, "check_llm", checked("llm"))
+    monkeypatch.setattr(provider_diagnostics, "check_embedding", checked("embedding"))
+    monkeypatch.setattr(provider_diagnostics, "check_reranker", checked("reranker"))
 
     environment = {"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"}
     if reranker_enabled:
@@ -715,7 +716,7 @@ def test_run_doctor_runtime_factory_failure_becomes_safe_model_failure(
     def fail_runtime(*_args: object, **_kwargs: object) -> object:
         raise ConfigurationError(secret_detail)
 
-    monkeypatch.setattr(doctor_module.components, "create_provider_runtime", fail_runtime)
+    monkeypatch.setattr(provider_diagnostics.components, "create_provider_runtime", fail_runtime)
     monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
 
     results = run_doctor(
@@ -741,10 +742,10 @@ def test_run_doctor_plugin_adapter_failure_becomes_safe_model_failure(
     def fail_adapter(*_args: object, **_kwargs: object) -> object:
         raise error_type(secret_detail)
 
-    monkeypatch.setattr(doctor_module.components, "make_llm_client", fail_adapter)
+    monkeypatch.setattr(provider_diagnostics.components, "make_llm_client", fail_adapter)
     monkeypatch.setattr(
-        doctor_module,
-        "_check_embedding",
+        provider_diagnostics,
+        "check_embedding",
         lambda _settings, _runtime=None: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
     )
     monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
