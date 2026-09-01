@@ -7,6 +7,9 @@
   "required": [
     "schema_version",
     "passed",
+    "provider_kind",
+    "core_commit",
+    "run_at_utc",
     "fixture_sha256",
     "config_fingerprint",
     "labels",
@@ -19,6 +22,9 @@
   "properties": {
     "schema_version": {"const": 1},
     "passed": {"type": "boolean"},
+    "provider_kind": {"enum": ["builtin", "external_plugin", "mixed"]},
+    "core_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "run_at_utc": {"type": "string", "format": "date-time", "pattern": "(?:Z|\\+00:00)$"},
     "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "config_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "labels": {
@@ -26,27 +32,74 @@
       "additionalProperties": false,
       "required": ["package_version", "plugins", "models"],
       "properties": {
-        "package_version": {"type": "string", "maxLength": 64},
-        "plugins": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 64}},
+        "package_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._+-]+$"},
+        "plugins": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9._-]*$"}
+        },
         "models": {
           "type": "object",
           "additionalProperties": false,
           "required": ["llm", "embedding", "reranker"],
           "properties": {
-            "llm": {"type": "string", "maxLength": 200},
-            "embedding": {"type": "string", "maxLength": 200},
-            "reranker": {"type": "string", "maxLength": 200}
+            "llm": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"},
+            "embedding": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"},
+            "reranker": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"}
           }
         }
       }
     },
     "counters": {
       "type": "object",
-      "additionalProperties": {"type": "integer", "minimum": 0}
+      "additionalProperties": false,
+      "required": [
+        "llm_requests",
+        "embedding_items",
+        "rerank_documents",
+        "cost_microunits",
+        "active_reservations",
+        "claims",
+        "evidence_links",
+        "canonical_entities",
+        "claim_entity_links",
+        "vectors",
+        "recall_results",
+        "reranker_successful_recalls",
+        "ordinary_recall_results",
+        "entity_recall_results",
+        "temporal_recall_results",
+        "preference_recall_results"
+      ],
+      "properties": {
+        "llm_requests": {"type": "integer", "minimum": 0},
+        "embedding_items": {"type": "integer", "minimum": 0},
+        "rerank_documents": {"type": "integer", "minimum": 0},
+        "cost_microunits": {"type": "integer", "minimum": 0},
+        "active_reservations": {"type": "integer", "minimum": 0},
+        "claims": {"type": "integer", "minimum": 0},
+        "evidence_links": {"type": "integer", "minimum": 0},
+        "canonical_entities": {"type": "integer", "minimum": 0},
+        "claim_entity_links": {"type": "integer", "minimum": 0},
+        "vectors": {"type": "integer", "minimum": 0},
+        "recall_results": {"type": "integer", "minimum": 0},
+        "reranker_successful_recalls": {"type": "integer", "minimum": 0},
+        "ordinary_recall_results": {"type": "integer", "minimum": 0},
+        "entity_recall_results": {"type": "integer", "minimum": 0},
+        "temporal_recall_results": {"type": "integer", "minimum": 0},
+        "preference_recall_results": {"type": "integer", "minimum": 0}
+      }
     },
     "latency_ms": {
       "type": "object",
-      "additionalProperties": {"type": "number", "minimum": 0}
+      "additionalProperties": false,
+      "required": ["ingest", "recall"],
+      "properties": {
+        "ingest": {"type": "number", "minimum": 0},
+        "recall": {"type": "number", "minimum": 0}
+      }
     },
     "price_book": {
       "type": "object",
@@ -56,13 +109,114 @@
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "effective_date": {"type": "string", "format": "date"},
-        "source_urls": {"type": "array", "maxItems": 16, "items": {"type": "string", "format": "uri"}}
+        "source_urls": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"type": "string", "format": "uri", "pattern": "^https://"}
+        }
       }
     },
-    "error_categories": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 64}},
+    "error_categories": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9._-]*$"}
+    },
     "checks": {
       "type": "object",
-      "additionalProperties": {"type": "boolean"}
+      "additionalProperties": false,
+      "required": [
+        "extract_ingest",
+        "claim_persistence",
+        "evidence_persistence",
+        "entity_persistence",
+        "vector_persistence",
+        "ordinary_recall",
+        "entity_recall",
+        "temporal_recall",
+        "preference_recall",
+        "reranker_success",
+        "reranker_failure_fallback",
+        "usage_settled",
+        "reservations_released",
+        "final_budget",
+        "temporary_database"
+      ],
+      "properties": {
+        "extract_ingest": {"type": "boolean"},
+        "claim_persistence": {"type": "boolean"},
+        "evidence_persistence": {"type": "boolean"},
+        "entity_persistence": {"type": "boolean"},
+        "vector_persistence": {"type": "boolean"},
+        "ordinary_recall": {"type": "boolean"},
+        "entity_recall": {"type": "boolean"},
+        "temporal_recall": {"type": "boolean"},
+        "preference_recall": {"type": "boolean"},
+        "reranker_success": {"type": "boolean"},
+        "reranker_failure_fallback": {"type": "boolean"},
+        "usage_settled": {"type": "boolean"},
+        "reservations_released": {"type": "boolean"},
+        "final_budget": {"type": "boolean"},
+        "temporary_database": {"type": "boolean"}
+      }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"passed": {"const": true}}, "required": ["passed"]},
+      "then": {
+        "properties": {
+          "counters": {
+            "properties": {
+              "llm_requests": {"minimum": 1},
+              "embedding_items": {"minimum": 1},
+              "rerank_documents": {"minimum": 1},
+              "active_reservations": {"const": 0},
+              "claims": {"minimum": 1},
+              "evidence_links": {"minimum": 1},
+              "canonical_entities": {"minimum": 1},
+              "claim_entity_links": {"minimum": 1},
+              "vectors": {"minimum": 1},
+              "recall_results": {"minimum": 1},
+              "reranker_successful_recalls": {"minimum": 1},
+              "ordinary_recall_results": {"minimum": 1},
+              "entity_recall_results": {"minimum": 1},
+              "temporal_recall_results": {"minimum": 1},
+              "preference_recall_results": {"minimum": 1}
+            }
+          },
+          "latency_ms": {
+            "properties": {
+              "ingest": {"exclusiveMinimum": 0},
+              "recall": {"exclusiveMinimum": 0}
+            }
+          },
+          "error_categories": {
+            "minItems": 1,
+            "contains": {"const": "controlled_reranker_failure"}
+          },
+          "checks": {
+            "properties": {
+              "extract_ingest": {"const": true},
+              "claim_persistence": {"const": true},
+              "evidence_persistence": {"const": true},
+              "entity_persistence": {"const": true},
+              "vector_persistence": {"const": true},
+              "ordinary_recall": {"const": true},
+              "entity_recall": {"const": true},
+              "temporal_recall": {"const": true},
+              "preference_recall": {"const": true},
+              "reranker_success": {"const": true},
+              "reranker_failure_fallback": {"const": true},
+              "usage_settled": {"const": true},
+              "reservations_released": {"const": true},
+              "final_budget": {"const": true},
+              "temporary_database": {"const": true}
+            }
+          }
+        }
+      }
+    }
+  ]
 }

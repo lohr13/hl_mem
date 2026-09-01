@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import shutil
 import zipfile
+from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,6 +14,7 @@ from typing import Any
 import httpx
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema import ValidationError as JsonSchemaValidationError
 
 from benchmarks.provider.live_smoke import (
     LiveSmokeBudgetError,
@@ -17,9 +22,11 @@ from benchmarks.provider.live_smoke import (
     LiveSmokeSafetyError,
     _LiveSmokeDependencies,
     _run_live_smoke,
+    main,
     run_live_smoke,
 )
 from hl_mem.llm.types import LLMCapabilities, LLMResponse
+from hl_mem.observability.pricing import UsagePriceBook
 from hl_mem.plugins.contracts import (
     EmbeddingInvocation,
     EmbeddingResult,
@@ -144,9 +151,15 @@ class _RecordingEntryPoint:
 
 
 class _RecordingTransport:
-    def __init__(self, *, unknown_embedding_usage: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        unknown_embedding_usage: bool = False,
+        fail_reranker: bool = False,
+    ) -> None:
         self.requests: list[dict[str, Any]] = []
         self.unknown_embedding_usage = unknown_embedding_usage
+        self.fail_reranker = fail_reranker
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -172,6 +185,8 @@ class _RecordingTransport:
                     "input_tokens": None if self.unknown_embedding_usage else len(payload["texts"]) * 4,
                 },
             )
+        if self.fail_reranker:
+            return httpx.Response(503, request=request, json={"error": {"code": "controlled_unavailable"}})
         documents = payload["documents"]
         return httpx.Response(
             200,
@@ -231,6 +246,21 @@ def _write_price_book(
     return path
 
 
+def _write_env(path: Path, *, prefix: str = "explicit") -> Path:
+    path.write_text(
+        "\n".join(
+            (
+                f"LLM_API_KEY={prefix}-llm-secret",
+                f"EMBEDDING_API_KEY={prefix}-embedding-secret",
+                f"RERANKER_API_KEY={prefix}-reranker-secret",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _recording_dependencies(tmp_path: Path, recorder: _RecordingTransport, clients: list[httpx.Client]):
     def client_factory() -> httpx.Client:
         client = httpx.Client(transport=httpx.MockTransport(recorder))
@@ -240,11 +270,6 @@ def _recording_dependencies(tmp_path: Path, recorder: _RecordingTransport, clien
     return _LiveSmokeDependencies(
         entry_points=(_RecordingEntryPoint(),),
         client_factory=client_factory,
-        environ={
-            "LLM_API_KEY": "recording-llm-secret",
-            "EMBEDDING_API_KEY": "recording-embedding-secret",
-            "RERANKER_API_KEY": "recording-reranker-secret",
-        },
         temp_parent=tmp_path,
     )
 
@@ -258,11 +283,14 @@ def _run_with_recording_providers(
 ) -> tuple[dict[str, object], _RecordingTransport, list[httpx.Client], Path, Path]:
     config = _write_config(tmp_path)
     price_book = _write_price_book(tmp_path, omit=omit_price_rule, request_rate=request_rate)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
     recorder = _RecordingTransport()
     clients: list[httpx.Client] = []
     result = _run_live_smoke(
         config,
         tmp_path / "result.json",
+        env_file=env_file,
+        price_book=price_book,
         limits=limits,
         dependencies=_recording_dependencies(tmp_path, recorder, clients),
     )
@@ -337,8 +365,16 @@ def test_live_smoke_refuses_database_path_not_owned_by_temporary_root(
     database: str,
 ) -> None:
     config = _write_config(tmp_path, database=database)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    price_book = _write_price_book(tmp_path)
     with pytest.raises(LiveSmokeSafetyError, match="temporary root"):
-        run_live_smoke(config, tmp_path / "result.json", limits=LIMITS)
+        run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
+            limits=LIMITS,
+        )
 
 
 @pytest.mark.parametrize(
@@ -359,26 +395,49 @@ def test_live_smoke_refuses_fake_components(
     start = text.index(f"[{section}]")
     next_section = text.find("\n[", start + 1)
     config.write_text(text[:start] + replacement + text[next_section:], encoding="utf-8")
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    price_book = _write_price_book(tmp_path)
 
     with pytest.raises(LiveSmokeSafetyError, match="Fake"):
-        run_live_smoke(config, tmp_path / "result.json", limits=LIMITS)
+        run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
+            limits=LIMITS,
+        )
 
 
 def test_live_smoke_requires_a_price_book(tmp_path: Path) -> None:
     config = _write_config(tmp_path)
-    config.write_text(
-        config.read_text(encoding="utf-8").replace('price_book_path = "prices.json"', ""),
-        encoding="utf-8",
-    )
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
 
-    with pytest.raises(LiveSmokeSafetyError, match="price book"):
-        run_live_smoke(config, tmp_path / "result.json", limits=LIMITS)
+    with pytest.raises(TypeError, match="price_book"):
+        run_live_smoke(config, tmp_path / "result.json", env_file=env_file, limits=LIMITS)
+
+
+def test_cli_requires_explicit_env_file_and_price_book(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as captured:
+        main(["--config", "smoke.toml", "--output", "result.json"])
+
+    assert captured.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "--env-file" in stderr
+    assert "--price-book" in stderr
 
 
 def test_live_smoke_does_not_create_output_on_safety_failure(tmp_path: Path) -> None:
     output = tmp_path / "result.json"
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    price_book = _write_price_book(tmp_path)
     with pytest.raises(LiveSmokeSafetyError):
-        run_live_smoke(_write_config(tmp_path, database="../escape.db"), output, limits=LIMITS)
+        run_live_smoke(
+            _write_config(tmp_path, database="../escape.db"),
+            output,
+            env_file=env_file,
+            price_book=price_book,
+            limits=LIMITS,
+        )
     assert not output.exists()
 
 
@@ -395,6 +454,9 @@ def test_recording_live_smoke_exercises_production_chain_and_validates_result(tm
         json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8")),
         format_checker=FormatChecker(),
     ).validate(result)
+    assert result["provider_kind"] == "external_plugin"
+    assert re.fullmatch(r"[0-9a-f]{40}", str(result["core_commit"]))
+    assert datetime.fromisoformat(str(result["run_at_utc"])).tzinfo is not None
     assert result["passed"] is True
     assert all(result["checks"].values())
     assert result["counters"]["llm_requests"] <= 10
@@ -413,6 +475,337 @@ def test_recording_live_smoke_exercises_production_chain_and_validates_result(tm
     }
     assert clients and all(client.is_closed for client in clients)
     assert json.loads((tmp_path / "result.json").read_text(encoding="utf-8")) == result
+
+
+@pytest.mark.parametrize(
+    "section, required_key",
+    (
+        ("counters", "claims"),
+        ("checks", "reranker_success"),
+        ("latency_ms", "ingest"),
+    ),
+)
+def test_result_schema_rejects_missing_fixed_evidence(
+    tmp_path: Path,
+    section: str,
+    required_key: str,
+) -> None:
+    result, *_rest = _run_with_recording_providers(tmp_path)
+    schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    invalid = deepcopy(result)
+    del invalid[section][required_key]
+
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, format_checker=FormatChecker()).validate(invalid)
+
+
+@pytest.mark.parametrize("section", ("counters", "checks", "latency_ms"))
+def test_result_schema_rejects_empty_fixed_evidence(tmp_path: Path, section: str) -> None:
+    result, *_rest = _run_with_recording_providers(tmp_path)
+    schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    invalid = deepcopy(result)
+    invalid[section] = {}
+
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, format_checker=FormatChecker()).validate(invalid)
+
+
+def test_result_schema_rejects_passed_true_when_any_fixed_check_is_false(tmp_path: Path) -> None:
+    result, *_rest = _run_with_recording_providers(tmp_path)
+    schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    invalid = deepcopy(result)
+    invalid["checks"]["reranker_success"] = False
+
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, format_checker=FormatChecker()).validate(invalid)
+
+
+@pytest.mark.parametrize(
+    "section, key, invalid_value",
+    (
+        ("counters", "claims", 0),
+        ("counters", "rerank_documents", 0),
+        ("counters", "reranker_successful_recalls", 0),
+        ("latency_ms", "ingest", 0),
+        ("error_categories", None, []),
+    ),
+)
+def test_result_schema_rejects_passed_true_with_zero_or_empty_execution_evidence(
+    tmp_path: Path,
+    section: str,
+    key: str | None,
+    invalid_value: object,
+) -> None:
+    result, *_rest = _run_with_recording_providers(tmp_path)
+    schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    invalid = deepcopy(result)
+    if key is None:
+        invalid[section] = invalid_value
+    else:
+        invalid[section][key] = invalid_value
+
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, format_checker=FormatChecker()).validate(invalid)
+
+
+def test_result_schema_requires_exact_commit_length_and_utc_timestamp(tmp_path: Path) -> None:
+    result, *_rest = _run_with_recording_providers(tmp_path)
+    schema = json.loads(RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+
+    wrong_commit = deepcopy(result)
+    wrong_commit["core_commit"] = "a" * 41
+    with pytest.raises(JsonSchemaValidationError):
+        validator.validate(wrong_commit)
+
+    non_utc_time = deepcopy(result)
+    non_utc_time["run_at_utc"] = "2026-09-01T08:00:00+08:00"
+    with pytest.raises(JsonSchemaValidationError):
+        validator.validate(non_utc_time)
+
+
+def test_explicit_env_and_price_book_override_implicit_adjacent_files(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+    implicit_env = _write_env(tmp_path / ".env", prefix="implicit-do-not-read")
+    explicit_env = _write_env(tmp_path / "smoke.env")
+    price_book = _write_price_book(tmp_path)
+    recorder = _RecordingTransport()
+    clients: list[httpx.Client] = []
+    result = _run_live_smoke(
+        config,
+        tmp_path / "result.json",
+        env_file=explicit_env,
+        price_book=price_book,
+        limits=LIMITS,
+        dependencies=_recording_dependencies(tmp_path, recorder, clients),
+    )
+
+    assert result["passed"] is True
+    assert recorder.requests
+    assert all("explicit-" in str(request["authorization"]) for request in recorder.requests)
+    assert all("implicit-do-not-read" not in str(request["authorization"]) for request in recorder.requests)
+    assert implicit_env.read_text(encoding="utf-8").startswith("LLM_API_KEY=implicit-do-not-read")
+
+
+def test_explicit_env_ignores_poisoned_process_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for capability in ("LLM", "EMBEDDING", "RERANKER"):
+        monkeypatch.setenv(f"{capability}_API_KEY", f"process-do-not-read-{capability.casefold()}")
+    result, recorder, _clients, _config, _price_book = _run_with_recording_providers(tmp_path)
+
+    assert result["passed"] is True
+    assert recorder.requests
+    assert all("recording-" in str(request["authorization"]) for request in recorder.requests)
+    assert all("process-do-not-read" not in str(request["authorization"]) for request in recorder.requests)
+
+
+def test_explicit_input_symlink_is_rejected_before_provider_calls(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+    target_env = _write_env(tmp_path / "target.env", prefix="recording")
+    linked_env = tmp_path / "linked.env"
+    linked_env.symlink_to(target_env)
+    price_book = _write_price_book(tmp_path)
+    recorder = _RecordingTransport()
+    clients: list[httpx.Client] = []
+
+    with pytest.raises(LiveSmokeSafetyError, match="symlink|unsafe"):
+        _run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=linked_env,
+            price_book=price_book,
+            limits=LIMITS,
+            dependencies=_recording_dependencies(tmp_path, recorder, clients),
+        )
+
+    assert recorder.requests == []
+
+
+def test_explicit_input_parent_escape_is_rejected_before_provider_calls(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+    _write_env(tmp_path / "smoke.env", prefix="recording")
+    escaped_env = tmp_path / "nested" / ".." / "smoke.env"
+    price_book = _write_price_book(tmp_path)
+    recorder = _RecordingTransport()
+    clients: list[httpx.Client] = []
+
+    with pytest.raises(LiveSmokeSafetyError, match="escape|unsafe"):
+        _run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=escaped_env,
+            price_book=price_book,
+            limits=LIMITS,
+            dependencies=_recording_dependencies(tmp_path, recorder, clients),
+        )
+
+    assert recorder.requests == []
+
+
+@pytest.mark.parametrize("redirected_input", ("config", "env", "price"))
+def test_explicit_input_with_symlinked_ancestor_is_rejected_before_provider_calls(
+    tmp_path: Path,
+    redirected_input: str,
+) -> None:
+    config = _write_config(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    price_book = _write_price_book(tmp_path)
+    real_directory = tmp_path / "real-inputs"
+    real_directory.mkdir()
+    linked_directory = tmp_path / "linked-inputs"
+    linked_directory.symlink_to(real_directory, target_is_directory=True)
+    if redirected_input == "config":
+        config = linked_directory / _write_config(real_directory).name
+    elif redirected_input == "env":
+        env_file = linked_directory / _write_env(real_directory / "redirected.env", prefix="recording").name
+    else:
+        price_book = linked_directory / _write_price_book(real_directory).name
+    recorder = _RecordingTransport()
+    clients: list[httpx.Client] = []
+
+    with pytest.raises(LiveSmokeSafetyError, match="symlink|junction|unsafe"):
+        _run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
+            limits=LIMITS,
+            dependencies=_recording_dependencies(tmp_path, recorder, clients),
+        )
+
+    assert recorder.requests == []
+
+
+def test_input_mutation_is_detected_even_when_pipeline_also_fails(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    price_book = _write_price_book(tmp_path)
+
+    def mutate_then_fail() -> httpx.Client:
+        env_file.write_text("LLM_API_KEY=changed\n", encoding="utf-8")
+        raise RuntimeError("controlled client factory failure")
+
+    dependencies = _LiveSmokeDependencies(
+        entry_points=(_RecordingEntryPoint(),),
+        client_factory=mutate_then_fail,
+        temp_parent=tmp_path,
+    )
+
+    with pytest.raises(LiveSmokeSafetyError, match="input.*changed"):
+        _run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
+            limits=LIMITS,
+            dependencies=dependencies,
+        )
+
+
+def test_input_mutation_is_detected_when_early_price_loading_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _write_config(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    price_book = _write_price_book(tmp_path)
+
+    def mutate_then_fail(_path: Path) -> UsagePriceBook:
+        env_file.write_text("LLM_API_KEY=changed\n", encoding="utf-8")
+        raise RuntimeError("controlled early price failure")
+
+    monkeypatch.setattr(UsagePriceBook, "load", mutate_then_fail)
+
+    with pytest.raises(LiveSmokeSafetyError, match="input.*changed"):
+        _run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
+            limits=LIMITS,
+            dependencies=_LiveSmokeDependencies(temp_parent=tmp_path),
+        )
+
+
+def test_input_mutation_during_snapshot_is_rejected_before_provider_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _write_config(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    price_book = _write_price_book(tmp_path)
+    recorder = _RecordingTransport()
+    clients: list[httpx.Client] = []
+    copyfile = shutil.copyfile
+
+    def copy_then_mutate(source: Path, destination: Path) -> str:
+        copied = copyfile(source, destination)
+        if Path(source) == env_file:
+            env_file.write_text("LLM_API_KEY=changed\n", encoding="utf-8")
+        return copied
+
+    monkeypatch.setattr(shutil, "copyfile", copy_then_mutate)
+
+    with pytest.raises(LiveSmokeSafetyError, match="input.*changed"):
+        _run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
+            limits=LIMITS,
+            dependencies=_recording_dependencies(tmp_path, recorder, clients),
+        )
+
+    assert recorder.requests == []
+
+
+def test_input_mutation_is_detected_when_output_write_also_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _write_config(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    price_book = _write_price_book(tmp_path)
+    recorder = _RecordingTransport()
+    clients: list[httpx.Client] = []
+
+    def mutate_then_fail(_output: Path, _result: object) -> None:
+        config.write_text("changed = true\n", encoding="utf-8")
+        raise OSError("controlled output failure")
+
+    monkeypatch.setattr("benchmarks.provider.live_smoke._atomic_write_json", mutate_then_fail)
+
+    with pytest.raises(LiveSmokeSafetyError, match="input.*changed"):
+        _run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
+            limits=LIMITS,
+            dependencies=_recording_dependencies(tmp_path, recorder, clients),
+        )
+
+    assert not (tmp_path / "result.json").exists()
+
+
+def test_all_real_reranker_calls_failing_cannot_pass_the_success_check(tmp_path: Path) -> None:
+    config = _write_config(tmp_path)
+    price_book = _write_price_book(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    recorder = _RecordingTransport(fail_reranker=True)
+    clients: list[httpx.Client] = []
+
+    result = _run_live_smoke(
+        config,
+        tmp_path / "result.json",
+        env_file=env_file,
+        price_book=price_book,
+        limits=LIMITS,
+        dependencies=_recording_dependencies(tmp_path, recorder, clients),
+    )
+
+    assert result["checks"]["reranker_success"] is False
+    assert result["checks"]["reranker_failure_fallback"] is True
+    assert result["passed"] is False
 
 
 def test_result_contains_no_fixture_provider_or_path_content(tmp_path: Path) -> None:
@@ -448,7 +841,8 @@ def test_preflight_rejects_budget_overrun_before_first_call(
     category: str,
 ) -> None:
     config = _write_config(tmp_path)
-    _write_price_book(tmp_path)
+    price_book = _write_price_book(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
     recorder = _RecordingTransport()
     clients: list[httpx.Client] = []
 
@@ -456,6 +850,8 @@ def test_preflight_rejects_budget_overrun_before_first_call(
         _run_live_smoke(
             config,
             tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
             limits=limits,
             dependencies=_recording_dependencies(tmp_path, recorder, clients),
         )
@@ -467,7 +863,8 @@ def test_preflight_rejects_budget_overrun_before_first_call(
 
 def test_preflight_missing_model_price_rule_fails_closed_before_first_call(tmp_path: Path) -> None:
     config = _write_config(tmp_path)
-    _write_price_book(tmp_path, omit="reranker")
+    price_book = _write_price_book(tmp_path, omit="reranker")
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
     recorder = _RecordingTransport()
     clients: list[httpx.Client] = []
 
@@ -475,6 +872,8 @@ def test_preflight_missing_model_price_rule_fails_closed_before_first_call(tmp_p
         _run_live_smoke(
             config,
             tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
             limits=LIMITS,
             dependencies=_recording_dependencies(tmp_path, recorder, clients),
         )
@@ -484,7 +883,8 @@ def test_preflight_missing_model_price_rule_fails_closed_before_first_call(tmp_p
 
 def test_price_book_source_url_userinfo_is_rejected_without_disclosure(tmp_path: Path) -> None:
     config = _write_config(tmp_path)
-    _write_price_book(tmp_path, source_url="https://do-not-log@pricing.example.test/provider")
+    price_book = _write_price_book(tmp_path, source_url="https://do-not-log@pricing.example.test/provider")
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
     recorder = _RecordingTransport()
     clients: list[httpx.Client] = []
 
@@ -492,6 +892,43 @@ def test_price_book_source_url_userinfo_is_rejected_without_disclosure(tmp_path:
         _run_live_smoke(
             config,
             tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
+            limits=LIMITS,
+            dependencies=_recording_dependencies(tmp_path, recorder, clients),
+        )
+
+    assert "do-not-log" not in str(captured.value)
+    assert recorder.requests == []
+
+
+@pytest.mark.parametrize(
+    "source_url",
+    (
+        "https://pricing.example.test/provider?token=do-not-log",
+        "https://pricing.example.test/provider#do-not-log",
+        "https://pricing.example.test/provider?",
+        "https://pricing.example.test/provider#",
+        "https://pricing.example.test/provider?#",
+        "https://[do-not-log",
+    ),
+)
+def test_price_book_source_url_query_or_fragment_is_rejected_without_disclosure(
+    tmp_path: Path,
+    source_url: str,
+) -> None:
+    config = _write_config(tmp_path)
+    price_book = _write_price_book(tmp_path, source_url=source_url)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
+    recorder = _RecordingTransport()
+    clients: list[httpx.Client] = []
+
+    with pytest.raises(LiveSmokeSafetyError, match="source URL") as captured:
+        _run_live_smoke(
+            config,
+            tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
             limits=LIMITS,
             dependencies=_recording_dependencies(tmp_path, recorder, clients),
         )
@@ -502,7 +939,8 @@ def test_price_book_source_url_userinfo_is_rejected_without_disclosure(tmp_path:
 
 def test_final_unknown_cost_fails_closed_and_writes_no_output(tmp_path: Path) -> None:
     config = _write_config(tmp_path)
-    _write_price_book(tmp_path, embedding_token_rate=1_000_000)
+    price_book = _write_price_book(tmp_path, embedding_token_rate=1_000_000)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
     recorder = _RecordingTransport(unknown_embedding_usage=True)
     clients: list[httpx.Client] = []
 
@@ -510,6 +948,8 @@ def test_final_unknown_cost_fails_closed_and_writes_no_output(tmp_path: Path) ->
         _run_live_smoke(
             config,
             tmp_path / "result.json",
+            env_file=env_file,
+            price_book=price_book,
             limits=LIMITS,
             dependencies=_recording_dependencies(tmp_path, recorder, clients),
         )
@@ -523,9 +963,10 @@ def test_final_unknown_cost_fails_closed_and_writes_no_output(tmp_path: Path) ->
 def test_live_smoke_preserves_inputs_and_removes_temporary_root(tmp_path: Path) -> None:
     config = _write_config(tmp_path)
     price_book = _write_price_book(tmp_path)
+    env_file = _write_env(tmp_path / "smoke.env", prefix="recording")
     before = {
         path: (path.stat().st_size, path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
-        for path in (config, price_book)
+        for path in (config, env_file, price_book)
     }
     recorder = _RecordingTransport()
     clients: list[httpx.Client] = []
@@ -533,13 +974,15 @@ def test_live_smoke_preserves_inputs_and_removes_temporary_root(tmp_path: Path) 
     _run_live_smoke(
         config,
         tmp_path / "result.json",
+        env_file=env_file,
+        price_book=price_book,
         limits=LIMITS,
         dependencies=_recording_dependencies(tmp_path, recorder, clients),
     )
 
     after = {
         path: (path.stat().st_size, path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
-        for path in (config, price_book)
+        for path in (config, env_file, price_book)
     }
     assert after == before
     assert not list(tmp_path.glob("hl-mem-provider-smoke-*"))

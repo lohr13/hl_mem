@@ -7,8 +7,10 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import time
 import tomllib
@@ -41,7 +43,7 @@ from hl_mem.ingest.extractors import FakeExtractor
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.observability.pricing import UsagePriceBook
 from hl_mem.observability.usage_types import UsageAmount, UsageIdentity
-from hl_mem.plugins.contracts import ProviderCapability
+from hl_mem.plugins.contracts import ProviderCapability, ProviderKey
 from hl_mem.recall.reranker import FakeReranker
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
@@ -49,6 +51,7 @@ from hl_mem.storage.events import EventRepository
 _FIXTURE_PATH = Path(__file__).with_name("fixture.json")
 _RESULT_SCHEMA_PATH = Path(__file__).with_name("result_schema.json")
 _SAFE_LABEL = "controlled_reranker_failure"
+_CORE_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40,64}")
 
 
 class LiveSmokeSafetyError(RuntimeError):
@@ -83,7 +86,6 @@ class LiveSmokeLimits:
 class _LiveSmokeDependencies:
     entry_points: Iterable[Any] | None = None
     client_factory: Callable[[], httpx.Client] = httpx.Client
-    environ: Mapping[str, str] | None = None
     temp_parent: Path | None = None
 
 
@@ -142,12 +144,51 @@ def _reject_fake_components(raw: dict[str, Any]) -> None:
             raise LiveSmokeSafetyError(f"Fake {label} components are forbidden in the live smoke")
 
 
-def _require_price_book(raw: dict[str, Any]) -> str:
-    usage = raw.get("usage")
-    value = usage.get("price_book_path") if isinstance(usage, dict) else None
-    if not isinstance(value, str) or not value.strip():
-        raise LiveSmokeSafetyError("a versioned usage price book is required")
-    return value
+def _require_explicit_file(path: Path | None, label: str) -> Path:
+    if path is None:
+        raise LiveSmokeSafetyError(f"an explicit {label} is required")
+    candidate = Path(path)
+    is_junction = getattr(os.path, "isjunction", lambda _path: False)
+    absolute_candidate = Path(os.path.abspath(candidate))
+    path_components = (absolute_candidate, *absolute_candidate.parents)
+    if ".." in candidate.parts or any(
+        component.is_symlink() or is_junction(component) for component in path_components
+    ):
+        raise LiveSmokeSafetyError(f"the explicit {label} uses an unsafe symlink, junction, or escape path")
+    if not candidate.is_file():
+        raise LiveSmokeSafetyError(f"the explicit {label} must be a readable regular file")
+    return candidate
+
+
+def _verify_input_identities(identities: Mapping[Path, _FileIdentity]) -> None:
+    try:
+        unchanged = all(_file_identity(path) == identity for path, identity in identities.items())
+    except OSError as error:
+        raise LiveSmokeSafetyError("an explicit input changed or disappeared during the live smoke") from error
+    if not unchanged:
+        raise LiveSmokeSafetyError("an explicit input changed during the live smoke")
+
+
+def _copy_verified_input(source: Path, destination: Path, identity: _FileIdentity) -> None:
+    shutil.copyfile(source, destination)
+    copied = _file_identity(destination)
+    if copied.size != identity.size or copied.sha256 != identity.sha256:
+        raise LiveSmokeSafetyError("an explicit input changed while it was copied for the live smoke")
+    _verify_input_identities({source: identity})
+
+
+def _core_commit() -> str:
+    completed = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    commit = completed.stdout.strip().casefold()
+    if completed.returncode != 0 or _CORE_COMMIT_PATTERN.fullmatch(commit) is None:
+        raise LiveSmokeSafetyError("the repository core commit could not be resolved safely")
+    return commit
 
 
 def _safe_source_urls(price_document: Mapping[str, Any]) -> list[str]:
@@ -155,9 +196,21 @@ def _safe_source_urls(price_document: Mapping[str, Any]) -> list[str]:
     if not isinstance(source_urls, list):
         raise LiveSmokeSafetyError("price book source URLs must be a list")
     for source_url in source_urls:
-        parsed = urlsplit(str(source_url))
-        if parsed.username is not None or parsed.password is not None:
-            raise LiveSmokeSafetyError("price book source URL userinfo is forbidden")
+        raw_url = str(source_url)
+        if "?" in raw_url or "#" in raw_url:
+            raise LiveSmokeSafetyError("price book source URL credentials or metadata are forbidden")
+        try:
+            parsed = urlsplit(raw_url)
+            hostname = parsed.hostname
+        except ValueError as error:
+            raise LiveSmokeSafetyError("price book source URL is invalid") from error
+        if (
+            parsed.scheme.casefold() != "https"
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise LiveSmokeSafetyError("price book source URL credentials or metadata are forbidden")
     return [str(source_url) for source_url in source_urls]
 
 
@@ -289,7 +342,7 @@ def _run_pipeline(
     settings: Any,
     fixture: Mapping[str, Any],
     dependencies: _LiveSmokeDependencies,
-) -> tuple[dict[str, int], dict[str, float], list[str], dict[str, bool], tuple[str, ...]]:
+) -> tuple[dict[str, int], dict[str, float], list[str], dict[str, bool], tuple[str, ...], str]:
     client: httpx.Client | None = None
     runtime = None
     database: Database | None = None
@@ -340,7 +393,7 @@ def _run_pipeline(
         started = time.perf_counter()
         recall_total = 0
         recall_counts: dict[str, int] = {}
-        success_outcomes: list[str] = []
+        reranker_successful_recalls = 0
         for recall in fixture["recalls"]:
             response = RecallService(connection, embedder, reranker, settings=settings).recall(
                 str(recall["query"]),
@@ -353,7 +406,11 @@ def _run_pipeline(
             label = str(recall["label"])
             recall_counts[label] = int(response["total"])
             recall_total += recall_counts[label]
-            success_outcomes.append(str(response["search_trace"]["outcome"]))
+            trace = response["search_trace"]
+            if trace["reranker_error_class"] is None and any(
+                candidate["rerank_rank"] is not None for candidate in trace["candidates"].values()
+            ):
+                reranker_successful_recalls += 1
         fallback = RecallService(connection, embedder, _ControlledFailureReranker(), settings=settings).recall(
             "Atlas Hub",
             limit=int(fixture["expected_claim_count"]),
@@ -382,6 +439,7 @@ def _run_pipeline(
             "claim_entity_links": persisted["claim_entity_links"],
             "vectors": persisted["vectors"],
             "recall_results": recall_total,
+            "reranker_successful_recalls": reranker_successful_recalls,
             **{f"{label}_recall_results": count for label, count in recall_counts.items()},
         }
         fallback_trace = fallback["search_trace"]
@@ -396,14 +454,23 @@ def _run_pipeline(
             "entity_recall": recall_counts.get("entity", 0) > 0,
             "temporal_recall": recall_counts.get("temporal", 0) > 0,
             "preference_recall": recall_counts.get("preference", 0) > 0,
-            "reranker_success": bool(success_outcomes) and int(settled["rerank_documents"]) > 0,
+            "reranker_success": reranker_successful_recalls > 0 and int(settled["rerank_documents"]) > 0,
             "reranker_failure_fallback": fallback_total > 0
             and fallback_trace["reranker_error_class"] == "RuntimeError",
             "usage_settled": usage["unknown_cost_count"] == 0,
             "reservations_released": counters["active_reservations"] == 0,
         }
         plugins = tuple(item["plugin_id"] for item in runtime.registry.health_snapshot())
-        return counters, latencies, [_SAFE_LABEL], checks, plugins
+        selected_plugins = {
+            runtime.registry.plugin_id_for(ProviderKey(ProviderCapability.LLM, settings.llm_provider)),
+            runtime.registry.plugin_id_for(ProviderKey(ProviderCapability.EMBEDDING, settings.embedding_provider)),
+            runtime.registry.plugin_id_for(ProviderKey(ProviderCapability.RERANKER, settings.reranker_provider)),
+        }
+        provider_kinds = {
+            "builtin" if plugin_id == "hl-mem.builtin" else "external_plugin" for plugin_id in selected_plugins
+        }
+        provider_kind = next(iter(provider_kinds)) if len(provider_kinds) == 1 else "mixed"
+        return counters, latencies, [_SAFE_LABEL], checks, plugins, provider_kind
     finally:
         if extractor is not None:
             extractor.llm_client.close()
@@ -423,50 +490,81 @@ def _run_live_smoke(
     config: Path,
     output: Path,
     *,
+    env_file: Path | None,
+    price_book: Path | None,
     limits: LiveSmokeLimits,
     dependencies: _LiveSmokeDependencies,
 ) -> dict[str, object]:
-    config = Path(config)
-    output = Path(output)
-    raw = _read_template(config)
-    database_name = _database_filename(raw)
-    _reject_fake_components(raw)
-    _require_price_book(raw)
-    source_settings = load_settings(
-        config,
-        config.with_name(".env"),
-        environ=dependencies.environ,
-        validate_runtime=True,
-    )
-    price_path = Path(source_settings.usage_price_book_path or "")
-    if output.resolve() in {config.resolve(), price_path.resolve()}:
-        raise LiveSmokeSafetyError("output must not overwrite the config or price book")
-    price_book = UsagePriceBook.load(price_path)
+    config_path = _require_explicit_file(Path(config), "config")
+    env_path = _require_explicit_file(env_file, "env file")
+    price_path = _require_explicit_file(price_book, "price book")
+    output_path = Path(output)
+    if output_path.resolve() in {config_path.resolve(), env_path.resolve(), price_path.resolve()}:
+        raise LiveSmokeSafetyError("output must not overwrite the config, env file, or price book")
+    input_identities = {
+        config_path: _file_identity(config_path),
+        env_path: _file_identity(env_path),
+        price_path: _file_identity(price_path),
+    }
     try:
-        price_document = json.loads(price_path.read_text(encoding="utf-8"))
-        fixture = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise LiveSmokeSafetyError("fixture and price book must be readable JSON") from error
-    source_urls = _safe_source_urls(price_document)
-    config_identity = _file_identity(config)
-    price_identity = _file_identity(price_path)
-    config_fingerprint = hashlib.sha256(
-        json.dumps(source_settings.snapshot(), sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    fixture_sha = hashlib.sha256(_FIXTURE_PATH.read_bytes()).hexdigest()
+        result = _run_live_smoke_impl(
+            config_path,
+            env_path=env_path,
+            price_path=price_path,
+            input_identities=input_identities,
+            limits=limits,
+            dependencies=dependencies,
+        )
+        _verify_input_identities(input_identities)
+        _atomic_write_json(output_path, result)
+    finally:
+        _verify_input_identities(input_identities)
+    return result
 
-    _preflight(source_settings, price_book, fixture, limits)
+
+def _run_live_smoke_impl(
+    config: Path,
+    *,
+    env_path: Path,
+    price_path: Path,
+    input_identities: Mapping[Path, _FileIdentity],
+    limits: LiveSmokeLimits,
+    dependencies: _LiveSmokeDependencies,
+) -> dict[str, object]:
     result: dict[str, object]
     with tempfile.TemporaryDirectory(
         prefix="hl-mem-provider-smoke-",
         dir=dependencies.temp_parent,
     ) as temporary_name:
         root = Path(temporary_name).resolve()
+        copied_config = root / "source-config.toml"
+        copied_env = root / "source-secrets.env"
+        copied_price = root / "source-price-book.json"
+        for source, destination in (
+            (config, copied_config),
+            (env_path, copied_env),
+            (price_path, copied_price),
+        ):
+            _copy_verified_input(source, destination, input_identities[source])
+        _verify_input_identities(input_identities)
+
+        raw = _read_template(copied_config)
+        database_name = _database_filename(raw)
+        _reject_fake_components(raw)
+        try:
+            price_document = json.loads(copied_price.read_text(encoding="utf-8"))
+            fixture = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise LiveSmokeSafetyError("fixture and price book must be readable JSON") from error
+        source_urls = _safe_source_urls(price_document)
+        loaded_price_book = UsagePriceBook.load(copied_price)
+        config_fingerprint = input_identities[config].sha256
+        fixture_sha = hashlib.sha256(_FIXTURE_PATH.read_bytes()).hexdigest()
+        core_commit = _core_commit()
+
         database_path = root / database_name
         if database_path.parent.resolve() != root or database_path.exists():
             raise LiveSmokeSafetyError("database path escaped or pre-existed outside the new temporary root")
-        copied_price = root / "price-book.json"
-        shutil.copyfile(price_path, copied_price)
         temporary_config = root / "hl_mem.toml"
         temporary_config.write_text(
             _temporary_document(raw, database_name, copied_price.name, limits),
@@ -475,16 +573,19 @@ def _run_live_smoke(
         )
         settings = load_settings(
             temporary_config,
-            config.with_name(".env"),
-            environ=dependencies.environ,
+            copied_env,
+            environ={},
             validate_runtime=True,
         )
         if Path(settings.database_path).resolve() != database_path:
             raise LiveSmokeSafetyError("loaded database path is not owned by the new temporary root")
         if Path(settings.usage_price_book_path or "").resolve() != copied_price.resolve():
             raise LiveSmokeSafetyError("loaded price book path is not owned by the new temporary root")
+        _preflight(settings, loaded_price_book, fixture, limits)
         try:
-            counters, latency, error_categories, checks, plugins = _run_pipeline(settings, fixture, dependencies)
+            counters, latency, error_categories, checks, plugins, provider_kind = _run_pipeline(
+                settings, fixture, dependencies
+            )
         except UsageLimitExceededError as error:
             if "cost estimate" in str(error):
                 raise LiveSmokeBudgetError("provider ledger has unknown cost under the active money limit") from error
@@ -494,6 +595,9 @@ def _run_live_smoke(
         result = {
             "schema_version": 1,
             "passed": all(checks.values()),
+            "provider_kind": provider_kind,
+            "core_commit": core_commit,
+            "run_at_utc": datetime.now(timezone.utc).isoformat(),
             "fixture_sha256": fixture_sha,
             "config_fingerprint": config_fingerprint,
             "labels": {
@@ -508,8 +612,8 @@ def _run_live_smoke(
             "counters": counters,
             "latency_ms": latency,
             "price_book": {
-                "sha256": price_identity.sha256,
-                "fingerprint": price_book.fingerprint,
+                "sha256": input_identities[price_path].sha256,
+                "fingerprint": loaded_price_book.fingerprint,
                 "effective_date": str(price_document["effective_date"]),
                 "source_urls": source_urls,
             },
@@ -519,23 +623,42 @@ def _run_live_smoke(
         schema = json.loads(_RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
         Draft202012Validator(schema, format_checker=FormatChecker()).validate(result)
 
-    if _file_identity(config) != config_identity or _file_identity(price_path) != price_identity:
-        raise LiveSmokeSafetyError("input config or price book changed during the live smoke")
-    _atomic_write_json(output, result)
     return result
 
 
-def run_live_smoke(config: Path, output: Path, *, limits: LiveSmokeLimits) -> dict[str, object]:
+def run_live_smoke(
+    config: Path,
+    output: Path,
+    *,
+    env_file: Path,
+    price_book: Path,
+    limits: LiveSmokeLimits,
+) -> dict[str, object]:
     """Run one governed smoke against resources owned by a fresh temporary root."""
-    return _run_live_smoke(config, output, limits=limits, dependencies=_LiveSmokeDependencies())
+    return _run_live_smoke(
+        config,
+        output,
+        env_file=env_file,
+        price_book=price_book,
+        limits=limits,
+        dependencies=_LiveSmokeDependencies(),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--env-file", required=True, type=Path)
+    parser.add_argument("--price-book", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
-    result = run_live_smoke(args.config, args.output, limits=LiveSmokeLimits())
+    result = run_live_smoke(
+        args.config,
+        args.output,
+        env_file=args.env_file,
+        price_book=args.price_book,
+        limits=LiveSmokeLimits(),
+    )
     return 0 if result["passed"] else 1
 
 
