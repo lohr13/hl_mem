@@ -8,7 +8,7 @@
   fixture 缺失而跳过，空库、历史库和重复 migration 均进入发布证据。
 - 新增确定性的发布证据清单、`v0.36.1` 冻结 Benchmark、依赖漏洞扫描、CycloneDX SBOM、CodeQL、完整
   Git 历史密钥扫描和全 SHA 固定的 GitHub Actions。发布门禁只验证，不自动上传 PyPI。
-- `1.0.0rc1` 必须连续观察七个 UTC 日期且没有未关闭 P0/P1，才允许提升为稳定版；SQLite 仍只支持
+- `1.0.0rc1` 通过本地真实部署观察与稳定提交的常规 GitHub Tests 后允许提升为稳定版；SQLite 仍只支持
   备份恢复，不提供 schema downgrade。
 - `report-version` 可记录严格的 `MAJOR.MINOR.PATCHrcN` 运行时版本；预发布版本仍保留在 latest-wins
   灰区，不获得稳定版本自动关链权限。
