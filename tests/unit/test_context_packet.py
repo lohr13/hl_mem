@@ -289,6 +289,32 @@ def test_relation_rendering_counts_against_the_existing_token_budget() -> None:
     assert packed.truncated is True
 
 
+def test_external_provenance_caution_counts_against_existing_token_budget() -> None:
+    item = RetrievalBundleItem(
+        "claim",
+        "claim-1",
+        "tea",
+        (
+            {
+                "type": "event",
+                "id": "event-1",
+                "provenance": {
+                    "origin_class": "external_derived",
+                    "session_kind": "interactive",
+                    "observed_at": "2026-09-01T00:00:00+00:00",
+                    "source_hint": "https://example.com",
+                },
+            },
+        ),
+    )
+
+    packed, used, truncated = pack_retrieval_items((item,), 2)
+
+    assert packed == ()
+    assert used == 0
+    assert truncated is True
+
+
 def test_materialized_packet_carries_complete_relation_fields() -> None:
     bundle = retrieval_bundle_from_dict(
         {

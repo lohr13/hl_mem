@@ -4,29 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 from typing import Any
-from urllib.parse import urlsplit
 
 from hl_mem.domain.provenance import ProvenanceMode, aggregate_event_provenance
 from hl_mem.errors import NotFoundError
-
-_MAX_SOURCE_URI_LENGTH = 2048
-
-
-def _source_hint(source_uri: object) -> str | None:
-    """Reduce a locator to a bounded non-secret origin hint."""
-    if not isinstance(source_uri, str) or not source_uri or len(source_uri) > _MAX_SOURCE_URI_LENGTH:
-        return None
-    try:
-        parsed = urlsplit(source_uri)
-        host = parsed.hostname
-        if parsed.scheme in {"http", "https"} and host:
-            safe_host = f"[{host}]" if ":" in host else host
-            return f"{parsed.scheme}://{safe_host}"[:255]
-        if parsed.scheme == "file":
-            return "file"
-    except (ValueError, UnicodeError):
-        return None
-    return None
+from hl_mem.security.source_hint import safe_source_hint
 
 
 def _interpret_policy(origin: str, session: str, mode: ProvenanceMode) -> str:
@@ -96,7 +77,7 @@ def explain_claim(
                 "session_kind": row["session_kind"],
                 "occurred_at": row["occurred_at"],
                 "recorded_at": row["recorded_at"],
-                "source_hint": _source_hint(row["source_uri"]),
+                "source_hint": safe_source_hint(row["source_uri"]),
             }
             event_sources.append(event)
         evidence.append(
