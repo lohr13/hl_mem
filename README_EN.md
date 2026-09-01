@@ -2,7 +2,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 1.1.0rc2](https://img.shields.io/badge/version-1.1.0rc2-blue.svg)](docs/CHANGELOG.md)
+[![Version: 1.1.0rc3](https://img.shields.io/badge/version-1.1.0rc3-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md#中文) | [English](#english)
@@ -202,6 +202,17 @@ hl-mem --db copy.db expired cleanup
 hl-mem --db copy.db expired cleanup --apply --expected-count 4508 --limit 100
 ```
 
+Legacy natural-language extraction-model statements can be inspected read-only and then explicitly linked to the
+current runtime projection with an exact count guard:
+
+```bash
+hl-mem --db copy.db coordinates repair-model-history
+hl-mem --db copy.db coordinates repair-model-history --apply --expected-count 3
+```
+
+The command selects only older, source-proven HL-Mem extraction statements. It does not rewrite content, touch answering,
+Embedding, or reranking models, or replace TTL expiry cleanup.
+
 Build and replay the fixed 200-point echo × freshness fixture offline. This report enforces structural gates only;
 post-deployment Hermes observe/canary quality evaluation remains a separate release decision:
 
@@ -359,7 +370,7 @@ See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, a
 - **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
 - **Experimental:** image evidence and other explicitly marked preview capabilities; disabled by default, with no low-quality fallback.
 
-The current baseline is v1.1.0rc2 with 60 immutable, forward-only migrations. Migrations 055–057 add Claim-mutation
+The current baseline is v1.1.0rc3 with 60 immutable, forward-only migrations. Migrations 055–057 add Claim-mutation
 auditing and retire the legacy conflict judge; migration 058 terminates pending pre-upgrade semantic work, and migration
 059 adds provenance to relation edges. Migration 060 adds legacy-safe Event origin/session fields. Stop all writers and
 back up both the primary database and tombstone sidecar
