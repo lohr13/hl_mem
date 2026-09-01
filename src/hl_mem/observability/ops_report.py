@@ -1,8 +1,4 @@
-"""Read-only Provider usage-ledger reports.
-
-Latency percentiles use nearest-rank over deterministic ``(latency_ms, id)``
-ordering. Accounting remains integer micro-units; utilization is ``Decimal``.
-"""
+"""Read-only Provider usage reports with deterministic nearest-rank latency."""
 
 from __future__ import annotations
 
@@ -19,16 +15,14 @@ from urllib.parse import quote
 
 from hl_mem.errors import OpsReportError
 from hl_mem.observability.usage import USAGE_LEDGER_SCHEMA_VERSION
-from hl_mem.observability.usage_types import UsageIdentity, UsageLimits
+from hl_mem.observability.usage_types import _LABEL_PATTERN, UsageIdentity, UsageLimits
 from hl_mem.plugins.contracts import ProviderCapability
 from hl_mem.settings import Settings
 from hl_mem.storage.jobs import JobRepository
 
 _DURATION = re.compile(r"([1-9][0-9]*)([hd])$")
-_SUCCESS_STATUSES = ("success", "ok", "settled", "imported", "estimated", "usage_unknown")
-_SUCCESS = frozenset(_SUCCESS_STATUSES)
-_EVENT_STATUS_ORDER = (*_SUCCESS_STATUSES, "error", "failed", "unknown")
-_EVENT_STATUSES = frozenset(_EVENT_STATUS_ORDER)
+_SUCCESS = frozenset("success ok settled imported estimated usage_unknown".split())
+_RESERVATION_STATES = frozenset({"active", "released", "settled"})
 _SAFE_ERROR_CATEGORIES = frozenset(
     (
         "ConnectionLost LeaseExpired RuntimeError Timeout TypeError ValueError auth circuit_open "
@@ -37,7 +31,6 @@ _SAFE_ERROR_CATEGORIES = frozenset(
 )
 _AMOUNTS = ("requests", "input_tokens", "output_tokens", "embedding_items", "rerank_documents", "images")
 OPS_REPORT_SCHEMA_VERSION: Final[int] = 1
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,17 +58,20 @@ def _iso(value: datetime | str) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-def _utc_microseconds(value: str) -> int:
+def _ledger_timestamp(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("usage ledger timestamp is invalid")
     normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as error:
-        raise ValueError("timestamp must be valid offset-aware ISO") from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ValueError("timestamp must be valid offset-aware ISO")
-    parsed = parsed.astimezone(timezone.utc)
-    delta = parsed - _EPOCH
-    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+    return _utc(datetime.fromisoformat(normalized))
+
+
+def _ledger_date(value: object) -> date:
+    if not isinstance(value, str):
+        raise ValueError("usage ledger date is invalid")
+    parsed = date.fromisoformat(value)
+    if parsed.isoformat() != value:
+        raise ValueError("usage ledger date is invalid")
+    return parsed
 
 
 def parse_report_window(value: str, *, now: datetime) -> ReportWindow:
@@ -108,7 +104,7 @@ def _add_amount(target: dict[str, Any], row: sqlite3.Row, *, prefix: str = "") -
         target[field] = int(target[field]) + _ledger_int(row[f"{prefix}{field}"])
     target["total_tokens"] = int(target["input_tokens"]) + int(target["output_tokens"])
     cost = row[f"{prefix}cost_microunits"]
-    unknown = cost is None or ("unknown_cost" in row.keys() and _ledger_int(row["unknown_cost"]) != 0)
+    unknown = cost is None or ("unknown_cost" in row.keys() and _ledger_flag(row["unknown_cost"]))
     if unknown:
         target["cost_microunits"] = None
     elif target["cost_microunits"] is not None:
@@ -116,24 +112,21 @@ def _add_amount(target: dict[str, Any], row: sqlite3.Row, *, prefix: str = "") -
     return unknown
 
 
-def _event_key(row: sqlite3.Row) -> tuple[str, str, str, str, str]:
+def _usage_identity(row: sqlite3.Row) -> UsageIdentity:
     capability = row["capability"]
+    operation = row["operation"]
     plugin_id = row["plugin_id"]
     provider = row["provider"]
     model = row["model"]
-    status = row["status"]
-    if not all(isinstance(value, str) for value in (capability, plugin_id, provider, model, status)):
+    if not all(isinstance(value, str) for value in (capability, operation, plugin_id, provider, model)):
         raise ValueError("usage ledger labels must be strings")
-    identity = UsageIdentity(
+    return UsageIdentity(
         ProviderCapability(capability),
-        "report",
+        operation,
         plugin_id,
         provider,
         model,
     )
-    if status not in _EVENT_STATUSES:
-        raise ValueError("usage ledger status is unsupported")
-    return identity.capability.value, identity.plugin_id, identity.provider, identity.model, status
 
 
 def _safe_error_category(value: object) -> str | None:
@@ -148,10 +141,54 @@ def _ledger_int(value: object) -> int:
     return value
 
 
+def _ledger_flag(value: object) -> bool:
+    parsed = _ledger_int(value)
+    if parsed not in (0, 1):
+        raise ValueError("usage ledger flag is invalid")
+    return bool(parsed)
+
+
 def _ledger_float(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         raise ValueError("usage ledger measurement is invalid")
     return float(value)
+
+
+def _validate_event_row(row: sqlite3.Row) -> tuple[str, str, str, str, str]:
+    identity = _usage_identity(row)
+    status = row["status"]
+    if not isinstance(status, str) or _LABEL_PATTERN.fullmatch(status) is None:
+        raise ValueError("usage ledger status is invalid")
+    _ledger_date(row["usage_date"])
+    _ledger_timestamp(row["created_at"])
+    for field in ("id", "attempts", *_AMOUNTS):
+        _ledger_int(row[field])
+    cost = row["cost_microunits"]
+    if cost is not None:
+        _ledger_int(cost)
+    _ledger_float(row["latency_ms"])
+    _ledger_flag(row["unknown_outcome"])
+    _ledger_flag(row["unknown_cost"])
+    return identity.capability.value, identity.plugin_id, identity.provider, identity.model, status
+
+
+def _validate_reservation_row(row: sqlite3.Row) -> tuple[str, date, datetime, datetime]:
+    _usage_identity(row)
+    state = row["state"]
+    if not isinstance(state, str) or state not in _RESERVATION_STATES:
+        raise ValueError("usage reservation state is invalid")
+    usage_day = _ledger_date(row["usage_date"])
+    created_at = _ledger_timestamp(row["created_at"])
+    lease_expires_at = _ledger_timestamp(row["lease_expires_at"])
+    if row["finalized_at"] is not None:
+        _ledger_timestamp(row["finalized_at"])
+    if state == "active":
+        for field in ("attempts", *tuple(f"reserved_{name}" for name in _AMOUNTS)):
+            _ledger_int(row[field])
+        cost = row["reserved_cost_microunits"]
+        if cost is not None:
+            _ledger_int(cost)
+    return state, usage_day, created_at, lease_expires_at
 
 
 def _percentiles(samples: list[tuple[float, int]]) -> dict[str, float | None]:
@@ -183,7 +220,6 @@ class UsageLedgerReader:
             connection = sqlite3.connect(f"file:{quoted_path}?mode=ro", uri=True)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA query_only=ON")
-            connection.create_function("hl_mem_utc_microseconds", 1, _utc_microseconds, deterministic=True)
             self._validate_schema(connection)
             return connection
         except OpsReportError:
@@ -227,7 +263,7 @@ class UsageLedgerReader:
     def _add_event(target: dict[str, Any], row: sqlite3.Row) -> None:
         unknown_cost = _add_amount(target, row)
         success = str(row["status"]) in _SUCCESS
-        unknown_outcome = _ledger_int(row["unknown_outcome"]) != 0
+        unknown_outcome = _ledger_flag(row["unknown_outcome"])
         created_at = _iso(row["created_at"])
         if success:
             target["successes"] += 1
@@ -257,83 +293,45 @@ class UsageLedgerReader:
         created_until: datetime | None = None,
         usage_day: date | None = None,
     ) -> dict[str, object]:
-        clauses = ["state='active'"]
-        parameters: dict[str, str | int] = {"cutoff_microseconds": _utc_microseconds(_iso(at))}
-        if created_until is not None:
-            clauses.append("created_at<=:created_until")
-            parameters["created_until"] = _iso(created_until)
-        if usage_day is not None:
-            clauses.append("usage_date=:usage_day")
-            parameters["usage_day"] = usage_day.isoformat()
-        lease_microseconds = "hl_mem_utc_microseconds(lease_expires_at)"
-        row = connection.execute(
-            "SELECT "
-            f"COUNT(CASE WHEN {lease_microseconds}<=:cutoff_microseconds THEN 1 END) expired_count, "
-            f"COUNT(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN 1 END) active_count, "
-            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_requests ELSE 0 END),0) requests, "
-            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_input_tokens ELSE 0 END),0) input_tokens, "
-            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_output_tokens ELSE 0 END),0) output_tokens, "
-            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_embedding_items ELSE 0 END),0) embedding_items, "
-            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_rerank_documents ELSE 0 END),0) rerank_documents, "
-            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_images ELSE 0 END),0) images, "
-            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds THEN reserved_cost_microunits ELSE 0 END),0) cost_microunits, "
-            f"COALESCE(SUM(CASE WHEN {lease_microseconds}>:cutoff_microseconds AND reserved_cost_microunits IS NULL THEN 1 ELSE 0 END),0) unknown_costs "
-            f"FROM usage_reservations WHERE {' AND '.join(clauses)}",
-            parameters,
-        ).fetchone()
-        assert row is not None
+        cutoff = _utc(at)
+        created_cutoff = _utc(created_until) if created_until is not None else None
         reserved: dict[str, Any] = _empty_amount()
-        for field in _AMOUNTS:
-            reserved[field] = int(row[field])
-        reserved["total_tokens"] = int(reserved["input_tokens"]) + int(reserved["output_tokens"])
-        reserved["cost_microunits"] = None if int(row["unknown_costs"]) else int(row["cost_microunits"])
+        active_count = 0
+        expired_count = 0
+        for row in connection.execute("SELECT * FROM usage_reservations ORDER BY id"):
+            state, row_day, created_at, lease_expires_at = _validate_reservation_row(row)
+            if state != "active" or (created_cutoff is not None and created_at > created_cutoff):
+                continue
+            if usage_day is not None and row_day != usage_day:
+                continue
+            if lease_expires_at <= cutoff:
+                expired_count += 1
+            else:
+                active_count += 1
+                _add_amount(reserved, row, prefix="reserved_")
         return {
-            "active_count": int(row["active_count"]),
-            "expired_count": int(row["expired_count"]),
+            "active_count": active_count,
+            "expired_count": expired_count,
             "reserved": reserved,
         }
 
     @staticmethod
     def _daily_totals(connection: sqlite3.Connection, day: date) -> dict[str, Any]:
-        success_placeholders = ",".join("?" for _ in _SUCCESS_STATUSES)
-        status_placeholders = ",".join("?" for _ in _EVENT_STATUS_ORDER)
-        row = connection.execute(
-            "SELECT COALESCE(SUM(requests),0) requests, "
-            "COALESCE(SUM(input_tokens),0) input_tokens, "
-            "COALESCE(SUM(output_tokens),0) output_tokens, "
-            "COALESCE(SUM(embedding_items),0) embedding_items, "
-            "COALESCE(SUM(rerank_documents),0) rerank_documents, "
-            "COALESCE(SUM(images),0) images, "
-            "COALESCE(SUM(cost_microunits),0) cost_microunits, "
-            f"COALESCE(SUM(CASE WHEN status IN ({success_placeholders}) THEN 0 ELSE 1 END),0) errors, "
-            "COALESCE(SUM(unknown_outcome),0) unknown_outcomes, "
-            "COALESCE(SUM(CASE WHEN unknown_cost<>0 OR cost_microunits IS NULL THEN 1 ELSE 0 END),0) unknown_costs, "
-            "COALESCE(SUM(CASE WHEN "
-            "typeof(requests)<>'integer' OR requests<0 OR "
-            "typeof(input_tokens)<>'integer' OR input_tokens<0 OR "
-            "typeof(output_tokens)<>'integer' OR output_tokens<0 OR "
-            "typeof(embedding_items)<>'integer' OR embedding_items<0 OR "
-            "typeof(rerank_documents)<>'integer' OR rerank_documents<0 OR "
-            "typeof(images)<>'integer' OR images<0 OR "
-            "(cost_microunits IS NOT NULL AND (typeof(cost_microunits)<>'integer' OR cost_microunits<0)) OR "
-            "typeof(unknown_outcome)<>'integer' OR unknown_outcome NOT IN (0,1) OR "
-            "typeof(unknown_cost)<>'integer' OR unknown_cost NOT IN (0,1) OR "
-            f"typeof(status)<>'text' OR status NOT IN ({status_placeholders}) "
-            "THEN 1 ELSE 0 END),0) invalid_rows "
-            "FROM usage_events WHERE usage_date=?",
-            (*_SUCCESS_STATUSES, *_EVENT_STATUS_ORDER, day.isoformat()),
-        ).fetchone()
-        assert row is not None
-        if int(row["invalid_rows"]) != 0:
-            raise OpsReportError("usage ledger is unreadable")
         totals: dict[str, Any] = _empty_amount()
-        for field in _AMOUNTS:
-            totals[field] = int(row[field])
-        totals["total_tokens"] = int(totals["input_tokens"]) + int(totals["output_tokens"])
-        totals["cost_microunits"] = None if int(row["unknown_costs"]) else int(row["cost_microunits"])
-        totals["errors"] = int(row["errors"])
-        totals["unknown_outcomes"] = int(row["unknown_outcomes"])
-        totals["unknown_costs"] = int(row["unknown_costs"])
+        totals.update(errors=0, unknown_outcomes=0, unknown_costs=0)
+        rows = connection.execute(
+            "SELECT * FROM usage_events WHERE usage_date=? OR typeof(usage_date)<>'text' "
+            "OR date(usage_date) IS NULL OR date(usage_date)<>usage_date ORDER BY id",
+            (day.isoformat(),),
+        )
+        for row in rows:
+            _validate_event_row(row)
+            if _ledger_date(row["usage_date"]) != day:
+                continue
+            unknown_cost = _add_amount(totals, row)
+            totals["errors"] += int(row["status"] not in _SUCCESS)
+            totals["unknown_outcomes"] += int(_ledger_flag(row["unknown_outcome"]))
+            totals["unknown_costs"] += int(unknown_cost)
         return totals
 
     @staticmethod
@@ -367,14 +365,15 @@ class UsageLedgerReader:
         connection = self._connect()
         try:
             rows = connection.execute(
-                "SELECT * FROM usage_events WHERE created_at>=? AND created_at<=? "
+                "SELECT * FROM usage_events WHERE (created_at>=? AND created_at<=?) "
+                "OR typeof(created_at)<>'text' OR julianday(created_at) IS NULL "
                 "ORDER BY capability,plugin_id,provider,model,status,created_at,id",
                 (_iso(window.since), _iso(window.until)),
             ).fetchall()
             groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
             totals: dict[str, Any] = self._new_group(("", "", "", "", ""))
             for row in rows:
-                key = _event_key(row)
+                key = _validate_event_row(row)
                 self._add_event(groups.setdefault(key, self._new_group(key)), row)
                 self._add_event(totals, row)
             finished_groups = [self._finish(groups[key]) for key in sorted(groups)]

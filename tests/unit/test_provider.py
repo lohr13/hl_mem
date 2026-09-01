@@ -47,7 +47,7 @@ def test_provider_runtime_health_snapshot_is_daily_and_compact(tmp_path: Path) -
         runtime.close()
 
 
-def test_provider_runtime_health_snapshot_uses_two_daily_aggregate_queries(
+def test_provider_runtime_health_snapshot_uses_two_validated_ledger_reads(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -73,11 +73,10 @@ def test_provider_runtime_health_snapshot_uses_two_daily_aggregate_queries(
 
     assert len(statements) == 2
     assert "FROM usage_events WHERE usage_date=" in statements[0]
-    assert "FROM usage_reservations WHERE state='active'" in statements[1]
-    assert "COUNT(" in statements[1]
-    assert "SUM(" in statements[1]
-    assert "SELECT *" not in statements[1]
-    assert "ORDER BY" not in statements[1]
+    assert "SELECT *" in statements[0]
+    assert "FROM usage_reservations ORDER BY id" in statements[1]
+    assert "SELECT *" in statements[1]
+    assert all("SUM(" not in statement and "COUNT(" not in statement for statement in statements)
 
 
 def test_provider_runtime_loads_price_book_once_and_exposes_only_validated_identity(tmp_path: Path) -> None:
