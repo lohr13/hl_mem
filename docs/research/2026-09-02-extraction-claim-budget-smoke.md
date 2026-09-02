@@ -1,56 +1,43 @@
 # Extraction Claim Budget — Zhipu Coding Plan Smoke
 
-Date: 2026-09-02  
-Provider/model: Zhipu `glm-5.3-flash`, `reasoning_effort=low`  
+Date: 2026-09-02
+Provider/model: Zhipu `glm-5.3-flash`, `reasoning_effort=low`
 Scope: extraction only, verification disabled, temporary usage ledger, no production database writes
 
 ## Purpose and method
 
-The approved five synthetic cases were executed once after the initial prompt change. That run exposed semantic omissions
-and incorrect merging, so the prompt received one bounded correction: explicit durable categories may not be omitted,
-independently changing slots may not be merged, and dates, quantities, frequencies, durations, approval conditions, and
-state-transition coordinates may not be rewritten. The same fixed set was then executed once as a post-correction
-regression run. No case was repeated further and no output was used to tune toward a preferred Claim count.
+The approved five synthetic scenarios were run once after the final prompt wording was fixed. The harness forced UTF-8 on
+the PowerShell-to-Python pipe, recorded only safe synthetic Claim values and counts, and used the production provider/model
+coordinates with a temporary usage database. Credentials, endpoint details, raw provider envelopes, and prompts were not
+persisted.
 
-The harness recorded only safe synthetic Claim values, counts, logical call counts, and token usage. Credentials, endpoints,
-raw provider payloads, and prompts were not persisted. Exact evidence support means every returned `evidence_quote` was a
-literal substring of the synthetic source; it is not a semantic-entailment judgment.
+One immediately preceding harness attempt was discarded before acceptance because its returned evidence exposed that the
+shell pipe had replaced Chinese source characters with `?`. The same scenario definitions were then rerun once with
+explicit UTF-8; the results below are from that valid run. No case was repeated to tune Claim count.
 
-## Post-correction run
-
-| case | generated / retained | LLM calls | input tokens | output tokens | exact evidence | qualitative result |
-| --- | ---: | ---: | ---: | ---: | --- | --- |
-| no durable memory | 0 / 0 | 1 | 2,075 | 13 | yes | Pass: no memory invented. |
-| three durable topics | 0 / 0 | 1 | 2,081 | 62 | vacuous | **Fail:** omitted an explicit lasting preference, adopted database decision, and weekly backup plan. |
-| dense multi-message | 4 / 4 | 1 | 2,219 | 635 | yes | **Fail:** stayed bounded, but omitted several independent settings and conflated Python preference with date handling; release cadence, retention periods, and dual approval were not preserved. |
-| state transition | 2 / 2 | 1 | 2,097 | 251 | yes | **Fail:** values hallucinated an exhibition and misread concurrency values as days/areas despite quoting source evidence. |
-| assistant generic chatter | 0 / 0 | 1 | 2,098 | 28 | vacuous | Pass: generic technical explanation was skipped. |
-
-Totals: 5 logical extraction calls, 10,570 input tokens, 989 output tokens. Every case completed in exactly one logical
-extraction call, retained at most 16 Claims, and emitted no count-overflow split/retry audit. The model itself never returned
-more than 16 items in this run, so live evidence covers prompt/schema compliance and call containment; deterministic tests
-cover application-side reduction of 17- and 30-item responses.
-
-## Initial run that triggered the correction
+## Accepted UTF-8 run
 
 | case | generated / retained | LLM calls | input tokens | output tokens | result |
 | --- | ---: | ---: | ---: | ---: | --- |
-| no durable memory | 0 / 0 | 1 | 1,999 | 13 | Pass |
-| three durable topics | 0 / 0 | 1 | 2,005 | 31 | Fail: omitted all three topics |
-| dense multi-message | 4 / 4 | 1 | 2,143 | 610 | Fail: changed cadence/retention semantics and omitted independent settings |
-| state transition | 0 / 0 | 1 | 2,021 | 82 | Fail: omitted transition |
-| assistant generic chatter | 0 / 0 | 1 | 2,022 | 13 | Pass |
+| no durable memory | 0 / 0 | 1 | 2,178 | 13 | Pass: no memory invented. |
+| three durable topics | 3 / 3 | 1 | 2,197 | 291 | Pass: retained the response preference, PostgreSQL decision, and weekly backup schedule separately. |
+| dense multi-message | 10 / 10 | 1 | 2,410 | 1,107 | Pass: grouped related settings without losing database/runtime choices, ports/timezone, retention, backup cadence, release window, dual approval, worker settings, retry/lease/batch limits, alert thresholds, or reporting preference. |
+| state transition | 2 / 2 | 1 | 2,229 | 219 | Pass: retained the effective date, concurrency 5→8, backlog reason, 15-minute lease, and 20-item batch limit. |
+| assistant generic chatter | 0 / 0 | 1 | 2,224 | 18 | Pass: generic technical explanation was skipped. |
 
-Initial totals: 5 logical calls, 10,190 input tokens, 749 output tokens.
+Totals: 5 logical extraction calls, 11,238 input tokens, and 1,648 output tokens. Every case completed in exactly one
+logical extraction call and retained at most 16 Claims. Every returned `evidence_quote` was a literal source substring,
+and every retained value was supported by the synthetic source.
+
+The model itself did not exceed 16 items in this bounded live run. Deterministic tests therefore remain the acceptance
+evidence for application-side ranking and reduction of 17- and 30-item responses, including malformed overflow handling.
 
 ## Interpretation
 
-The operational objective is supported: Claim count did not multiply model calls, and all live responses stayed within the
-16-item schema. The semantic-quality objective is **not** established for this Zhipu low-reasoning configuration. Exact
-evidence presence alone did not prevent unsupported value synthesis, and the model remained overly conservative on a short
-durable input after the prompt correction. These failures should not be represented as a successful extraction-quality
-benchmark.
+The smoke supports both intended properties for the configured low-reasoning Zhipu model: the revised granularity keeps
+dense extraction compact without dropping the named high-value settings, and Claim count does not create recursive model
+calls. This is a smoke check, not a general benchmark or proof of semantic quality across arbitrary conversations.
 
-No 20-case LongMemEval slice was run. The workspace contains only the three-case unit fixture
-`tests/fixtures/longmemeval_small.json`, not the required fixed 20-item local dataset; no dataset was downloaded and no paid
-run was expanded.
+No LongMemEval run was performed. The workspace contains only the three-case unit fixture
+`tests/fixtures/longmemeval_small.json`, not the planned fixed 20-item local slice; no dataset was downloaded and no paid
+benchmark was expanded.

@@ -103,9 +103,9 @@ assistant durable output：
 - 只提取能独立回答后续问题的最小上下文完整记忆；禁止记忆整段 assistant 回答或普通解释性填充。
 
 - 粒度：一条记忆对应一个可独立更新、冲突或遗忘的主题、决策或状态变化；同一主题且生命周期相同的背景应合并。
-- 完整性：长期偏好、已采用决策、重要配置、明确计划和状态迁移只要有证据就必须提取；不同主题或可独立变化的槽位不得合并或遗漏。
-- 精确性：不得改写、互换或推算日期、时间、频率、持续期、数量及审批条件；状态迁移应保留旧值、新值、生效时间和原因。
-- 数量由原文决定：可以输出 0 条，不需要凑数；通常不超过 {ordinary_claim_target} 条，最多 {max_claims_per_chunk} 条，并按未来用途从高到低排列。
+- 完整性：长期偏好、已采用决策、重要配置、明确计划和状态迁移只要有证据就必须提取；不同主题或可独立变化的槽位不得合并或遗漏；这些类别任一存在时返回空 claims 属于错误。
+- 精确性：不得改写、互换或推算日期、时间、频率、持续期、数量及审批条件；状态迁移应保留旧值、新值、生效时间和原因；value 中的每个断言都必须由 evidence_quote 直接支持。
+- 数量由原文决定：可以输出 0 条，不需要凑数；通常不超过 {ordinary_claim_target} 条，最多 {max_claims_per_chunk} 条；必须先按 notability 的 high、medium、low 顺序，再按 confidence 从高到低排列。
 - 保真：在相关记忆中保留具体姓名、日期、数字、单位和约束；不要仅因一句话包含多个名词、数字或从句就拆成多条。
 限制：
 - 最多 {max_claims_per_chunk} 条。
@@ -222,9 +222,9 @@ Assistant durable output:
 - Extract only the smallest context-rich memory that can answer a later question. Do not memorize the whole assistant answer.
 
 - Granularity: one memory represents a topic, decision, or state change that can be independently updated, contradicted, or forgotten; merge context with the same topic and lifetime.
-- Completeness: always extract evidenced lasting preferences, adopted decisions, important configuration, confirmed plans, and state transitions; never merge or omit distinct topics or independently changing slots.
-- Precision: never rewrite, swap, or calculate dates, times, frequencies, durations, quantities, or approval conditions; a state transition must retain its old value, new value, effective time, and reason.
-- Let the source determine the count: zero is valid and no padding is needed; normally return at most {ordinary_claim_target} claims, never more than {max_claims_per_chunk}, ordered by future usefulness.
+- Completeness: always extract evidenced lasting preferences, adopted decisions, important configuration, confirmed plans, and state transitions; never merge or omit distinct topics or independently changing slots; returning empty claims is an error when any of these categories is present.
+- Precision: never rewrite, swap, or calculate dates, times, frequencies, durations, quantities, or approval conditions; a state transition must retain its old value, new value, effective time, and reason; every assertion in value must be directly supported by evidence_quote.
+- Let the source determine the count: zero is valid and no padding is needed; normally return at most {ordinary_claim_target} claims, never more than {max_claims_per_chunk}; order strictly by notability high, medium, low, then by confidence descending.
 - Fidelity: keep relevant names, dates, numbers, units, and constraints inside the corresponding memory; do not split merely because a sentence has multiple nouns, numbers, or clauses.
 Limits:
 - Maximum {max_claims_per_chunk} claims per chunk.

@@ -118,7 +118,7 @@ _EN_FUNCTION_SIGNAL_RE = re.compile(
     r"(?i)\b(?:i|we|you|he|she|it|the|a|an|to|of|in|on|at|for|with|my|our|your|this|that|yesterday|tomorrow)\b"
 )
 LANGUAGE_ROUTER_VERSION = "language-router-v1"
-CLAIM_COUNT_OVERFLOW_POLICY_VERSION = "claim-count-auto-split-v1"
+CLAIM_COUNT_OVERFLOW_POLICY_VERSION = "deterministic-claim-budget-v1"
 _UNSETTLED_SIGNAL_RE = re.compile(r"可以考虑|建议|考虑|待定|或许|计划中|未执行")
 _SETTLED_SIGNAL_RE = re.compile(
     r"已经确认|已确认|已经批准|已批准|已经执行|已执行|已经实施|已实施|"

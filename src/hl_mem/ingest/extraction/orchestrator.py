@@ -257,6 +257,13 @@ class ExtractionOrchestrator:
                 self._state.repair_count += count_repairs(raw, repaired)
                 budget = cap_extraction_claims(repaired)
                 repaired = budget.payload
+                if uses_compact_schema(repaired):
+                    _add_compact_action_defaults(repaired)
+                    result: ExtractionResponse = CompactExtractionResponseSchema.model_validate(repaired)
+                else:
+                    result = ExtractionResponseSchema.model_validate(
+                        parse_legacy_defaults(repaired, self._hooks.legacy_claim_defaults)
+                    )
                 if budget.dropped_count:
                     current_audit().emit(
                         "extract",
@@ -271,12 +278,7 @@ class ExtractionOrchestrator:
                             "end_unit": chunk.end_unit,
                         },
                     )
-                if uses_compact_schema(repaired):
-                    _add_compact_action_defaults(repaired)
-                    return CompactExtractionResponseSchema.model_validate(repaired)
-                return ExtractionResponseSchema.model_validate(
-                    parse_legacy_defaults(repaired, self._hooks.legacy_claim_defaults)
-                )
+                return result
             except (PydanticValidationError, ValueError) as error:
                 if isinstance(error, PydanticValidationError):
                     self._state.schema_errors.extend(dict(item) for item in error.errors())

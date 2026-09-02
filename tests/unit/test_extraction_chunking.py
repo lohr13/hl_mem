@@ -115,14 +115,29 @@ def test_claim_budget_uses_confidence_then_original_order_for_ties() -> None:
     ]
 
 
-def test_claim_budget_supports_legacy_importance() -> None:
-    claims = [{"value": f"claim-{index}", "importance": 0.1} for index in range(17)]
-    claims[-1]["importance"] = 0.9
+def test_claim_budget_uses_confidence_and_order_when_notability_is_missing() -> None:
+    claims = [{"value": f"claim-{index}", "importance": 0.9, "confidence": 0.5} for index in range(17)]
+    claims[-1]["importance"] = 0.0
+    claims[-1]["confidence"] = 0.9
 
     result = parsing.cap_extraction_claims({"claims": claims}, limit=16)
 
     assert result.payload["claims"][0]["value"] == "claim-16"
     assert "claim-15" not in {claim["value"] for claim in result.payload["claims"]}
+
+
+def test_claim_budget_drops_malformed_notability_instead_of_promoting_importance() -> None:
+    claims = []
+    for index in range(16):
+        claim = _compact_fact(f"valid-{index}")
+        claim.update({"notability": "low", "confidence": 0.1})
+        claims.append(claim)
+    malformed = _compact_fact("malformed")
+    malformed.update({"notability": ["bogus"], "confidence": 1.0, "importance": 999})
+
+    result = parsing.cap_extraction_claims({"claims": [*claims, malformed]}, limit=16)
+
+    assert [claim["value"] for claim in result.payload["claims"]] == [f"valid-{index}" for index in range(16)]
 
 
 def test_claim_budget_leaves_non_list_for_validation_and_rejects_invalid_limit() -> None:
@@ -319,7 +334,7 @@ def test_truncated_output_is_bisected_and_usage_is_accumulated() -> None:
 
 def test_claim_count_overflow_is_ranked_and_truncated_without_another_request() -> None:
     low_claims = []
-    for index in range(16):
+    for index in range(28):
         claim = _compact_fact(f"low-{index}")
         claim.update({"notability": "low", "confidence": 0.9})
         low_claims.append(claim)
@@ -355,9 +370,49 @@ def test_claim_count_overflow_is_ranked_and_truncated_without_another_request() 
             "claim_budget",
             "overflow_truncated",
             {
-                "generated_claim_count": 18,
+                "generated_claim_count": 30,
                 "retained_claim_count": 16,
-                "dropped_claim_count": 2,
+                "dropped_claim_count": 14,
+                "chunk_index": 0,
+                "start_unit": 0,
+                "end_unit": 1,
+            },
+        )
+    ]
+
+
+def test_malformed_overflow_is_audited_only_after_schema_retry_succeeds() -> None:
+    first_claims = [_compact_fact(f"first-{index}") for index in range(17)]
+    first_claims[0].pop("subject")
+    second_values = [f"second-{index}" for index in range(17)]
+    client = _SequenceClient(
+        [
+            LLMResponse(
+                json.dumps({"claims": first_claims, "should_memorize": True}),
+                "stop",
+                10,
+            ),
+            LLMResponse(_compact_response(second_values), "stop", 11),
+        ]
+    )
+    audit = _RecordingAudit()
+    extractor = LLMExtractor(client, ChunkingPolicy(1_000, 0, 2), schema_retries=1)
+
+    with audit_scope(audit):
+        claims = extractor.extract("\n".join(second_values))
+
+    assert [claim.value for claim in claims] == second_values[:16]
+    assert len(client.requests) == 2
+    assert extractor._schema_retry_count == 1
+    assert [event for event in audit.events if event[2] == "overflow_truncated"] == [
+        (
+            "extract",
+            "claim_budget",
+            "overflow_truncated",
+            {
+                "generated_claim_count": 17,
+                "retained_claim_count": 16,
+                "dropped_claim_count": 1,
                 "chunk_index": 0,
                 "start_unit": 0,
                 "end_unit": 1,

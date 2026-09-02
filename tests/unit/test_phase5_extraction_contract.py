@@ -45,12 +45,12 @@ class _RecordingClient:
     [
         (
             "User prefers tea.",
-            "15b07c0f88679061bba7003c293287b36acfe7399e7868eeb9323a9d0f820639",
+            "4fcb6dab86e469d9403ad2ce2a44d24d9524a0d61a732dfe0a2b2b4f0baced6f",
             "cb36a6a0e18592a5a89df2af6319e87da7a1b3d6d84b4cdb487c361f1a5d3336",
         ),
         (
             "用户喜欢喝茶。",
-            "845e3b51a88fd8c324b9351ce0aa30ae5d4c01645e83ace8f43c618ac9f56309",
+            "4414210dee17ae60f54bfe17c174f35e1c6376c9efbd1964aa55796aac533fcb",
             "74df0124a2336d1613577e753dfacb030ca0fa5e969c5849fc02d4e16b05581a",
         ),
     ],

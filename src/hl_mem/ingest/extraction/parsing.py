@@ -39,10 +39,8 @@ def _claim_priority(claim: Any) -> tuple[float, float]:
     if not isinstance(claim, dict):
         return (0.0, 0.0)
     notability_rank = {"high": 3.0, "medium": 2.0, "low": 1.0}
-    if claim.get("notability") in notability_rank:
-        priority = notability_rank[claim["notability"]]
-    else:
-        priority = _finite_number(claim.get("importance"))
+    notability = claim.get("notability")
+    priority = notability_rank.get(notability, 0.0) if isinstance(notability, str) else 0.0
     return (priority, _finite_number(claim.get("confidence")))
 
 
