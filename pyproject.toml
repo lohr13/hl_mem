@@ -1,6 +1,6 @@
 [project]
 name = "hl-mem"
-version = "1.1.0"
+version = "1.1.1"
 description = "Evidence-aware local memory service"
 readme = "README.md"
 license = "Apache-2.0"
@@ -126,6 +126,7 @@ exclude = [
     "/hl_mem.toml.bak*",
     "/var",
     "/docs/tasks",
+    "/docs/HANDOFF.md",
     "/evaluation",
     "/benchmarks",
 ]
