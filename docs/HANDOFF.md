@@ -40,10 +40,13 @@
   真实凭据未加入忽略列表；维护者已明确接受其仍有效的残余风险，本项不记为安全清单通过。
 - 不可变标签 `v1.1.0rc1`、`v1.1.0rc2`、`v1.1.0rc3` 均已发布至 GitHub 与 PyPI；RC3 的 Tests、Release
   Gates 与 Publish 全绿，本地服务和 Hermes 已切换到 RC3 验证。
-- `v1.1.0` 只提升版本与发布元数据，不改变 RC3 已验证的可执行行为或数据库 schema；稳定标签必须指向
-  本交接文档所在的发布提交，不得移动既有 RC 标签。
+- 不可变标签 `v1.1.0` 指向 `299c05f550306821df67caa3c12540c7f21d8f39`；GitHub Release 与 PyPI wheel/sdist
+  已发布且未撤回，`main` 的 Tests/Security、稳定标签的 Tests/Publish 均通过。稳定版只提升版本与发布元数据，
+  不改变 RC3 已验证的可执行行为或数据库 schema。
 - 1.1 的本地发布前门禁为 3105 passed、4 skipped、108 subtests，覆盖率 88.16%；公开召回门禁为
-  Recall@5 0.9583、MRR 0.9306。稳定版发布时仍以同一提交的最新验证结果和 GitHub Tests 为准。
+  Recall@5 0.9583、MRR 0.9306；稳定提交还通过 wheel 内容、干净 Python 3.13 安装和 CLI 版本验证。
+- 本机 HL-Mem 服务已运行 `1.1.0`，`/healthz` 为 `ok`，Worker 正常、维护失败 0、开放冲突 0；Hermes Gateway
+  已重启。Hermes loaded-runtime 证据按实际 Memory Provider 加载惰性刷新，不能仅凭 Gateway 启动判定已注册。
 
 ## 升级与恢复
 
@@ -53,8 +56,8 @@
 
 ## 下一步
 
-1. 确认 `v1.1.0` 的 GitHub Tests、Security、Publish 与 PyPI 产物全部成功；失败时修复并发布新补丁，禁止
-   移动或覆盖已公开标签。
-2. 本机服务与 Hermes 切换到 `v1.1.0` 后检查 `/healthz`、Worker 维护失败、Provider 失败增量和 Hermes
-   loaded-runtime 证据；Hermes 运行证据在下一次实际加载 Memory Provider 时刷新。
-3. 1.1.x 只接受兼容缺陷与安全修复。下一轮功能开发先从真实使用证据形成独立设计，不继续扩大 1.1 范围。
+1. 1.1.x 只接受兼容缺陷与安全修复；公开标签和 PyPI 版本不可覆盖，任何修复使用递增补丁版本。
+2. 真实使用中关注模型任务坐标、Provider 失败增量、Worker 维护失败和 Hermes loaded-runtime 证据；历史模型
+   修复先执行只读预览，不在没有精确计数与 selection token 时应用。
+3. 下一轮功能开发先从真实使用证据形成独立设计和分支，不继续扩大 1.1 稳定线，也不为未来能力预建 Graph、
+   新存储或后台清理循环。
