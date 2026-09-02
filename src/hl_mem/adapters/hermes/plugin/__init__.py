@@ -5,20 +5,49 @@
 
 from __future__ import annotations
 
-import logging
+import os
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-from hl_mem import __version__, components
-from hl_mem.adapters.hermes.discovery import find_hermes_home
-from hl_mem.adapters.hermes.provider import HLMemProvider
-from hl_mem.adapters.hermes.runtime_status import (
+
+def _find_hermes_home_for_load_attempt() -> Path:
+    environment_home = os.getenv("HERMES_HOME", "").strip()
+    if environment_home:
+        return Path(environment_home).expanduser().resolve()
+    if sys.platform == "win32":
+        local_appdata = os.getenv("LOCALAPPDATA", "").strip()
+        base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
+        return (base / "hermes").resolve()
+    return (Path.home() / ".hermes").resolve()
+
+
+try:
+    from hl_mem import __version__ as _load_attempt_version
+except Exception:
+    _load_attempt_version = "<import-failed>"
+try:
+    open(_find_hermes_home_for_load_attempt() / "state" / "hl_mem-load.log", "a", encoding="utf-8").write(
+        "load-attempt "
+        f"timestamp={datetime.now(timezone.utc).isoformat()} "
+        f"pid={os.getpid()} hl_mem_version={_load_attempt_version}\n"
+    )
+except Exception:
+    pass
+
+import logging  # noqa: E402
+from typing import Any  # noqa: E402
+
+from hl_mem import __version__, components  # noqa: E402
+from hl_mem.adapters.hermes.discovery import find_hermes_home  # noqa: E402
+from hl_mem.adapters.hermes.provider import HLMemProvider  # noqa: E402
+from hl_mem.adapters.hermes.runtime_status import (  # noqa: E402
     RuntimeRegistrationState,
     capture_runtime_identity,
     write_runtime_status,
 )
-from hl_mem.config_loader import load_settings
-from hl_mem.settings import Settings
+from hl_mem.config_loader import load_settings  # noqa: E402
+from hl_mem.settings import Settings  # noqa: E402
 
 logger = logging.getLogger(__name__)
 _RUNTIME_IDENTITY = capture_runtime_identity()
