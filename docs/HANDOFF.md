@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-- **分支**：`main`（1.1.0rc3 发布线）
-- **版本**：v1.1.0rc3
-- **阶段**：RC2 发布与 Hermes 真实部署观察
+- **分支**：`main`（1.1 稳定线）
+- **版本**：v1.1.0
+- **阶段**：1.1 稳定基线；可执行行为与已验证的 `v1.1.0rc3` 一致
 - **Schema**：60 migrations；全部不可变、仅向前执行
 - **运行时**：Python 3.12–3.14；SQLite 为权威存储
-- **发布原则**：候选版本完成本地真实链路观察，稳定提交通过常规 GitHub Tests 后创建不可变标签
+- **发布原则**：稳定提交先通过常规 GitHub Tests，再创建不可变标签并由 Trusted Publishing 发布
 
 ## Core 1.0 与 1.1 已交付
 
@@ -38,11 +38,12 @@
 
 - Git 历史中的已删除 `.env.bak_glm` 含两条真实凭据形状。测试假阳性已按精确 fingerprint 基线化；这两条
   真实凭据未加入忽略列表；维护者已明确接受其仍有效的残余风险，本项不记为安全清单通过。
-- 不可变标签 `v1.1.0rc1` 指向 `69a32cee99d66668d6d008fd5f51f8a762ea4962`；GitHub Release 与 PyPI
-  预发行包均已发布，RC2 只在其后追加本交接文档所列坐标修复。
-- Core 1.0 release-gates、Tests 与 Security 已通过并保存在 GitHub Actions；本地真实 Provider、摄入、召回与
-  用量链路已完成冒烟观察。
-- `v1.0.0` 仅包含版本、发布政策与文档调整，不改变 RC 已验证的可执行行为或数据库 schema。
+- 不可变标签 `v1.1.0rc1`、`v1.1.0rc2`、`v1.1.0rc3` 均已发布至 GitHub 与 PyPI；RC3 的 Tests、Release
+  Gates 与 Publish 全绿，本地服务和 Hermes 已切换到 RC3 验证。
+- `v1.1.0` 只提升版本与发布元数据，不改变 RC3 已验证的可执行行为或数据库 schema；稳定标签必须指向
+  本交接文档所在的发布提交，不得移动既有 RC 标签。
+- 1.1 的本地发布前门禁为 3105 passed、4 skipped、108 subtests，覆盖率 88.16%；公开召回门禁为
+  Recall@5 0.9583、MRR 0.9306。稳定版发布时仍以同一提交的最新验证结果和 GitHub Tests 为准。
 
 ## 升级与恢复
 
@@ -52,6 +53,8 @@
 
 ## 下一步
 
-1. 使用不可变 `v1.1.0rc3` 标签，由 Hermes 部署观察并由 PyPI Trusted Publishing 发布预发行包。
-2. RC 仅接受兼容缺陷与安全修复；如需修复则发布新的 RC，不移动既有标签。
-3. 真实部署稳定后发布 `v1.1.0`，继续保持 1.x 兼容和恢复边界。
+1. 确认 `v1.1.0` 的 GitHub Tests、Security、Publish 与 PyPI 产物全部成功；失败时修复并发布新补丁，禁止
+   移动或覆盖已公开标签。
+2. 本机服务与 Hermes 切换到 `v1.1.0` 后检查 `/healthz`、Worker 维护失败、Provider 失败增量和 Hermes
+   loaded-runtime 证据；Hermes 运行证据在下一次实际加载 Memory Provider 时刷新。
+3. 1.1.x 只接受兼容缺陷与安全修复。下一轮功能开发先从真实使用证据形成独立设计，不继续扩大 1.1 范围。
