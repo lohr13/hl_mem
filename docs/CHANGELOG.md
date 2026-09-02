@@ -1,5 +1,9 @@
 # HL-Mem 变更记录
 
+## v1.1.3（2026-09-02）
+
+- Fix resource warning in load-attempt sentinel.
+
 ## v1.1.2（2026-09-02）
 
 - Hermes 插件现在会在加载早期向 `state/hl_mem-load.log` 追加一条独立哨兵记录；即使后续 HL-Mem 导入失败，

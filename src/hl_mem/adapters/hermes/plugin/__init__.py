@@ -27,11 +27,12 @@ try:
 except Exception:
     _load_attempt_version = "<import-failed>"
 try:
-    open(_find_hermes_home_for_load_attempt() / "state" / "hl_mem-load.log", "a", encoding="utf-8").write(
-        "load-attempt "
-        f"timestamp={datetime.now(timezone.utc).isoformat()} "
-        f"pid={os.getpid()} hl_mem_version={_load_attempt_version}\n"
-    )
+    with open(_find_hermes_home_for_load_attempt() / "state" / "hl_mem-load.log", "a", encoding="utf-8") as f:
+        f.write(
+            "load-attempt "
+            f"timestamp={datetime.now(timezone.utc).isoformat()} "
+            f"pid={os.getpid()} hl_mem_version={_load_attempt_version}\n"
+        )
 except Exception:
     pass
 
