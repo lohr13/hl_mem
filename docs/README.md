@@ -23,7 +23,6 @@
 - [Provider Plugin API](provider-plugins.md)
 - [Capability matrix](capability-matrix.md)
 - [Changelog](CHANGELOG.md)
-- [Handoff](HANDOFF.md)
 
 `api-schema.json` 和 `mcp-tools.json` 是由代码生成并受 CI 校验的契约快照，不应手工改写。
 
@@ -36,7 +35,7 @@
 
 ## 维护规则
 
-- 发布级变化追加到 `CHANGELOG.md`；`HANDOFF.md` 只保存当前状态、下一步和已知限制。
+- 发布级变化追加到 `CHANGELOG.md`；本机运行状态和会话交接信息不得进入仓库。
 - Accepted ADR 不改写决策；新方向使用新 ADR。
 - API、数据模型和默认行为变化必须同步活文档及生成快照。
 - 能力成熟度和默认模式以 capability matrix 为准。

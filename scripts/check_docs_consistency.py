@@ -113,7 +113,6 @@ def main() -> int:
         readme = read("README.md")
         readme_en = read("README_EN.md")
         architecture = read("docs/architecture.md")
-        handoff = read("docs/HANDOFF.md")
         capability_matrix = read("docs/capability-matrix.md")
         changelog = read("docs/CHANGELOG.md")
         agents_md = read("AGENTS.md")
@@ -157,12 +156,6 @@ def main() -> int:
             "architecture baseline",
         )
         errors += check_value(
-            handoff,
-            rf"\*\*版本\*\*[：:]\s*v?({VERSION_PATTERN})",
-            version,
-            "HANDOFF version",
-        )
-        errors += check_value(
             agents_md,
             rf"\*\*当前版本[：:]\s*v?({VERSION_PATTERN})",
             version,
@@ -192,8 +185,6 @@ def main() -> int:
             migration_count,
             "architecture migrations",
         )
-        errors += check_value(handoff, r"\b(\d+)\s+migrations\b", migration_count, "HANDOFF migrations")
-
         errors += [
             f"  Markdown relative link: {broken}"
             for broken in find_broken_relative_links(ROOT, tracked_markdown_files(ROOT))
