@@ -3,6 +3,10 @@
 ## v1.1.3（2026-09-02）
 
 - Fix resource warning in load-attempt sentinel.
+- 提取 Prompt 改为优先生成上下文完整的记忆：普通输出目标不超过 12 条，每 chunk 硬上限 16 条；不再为每个
+  数字、属性或从句机械拆分 Claim。
+- 合法超量响应按 notability、confidence 与原始顺序确定性保留前 16 条并记录审计，不再触发 Claim 数量驱动的
+  二分、delta repair 或模型重试；provider 真实输出截断的有界二分恢复保持不变。旧 soft-split 配置继续接受但为 no-op。
 
 ## v1.1.2（2026-09-02）
 

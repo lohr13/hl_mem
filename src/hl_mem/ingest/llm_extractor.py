@@ -70,7 +70,6 @@ from .extraction.orchestrator import (
 )
 from .extraction.parsing import (
     count_repairs,
-    is_claim_count_overflow,
     looks_like_truncated_json,
     parse_json_response,
     parse_legacy_defaults,
@@ -594,7 +593,7 @@ class LLMExtractor:
         return self._llm_call_count
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
-        """同步分块提取事实，并在输出截断或 claim 数超限时递归二分恢复。"""
+        """同步分块提取事实；仅在 provider 输出截断时递归二分恢复。"""
         return list(self._orchestrator.extract(content, context).claims)
 
     def _verify_extracted_claims(
@@ -1039,10 +1038,6 @@ class LLMExtractor:
     @staticmethod
     def _schema_error_paths(error: Exception) -> list[str]:
         return schema_error_paths(error)
-
-    @staticmethod
-    def _is_claim_count_overflow(error: BaseException) -> bool:
-        return is_claim_count_overflow(error)
 
     @staticmethod
     def _schema_error_details(error: Exception, payload: Any) -> list[dict[str, Any]]:

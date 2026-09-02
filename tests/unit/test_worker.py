@@ -269,6 +269,56 @@ class OneClaimLLMClient(NoClaimsLLMClient):
         )
 
 
+class OverflowLLMClient(NoClaimsLLMClient):
+    def __init__(self, values: list[str]) -> None:
+        self.values = values
+        self.calls = 0
+
+    def complete(self, _request):
+        self.calls += 1
+        claims = [
+            {
+                "subject": "user",
+                "value": value,
+                "kind": "fact",
+                "confidence": 0.9,
+                "notability": "medium",
+                "evidence_quote": value,
+                "source_event_indices": [0],
+            }
+            for value in self.values
+        ]
+        return LLMResponse(json.dumps({"claims": claims, "should_memorize": True}), "stop", 20)
+
+
+def test_worker_completes_overflowing_extraction_in_one_attempt(tmp_path) -> None:
+    path = tmp_path / "claim-budget.db"
+    connection = Database(path).open()
+    values = [f"The user recorded durable item {index}" for index in range(17)]
+    queue(connection, content={"text": "\n".join(values)})
+    client = OverflowLLMClient(values)
+    extractor = LLMExtractor(
+        client,
+        ChunkingPolicy(10_000, 0, 2),
+        soft_split_enabled=True,
+        delta_repair_enabled=True,
+    )
+    worker = Worker(
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
+        extractor=extractor,
+        embedder=FakeEmbedder(8),
+    )
+
+    result = worker.run_once()
+
+    job = connection.execute("SELECT status,attempts FROM jobs WHERE id='job'").fetchone()
+    assert result["status"] == "succeeded"
+    assert result["claims"] == 16
+    assert (job["status"], job["attempts"]) == ("succeeded", 1)
+    assert client.calls == 1
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 16
+
+
 class CustomVersionLLMExtractor(LLMExtractor):
     prompt_hash = "111111111111"
     extractor_version = "llm-v2+111111111111"

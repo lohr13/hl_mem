@@ -239,11 +239,11 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `extraction.batch_max_wait_seconds` | 数值 | `120.0` | >= 0 | `extraction_batch_max_wait_seconds` |
 | `extraction.chunk_overlap_turns` | 整数 | `2` | >= 0 | `extraction_chunk_overlap_turns` |
 | `extraction.chunk_target_chars` | 整数 | `12000` | >= 1 | `extraction_chunk_target_chars` |
-| `extraction.delta_repair_enabled` | 布尔值 | `false` | `true`、`false` | `extraction_delta_repair_enabled` |
+| `extraction.delta_repair_enabled` | 布尔值 | `false` | 已弃用 no-op；仍接受 `true`、`false` | `extraction_delta_repair_enabled` |
 | `extraction.lesson_signal_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `lesson_signal_mode` |
 | `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
 | `extraction.mode` | 字符串 | `"llm"` | 生产为 `real` 或 `llm`；`fake` 仅供测试 | `extractor_mode` |
-| `extraction.soft_split_enabled` | 布尔值 | `false` | `true`、`false` | `extraction_soft_split_enabled` |
+| `extraction.soft_split_enabled` | 布尔值 | `false` | 已弃用 no-op；仍接受 `true`、`false` | `extraction_soft_split_enabled` |
 | `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
 
 Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_max_events` 时立即提取，否则最多等待
@@ -251,8 +251,10 @@ Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_
 user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并；Claim 仍分别链接实际来源 Event。
 默认值偏向降低提取调用成本：增大批量上限或等待时间有利于合并更多相邻 Event、摊薄 LLM 调用成本，
 但会增加低流量 session 的提取延迟；需要低延迟时可调小这两个值。
-`extraction.delta_repair_enabled` 只有同时启用 `extraction.soft_split_enabled`，且首次二分后的子块仍命中
-30 条 schema 上限时才懒触发一次；单独启用 delta repair 不增加提取调用。两项开关默认均为 `false`。
+从 v1.1.3 起，`extraction.soft_split_enabled` 与 `extraction.delta_repair_enabled` 仅作为兼容配置继续接受，
+已弃用且不再触发额外模型调用。普通提取以不超过 12 条上下文完整 Claim 为目标；合法响应超过每 chunk
+16 条时，程序按 notability、confidence 和原始顺序确定性保留前 16 条并记录 overflow 审计。只有 provider
+实际输出截断（例如 `finish_reason=length`）仍会按 `extraction.max_split_depth` 对输入二分恢复。
 
 ### `[hermes]`
 

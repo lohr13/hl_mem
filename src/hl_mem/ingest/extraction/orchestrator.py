@@ -26,8 +26,8 @@ from ..chunking import (
 )
 from ..extractors import ExtractedClaim
 from .parsing import (
+    cap_extraction_claims,
     count_repairs,
-    is_claim_count_overflow,
     looks_like_truncated_json,
     parse_json_response,
     parse_legacy_defaults,
@@ -38,7 +38,7 @@ from .parsing import (
 )
 from .postprocessing import merge_chunk_claims
 from .repair import repair_extraction_json
-from .request_builder import build_delta_repair_request, build_extraction_request
+from .request_builder import build_extraction_request
 from .run_state import ExtractionRunState
 from .schema import CompactExtractionResponseSchema, ExtractionResponseSchema
 
@@ -86,13 +86,6 @@ class ExtractionOrchestratorConfig:
 class ExtractionRunResult:
     claims: tuple[ExtractedClaim, ...]
     state: ExtractionRunState
-
-
-@dataclass(frozen=True, slots=True)
-class _ChunkExtractionOutcome:
-    claims: list[ExtractedClaim]
-    compact_soft_saturated: bool
-    raw_claim_count: int
 
 
 class ExtractionOrchestrator:
@@ -172,71 +165,12 @@ class ExtractionOrchestrator:
         chunk: ExtractionChunk,
         event_context: dict[str, Any],
         depth: int,
-        soft_split_applied: bool = False,
     ) -> list[ExtractedClaim]:
         try:
-            outcome = self._extract_one_chunk(chunk, event_context)
-            claims = outcome.claims
+            claims = self._extract_one_chunk(chunk, event_context)
             if self._verification_enabled:
                 claims = self._hooks.verify_claims(self._hooks.postprocess_claims(claims), chunk.text)
-            if not self.config.soft_split_enabled or not outcome.compact_soft_saturated:
-                return claims
-            if soft_split_applied:
-                current_audit().emit(
-                    "extract",
-                    "possible_under_extraction",
-                    "claim_limit_residual_after_split",
-                    detail={
-                        "claim_count": outcome.raw_claim_count,
-                        "schema_limit": 30,
-                        "chunk_index": chunk.index,
-                        "start_unit": chunk.start_unit,
-                        "end_unit": chunk.end_unit,
-                        "source_length": len(chunk.text),
-                    },
-                )
-                return self._apply_delta_repair(chunk, event_context, claims)
-            split = bisect_extraction_chunk(chunk)
-            if split is None:
-                current_audit().emit(
-                    "extract",
-                    "possible_under_extraction",
-                    "claim_limit_residual_after_split",
-                    detail={
-                        "claim_count": outcome.raw_claim_count,
-                        "schema_limit": 30,
-                        "chunk_index": chunk.index,
-                        "start_unit": chunk.start_unit,
-                        "end_unit": chunk.end_unit,
-                        "source_length": len(chunk.text),
-                        "reason": "split_unavailable",
-                    },
-                )
-                return claims
-            left, right = split
-            left_claims = self._extract_chunk_with_auto_split(left, event_context, depth, soft_split_applied=True)
-            right_claims = self._extract_chunk_with_auto_split(right, event_context, depth, soft_split_applied=True)
-            root_claims = merge_chunk_claims([claims])
-            merged = merge_chunk_claims([claims, left_claims, right_claims])
-            current_audit().emit(
-                "extract",
-                "possible_under_extraction",
-                "claim_limit_split_applied",
-                detail={
-                    "claim_count_before_split": outcome.raw_claim_count,
-                    "root_unique_claim_count": len(root_claims),
-                    "left_claim_count": len(left_claims),
-                    "right_claim_count": len(right_claims),
-                    "merged_claim_count": len(merged),
-                    "net_new_after_split": len(merged) - len(root_claims),
-                    "duplicates_removed": len(claims) + len(left_claims) + len(right_claims) - len(merged),
-                    "chunk_index": chunk.index,
-                    "start_unit": chunk.start_unit,
-                    "end_unit": chunk.end_unit,
-                    "source_length": len(chunk.text),
-                },
-            )
-            return merged
+            return claims
         except LLMOutputTruncatedError as error:
             split = bisect_extraction_chunk(chunk)
             if depth >= self.config.chunking_policy.max_split_depth or split is None:
@@ -252,147 +186,28 @@ class ExtractionOrchestrator:
                         left,
                         event_context,
                         depth + 1,
-                        soft_split_applied=soft_split_applied,
                     ),
                     self._extract_chunk_with_auto_split(
                         right,
                         event_context,
                         depth + 1,
-                        soft_split_applied=soft_split_applied,
                     ),
                 ]
             )
-        except LLMSchemaValidationError as error:
-            if not is_claim_count_overflow(error):
-                raise
-            split = bisect_extraction_chunk(chunk)
-            if depth >= self.config.chunking_policy.max_split_depth or split is None:
-                raise LLMSchemaValidationError(
-                    "LLM response claims remain over limit after auto split: "
-                    f"chunk={chunk.index}, start_unit={chunk.start_unit}, "
-                    f"end_unit={chunk.end_unit}, depth={depth}"
-                ) from error
-            left, right = split
-            return merge_chunk_claims(
-                [
-                    self._extract_chunk_with_auto_split(
-                        left,
-                        event_context,
-                        depth + 1,
-                        soft_split_applied=soft_split_applied,
-                    ),
-                    self._extract_chunk_with_auto_split(
-                        right,
-                        event_context,
-                        depth + 1,
-                        soft_split_applied=soft_split_applied,
-                    ),
-                ]
-            )
-
-    def _apply_delta_repair(
-        self,
-        chunk: ExtractionChunk,
-        event_context: dict[str, Any],
-        residual_claims: list[ExtractedClaim],
-    ) -> list[ExtractedClaim]:
-        if not self.config.delta_repair_enabled:
-            return residual_claims
-        base_detail: dict[str, Any] = {
-            "residual_claim_count": len(residual_claims),
-            "repair_new_count": 0,
-            "merged_total": len(residual_claims),
-            "net_new_after_repair": 0,
-            "duplicates_removed": 0,
-            "chunk_index": chunk.index,
-            "start_unit": chunk.start_unit,
-            "end_unit": chunk.end_unit,
-            "source_length": len(chunk.text),
-        }
-        try:
-            outcome = self._extract_one_chunk(chunk, event_context, repair_covered_claims=residual_claims)
-            repair_claims = outcome.claims
-            if self._verification_enabled:
-                repair_claims = self._hooks.verify_claims(self._hooks.postprocess_claims(repair_claims), chunk.text)
-            merged = merge_chunk_claims([residual_claims, repair_claims])
-            current_audit().emit(
-                "extract",
-                "possible_under_extraction",
-                "delta_repair_applied",
-                detail={
-                    **base_detail,
-                    "repair_new_count": len(repair_claims),
-                    "merged_total": len(merged),
-                    "net_new_after_repair": len(merged) - len(residual_claims),
-                    "duplicates_removed": len(residual_claims) + len(repair_claims) - len(merged),
-                    "repair_status": "success",
-                },
-            )
-            if outcome.compact_soft_saturated:
-                current_audit().emit(
-                    "extract",
-                    "possible_under_extraction",
-                    "claim_limit_residual_after_repair",
-                    detail={
-                        "claim_count": outcome.raw_claim_count,
-                        "schema_limit": 30,
-                        "accepted_claim_count": len(repair_claims),
-                        "chunk_index": chunk.index,
-                        "start_unit": chunk.start_unit,
-                        "end_unit": chunk.end_unit,
-                        "source_length": len(chunk.text),
-                    },
-                )
-            return merged
-        except Exception as error:
-            current_audit().emit(
-                "extract",
-                "possible_under_extraction",
-                "delta_repair_applied",
-                detail={
-                    **base_detail,
-                    "repair_status": "failed",
-                    "error_class": type(error).__name__,
-                    "error": str(error).replace("\n", " ")[:256],
-                },
-            )
-            return residual_claims
 
     def _extract_one_chunk(
         self,
         chunk: ExtractionChunk,
         event_context: dict[str, Any],
-        *,
-        repair_covered_claims: list[ExtractedClaim] | None = None,
-    ) -> _ChunkExtractionOutcome:
+    ) -> list[ExtractedClaim]:
         prompt_context = {key: value for key, value in event_context.items() if not key.startswith("_")}
         context = json.dumps(prompt_context, ensure_ascii=False)
         occurred_at = str(event_context.get("occurred_at", "未知"))
         language = self._hooks.language_detector(chunk.text)
-        result = (
-            self._request_delta_repair(chunk, context, occurred_at, language, repair_covered_claims)
-            if repair_covered_claims is not None
-            else self._request_chunk(chunk, context, occurred_at, language)
-        )
-        compact_response = isinstance(result, CompactExtractionResponseSchema)
-        compact_soft_saturated = compact_response and len(result.claims) == 30
-        if compact_soft_saturated and repair_covered_claims is None:
-            current_audit().emit(
-                "extract",
-                "possible_under_extraction",
-                "claim_limit_reached",
-                detail={
-                    "claim_count": len(result.claims),
-                    "schema_limit": 30,
-                    "chunk_index": chunk.index,
-                    "start_unit": chunk.start_unit,
-                    "end_unit": chunk.end_unit,
-                    "source_length": len(chunk.text),
-                },
-            )
+        result = self._request_chunk(chunk, context, occurred_at, language)
         if not result.should_memorize and not result.claims:
             self._state.memorize_decisions.append((False, "should_memorize=false"))
-            return _ChunkExtractionOutcome([], False, 0)
+            return []
         if not result.should_memorize:
             current_audit().emit(
                 "extract",
@@ -403,45 +218,7 @@ class ExtractionOrchestrator:
         claims = self._hooks.project_claims(result, chunk, event_context, occurred_at)
         reasons = sorted({claim.reason for claim in claims if claim.reason})
         self._state.memorize_decisions.append((bool(claims), "；".join(reasons) if claims else "postprocess_rejected"))
-        return _ChunkExtractionOutcome(claims, compact_soft_saturated, len(result.claims))
-
-    def _request_delta_repair(
-        self,
-        chunk: ExtractionChunk,
-        context: str,
-        occurred_at: str,
-        language: Literal["zh", "en"],
-        covered_claims: list[ExtractedClaim],
-    ) -> CompactExtractionResponseSchema:
-        request = build_delta_repair_request(
-            chunk,
-            context,
-            occurred_at,
-            language,
-            covered_claims,
-            self._hooks.response_json_schema(),
-            self.config.structured_mode,
-        )
-        response = self.client.complete(request)
-        self._record_usage(response)
-        if response.finish_reason in {"length", "max_tokens"}:
-            raise LLMOutputTruncatedError(
-                f"LLM delta repair output truncated: provider={self.provider_name}, model={self.model}"
-            )
-        try:
-            raw = parse_json_response(response.content)
-            repaired = repair_extraction_json(raw, provider=self.provider_name, model=self.model)
-            self._state.repair_count += count_repairs(raw, repaired)
-            if not uses_compact_schema(repaired):
-                raise ValueError("delta repair response must use compact schema")
-            _add_compact_action_defaults(repaired)
-            return CompactExtractionResponseSchema.model_validate(repaired)
-        except (PydanticValidationError, ValueError) as error:
-            raise LLMSchemaValidationError(
-                "LLM delta repair response does not contain valid compact JSON: "
-                f"provider={self.provider_name}, model={self.model}, "
-                f"chunk_length={len(chunk.text)}, errors={schema_error_paths(error)}"
-            ) from error
+        return claims
 
     def _request_chunk(
         self,
@@ -478,6 +255,22 @@ class ExtractionOrchestrator:
                 previous_output_payload = raw
                 repaired = repair_extraction_json(raw, provider=self.provider_name, model=self.model)
                 self._state.repair_count += count_repairs(raw, repaired)
+                budget = cap_extraction_claims(repaired)
+                repaired = budget.payload
+                if budget.dropped_count:
+                    current_audit().emit(
+                        "extract",
+                        "claim_budget",
+                        "overflow_truncated",
+                        detail={
+                            "generated_claim_count": budget.generated_count,
+                            "retained_claim_count": budget.retained_count,
+                            "dropped_claim_count": budget.dropped_count,
+                            "chunk_index": chunk.index,
+                            "start_unit": chunk.start_unit,
+                            "end_unit": chunk.end_unit,
+                        },
+                    )
                 if uses_compact_schema(repaired):
                     _add_compact_action_defaults(repaired)
                     return CompactExtractionResponseSchema.model_validate(repaired)
@@ -490,12 +283,6 @@ class ExtractionOrchestrator:
                 if looks_like_truncated_json(response.content):
                     raise LLMOutputTruncatedError(
                         f"LLM output appears truncated: provider={self.provider_name}, model={self.model}"
-                    ) from error
-                if is_claim_count_overflow(error):
-                    raise LLMSchemaValidationError(
-                        "LLM response claims exceed the per-chunk schema limit; auto split required: "
-                        f"provider={self.provider_name}, model={self.model}, "
-                        f"chunk_length={len(chunk.text)}, errors={schema_error_paths(error)}"
                     ) from error
                 previous_output = previous_output_payload
                 errors = schema_error_details(

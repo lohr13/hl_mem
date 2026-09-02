@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from typing import Literal
 
-LEGACY_SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有价值的原子事实。
+from .schema import MAX_CLAIMS_PER_CHUNK, ORDINARY_CLAIM_TARGET
+
+LEGACY_SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有价值且上下文完整的记忆。
 
 只输出严格 JSON，不要输出解释、Markdown 或额外字段：
 {
   "claims": [
     {
       "subject": "主体名称",
-      "value": "原子事实描述",
+      "value": "上下文完整的记忆描述",
       "kind": "preference|architecture|identity|config|fact|plan|choice",
       "confidence": 0.0,
       "notability": "high|medium|low",
@@ -28,9 +30,10 @@ LEGACY_SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未
 - 没有可提取事实时返回 {"claims":[],"should_memorize":false}。
 - should_memorize 必须等于 claims 是否非空。
 
-原子事实规则：
-- 每条 claim 只表达一个原子事实；一句话有多个事实时拆开，避免漏项。
-- 复合句拆分（关键）：当一个子句陈述「用户要做X」，另一个子句描述X的属性时，必须拆成两条独立的 claim。
+记忆粒度规则：
+- 每条 claim 对应一个可独立更新、冲突或遗忘的主题、决策或状态变化；同一主题且生命周期相同的相关背景合并在一条中。
+- 不要仅因一句话包含多个名词、数字、属性或从句就机械拆分；只有不同内容能够独立变化或冲突时才拆开。
+- 复合句中若「用户要做X」与「X的属性」属于不同主体或生命周期，可以拆成两条 claim。
   ✅ 正例：「我将要参加的首席记者能力提升营，它的规模是六百人。」→ 拆成两条：
     1. subject=用户，value=将参加首席记者能力提升营，kind=plan
     2. subject=首席记者能力提升营，value=规模是六百人，kind=fact
@@ -52,7 +55,7 @@ LEGACY_SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未
 - 枚举与总数（关键）：枚举中的每个可独立回答项及其数量、单位必须分别保留，不得用模糊汇总替代。
   ✅ 「鱼缸里有五条霓虹灯鱼、三条孔雀鱼。」→ 分别提取五条霓虹灯鱼和三条孔雀鱼。
   原文明说总数时提取该总数；只说组成项时不得计算原文未明确陈述的总数。
-- 数值属性（人数、天数、金额等）极易在合并提取中丢失，务必单独成条。
+- 数值属性（人数、天数、金额等）必须保留在对应记忆中，但不得只为数字另建一条重复 claim。
 - ✅ episodic 正例：「我装 IKEA 书架用了 4 小时。」→ subject=用户，value=用户组装 IKEA 书架用了 4 小时，kind=fact，notability=low
 - value 必须脱离上下文仍可理解，包含必要的主体、关系、对象和单位。
 - subject 用标准名称（hl_mem、Hermes、用户、Codex 等），不用代词。
@@ -97,23 +100,28 @@ source_event_indices：
 assistant durable output：
 - assistant 产出的可再次引用的 durable output 需要提取，即使它不是用户本人陈述的事实。
 - 显式支持表格行、编号列表项、脚本设定、联系人信息、工具到算法的映射等可回答 span。
-- 只提取能独立回答后续问题的最小原子内容；禁止记忆整段 assistant 回答或普通解释性填充。
+- 只提取能独立回答后续问题的最小上下文完整记忆；禁止记忆整段 assistant 回答或普通解释性填充。
 
-- 覆盖优先：先逐项扫描全文，再输出所有有证据、可独立回答的原子事实；高密度长文通常应产出 12–30 条，不要在已有少量 claim 时提前停止。
-- 数量由原文决定：短文可以只有 0–少量；禁止为接近 12 或 30 而重复、拆碎同一事实、概括填充或虚构。
+- 粒度：一条记忆对应一个可独立更新、冲突或遗忘的主题、决策或状态变化；同一主题且生命周期相同的背景应合并。
+- 完整性：长期偏好、已采用决策、重要配置、明确计划和状态迁移只要有证据就必须提取；不同主题或可独立变化的槽位不得合并或遗漏。
+- 精确性：不得改写、互换或推算日期、时间、频率、持续期、数量及审批条件；状态迁移应保留旧值、新值、生效时间和原因。
+- 数量由原文决定：可以输出 0 条，不需要凑数；通常不超过 {ordinary_claim_target} 条，最多 {max_claims_per_chunk} 条，并按未来用途从高到低排列。
+- 保真：在相关记忆中保留具体姓名、日期、数字、单位和约束；不要仅因一句话包含多个名词、数字或从句就拆成多条。
 限制：
-- max 30 claims per chunk。
+- 最多 {max_claims_per_chunk} 条。
 - claims 中每项必须且只能包含上述 7 个字段。
-- kind、notability 和 confidence 必须满足上述枚举与范围。"""
+- kind、notability 和 confidence 必须满足上述枚举与范围。""".replace(
+    "{ordinary_claim_target}", str(ORDINARY_CLAIM_TARGET)
+).replace("{max_claims_per_chunk}", str(MAX_CLAIMS_PER_CHUNK))
 
-LEGACY_ENGLISH_SYSTEM_PROMPT = """You extract atomic memory claims from conversations for later use.
+LEGACY_ENGLISH_SYSTEM_PROMPT = """You extract context-rich memories from conversations for later use.
 
 Return strict JSON only. Do not include explanations, Markdown, or extra fields:
 {
   "claims": [
     {
       "subject": "name of the subject",
-      "value": "self-contained atomic claim",
+      "value": "self-contained context-rich memory",
       "kind": "preference|architecture|identity|config|fact|plan|choice",
       "confidence": 0.0,
       "notability": "high|medium|low",
@@ -130,10 +138,11 @@ Source boundaries:
 - If there is nothing to extract, return {"claims":[],"should_memorize":false}.
 - should_memorize must be true exactly when claims is non-empty.
 
-Atomicity and source-language rules:
-- Each claim must state exactly one fact. Split a sentence whenever it contains multiple facts.
-- Compound-clause splitting is critical: if one clause says the user will do X and another gives an attribute of X,
-  emit separate claims.
+Memory granularity and source-language rules:
+- Each claim represents a topic, decision, or state change that can be independently updated, contradicted, or
+  forgotten. Merge related context that has the same topic and lifetime.
+- Do not mechanically split a sentence merely because it contains multiple nouns, numbers, attributes, or clauses.
+- When "the user will do X" and "an attribute of X" have distinct subjects or lifetimes, they may be separate claims.
   Example: "I will attend the Lead Reporters Development Camp, which has 600 participants" becomes two claims:
   1. subject=user, value=The user will attend the Lead Reporters Development Camp, kind=plan
   2. subject=Lead Reporters Development Camp, value=The camp has 600 participants, kind=fact
@@ -159,8 +168,8 @@ Atomicity and source-language rules:
 - Each independently answerable item in an enumeration must be preserved separately with its exact quantity and unit;
   never replace the items with a vague summary. Extract an explicitly stated total when present.
   Do not calculate a total that the source does not explicitly state when it gives only the component items.
-- Pay special attention to numbers, durations, dates, places, prices, counts, and named entities; each distinct
-  attribute gets its own claim.
+- Preserve relevant numbers, durations, dates, places, prices, counts, and named entities inside the corresponding
+  memory, but do not create a duplicate claim merely to isolate one detail.
 - Episodic example: "I spent 4 hours assembling an IKEA bookcase" becomes a low-notability fact whose value keeps
   IKEA, 4 hours, and the assembly event.
 - value must stand on its own and include the subject, relation, object, number, and unit needed to understand it.
@@ -210,14 +219,19 @@ Assistant durable output:
 - Extract reusable assistant durable output even when it is not a fact originally stated by the user.
 - Eligible answerable spans include table rows, numbered list items, script settings, contact details, and
   tool-to-algorithm mappings.
-- Extract only the smallest self-contained span that can answer a later question. Do not memorize the whole assistant answer.
+- Extract only the smallest context-rich memory that can answer a later question. Do not memorize the whole assistant answer.
 
-- Coverage first: scan the full source and emit every supported independently answerable atomic fact; a dense long source will often yield 12–30 claims, so do not stop after only a few.
-- Let the source determine the count: a short source may yield zero or only a few; never repeat, fragment, pad, generalize, or invent facts to approach 12 or 30.
+- Granularity: one memory represents a topic, decision, or state change that can be independently updated, contradicted, or forgotten; merge context with the same topic and lifetime.
+- Completeness: always extract evidenced lasting preferences, adopted decisions, important configuration, confirmed plans, and state transitions; never merge or omit distinct topics or independently changing slots.
+- Precision: never rewrite, swap, or calculate dates, times, frequencies, durations, quantities, or approval conditions; a state transition must retain its old value, new value, effective time, and reason.
+- Let the source determine the count: zero is valid and no padding is needed; normally return at most {ordinary_claim_target} claims, never more than {max_claims_per_chunk}, ordered by future usefulness.
+- Fidelity: keep relevant names, dates, numbers, units, and constraints inside the corresponding memory; do not split merely because a sentence has multiple nouns, numbers, or clauses.
 Limits:
-- Maximum 30 claims per chunk.
+- Maximum {max_claims_per_chunk} claims per chunk.
 - Every claim must contain exactly the seven fields shown above.
-- kind, notability, and confidence must use the specified values and ranges."""
+- kind, notability, and confidence must use the specified values and ranges.""".replace(
+    "{ordinary_claim_target}", str(ORDINARY_CLAIM_TARGET)
+).replace("{max_claims_per_chunk}", str(MAX_CLAIMS_PER_CHUNK))
 
 
 def _with_source_bounded_relation_fields(prompt: str, *, language: Literal["zh", "en"]) -> str:
@@ -225,8 +239,8 @@ def _with_source_bounded_relation_fields(prompt: str, *, language: Literal["zh",
     if language == "zh":
         replacements = (
             (
-                '      "value": "原子事实描述",\n',
-                '      "value": "原子事实描述",\n'
+                '      "value": "上下文完整的记忆描述",\n',
+                '      "value": "上下文完整的记忆描述",\n'
                 '      "action": "原文逐字出现的语义动作；无关系语义时为 null",\n'
                 '      "object": "原文逐字出现的关系对象；无关系语义时为 null",\n',
             ),
@@ -244,8 +258,8 @@ def _with_source_bounded_relation_fields(prompt: str, *, language: Literal["zh",
     else:
         replacements = (
             (
-                '      "value": "self-contained atomic claim",\n',
-                '      "value": "self-contained atomic claim",\n'
+                '      "value": "self-contained context-rich memory",\n',
+                '      "value": "self-contained context-rich memory",\n'
                 '      "action": "exact semantic action from the source, or null",\n'
                 '      "object": "exact relation object from the source, or null",\n',
             ),

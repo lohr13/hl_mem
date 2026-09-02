@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+
+import pytest
 
 from hl_mem.errors import LLMOutputTruncatedError
 from hl_mem.ingest.chunking import (
@@ -12,6 +15,7 @@ from hl_mem.ingest.chunking import (
     detect_content_structure,
     split_extraction_content,
 )
+from hl_mem.ingest.extraction import parsing
 from hl_mem.ingest.llm_extractor import LLMExtractor
 from hl_mem.llm.types import LLMRequest, LLMResponse
 from hl_mem.observability.audit import audit_scope
@@ -69,6 +73,69 @@ def _compact_response(values: list[str]) -> str:
     )
 
 
+def test_claim_budget_ranks_compact_claims_without_mutating_input() -> None:
+    claims = []
+    for index in range(16):
+        claim = _compact_fact(f"low-{index}")
+        claim.update({"notability": "low", "confidence": 0.9})
+        claims.append(claim)
+    high = _compact_fact("high")
+    high.update({"notability": "high", "confidence": 0.1})
+    medium = _compact_fact("medium")
+    medium.update({"notability": "medium", "confidence": 0.2})
+    payload = {"claims": [*claims, high, medium], "should_memorize": True}
+    original = deepcopy(payload)
+
+    result = parsing.cap_extraction_claims(payload, limit=16)
+
+    assert result.generated_count == 18
+    assert result.retained_count == 16
+    assert result.dropped_count == 2
+    assert [claim["value"] for claim in result.payload["claims"]] == [
+        "high",
+        "medium",
+        *(f"low-{index}" for index in range(14)),
+    ]
+    assert payload == original
+
+
+def test_claim_budget_uses_confidence_then_original_order_for_ties() -> None:
+    claims = []
+    for index in range(18):
+        claim = _compact_fact(f"claim-{index}")
+        claim.update({"notability": "medium", "confidence": 0.5})
+        claims.append(claim)
+    claims[-1]["confidence"] = "0.9"
+
+    result = parsing.cap_extraction_claims({"claims": claims}, limit=16)
+
+    assert [claim["value"] for claim in result.payload["claims"]] == [
+        "claim-17",
+        *(f"claim-{index}" for index in range(15)),
+    ]
+
+
+def test_claim_budget_supports_legacy_importance() -> None:
+    claims = [{"value": f"claim-{index}", "importance": 0.1} for index in range(17)]
+    claims[-1]["importance"] = 0.9
+
+    result = parsing.cap_extraction_claims({"claims": claims}, limit=16)
+
+    assert result.payload["claims"][0]["value"] == "claim-16"
+    assert "claim-15" not in {claim["value"] for claim in result.payload["claims"]}
+
+
+def test_claim_budget_leaves_non_list_for_validation_and_rejects_invalid_limit() -> None:
+    payload = {"claims": "invalid", "should_memorize": True}
+
+    result = parsing.cap_extraction_claims(payload)
+
+    assert result.payload == payload
+    assert result.generated_count == result.retained_count == result.dropped_count == 0
+    with pytest.raises(ValueError, match="positive"):
+        parsing.cap_extraction_claims(payload, limit=0)
+
+
 def _full_response(values: list[str]) -> str:
     return json.dumps(
         {
@@ -94,12 +161,6 @@ def _full_response(values: list[str]) -> str:
         },
         ensure_ascii=False,
     )
-
-
-def _balanced_two_paragraph_source(left_values: list[str], right_values: list[str]) -> str:
-    left = "\n".join(left_values)
-    right = "\n".join(right_values)
-    return left + "\n\n" + right + ("x" * max(0, len(left) - len(right)))
 
 
 def test_short_text_uses_single_chunk() -> None:
@@ -185,270 +246,27 @@ def test_text_prefers_paragraph_boundaries_and_can_be_bisected() -> None:
     assert split[0].text + split[1].text == chunks[0].text
 
 
-def test_exact_compact_limit_keeps_single_request_when_soft_split_is_disabled() -> None:
-    """默认关闭必须保持 compact==30 的现有单请求行为。"""
-    values = [f"User recorded baseline item {index:02d}" for index in range(30)]
+def test_exact_compact_limit_keeps_single_request_with_deprecated_flags_enabled() -> None:
+    """Deprecated split flags must not add requests at the hard budget."""
+    values = [f"User recorded baseline item {index:02d}" for index in range(16)]
     client = _SequenceClient([LLMResponse(_compact_response(values), "stop", 10)])
     audit = _RecordingAudit()
 
     with audit_scope(audit):
-        claims = LLMExtractor(client, ChunkingPolicy(10_000, 0, 3)).extract("\n".join(values))
+        claims = LLMExtractor(
+            client,
+            ChunkingPolicy(10_000, 0, 3),
+            soft_split_enabled=True,
+            delta_repair_enabled=True,
+        ).extract("\n".join(values))
 
     assert len(client.requests) == 1
     assert {claim.value for claim in claims} == set(values)
-    assert [event[2] for event in audit.events if event[1] == "possible_under_extraction"] == ["claim_limit_reached"]
+    assert not [event for event in audit.events if event[1] in {"claim_budget", "possible_under_extraction"}]
 
 
-def test_soft_split_preserves_root_merges_children_and_does_not_recurse_on_residual() -> None:
-    """软触发只拆一层，保留根结果并用既有 merge 去重。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(30)]
-    right_values = [f"User recorded right item {index:02d}" for index in range(30)]
-    root_values = left_values[:15] + right_values[:15]
-    client = _SequenceClient(
-        [
-            LLMResponse(_compact_response(root_values), "stop", 10),
-            LLMResponse(_compact_response(left_values), "stop", 11),
-            LLMResponse(_compact_response(right_values), "stop", 12),
-        ]
-    )
-    audit = _RecordingAudit()
-
-    with audit_scope(audit):
-        extractor = LLMExtractor(
-            client,
-            ChunkingPolicy(10_000, 0, 3),
-            soft_split_enabled=True,
-        )
-        claims = extractor.extract("\n".join(left_values + right_values))
-
-    assert extractor.delta_repair_enabled is False
-    assert len(client.requests) == 3
-    assert [claim.value for claim in claims[:30]] == root_values
-    assert {claim.value for claim in claims} == set(left_values + right_values)
-    outcomes = [event[2] for event in audit.events]
-    assert outcomes.count("claim_limit_residual_after_split") == 2
-    assert outcomes.count("claim_limit_split_applied") == 1
-    residual_details = [event[3] for event in audit.events if event[2] == "claim_limit_residual_after_split"]
-    assert all(detail["schema_limit"] == 30 for detail in residual_details)
-    split_detail = next(event[3] for event in audit.events if event[2] == "claim_limit_split_applied")
-    assert split_detail == {
-        "claim_count_before_split": 30,
-        "root_unique_claim_count": 30,
-        "left_claim_count": 30,
-        "right_claim_count": 30,
-        "merged_claim_count": 60,
-        "net_new_after_split": 30,
-        "duplicates_removed": 30,
-        "chunk_index": 0,
-        "start_unit": 0,
-        "end_unit": 1,
-        "source_length": len("\n".join(left_values + right_values)),
-    }
-    assert "delta_repair_applied" not in outcomes
-
-
-def test_unavailable_soft_split_reports_30_claim_schema_limit() -> None:
-    client = _SequenceClient([LLMResponse(_compact_response(["x"] * 30), "stop", 10)])
-    audit = _RecordingAudit()
-
-    with audit_scope(audit):
-        LLMExtractor(
-            client,
-            ChunkingPolicy(10_000, 0, 3),
-            soft_split_enabled=True,
-        ).extract("x")
-
-    residual = [event for event in audit.events if event[2] == "claim_limit_residual_after_split"]
-    assert residual == [
-        (
-            "extract",
-            "possible_under_extraction",
-            "claim_limit_residual_after_split",
-            {
-                "claim_count": 30,
-                "schema_limit": 30,
-                "chunk_index": 0,
-                "start_unit": 0,
-                "end_unit": 1,
-                "source_length": 1,
-                "reason": "split_unavailable",
-            },
-        )
-    ]
-
-
-def test_delta_repair_runs_once_for_residual_and_merges_only_new_claims() -> None:
-    """残余子块只补一轮，并在既有五元组 merge 后报告真实净新增。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(31)]
-    right_values = [f"User recorded right item {index:02d}" for index in range(4)]
-    root_values = left_values[:26] + right_values
-    client = _SequenceClient(
-        [
-            LLMResponse(_compact_response(root_values), "stop", 10),
-            LLMResponse(_compact_response(left_values[:30]), "stop", 11),
-            LLMResponse(_compact_response([left_values[0], left_values[30]]), "stop", 12),
-            LLMResponse(_compact_response(right_values), "stop", 13),
-        ]
-    )
-    audit = _RecordingAudit()
-    source = _balanced_two_paragraph_source(left_values, right_values)
-
-    with audit_scope(audit):
-        claims = LLMExtractor(
-            client,
-            ChunkingPolicy(10_000, 0, 3),
-            soft_split_enabled=True,
-            delta_repair_enabled=True,
-        ).extract(source)
-
-    assert len(client.requests) == 4
-    assert {claim.value for claim in claims} == set(left_values + right_values)
-    repair_prompt = client.requests[2].messages[1].content
-    assert left_values[30] in repair_prompt
-    assert f"1. user | {left_values[0]}" in repair_prompt
-    assert "Extract only new atomic facts not covered by the list above" in repair_prompt
-    outcomes = [event[2] for event in audit.events]
-    assert outcomes.count("claim_limit_residual_after_split") == 1
-    assert outcomes.count("delta_repair_applied") == 1
-    repair_detail = next(event[3] for event in audit.events if event[2] == "delta_repair_applied")
-    assert repair_detail == {
-        "residual_claim_count": 30,
-        "repair_new_count": 2,
-        "merged_total": 31,
-        "net_new_after_repair": 1,
-        "duplicates_removed": 1,
-        "chunk_index": 0,
-        "start_unit": 0,
-        "end_unit": 1,
-        "source_length": len("\n".join(left_values) + "\n\n"),
-        "repair_status": "success",
-    }
-
-
-def test_delta_repair_empty_response_stops_after_one_request() -> None:
-    """合法空 repair 响应立即停止，保留软拆分已有 claims。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(30)]
-    right_values = ["User recorded right item"]
-    root_values = left_values[:29] + right_values
-    empty_response = json.dumps({"claims": [], "should_memorize": False})
-    client = _SequenceClient(
-        [
-            LLMResponse(_compact_response(root_values), "stop", 10),
-            LLMResponse(_compact_response(left_values), "stop", 11),
-            LLMResponse(empty_response, "stop", 12),
-            LLMResponse(_compact_response(right_values), "stop", 13),
-        ]
-    )
-    audit = _RecordingAudit()
-
-    with audit_scope(audit):
-        claims = LLMExtractor(
-            client,
-            ChunkingPolicy(10_000, 0, 3),
-            soft_split_enabled=True,
-            delta_repair_enabled=True,
-        ).extract(_balanced_two_paragraph_source(left_values, right_values))
-
-    assert len(client.requests) == 4
-    assert {claim.value for claim in claims} == set(left_values + right_values)
-    repair_detail = next(event[3] for event in audit.events if event[2] == "delta_repair_applied")
-    assert repair_detail["repair_new_count"] == 0
-    assert repair_detail["net_new_after_repair"] == 0
-    assert not [event for event in audit.events if event[2] == "claim_limit_residual_after_repair"]
-
-
-def test_delta_repair_saturation_emits_residual_without_recursing() -> None:
-    """repair 再次返回 30 条时仅审计，不发第二轮请求。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(60)]
-    right_values = ["User recorded right item"]
-    root_values = left_values[:29] + right_values
-    client = _SequenceClient(
-        [
-            LLMResponse(_compact_response(root_values), "stop", 10),
-            LLMResponse(_compact_response(left_values[:30]), "stop", 11),
-            LLMResponse(_compact_response(left_values[30:]), "stop", 12),
-            LLMResponse(_compact_response(right_values), "stop", 13),
-        ]
-    )
-    audit = _RecordingAudit()
-
-    with audit_scope(audit):
-        LLMExtractor(
-            client,
-            ChunkingPolicy(10_000, 0, 3),
-            soft_split_enabled=True,
-            delta_repair_enabled=True,
-        ).extract(_balanced_two_paragraph_source(left_values, right_values))
-
-    assert len(client.requests) == 4
-    residual = [event for event in audit.events if event[2] == "claim_limit_residual_after_repair"]
-    assert len(residual) == 1
-    assert residual[0][3]["claim_count"] == 30
-    assert residual[0][3]["schema_limit"] == 30
-    assert [event[2] for event in audit.events].count("delta_repair_applied") == 1
-
-
-def test_delta_repair_failure_preserves_residual_claims_and_continues() -> None:
-    """repair 调用失败必须 fail-open，右子块仍继续提取且根 claims 不丢。"""
-    left_values = [f"User recorded left item {index:02d}" for index in range(30)]
-    right_values = ["User recorded right item"]
-    root_values = left_values[:29] + right_values
-    client = _SequenceClient(
-        [
-            LLMResponse(_compact_response(root_values), "stop", 10),
-            LLMResponse(_compact_response(left_values), "stop", 11),
-            RuntimeError("repair unavailable"),
-            LLMResponse(_compact_response(right_values), "stop", 13),
-        ]
-    )
-    audit = _RecordingAudit()
-
-    with audit_scope(audit):
-        claims = LLMExtractor(
-            client,
-            ChunkingPolicy(10_000, 0, 3),
-            soft_split_enabled=True,
-            delta_repair_enabled=True,
-        ).extract(_balanced_two_paragraph_source(left_values, right_values))
-
-    assert len(client.requests) == 4
-    assert {claim.value for claim in claims} == set(left_values + right_values)
-    repair_detail = next(event[3] for event in audit.events if event[2] == "delta_repair_applied")
-    assert repair_detail["repair_status"] == "failed"
-    assert repair_detail["repair_new_count"] == 0
-    assert repair_detail["net_new_after_repair"] == 0
-    assert repair_detail["error_class"] == "RuntimeError"
-
-
-def test_hard_recovery_inside_soft_child_does_not_reset_one_level_guard() -> None:
-    """软拆子块即使发生硬截断恢复，也不能在更深层再次软拆。"""
-    root_values = [f"User recorded root item {index:02d}" for index in range(30)]
-    residual_values = [f"User recorded residual item {index:02d}" for index in range(30)]
-    client = _SequenceClient(
-        [
-            LLMResponse(_compact_response(root_values), "stop", 10),
-            LLMResponse('{"claims":[', "length", 11),
-            LLMResponse(_compact_response(residual_values), "stop", 12),
-            LLMResponse(_compact_response(["User recorded left tail"]), "stop", 13),
-            LLMResponse(_compact_response(["User recorded right half"]), "stop", 14),
-        ]
-    )
-    audit = _RecordingAudit()
-
-    with audit_scope(audit):
-        LLMExtractor(
-            client,
-            ChunkingPolicy(10_000, 0, 3),
-            soft_split_enabled=True,
-        ).extract("first paragraph\n\nsecond paragraph\n\nthird paragraph\n\nfourth paragraph")
-
-    assert len(client.requests) == 5
-    assert [event[2] for event in audit.events].count("claim_limit_residual_after_split") == 1
-    assert [event[2] for event in audit.events].count("claim_limit_split_applied") == 1
-
-
-def test_full_schema_exact_twenty_does_not_trigger_soft_split_or_limit_audit() -> None:
-    """完整响应没有 20 条上限，恰好 20 条不得误触发 compact 恢复。"""
+def test_legacy_schema_overflow_uses_the_same_hard_budget() -> None:
+    """Compatible legacy responses use the same deterministic hard cap."""
     values = [f"User recorded legacy item {index:02d}" for index in range(20)]
     client = _SequenceClient([LLMResponse(_full_response(values), "stop", 10)])
     audit = _RecordingAudit()
@@ -461,8 +279,8 @@ def test_full_schema_exact_twenty_does_not_trigger_soft_split_or_limit_audit() -
         ).extract("\n".join(values))
 
     assert len(client.requests) == 1
-    assert len(claims) == 20
-    assert not [event for event in audit.events if event[2].startswith("claim_limit_")]
+    assert [claim.value for claim in claims] == values[:16]
+    assert [event[3]["dropped_claim_count"] for event in audit.events if event[2] == "overflow_truncated"] == [4]
 
 
 def test_truncated_output_is_bisected_and_usage_is_accumulated() -> None:
@@ -499,57 +317,53 @@ def test_truncated_output_is_bisected_and_usage_is_accumulated() -> None:
     assert extractor.last_usage_tokens == 33
 
 
-def test_claim_count_overflow_is_bisected_without_schema_retry() -> None:
-    """A dense chunk should split instead of asking the model to rewrite more than 30 claims."""
-
-    def compact_claim(value: str, evidence_quote: str) -> dict[str, object]:
-        return {
-            "subject": "user",
-            "value": value,
-            "kind": "preference",
-            "confidence": 1.0,
-            "notability": "high",
-            "evidence_quote": evidence_quote,
-            "source_event_indices": [0],
-        }
-
-    overflow = json.dumps(
-        {
-            "claims": [compact_claim(f"overflow-{index}", "User likes tea") for index in range(31)],
-            "should_memorize": True,
-        }
-    )
-    tea = json.dumps(
-        {
-            "claims": [compact_claim("User likes tea", "User likes tea")],
-            "should_memorize": True,
-        }
-    )
-    coffee = json.dumps(
-        {
-            "claims": [compact_claim("User likes coffee", "User likes coffee")],
-            "should_memorize": True,
-        }
-    )
-    client = _SequenceClient(
-        [
-            LLMResponse(overflow, "stop", 10),
-            LLMResponse(tea, "stop", 11),
-            LLMResponse(coffee, "stop", 12),
-        ]
-    )
+def test_claim_count_overflow_is_ranked_and_truncated_without_another_request() -> None:
+    low_claims = []
+    for index in range(16):
+        claim = _compact_fact(f"low-{index}")
+        claim.update({"notability": "low", "confidence": 0.9})
+        low_claims.append(claim)
+    high = _compact_fact("high")
+    high.update({"notability": "high", "confidence": 0.1})
+    medium = _compact_fact("medium")
+    medium.update({"notability": "medium", "confidence": 0.2})
+    overflow = json.dumps({"claims": [*low_claims, high, medium], "should_memorize": True})
+    client = _SequenceClient([LLMResponse(overflow, "stop", 10)])
+    audit = _RecordingAudit()
     extractor = LLMExtractor(
         client,
         ChunkingPolicy(1_000, 0, 2),
         schema_retries=2,
+        soft_split_enabled=True,
+        delta_repair_enabled=True,
     )
 
-    claims = extractor.extract("User likes tea.\n\nUser likes coffee.")
+    with audit_scope(audit):
+        claims = extractor.extract("\n".join([*(f"low-{index}" for index in range(16)), "high", "medium"]))
 
-    assert {claim.value for claim in claims} == {"User likes tea", "User likes coffee"}
-    assert len(client.requests) == 3
+    assert [claim.value for claim in claims] == [
+        "high",
+        "medium",
+        *(f"low-{index}" for index in range(14)),
+    ]
+    assert len(client.requests) == 1
     assert extractor._schema_retry_count == 0
-    assert extractor.last_usage_tokens == 33
+    assert extractor.last_usage_tokens == 10
+    assert [event for event in audit.events if event[2] == "overflow_truncated"] == [
+        (
+            "extract",
+            "claim_budget",
+            "overflow_truncated",
+            {
+                "generated_claim_count": 18,
+                "retained_claim_count": 16,
+                "dropped_claim_count": 2,
+                "chunk_index": 0,
+                "start_unit": 0,
+                "end_unit": 1,
+            },
+        )
+    ]
 
 
 def test_truncation_at_max_depth_reports_chunk_location() -> None:

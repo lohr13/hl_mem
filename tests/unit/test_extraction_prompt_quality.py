@@ -12,7 +12,7 @@ class ExtractionPromptQualityTest(unittest.TestCase):
 
     def test_prompt_contains_compact_contract_and_core_guidance(self) -> None:
         for expected in (
-            "对未来有价值的原子事实",
+            "对未来有价值且上下文完整的记忆",
             "脱离上下文仍可理解",
             "subject 用标准名称",
             '"kind"',
@@ -20,29 +20,35 @@ class ExtractionPromptQualityTest(unittest.TestCase):
             '"evidence_quote"',
             '"source_event_indices"',
             "confidence",
-            "max 30 claims per chunk",
+            "最多 16 条",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
 
-    def test_prompts_use_validated_density_arm_copy(self) -> None:
+    def test_prompts_define_context_rich_claim_budget(self) -> None:
         zh_lines = (
-            "- 覆盖优先：先逐项扫描全文，再输出所有有证据、可独立回答的原子事实；高密度长文通常应产出 12–30 条，不要在已有少量 claim 时提前停止。",
-            "- 数量由原文决定：短文可以只有 0–少量；禁止为接近 12 或 30 而重复、拆碎同一事实、概括填充或虚构。",
+            "- 粒度：一条记忆对应一个可独立更新、冲突或遗忘的主题、决策或状态变化；同一主题且生命周期相同的背景应合并。",
+            "- 完整性：长期偏好、已采用决策、重要配置、明确计划和状态迁移只要有证据就必须提取；不同主题或可独立变化的槽位不得合并或遗漏。",
+            "- 精确性：不得改写、互换或推算日期、时间、频率、持续期、数量及审批条件；状态迁移应保留旧值、新值、生效时间和原因。",
+            "- 数量由原文决定：可以输出 0 条，不需要凑数；通常不超过 12 条，最多 16 条，并按未来用途从高到低排列。",
+            "- 保真：在相关记忆中保留具体姓名、日期、数字、单位和约束；不要仅因一句话包含多个名词、数字或从句就拆成多条。",
         )
         en_lines = (
-            "- Coverage first: scan the full source and emit every supported independently answerable atomic fact; a dense long source will often yield 12–30 claims, so do not stop after only a few.",
-            "- Let the source determine the count: a short source may yield zero or only a few; never repeat, fragment, pad, generalize, or invent facts to approach 12 or 30.",
+            "- Granularity: one memory represents a topic, decision, or state change that can be independently updated, contradicted, or forgotten; merge context with the same topic and lifetime.",
+            "- Completeness: always extract evidenced lasting preferences, adopted decisions, important configuration, confirmed plans, and state transitions; never merge or omit distinct topics or independently changing slots.",
+            "- Precision: never rewrite, swap, or calculate dates, times, frequencies, durations, quantities, or approval conditions; a state transition must retain its old value, new value, effective time, and reason.",
+            "- Let the source determine the count: zero is valid and no padding is needed; normally return at most 12 claims, never more than 16, ordered by future usefulness.",
+            "- Fidelity: keep relevant names, dates, numbers, units, and constraints inside the corresponding memory; do not split merely because a sentence has multiple nouns, numbers, or clauses.",
         )
 
         for expected in zh_lines:
             self.assertEqual(SYSTEM_PROMPT.count(expected), 1)
         for expected in en_lines:
             self.assertEqual(ENGLISH_SYSTEM_PROMPT.count(expected), 1)
-        self.assertIn(f"{zh_lines[1]}\n限制：", SYSTEM_PROMPT)
-        self.assertIn(f"{en_lines[1]}\nLimits:", ENGLISH_SYSTEM_PROMPT)
-        self.assertIn("Maximum 30 claims per chunk", ENGLISH_SYSTEM_PROMPT)
-        self.assertNotIn("max 20 claims per chunk", SYSTEM_PROMPT)
-        self.assertNotIn("Maximum 20 claims per chunk", ENGLISH_SYSTEM_PROMPT)
+        self.assertIn(f"{zh_lines[4]}\n限制：", SYSTEM_PROMPT)
+        self.assertIn(f"{en_lines[4]}\nLimits:", ENGLISH_SYSTEM_PROMPT)
+        self.assertNotIn("12–30", SYSTEM_PROMPT)
+        self.assertNotIn("12–30", ENGLISH_SYSTEM_PROMPT)
+        self.assertNotIn("Maximum 30 claims per chunk", ENGLISH_SYSTEM_PROMPT)
 
     def test_prompt_defines_all_six_kinds(self) -> None:
         for expected in (

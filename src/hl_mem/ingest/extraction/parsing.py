@@ -3,14 +3,70 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from copy import deepcopy
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, NamedTuple
 
 from pydantic import ValidationError as PydanticValidationError
 
 from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS
 from hl_mem.observability.audit import current_audit
+
+from .schema import MAX_CLAIMS_PER_CHUNK
+
+
+class ClaimBudgetResult(NamedTuple):
+    """A copied extraction payload plus deterministic claim-count metadata."""
+
+    payload: dict[str, Any]
+    generated_count: int
+    retained_count: int
+    dropped_count: int
+
+
+def _finite_number(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
+def _claim_priority(claim: Any) -> tuple[float, float]:
+    if not isinstance(claim, dict):
+        return (0.0, 0.0)
+    notability_rank = {"high": 3.0, "medium": 2.0, "low": 1.0}
+    if claim.get("notability") in notability_rank:
+        priority = notability_rank[claim["notability"]]
+    else:
+        priority = _finite_number(claim.get("importance"))
+    return (priority, _finite_number(claim.get("confidence")))
+
+
+def cap_extraction_claims(
+    payload: dict[str, Any],
+    *,
+    limit: int = MAX_CLAIMS_PER_CHUNK,
+) -> ClaimBudgetResult:
+    """Copy a response and retain the highest-priority claims when it overflows."""
+    if limit < 1:
+        raise ValueError("claim limit must be positive")
+    capped = deepcopy(payload)
+    claims = capped.get("claims")
+    if not isinstance(claims, list):
+        return ClaimBudgetResult(capped, 0, 0, 0)
+    generated_count = len(claims)
+    if generated_count <= limit:
+        return ClaimBudgetResult(capped, generated_count, generated_count, 0)
+    ranked = sorted(
+        enumerate(claims),
+        key=lambda indexed: (*(-value for value in _claim_priority(indexed[1])), indexed[0]),
+    )
+    capped["claims"] = [claim for _, claim in ranked[:limit]]
+    return ClaimBudgetResult(capped, generated_count, limit, generated_count - limit)
 
 
 def count_repairs(original: Any, repaired: Any) -> int:
@@ -85,20 +141,6 @@ def schema_error_paths(error: Exception) -> list[str]:
     if isinstance(error, PydanticValidationError):
         return [f"{'.'.join(str(part) for part in item['loc'])}:{item['type']}" for item in error.errors()]
     return [f"response:{type(error).__name__}"]
-
-
-def is_claim_count_overflow(error: BaseException) -> bool:
-    """Recognize a claims array that exceeded the response-schema limit."""
-    current: BaseException | None = error
-    visited: set[int] = set()
-    while current is not None and id(current) not in visited:
-        visited.add(id(current))
-        if isinstance(current, PydanticValidationError) and any(
-            tuple(item["loc"]) == ("claims",) and item["type"] == "too_long" for item in current.errors()
-        ):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
 
 
 def schema_error_details(

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Annotated, Any, Literal, TypeAlias, get_args
+from typing import Annotated, Any, Final, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS, OPERATIONAL_SLOT_NAMES
 
 from ..extractors import AssertionKind
+
+ORDINARY_CLAIM_TARGET: Final[int] = 12
+MAX_CLAIMS_PER_CHUNK: Final[int] = 16
 
 CanonicalSlot: TypeAlias = Literal[
     "preference.ui_theme",
@@ -146,7 +149,7 @@ class CompactExtractionResponseSchema(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    claims: list[CompactExtractedClaimSchema] = Field(max_length=30)
+    claims: list[CompactExtractedClaimSchema] = Field(max_length=MAX_CLAIMS_PER_CHUNK)
     should_memorize: bool
 
 

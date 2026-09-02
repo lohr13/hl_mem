@@ -248,11 +248,12 @@ persisted as separate Event evidence links; speaker remains an Event property in
 subject. Each decision emits an audit reason code. Claim FTS and dense embeddings consume the persisted `index_text`;
 changing `index.text_mode` therefore supports controlled representation A/B without changing the rest of recall.
 
-The localized Chinese and English prompts share atomicity rules for compound facts, explicit actions/relationships,
-named-entity fidelity, one-off events, and enumerations. Prompt and extractor identities are recorded by the code and
-evaluation manifests instead of being duplicated in this document. A raw structured response containing exactly the 20
-allowed Claims emits a `claim_limit_reached` audit warning because the model may have silently omitted additional facts;
-the schema limit itself remains unchanged.
+The localized Chinese and English prompts prefer context-rich memories whose topic or lifecycle can be independently
+updated, contradicted, or forgotten, while preserving explicit actions, relationships, named entities, dates, and
+quantities. Ordinary output targets at most 12 Claims. A valid response above the hard 16-Claim per-chunk budget is
+deterministically ranked by notability, confidence, and original position, then reduced without another model call; the
+reduction emits `extract/claim_budget/overflow_truncated`. Claim count never triggers input splitting or schema retry.
+Provider output truncation remains distinct and may still bisect input up to `extraction.max_split_depth`.
 
 The released extractor prompt remains the pre-v0.31 prompt because the lesson-notability experiment was sealed. A
 deterministic post-processor can emit a grounded `lesson_signal`, but its default `observe` mode cannot promote scope or
