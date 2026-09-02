@@ -29,12 +29,16 @@ def test_chinese_extraction_recall_qa_e2e() -> None:
         pytest.skip(f"private Chinese E2E sources are not installed: {missing_sources}")
 
     refresh = os.getenv("HL_MEM_CHINESE_E2E_REFRESH") == "1"
+    config_path = os.getenv("HL_MEM_CHINESE_E2E_CONFIG")
+    env_path = os.getenv("HL_MEM_CHINESE_E2E_ENV")
     report_path = Path(os.getenv("HL_MEM_CHINESE_E2E_REPORT", str(DEFAULT_REPORT_PATH)))
     report = run_chinese_e2e(
         manifest_path=SAMPLE_MANIFEST_PATH,
         cache_root=DEFAULT_CACHE_ROOT,
         report_path=report_path,
         refresh=refresh,
+        config_path=Path(config_path) if config_path else None,
+        env_path=Path(env_path) if env_path else None,
     )
 
     print("\nChinese extraction -> recall -> QA summary:")

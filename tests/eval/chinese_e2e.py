@@ -922,7 +922,8 @@ def evaluate_gate(
             failures.append(GateFailure(dataset, "failed_cases", failed_cases, 0.0))
         for field in fields(threshold):
             metric = field.name
-            actual = float(metrics.get(metric, math.nan))
+            raw_actual = metrics.get(metric, math.nan)
+            actual = 0.0 if raw_actual is None else float(raw_actual)
             minimum = float(getattr(threshold, metric))
             if not math.isfinite(actual) or actual < minimum:
                 failures.append(GateFailure(dataset, metric, actual, minimum))
