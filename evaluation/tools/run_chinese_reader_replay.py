@@ -1536,6 +1536,8 @@ def _validate_authoritative_case_result(
     replay_case: ReplayCase,
     result: Mapping[str, Any],
 ) -> None:
+    if "messages" in result:
+        raise ReplayInputError("authoritative replay case result contains private messages")
     derived_fields = {"qa", "answer_entity", "reader_call", "reader_error", "messages"}
     expected_source = {key: value for key, value in replay_case.source_case.items() if key not in derived_fields}
     actual_source = {key: value for key, value in result.items() if key not in derived_fields}
@@ -2029,7 +2031,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         _clear_exception_chain(error)
         preflight_failed = True
     if preflight_failed:
-        _persist_preflight_abort(args.output_root, base_url=args.base_url)
+        if not args.resume:
+            _persist_preflight_abort(args.output_root, base_url=args.base_url)
         print("reader replay failed: reader replay aborted", file=sys.stderr)
         return 2
 

@@ -1574,6 +1574,7 @@ def test_resume_rejects_authoritative_identity_mismatch_before_call(
         lambda case: case["answer_entity"].update(entity_coverage_at_5=0.75),
         lambda case: case["reader_call"].update(attempts=99),
         lambda case: case["qa"]["usage"].update(private_extra="not-safe"),
+        lambda case: case.update(messages=[{"content": "PRIVATE_MESSAGE"}]),
         lambda case: case.update(question="tampered question"),
     ],
 )
@@ -1801,6 +1802,67 @@ def test_main_persists_generic_preflight_abort_when_source_loading_fails(
     assert state["status"] == "aborted"
     assert state["abort_stage"] == "input_validation"
     assert "PRIVATE_MANIFEST_OR_REPORT_FAILURE" not in state_raw
+
+
+def test_main_resume_preflight_failure_preserves_existing_authoritative_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output_root = tmp_path / "out"
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=output_root,
+        canary_only=True,
+        resume=False,
+    )
+    state_path = output_root / replay.AUTHORITATIVE_STATE_FILE
+    before = replay.sha256_file(state_path)
+
+    def fail_load(manifest: Path, paths: dict[str, Path]) -> dict[str, tuple[replay.ReplayCase, ...]]:
+        del manifest, paths
+        raise replay.ReplayInputError("PRIVATE_RESUME_PREFLIGHT_FAILURE")
+
+    monkeypatch.setenv("LLM_API_KEY", "synthetic-secret")
+    monkeypatch.setattr(replay, "load_replay_cases", fail_load)
+
+    exit_code = replay.main(["--resume", "--output-root", str(output_root)])
+
+    assert exit_code == 2
+    assert capsys.readouterr().err.strip() == "reader replay failed: reader replay aborted"
+    assert replay.sha256_file(state_path) == before
+
+
+def test_main_resume_preflight_failure_preserves_unmigrated_legacy_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+    state_path = tmp_path / replay.AUTHORITATIVE_STATE_FILE
+    state_path.unlink()
+    convert_completed_replay_to_legacy(tmp_path)
+    legacy_paths = [tmp_path / f"{label}.json" for label in replay.ARM_LABELS] + [tmp_path / "summary.json"]
+    before = {path.name: replay.sha256_file(path) for path in legacy_paths}
+
+    def fail_load(manifest: Path, paths: dict[str, Path]) -> dict[str, tuple[replay.ReplayCase, ...]]:
+        del manifest, paths
+        raise replay.ReplayInputError("PRIVATE_LEGACY_RESUME_PREFLIGHT_FAILURE")
+
+    monkeypatch.setenv("LLM_API_KEY", "synthetic-secret")
+    monkeypatch.setattr(replay, "load_replay_cases", fail_load)
+
+    assert replay.main(["--resume", "--output-root", str(tmp_path)]) == 2
+    assert not state_path.exists()
+    assert {path.name: replay.sha256_file(path) for path in legacy_paths} == before
 
 
 def test_main_classifies_exhausted_transient_canary_as_continuable_reader_error(
