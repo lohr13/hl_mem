@@ -6,10 +6,10 @@ import hashlib
 import json
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import Field, dataclass, replace
 from importlib import import_module
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any, ClassVar, Protocol, TypeAlias
 
 # These evaluation helpers live below namespace-package roots that mypy otherwise
 # discovers twice when this file is checked by path (``tools`` and
@@ -21,11 +21,43 @@ load_sampled_inputs = _chinese_e2e.load_sampled_inputs
 build_perltqa_ingest_trajectory = _chinese_e2e.build_perltqa_ingest_trajectory
 build_perltqa_question_trajectory = _chinese_e2e.build_perltqa_question_trajectory
 
-MemDailyTrajectory: TypeAlias = Any
 AcceptedRubrics: TypeAlias = tuple[tuple[tuple[str, ...], ...], ...]
-AnswerEntityGold: TypeAlias = Any
+
+
+class MemDailyTrajectory(Protocol):
+    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
+    case_id: str
+    qtype: str
+    subtype: str
+    tid: int
+    namespace: str
+    question: str
+    answer: str
+    question_at: str | None
+    ground_truth_choice: str | None
+    choices: dict[str, str]
+    messages: tuple[object, ...]
+    gold_event_ids: tuple[str, ...]
+
+
+class RoleActionObject(Protocol):
+    role: str
+    action: str
+    object: str
+
+
+class AnswerEntityGold(Protocol):
+    answerability: str
+    answer_entities: tuple[str, ...] | None
+    role_action_object: tuple[RoleActionObject, ...]
+    forbidden_entities: tuple[str, ...]
+    forbidden_assertions: tuple[str, ...]
 
 EXPECTED_CASE_COUNT = 40
+OFFICIAL_BENCHMARK = "chinese_e2e"
+OFFICIAL_SCORER_VERSION = "deterministic-rubric-v2"
+OFFICIAL_ANSWER_ENTITY_SCORER_VERSION = "answer-entity-packet-v1"
+OFFICIAL_SAMPLE_ID = "zh-e2e-v3"
 OFFICIAL_READER_MODEL = "qwen3.7-plus"
 SUPPORTED_ANSWERABILITY = frozenset({"supported", "low_confidence"})
 
@@ -97,6 +129,23 @@ def validate_source_report(
         raise ReplayInputError("source report schema_version must be 3")
     if report.get("status") != "completed":
         raise ReplayInputError("source report status must be completed")
+    if report.get("benchmark") != OFFICIAL_BENCHMARK:
+        raise ReplayInputError(f"source report benchmark must be {OFFICIAL_BENCHMARK}")
+    if report.get("scorer_version") != OFFICIAL_SCORER_VERSION:
+        raise ReplayInputError(f"source report scorer_version must be {OFFICIAL_SCORER_VERSION}")
+    if report.get("answer_entity_scorer_version") != OFFICIAL_ANSWER_ENTITY_SCORER_VERSION:
+        raise ReplayInputError(
+            "source report answer_entity_scorer_version must be "
+            f"{OFFICIAL_ANSWER_ENTITY_SCORER_VERSION}"
+        )
+
+    sample = report.get("sample")
+    if not isinstance(sample, Mapping) or sample.get("id") != OFFICIAL_SAMPLE_ID:
+        raise ReplayInputError(f"source report sample.id must be {OFFICIAL_SAMPLE_ID}")
+    run = report.get("run")
+    models = run.get("models") if isinstance(run, Mapping) else None
+    if not isinstance(models, Mapping) or models.get("qa") != OFFICIAL_READER_MODEL:
+        raise ReplayInputError(f"source report run.models.qa must be {OFFICIAL_READER_MODEL}")
 
     raw_cases = report.get("cases")
     if not isinstance(raw_cases, list):
