@@ -3,24 +3,30 @@ name: Tests
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
     branches: [main]
 
 jobs:
-  fast:
-    name: Fast contract gate
+  checks:
+    name: Static and contract checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
       - run: uv sync --frozen
-      - name: Run static and stable-contract checks
+      - name: Run static checks
         run: |
           uv run --frozen ruff check .
+          uv run --frozen black --check .
+          uv run --frozen isort --check-only .
+          uv run --frozen python -m mypy src/hl_mem/ --ignore-missing-imports
+      - name: Run stable-contract checks
+        run: |
           uv run --frozen python scripts/check_actions_pinned.py
           uv run --frozen python scripts/check_imports.py
           uv run --frozen python scripts/check_config_schema_snapshot.py
@@ -28,34 +34,29 @@ jobs:
           uv run --frozen python scripts/check_ops_report_schema.py
           uv run --frozen python scripts/check_openapi_snapshot.py
           uv run --frozen python scripts/check_mcp_snapshot.py
-      - name: Run focused release contracts
-        run: |
-          uv run --frozen python -m tests.eval.ci_gate
-          uv run --frozen python -m pytest tests/release/test_migration_release_gate.py tests/unit/test_config_loader.py tests/unit/test_provider_registry.py tests/unit/test_request_size_limit.py tests/unit/test_phase5_api_contract.py tests/unit/test_phase5_extraction_contract.py tests/unit/test_phase5_recall_contract.py -q --tb=short
+          uv run --frozen python scripts/check_docs_consistency.py
+          uv run --frozen python scripts/check_complexity_budget.py --ratchet
 
-  test:
+  core-tests:
+    name: Core tests (Python 3.13)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - name: Install dependencies
-        run: uv sync --frozen
-      - name: Run full test suite
+      - run: uv sync --frozen
+      - name: Run core suite once
         env:
           HL_MEM_ENV: test
-        run: |
-          uv run --frozen python -W error::ResourceWarning -m pytest tests/ -q --tb=short --cov=hl_mem --cov-report=term-missing --cov-fail-under=80
-      - name: Run migration upgrade test
-        run: uv run --frozen python -m pytest tests/test_migration_upgrade.py -q --tb=short
+        run: >-
+          uv run --frozen python -W error::ResourceWarning -m pytest tests/
+          -m "not release_only" -n 4 -q --tb=short
+          --cov=hl_mem --cov-report=term-missing --cov-fail-under=80
 
-  lint:
+  quality:
+    name: Recall gate and quality smoke
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -64,28 +65,13 @@ jobs:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
       - run: uv sync --frozen
-      - run: uv run --frozen ruff check .
-
-  type-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.13"
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - run: uv sync --frozen
-      - run: uv run --frozen python -m mypy src/hl_mem/ --ignore-missing-imports
-
-  quality-smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - run: uv sync --frozen
-      - run: uv run --frozen python scripts/run_quality_smoke.py
+      - name: Run required public recall contract
+        run: uv run --frozen python -m tests.eval.ci_gate
+      - name: Run quality smoke
+        run: uv run --frozen python scripts/run_quality_smoke.py
 
   state-full-chain-smoke:
+    name: State full-chain smoke
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -102,125 +88,3 @@ jobs:
           VIRTUAL_ENV: /host/venv/must-not-leak
           CONDA_PREFIX: /host/conda/must-not-leak
         run: bash scripts/hlmem-eval-python.sh -m hl_mem.evaluation.smoke_full_chain
-
-  recall-gate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.13"
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - run: uv sync --frozen
-      - name: Run required public recall contract
-        run: uv run --frozen python -m tests.eval.ci_gate
-
-  format:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.13"
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - run: uv sync --frozen
-      - name: Check formatting
-        run: |
-          uv run --frozen black --check .
-          uv run --frozen isort --check-only .
-      - name: Check complexity budget
-        run: uv run --frozen python scripts/check_complexity_budget.py --ratchet
-
-  build:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - run: uv sync --frozen
-      - name: Build wheel and source distribution
-        run: uv run --frozen python -m build
-      - name: Verify wheel contents
-        run: uv run --frozen python scripts/check_wheel_contents.py --reject-v030 dist/*.whl
-      - name: Verify import in a clean environment
-        run: |
-          python -m venv .build-venv
-          .build-venv/bin/python -m pip install --upgrade pip
-          .build-venv/bin/python -m pip install dist/*.whl
-          .build-venv/bin/python -c "import hl_mem; print(hl_mem.__version__)"
-          .build-venv/bin/hl-mem --version
-          .build-venv/bin/hl-mem config migrate --help
-          .build-venv/bin/hl-mem doctor --help
-
-  migrations:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - run: uv sync --frozen
-      - name: Verify empty, historical, and repeated migrations
-        run: uv run --frozen python -m pytest tests/release/test_migration_release_gate.py tests/test_migration_upgrade.py -q --tb=short
-
-  import-boundary:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.13"
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - run: uv sync --frozen
-      - name: Check dependency direction
-        run: uv run --frozen python scripts/check_imports.py
-
-  doc-consistency:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.13"
-      - run: python scripts/check_docs_consistency.py
-
-  contract-snapshots:
-    # NOTE: Snapshot mismatch means contract changed.
-    # Reviewers must verify this is intentional before approving.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.13"
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - run: uv sync --frozen
-      - name: Check config, Provider, OpenAPI, and MCP contracts
-        run: |
-          uv run --frozen python scripts/check_config_schema_snapshot.py
-          uv run --frozen python scripts/check_provider_plugin_api.py
-          uv run --frozen python scripts/check_openapi_snapshot.py
-          uv run --frozen python scripts/check_mcp_snapshot.py
-
-  provider-plugin-wheel:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.13"
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
-      - run: uv sync --frozen
-      - name: Build and install an external Provider wheel
-        run: uv run --frozen python -m pytest tests/integration/test_provider_plugin_wheel.py -q --tb=short
