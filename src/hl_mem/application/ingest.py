@@ -156,16 +156,18 @@ def _commit_store_result(
     return result
 
 
-def _episodic_retention_anchor(
+def _retention_anchor(
+    observed_at: str,
     recorded_from: str,
     *,
+    memory_layer: str,
     is_plan: bool,
     occurred_start: str | None,
     occurred_end: str | None,
 ) -> str:
-    """Anchor facts at ingestion and plans after their latest known occurrence boundary."""
+    """Select one normalized TTL anchor without changing the Claim's event time."""
     if not is_plan:
-        return recorded_from
+        return recorded_from if memory_layer == "episodic" else observed_at
     anchors = [recorded_from]
     for field_name, value in (("occurred_start", occurred_start), ("occurred_end", occurred_end)):
         if value:
@@ -1019,15 +1021,14 @@ def _build_claim_drafts(
     observed_at = normalize_utc_iso(str(event.get("occurred_at", now)), "observed_at")
     recorded_from = normalize_utc_iso(now, "recorded_from")
     memory_layer = getattr(extracted, "memory_layer", "durable")
-    if memory_layer == "episodic":
-        retention_anchor = _episodic_retention_anchor(
-            recorded_from,
-            is_plan=canonical_attribute.startswith("plan.") or predicate == "计划",
-            occurred_start=getattr(extracted, "occurred_start", None),
-            occurred_end=getattr(extracted, "occurred_end", None),
-        )
-    else:
-        retention_anchor = observed_at
+    retention_anchor = _retention_anchor(
+        observed_at,
+        recorded_from,
+        memory_layer=memory_layer,
+        is_plan=canonical_attribute.startswith("plan.") or predicate == "计划",
+        occurred_start=getattr(extracted, "occurred_start", None),
+        occurred_end=getattr(extracted, "occurred_end", None),
+    )
     expires_at, _expiration_reason = compute_expiration(
         scope=scope,
         importance=importance,
