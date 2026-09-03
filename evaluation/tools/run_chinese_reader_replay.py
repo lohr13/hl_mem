@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -20,11 +21,13 @@ import httpx
 # keeping the task's exact standalone mypy command scoped to this module.
 _chinese_e2e = import_module("tests.eval.chinese_e2e")
 _qa_client = import_module("evaluation.tools.longmemeval.qa_client")
+_http_utils = import_module("hl_mem.http_utils")
 load_sample_manifest = _chinese_e2e.load_sample_manifest
 load_sampled_inputs = _chinese_e2e.load_sampled_inputs
 build_perltqa_ingest_trajectory = _chinese_e2e.build_perltqa_ingest_trajectory
 build_perltqa_question_trajectory = _chinese_e2e.build_perltqa_question_trajectory
 qa_call_with_retry = _qa_client.qa_call_with_retry
+retry_after_seconds = _http_utils.retry_after_seconds
 
 AcceptedRubrics: TypeAlias = tuple[tuple[tuple[str, ...], ...], ...]
 
@@ -68,6 +71,14 @@ OFFICIAL_READER_MODEL = "qwen3.7-plus"
 SUPPORTED_ANSWERABILITY = frozenset({"supported", "low_confidence"})
 GLM_THINKING_MODEL = "glm-5.3-flash"
 GLM_MAX_ATTEMPTS = 3
+_MISSING = object()
+_SAFE_RESPONSE_ERRORS = frozenset(
+    {
+        "GLM response must be a JSON object",
+        "GLM response is missing a final answer",
+        "GLM response contains invalid token usage",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +125,14 @@ class ReaderCallMetadata:
 
 
 @dataclass(frozen=True)
+class _SanitizedFailure:
+    kind: str
+    message: str
+    status_code: int | None = None
+    retry_after: str | None = None
+
+
+@dataclass(frozen=True)
 class _TrajectoryCase:
     dataset: str
     slice_name: str
@@ -146,23 +165,16 @@ def build_glm_thinking_payload(
 
 
 def _token_count(usage: Mapping[object, object], *field_names: str) -> int:
-    raw_value: object = 0
+    selected_value: int | None = None
     for field_name in field_names:
-        if field_name in usage:
-            raw_value = usage[field_name]
-            break
-    invalid_value = isinstance(raw_value, bool)
-    value = 0
-    if raw_value is not None and isinstance(raw_value, (str, int, float)) and not invalid_value:
-        try:
-            value = int(raw_value)
-        except (ValueError, OverflowError):
-            invalid_value = True
-    elif raw_value is not None:
-        invalid_value = True
-    if invalid_value or value < 0:
-        raise ValueError("GLM response contains invalid token usage")
-    return value
+        if field_name not in usage:
+            continue
+        raw_value = usage[field_name]
+        if isinstance(raw_value, bool) or not isinstance(raw_value, int) or raw_value < 0:
+            raise ValueError("GLM response contains invalid token usage")
+        if selected_value is None:
+            selected_value = raw_value
+    return selected_value if selected_value is not None else 0
 
 
 def parse_glm_thinking_response(envelope: Mapping[str, Any]) -> ParsedGLMResponse:
@@ -184,14 +196,30 @@ def parse_glm_thinking_response(envelope: Mapping[str, Any]) -> ParsedGLMRespons
     has_reasoning_content = isinstance(reasoning_content, str) and bool(reasoning_content.strip())
     del reasoning_content
 
-    raw_usage = envelope.get("usage")
-    usage: Mapping[object, object] = raw_usage if isinstance(raw_usage, Mapping) else {}
+    raw_usage = envelope.get("usage", _MISSING)
+    if raw_usage is _MISSING:
+        usage: Mapping[object, object] = {}
+    elif isinstance(raw_usage, Mapping):
+        usage = raw_usage
+    else:
+        raise ValueError("GLM response contains invalid token usage")
     input_tokens = _token_count(usage, "prompt_tokens", "input_tokens")
     output_tokens = _token_count(usage, "completion_tokens", "output_tokens")
-    raw_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
-    if not isinstance(raw_details, Mapping):
-        raise ValueError("GLM response contains invalid token usage")
-    reasoning_tokens = _token_count(raw_details, "reasoning_tokens")
+    detail_variants: list[Mapping[object, object]] = []
+    for field_name in ("completion_tokens_details", "output_tokens_details"):
+        if field_name not in usage:
+            continue
+        raw_details = usage[field_name]
+        if not isinstance(raw_details, Mapping):
+            raise ValueError("GLM response contains invalid token usage")
+        detail_variants.append(raw_details)
+    reasoning_tokens = 0
+    reasoning_selected = False
+    for details in detail_variants:
+        variant_reasoning_tokens = _token_count(details, "reasoning_tokens")
+        if not reasoning_selected and "reasoning_tokens" in details:
+            reasoning_tokens = variant_reasoning_tokens
+            reasoning_selected = True
     total_tokens = _token_count(usage, "total_tokens") or input_tokens + output_tokens
 
     return ParsedGLMResponse(
@@ -204,14 +232,81 @@ def parse_glm_thinking_response(envelope: Mapping[str, Any]) -> ParsedGLMRespons
     )
 
 
-def _safe_status_error(status_code: int) -> httpx.HTTPStatusError:
+def _canonical_retry_after(value: str | None) -> str | None:
+    if value is None:
+        return None
+    seconds = retry_after_seconds(value)
+    if seconds is None or not math.isfinite(seconds):
+        return None
+    return f"{seconds:g}"
+
+
+def _safe_status_error(
+    status_code: int,
+    *,
+    retry_after: str | None = None,
+) -> httpx.HTTPStatusError:
     request = httpx.Request("POST", "https://provider.invalid/chat/completions")
-    response = httpx.Response(status_code, request=request)
+    headers = {"Retry-After": retry_after} if retry_after is not None else None
+    response = httpx.Response(status_code, request=request, headers=headers)
     return httpx.HTTPStatusError(
         f"GLM request failed with HTTP {status_code}",
         request=request,
         response=response,
     )
+
+
+def _describe_failure(error: Exception) -> _SanitizedFailure:
+    if isinstance(error, httpx.HTTPStatusError):
+        return _SanitizedFailure(
+            kind="status",
+            message=f"GLM request failed with HTTP {error.response.status_code}",
+            status_code=error.response.status_code,
+            retry_after=_canonical_retry_after(error.response.headers.get("Retry-After")),
+        )
+    if isinstance(error, httpx.ReadTimeout):
+        return _SanitizedFailure(kind="read_timeout", message="GLM request timed out")
+    if isinstance(error, httpx.ConnectTimeout):
+        return _SanitizedFailure(kind="connect_timeout", message="GLM connection timed out")
+    if isinstance(error, httpx.HTTPError):
+        return _SanitizedFailure(kind="http", message="GLM request failed")
+    if isinstance(error, ValueError):
+        message = str(error)
+        if message not in _SAFE_RESPONSE_ERRORS:
+            message = "GLM response is invalid"
+        return _SanitizedFailure(kind="value", message=message)
+    return _SanitizedFailure(kind="runtime", message="GLM request failed")
+
+
+def _clear_exception_chain(error: BaseException) -> None:
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        current.__traceback__ = None
+        current.__cause__ = None
+        current.__context__ = None
+
+
+def _fresh_exception(failure: _SanitizedFailure) -> Exception:
+    if failure.kind == "status" and failure.status_code is not None:
+        return _safe_status_error(failure.status_code, retry_after=failure.retry_after)
+    if failure.kind == "read_timeout":
+        return httpx.ReadTimeout(failure.message)
+    if failure.kind == "connect_timeout":
+        return httpx.ConnectTimeout(failure.message)
+    if failure.kind == "http":
+        return httpx.HTTPError(failure.message)
+    if failure.kind == "value":
+        return ValueError(failure.message)
+    return RuntimeError(failure.message)
 
 
 def _response_json(response: httpx.Response) -> Mapping[str, Any]:
@@ -262,7 +357,10 @@ class GLMThinkingTransport:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
-            failure = _safe_status_error(error.response.status_code)
+            failure = _safe_status_error(
+                error.response.status_code,
+                retry_after=_canonical_retry_after(error.response.headers.get("Retry-After")),
+            )
         except httpx.ReadTimeout:
             failure = httpx.ReadTimeout("GLM request timed out")
         except httpx.ConnectTimeout:
@@ -281,9 +379,10 @@ class GLMThinkingTransport:
         system_prompt: str,
         user_prompt: str,
     ) -> tuple[str, int]:
-        if model != GLM_THINKING_MODEL:
-            raise ValueError("GLM thinking transport requires glm-5.3-flash")
         self.last_call = None
+        if model != GLM_THINKING_MODEL:
+            del api_key, base_url, model, system_prompt, user_prompt, self
+            raise ValueError("GLM thinking transport requires glm-5.3-flash")
         attempts = 0
         url = f"{base_url.rstrip('/')}/chat/completions"
         payload = build_glm_thinking_payload(model, system_prompt, user_prompt)
@@ -294,11 +393,20 @@ class GLMThinkingTransport:
             attempts += 1
             return self._request_once(url=url, api_key=api_key, payload=payload)
 
-        parsed = qa_call_with_retry(
-            request_once,
-            max_attempts=self._max_attempts,
-            sleep=self._sleep,
-        )
+        sanitized_failure: _SanitizedFailure | None = None
+        try:
+            parsed = qa_call_with_retry(
+                request_once,
+                max_attempts=self._max_attempts,
+                sleep=self._sleep,
+            )
+        except Exception as error:
+            sanitized_failure = _describe_failure(error)
+            _clear_exception_chain(error)
+        if sanitized_failure is not None:
+            del api_key, base_url, model, system_prompt, user_prompt
+            del payload, request_once, url, self
+            raise _fresh_exception(sanitized_failure)
         self.last_call = ReaderCallMetadata(
             input_tokens=parsed.input_tokens,
             output_tokens=parsed.output_tokens,

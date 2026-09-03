@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import types
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -37,7 +38,7 @@ def success_envelope() -> dict[str, Any]:
 
 
 def mock_client(
-    actions: list[dict[str, Any] | BaseException],
+    actions: list[dict[str, Any] | httpx.Response | BaseException],
 ) -> tuple[httpx.Client, list[httpx.Request]]:
     requests: list[httpx.Request] = []
 
@@ -46,9 +47,80 @@ def mock_client(
         action = actions.pop(0)
         if isinstance(action, BaseException):
             raise action
+        if isinstance(action, httpx.Response):
+            return httpx.Response(
+                action.status_code,
+                request=request,
+                headers=action.headers,
+                content=action.content,
+            )
         return httpx.Response(200, json=action)
 
     return httpx.Client(transport=httpx.MockTransport(handler)), requests
+
+
+def _traceback_referents(error: BaseException) -> list[object]:
+    roots: list[object] = [error]
+    traceback = error.__traceback__
+    while traceback is not None:
+        module_name = str(traceback.tb_frame.f_globals.get("__name__", ""))
+        if module_name in {
+            replay.__name__,
+            "evaluation.tools.longmemeval.qa_client",
+            "hl_mem.http_utils",
+        }:
+            roots.extend(traceback.tb_frame.f_locals.values())
+        traceback = traceback.tb_next
+
+    referents: list[object] = []
+    pending = [(root, 8) for root in roots]
+    seen: set[int] = set()
+    while pending:
+        value, depth = pending.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        referents.append(value)
+        if depth == 0 or isinstance(value, (str, bytes, bytearray, int, float, bool, type(None))):
+            continue
+        children: list[object] = []
+        if isinstance(value, dict):
+            children.extend(value.keys())
+            children.extend(value.values())
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            children.extend(value)
+        elif isinstance(value, BaseException):
+            children.extend(value.args)
+            children.extend(item for item in (value.__cause__, value.__context__) if item is not None)
+            children.extend(vars(value).values())
+        elif isinstance(value, types.FunctionType):
+            for cell in value.__closure__ or ():
+                try:
+                    children.append(cell.cell_contents)
+                except ValueError:
+                    pass
+        elif not isinstance(value, (type, types.ModuleType)):
+            try:
+                children.extend(vars(value).values())
+            except TypeError:
+                pass
+        pending.extend((child, depth - 1) for child in children)
+    return referents
+
+
+def assert_transport_exception_drops(
+    error: BaseException,
+    *,
+    strings: tuple[str, ...],
+    objects: tuple[object, ...] = (),
+) -> None:
+    referents = _traceback_referents(error)
+    for value in referents:
+        assert all(value is not forbidden for forbidden in objects)
+        if isinstance(value, str):
+            assert all(forbidden not in value for forbidden in strings)
+        elif isinstance(value, (bytes, bytearray)):
+            assert all(forbidden.encode() not in value for forbidden in strings)
 
 
 def make_gold(case_id: str) -> AnswerEntityGold:
@@ -485,6 +557,138 @@ def test_transport_invalid_json_failure_does_not_retain_response_body() -> None:
     assert transport.last_call is None
 
 
+def test_transport_failure_traceback_drops_all_sensitive_request_and_response_state() -> None:
+    api_key = "TRACE_API_KEY_SENTINEL"
+    system_prompt = "TRACE_SYSTEM_SENTINEL"
+    user_prompt = "TRACE_USER_SENTINEL"
+    reasoning = "TRACE_REASONING_SENTINEL"
+    raw_envelope = {
+        "choices": [{"message": {"content": "answer", "reasoning_content": reasoning}}],
+        "usage": {"input_tokens": "invalid"},
+    }
+    captured_requests: list[httpx.Request] = []
+    captured_responses: list[httpx.Response] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        response = httpx.Response(200, request=request, json=raw_envelope)
+        captured_responses.append(response)
+        return response
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=1, sleep=lambda _: None)
+        with pytest.raises(ValueError, match="invalid token usage") as raised:
+            transport(api_key, BASE_URL, MODEL, system_prompt, user_prompt)
+    finally:
+        client.close()
+
+    assert_transport_exception_drops(
+        raised.value,
+        strings=(api_key, system_prompt, user_prompt, reasoning, "Authorization"),
+        objects=(raw_envelope, captured_requests[0], captured_responses[0]),
+    )
+
+
+def test_failed_model_validation_clears_prior_call_metadata_and_secret_traceback() -> None:
+    client, _ = mock_client([success_envelope()])
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=1, sleep=lambda _: None)
+        transport("first-key", BASE_URL, MODEL, "s", "u")
+        assert transport.last_call is not None
+
+        api_key = "WRONG_MODEL_API_KEY_SENTINEL"
+        with pytest.raises(ValueError, match="requires glm-5.3-flash") as raised:
+            transport(api_key, BASE_URL, "wrong-model", "SYSTEM_SENTINEL", "USER_SENTINEL")
+    finally:
+        client.close()
+
+    assert transport.last_call is None
+    assert_transport_exception_drops(
+        raised.value,
+        strings=(api_key, "SYSTEM_SENTINEL", "USER_SENTINEL"),
+    )
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+def test_transport_retries_retryable_http_statuses(status_code: int) -> None:
+    headers = {"Retry-After": "0", "X-Private": "private-header"}
+    client, requests = mock_client(
+        [
+            httpx.Response(status_code, headers=headers, json={"error": "private-body"}),
+            success_envelope(),
+        ]
+    )
+    sleeps: list[float] = []
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=sleeps.append)
+        assert transport("secret", BASE_URL, MODEL, "s", "u")[0] == "answer"
+    finally:
+        client.close()
+
+    assert len(requests) == 2
+    assert sleeps == [0.0]
+    assert transport.last_call is not None
+    assert transport.last_call.attempts == 2
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 404])
+def test_transport_does_not_retry_ordinary_client_errors(status_code: int) -> None:
+    client, requests = mock_client(
+        [
+            httpx.Response(
+                status_code,
+                headers={"Retry-After": "7", "X-Private": "private-header"},
+                json={"error": "private-body"},
+            )
+        ]
+    )
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=lambda _: None)
+        with pytest.raises(httpx.HTTPStatusError) as raised:
+            transport("secret", BASE_URL, MODEL, "s", "u")
+    finally:
+        client.close()
+
+    assert len(requests) == 1
+    assert raised.value.response.status_code == status_code
+    assert raised.value.response.headers["Retry-After"] == "7"
+    assert "X-Private" not in raised.value.response.headers
+    assert raised.value.response.content == b""
+
+
+def test_transport_normalizes_input_output_token_variant_and_verifies_thinking() -> None:
+    client, _ = mock_client(
+        [
+            {
+                "choices": [{"message": {"content": "variant answer"}}],
+                "usage": {
+                    "input_tokens": 13,
+                    "output_tokens": 9,
+                    "total_tokens": 22,
+                    "output_tokens_details": {"reasoning_tokens": 4},
+                },
+            }
+        ]
+    )
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=1, sleep=lambda _: None)
+        result = transport("secret", BASE_URL, MODEL, "s", "u")
+    finally:
+        client.close()
+
+    assert result == ("variant answer", 22)
+    assert transport.last_call == replay.ReaderCallMetadata(
+        input_tokens=13,
+        output_tokens=9,
+        reasoning_tokens=4,
+        total_tokens=22,
+        latency_seconds=transport.last_call.latency_seconds,
+        attempts=1,
+        thinking_verified=True,
+    )
+
+
 @pytest.mark.parametrize(
     ("usage", "expected"),
     [
@@ -554,6 +758,71 @@ def test_response_parser_does_not_retain_invalid_token_value_in_exception_chain(
     assert private_value not in str(raised.value)
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize("usage", [None, [], True, 1, "invalid"])
+def test_response_parser_rejects_present_non_mapping_usage(usage: object) -> None:
+    with pytest.raises(ValueError, match="invalid token usage"):
+        replay.parse_glm_thinking_response({"choices": [{"message": {"content": "answer"}}], "usage": usage})
+
+
+@pytest.mark.parametrize("details", [None, [], True, 1, "invalid"])
+def test_response_parser_rejects_present_non_mapping_token_details(details: object) -> None:
+    with pytest.raises(ValueError, match="invalid token usage"):
+        replay.parse_glm_thinking_response(
+            {
+                "choices": [{"message": {"content": "answer"}}],
+                "usage": {"completion_tokens_details": details},
+            }
+        )
+
+
+@pytest.mark.parametrize("token_value", [True, False, 1.5, -1, "five"])
+def test_response_parser_rejects_non_integer_or_negative_token_counts(token_value: object) -> None:
+    with pytest.raises(ValueError, match="invalid token usage"):
+        replay.parse_glm_thinking_response(
+            {
+                "choices": [{"message": {"content": "answer"}}],
+                "usage": {"input_tokens": token_value},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"prompt_tokens": 1, "input_tokens": 1.5},
+        {"completion_tokens": 1, "output_tokens": True},
+        {
+            "completion_tokens_details": {"reasoning_tokens": 1},
+            "output_tokens_details": [],
+        },
+        {
+            "completion_tokens_details": {"reasoning_tokens": 1},
+            "output_tokens_details": {"reasoning_tokens": 1.5},
+        },
+    ],
+)
+def test_response_parser_rejects_malformed_secondary_usage_variants(
+    usage: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="invalid token usage"):
+        replay.parse_glm_thinking_response({"choices": [{"message": {"content": "answer"}}], "usage": usage})
+
+
+def test_response_parser_reads_secondary_reasoning_details_when_primary_omits_count() -> None:
+    parsed = replay.parse_glm_thinking_response(
+        {
+            "choices": [{"message": {"content": "answer"}}],
+            "usage": {
+                "completion_tokens_details": {},
+                "output_tokens_details": {"reasoning_tokens": 3},
+            },
+        }
+    )
+
+    assert parsed.reasoning_tokens == 3
+    assert parsed.thinking_verified is True
 
 
 @pytest.mark.parametrize("content", [None, "", "   "])
