@@ -184,7 +184,7 @@ The failed local attempt is excluded from official comparisons. The 5 retrieval 
 
 ## GLM-5.3-Flash thinking reader replay
 
-The reader-only replay completed from `2026-09-03T10:54:42.909269+00:00` through `2026-09-03T11:06:54.937048+00:00`: `status=completed`, 120 logical calls, 40 unique cases per arm, and zero failures. It reused each frozen source artifact's complete recorded evidence sequence and the unchanged prompt/scorers; it did not rerun extraction, embedding, reranking, recall, or database work.
+The reader-only replay completed from `2026-09-03T10:54:42.909269+00:00` through `2026-09-03T11:06:54.937048+00:00`: `status=completed`, 120 logical calls, 40 unique cases per arm, and zero failures. It reused each frozen source artifact's complete recorded evidence sequence and the unchanged prompt/scorers; it did not rerun extraction, embedding, reranking, recall, or database work. Offline migration bound the replay to manifest SHA-256 `d49101237480a1d859993d99fffbaa5f62176b5b63ab10ce55d8c0a6d32b1786` and canonical safe scoring-input SHA-256 `717b88bd874740b43dd73788eeeeb4dfbd2e13ad1c75319e23bee9f867c29d5e` without repeating a reader call.
 
 The source report hashes exactly match the official artifacts above, preserving extractor identities `qwen3.7-plus`, `glm-5.3-flash`, and `qwen3.8-27b-ud-iq4-xs`, respectively:
 
@@ -194,7 +194,7 @@ The source report hashes exactly match the official artifacts above, preserving 
 | GLM-5.3-Flash | `bed4e6ecd330f08afa0f7a7bc99b25de4c6c8af2a09d3bbd3fa902695a3965db` | `glm-5.3-flash` | `qwen3.7-plus` |
 | Local Qwen3.8-27B | `f21ac6049575cc4b5bec7c46af7e9b90d2437a1314438582810021f2a102a9be` | `qwen3.8-27b-ud-iq4-xs` | `qwen3.7-plus` |
 
-The original reader identity was `qwen3.7-plus` with thinking enabled, thinking budget `2048`, and answer budget `512`. The replay reader identity was `glm-5.3-flash` at `https://open.bigmodel.cn/api/paas/v4` with `thinking={"type":"enabled"}`. It retained prompt `memdaily-qa-prompt-v1`, QA scorer `deterministic-rubric-v2`, and answer-entity scorer `answer-entity-packet-v1`. The required Qwen-arm canary `perltqa:23d905b73c57:dialogues:836f6182a0a9` produced a non-empty final answer and positive thinking verification with exact metadata `attempts=1`, `input_tokens=330`, `output_tokens=396`, `reasoning_tokens=296`, `total_tokens=726`, `latency_seconds=13.639505699975416`, and `thinking_verified=true`. No reasoning content or private source text is recorded here.
+The original reader identity was `qwen3.7-plus` with thinking enabled, thinking budget `2048`, and answer budget `512`. The replay reader identity was `glm-5.3-flash`, temperature `0.1`, `max_tokens=4096`, timeout `120.0` seconds, and endpoint SHA-256 `0413b53d28826c51b400bc9ebc578639bf6a4ff94d3e43fbcbc468bd51945602`, with `thinking={"type":"enabled"}`; the regenerated active state, projections, and summary persist no raw endpoint. It retained prompt `memdaily-qa-prompt-v1`, QA scorer `deterministic-rubric-v2`, and answer-entity scorer `answer-entity-packet-v1`. The required Qwen-arm canary `perltqa:23d905b73c57:dialogues:836f6182a0a9` produced a non-empty final answer and positive thinking verification with exact metadata `attempts=1`, `input_tokens=330`, `output_tokens=396`, `reasoning_tokens=296`, `total_tokens=726`, `latency_seconds=13.639505699975416`, and `thinking_verified=true`. No reasoning content or private source text is recorded here.
 
 | Frozen extractor arm | Qwen-reader QA / F1 | GLM-reader QA / F1 | Paired accuracy / F1 delta |
 | --- | ---: | ---: | ---: |
@@ -202,7 +202,7 @@ The original reader identity was `qwen3.7-plus` with thinking enabled, thinking 
 | GLM-5.3-Flash | 33/40 (`0.825`) / `0.6052649999999999` | 33/40 (`0.825`) / `0.6167475` | `0.0` / `0.011482500000000062` |
 | Local Qwen3.8-27B | 32/40 (`0.8`) / `0.5559775` | 33/40 (`0.825`) / `0.6007024999999999` | `0.02499999999999991` / `0.044724999999999904` |
 
-Original Qwen-reader ranking: Qwen3.7-Plus, GLM-5.3-Flash, Local Qwen3.8-27B. GLM-reader replay ranking: Qwen3.7-Plus, GLM-5.3-Flash, Local Qwen3.8-27B.
+Accuracy-only ranking, with ties represented explicitly: original Qwen-reader `Qwen3.7-Plus > GLM-5.3-Flash > Local Qwen3.8-27B`; GLM-reader replay `Qwen3.7-Plus > (GLM-5.3-Flash = Local Qwen3.8-27B)`.
 
 Paired flip buckets below list every case ID from the completed summary.
 
@@ -234,7 +234,7 @@ Paired flip buckets below list every case ID from the completed summary.
 | Local Qwen3.8-27B | `11178` | `7124` | `6272` | `18302` | `211.30587820033543` s | `40` | `0` |
 | **Total** | **`35092`** | **`18358`** | **`16027`** | **`53450`** | **`622.6354738997761` s** | **`120`** | **`0`** |
 
-Interpretation: holding extraction and reader evidence fixed, the GLM thinking reader improved the Qwen extractor arm by two correct cases, left the GLM extractor arm unchanged in net correctness after one improvement and one regression, and improved the local arm by one correct case. The arm ranking was unchanged. These paired flips demonstrate reader sensitivity but do not reclassify extraction, retrieval, or TTL failures.
+Interpretation: holding extraction and reader evidence fixed, the GLM thinking reader improved the Qwen extractor arm by two correct cases, left the GLM extractor arm unchanged in net correctness after one improvement and one regression, and improved the local arm by one correct case. The replay ranking changed because GLM and local are tied at 33/40; F1 is not used as a hidden tiebreaker. These paired flips demonstrate reader sensitivity but do not reclassify extraction, retrieval, or TTL failures.
 
 This reader-only replay is **not extraction run2**. Its GLM-reader scores are diagnostic and must not replace the official Qwen-reader run1 scores in the approved release or challenger rules. It does not change the approved release gate, does not authorize or complete run2, and does not switch any runtime or Provider configuration. Qwen3.7-Plus remains the recommended runtime default from the official extraction evaluation.
 

@@ -61,7 +61,7 @@ class FakeThinkingTransport:
                 attempts=3,
                 thinking_verified=False,
             )
-            raise RuntimeError("private provider failure")
+            raise replay.RetryExhaustedTransientError(self.last_call)
         self.last_call = replay.ReaderCallMetadata(
             input_tokens=10,
             output_tokens=7,
@@ -110,16 +110,24 @@ def mock_client(
 
 def _traceback_referents(error: BaseException) -> list[object]:
     roots: list[object] = [error]
-    traceback = error.__traceback__
-    while traceback is not None:
-        module_name = str(traceback.tb_frame.f_globals.get("__name__", ""))
-        if module_name in {
-            replay.__name__,
-            "evaluation.tools.longmemeval.qa_client",
-            "hl_mem.http_utils",
-        }:
-            roots.extend(traceback.tb_frame.f_locals.values())
-        traceback = traceback.tb_next
+    pending_errors: list[BaseException] = [error]
+    seen_errors: set[int] = set()
+    while pending_errors:
+        current_error = pending_errors.pop()
+        if id(current_error) in seen_errors:
+            continue
+        seen_errors.add(id(current_error))
+        traceback = current_error.__traceback__
+        while traceback is not None:
+            module_name = str(traceback.tb_frame.f_globals.get("__name__", ""))
+            if module_name in {
+                replay.__name__,
+                "evaluation.tools.longmemeval.qa_client",
+                "hl_mem.http_utils",
+            }:
+                roots.extend(traceback.tb_frame.f_locals.values())
+            traceback = traceback.tb_next
+        pending_errors.extend(item for item in (current_error.__cause__, current_error.__context__) if item is not None)
 
     referents: list[object] = []
     pending = [(root, 8) for root in roots]
@@ -224,7 +232,7 @@ def make_manifest(first: MemDailyTrajectory | None = None) -> E2ESampleManifest:
     case_ids = [trajectory.case_id for trajectory in inputs.memdaily_trajectories]
     return E2ESampleManifest(
         schema_version=3,
-        sample_id="synthetic-reader-replay",
+        sample_id="zh-e2e-v3",
         sources={
             name: {"path": f"synthetic-{name}.json", "sha256": "0" * 64}
             for name in ("perltqa_memory", "perltqa_qa", "memdaily")
@@ -263,22 +271,44 @@ def make_case(
     }
 
 
-def make_report(cases: list[dict[str, Any]]) -> dict[str, Any]:
+def make_report(
+    cases: list[dict[str, Any]],
+    *,
+    extractor_model: str = "qwen3.7-plus",
+) -> dict[str, Any]:
     return {
         "schema_version": 3,
         "benchmark": "chinese_e2e",
         "scorer_version": "deterministic-rubric-v2",
         "answer_entity_scorer_version": "answer-entity-packet-v1",
         "status": "completed",
-        "sample": {"id": "zh-e2e-v3"},
-        "run": {"models": {"extractor": "synthetic-extractor", "qa": "qwen3.7-plus"}},
+        "sample": {
+            "id": "zh-e2e-v3",
+            "sources": make_manifest().sources,
+            "perltqa_questions": 0,
+            "memdaily_questions": 40,
+            "perltqa_evaluation_as_of": "2026-01-01T00:00:00+00:00",
+            "slice_counts": {"memdaily_simple": 40},
+        },
+        "run": {"models": {"extractor": extractor_model, "qa": "qwen3.7-plus"}},
         "cases": cases,
     }
 
 
-def write_report(tmp_path: Path, cases: list[dict[str, Any]]) -> Path:
+def write_report(
+    tmp_path: Path,
+    cases: list[dict[str, Any]],
+    *,
+    extractor_model: str = "qwen3.7-plus",
+) -> Path:
     path = tmp_path / "source-report.json"
-    path.write_text(json.dumps(make_report(cases)), encoding="utf-8")
+    path.write_text(json.dumps(make_report(cases, extractor_model=extractor_model)), encoding="utf-8")
+    return path
+
+
+def write_manifest_placeholder(tmp_path: Path) -> Path:
+    path = tmp_path / "manifest.json"
+    path.write_text('{"synthetic":"manifest"}\n', encoding="utf-8")
     return path
 
 
@@ -370,10 +400,11 @@ def test_load_replay_cases_joins_memdaily_choices_without_copying_messages(
     trajectory = make_trajectory(case_id="memdaily:simple:events:1", choices={"A": "left", "B": "right"})
     monkeypatch.setattr(replay, "load_sample_manifest", lambda path: make_manifest(trajectory))
     monkeypatch.setattr(replay, "load_sampled_inputs", lambda manifest: make_inputs(trajectory))
+    manifest_path = write_manifest_placeholder(tmp_path)
     source_cases = all_cases(trajectory)
     source_cases[0]["messages"] = ["synthetic source message"]
     source = write_report(tmp_path, source_cases)
-    loaded = replay.load_replay_cases(tmp_path / "manifest.json", {"qwen37": source})
+    loaded = replay.load_replay_cases(manifest_path, {"qwen37": source})
 
     assert loaded["qwen37"][0].trajectory.choices == {"A": "left", "B": "right"}
     assert loaded["qwen37"][0].retrieved == tuple(make_case(trajectory.case_id)["retrieved"])
@@ -469,6 +500,7 @@ def test_load_replay_cases_rejects_report_text_that_does_not_match_trajectory(
     trajectory = make_trajectory(case_id="memdaily:simple:events:1")
     monkeypatch.setattr(replay, "load_sample_manifest", lambda path: make_manifest(trajectory))
     monkeypatch.setattr(replay, "load_sampled_inputs", lambda manifest: make_inputs(trajectory))
+    manifest_path = write_manifest_placeholder(tmp_path)
     cases = all_cases(trajectory)
     cases[0][field] = replacement
     if field == "answer":
@@ -476,7 +508,55 @@ def test_load_replay_cases_rejects_report_text_that_does_not_match_trajectory(
     source = write_report(tmp_path, cases)
 
     with pytest.raises(replay.ReplayInputError, match=message):
-        replay.load_replay_cases(tmp_path / "manifest.json", {"qwen37": source})
+        replay.load_replay_cases(manifest_path, {"qwen37": source})
+
+
+def test_load_replay_cases_rejects_swapped_extractor_arm_before_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    trajectory = make_trajectory(case_id="memdaily:simple:events:1")
+    monkeypatch.setattr(replay, "load_sample_manifest", lambda path: make_manifest(trajectory))
+    monkeypatch.setattr(replay, "load_sampled_inputs", lambda manifest: make_inputs(trajectory))
+    manifest_path = write_manifest_placeholder(tmp_path)
+    source = write_report(tmp_path, all_cases(trajectory), extractor_model="glm-5.3-flash")
+
+    with pytest.raises(replay.ReplayInputError, match="extractor"):
+        replay.load_replay_cases(manifest_path, {"qwen37": source})
+
+
+def test_load_replay_cases_rejects_manifest_source_declaration_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    trajectory = make_trajectory(case_id="memdaily:simple:events:1")
+    monkeypatch.setattr(replay, "load_sample_manifest", lambda path: make_manifest(trajectory))
+    monkeypatch.setattr(replay, "load_sampled_inputs", lambda manifest: make_inputs(trajectory))
+    manifest_path = write_manifest_placeholder(tmp_path)
+    report = make_report(all_cases(trajectory))
+    report["sample"]["sources"]["memdaily"]["sha256"] = "f" * 64
+    source = tmp_path / "source-report.json"
+    source.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(replay.ReplayInputError, match="sample declarations"):
+        replay.load_replay_cases(manifest_path, {"qwen37": source})
+
+
+def test_load_replay_cases_binds_manifest_and_scoring_input_digests(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    trajectory = make_trajectory(case_id="memdaily:simple:events:1")
+    monkeypatch.setattr(replay, "load_sample_manifest", lambda path: make_manifest(trajectory))
+    monkeypatch.setattr(replay, "load_sampled_inputs", lambda manifest: make_inputs(trajectory))
+    manifest_path = write_manifest_placeholder(tmp_path)
+    source = write_report(tmp_path, all_cases(trajectory))
+
+    loaded = replay.load_replay_cases(manifest_path, {"qwen37": source})
+    arm = loaded["qwen37"][0].arm
+
+    assert arm.manifest_sha256 == replay.sha256_file(manifest_path)
+    assert len(arm.scoring_inputs_sha256) == 64
 
 
 def test_validate_source_report_returns_copies() -> None:
@@ -544,7 +624,7 @@ def test_transport_stops_after_three_transient_failures() -> None:
     client, requests = mock_client([httpx.ReadTimeout("slow") for _ in range(4)])
     try:
         transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=lambda _: None)
-        with pytest.raises(httpx.ReadTimeout, match="timed out") as raised:
+        with pytest.raises(replay.RetryExhaustedTransientError) as raised:
             transport("secret", BASE_URL, MODEL, "s", "u")
     finally:
         client.close()
@@ -555,9 +635,35 @@ def test_transport_stops_after_three_transient_failures() -> None:
     assert transport.last_call.total_tokens == 0
     assert transport.last_call.thinking_verified is False
     assert transport.last_call.latency_seconds >= 0.0
+    assert raised.value.metadata == transport.last_call
     assert "slow" not in str(raised.value)
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "actions",
+    [
+        [httpx.ConnectTimeout("private connect") for _ in range(3)],
+        [httpx.Response(429, json={"error": "private"}) for _ in range(3)],
+        [httpx.Response(503, json={"error": "private"}) for _ in range(3)],
+    ],
+)
+def test_transport_marks_only_exhausted_retryable_failures_as_transient(
+    actions: list[httpx.Response | BaseException],
+) -> None:
+    client, requests = mock_client(actions)
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=lambda _: None)
+        with pytest.raises(replay.RetryExhaustedTransientError) as raised:
+            transport("secret", BASE_URL, MODEL, "s", "u")
+    finally:
+        client.close()
+
+    assert len(requests) == 3
+    assert raised.value.metadata.attempts == 3
+    assert raised.value.metadata.latency_seconds >= 0.0
+    assert "private" not in str(raised.value)
 
 
 def test_transport_failure_drops_response_body_headers_and_authorization() -> None:
@@ -566,7 +672,7 @@ def test_transport_failure_drops_response_body_headers_and_authorization() -> No
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            500,
+            400,
             request=request,
             headers={"X-Private": private_header},
             json={"error": {"message": private_body}},
@@ -581,7 +687,7 @@ def test_transport_failure_drops_response_body_headers_and_authorization() -> No
         client.close()
 
     error = raised.value
-    assert error.response.status_code == 500
+    assert error.response.status_code == 400
     assert error.response.content == b""
     assert private_body not in str(error)
     assert private_header not in str(error.response.headers)
@@ -686,6 +792,23 @@ def test_transport_retries_retryable_http_statuses(status_code: int) -> None:
     assert sleeps == [0.0]
     assert transport.last_call is not None
     assert transport.last_call.attempts == 2
+
+
+def test_transport_clamps_provider_retry_after_to_documented_maximum() -> None:
+    client, _ = mock_client(
+        [
+            httpx.Response(429, headers={"Retry-After": "999999"}),
+            success_envelope(),
+        ]
+    )
+    sleeps: list[float] = []
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=sleeps.append)
+        transport("secret", BASE_URL, MODEL, "s", "u")
+    finally:
+        client.close()
+
+    assert sleeps == [replay.GLM_MAX_RETRY_AFTER_SECONDS]
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 404])
@@ -901,7 +1024,9 @@ def synthetic_three_arm_cases(
             label=label,
             report_path=Path(f"synthetic-{label}.json"),
             report_sha256=str(arm_number) * 64,
-            extractor_model=f"extractor-{label}",
+            extractor_model=replay.EXPECTED_EXTRACTOR_MODELS[label],
+            manifest_sha256="a" * 64,
+            scoring_inputs_sha256="0" * 64,
         )
         cases: list[replay.ReplayCase] = []
         for index, case_id in enumerate(case_ids):
@@ -947,7 +1072,9 @@ def synthetic_three_arm_cases(
                     source_case=source_case,
                 )
             )
-        result[label] = tuple(cases)
+        scoring_inputs_sha256 = replay._scoring_inputs_sha256(cases)
+        bound_arm = replace(arm, scoring_inputs_sha256=scoring_inputs_sha256)
+        result[label] = tuple(replace(case, arm=bound_arm) for case in cases)
     return result
 
 
@@ -962,6 +1089,183 @@ def synthetic_three_arm_cases(
 )
 def test_classify_flip(before: bool, after: bool, expected: str) -> None:
     assert replay.classify_flip(before, after) == expected
+
+
+def test_ranking_uses_accuracy_only_and_groups_ties_deterministically() -> None:
+    arms = {
+        "qwen37": {
+            "original": {"qa_accuracy": 0.85, "qa_f1": 0.1},
+            "replay": {"qa_accuracy": 0.9, "qa_f1": 0.1},
+        },
+        "glm53": {
+            "original": {"qa_accuracy": 0.825, "qa_f1": 0.9},
+            "replay": {"qa_accuracy": 0.825, "qa_f1": 0.9},
+        },
+        "qwen38-27b": {
+            "original": {"qa_accuracy": 0.8, "qa_f1": 1.0},
+            "replay": {"qa_accuracy": 0.825, "qa_f1": 0.1},
+        },
+    }
+
+    assert replay._ranking(arms, "original") == [["qwen37"], ["glm53"], ["qwen38-27b"]]
+    assert replay._ranking(arms, "replay") == [["qwen37"], ["glm53", "qwen38-27b"]]
+
+
+def test_incomplete_summary_omits_rankings(tmp_path: Path) -> None:
+    summary = replay.run_replay(
+        synthetic_three_arm_cases(include_canary=True),
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+
+    assert summary["status"] == "canary_completed"
+    assert "original_ranking" not in summary
+    assert "replay_ranking" not in summary
+
+
+def test_reader_identity_is_complete_and_persists_only_an_endpoint_digest() -> None:
+    identity = replay._reader_identity(BASE_URL)
+
+    assert identity == {
+        "model": "glm-5.3-flash",
+        "temperature": 0.1,
+        "max_tokens": 4096,
+        "timeout_seconds": 120.0,
+        "endpoint_sha256": "0413b53d28826c51b400bc9ebc578639bf6a4ff94d3e43fbcbc468bd51945602",
+    }
+    assert BASE_URL not in json.dumps(identity)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://provider.example/v1",
+        "https://user:password@provider.example/v1",
+        "https://provider.example/v1?token=private",
+        "https://provider.example/v1#private",
+        "https:///missing-host",
+    ],
+)
+def test_invalid_endpoint_is_rejected_before_transport_call(
+    tmp_path: Path,
+    base_url: str,
+) -> None:
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="HTTPS endpoint"):
+        replay.run_replay(
+            synthetic_three_arm_cases(include_canary=True),
+            transport,
+            output_root=tmp_path,
+            canary_only=True,
+            resume=False,
+            base_url=base_url,
+        )
+
+    assert transport.calls == []
+
+
+def test_transport_invalid_endpoint_exception_drops_embedded_credentials() -> None:
+    client, _ = mock_client([success_envelope()])
+    transport = replay.GLMThinkingTransport(client, max_attempts=1, sleep=lambda _: None)
+    bad_url = "https://PRIVATE_USER:PRIVATE_PASSWORD@provider.example/v1?token=PRIVATE_TOKEN"
+    try:
+        with pytest.raises(replay.ReplayInputError, match="HTTPS endpoint") as raised:
+            transport("PRIVATE_API_KEY", bad_url, MODEL, "PRIVATE_SYSTEM", "PRIVATE_USER_PROMPT")
+    finally:
+        client.close()
+
+    assert_transport_exception_drops(
+        raised.value,
+        strings=(
+            "PRIVATE_USER",
+            "PRIVATE_PASSWORD",
+            "PRIVATE_TOKEN",
+            "PRIVATE_API_KEY",
+            "PRIVATE_SYSTEM",
+            "PRIVATE_USER_PROMPT",
+        ),
+    )
+
+
+def test_checkpoint_and_summary_bind_complete_input_identity(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    summary = replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+    checkpoint = json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))
+
+    for artifact in (checkpoint, summary):
+        assert artifact["manifest_sha256"] == "a" * 64
+        assert artifact["scoring_inputs_sha256"] == sources["qwen37"][0].arm.scoring_inputs_sha256
+        assert artifact["extractor_models"] == replay.EXPECTED_EXTRACTOR_MODELS
+
+
+def test_summary_contains_explicit_safe_canary_evidence(tmp_path: Path) -> None:
+    summary = replay.run_replay(
+        synthetic_three_arm_cases(include_canary=True),
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+
+    assert summary["canary"] == {
+        "arm": "qwen37",
+        "case_id": replay.CANARY_CASE_ID,
+        "thinking_verified": True,
+        "attempts": 2,
+        "input_tokens": 10,
+        "output_tokens": 7,
+        "reasoning_tokens": 5,
+        "total_tokens": 17,
+        "latency_seconds": 0.25,
+    }
+
+
+@pytest.mark.parametrize("mutation", ["manifest", "question", "rubrics", "gold"])
+def test_resume_rejects_reconstructed_input_mutation_before_call(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+    for label in replay.ARM_LABELS:
+        cases = list(sources[label])
+        first = cases[0]
+        if mutation == "manifest":
+            cases = [replace(case, arm=replace(case.arm, manifest_sha256="b" * 64)) for case in cases]
+        elif mutation == "question":
+            cases[0] = replace(first, trajectory=replace(first.trajectory, question="mutated question"))
+        elif mutation == "rubrics":
+            cases[0] = replace(first, accepted_rubrics=((("mutated rubric",),),))
+        else:
+            cases[0] = replace(first, answer_entity_gold=make_gold("mutated-gold"))
+        sources[label] = tuple(cases)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="manifest|scoring inputs|source identity"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=True,
+            resume=True,
+        )
+
+    assert transport.calls == []
 
 
 def test_score_replayed_case_reuses_prompt_evidence_and_answerability(
@@ -1030,6 +1334,134 @@ def test_canary_only_checkpoints_one_call_and_resume_does_not_repeat_it(tmp_path
     assert complete["logical_calls"] == 120
 
 
+def test_authoritative_state_commits_first_and_repairs_projections_without_a_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    real_write = replay._write_json_atomic
+    writes: list[str] = []
+
+    def interrupt_after_state(path: Path, payload: dict[str, Any]) -> None:
+        writes.append(path.name)
+        if path.name == "qwen37.json":
+            raise OSError("synthetic projection interruption")
+        real_write(path, payload)
+
+    monkeypatch.setattr(replay, "_write_json_atomic", interrupt_after_state)
+    with pytest.raises(OSError, match="projection interruption"):
+        replay.run_replay(
+            sources,
+            FakeThinkingTransport(answer="synthetic answer", verified=True),
+            output_root=tmp_path,
+            canary_only=True,
+            resume=False,
+        )
+
+    assert writes[:2] == ["state.json", "qwen37.json"]
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "canary_completed"
+    assert state["logical_calls"] == 1
+
+    monkeypatch.setattr(replay, "_write_json_atomic", real_write)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+    repaired = replay.run_replay(
+        sources,
+        transport,
+        output_root=tmp_path,
+        canary_only=True,
+        resume=True,
+    )
+
+    assert transport.calls == []
+    assert repaired["status"] == "canary_completed"
+    assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["completed_case_ids"] == [
+        replay.CANARY_CASE_ID
+    ]
+    assert json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))["logical_calls"] == 1
+
+
+def convert_completed_replay_to_legacy(output_root: Path) -> None:
+    for label in replay.ARM_LABELS:
+        path = output_root / f"{label}.json"
+        checkpoint = json.loads(path.read_text(encoding="utf-8"))
+        checkpoint["schema_version"] = replay.LEGACY_REPLAY_SCHEMA_VERSION
+        checkpoint["reader"] = {"model": MODEL, "base_url": BASE_URL}
+        checkpoint["source"].pop("extractor_model")
+        for field in ("manifest_sha256", "scoring_inputs_sha256", "extractor_models"):
+            checkpoint.pop(field)
+        path.write_text(json.dumps(checkpoint), encoding="utf-8")
+    summary_path = output_root / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["schema_version"] = replay.LEGACY_REPLAY_SCHEMA_VERSION
+    summary["reader"] = {"model": MODEL, "base_url": BASE_URL}
+    for field in ("manifest_sha256", "scoring_inputs_sha256", "extractor_models"):
+        summary.pop(field)
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+
+def test_completed_legacy_replay_migrates_with_backup_and_zero_calls(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+    (tmp_path / replay.AUTHORITATIVE_STATE_FILE).unlink()
+    convert_completed_replay_to_legacy(tmp_path)
+    artifact_names = [f"{label}.json" for label in replay.ARM_LABELS] + ["summary.json"]
+    before = {name: replay.sha256_file(tmp_path / name) for name in artifact_names}
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    summary = replay.run_replay(
+        sources,
+        transport,
+        output_root=tmp_path,
+        canary_only=False,
+        resume=True,
+    )
+
+    assert transport.calls == []
+    assert summary["status"] == "completed"
+    state = json.loads((tmp_path / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8"))
+    assert state["logical_calls"] == 120
+    assert state["migration"]["from_schema_version"] == replay.LEGACY_REPLAY_SCHEMA_VERSION
+    backup = tmp_path / replay.LEGACY_BACKUP_DIRECTORY
+    assert {name: replay.sha256_file(backup / name) for name in artifact_names} == before
+
+
+def test_partial_legacy_replay_is_rejected_without_rewrite_or_transport_call(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+    (tmp_path / replay.AUTHORITATIVE_STATE_FILE).unlink()
+    convert_completed_replay_to_legacy(tmp_path)
+    mutate_json(tmp_path / "summary.json", lambda value: value.update(status="running"))
+    before = replay.sha256_file(tmp_path / "summary.json")
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="complete.*legacy"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=False,
+            resume=True,
+        )
+
+    assert transport.calls == []
+    assert replay.sha256_file(tmp_path / "summary.json") == before
+    assert not (tmp_path / replay.AUTHORITATIVE_STATE_FILE).exists()
+    assert not (tmp_path / replay.LEGACY_BACKUP_DIRECTORY).exists()
+
+
 def test_unverified_canary_aborts_before_second_call(tmp_path: Path) -> None:
     sources = synthetic_three_arm_cases(include_canary=True)
     transport = FakeThinkingTransport(answer="synthetic answer", verified=False)
@@ -1057,18 +1489,17 @@ def test_checkpoint_contains_no_secret_envelope_or_reasoning(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize(
-    ("file_name", "mutation", "message"),
+    ("mutation", "message"),
     [
-        ("qwen37.json", lambda value: value["source"].update(sha256="0" * 64), "source hash"),
-        ("qwen37.json", lambda value: value["reader"].update(model="other"), "reader identity"),
-        ("qwen37.json", lambda value: value.update(thinking={"type": "disabled"}), "thinking"),
-        ("qwen37.json", lambda value: value["versions"].update(prompt="other"), "prompt/scorer"),
-        ("qwen37.json", lambda value: value["case_ids"].pop(), "case set"),
+        (lambda value: value["sources"]["qwen37"].update(sha256="0" * 64), "sources"),
+        (lambda value: value["reader"].update(model="other"), "reader"),
+        (lambda value: value.update(thinking={"type": "disabled"}), "thinking"),
+        (lambda value: value["versions"].update(prompt="other"), "versions"),
+        (lambda value: value["case_sets"]["qwen37"].pop(), "case_sets"),
     ],
 )
-def test_resume_rejects_identity_mismatch_before_call(
+def test_resume_rejects_authoritative_identity_mismatch_before_call(
     tmp_path: Path,
-    file_name: str,
     mutation: Any,
     message: str,
 ) -> None:
@@ -1080,7 +1511,7 @@ def test_resume_rejects_identity_mismatch_before_call(
         canary_only=True,
         resume=False,
     )
-    path = tmp_path / file_name
+    path = tmp_path / replay.AUTHORITATIVE_STATE_FILE
     payload = json.loads(path.read_text(encoding="utf-8"))
     mutation(payload)
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -1092,7 +1523,7 @@ def test_resume_rejects_identity_mismatch_before_call(
     assert transport.calls == []
 
 
-def test_resume_rejects_corrupt_checkpoint_before_call(tmp_path: Path) -> None:
+def test_resume_repairs_corrupt_projection_before_call(tmp_path: Path) -> None:
     sources = synthetic_three_arm_cases(include_canary=True)
     replay.run_replay(
         sources,
@@ -1104,13 +1535,14 @@ def test_resume_rejects_corrupt_checkpoint_before_call(tmp_path: Path) -> None:
     (tmp_path / "glm53.json").write_text("{broken", encoding="utf-8")
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
-    with pytest.raises(replay.ReplayInputError, match="checkpoint"):
-        replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=True)
+    summary = replay.run_replay(sources, transport, output_root=tmp_path, canary_only=True, resume=True)
 
     assert transport.calls == []
+    assert summary["status"] == "canary_completed"
+    assert json.loads((tmp_path / "glm53.json").read_text(encoding="utf-8"))["status"] == "pending"
 
 
-def test_resume_rejects_tampered_checkpoint_metrics_before_call(tmp_path: Path) -> None:
+def test_resume_repairs_tampered_projection_metrics_before_call(tmp_path: Path) -> None:
     sources = synthetic_three_arm_cases(include_canary=True)
     replay.run_replay(
         sources,
@@ -1125,10 +1557,11 @@ def test_resume_rejects_tampered_checkpoint_metrics_before_call(tmp_path: Path) 
     path.write_text(json.dumps(checkpoint), encoding="utf-8")
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
-    with pytest.raises(replay.ReplayInputError, match="metrics"):
-        replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=True)
+    replay.run_replay(sources, transport, output_root=tmp_path, canary_only=True, resume=True)
 
     assert transport.calls == []
+    repaired = json.loads(path.read_text(encoding="utf-8"))
+    assert repaired["metrics"]["overall"]["qa_accuracy"] != 0.0
 
 
 def test_partial_failures_are_checkpointed_and_do_not_stop_later_cases(tmp_path: Path) -> None:
@@ -1141,8 +1574,39 @@ def test_partial_failures_are_checkpointed_and_do_not_stop_later_cases(tmp_path:
     assert summary["status"] == "completed_with_failures"
     assert summary["logical_calls"] == 120
     assert len(summary["failed_case_ids"]) == 2
+    assert "original_ranking" not in summary
+    assert "replay_ranking" not in summary
     assert sum(len(arm["failed_case_ids"]) for arm in summary["arms"].values()) == 2
     assert summary["arms"]["qwen37"]["paired_delta"]["qa_accuracy"] == pytest.approx(20 / 39)
+
+
+def test_scorer_failure_persists_aborted_state_and_raises_generic_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+
+    def fail_score(*args: object, **kwargs: object) -> dict[str, Any]:
+        del args, kwargs
+        raise RuntimeError("PRIVATE_SCORER_FAILURE")
+
+    monkeypatch.setattr(replay, "score_answer", fail_score)
+
+    with pytest.raises(replay.ReplayAbortedError, match="reader replay aborted") as raised:
+        replay.run_replay(
+            sources,
+            FakeThinkingTransport(answer="synthetic answer", verified=True),
+            output_root=tmp_path,
+            canary_only=False,
+            resume=False,
+        )
+
+    summary_raw = (tmp_path / "summary.json").read_text(encoding="utf-8")
+    assert json.loads(summary_raw)["status"] == "aborted"
+    assert "PRIVATE_SCORER_FAILURE" not in summary_raw
+    assert "PRIVATE_SCORER_FAILURE" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 def test_main_rejects_missing_or_placeholder_secret_before_transport(
@@ -1188,6 +1652,84 @@ def test_main_returns_nonzero_when_canary_cannot_verify_thinking(
     assert exit_code != 0
 
 
+def test_main_persists_generic_abort_for_fresh_source_validation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    sources["qwen37"] = tuple(
+        replace(
+            case,
+            arm=replace(case.arm, extractor_model="PRIVATE_MISLABELED_EXTRACTOR"),
+        )
+        for case in sources["qwen37"]
+    )
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    class FakeClient:
+        def __init__(self, *, timeout: object = None) -> None:
+            del timeout
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setenv("LLM_API_KEY", "synthetic-secret")
+    monkeypatch.setattr(replay, "load_replay_cases", lambda manifest, paths: sources)
+    monkeypatch.setattr(replay.httpx, "Client", FakeClient)
+    monkeypatch.setattr(replay, "GLMThinkingTransport", lambda client: transport)
+    output_root = tmp_path / "out"
+
+    exit_code = replay.main(["--output-root", str(output_root)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert transport.calls == []
+    assert captured.err.strip() == "reader replay failed: reader replay aborted"
+    state_raw = (output_root / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8")
+    assert json.loads(state_raw)["status"] == "aborted"
+    assert "PRIVATE_MISLABELED_EXTRACTOR" not in captured.err
+
+
+def test_main_classifies_exhausted_transient_canary_as_continuable_reader_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    transport = FakeThinkingTransport(
+        answer="synthetic answer",
+        verified=True,
+        fail_on_calls={1},
+    )
+
+    class FakeClient:
+        def __init__(self, *, timeout: object = None) -> None:
+            del timeout
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setenv("LLM_API_KEY", "synthetic-secret")
+    monkeypatch.setattr(replay, "load_replay_cases", lambda manifest, paths: sources)
+    monkeypatch.setattr(replay.httpx, "Client", FakeClient)
+    monkeypatch.setattr(replay, "GLMThinkingTransport", lambda client: transport)
+    output_root = tmp_path / "out"
+
+    exit_code = replay.main(["--output-root", str(output_root)])
+
+    assert exit_code == 1
+    state = json.loads((output_root / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8"))
+    assert state["status"] == "canary_failed"
+    assert state["case_states"]["qwen37"][0]["reader_error"] == "reader_call_failed"
+    assert state["case_states"]["qwen37"][0]["reader_call"]["attempts"] == 3
+
+
 def test_main_constructs_http_client_with_a_120_second_timeout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1228,7 +1770,7 @@ def test_resume_rejects_unknown_summary_status_before_call(tmp_path: Path) -> No
         canary_only=True,
         resume=False,
     )
-    mutate_json(tmp_path / "summary.json", lambda value: value.update(status="invented"))
+    mutate_json(tmp_path / replay.AUTHORITATIVE_STATE_FILE, lambda value: value.update(status="invented"))
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
     with pytest.raises(replay.ReplayInputError, match="status"):
@@ -1243,7 +1785,7 @@ def test_resume_rejects_unknown_summary_status_before_call(tmp_path: Path) -> No
     assert transport.calls == []
 
 
-def test_resume_rejects_checkpoint_status_incoherent_with_canary_summary(tmp_path: Path) -> None:
+def test_resume_repairs_projection_status_from_authoritative_state(tmp_path: Path) -> None:
     sources = synthetic_three_arm_cases(include_canary=True)
     replay.run_replay(
         sources,
@@ -1255,16 +1797,16 @@ def test_resume_rejects_checkpoint_status_incoherent_with_canary_summary(tmp_pat
     mutate_json(tmp_path / "qwen37.json", lambda value: value.update(status="pending"))
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
-    with pytest.raises(replay.ReplayInputError, match="status"):
-        replay.run_replay(
-            sources,
-            transport,
-            output_root=tmp_path,
-            canary_only=True,
-            resume=True,
-        )
+    replay.run_replay(
+        sources,
+        transport,
+        output_root=tmp_path,
+        canary_only=True,
+        resume=True,
+    )
 
     assert transport.calls == []
+    assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["status"] == "canary_completed"
 
 
 def test_resume_rejects_canary_with_tampered_thinking_verification(tmp_path: Path) -> None:
@@ -1278,9 +1820,9 @@ def test_resume_rejects_canary_with_tampered_thinking_verification(tmp_path: Pat
     )
 
     def remove_verification(value: dict[str, Any]) -> None:
-        value["cases"][0]["reader_call"]["thinking_verified"] = False
+        value["case_states"]["qwen37"][0]["reader_call"]["thinking_verified"] = False
 
-    mutate_json(tmp_path / "qwen37.json", remove_verification)
+    mutate_json(tmp_path / replay.AUTHORITATIVE_STATE_FILE, remove_verification)
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
     with pytest.raises(replay.ReplayInputError, match="canary"):
@@ -1311,7 +1853,7 @@ def test_resume_rejects_reordered_physical_execution_prefix(tmp_path: Path) -> N
             value["execution_order"][0],
         )
 
-    mutate_json(tmp_path / "summary.json", reorder)
+    mutate_json(tmp_path / replay.AUTHORITATIVE_STATE_FILE, reorder)
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
     with pytest.raises(replay.ReplayInputError, match="execution order"):
@@ -1337,17 +1879,11 @@ def test_resume_rejects_arbitrary_expected_case_substituted_for_canary(tmp_path:
     )
     replacement = sources["qwen37"][0].case_id
 
-    def substitute_checkpoint(value: dict[str, Any]) -> None:
-        value["completed_case_ids"] = [replacement]
-        value["cases"][0]["case_id"] = replacement
-        value["metrics"] = replay.aggregate_results(value["cases"])
-
-    mutate_json(tmp_path / "qwen37.json", substitute_checkpoint)
-
-    def substitute_summary(value: dict[str, Any]) -> None:
+    def substitute_state(value: dict[str, Any]) -> None:
+        value["case_states"]["qwen37"][0]["case_id"] = replacement
         value["execution_order"] = [f"qwen37:{replacement}"]
 
-    mutate_json(tmp_path / "summary.json", substitute_summary)
+    mutate_json(tmp_path / replay.AUTHORITATIVE_STATE_FILE, substitute_state)
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
     with pytest.raises(replay.ReplayInputError, match="execution order"):
@@ -1371,8 +1907,10 @@ def test_resume_rejects_unverified_canary_with_status_tampered_to_completed(tmp_
         canary_only=False,
         resume=False,
     )
-    mutate_json(tmp_path / "qwen37.json", lambda value: value.update(status="canary_completed"))
-    mutate_json(tmp_path / "summary.json", lambda value: value.update(status="canary_completed"))
+    mutate_json(
+        tmp_path / replay.AUTHORITATIVE_STATE_FILE,
+        lambda value: value.update(status="canary_completed"),
+    )
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
     with pytest.raises(replay.ReplayInputError, match="canary"):
@@ -1396,8 +1934,10 @@ def test_resume_rejects_failed_canary_with_status_tampered_to_completed(tmp_path
         canary_only=False,
         resume=False,
     )
-    mutate_json(tmp_path / "qwen37.json", lambda value: value.update(status="canary_completed"))
-    mutate_json(tmp_path / "summary.json", lambda value: value.update(status="canary_completed"))
+    mutate_json(
+        tmp_path / replay.AUTHORITATIVE_STATE_FILE,
+        lambda value: value.update(status="canary_completed"),
+    )
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
     with pytest.raises(replay.ReplayInputError, match="canary"):
@@ -1455,17 +1995,23 @@ def test_orchestration_does_not_persist_stale_metadata_from_a_prior_call(tmp_pat
         def __call__(self, *args: str) -> tuple[str, int]:
             raise RuntimeError("failed without clearing metadata")
 
-    summary = replay.run_replay(
-        sources,
-        StaleTransport(),
-        output_root=tmp_path,
-        canary_only=False,
-        resume=False,
-    )
+    with pytest.raises(replay.ReplayAbortedError, match="reader replay aborted") as raised:
+        replay.run_replay(
+            sources,
+            StaleTransport(),
+            output_root=tmp_path,
+            canary_only=False,
+            resume=False,
+        )
 
-    assert summary["status"] == "canary_failed"
-    [failed] = json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["cases"]
-    assert failed["reader_call"] is None
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "aborted"
+    assert summary["logical_calls"] == 0
+    assert summary["aborted_case_id"] == f"qwen37:{replay.CANARY_CASE_ID}"
+    assert "original_ranking" not in summary
+    assert "replay_ranking" not in summary
 
 
 def test_reader_failure_preserves_non_reader_metrics_and_source_error(tmp_path: Path) -> None:
