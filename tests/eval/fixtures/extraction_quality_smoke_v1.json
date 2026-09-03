@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "attributed_viewpoint_and_speaker",
+      "occurred_at": "2026-09-03T00:00:00+00:00",
+      "messages": [
+        {
+          "speaker": "user",
+          "text": "张岚：我认为真正的自由不是没有约束，而是在承担选择后果时不断超越旧有框架。我会尊重与他人共处的边界，并通过反思自己的决定来实践个人成长。"
+        }
+      ],
+      "required_claims": [
+        {"subject": "张岚", "term_groups": [["自由"], ["承担", "后果"], ["约束"]]},
+        {"subject": "张岚", "term_groups": [["边界"], ["反思", "成长"]]}
+      ],
+      "forbidden_subjects": ["user", "用户"],
+      "expect_empty": false
+    },
+    {
+      "id": "personal_reason_and_feeling",
+      "occurred_at": "2026-09-03T00:01:00+00:00",
+      "messages": [
+        {
+          "speaker": "user",
+          "text": "林月：我开始拍纪录片，是因为想让普通人的经历被看见。看到胚胎发育影像时，我感到生命既脆弱又令人敬畏。"
+        }
+      ],
+      "required_claims": [
+        {"subject": "林月", "term_groups": [["纪录片"], ["普通人"], ["看见"]]},
+        {"subject": "林月", "term_groups": [["胚胎"], ["脆弱"], ["敬畏"]]}
+      ],
+      "forbidden_subjects": ["user", "用户"],
+      "expect_empty": false
+    },
+    {
+      "id": "named_relationship",
+      "occurred_at": "2026-09-03T00:02:00+00:00",
+      "messages": [
+        {
+          "speaker": "user",
+          "text": "具体人物：周宁\n描述：陈晖的大学同学，两人经常共同制作短片。\n与陈晖的关系：同学和长期合作伙伴。"
+        }
+      ],
+      "required_claims": [
+        {"subject": "周宁", "term_groups": [["周宁"], ["陈晖"], ["同学"]]},
+        {"subject": "周宁", "term_groups": [["周宁"], ["陈晖"], ["合作", "短片"]]}
+      ],
+      "forbidden_subjects": [],
+      "expect_empty": false
+    },
+    {
+      "id": "structured_event_content",
+      "occurred_at": "2026-09-03T00:03:00+00:00",
+      "messages": [
+        {
+          "speaker": "user",
+          "text": "活动名称：销售创新研讨会\n地点：北京\n主要内容：分享成功案例并探讨销售创新策略\n目的：促进业内合作。"
+        }
+      ],
+      "required_claims": [
+        {"subject": "销售创新研讨会", "term_groups": [["成功案例"], ["销售创新策略"]]},
+        {"subject": "销售创新研讨会", "term_groups": [["北京"]]}
+      ],
+      "forbidden_subjects": [],
+      "expect_empty": false
+    },
+    {
+      "id": "completed_decision_is_fact",
+      "occurred_at": "2024-01-01T00:00:00+00:00",
+      "messages": [
+        {
+          "speaker": "user",
+          "text": "李明：年初我决定将部分资金配置到原油、黄金和铜；三月已经完成配置，目前仍持有这些资产。"
+        }
+      ],
+      "required_claims": [
+        {"subject": "李明", "predicate": "事实", "term_groups": [["原油"], ["黄金"], ["铜"], ["完成", "持有"]]}
+      ],
+      "forbidden_subjects": ["user", "用户"],
+      "expect_empty": false
+    },
+    {
+      "id": "historical_pending_plan",
+      "occurred_at": "2024-01-01T00:00:00+00:00",
+      "messages": [
+        {
+          "speaker": "user",
+          "text": "沈青：这个安排尚未完成，我仍计划在 Meet World 的个人资料中展示兴趣爱好和生物医学科学成果。"
+        }
+      ],
+      "required_claims": [
+        {"subject": "沈青", "predicate": "计划", "term_groups": [["Meet World"], ["兴趣爱好"], ["生物医学科学"]]}
+      ],
+      "forbidden_subjects": ["user", "用户"],
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_future_plan",
+      "occurred_at": "2026-09-03T00:06:00+00:00",
+      "messages": [
+        {
+          "speaker": "user",
+          "text": "宋宁：我将在 2026 年 9 月 11 日提交方案，截止时间是当天 18:00。"
+        }
+      ],
+      "required_claims": [
+        {"subject": "宋宁", "predicate": "计划", "term_groups": [["2026"], ["9 月 11 日", "9月11日"], ["18:00"], ["提交方案"]]}
+      ],
+      "forbidden_subjects": ["user", "用户"],
+      "expect_empty": false
+    },
+    {
+      "id": "assistant_and_question_negatives",
+      "occurred_at": "2026-09-03T00:07:00+00:00",
+      "messages": [
+        {"speaker": "assistant", "text": "一般来说，存在主义讨论自由、责任和选择。"},
+        {"speaker": "assistant", "text": "作为 AI 助手，我是一个平凡的人，我喜欢散步，明天会提醒你。"},
+        {"speaker": "user", "text": "尼采如何理解超越道德？"}
+      ],
+      "required_claims": [],
+      "forbidden_subjects": [],
+      "expect_empty": true
+    }
+  ]
+}
