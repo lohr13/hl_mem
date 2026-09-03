@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-03
 **Status:** Approved for implementation planning
-**Scope:** Local test workflow, test data sizing, and GitHub Actions routing only
+**Scope:** Local test workflow, test data sizing, GitHub Actions routing, and README information architecture
 
 ## Context
 
@@ -22,7 +22,9 @@ The package's existing Python installation range remains unchanged. Python 3.13 
 2. Reduce the reference-host core full-suite time from about 376 seconds to a measured target of 180–210 seconds.
 3. Remove duplicate CI execution while preserving offline business coverage, coverage enforcement, release checks, quality gates, and supply-chain checks.
 4. Preserve every reader-replay security and state-machine assertion while reducing unnecessary fixture size and checkpoint I/O.
-5. Keep the change test-only and workflow-only; do not modify production database or memory behavior.
+5. Keep executable changes test-only and workflow-only; documentation may be simplified, but production database and
+   memory behavior must not change.
+6. Turn both language READMEs back into concise landing pages instead of release-history and operator runbooks.
 
 ## Non-goals
 
@@ -31,6 +33,8 @@ The package's existing Python installation range remains unchanged. Python 3.13 
 - Deleting validation branches merely to reduce test count.
 - Running real provider/model evaluations.
 - Introducing dynamic test selection, test-impact analysis, or timing-based CI failure thresholds.
+- Deleting detailed architecture, configuration, compatibility, release-history, or evaluation documentation outside the
+  two landing-page READMEs.
 
 ## Test Tiers
 
@@ -117,6 +121,19 @@ Evidence aggregation references the single authoritative core result and the dis
 - release-only checks only before release;
 - Python 3.13 as the sole authoritative CI environment without changing package installation metadata.
 
+### README landing pages
+
+`README.md` and `README_EN.md` remain synchronized Chinese and English entry points. Each targets roughly 150 lines and
+keeps only the product definition, evidence/data-flow overview, one non-duplicated quickstart, concise source install and
+model/MCP/Hermes integration guidance, eight to ten common configuration keys, a compact capability summary, and links to
+the maintained specialist documentation.
+
+The READMEs remove version-by-version migration sections, editable-deployment internals, contaminated-host troubleshooting,
+Windows supervisor instructions, repair/cleanup command recipes, injection-fixture instructions, historical benchmark
+tables, detailed migration inventories, and duplicated project-status prose. Those details are not copied elsewhere during
+this change: architecture, configuration, compatibility, changelog, capability matrix, evaluation documentation, and CLI
+help remain the authoritative destinations. The landing pages make no new capability, compatibility, or benchmark claim.
+
 ## Verification
 
 Implementation verification proceeds in this order:
@@ -126,6 +143,8 @@ Implementation verification proceeds in this order:
 3. One final parallel core run with `--durations=25` and coverage.
 4. A second final core run only if step 3 causes code changes.
 5. Static checks and workflow consistency checks; these do not trigger another pytest full-suite run.
+6. Documentation consistency and link-target checks cover both synchronized README landing pages; README-only edits are
+   completed before the one permitted post-fix core-suite rerun.
 
 Acceptance requires:
 
