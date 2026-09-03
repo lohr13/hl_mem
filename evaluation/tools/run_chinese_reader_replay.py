@@ -129,7 +129,6 @@ class _SanitizedFailure:
     kind: str
     message: str
     status_code: int | None = None
-    retry_after: str | None = None
 
 
 @dataclass(frozen=True)
@@ -262,7 +261,6 @@ def _describe_failure(error: Exception) -> _SanitizedFailure:
             kind="status",
             message=f"GLM request failed with HTTP {error.response.status_code}",
             status_code=error.response.status_code,
-            retry_after=_canonical_retry_after(error.response.headers.get("Retry-After")),
         )
     if isinstance(error, httpx.ReadTimeout):
         return _SanitizedFailure(kind="read_timeout", message="GLM request timed out")
@@ -297,7 +295,7 @@ def _clear_exception_chain(error: BaseException) -> None:
 
 def _fresh_exception(failure: _SanitizedFailure) -> Exception:
     if failure.kind == "status" and failure.status_code is not None:
-        return _safe_status_error(failure.status_code, retry_after=failure.retry_after)
+        return _safe_status_error(failure.status_code)
     if failure.kind == "read_timeout":
         return httpx.ReadTimeout(failure.message)
     if failure.kind == "connect_timeout":

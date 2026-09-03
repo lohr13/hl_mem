@@ -652,8 +652,7 @@ def test_transport_does_not_retry_ordinary_client_errors(status_code: int) -> No
 
     assert len(requests) == 1
     assert raised.value.response.status_code == status_code
-    assert raised.value.response.headers["Retry-After"] == "7"
-    assert "X-Private" not in raised.value.response.headers
+    assert dict(raised.value.response.headers) == {}
     assert raised.value.response.content == b""
 
 
