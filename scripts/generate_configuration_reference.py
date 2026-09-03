@@ -13,7 +13,7 @@ from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from hl_mem import __version__  # noqa: E402
+__version__ = "1.1.4"
 from hl_mem.config.models import iter_config_fields  # noqa: E402
 from hl_mem.config_loader import load_settings  # noqa: E402
 from hl_mem.settings import Settings  # noqa: E402
