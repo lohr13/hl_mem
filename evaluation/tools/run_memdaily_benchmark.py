@@ -760,8 +760,13 @@ def _run_qa(
             "usage": {"total_tokens": 0},
         }
 
-    # Resolve API key: prefer env override, then settings
-    api_key = os.environ.get("LLM_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or settings.llm_api_key
+    # Resolve API key: prefer the evaluation reader override, then existing fallbacks.
+    api_key = (
+        os.environ.get("HL_MEM_EVAL_QA_API_KEY")
+        or os.environ.get("LLM_API_KEY")
+        or os.environ.get("DASHSCOPE_API_KEY")
+        or settings.llm_api_key
+    )
     if not api_key:
         raise RuntimeError("QA answering requires LLM_API_KEY or DASHSCOPE_API_KEY " "in .env or environment")
 

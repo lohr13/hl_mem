@@ -32,6 +32,14 @@ SAMPLE_MANIFEST_PATH = Path(__file__).parent / "fixtures" / "chinese_e2e_sample.
 RUBRIC_V2_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "chinese_e2e_rubric_v2.json"
 
 
+def test_live_entrypoint_accepts_isolated_cache_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from tests.eval import test_chinese_e2e as entrypoint
+
+    cache_root = tmp_path / "qwen-run-1"
+    monkeypatch.setenv("HL_MEM_CHINESE_E2E_CACHE_ROOT", str(cache_root))
+    assert entrypoint._configured_cache_root() == cache_root
+
+
 def test_manifest_keeps_the_paid_sample_fixed_and_stratified() -> None:
     """Removing a slice or silently changing the paid sample must break offline validation."""
     manifest = load_sample_manifest(SAMPLE_MANIFEST_PATH)

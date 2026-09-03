@@ -46,6 +46,25 @@ def _memdaily_trajectory() -> memdaily_runner.MemDailyTrajectory:
 
 
 class MemDailyAggregationTests(unittest.TestCase):
+    def test_reader_prefers_dedicated_qa_api_key(self) -> None:
+        trajectory = _memdaily_trajectory()
+        settings = replace(Settings.for_test(), llm_api_key="extractor-key")
+        with (
+            patch.dict(
+                memdaily_runner.os.environ,
+                {
+                    "LLM_API_KEY": "process-extractor-key",
+                    "HL_MEM_EVAL_QA_API_KEY": "reader-key",
+                    "HL_MEM_EVAL_QA_BASE_URL": "https://reader.example/v1",
+                    "HL_MEM_EVAL_QA_MODEL": "qwen3.7-plus",
+                },
+                clear=True,
+            ),
+            patch.object(memdaily_runner, "_qa_dashscope_chat", return_value=("An event", 11)) as qa_call,
+        ):
+            memdaily_runner._run_qa(object(), trajectory, [{"rank": 1, "text": "An event happened"}], settings)
+        self.assertEqual(qa_call.call_args.args[0], "reader-key")
+
     def test_reader_short_circuits_hard_abstention(self) -> None:
         """没有候选时 reader 不调用模型。"""
         trajectory = _memdaily_trajectory()

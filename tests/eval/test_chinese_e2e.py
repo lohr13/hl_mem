@@ -17,6 +17,10 @@ DEFAULT_CACHE_ROOT = ROOT / "var" / "eval" / "chinese_e2e_cache"
 DEFAULT_REPORT_PATH = ROOT / "var" / "eval" / "chinese_e2e_report.json"
 
 
+def _configured_cache_root() -> Path:
+    return Path(os.getenv("HL_MEM_CHINESE_E2E_CACHE_ROOT", str(DEFAULT_CACHE_ROOT)))
+
+
 def _metric(value: object) -> str:
     return f"{float(value):.3f}" if isinstance(value, (int, float)) else "n/a"
 
@@ -34,7 +38,7 @@ def test_chinese_extraction_recall_qa_e2e() -> None:
     report_path = Path(os.getenv("HL_MEM_CHINESE_E2E_REPORT", str(DEFAULT_REPORT_PATH)))
     report = run_chinese_e2e(
         manifest_path=SAMPLE_MANIFEST_PATH,
-        cache_root=DEFAULT_CACHE_ROOT,
+        cache_root=_configured_cache_root(),
         report_path=report_path,
         refresh=refresh,
         config_path=Path(config_path) if config_path else None,
