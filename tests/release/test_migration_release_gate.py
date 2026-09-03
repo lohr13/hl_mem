@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hl_mem.storage.database import Database
+
+pytestmark = pytest.mark.release_only
 
 MIGRATION_DIRECTORY = Path(__file__).parents[2] / "src" / "hl_mem" / "storage" / "migrations"
 DATA_MIGRATION_VERSIONS = (
