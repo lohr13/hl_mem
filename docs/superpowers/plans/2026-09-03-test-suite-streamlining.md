@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Reduce local and CI test latency by removing duplicate execution, isolating release-only validation, shrinking repeated replay fixtures, and running the core suite once with four Python 3.13 workers.
+**Goal:** Reduce local and CI test latency by removing duplicate execution, isolating release-only validation, shrinking repeated replay fixtures, running the core suite once with four Python 3.13 workers, and restoring both READMEs to concise landing pages.
 
-**Architecture:** Keep production behavior untouched. Introduce an explicit `release_only` pytest tier, retain one exact 120-case replay orchestration test while using small test-local sources for state-machine cases, consolidate ordinary and release workflows around single authoritative results, and document a one-final-run policy.
+**Architecture:** Keep production behavior untouched. Introduce an explicit `release_only` pytest tier, retain one exact 120-case replay orchestration test while using small test-local sources for state-machine cases, consolidate ordinary and release workflows around single authoritative results, document a one-final-run policy, and move detailed operational/history material out of the bilingual README landing pages by linking to existing specialist documents.
 
 **Tech Stack:** Python 3.13 CI authority, pytest, pytest-xdist, pytest-cov, GitHub Actions, uv, TOML, JUnit XML.
 
@@ -18,6 +18,8 @@
 - Task 5 may run the core full suite once, with one additional run allowed only if that run leads to code changes.
 - Do not repeat the core suite after a fast-forward merge to the identical verified commit.
 - Do not call real providers or models.
+- Keep `README.md` and `README_EN.md` structurally synchronized, at roughly 150 lines each, without creating new capability,
+  compatibility, or benchmark claims.
 
 ---
 
@@ -403,19 +405,39 @@ git commit -m "ci: deduplicate release evidence gates"
 ### Task 5: Document policy and perform the bounded final verification
 
 **Files:**
+- Modify: `README.md`
+- Modify: `README_EN.md`
 - Modify: `AGENTS.md:107-116`
 - Modify: `docs/architecture.md:524-536`
 - Modify: `docs/release-checklist.md:1-25`
 - Modify: `docs/support.md:1-20`
 - Modify: `docs/provider-plugins.md:95-112`
 - Modify: `docs/CHANGELOG.md:1-12`
+- Modify: `tests/unit/test_startup_scripts.py:1-150`
 
 **Interfaces:**
 - Consumes: final commands and workflow names from Tasks 1–4.
 - Produces: contributor policy limiting core full-suite execution to one final run, with a second only after code changes.
 - Produces: explicit Python 3.13 CI-authority wording without changing package install metadata.
+- Produces: synchronized Chinese and English landing pages containing one quickstart and links to specialist documentation.
+- Preserves: evaluation-launcher coverage in the dedicated `sqlite-vec` environment while allowing the core environment to
+  omit that optional extra.
 
-- [ ] **Step 1: Update documentation with exact commands and support wording**
+- [ ] **Step 1: Isolate the optional evaluation-launcher checks**
+
+Use `importlib.util.find_spec("sqlite_vec")` in `tests/unit/test_startup_scripts.py` and skip only the two Windows evaluation
+launcher subprocess tests when the optional extra is absent. The ordinary repository launcher test remains unconditional
+on Windows, and the separate `state-full-chain-smoke` job continues to install and exercise `sqlite-vec`.
+
+Run:
+
+```powershell
+uv run --frozen python -m pytest tests/unit/test_startup_scripts.py -q --tb=short
+```
+
+Expected without the optional extra: seven pass and the two evaluation-launcher subprocess tests skip.
+
+- [ ] **Step 2: Update documentation with exact commands and support wording**
 
 Document these commands:
 
@@ -440,7 +462,25 @@ State explicitly:
 
 Add a v1.1.4 changelog bullet describing test-routing and CI changes, with no runtime behavior claim.
 
-- [ ] **Step 2: Run documentation and static checks before pytest suites**
+- [ ] **Step 3: Replace both READMEs with synchronized landing pages**
+
+Keep these sections in both `README.md` and `README_EN.md`, in the same order:
+
+1. badges and language switch;
+2. product definition and evidence-first data-flow diagram;
+3. one quickstart covering install, init, server, remember, and recall;
+4. concise source install plus model, MCP, and Hermes integration links;
+5. a table of eight to ten common configuration keys;
+6. compact capability summary and documentation index;
+7. contribution and license links.
+
+Remove version-by-version upgrade sections, editable-install internals, contaminated-host troubleshooting, Windows
+supervisor instructions, maintenance/repair recipes, injection-fixture instructions, historical benchmark tables,
+migration inventories, and duplicated project-status prose. Do not copy those details into a new README appendix; link to
+`docs/architecture.md`, `docs/configuration.md`, `docs/compatibility.md`, `docs/capability-matrix.md`,
+`docs/CHANGELOG.md`, `tests/eval/README.md`, and CLI help as appropriate.
+
+- [ ] **Step 4: Run documentation and static checks before the final pytest rerun**
 
 Run:
 
@@ -456,7 +496,7 @@ git diff --check
 
 Expected: all pass. Formatting-only corrections do not authorize an extra core run.
 
-- [ ] **Step 3: Verify collection partitions without executing the core suite**
+- [ ] **Step 5: Verify collection partitions without executing the core suite**
 
 Run:
 
@@ -468,7 +508,7 @@ uv run --frozen python -m pytest tests/ --collect-only -q
 
 Expected: release-only collection contains exactly the five intended tests; core plus release-only node counts equal the unfiltered collection count.
 
-- [ ] **Step 4: Run release-only validation once, serially**
+- [ ] **Step 6: Run release-only validation once, serially**
 
 Run:
 
@@ -478,9 +518,11 @@ uv run --frozen python -W error::ResourceWarning -m pytest tests/ -m release_onl
 
 Expected: all five release-only tests pass. Do not repeat without a subsequent code change affecting them.
 
-- [ ] **Step 5: Run the core full suite once with four workers**
+- [ ] **Step 7: Run the one permitted final core-suite rerun with four workers**
 
-Run exactly once:
+The first core run completed in 204.45 seconds with 3,262 passing tests, six skips, 108 passing subtests, 87.51% coverage,
+and two Windows-only failures because the core environment omitted optional `sqlite-vec`. Step 1 changes the affected test
+isolation, so one final core rerun is permitted. Run it exactly once:
 
 ```powershell
 uv run --frozen python -W error::ResourceWarning -m pytest tests/ `
@@ -490,20 +532,20 @@ uv run --frozen python -W error::ResourceWarning -m pytest tests/ `
 
 Expected: zero failures, coverage at least 80%, and elapsed time recorded. The target is 180–210 seconds on the reference Windows host, but time is reported rather than enforced.
 
-If this run fails, diagnose only the failures. Make the smallest correction, rerun affected focused tests, and then run the core suite one final time. A third core run is not allowed without explicit user approval.
+If this run fails, diagnose only the failures and report them. A third core run is not allowed without explicit user approval.
 
-- [ ] **Step 6: Record measured results and commit Task 5**
+- [ ] **Step 8: Record measured results and commit Task 5**
 
 Update the v1.1.4 changelog bullet with actual reader-file, release-only, core-suite, and coverage measurements. Do not claim the time target if it was missed.
 
 Then commit:
 
 ```powershell
-git add AGENTS.md docs/architecture.md docs/release-checklist.md docs/support.md docs/provider-plugins.md docs/CHANGELOG.md
+git add README.md README_EN.md AGENTS.md docs/architecture.md docs/release-checklist.md docs/support.md docs/provider-plugins.md docs/CHANGELOG.md tests/unit/test_startup_scripts.py
 git commit -m "docs: define bounded test execution policy"
 ```
 
-- [ ] **Step 7: Final repository audit without rerunning pytest**
+- [ ] **Step 9: Final repository audit without rerunning pytest**
 
 Run:
 
