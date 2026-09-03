@@ -52,6 +52,15 @@ class FakeThinkingTransport:
         call_number = len(self.calls)
         self.last_call = None
         if call_number in self.fail_on_calls:
+            self.last_call = replay.ReaderCallMetadata(
+                input_tokens=0,
+                output_tokens=0,
+                reasoning_tokens=0,
+                total_tokens=0,
+                latency_seconds=0.5,
+                attempts=3,
+                thinking_verified=False,
+            )
             raise RuntimeError("private provider failure")
         self.last_call = replay.ReaderCallMetadata(
             input_tokens=10,
@@ -541,7 +550,11 @@ def test_transport_stops_after_three_transient_failures() -> None:
         client.close()
 
     assert len(requests) == 3
-    assert transport.last_call is None
+    assert transport.last_call is not None
+    assert transport.last_call.attempts == 3
+    assert transport.last_call.total_tokens == 0
+    assert transport.last_call.thinking_verified is False
+    assert transport.last_call.latency_seconds >= 0.0
     assert "slow" not in str(raised.value)
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
@@ -594,7 +607,10 @@ def test_transport_invalid_json_failure_does_not_retain_response_body() -> None:
     assert private_body not in str(raised.value)
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
-    assert transport.last_call is None
+    assert transport.last_call is not None
+    assert transport.last_call.attempts == 1
+    assert transport.last_call.total_tokens == 0
+    assert transport.last_call.thinking_verified is False
 
 
 def test_transport_failure_traceback_drops_all_sensitive_request_and_response_state() -> None:
@@ -1167,3 +1183,316 @@ def test_main_returns_nonzero_when_canary_cannot_verify_thinking(
     exit_code = replay.main(["--output-root", str(tmp_path / "out")])
 
     assert exit_code != 0
+
+
+def mutate_json(path: Path, mutation: Any) -> None:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutation(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_resume_rejects_unknown_summary_status_before_call(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+    mutate_json(tmp_path / "summary.json", lambda value: value.update(status="invented"))
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="status"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=True,
+            resume=True,
+        )
+
+    assert transport.calls == []
+
+
+def test_resume_rejects_checkpoint_status_incoherent_with_canary_summary(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+    mutate_json(tmp_path / "qwen37.json", lambda value: value.update(status="pending"))
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="status"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=True,
+            resume=True,
+        )
+
+    assert transport.calls == []
+
+
+def test_resume_rejects_canary_with_tampered_thinking_verification(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+
+    def remove_verification(value: dict[str, Any]) -> None:
+        value["cases"][0]["reader_call"]["thinking_verified"] = False
+
+    mutate_json(tmp_path / "qwen37.json", remove_verification)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="canary"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=True,
+            resume=True,
+        )
+
+    assert transport.calls == []
+
+
+def test_resume_rejects_reordered_physical_execution_prefix(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+
+    def reorder(value: dict[str, Any]) -> None:
+        value["execution_order"][0], value["execution_order"][1] = (
+            value["execution_order"][1],
+            value["execution_order"][0],
+        )
+
+    mutate_json(tmp_path / "summary.json", reorder)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="execution order"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=False,
+            resume=True,
+        )
+
+    assert transport.calls == []
+
+
+def test_resume_rejects_arbitrary_expected_case_substituted_for_canary(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+    replacement = sources["qwen37"][0].case_id
+
+    def substitute_checkpoint(value: dict[str, Any]) -> None:
+        value["completed_case_ids"] = [replacement]
+        value["cases"][0]["case_id"] = replacement
+        value["metrics"] = replay.aggregate_results(value["cases"])
+
+    mutate_json(tmp_path / "qwen37.json", substitute_checkpoint)
+
+    def substitute_summary(value: dict[str, Any]) -> None:
+        value["execution_order"] = [f"qwen37:{replacement}"]
+
+    mutate_json(tmp_path / "summary.json", substitute_summary)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="execution order"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=True,
+            resume=True,
+        )
+
+    assert transport.calls == []
+
+
+def test_resume_rejects_unverified_canary_with_status_tampered_to_completed(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=False),
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+    mutate_json(tmp_path / "qwen37.json", lambda value: value.update(status="canary_completed"))
+    mutate_json(tmp_path / "summary.json", lambda value: value.update(status="canary_completed"))
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="canary"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=True,
+            resume=True,
+        )
+
+    assert transport.calls == []
+
+
+def test_resume_rejects_failed_canary_with_status_tampered_to_completed(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True, fail_on_calls={1}),
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+    mutate_json(tmp_path / "qwen37.json", lambda value: value.update(status="canary_completed"))
+    mutate_json(tmp_path / "summary.json", lambda value: value.update(status="canary_completed"))
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="canary"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=True,
+            resume=True,
+        )
+
+    assert transport.calls == []
+
+
+def test_retry_exhaustion_persists_terminal_attempt_and_latency_totals(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    client, requests = mock_client([httpx.ReadTimeout("private timeout") for _ in range(3)])
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=lambda _: None)
+        summary = replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=False,
+            resume=False,
+        )
+    finally:
+        client.close()
+
+    assert len(requests) == 3
+    assert summary["status"] == "canary_failed"
+    assert summary["arms"]["qwen37"]["reader_totals"]["attempts"] == 3
+    assert summary["arms"]["qwen37"]["reader_totals"]["latency_seconds"] >= 0.0
+    [failed] = json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["cases"]
+    assert failed["reader_call"]["attempts"] == 3
+    assert failed["reader_call"]["total_tokens"] == 0
+    assert failed["reader_call"]["thinking_verified"] is False
+    assert "private timeout" not in json.dumps(failed)
+
+
+def test_orchestration_does_not_persist_stale_metadata_from_a_prior_call(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+
+    class StaleTransport:
+        last_call: replay.ReaderCallMetadata | None = replay.ReaderCallMetadata(
+            9,
+            9,
+            9,
+            27,
+            9.0,
+            9,
+            True,
+        )
+
+        def __call__(self, *args: str) -> tuple[str, int]:
+            raise RuntimeError("failed without clearing metadata")
+
+    summary = replay.run_replay(
+        sources,
+        StaleTransport(),
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+
+    assert summary["status"] == "canary_failed"
+    [failed] = json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["cases"]
+    assert failed["reader_call"] is None
+
+
+def test_reader_failure_preserves_non_reader_metrics_and_source_error(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    sources["qwen37"][0].source_case["retrieval"] = {"recall_at_5": 0.25, "mrr": 0.125}
+    original_metrics = replay.aggregate_results([case.source_case for case in sources["qwen37"]])["overall"]
+
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True, fail_on_calls={2}),
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+
+    checkpoint = json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))
+    failed = checkpoint["cases"][1]
+    assert failed["error"] is None
+    assert failed["reader_error"] == "reader_call_failed"
+    assert failed["qa"] is None
+    assert failed["answer_entity"] is None
+    for metric in ("recall_at_5", "mrr", "extraction_coverage"):
+        assert checkpoint["metrics"]["overall"][metric] == original_metrics[metric]
+
+
+def test_resume_does_not_retry_completed_reader_failures(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    first = FakeThinkingTransport(answer="synthetic answer", verified=True, fail_on_calls={2, 42})
+    partial = replay.run_replay(
+        sources,
+        first,
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+    expected_qwen_ids = [replay.CANARY_CASE_ID] + [
+        case.case_id for case in sources["qwen37"] if case.case_id != replay.CANARY_CASE_ID
+    ]
+    assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["completed_case_ids"] == (
+        expected_qwen_ids
+    )
+    for label in replay.ARM_LABELS[1:]:
+        assert json.loads((tmp_path / f"{label}.json").read_text(encoding="utf-8"))["completed_case_ids"] == [
+            case.case_id for case in sources[label]
+        ]
+    resumed_transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    resumed = replay.run_replay(
+        sources,
+        resumed_transport,
+        output_root=tmp_path,
+        canary_only=False,
+        resume=True,
+    )
+
+    assert resumed_transport.calls == []
+    assert resumed["execution_order"] == partial["execution_order"]
+    assert resumed["failed_case_ids"] == partial["failed_case_ids"]

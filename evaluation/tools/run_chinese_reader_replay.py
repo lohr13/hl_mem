@@ -112,6 +112,16 @@ ARM_LABELS = ("qwen37", "glm53", "qwen38-27b")
 REPLAY_SCHEMA_VERSION = 1
 READER_PROMPT_VERSION = "memdaily-qa-prompt-v1"
 THINKING = {"type": "enabled"}
+SUMMARY_STATUSES = frozenset(
+    {
+        "running",
+        "canary_completed",
+        "mode_unverified",
+        "canary_failed",
+        "completed",
+        "completed_with_failures",
+    }
+)
 ORIGINAL_QWEN_READER_IDENTITY = {
     "model": OFFICIAL_READER_MODEL,
     "enable_thinking": True,
@@ -455,6 +465,15 @@ class GLMThinkingTransport:
             sanitized_failure = _describe_failure(error)
             _clear_exception_chain(error)
         if sanitized_failure is not None:
+            self.last_call = ReaderCallMetadata(
+                input_tokens=0,
+                output_tokens=0,
+                reasoning_tokens=0,
+                total_tokens=0,
+                latency_seconds=time.monotonic() - started_at,
+                attempts=attempts,
+                thinking_verified=False,
+            )
             del api_key, base_url, model, system_prompt, user_prompt
             del payload, request_once, url, self
             raise _fresh_exception(sanitized_failure)
@@ -731,6 +750,7 @@ def score_replayed_case(
     if not isinstance(answerability, str):
         raise ReplayInputError(f"source case {replay_case.case_id} requires QA answerability")
 
+    transport.last_call = None
     with _scoped_environment(
         {
             "HL_MEM_EVAL_QA_API_KEY": api_key,
@@ -791,7 +811,7 @@ def summarize_arm(
     }
     for replay_case in source_cases:
         result = replayed_by_id.get(replay_case.case_id)
-        if result is None or result.get("error"):
+        if result is None or result.get("reader_error"):
             continue
         before_qa = replay_case.source_case.get("qa")
         after_qa = result.get("qa")
@@ -811,7 +831,7 @@ def summarize_arm(
     successful_ids = {
         str(case.get("case_id"))
         for case in replay_cases
-        if not case.get("error") and isinstance(case.get("qa"), Mapping)
+        if not case.get("reader_error") and isinstance(case.get("qa"), Mapping)
     }
     paired_original = _qa_pair_metrics([case.source_case for case in source_cases if case.case_id in successful_ids])
     paired_replayed = _qa_pair_metrics([case for case in replay_cases if str(case.get("case_id")) in successful_ids])
@@ -828,7 +848,7 @@ def summarize_arm(
         "paired_delta": paired_delta,
         "flips": flips,
         "reader_totals": totals,
-        "failed_case_ids": [str(case.get("case_id")) for case in replay_cases if case.get("error")],
+        "failed_case_ids": [str(case.get("case_id")) for case in replay_cases if case.get("reader_error")],
     }
 
 
@@ -950,8 +970,88 @@ def _arm_status(
     if overall_status == "canary_completed":
         return "canary_completed" if label == "qwen37" else "pending"
     if len(replay_cases) == total_cases:
-        return "completed_with_failures" if any(case.get("error") for case in replay_cases) else "completed"
+        return "completed_with_failures" if any(case.get("reader_error") for case in replay_cases) else "completed"
     return "running" if replay_cases else "pending"
+
+
+def _ordered_replay_cases(
+    sources: Mapping[str, Sequence[ReplayCase]],
+) -> list[tuple[str, ReplayCase]]:
+    qwen_cases = list(sources["qwen37"])
+    canary = next(case for case in qwen_cases if case.case_id == CANARY_CASE_ID)
+    ordered = [("qwen37", canary)]
+    ordered.extend(("qwen37", case) for case in qwen_cases if case.case_id != CANARY_CASE_ID)
+    ordered.extend((label, case) for label in ARM_LABELS[1:] for case in sources[label])
+    return ordered
+
+
+def _validate_resume_progress(
+    sources: Mapping[str, Sequence[ReplayCase]],
+    checkpoints: Mapping[str, Mapping[str, Any]],
+    states: Mapping[str, Sequence[Mapping[str, Any]]],
+    summary: Mapping[str, Any],
+    execution_order: Sequence[str],
+) -> None:
+    raw_status = summary.get("status")
+    if not isinstance(raw_status, str) or raw_status not in SUMMARY_STATUSES:
+        raise ReplayInputError("replay summary status is invalid")
+    status = raw_status
+
+    canonical_pairs = _ordered_replay_cases(sources)
+    canonical_order = [f"{label}:{case.case_id}" for label, case in canonical_pairs]
+    if list(execution_order) != canonical_order[: len(execution_order)]:
+        raise ReplayInputError("replay summary execution order is not a canonical prefix")
+
+    for label in ARM_LABELS:
+        expected_ids = [
+            case.case_id for pair_label, case in canonical_pairs[: len(execution_order)] if pair_label == label
+        ]
+        if checkpoints[label].get("completed_case_ids") != expected_ids:
+            raise ReplayInputError("replay execution order and arm checkpoint prefixes do not match")
+        expected_status = _arm_status(label, states[label], len(sources[label]), status)
+        if checkpoints[label].get("status") != expected_status:
+            raise ReplayInputError(f"replay checkpoint status is incoherent for {label}")
+
+    count = len(execution_order)
+    has_reader_failures = any(case.get("reader_error") for arm_cases in states.values() for case in arm_cases)
+    if status in {"canary_completed", "mode_unverified", "canary_failed"} and count != 1:
+        raise ReplayInputError(f"replay summary status {status} requires exactly one canary call")
+    if status == "running" and not 1 <= count < len(canonical_order):
+        raise ReplayInputError("replay summary running status has an invalid call count")
+    if status in {"completed", "completed_with_failures"} and count != len(canonical_order):
+        raise ReplayInputError(f"replay summary status {status} requires all logical calls")
+    if status == "completed" and has_reader_failures:
+        raise ReplayInputError("replay summary completed status conflicts with reader failures")
+    if status == "completed_with_failures" and not has_reader_failures:
+        raise ReplayInputError("replay summary completed_with_failures status requires a reader failure")
+
+    qwen_results = states["qwen37"]
+    canary_result = qwen_results[0] if qwen_results else None
+    reader_call = canary_result.get("reader_call") if canary_result is not None else None
+    canary_verified = (
+        canary_result is not None
+        and not canary_result.get("reader_error")
+        and isinstance(canary_result.get("qa"), Mapping)
+        and isinstance(reader_call, Mapping)
+        and reader_call.get("thinking_verified") is True
+    )
+    if status not in {"mode_unverified", "canary_failed"} and not canary_verified:
+        raise ReplayInputError("replay checkpoint does not contain a successful verified Qwen canary")
+    if status == "mode_unverified" and (
+        canary_result is None
+        or canary_result.get("reader_error")
+        or not isinstance(reader_call, Mapping)
+        or reader_call.get("thinking_verified") is not False
+    ):
+        raise ReplayInputError("replay mode_unverified status does not match the Qwen canary")
+    if status == "canary_failed" and (canary_result is None or not canary_result.get("reader_error")):
+        raise ReplayInputError("replay canary_failed status does not match the Qwen canary")
+
+    expected_failed_ids = [
+        f"{label}:{case.get('case_id')}" for label in ARM_LABELS for case in states[label] if case.get("reader_error")
+    ]
+    if summary.get("failed_case_ids") != expected_failed_ids:
+        raise ReplayInputError("replay summary failed case IDs do not match arm checkpoints")
 
 
 def _ranking(arms: Mapping[str, Mapping[str, Any]], metric_group: str) -> list[str]:
@@ -995,7 +1095,10 @@ def _build_summary(
         "logical_calls": len(execution_order),
         "execution_order": list(execution_order),
         "failed_case_ids": [
-            f"{label}:{case.get('case_id')}" for label in ARM_LABELS for case in states[label] if case.get("error")
+            f"{label}:{case.get('case_id')}"
+            for label in ARM_LABELS
+            for case in states[label]
+            if case.get("reader_error")
         ],
         "arms": arms,
         "original_ranking": _ranking(arms, "original"),
@@ -1080,9 +1183,13 @@ def _resume_state(
         raise ReplayInputError("replay summary execution order is invalid")
 
     states = {label: [dict(case) for case in checkpoints[label]["cases"]] for label in ARM_LABELS}
-    completed_physical = {f"{label}:{case.get('case_id')}" for label in ARM_LABELS for case in states[label]}
-    if len(completed_physical) != len(execution_order) or set(execution_order) != completed_physical:
-        raise ReplayInputError("replay summary and arm checkpoints do not match")
+    _validate_resume_progress(
+        sources,
+        checkpoints,
+        states,
+        summary,
+        execution_order,
+    )
     status = str(summary.get("status") or "")
     if status in {"mode_unverified", "canary_failed"}:
         raise ReplayInputError(f"cannot resume replay with status {status}")
@@ -1092,13 +1199,16 @@ def _resume_state(
     return states, [str(item) for item in execution_order], started_at, summary
 
 
-def _failed_replay_case(replay_case: ReplayCase) -> dict[str, Any]:
+def _failed_replay_case(
+    replay_case: ReplayCase,
+    metadata: ReaderCallMetadata | None,
+) -> dict[str, Any]:
     result = deepcopy(replay_case.source_case)
     result.pop("messages", None)
     result["qa"] = None
     result["answer_entity"] = None
-    result["reader_call"] = None
-    result["error"] = {"type": "reader_call_failed", "message": "reader replay failed"}
+    result["reader_call"] = asdict(metadata) if metadata is not None else None
+    result["reader_error"] = "reader_call_failed"
     return result
 
 
@@ -1128,11 +1238,7 @@ def run_replay(
         previous_summary = {}
 
     completed = {(label, str(case.get("case_id"))) for label in ARM_LABELS for case in states[label]}
-    qwen_cases = list(sources["qwen37"])
-    canary = next(case for case in qwen_cases if case.case_id == CANARY_CASE_ID)
-    ordered = [("qwen37", canary)]
-    ordered.extend(("qwen37", case) for case in qwen_cases if case.case_id != CANARY_CASE_ID)
-    ordered.extend((label, case) for label in ARM_LABELS[1:] for case in sources[label])
+    ordered = _ordered_replay_cases(sources)
     remaining = [(label, case) for label, case in ordered if (label, case.case_id) not in completed]
 
     if not remaining or (canary_only and ("qwen37", CANARY_CASE_ID) in completed):
@@ -1151,7 +1257,7 @@ def run_replay(
                 base_url=base_url,
             )
         except Exception:
-            result = _failed_replay_case(replay_case)
+            result = _failed_replay_case(replay_case, transport.last_call)
             failed = True
         states[label].append(result)
 
@@ -1168,7 +1274,7 @@ def run_replay(
         if status == "running" and remaining_index == len(remaining) - 1:
             status = (
                 "completed_with_failures"
-                if any(case.get("error") for arm_cases in states.values() for case in arm_cases)
+                if any(case.get("reader_error") for arm_cases in states.values() for case in arm_cases)
                 else "completed"
             )
         summary = _persist_replay(
