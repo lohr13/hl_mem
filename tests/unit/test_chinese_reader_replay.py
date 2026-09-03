@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import types
 from copy import deepcopy
 from dataclasses import replace
@@ -23,6 +24,45 @@ from tests.eval.chinese_e2e import (
 
 BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 MODEL = "glm-5.3-flash"
+
+
+class FakeThinkingTransport:
+    def __init__(
+        self,
+        *,
+        answer: str,
+        verified: bool,
+        fail_on_calls: set[int] | None = None,
+    ) -> None:
+        self.answer = answer
+        self.verified = verified
+        self.fail_on_calls = fail_on_calls or set()
+        self.calls: list[tuple[str, str, str, str, str]] = []
+        self.last_call: replay.ReaderCallMetadata | None = None
+
+    def __call__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[str, int]:
+        self.calls.append((api_key, base_url, model, system_prompt, user_prompt))
+        call_number = len(self.calls)
+        self.last_call = None
+        if call_number in self.fail_on_calls:
+            raise RuntimeError("private provider failure")
+        self.last_call = replay.ReaderCallMetadata(
+            input_tokens=10,
+            output_tokens=7,
+            reasoning_tokens=5,
+            total_tokens=17,
+            latency_seconds=0.25,
+            attempts=2,
+            thinking_verified=self.verified,
+        )
+        return self.answer, 17
 
 
 def success_envelope() -> dict[str, Any]:
@@ -830,3 +870,300 @@ def test_response_parser_rejects_missing_or_empty_final_content(content: object)
 
     with pytest.raises(ValueError, match="final answer"):
         replay.parse_glm_thinking_response(envelope)
+
+
+def synthetic_three_arm_cases(
+    *,
+    include_canary: bool,
+) -> dict[str, tuple[replay.ReplayCase, ...]]:
+    case_ids = [f"memdaily:simple:events:{index}" for index in range(1, 41)]
+    if include_canary:
+        case_ids[13] = replay.CANARY_CASE_ID
+    result: dict[str, tuple[replay.ReplayCase, ...]] = {}
+    for arm_number, label in enumerate(replay.ARM_LABELS, start=1):
+        arm = replay.SourceArm(
+            label=label,
+            report_path=Path(f"synthetic-{label}.json"),
+            report_sha256=str(arm_number) * 64,
+            extractor_model=f"extractor-{label}",
+        )
+        cases: list[replay.ReplayCase] = []
+        for index, case_id in enumerate(case_ids):
+            dataset = "perltqa" if case_id == replay.CANARY_CASE_ID else "memdaily"
+            trajectory = replace(
+                make_trajectory(case_id=case_id),
+                answer="synthetic answer",
+                messages=(),
+            )
+            source_case = make_case(case_id)
+            source_case.update(
+                dataset=dataset,
+                slice="perltqa_dialogues" if dataset == "perltqa" else "memdaily_simple",
+                answer="synthetic answer",
+                retrieval={"recall_at_5": 1.0, "mrr": 1.0},
+                ingest={"stored_claims": 1},
+                gold_extraction_units=[f"event-{case_id}"],
+                covered_extraction_units=[f"event-{case_id}"],
+            )
+            source_case["qa"].update(
+                gold_answer="synthetic answer",
+                predicted_answer="synthetic answer" if index % 2 == 0 else "wrong",
+                exact_match=index % 2 == 0,
+                f1=1.0 if index % 2 == 0 else 0.0,
+                answer_correct=float(index % 2 == 0),
+            )
+            retrieved = (
+                {"rank": 1, "text": f"first evidence {case_id}", "entities": [], "seed_rank": 1},
+                {"rank": 2, "text": f"second evidence {case_id}", "entities": [], "seed_rank": 2},
+            )
+            source_case["retrieved"] = [dict(item) for item in retrieved]
+            cases.append(
+                replay.ReplayCase(
+                    arm=arm,
+                    case_id=case_id,
+                    dataset=dataset,
+                    slice_name=str(source_case["slice"]),
+                    trajectory=trajectory,
+                    answer_anchors=("synthetic answer",) if dataset == "perltqa" else (),
+                    accepted_rubrics=(),
+                    answer_entity_gold=make_gold(case_id),
+                    retrieved=retrieved,
+                    source_case=source_case,
+                )
+            )
+        result[label] = tuple(cases)
+    return result
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "expected"),
+    [
+        (True, True, "unchanged_correct"),
+        (False, False, "unchanged_wrong"),
+        (False, True, "wrong_to_right"),
+        (True, False, "right_to_wrong"),
+    ],
+)
+def test_classify_flip(before: bool, after: bool, expected: str) -> None:
+    assert replay.classify_flip(before, after) == expected
+
+
+def test_score_replayed_case_reuses_prompt_evidence_and_answerability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("HL_MEM_EVAL_QA_API_KEY", raising=False)
+    monkeypatch.delenv("HL_MEM_EVAL_QA_BASE_URL", raising=False)
+    monkeypatch.delenv("HL_MEM_EVAL_QA_MODEL", raising=False)
+    replay_case = synthetic_three_arm_cases(include_canary=True)["qwen37"][13]
+    original = deepcopy(replay_case.source_case)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    scored = replay.score_replayed_case(
+        replay_case,
+        transport,
+        api_key="synthetic-secret",
+        base_url=BASE_URL,
+    )
+
+    assert len(transport.calls) == 1
+    api_key, base_url, model, _, user_prompt = transport.calls[0]
+    assert (api_key, base_url, model) == ("synthetic-secret", BASE_URL, MODEL)
+    assert user_prompt.index("first evidence") < user_prompt.index("second evidence")
+    assert scored["qa"]["answerability"] == original["qa"]["answerability"]
+    assert scored["qa"]["answer_correct"] == 1.0
+    assert scored["retrieved"] == original["retrieved"]
+    assert scored["retrieval"] == original["retrieval"]
+    assert scored["ingest"] == original["ingest"]
+    assert scored["reader_call"]["thinking_verified"] is True
+    assert replay_case.source_case == original
+    assert "HL_MEM_EVAL_QA_API_KEY" not in os.environ
+    assert "HL_MEM_EVAL_QA_BASE_URL" not in os.environ
+    assert "HL_MEM_EVAL_QA_MODEL" not in os.environ
+
+
+def test_run_replay_calls_canary_first_and_counts_it_once(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+    summary = replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=False)
+
+    assert summary["execution_order"][0] == f"qwen37:{replay.CANARY_CASE_ID}"
+    assert len(transport.calls) == 120
+    assert sum(item.endswith(replay.CANARY_CASE_ID) for item in summary["execution_order"]) == 3
+    assert summary["status"] == "completed"
+    assert summary["logical_calls"] == 120
+    assert set(summary["arms"]) == set(replay.ARM_LABELS)
+    assert all(len(summary["arms"][label]["flips"]["wrong_to_right"]) == 20 for label in replay.ARM_LABELS)
+    assert "gate" not in summary
+
+
+def test_canary_only_checkpoints_one_call_and_resume_does_not_repeat_it(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    first = FakeThinkingTransport(answer="synthetic answer", verified=True)
+    partial = replay.run_replay(sources, first, output_root=tmp_path, canary_only=True, resume=False)
+    assert partial["status"] == "canary_completed"
+    assert len(first.calls) == 1
+    assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["completed_case_ids"] == [
+        replay.CANARY_CASE_ID
+    ]
+    assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["completed_at"] is not None
+    assert json.loads((tmp_path / "glm53.json").read_text(encoding="utf-8"))["completed_at"] is None
+
+    second = FakeThinkingTransport(answer="synthetic answer", verified=True)
+    complete = replay.run_replay(sources, second, output_root=tmp_path, canary_only=False, resume=True)
+    assert len(second.calls) == 119
+    assert complete["logical_calls"] == 120
+
+
+def test_unverified_canary_aborts_before_second_call(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=False)
+    summary = replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=False)
+    assert summary["status"] == "mode_unverified"
+    assert len(transport.calls) == 1
+    assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["status"] == "mode_unverified"
+
+
+def test_checkpoint_contains_no_secret_envelope_or_reasoning(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+    replay.run_replay(
+        sources,
+        transport,
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+        api_key="Bearer SYNTHETIC_SECRET",
+    )
+    raw = (tmp_path / "qwen37.json").read_text(encoding="utf-8")
+    assert "private chain" not in raw
+    assert "Bearer " not in raw
+    assert '"reasoning_content"' not in raw
+
+
+@pytest.mark.parametrize(
+    ("file_name", "mutation", "message"),
+    [
+        ("qwen37.json", lambda value: value["source"].update(sha256="0" * 64), "source hash"),
+        ("qwen37.json", lambda value: value["reader"].update(model="other"), "reader identity"),
+        ("qwen37.json", lambda value: value.update(thinking={"type": "disabled"}), "thinking"),
+        ("qwen37.json", lambda value: value["versions"].update(prompt="other"), "prompt/scorer"),
+        ("qwen37.json", lambda value: value["case_ids"].pop(), "case set"),
+    ],
+)
+def test_resume_rejects_identity_mismatch_before_call(
+    tmp_path: Path,
+    file_name: str,
+    mutation: Any,
+    message: str,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+    path = tmp_path / file_name
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutation(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match=message):
+        replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=True)
+
+    assert transport.calls == []
+
+
+def test_resume_rejects_corrupt_checkpoint_before_call(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+    (tmp_path / "glm53.json").write_text("{broken", encoding="utf-8")
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="checkpoint"):
+        replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=True)
+
+    assert transport.calls == []
+
+
+def test_resume_rejects_tampered_checkpoint_metrics_before_call(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=True,
+        resume=False,
+    )
+    path = tmp_path / "qwen37.json"
+    checkpoint = json.loads(path.read_text(encoding="utf-8"))
+    checkpoint["metrics"]["overall"]["qa_accuracy"] = 0.0
+    path.write_text(json.dumps(checkpoint), encoding="utf-8")
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="metrics"):
+        replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=True)
+
+    assert transport.calls == []
+
+
+def test_partial_failures_are_checkpointed_and_do_not_stop_later_cases(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True, fail_on_calls={2, 42})
+
+    summary = replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=False)
+
+    assert len(transport.calls) == 120
+    assert summary["status"] == "completed_with_failures"
+    assert summary["logical_calls"] == 120
+    assert len(summary["failed_case_ids"]) == 2
+    assert sum(len(arm["failed_case_ids"]) for arm in summary["arms"].values()) == 2
+    assert summary["arms"]["qwen37"]["paired_delta"]["qa_accuracy"] == pytest.approx(20 / 39)
+
+
+def test_main_rejects_missing_or_placeholder_secret_before_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(replay, "load_replay_cases", lambda manifest, sources: pytest.fail("loaded sources"))
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_API_KEY=xxx\n", encoding="utf-8")
+
+    exit_code = replay.main(["--env-file", str(env_file), "--output-root", str(tmp_path / "out")])
+
+    assert exit_code != 0
+
+
+def test_main_returns_nonzero_when_canary_cannot_verify_thinking(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    monkeypatch.setenv("LLM_API_KEY", "synthetic-secret")
+    monkeypatch.setattr(replay, "load_replay_cases", lambda manifest, paths: sources)
+
+    class FakeClient:
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(replay.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        replay,
+        "GLMThinkingTransport",
+        lambda client: FakeThinkingTransport(answer="synthetic answer", verified=False),
+    )
+
+    exit_code = replay.main(["--output-root", str(tmp_path / "out")])
+
+    assert exit_code != 0
