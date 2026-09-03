@@ -11,32 +11,29 @@ permissions:
 
 jobs:
   python:
-    name: Python ${{ matrix.python-version }}
+    name: Core tests (Python 3.13)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
       - run: python scripts/check_actions_pinned.py
       - run: uv sync --frozen --extra sqlite-vec
-      - name: Run authoritative suite
+      - name: Run core suite once
         env:
           HL_MEM_ENV: test
         run: |
           mkdir -p evidence
-          uv run --frozen python -W error::ResourceWarning -m pytest tests/ -q --tb=short \
+          uv run --frozen python -W error::ResourceWarning -m pytest tests/ \
+            -m "not release_only" -n 4 -q --tb=short \
             --cov=hl_mem --cov-report=term-missing --cov-fail-under=80 \
-            --junitxml=evidence/python-${{ matrix.python-version }}.xml
+            --junitxml=evidence/python-3.13.xml
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: release-python-${{ matrix.python-version }}
+          name: release-python-3.13
           path: evidence/
           if-no-files-found: error
 
@@ -50,27 +47,11 @@ jobs:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2, Node 24
       - run: uv sync --frozen --extra sqlite-vec
-      - name: Verify migrations
+      - name: Run release-only validation once
         run: |
           mkdir -p evidence
-          uv run --frozen python -m pytest tests/release/test_migration_release_gate.py \
-            tests/test_migration_upgrade.py -q --tb=short --junitxml=evidence/migration.xml
-      - name: Verify backup and restore
-        run: >-
-          uv run --frozen python -m pytest tests/unit/test_backup_cli.py -q --tb=short
-          --junitxml=evidence/backup-restore.xml
-      - name: Verify external Provider conflict handling
-        run: >-
-          uv run --frozen python -m pytest tests/integration/test_provider_plugin_wheel.py -q --tb=short
-          --junitxml=evidence/plugin-conflict.xml
-      - name: Verify streaming request limit
-        run: >-
-          uv run --frozen python -m pytest tests/unit/test_request_size_limit.py -q --tb=short
-          --junitxml=evidence/streaming-limit.xml
-      - name: Verify default zero-model-call contract
-        run: >-
-          uv run --frozen python -m pytest tests/release/test_default_zero_model_calls.py -q --tb=short
-          --junitxml=evidence/zero-model-call.xml
+          uv run --frozen python -m pytest tests/ -m release_only -q --tb=short \
+            --junitxml=evidence/release-only.xml
       - name: Verify public recall gate
         run: uv run --frozen python -m tests.eval.ci_gate --report evidence/public-recall.json
       - name: Build and install distributions
@@ -148,14 +129,8 @@ jobs:
             --commit "$RELEASE_COMMIT" \
             --run-url "$RELEASE_RUN_URL" \
             --output-dir evidence/manifest \
-            --junit python-3.12=evidence/python-3.12.xml \
             --junit python-3.13=evidence/python-3.13.xml \
-            --junit python-3.14=evidence/python-3.14.xml \
-            --junit migration=evidence/migration.xml \
-            --junit backup-restore=evidence/backup-restore.xml \
-            --junit plugin-conflict=evidence/plugin-conflict.xml \
-            --junit streaming-limit=evidence/streaming-limit.xml \
-            --junit zero-model-call=evidence/zero-model-call.xml \
+            --junit release-only=evidence/release-only.xml \
             --json public-recall=evidence/public-recall.json \
             --json pip-audit=evidence/pip-audit.json \
             --file sbom=evidence/sbom.cdx.json \

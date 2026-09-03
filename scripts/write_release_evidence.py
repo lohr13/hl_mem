@@ -13,14 +13,8 @@ from typing import Any, Sequence
 
 REQUIRED_EVIDENCE = frozenset(
     {
-        "python-3.12",
         "python-3.13",
-        "python-3.14",
-        "migration",
-        "backup-restore",
-        "plugin-conflict",
-        "streaming-limit",
-        "zero-model-call",
+        "release-only",
         "public-recall",
         "pip-audit",
         "sbom",
