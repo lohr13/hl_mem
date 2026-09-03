@@ -900,6 +900,7 @@ def score_replayed_case(
     base_url: str = DEFAULT_BASE_URL,
 ) -> dict[str, Any]:
     """Replay exactly the recorded evidence through the frozen QA prompt/scorers."""
+    transport.last_call = None
     source_qa = replay_case.source_case.get("qa")
     if not isinstance(source_qa, Mapping):
         raise ReplayInputError(f"source case {replay_case.case_id} requires QA output")
@@ -907,7 +908,6 @@ def score_replayed_case(
     if not isinstance(answerability, str):
         raise ReplayInputError(f"source case {replay_case.case_id} requires QA answerability")
 
-    transport.last_call = None
     with _scoped_environment(
         {
             "HL_MEM_EVAL_QA_API_KEY": api_key,
@@ -1285,6 +1285,7 @@ def _build_summary(
     started_at: str,
     updated_at: str,
     aborted_case_id: str | None = None,
+    aborted_call: Mapping[str, Any] | None = None,
     abort_stage: str | None = None,
 ) -> dict[str, Any]:
     arms = {label: summarize_arm(sources[label], states[label]) for label in ARM_LABELS}
@@ -1320,6 +1321,8 @@ def _build_summary(
         summary["replay_ranking"] = _ranking(arms, "replay")
     if aborted_case_id is not None:
         summary["aborted_case_id"] = aborted_case_id
+    if aborted_call is not None:
+        summary["aborted_call"] = dict(aborted_call)
     if abort_stage is not None:
         summary["abort_stage"] = abort_stage
     canary = _canary_evidence(states)
@@ -1338,6 +1341,7 @@ def _build_authoritative_state(
     started_at: str,
     updated_at: str,
     aborted_case_id: str | None = None,
+    aborted_call: Mapping[str, Any] | None = None,
     abort_stage: str | None = None,
 ) -> dict[str, Any]:
     state = {
@@ -1360,6 +1364,8 @@ def _build_authoritative_state(
     }
     if aborted_case_id is not None:
         state["aborted_case_id"] = aborted_case_id
+    if aborted_call is not None:
+        state["aborted_call"] = dict(aborted_call)
     if abort_stage is not None:
         state["abort_stage"] = abort_stage
     return state
@@ -1411,6 +1417,7 @@ def _project_authoritative_state(
         started_at=started_at,
         updated_at=updated_at,
         aborted_case_id=state.get("aborted_case_id"),
+        aborted_call=state.get("aborted_call"),
         abort_stage=state.get("abort_stage"),
     )
     _write_json_atomic(output_root / "summary.json", summary)
@@ -1427,6 +1434,7 @@ def _persist_replay(
     execution_order: Sequence[str],
     started_at: str,
     aborted_case_id: str | None = None,
+    aborted_call: Mapping[str, Any] | None = None,
     abort_stage: str | None = None,
 ) -> dict[str, Any]:
     updated_at = datetime.now(timezone.utc).isoformat()
@@ -1439,6 +1447,7 @@ def _persist_replay(
         started_at=started_at,
         updated_at=updated_at,
         aborted_case_id=aborted_case_id,
+        aborted_call=aborted_call,
         abort_stage=abort_stage,
     )
     _write_json_atomic(_authoritative_state_path(output_root), state)
@@ -1628,8 +1637,15 @@ def _validate_authoritative_state(
     canonical_order = [f"{label}:{case.case_id}" for label, case in canonical_pairs]
     if execution_order != canonical_order[: len(execution_order)]:
         raise ReplayInputError("authoritative replay execution order is not a canonical prefix")
+    raw_aborted_call = state.get("aborted_call")
+    has_aborted_call = "aborted_call" in state
+    if has_aborted_call and (status != "aborted" or not isinstance(raw_aborted_call, Mapping)):
+        raise ReplayInputError("authoritative replay aborted call is invalid")
+    completed_call_count = len(execution_order) - int(has_aborted_call)
+    if completed_call_count < 0:
+        raise ReplayInputError("authoritative replay aborted call is invalid")
     for label in ARM_LABELS:
-        expected_cases = [case for pair_label, case in canonical_pairs[: len(execution_order)] if pair_label == label]
+        expected_cases = [case for pair_label, case in canonical_pairs[:completed_call_count] if pair_label == label]
         expected_ids = [case.case_id for case in expected_cases]
         actual_ids = [str(case.get("case_id")) for case in states[label]]
         if actual_ids != expected_ids:
@@ -1656,9 +1672,17 @@ def _validate_authoritative_state(
     if status == "aborted":
         aborted_case_id = state.get("aborted_case_id")
         preflight_abort = state.get("abort_stage") == "input_validation" and count == 0
-        if not preflight_abort and (
+        if has_aborted_call:
+            if not isinstance(raw_aborted_call, Mapping):
+                raise ReplayInputError("authoritative replay aborted call is invalid")
+            metadata_fields = {field.name for field in dataclasses.fields(ReaderCallMetadata)}
+            if count == 0 or set(raw_aborted_call) != metadata_fields or aborted_case_id != execution_order[-1]:
+                raise ReplayInputError("authoritative replay aborted call is invalid")
+            _validate_reader_call_metadata(raw_aborted_call, failed=False)
+        elif not preflight_abort and (
             not isinstance(aborted_case_id, str)
-            or (count < len(canonical_order) and aborted_case_id != canonical_order[count])
+            or count >= len(canonical_order)
+            or aborted_case_id != canonical_order[count]
         ):
             raise ReplayInputError("authoritative aborted replay has an invalid aborted case")
 
@@ -1781,7 +1805,12 @@ def _backup_legacy_replay(output_root: Path) -> None:
             if sha256_file(destination) != sha256_file(source):
                 raise ReplayInputError("legacy replay backup conflicts with current artifacts")
             continue
-        shutil.copy2(source, destination)
+        temporary = destination.with_suffix(f"{destination.suffix}.tmp")
+        try:
+            shutil.copy2(source, temporary)
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def _migrate_completed_legacy_replay(
@@ -1795,7 +1824,6 @@ def _migrate_completed_legacy_replay(
         output_root=output_root,
         base_url=base_url,
     )
-    _backup_legacy_replay(output_root)
     state = _build_authoritative_state(
         sources,
         states,
@@ -1809,6 +1837,8 @@ def _migrate_completed_legacy_replay(
         "from_schema_version": LEGACY_REPLAY_SCHEMA_VERSION,
         "backup_directory": LEGACY_BACKUP_DIRECTORY,
     }
+    _validate_authoritative_state(state, sources, base_url=base_url)
+    _backup_legacy_replay(output_root)
     _write_json_atomic(_authoritative_state_path(output_root), state)
     return state
 
@@ -1920,6 +1950,7 @@ def run_replay(
         physical_id = f"{label}:{replay_case.case_id}"
         failed = False
         fatal = False
+        aborted_metadata: ReaderCallMetadata | None = None
         try:
             result = score_replayed_case(
                 replay_case,
@@ -1931,9 +1962,14 @@ def run_replay(
             result = _failed_replay_case(replay_case, error.metadata)
             failed = True
         except Exception as error:
+            aborted_metadata = transport.last_call
             _clear_exception_chain(error)
             fatal = True
         if fatal:
+            aborted_call = None
+            if aborted_metadata is not None:
+                execution_order.append(physical_id)
+                aborted_call = asdict(aborted_metadata)
             _persist_replay(
                 sources,
                 states,
@@ -1943,6 +1979,7 @@ def run_replay(
                 execution_order=execution_order,
                 started_at=started_at,
                 aborted_case_id=physical_id,
+                aborted_call=aborted_call,
             )
             raise ReplayAbortedError("reader replay aborted")
         execution_order.append(physical_id)

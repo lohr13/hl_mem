@@ -1444,6 +1444,21 @@ def convert_completed_replay_to_legacy(output_root: Path) -> None:
     summary_path.write_text(json.dumps(summary), encoding="utf-8")
 
 
+def create_completed_legacy_replay(
+    output_root: Path,
+    sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=output_root,
+        canary_only=False,
+        resume=False,
+    )
+    (output_root / replay.AUTHORITATIVE_STATE_FILE).unlink()
+    convert_completed_replay_to_legacy(output_root)
+
+
 def test_completed_legacy_replay_migrates_with_backup_and_zero_calls(tmp_path: Path) -> None:
     sources = synthetic_three_arm_cases(include_canary=True)
     replay.run_replay(
@@ -1474,6 +1489,98 @@ def test_completed_legacy_replay_migrates_with_backup_and_zero_calls(tmp_path: P
     assert state["migration"]["from_schema_version"] == replay.LEGACY_REPLAY_SCHEMA_VERSION
     backup = tmp_path / replay.LEGACY_BACKUP_DIRECTORY
     assert {name: replay.sha256_file(backup / name) for name in artifact_names} == before
+
+
+def test_legacy_migration_rejects_private_messages_before_creating_artifacts(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    create_completed_legacy_replay(tmp_path, sources)
+    mutate_json(
+        tmp_path / "qwen37.json",
+        lambda value: value["cases"][1].update(messages=[{"content": "PRIVATE_MESSAGE"}]),
+    )
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="private messages"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=False,
+            resume=True,
+        )
+
+    assert transport.calls == []
+    assert not (tmp_path / replay.AUTHORITATIVE_STATE_FILE).exists()
+    assert not (tmp_path / replay.LEGACY_BACKUP_DIRECTORY).exists()
+
+
+def test_legacy_migration_rejects_coherently_tampered_scoring_before_artifacts(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    create_completed_legacy_replay(tmp_path, sources)
+    checkpoint_path = tmp_path / "qwen37.json"
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint["cases"][1]["qa"].update(exact_match=False, answer_correct=False)
+    checkpoint["metrics"] = replay.aggregate_results(checkpoint["cases"])
+    checkpoint_path.write_text(json.dumps(checkpoint), encoding="utf-8")
+    summary_path = tmp_path / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["arms"]["qwen37"] = replay.summarize_arm(sources["qwen37"], checkpoint["cases"])
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="invalid QA scoring"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=False,
+            resume=True,
+        )
+
+    assert transport.calls == []
+    assert not (tmp_path / replay.AUTHORITATIVE_STATE_FILE).exists()
+    assert not (tmp_path / replay.LEGACY_BACKUP_DIRECTORY).exists()
+
+
+def test_legacy_backup_copy_failure_leaves_no_partial_destination(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    create_completed_legacy_replay(tmp_path, sources)
+    real_copy2 = replay.shutil.copy2
+
+    def fail_after_partial_copy(source: Path, destination: Path) -> None:
+        del source
+        destination.write_bytes(b"partial legacy backup")
+        raise OSError("synthetic backup interruption")
+
+    monkeypatch.setattr(replay.shutil, "copy2", fail_after_partial_copy)
+    with pytest.raises(OSError, match="backup interruption"):
+        replay.run_replay(
+            sources,
+            FakeThinkingTransport(answer="synthetic answer", verified=True),
+            output_root=tmp_path,
+            canary_only=False,
+            resume=True,
+        )
+
+    backup_root = tmp_path / replay.LEGACY_BACKUP_DIRECTORY
+    assert not (backup_root / "qwen37.json").exists()
+    assert not list(backup_root.glob("*.tmp"))
+    assert not (tmp_path / replay.AUTHORITATIVE_STATE_FILE).exists()
+
+    monkeypatch.setattr(replay.shutil, "copy2", real_copy2)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+    summary = replay.run_replay(
+        sources,
+        transport,
+        output_root=tmp_path,
+        canary_only=False,
+        resume=True,
+    )
+    assert transport.calls == []
+    assert summary["status"] == "completed"
 
 
 def test_partial_legacy_replay_is_rejected_without_rewrite_or_transport_call(tmp_path: Path) -> None:
@@ -1676,22 +1783,144 @@ def test_scorer_failure_persists_aborted_state_and_raises_generic_exception(
         raise RuntimeError("PRIVATE_SCORER_FAILURE")
 
     monkeypatch.setattr(replay, "score_answer", fail_score)
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
     with pytest.raises(replay.ReplayAbortedError, match="reader replay aborted") as raised:
         replay.run_replay(
             sources,
-            FakeThinkingTransport(answer="synthetic answer", verified=True),
+            transport,
             output_root=tmp_path,
             canary_only=False,
             resume=False,
         )
 
     summary_raw = (tmp_path / "summary.json").read_text(encoding="utf-8")
-    assert json.loads(summary_raw)["status"] == "aborted"
+    summary = json.loads(summary_raw)
+    state = json.loads((tmp_path / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8"))
+    physical_id = f"qwen37:{replay.CANARY_CASE_ID}"
+    assert len(transport.calls) == 1
+    for payload in (state, summary):
+        assert payload["status"] == "aborted"
+        assert payload["logical_calls"] == 1
+        assert payload["execution_order"] == [physical_id]
+        assert payload["aborted_case_id"] == physical_id
+        assert payload["aborted_call"] == {
+            "input_tokens": 10,
+            "output_tokens": 7,
+            "reasoning_tokens": 5,
+            "total_tokens": 17,
+            "latency_seconds": 0.25,
+            "attempts": 2,
+            "thinking_verified": True,
+        }
+        assert "original_ranking" not in payload
+        assert "replay_ranking" not in payload
+    assert state["case_states"]["qwen37"] == []
     assert "PRIVATE_SCORER_FAILURE" not in summary_raw
     assert "PRIVATE_SCORER_FAILURE" not in str(raised.value)
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        pytest.param(httpx.Response(400), id="http-400"),
+        pytest.param({"choices": []}, id="invalid-response"),
+    ],
+)
+def test_fatal_reader_response_records_attempt_without_a_completed_case(
+    tmp_path: Path,
+    action: dict[str, Any] | httpx.Response,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    client, requests = mock_client([action])
+    try:
+        with pytest.raises(replay.ReplayAbortedError, match="reader replay aborted"):
+            replay.run_replay(
+                sources,
+                replay.GLMThinkingTransport(client, max_attempts=1, sleep=lambda _: None),
+                output_root=tmp_path,
+                canary_only=False,
+                resume=False,
+                api_key="synthetic-secret",
+            )
+    finally:
+        client.close()
+
+    assert len(requests) == 1
+    physical_id = f"qwen37:{replay.CANARY_CASE_ID}"
+    state = json.loads((tmp_path / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8"))
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    validated_states = replay._validate_authoritative_state(state, sources, base_url=BASE_URL)
+    assert all(validated_states[label] == [] for label in replay.ARM_LABELS)
+    for payload in (state, summary):
+        assert payload["status"] == "aborted"
+        assert payload["logical_calls"] == 1
+        assert payload["execution_order"] == [physical_id]
+        assert payload["aborted_case_id"] == physical_id
+        aborted_call = payload["aborted_call"]
+        assert set(aborted_call) == {
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "total_tokens",
+            "latency_seconds",
+            "attempts",
+            "thinking_verified",
+        }
+        assert aborted_call["attempts"] == 1
+        assert aborted_call["input_tokens"] == 0
+        assert aborted_call["output_tokens"] == 0
+        assert aborted_call["reasoning_tokens"] == 0
+        assert aborted_call["total_tokens"] == 0
+        assert aborted_call["latency_seconds"] >= 0.0
+        assert aborted_call["thinking_verified"] is False
+        assert "original_ranking" not in payload
+        assert "replay_ranking" not in payload
+    assert state["case_states"]["qwen37"] == []
+    assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["cases"] == []
+
+
+def test_pre_call_input_failure_does_not_invent_a_physical_call(tmp_path: Path) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    canary = next(case for case in sources["qwen37"] if case.case_id == replay.CANARY_CASE_ID)
+    canary.source_case["qa"] = None
+
+    class NeverCalledTransport:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.last_call: replay.ReaderCallMetadata | None = replay.ReaderCallMetadata(
+                9,
+                9,
+                9,
+                27,
+                9.0,
+                3,
+                True,
+            )
+
+        def __call__(self, *args: str) -> tuple[str, int]:
+            del args
+            self.calls += 1
+            raise AssertionError("transport must not be called")
+
+    transport = NeverCalledTransport()
+    with pytest.raises(replay.ReplayAbortedError, match="reader replay aborted"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=False,
+            resume=False,
+        )
+
+    assert transport.calls == 0
+    assert transport.last_call is None
+    state = json.loads((tmp_path / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8"))
+    assert state["logical_calls"] == 0
+    assert state["execution_order"] == []
+    assert "aborted_call" not in state
 
 
 def test_main_rejects_missing_or_placeholder_secret_before_transport(
