@@ -194,13 +194,13 @@ The source report hashes exactly match the official artifacts above, preserving 
 | GLM-5.3-Flash | `bed4e6ecd330f08afa0f7a7bc99b25de4c6c8af2a09d3bbd3fa902695a3965db` | `glm-5.3-flash` | `qwen3.7-plus` |
 | Local Qwen3.8-27B | `f21ac6049575cc4b5bec7c46af7e9b90d2437a1314438582810021f2a102a9be` | `qwen3.8-27b-ud-iq4-xs` | `qwen3.7-plus` |
 
-The original reader identity was `qwen3.7-plus` with thinking enabled, thinking budget 2,048, and answer budget 512. The replay reader identity was `glm-5.3-flash` at `https://open.bigmodel.cn/api/paas/v4` with `thinking={"type":"enabled"}`. It retained prompt `memdaily-qa-prompt-v1`, QA scorer `deterministic-rubric-v2`, and answer-entity scorer `answer-entity-packet-v1`. The required Qwen-arm canary `perltqa:23d905b73c57:dialogues:836f6182a0a9` produced a non-empty final answer and positive thinking verification on one attempt: 330 input, 396 output, 296 reasoning, and 726 total tokens in 13.639506 seconds. No reasoning content or private source text is recorded here.
+The original reader identity was `qwen3.7-plus` with thinking enabled, thinking budget `2048`, and answer budget `512`. The replay reader identity was `glm-5.3-flash` at `https://open.bigmodel.cn/api/paas/v4` with `thinking={"type":"enabled"}`. It retained prompt `memdaily-qa-prompt-v1`, QA scorer `deterministic-rubric-v2`, and answer-entity scorer `answer-entity-packet-v1`. The required Qwen-arm canary `perltqa:23d905b73c57:dialogues:836f6182a0a9` produced a non-empty final answer and positive thinking verification with exact metadata `attempts=1`, `input_tokens=330`, `output_tokens=396`, `reasoning_tokens=296`, `total_tokens=726`, `latency_seconds=13.639505699975416`, and `thinking_verified=true`. No reasoning content or private source text is recorded here.
 
 | Frozen extractor arm | Qwen-reader QA / F1 | GLM-reader QA / F1 | Paired accuracy / F1 delta |
 | --- | ---: | ---: | ---: |
-| Qwen3.7-Plus | 34/40 (`.850000`) / `.567305` | 36/40 (`.900000`) / `.665215` | `+.050000` / `+.097910` |
-| GLM-5.3-Flash | 33/40 (`.825000`) / `.605265` | 33/40 (`.825000`) / `.616748` | `.000000` / `+.011483` |
-| Local Qwen3.8-27B | 32/40 (`.800000`) / `.555978` | 33/40 (`.825000`) / `.600702` | `+.025000` / `+.044725` |
+| Qwen3.7-Plus | 34/40 (`0.85`) / `0.567305` | 36/40 (`0.9`) / `0.665215` | `0.050000000000000044` / `0.09791000000000005` |
+| GLM-5.3-Flash | 33/40 (`0.825`) / `0.6052649999999999` | 33/40 (`0.825`) / `0.6167475` | `0.0` / `0.011482500000000062` |
+| Local Qwen3.8-27B | 32/40 (`0.8`) / `0.5559775` | 33/40 (`0.825`) / `0.6007024999999999` | `0.02499999999999991` / `0.044724999999999904` |
 
 Original Qwen-reader ranking: Qwen3.7-Plus, GLM-5.3-Flash, Local Qwen3.8-27B. GLM-reader replay ranking: Qwen3.7-Plus, GLM-5.3-Flash, Local Qwen3.8-27B.
 
@@ -229,10 +229,10 @@ Paired flip buckets below list every case ID from the completed summary.
 
 | Frozen extractor arm | Input | Output | Reasoning | Total | Recorded latency | Attempts | Failures |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Qwen3.7-Plus | 11,090 | 6,132 | 5,316 | 17,222 | 231.197636 s | 40 | 0 |
-| GLM-5.3-Flash | 12,824 | 5,102 | 4,439 | 17,926 | 180.131960 s | 40 | 0 |
-| Local Qwen3.8-27B | 11,178 | 7,124 | 6,272 | 18,302 | 211.305878 s | 40 | 0 |
-| **Total** | **35,092** | **18,358** | **16,027** | **53,450** | **622.635474 s** | **120** | **0** |
+| Qwen3.7-Plus | `11090` | `6132` | `5316` | `17222` | `231.19763559964485` s | `40` | `0` |
+| GLM-5.3-Flash | `12824` | `5102` | `4439` | `17926` | `180.13196009979583` s | `40` | `0` |
+| Local Qwen3.8-27B | `11178` | `7124` | `6272` | `18302` | `211.30587820033543` s | `40` | `0` |
+| **Total** | **`35092`** | **`18358`** | **`16027`** | **`53450`** | **`622.6354738997761` s** | **`120`** | **`0`** |
 
 Interpretation: holding extraction and reader evidence fixed, the GLM thinking reader improved the Qwen extractor arm by two correct cases, left the GLM extractor arm unchanged in net correctness after one improvement and one regression, and improved the local arm by one correct case. The arm ranking was unchanged. These paired flips demonstrate reader sensitivity but do not reclassify extraction, retrieval, or TTL failures.
 
@@ -240,4 +240,4 @@ This reader-only replay is **not extraction run2**. Its GLM-reader scores are di
 
 ## Cleanup and scope
 
-Failed-attempt server PID 34276 and recovery server PID 2320 were each stopped exactly. Both processes were confirmed gone and port 8090 was confirmed closed. Generated reports, caches, and logs remain ignored under `var/eval/v114/candidate/**`. This research report is the only non-ignored worktree artifact and remains uncommitted while run2 is pending. No config/default was edited, and nothing was pushed, tagged, deployed, or published.
+Failed-attempt server PID 34276 and recovery server PID 2320 were each stopped exactly. Both processes were confirmed gone and port 8090 was confirmed closed. Generated reports, caches, and logs remain ignored under `var/eval/v114/candidate/**`. This research report is tracked in local commits on branch `extraction-quality-plan-ttl`; extraction run2 remains separate and pending. No runtime Provider configuration or default was switched by the replay/report work, and nothing has been pushed, tagged, deployed, or published.
