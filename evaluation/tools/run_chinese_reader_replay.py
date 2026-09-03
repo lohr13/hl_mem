@@ -98,6 +98,7 @@ OFFICIAL_READER_MODEL = "qwen3.7-plus"
 SUPPORTED_ANSWERABILITY = frozenset({"supported", "low_confidence"})
 GLM_THINKING_MODEL = "glm-5.3-flash"
 GLM_MAX_ATTEMPTS = 3
+GLM_REQUEST_TIMEOUT_SECONDS = 120.0
 DEFAULT_MANIFEST = Path("tests/eval/fixtures/chinese_e2e_sample.json")
 DEFAULT_SOURCES = {
     "qwen37": Path("var/eval/v114/candidate/full40/qwen37/run1/report.json"),
@@ -1338,7 +1339,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "qwen38-27b": args.qwen38_27b_report,
             },
         )
-        with httpx.Client() as client:
+        with httpx.Client(timeout=GLM_REQUEST_TIMEOUT_SECONDS) as client:
             summary = run_replay(
                 sources,
                 GLMThinkingTransport(client),

@@ -1167,6 +1167,9 @@ def test_main_returns_nonzero_when_canary_cannot_verify_thinking(
     monkeypatch.setattr(replay, "load_replay_cases", lambda manifest, paths: sources)
 
     class FakeClient:
+        def __init__(self, *, timeout: float = 5.0) -> None:
+            del timeout
+
         def __enter__(self) -> FakeClient:
             return self
 
@@ -1183,6 +1186,31 @@ def test_main_returns_nonzero_when_canary_cannot_verify_thinking(
     exit_code = replay.main(["--output-root", str(tmp_path / "out")])
 
     assert exit_code != 0
+
+
+def test_main_constructs_http_client_with_a_120_second_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    constructed_timeouts: list[object] = []
+
+    class RecordingClient:
+        def __init__(self, *, timeout: object = None) -> None:
+            constructed_timeouts.append(timeout)
+
+        def __enter__(self) -> RecordingClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setenv("LLM_API_KEY", "synthetic-secret")
+    monkeypatch.setattr(replay, "load_replay_cases", lambda manifest, paths: {})
+    monkeypatch.setattr(replay.httpx, "Client", RecordingClient)
+    monkeypatch.setattr(replay, "run_replay", lambda *args, **kwargs: {"status": "canary_completed"})
+
+    assert replay.main(["--output-root", str(tmp_path / "out")]) == 0
+    assert constructed_timeouts == [120.0]
 
 
 def mutate_json(path: Path, mutation: Any) -> None:
