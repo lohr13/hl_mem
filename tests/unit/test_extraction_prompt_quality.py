@@ -56,10 +56,33 @@ class ExtractionPromptQualityTest(unittest.TestCase):
             "architecture：已执行的架构决策、系统结构、组件关系",
             "identity：用户名、硬件、角色等身份信息",
             "config：端口、路径、模型名、API 地址等技术配置",
-            "fact：其他客观事实，包括一次性事件及其可回答细节",
-            "plan：已确认的计划和截止日期",
+            "fact：已完成的动作、当前状态、已生效决定及其他客观事实；后文已确认完成时，不得因前文出现“决定将”“将”或“计划”仍分类为 plan。",
+            "plan：明确仍待执行的行动，尤其是有未来日期、截止时间、周期、时间窗或条件的安排。",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
+
+    def test_prompts_define_personal_semantics_speaker_and_status_contract(self) -> None:
+        zh_lines = (
+            "- 个人语义：显式归因给某人的观点、信念、理解、感受、行为原因和实践原则若对未来问答有用，必须保留其内容；不得只记该人物讨论过某主题。",
+            "- 说话人绑定：形如「姓名：发言」时，第一人称代词和个人陈述属于冒号前姓名，不得改成泛化的“用户”；提问、未采纳引语和助手通识不得当作该人物的观点。",
+            "- 助手边界：助手关于自身身份、偏好、感受、计划或对话承诺的陈述不进入长期记忆，除非内容本身是可复用交付物、配置或已采纳项目决策。",
+            "- fact：已完成的动作、当前状态、已生效决定及其他客观事实；后文已确认完成时，不得因前文出现“决定将”“将”或“计划”仍分类为 plan。",
+            "- plan：明确仍待执行的行动，尤其是有未来日期、截止时间、周期、时间窗或条件的安排。",
+        )
+        en_lines = (
+            "- Personal meaning: preserve the content of an explicitly attributed viewpoint, belief, interpretation, feeling, behavioral reason, or practice principle when it can help a future answer; do not retain only that the person discussed a topic.",
+            "- Speaker binding: in `Name: utterance`, first-person references and personal assertions belong to the name before the colon, never a generic `user`; a question, unadopted quotation, or generic assistant explanation is not that person's viewpoint.",
+            "- Assistant boundary: skip assistant self-statements about identity, preferences, feelings, plans, or conversational promises unless the content itself is a reusable deliverable, configuration, or adopted project decision.",
+            "- fact: a completed action, current state, effective decision, or other objective fact; when later context confirms completion, earlier words such as `decided to`, `will`, or `plan to` must not keep it classified as a plan.",
+            "- plan: an explicitly pending action, especially one with a future date, deadline, recurrence, time window, or condition.",
+        )
+        for line in zh_lines:
+            self.assertEqual(SYSTEM_PROMPT.count(line), 1)
+        for line in en_lines:
+            self.assertEqual(ENGLISH_SYSTEM_PROMPT.count(line), 1)
+        for benchmark_name in ("张小红", "尼采", "徐佳", "Meet World"):
+            self.assertNotIn(benchmark_name, SYSTEM_PROMPT)
+            self.assertNotIn(benchmark_name, ENGLISH_SYSTEM_PROMPT)
 
     def test_prompt_leaves_derived_fields_to_postprocessing(self) -> None:
         for removed in (
