@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from evaluation.tools import run_memdaily_benchmark as memdaily_runner
 from evaluation.tools import run_perltqa_benchmark as perltqa_runner
@@ -46,6 +46,48 @@ def _memdaily_trajectory() -> memdaily_runner.MemDailyTrajectory:
 
 
 class MemDailyAggregationTests(unittest.TestCase):
+    def test_reader_accepts_an_explicit_transport_without_mutating_default(self) -> None:
+        trajectory = _memdaily_trajectory()
+        explicit = Mock(return_value=("An event", 19))
+        with (
+            patch.dict(
+                memdaily_runner.os.environ,
+                {
+                    "HL_MEM_EVAL_QA_API_KEY": "reader-key",
+                    "HL_MEM_EVAL_QA_BASE_URL": "https://reader.example/v1",
+                    "HL_MEM_EVAL_QA_MODEL": "reader-model",
+                },
+                clear=True,
+            ),
+            patch.object(memdaily_runner, "_qa_dashscope_chat") as default_chat,
+        ):
+            result = memdaily_runner._run_qa(
+                object(),
+                trajectory,
+                [{"rank": 1, "text": "An event happened"}],
+                Settings.for_test(),
+                qa_chat=explicit,
+            )
+
+        explicit.assert_called_once()
+        default_chat.assert_not_called()
+        self.assertEqual(explicit.call_args.args[:3], ("reader-key", "https://reader.example/v1", "reader-model"))
+        self.assertEqual(result["predicted_answer"], "An event")
+        self.assertEqual(result["usage"]["total_tokens"], 19)
+
+    def test_reader_resolves_the_module_default_transport_at_call_time(self) -> None:
+        trajectory = _memdaily_trajectory()
+        with (
+            patch.dict(memdaily_runner.os.environ, {"LLM_API_KEY": "reader-key"}, clear=True),
+            patch.object(memdaily_runner, "_qa_dashscope_chat", return_value=("An event", 23)) as default_chat,
+        ):
+            result = memdaily_runner._run_qa(
+                object(), trajectory, [{"rank": 1, "text": "An event happened"}], Settings.for_test()
+            )
+
+        default_chat.assert_called_once()
+        self.assertEqual(result["usage"]["total_tokens"], 23)
+
     def test_reader_prefers_dedicated_qa_api_key(self) -> None:
         trajectory = _memdaily_trajectory()
         settings = replace(Settings.for_test(), llm_api_key="extractor-key")

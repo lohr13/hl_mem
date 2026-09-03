@@ -19,7 +19,7 @@ import re
 import sys
 import time
 from collections import Counter, defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +59,7 @@ DEFAULT_ENV_FILE = ROOT / ".env"
 DATABASE_ROOT = ROOT / "var" / "benchmark_memdaily"
 RECALL_K = 10  # recall limit; recall@5 computed from top-5
 QA_FALLBACK_MODEL = "qwen3.7-plus"
+QAChat = Callable[[str, str, str, str, str], tuple[str, int]]
 
 
 # ─── Normalization & data structures ──────────────────────────────────────────
@@ -729,6 +730,7 @@ def _run_qa(
     settings: Settings,
     *,
     answerability: Answerability = "supported",
+    qa_chat: QAChat | None = None,
 ) -> dict[str, Any]:
     """Ask the LLM to answer the question using retrieved claims.
 
@@ -801,7 +803,8 @@ def _run_qa(
     )
     user_prompt = f"记忆片段:\n{context or '(无)'}\n\n" f"问题: {traj.question}{choice_instruction}"
 
-    answer_text, total_tokens = _qa_dashscope_chat(api_key, base_url, qa_model, system_prompt, user_prompt)
+    selected_chat = qa_chat or _qa_dashscope_chat
+    answer_text, total_tokens = selected_chat(api_key, base_url, qa_model, system_prompt, user_prompt)
 
     # Extract predicted answer and choice letter from text response
     predicted = answer_text.strip()
