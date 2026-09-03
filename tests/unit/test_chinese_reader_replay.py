@@ -1032,10 +1032,11 @@ def test_response_parser_rejects_missing_or_empty_final_content(content: object)
 def synthetic_three_arm_cases(
     *,
     include_canary: bool,
+    case_count: int = replay.EXPECTED_CASE_COUNT,
 ) -> dict[str, tuple[replay.ReplayCase, ...]]:
-    case_ids = [f"memdaily:simple:events:{index}" for index in range(1, 41)]
+    case_ids = [f"memdaily:simple:events:{index}" for index in range(1, case_count + 1)]
     if include_canary:
-        case_ids[13] = replay.CANARY_CASE_ID
+        case_ids[min(13, case_count - 1)] = replay.CANARY_CASE_ID
     result: dict[str, tuple[replay.ReplayCase, ...]] = {}
     for arm_number, label in enumerate(replay.ARM_LABELS, start=1):
         arm = replay.SourceArm(
@@ -1096,6 +1097,24 @@ def synthetic_three_arm_cases(
     return result
 
 
+@pytest.fixture
+def small_replay_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, tuple[replay.ReplayCase, ...]]:
+    monkeypatch.setattr(replay, "EXPECTED_CASE_COUNT", 2)
+    return synthetic_three_arm_cases(include_canary=True, case_count=2)
+
+
+def test_synthetic_three_arm_cases_support_small_state_scenarios(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(replay, "EXPECTED_CASE_COUNT", 2)
+    sources = synthetic_three_arm_cases(include_canary=True, case_count=2)
+
+    assert {label: len(cases) for label, cases in sources.items()} == {label: 2 for label in replay.ARM_LABELS}
+    assert replay.CANARY_CASE_ID in {case.case_id for case in sources["qwen37"]}
+
+
 @pytest.mark.parametrize(
     ("before", "after", "expected"),
     [
@@ -1129,9 +1148,12 @@ def test_ranking_uses_accuracy_only_and_groups_ties_deterministically() -> None:
     assert replay._ranking(arms, "replay") == [["qwen37"], ["glm53", "qwen38-27b"]]
 
 
-def test_incomplete_summary_omits_rankings(tmp_path: Path) -> None:
+def test_incomplete_summary_omits_rankings(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
     summary = replay.run_replay(
-        synthetic_three_arm_cases(include_canary=True),
+        small_replay_sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
         output_root=tmp_path,
         canary_only=True,
@@ -1169,12 +1191,13 @@ def test_reader_identity_is_complete_and_persists_only_an_endpoint_digest() -> N
 def test_invalid_endpoint_is_rejected_before_transport_call(
     tmp_path: Path,
     base_url: str,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
     with pytest.raises(replay.ReplayAbortedError, match="reader replay aborted"):
         replay.run_replay(
-            synthetic_three_arm_cases(include_canary=True),
+            small_replay_sources,
             transport,
             output_root=tmp_path,
             canary_only=True,
@@ -1234,8 +1257,11 @@ def test_transport_invalid_endpoint_exception_drops_embedded_credentials() -> No
     )
 
 
-def test_checkpoint_and_summary_bind_complete_input_identity(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_checkpoint_and_summary_bind_complete_input_identity(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     summary = replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -1251,9 +1277,12 @@ def test_checkpoint_and_summary_bind_complete_input_identity(tmp_path: Path) -> 
         assert artifact["extractor_models"] == replay.EXPECTED_EXTRACTOR_MODELS
 
 
-def test_summary_contains_explicit_safe_canary_evidence(tmp_path: Path) -> None:
+def test_summary_contains_explicit_safe_canary_evidence(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
     summary = replay.run_replay(
-        synthetic_three_arm_cases(include_canary=True),
+        small_replay_sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
         output_root=tmp_path,
         canary_only=True,
@@ -1277,8 +1306,9 @@ def test_summary_contains_explicit_safe_canary_evidence(tmp_path: Path) -> None:
 def test_resume_rejects_reconstructed_input_mutation_before_call(
     tmp_path: Path,
     mutation: str,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -1381,8 +1411,9 @@ def test_canary_only_checkpoints_one_call_and_resume_does_not_repeat_it(tmp_path
 def test_authoritative_state_commits_first_and_repairs_projections_without_a_call(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     real_write = replay._write_json_atomic
     writes: list[str] = []
 
@@ -1459,8 +1490,11 @@ def create_completed_legacy_replay(
     convert_completed_replay_to_legacy(output_root)
 
 
-def test_completed_legacy_replay_migrates_with_backup_and_zero_calls(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_completed_legacy_replay_migrates_with_backup_and_zero_calls(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -1485,14 +1519,17 @@ def test_completed_legacy_replay_migrates_with_backup_and_zero_calls(tmp_path: P
     assert transport.calls == []
     assert summary["status"] == "completed"
     state = json.loads((tmp_path / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8"))
-    assert state["logical_calls"] == 120
+    assert state["logical_calls"] == sum(map(len, sources.values()))
     assert state["migration"]["from_schema_version"] == replay.LEGACY_REPLAY_SCHEMA_VERSION
     backup = tmp_path / replay.LEGACY_BACKUP_DIRECTORY
     assert {name: replay.sha256_file(backup / name) for name in artifact_names} == before
 
 
-def test_legacy_migration_rejects_private_messages_before_creating_artifacts(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_legacy_migration_rejects_private_messages_before_creating_artifacts(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     create_completed_legacy_replay(tmp_path, sources)
     mutate_json(
         tmp_path / "qwen37.json",
@@ -1514,8 +1551,11 @@ def test_legacy_migration_rejects_private_messages_before_creating_artifacts(tmp
     assert not (tmp_path / replay.LEGACY_BACKUP_DIRECTORY).exists()
 
 
-def test_legacy_migration_rejects_coherently_tampered_scoring_before_artifacts(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_legacy_migration_rejects_coherently_tampered_scoring_before_artifacts(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     create_completed_legacy_replay(tmp_path, sources)
     checkpoint_path = tmp_path / "qwen37.json"
     checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
@@ -1545,8 +1585,9 @@ def test_legacy_migration_rejects_coherently_tampered_scoring_before_artifacts(t
 def test_legacy_backup_copy_failure_leaves_no_partial_destination(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     create_completed_legacy_replay(tmp_path, sources)
     real_copy2 = replay.shutil.copy2
 
@@ -1583,8 +1624,11 @@ def test_legacy_backup_copy_failure_leaves_no_partial_destination(
     assert summary["status"] == "completed"
 
 
-def test_partial_legacy_replay_is_rejected_without_rewrite_or_transport_call(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_partial_legacy_replay_is_rejected_without_rewrite_or_transport_call(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -1613,8 +1657,11 @@ def test_partial_legacy_replay_is_rejected_without_rewrite_or_transport_call(tmp
     assert not (tmp_path / replay.LEGACY_BACKUP_DIRECTORY).exists()
 
 
-def test_unverified_canary_aborts_before_second_call(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_unverified_canary_aborts_before_second_call(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     transport = FakeThinkingTransport(answer="synthetic answer", verified=False)
     summary = replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=False)
     assert summary["status"] == "mode_unverified"
@@ -1622,8 +1669,11 @@ def test_unverified_canary_aborts_before_second_call(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["status"] == "mode_unverified"
 
 
-def test_checkpoint_contains_no_secret_envelope_or_reasoning(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_checkpoint_contains_no_secret_envelope_or_reasoning(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
     replay.run_replay(
         sources,
@@ -1653,8 +1703,9 @@ def test_resume_rejects_authoritative_identity_mismatch_before_call(
     tmp_path: Path,
     mutation: Any,
     message: str,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -1688,8 +1739,9 @@ def test_resume_rejects_authoritative_identity_mismatch_before_call(
 def test_resume_rejects_tampered_non_canary_authoritative_result(
     tmp_path: Path,
     mutation: Any,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -1715,8 +1767,11 @@ def test_resume_rejects_tampered_non_canary_authoritative_result(
     assert transport.calls == []
 
 
-def test_resume_repairs_corrupt_projection_before_call(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_resume_repairs_corrupt_projection_before_call(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -1734,8 +1789,11 @@ def test_resume_repairs_corrupt_projection_before_call(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "glm53.json").read_text(encoding="utf-8"))["status"] == "pending"
 
 
-def test_resume_repairs_tampered_projection_metrics_before_call(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_resume_repairs_tampered_projection_metrics_before_call(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -1756,27 +1814,31 @@ def test_resume_repairs_tampered_projection_metrics_before_call(tmp_path: Path) 
     assert repaired["metrics"]["overall"]["qa_accuracy"] != 0.0
 
 
-def test_partial_failures_are_checkpointed_and_do_not_stop_later_cases(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
-    transport = FakeThinkingTransport(answer="synthetic answer", verified=True, fail_on_calls={2, 42})
+def test_partial_failures_are_checkpointed_and_do_not_stop_later_cases(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True, fail_on_calls={2, 4})
 
     summary = replay.run_replay(sources, transport, output_root=tmp_path, canary_only=False, resume=False)
 
-    assert len(transport.calls) == 120
+    assert len(transport.calls) == sum(map(len, sources.values()))
     assert summary["status"] == "completed_with_failures"
-    assert summary["logical_calls"] == 120
+    assert summary["logical_calls"] == sum(map(len, sources.values()))
     assert len(summary["failed_case_ids"]) == 2
     assert "original_ranking" not in summary
     assert "replay_ranking" not in summary
     assert sum(len(arm["failed_case_ids"]) for arm in summary["arms"].values()) == 2
-    assert summary["arms"]["qwen37"]["paired_delta"]["qa_accuracy"] == pytest.approx(20 / 39)
+    assert summary["arms"]["qwen37"]["paired_delta"]["qa_accuracy"] == pytest.approx(1.0)
 
 
 def test_scorer_failure_persists_aborted_state_and_raises_generic_exception(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
 
     def fail_score(*args: object, **kwargs: object) -> dict[str, Any]:
         del args, kwargs
@@ -1832,8 +1894,9 @@ def test_scorer_failure_persists_aborted_state_and_raises_generic_exception(
 def test_fatal_reader_response_records_attempt_without_a_completed_case(
     tmp_path: Path,
     action: dict[str, Any] | httpx.Response,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     client, requests = mock_client([action])
     try:
         with pytest.raises(replay.ReplayAbortedError, match="reader replay aborted"):
@@ -1882,8 +1945,11 @@ def test_fatal_reader_response_records_attempt_without_a_completed_case(
     assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["cases"] == []
 
 
-def test_pre_call_input_failure_does_not_invent_a_physical_call(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_pre_call_input_failure_does_not_invent_a_physical_call(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     canary = next(case for case in sources["qwen37"] if case.case_id == replay.CANARY_CASE_ID)
     canary.source_case["qa"] = None
 
@@ -1939,8 +2005,9 @@ def test_main_rejects_missing_or_placeholder_secret_before_transport(
 def test_main_returns_nonzero_when_canary_cannot_verify_thinking(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     monkeypatch.setenv("LLM_API_KEY", "synthetic-secret")
     monkeypatch.setattr(replay, "load_replay_cases", lambda manifest, paths: sources)
 
@@ -1970,8 +2037,9 @@ def test_main_persists_generic_abort_for_fresh_source_validation_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     sources["qwen37"] = tuple(
         replace(
             case,
@@ -2037,9 +2105,10 @@ def test_main_resume_preflight_failure_preserves_existing_authoritative_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
     output_root = tmp_path / "out"
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -2067,8 +2136,9 @@ def test_main_resume_preflight_failure_preserves_existing_authoritative_state(
 def test_main_resume_preflight_failure_preserves_unmigrated_legacy_replay(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -2097,8 +2167,9 @@ def test_main_resume_preflight_failure_preserves_unmigrated_legacy_replay(
 def test_main_classifies_exhausted_transient_canary_as_continuable_reader_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
 ) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+    sources = small_replay_sources
     transport = FakeThinkingTransport(
         answer="synthetic answer",
         verified=True,
@@ -2161,8 +2232,11 @@ def mutate_json(path: Path, mutation: Any) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_resume_rejects_unknown_summary_status_before_call(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_resume_rejects_unknown_summary_status_before_call(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -2185,8 +2259,11 @@ def test_resume_rejects_unknown_summary_status_before_call(tmp_path: Path) -> No
     assert transport.calls == []
 
 
-def test_resume_repairs_projection_status_from_authoritative_state(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_resume_repairs_projection_status_from_authoritative_state(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -2209,8 +2286,11 @@ def test_resume_repairs_projection_status_from_authoritative_state(tmp_path: Pat
     assert json.loads((tmp_path / "qwen37.json").read_text(encoding="utf-8"))["status"] == "canary_completed"
 
 
-def test_resume_rejects_canary_with_tampered_thinking_verification(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_resume_rejects_canary_with_tampered_thinking_verification(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -2237,8 +2317,11 @@ def test_resume_rejects_canary_with_tampered_thinking_verification(tmp_path: Pat
     assert transport.calls == []
 
 
-def test_resume_rejects_reordered_physical_execution_prefix(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_resume_rejects_reordered_physical_execution_prefix(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -2268,8 +2351,11 @@ def test_resume_rejects_reordered_physical_execution_prefix(tmp_path: Path) -> N
     assert transport.calls == []
 
 
-def test_resume_rejects_arbitrary_expected_case_substituted_for_canary(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_resume_rejects_arbitrary_expected_case_substituted_for_canary(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True),
@@ -2298,8 +2384,11 @@ def test_resume_rejects_arbitrary_expected_case_substituted_for_canary(tmp_path:
     assert transport.calls == []
 
 
-def test_resume_rejects_unverified_canary_with_status_tampered_to_completed(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_resume_rejects_unverified_canary_with_status_tampered_to_completed(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=False),
@@ -2325,8 +2414,11 @@ def test_resume_rejects_unverified_canary_with_status_tampered_to_completed(tmp_
     assert transport.calls == []
 
 
-def test_resume_rejects_failed_canary_with_status_tampered_to_completed(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_resume_rejects_failed_canary_with_status_tampered_to_completed(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     replay.run_replay(
         sources,
         FakeThinkingTransport(answer="synthetic answer", verified=True, fail_on_calls={1}),
@@ -2352,8 +2444,11 @@ def test_resume_rejects_failed_canary_with_status_tampered_to_completed(tmp_path
     assert transport.calls == []
 
 
-def test_retry_exhaustion_persists_terminal_attempt_and_latency_totals(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_retry_exhaustion_persists_terminal_attempt_and_latency_totals(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     client, requests = mock_client([httpx.ReadTimeout("private timeout") for _ in range(3)])
     try:
         transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=lambda _: None)
@@ -2378,8 +2473,11 @@ def test_retry_exhaustion_persists_terminal_attempt_and_latency_totals(tmp_path:
     assert "private timeout" not in json.dumps(failed)
 
 
-def test_orchestration_does_not_persist_stale_metadata_from_a_prior_call(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_orchestration_does_not_persist_stale_metadata_from_a_prior_call(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
 
     class StaleTransport:
         last_call: replay.ReaderCallMetadata | None = replay.ReaderCallMetadata(
@@ -2414,8 +2512,11 @@ def test_orchestration_does_not_persist_stale_metadata_from_a_prior_call(tmp_pat
     assert "replay_ranking" not in summary
 
 
-def test_reader_failure_preserves_non_reader_metrics_and_source_error(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
+def test_reader_failure_preserves_non_reader_metrics_and_source_error(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
     sources["qwen37"][0].source_case["retrieval"] = {"recall_at_5": 0.25, "mrr": 0.125}
     original_metrics = replay.aggregate_results([case.source_case for case in sources["qwen37"]])["overall"]
 
@@ -2437,9 +2538,12 @@ def test_reader_failure_preserves_non_reader_metrics_and_source_error(tmp_path: 
         assert checkpoint["metrics"]["overall"][metric] == original_metrics[metric]
 
 
-def test_resume_does_not_retry_completed_reader_failures(tmp_path: Path) -> None:
-    sources = synthetic_three_arm_cases(include_canary=True)
-    first = FakeThinkingTransport(answer="synthetic answer", verified=True, fail_on_calls={2, 42})
+def test_resume_does_not_retry_completed_reader_failures(
+    tmp_path: Path,
+    small_replay_sources: dict[str, tuple[replay.ReplayCase, ...]],
+) -> None:
+    sources = small_replay_sources
+    first = FakeThinkingTransport(answer="synthetic answer", verified=True, fail_on_calls={2, 4})
     partial = replay.run_replay(
         sources,
         first,
