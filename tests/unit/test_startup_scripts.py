@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -12,6 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 ISOLATED_KEYS = ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX")
+SQLITE_VEC_AVAILABLE = importlib.util.find_spec("sqlite_vec") is not None
 
 
 def _polluted_environment() -> dict[str, str]:
@@ -101,7 +103,10 @@ def test_windows_repository_launcher_drops_all_host_python_environment() -> None
     assert Path(str(payload["prefix"])).resolve() == (ROOT / ".venv").resolve()
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows evaluation launcher behavior")
+@pytest.mark.skipif(
+    os.name != "nt" or not SQLITE_VEC_AVAILABLE,
+    reason="Windows evaluation launcher behavior requires the sqlite-vec extra",
+)
 def test_windows_evaluation_launcher_rejects_host_python_path_before_imports() -> None:
     completed = subprocess.run(
         [str(ROOT / "scripts" / "hlmem-eval-python.cmd"), "-c", _environment_probe()],
@@ -119,7 +124,10 @@ def test_windows_evaluation_launcher_rejects_host_python_path_before_imports() -
     assert Path(str(payload["prefix"])).resolve() == (ROOT / ".venv").resolve()
 
 
-@pytest.mark.skipif(os.name != "nt" or shutil.which("bash") is None, reason="Windows Git Bash behavior")
+@pytest.mark.skipif(
+    os.name != "nt" or shutil.which("bash") is None or not SQLITE_VEC_AVAILABLE,
+    reason="Windows Git Bash evaluation launcher behavior requires bash and the sqlite-vec extra",
+)
 def test_git_bash_evaluation_launcher_converts_the_expected_venv_for_windows_python() -> None:
     completed = subprocess.run(
         [

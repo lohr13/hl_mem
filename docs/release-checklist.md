@@ -13,14 +13,15 @@ do not reuse artifacts from another run.
 ## Required release evidence
 
 - [ ] Core 1.0 release-gates run URL: `________________`.
-- [ ] Python 3.12, 3.13, and 3.14 suites pass with coverage at or above 80%.
-- [ ] Empty, historical, and repeated migrations pass.
-- [ ] Backup validation and restore pass against a disposable target.
-- [ ] External Provider wheel installation and duplicate-ID conflict handling pass.
-- [ ] Streaming request limits and default zero-model-call behavior pass.
+- [ ] The Python 3.13 core suite passes once with coverage at or above 80%.
+- [ ] The serial `release_only` tier passes once, covering empty, historical, and repeated migrations plus the external
+  Provider wheel installation and duplicate-ID conflict contract.
+- [ ] Core coverage includes backup/restore, streaming request limits, and default zero-model-call behavior without
+  rerunning those tests as separate release jobs.
 - [ ] Public recall fixture passes with 100% HTTP success and zero forbidden hits.
 - [ ] Clean wheel installation, CLI startup, stable evaluation import, and wheel-content checks pass.
-- [ ] `release-evidence.json` and `release-evidence.md` validate every required input hash.
+- [ ] `release-evidence.json` and `release-evidence.md` validate the six required inputs: `python-3.13`, `release-only`,
+  `public-recall`, `pip-audit`, `sbom`, and `wheel-install`.
 
 ## Benchmark and security
 

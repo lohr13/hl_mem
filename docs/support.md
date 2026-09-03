@@ -7,7 +7,8 @@
   immediately by a newer RC or by `1.0.0`.
 - After final `1.0.0`, `0.x` is migration-only. It receives no new fixes and is supported only as an input to the
   documented configuration and database upgrade path.
-- Python 3.12, 3.13, and 3.14 are the tested runtime matrix.
+- Python 3.13 is the only CI-tested runtime. Package installation metadata remains unchanged; other installable Python
+  versions do not carry a CI compatibility promise.
 
 ## Deployment boundary
 

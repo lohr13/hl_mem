@@ -413,6 +413,8 @@ git commit -m "ci: deduplicate release evidence gates"
 - Modify: `docs/support.md:1-20`
 - Modify: `docs/provider-plugins.md:95-112`
 - Modify: `docs/CHANGELOG.md:1-12`
+- Modify: `scripts/check_docs_consistency.py:125-185`
+- Test: `tests/unit/test_check_docs_consistency.py`
 - Modify: `tests/unit/test_startup_scripts.py:1-150`
 
 **Interfaces:**
@@ -480,6 +482,14 @@ migration inventories, and duplicated project-status prose. Do not copy those de
 `docs/architecture.md`, `docs/configuration.md`, `docs/compatibility.md`, `docs/capability-matrix.md`,
 `docs/CHANGELOG.md`, `tests/eval/README.md`, and CLI help as appropriate.
 
+Update `scripts/check_docs_consistency.py` so both READMEs validate their version badges but neither must repeat the current
+version or migration count in prose. Keep the architecture migration-count check and all relative-link validation. Run:
+
+```powershell
+uv run --frozen python scripts/check_docs_consistency.py
+uv run --frozen python -m pytest tests/unit/test_check_docs_consistency.py -q --tb=short
+```
+
 - [ ] **Step 4: Run documentation and static checks before the final pytest rerun**
 
 Run:
@@ -541,7 +551,7 @@ Update the v1.1.4 changelog bullet with actual reader-file, release-only, core-s
 Then commit:
 
 ```powershell
-git add README.md README_EN.md AGENTS.md docs/architecture.md docs/release-checklist.md docs/support.md docs/provider-plugins.md docs/CHANGELOG.md tests/unit/test_startup_scripts.py
+git add README.md README_EN.md AGENTS.md docs/architecture.md docs/release-checklist.md docs/support.md docs/provider-plugins.md docs/CHANGELOG.md scripts/check_docs_consistency.py tests/unit/test_check_docs_consistency.py tests/unit/test_startup_scripts.py
 git commit -m "docs: define bounded test execution policy"
 ```
 

@@ -139,15 +139,9 @@ def main() -> int:
         )
         errors += check_value(
             readme_en,
-            rf"The current baseline is\s+v?({VERSION_PATTERN})",
+            rf"shields\.io/badge/version-v?({VERSION_PATTERN})-",
             version,
-            "README_EN body version",
-        )
-        errors += check_value(
-            readme,
-            rf"当前基线为\s*v?({VERSION_PATTERN})",
-            version,
-            "README body version",
+            "README_EN badge version",
         )
         errors += check_value(
             architecture,
@@ -166,18 +160,6 @@ def main() -> int:
             rf"基线[：:]\s*v?({VERSION_PATTERN})",
             version,
             "capability matrix baseline",
-        )
-        errors += check_value(
-            readme_en,
-            r"The current baseline is.*?\b(\d+)\s+immutable\b.*?\bmigrations\b",
-            migration_count,
-            "README_EN migrations",
-        )
-        errors += check_value(
-            readme,
-            r"当前基线为.*?共\s*(\d+)\s*个.*?Migration",
-            migration_count,
-            "README migrations",
         )
         errors += check_value(
             architecture,

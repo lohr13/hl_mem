@@ -5,76 +5,77 @@
 [![Version: 1.1.4](https://img.shields.io/badge/version-1.1.4-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
-[中文](README.md#中文) | [English](#english)
+[中文](README.md) | [English](#english)
 
 <a id="english"></a>
 
 ## English
 
-HL-Mem is an evidence-driven long-term memory system for AI agents—not just another vector store. It turns immutable Events into structured Claims with evidence lineage, tracks change through a bitemporal model, and distills Episodes, Traces, and reusable Policies through a separate Experience channel. SQLite stores authoritative data; high-quality LLM and Embedding services power extraction and semantic recall, while sqlite-vec remains optional.
+HL-Mem is an evidence-driven long-term memory system for AI agents. It converts immutable Events into sourced,
+structured Claims, records factual change with a bitemporal model, and stores Episodes, Traces, and reusable Policies in
+a separate Experience channel. SQLite is authoritative; LLM extraction plus lexical and vector retrieval make memories
+usable.
 
-**Every memory is traceable to an immutable source event.**
+**Every memory remains traceable to an immutable source event instead of becoming unsourced model text.**
 
-## How data flows
+## Data flow
 
 ```mermaid
 flowchart LR
-    A["Event ingestion<br/>Immutable source"] --> B["LLM extraction<br/>7-field compact"]
-    B --> C["AdmissionPolicy<br/>Admission + post-processing"]
-    C --> D["Claim<br/>Evidence · bitemporal"]
-    D --> E["Hybrid recall<br/>FTS5 + Dense"]
-    E --> F["RRF → Reranker"]
-    F --> G["Context Packet / REST / MCP"]
+    A["Event ingest<br/>immutable source"] --> B["LLM extraction<br/>structured Claim"]
+    B --> C["Admission and enrichment<br/>evidence · time · entity"]
+    C --> D["SQLite<br/>authoritative store"]
+    D --> E["Hybrid retrieval<br/>FTS + Dense"]
+    E --> F["RRF / Reranker"]
+    F --> G["Context Packet<br/>REST / MCP"]
 ```
 
-## 30-second quickstart
+## Quickstart
 
-Python 3.12+ is required. Run the first two lines in the current terminal; once the server starts, run the third in another terminal:
+Python 3.12+ is installable. Python 3.13 is the sole CI-authoritative runtime; see the [support policy](docs/support.md)
+for the exact commitment.
 
 ```bash
 python -m pip install hl-mem
 hlmem init
 hlmem server
-hlmem remember "Alice prefers dark mode" && hlmem recall "What does Alice prefer?"
 ```
 
-## Five-minute quickstart
-
-Python 3.12+ is required. Install HL-Mem from PyPI:
-
-```bash
-python -m pip install hl-mem
-```
-
-In the directory where you want the configuration and database, run the setup wizard. It requires an explicit LLM, Embedding service, and optional Reranker, verifies them before atomically writing `hl_mem.toml` and `.env`, and never falls back to low-quality Fake providers:
-
-```bash
-hlmem init
-hlmem server
-```
-
-Open another terminal, then save and recall a memory:
+`hlmem init` asks you to select and verify an LLM, an Embedding provider, and an optional Reranker, then writes
+`hl_mem.toml` and `.env` in the current directory. Once the service is running, use another terminal to store and recall
+a memory:
 
 ```bash
 hlmem remember "Alice prefers dark mode"
 hlmem recall "What does Alice prefer?"
 ```
 
-Recall prints the Claim ID, score, and evidence references together:
+Recall output includes the Claim ID, relevance score, and an `event/<event-id>` evidence reference. Common management
+commands are:
 
-```text
-[1] Alice prefers dark mode
-    ID: <claim-id>
-    分数: 0.8123
-    证据:
-      - event/<event-id>
+```bash
+hlmem list
+hlmem explain claim <claim-id>
+hlmem forget <claim-id>
+hlmem doctor
 ```
 
-`event/<event-id>` means the Claim is traceable to an immutable source event instead of being unsupported model text. Use `hlmem list` to see the Claim ID again, then pass it to `hlmem forget <claim-id>`, the REST detail endpoint, or MCP's `memory_explain`. The CLI output labels are currently Chinese.
+## Core capabilities
 
-## Advanced installation and integrations
+| Area | Capability |
+|---|---|
+| Write path | Idempotent Event ingest, structured extraction, admission checks, atomic persistence |
+| Evidence and time | Event provenance, bitemporal state, TTL, decay, archival, and forgetting |
+| Retrieval | Chinese FTS, Dense retrieval, RRF, optional Reranking, and bounded context |
+| Governance | Conflict convergence, near-copy review, audit ledger, and explainable Claims |
+| Experience | Episodes, Traces, Rewards, Policies, and Procedures |
+| Interfaces | CLI, FastAPI REST, MCP stdio, and the Hermes adapter |
 
-### Install from source
+The [capability matrix](docs/capability-matrix.md) is authoritative for maturity, defaults, and validation evidence.
+
+## Installation and integrations
+
+### Run from source
 
 ```bash
 git clone https://github.com/lohr13/hl_mem.git
@@ -84,318 +85,90 @@ uv run hlmem init
 uv run hlmem server
 ```
 
-Use `uv sync --dev` for development and `hlmem doctor` for read-only diagnostics. SQLite must include FTS5, which is normally present in official Python distributions.
+Development and tests use `uv` and the committed lockfile. See the [architecture](docs/architecture.md) and
+[compatibility policy](docs/compatibility.md) for deployment, backup, restore, and runtime boundaries.
 
-#### Contaminated host environments
+### Online models
 
-Hosts such as the Hermes gateway may inject `PYTHONPATH` or `PYTHONHOME` values that point to their own virtual environment. Calling this repository's `.venv` Python directly can then import packages from the host and load incompatible binary extensions built for a different Python version. When running the source checkout from such a host, always use the launcher:
+Put non-secret settings in `hl_mem.toml`. Put each component credential in `.env` or its same-named process environment
+variable. HL-Mem does not silently replace a failed real component with a Fake Provider. See the
+[configuration reference](docs/configuration.md) for providers, models, and all supported fields.
 
-```bash
-bash scripts/hlmem-python.sh -m hl_mem.cli doctor
-```
-
-For Windows `cmd.exe`, use:
-
-```bat
-scripts\hlmem-python.cmd -m hl_mem.cli doctor
-```
-
-The launcher clears both contaminating variables, switches to the repository root, and pins `.venv/Scripts/python.exe`. `start_hl_mem.sh` and `start_production.bat` delegate to the same entry point.
-
-### Enable online models
-
-From a source checkout, copy `config.example.toml` to a local `hl_mem.toml`, and copy `.env.example` as needed. Put each enabled component's independent key in `.env`: `LLM_API_KEY`, `EMBEDDING_API_KEY`, `RERANKER_API_KEY`, or `IMAGE_API_KEY`. Then enable the matching `extraction.mode`, `embedding.mode`, `reranker.mode`, or `image_describer.mode`. See the [configuration reference](docs/configuration.md) for the full schema.
-
-### Connect Codex, Claude, and Cursor
-
-Install the MCP extra with `python -m pip install "hl-mem[mcp]"` to use `hl-mem-mcp`, an official MCP Python SDK 2.x stdio server for Codex, Claude Code, Claude Desktop, and Cursor. See the [MCP guide](docs/mcp.md) for client configuration, its seven tools, and error behavior.
-
-### Integrate with Hermes
-
-Start HL-Mem and verify `curl --fail http://127.0.0.1:8200/healthz`, then run this from a source checkout:
+### MCP
 
 ```bash
-uv run python scripts/install_to_hermes.py --hermes-home <HERMES_HOME>
+python -m pip install "hl-mem[mcp]"
+hl-mem-mcp
 ```
 
-The plugin is installed under `<HERMES_HOME>/plugins/hl_mem/` and always reads `<HERMES_HOME>/hl_mem.toml` plus `<HERMES_HOME>/.env`, independent of the Hermes process CWD. After a real install or upgrade, restart every Hermes gateway/CLI process that imported hl_mem; never validate new configuration in a process that still holds modules from an older editable checkout. The local HTTP adapter provides timeouts, circuit breaking, prefetching, and Episode/Trace synchronization.
+See the [MCP guide](docs/mcp.md) for Codex, Claude Code, Claude Desktop, and Cursor examples.
 
-### Always-on deployment and systemd
+### Hermes
 
-Use the stdlib-only `scripts/healthcheck.py` to probe `/healthz`, and leave restart and alerting to systemd, Windows service management, or the container orchestrator. A systemd unit's `WorkingDirectory` must contain `hl_mem.toml` and the optional `.env`.
+After the HL-Mem service is healthy, install or upgrade the Hermes plugin:
 
-See the [API reference](docs/api.md) for complete REST request contracts.
+```bash
+hl-mem hermes install --hermes-home <HERMES_HOME>
+hl-mem hermes upgrade --hermes-home <HERMES_HOME>
+```
 
-## Key Configuration
+The plugin reads configuration from the Hermes root. Restart Hermes processes that already loaded the plugin after an
+install or upgrade. See the [architecture](docs/architecture.md) for integration boundaries.
 
-General CLI/server entry points read `hl_mem.toml` from the current directory, while the Hermes plugin reads it from
-`HERMES_HOME`; secrets come only from the corresponding `.env` or same-named process environment variables. A relative
-`database.path` is resolved from the real target directory of the configuration symlink. Foreign-platform absolute paths
-fail before startup. Common keys are listed below.
+### Optional sqlite-vec
 
-| TOML key | Code default | Purpose |
+The default `sqlite_scan` backend fits small and medium local collections. Install the optional derived index when you
+need sqlite-vec:
+
+```bash
+python -m pip install "hl-mem[sqlite-vec]"
+```
+
+Then set `recall.vector_backend` to `sqlite_vec`. The SQLite main tables remain authoritative.
+
+## Common configuration
+
+| TOML key | Default | Purpose |
 |---|---:|---|
-| `database.path` | `var/hl_mem.db` | SQLite path, relative to the real configuration directory |
-| `extraction.mode` | `llm` | Production uses `real` or `llm`; Fake is test-only |
-| `extraction.batch_max_events` | `5` | Maximum same-session Events per extraction call |
-| `extraction.batch_max_wait_seconds` | `120.0` | Maximum wait for a non-full extraction window |
-| `embedding.mode` | `real` | Production uses `real`; Fake is test-only |
-| `embedding.text_type` | unset | Optional `document` or `query` in native mode; omitted by default |
-| `reranker.mode` | `off` | `off`, `on`, or `real`; Fake is test-only |
-| `image_describer.mode` | `off` | `off` or `on` |
-| `llm.provider` | `dashscope` | `dashscope`, `zhipu`, or `openai_compatible` |
-| `llm.structured_mode` | `json_object` | `auto`, `json_object`, or `json_schema` |
-| `index.text_mode` | `natural` | `legacy`, `value_only`, `natural`, or `answerable`; natural uses only the subject and original-language value |
-| `recall.vector_backend` | `sqlite_scan` | `sqlite_scan` (default) or `sqlite_vec`, which requires `hl-mem[sqlite-vec]` |
-| `recall.dedup_threshold` | `0.95` | Near-copy folding threshold inside the bounded candidate window; `0` disables folding |
-| `recall.dedup_candidate_limit` | `100` | Maximum recall candidates considered for near-copy folding |
-| `recall.echo_suppression_mode` | `enforce` | Same-session echo governance: `off`, observe-only `observe`, or `enforce` |
-| `recall.freshness_annotation_mode` | `render` | Risk-gated freshness hints: `off`, observe-only `observe`, or `render` |
-| `recall.resurrection_mode` | `off` | Set `auto` explicitly to enable the bounded archived-only cold path |
-| `recall.query_expansion_mode` | `off` | `off`, `auto`, or `always` |
-| `decay.model` | `activation_halflife` | Decays activation by scope-specific half-life without changing confidence during routine decay |
-| `dedup.enabled` | `true` | Enables deterministic near-copy review without LLM calls or Claim merging |
-| `dedup.llm_enabled` | `false` | Explicitly enables LLM dedup under the shared budget and audit controls |
-| `dedup.scan_limit` | `200` | Maximum pending `dedup_pairs` reviewed per maintenance pass |
-| `worker.semantic_conflict_consolidation_enabled` | `false` | Explicitly enables audit-only LLM conflict classification |
-| `worker.policy_induction_enabled` | `false` | Explicitly enables automatic Policy publication from Episodes |
-| `worker.reclassify_enabled` | `false` | Explicitly enables LLM Claim reclassification |
-| `relation.discovery_mode` | `off` | `off` or proposal-only `audit` |
+| `database.path` | `var/hl_mem.db` | SQLite database path |
+| `llm.provider` | `dashscope` | Extraction model provider |
+| `extraction.batch_max_events` | `5` | Events per extraction window |
+| `extraction.batch_max_wait_seconds` | `120.0` | Maximum wait for a partial window |
+| `embedding.mode` | `real` | Production embedding mode |
+| `reranker.mode` | `off` | Optional reranking |
+| `recall.vector_backend` | `sqlite_scan` | Vector retrieval backend |
+| `recall.query_expansion_mode` | `off` | Query expansion policy |
+| `image_describer.mode` | `off` | Image-description preview |
 
-LLM, Embedding, and Reranker integrations can be extended through the governed
-[Provider Plugin API](docs/provider-plugins.md). Image Providers use the same API as an experimental contract. Plugins
-must be explicitly allowlisted and run as trusted, unsandboxed code inside the host process.
+See the [configuration reference](docs/configuration.md) for complete defaults, allowed values, and secret boundaries.
 
-Real components and external-call paths must be supplied with their own key; there is no automatic fake fallback.
-`HL_MEM_*` environment variables no longer participate in application `Settings` configuration. `Settings` and
-`config.example.toml` both use `5` / `0.15` for `recall.default_limit` / `recall.relevance_reranker_floor`; the example
-deployment only raises `recall.relevance_relative_drop` from the code default `0.15` to `0.30` and keeps
-`recall.relevance_keep_top1 = true`. Query expansion uses a separately configurable model and is disabled by default.
+## Quality and boundaries
 
-### Vector search sizing
+The repository includes extraction, isolated retrieval, Chinese E2E, LongMemEval, MemDaily, and PerLTQA runners. See the
+[evaluation guide](tests/eval/README.md) and [result index](evaluation/results/README.md) for protocols and current
+artifacts; this README does not duplicate historical scores that quickly become stale.
 
-The default two-stage exact `sqlite_scan` backend is intended for local stores up to roughly 100,000 Claims; the actual
-boundary also depends on embedding dimensions, concurrency, and latency targets. Near or above that scale, install
-`hl-mem[sqlite-vec]` and explicitly set `recall.vector_backend = "sqlite_vec"` instead of treating a full vector scan as
-an unbounded production index. SQLite remains authoritative and the sqlite-vec projection stays rebuildable.
-
-When migrating an existing database from a legacy index, preview it read-only before explicitly running the backfill. The backfill updates `index_text`, FTS, and dense embeddings together; deployments using a real embedder must provide the corresponding key:
-
-```bash
-hlmem backfill-index-text --mode natural --dry-run
-hlmem backfill-index-text --mode natural
-```
-
-Pending `dedup_pairs` below the current `dedup.threshold` can be previewed read-only on an offline copy. Applying the
-terminal classification requires the exact preview count and never changes Claims:
-
-```bash
-hl-mem --db copy.db dedup drain-below-floor
-hl-mem --db copy.db dedup drain-below-floor --apply --expected-count 597
-```
-
-Expired history is retained for 90 days. Only Claims without downstream evidence consumers or open conflicts are
-eligible for bounded reclamation on an offline copy:
-
-```bash
-hl-mem --db copy.db expired cleanup
-hl-mem --db copy.db expired cleanup --apply --expected-count 4508 --limit 100
-```
-
-Legacy natural-language extraction-model statements can be inspected read-only and then explicitly linked to the
-current runtime projection with an exact count guard:
-
-```bash
-hl-mem --db copy.db coordinates repair-model-history
-hl-mem --db copy.db coordinates repair-model-history --apply --expected-count 3 \
-  --selection-token <token-from-dry-run>
-```
-
-The command selects only older, source-proven HL-Mem extraction statements. It does not rewrite content, touch answering,
-Embedding, or reranking models, or replace TTL expiry cleanup.
-
-Build and replay the fixed 200-point echo × freshness fixture offline. This report enforces structural gates only;
-post-deployment Hermes observe/canary quality evaluation remains a separate release decision:
-
-```bash
-python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-replay.json
-python scripts/run_v0291_injection_replay.py --output var/eval/v0291-injection-replay.json \
-  --export-expanded-fixture var/eval/v0291-injection-fixture.jsonl
-```
-
-### Upgrading to v0.36.0
-
-The forward-only migration 057 retires non-terminal `resolve_conflict_llm` jobs as `dead`, clears their leases, and marks
-linked open cases dirty so they return to deterministic L0 processing or `manual_required`. Existing `succeeded` and
-`dead` history is unchanged. The built-in conflict judge and its configuration surface are retired;
-`conflict.auto_mode` now accepts only `l0_only` and `off`, and old values fail closed during startup.
-Before the upgraded service starts, remove the entire `[maintenance_judge]` section from `hl_mem.toml` and replace old
-`observe`/`enforce` values with `l0_only` or `off`. Terminal conflict rationale is now immutable. The delegation write
-endpoint supports the four pair actions alongside the existing group vocabulary, and hosts should send the revision and
-v2 fingerprint from the same dossier.
-
-### Upgrading to v0.33.0
-
-v0.33.0 enables the coverage-first extraction prompt by default and raises the per-chunk Claim limit to 30; saturation
-soft-splitting and residual repair remain disabled. `extraction.delta_repair_enabled` is lazy and effective only when
-`extraction.soft_split_enabled` is also enabled and a child remains saturated at 30 Claims after the first split; enabling
-delta repair alone adds no extraction call. To preserve provider defaults, omit `llm.max_tokens` and
-`llm.reasoning_effort`, and keep `llm.thinking_control = "auto"`.
-
-The upgrade applies migrations 055–056 in order, adding database-boundary auditing and portable audit context for Claim
-UPDATE/DELETE operations. Stop the API, workers, and all other writers first, and back up the checkpointed primary database
-together with its tombstone sidecar. Both migrations are forward-only; old binaries do not understand the new audit
-semantics and must not resume writes after the upgrade.
-
-### Upgrading to v0.31.1
-
-v0.31.1 fixes Hermes configuration discovery and shadow-database path hazards. Before upgrading, use a fresh process to
-confirm the database's newly resolved absolute path. If it differs from the file opened by the old process, perform a
-controlled migration before allowing writers to start. Prefer `database.path = "var/hl_mem.db"`; Windows drive/UNC paths
-are rejected on POSIX, and POSIX root paths are rejected on Windows. Restart every Hermes gateway/CLI process after
-upgrading the plugin so the checkout, package metadata, deployed copy, and imported modules all agree. This release adds
-no TOML keys or migrations.
-
-### Upgrading to v0.31.0
-
-v0.31.0 adds typed canonical entities, canonical price targets, plan fulfillment, the governance action ledger, and
-slot-aware cross-subject dedup auditing. Only destructive behaviors that passed their frozen gates are enabled by default:
-plan fulfillment and price targets use `enforce`, while conflict automation is restricted to `l0_only`. Dedup remains
-`audit_only=true`; query entity constraints and lesson signals remain in `observe`. Hermes emits at most one residual
-manual-conflict notice on first use or when the count changes within a session.
-
-Production has no built-in conflict-judge dependency. The `l0_only` mode applies deterministic L0 rules and routes gray
-cases to `manual_required`. Each automated mutation records its input fingerprint and governance action. These independent
-emergency overrides return the new paths to non-mutating modes:
-
-```toml
-[conflict]
-auto_mode = "off"
-
-[plan]
-fulfillment_mode = "observe"
-
-[price]
-target_mode = "observe"
-
-[hermes]
-manual_conflict_notice = false
-```
-
-The upgrade applies migrations 050–054 in order. Stop the API, workers, and all other writers first, and back up the
-checkpointed primary database together with its tombstone sidecar. The schema additions are additive, but old binaries do
-not understand the new governance semantics and must not resume writes after the upgrade.
-
-### Upgrading to v0.29.3
-
-v0.29.3 requires no schema migration and introduces no configuration or breaking REST/MCP API change. Price and
-measurement snapshots now follow three temporal branches: a later coordinate in the same series advances the current tip;
-different measurements or instruments coexist; same-coordinate revisions, implicit replacements, and other unproven cases
-remain in manual conflict review. The Recall/ingest orchestration splits and complexity ratchet do not change runtime
-behavior, and `daemon_contract` remains `1`.
-
-There is no setting that restores the old temporal decisions: the three-way behavior is the purpose of this release. A
-deployment that must restore the old behavior has to downgrade the package.
-
-### Upgrading to v0.29.2
-
-Upgrading enables same-session echo suppression and risk-gated freshness hints by default; no migration script is
-required. To restore the previous behavior, set these values explicitly in `hl_mem.toml`:
-
-```toml
-recall.echo_suppression_mode = "off"
-recall.freshness_annotation_mode = "off"
-```
-
-### Upgrading from v0.27.x
-
-v0.28.6 adds the optional `hermes.on_demand_recall_timeout_seconds` setting (default `8.0`) without changing the v0.27
-defaults for `recall.resurrection_mode = "auto"` or `decay.model = "activation_halflife"`. A deployment skipping directly
-from v0.26 can still retain the old behavior with:
-
-```toml
-[recall]
-resurrection_mode = "off"
-
-[decay]
-model = "legacy_linear"
-```
-
-Stop the API, workers, and other writers and retain an offline copy of the primary database before upgrading. The first
-v0.28 open automatically applies migrations 043/044. Immediately run `hlmem backup`; it creates and binds
-`<database>.tombstones.db` and emits a v2 manifest. Protect the database backup, manifest, and tombstone ledger as one set.
-Legacy v1 manifests cannot prove deletion history and v0.28 restore rejects them explicitly. Migrations do not adjudicate
-historical conflicts or delete anomalies; those still require the explicit audit/repair workflow.
-
-## Capabilities
-
-| Core memory | Service and governance |
-|---|---|
-| **Memory correctness**<br>Idempotent ingestion, atomic writes, and exact deduplication<br>Conflict convergence plus three-entry deletion closure and anti-resurrection tombstones | **Experience channel**<br>Episodes, Traces, and rewards<br>Policies/Procedures and derived Observations |
-| **Time and evidence**<br>Bitemporal Claims and relation edges<br>Evidence lineage, entity normalization, controlled archival, and physical forgetting | **Interfaces**<br>Stable FastAPI REST and Hermes Provider<br>Beta seven-tool MCP stdio interface |
-| **Hybrid recall**<br>Chinese-aware FTS5 + Dense, fused by RRF with optional reranking<br>Relation/query expansion and token-budgeted context | **Evaluation**<br>Extraction v2, 112-case isolated retrieval, and 40-case Chinese E2E<br>Full LongMemEval, MemDaily, and PerLTQA runners |
-| **Lifecycle**<br>Importance-aware TTL, activation decay, and archived cleanup<br>Manifest-v2 backup plus tombstone restore replay | **Governance tools**<br>7-field compact extraction + evidence-bound canonical slots<br>Job write progress, dangling audits, and active-Claim repair |
-
-### Evaluation Results (published frozen protocols)
-
-| Benchmark | Setup | Result |
-|---|---|---:|
-| LongMemEval · HL-Mem v0.25.2 | holdout50, Top-10 structured evidence | **43/50 (86.0%)** |
-| LongMemEval · Full-Context upper bound | all sessions passed directly to the reader | **46/50 (92.0%)** |
-| LongMemEval · Native RAG baseline | raw-session dense RAG, Top-10 | **45/50 (90.0%)** |
-| MemDaily · v0.26.0 (2026-08-15) | 180 trajectories, extraction → recall → QA | **97.2% accuracy, F1 0.9855, R@5 97.5%** |
-| PerLTQA · v0.26.0 (2026-08-15) | 378 questions, 10 characters, retrieval-only | **R@5 96.8%, MRR 82.8%** |
-| Chinese E2E · v0.26.0 (2026-08-15) | 40 cases, live `deterministic-rubric-v2` | **38/40 (95.0%)**; R@5 **100%** |
-| v0.27.1 behavior-change validation (2026-08-15) | Reuses the v0.26.0 figures; no full benchmark rerun for this release | **resurrection: 2 correct revivals, 0 false revivals, p95 12.7ms; activation: zero identity false archives with confidence semantics separated** |
-| v0.28.0 maintenance and experiment validation (2026-08-16) | Reuses the published benchmarks above; no full benchmark rerun | **16/16 slot mismatches fixed with zero regressions; relation semantics reached 12% packet RAO with no entity@5 gain and was not productized** |
-
-All Chinese baselines use `qwen3.7-text-embedding` and `qwen3-rerank`. PerLTQA directly ingests the corpus and measures retrieval without extraction; MemDaily and Chinese E2E run the extraction → recall → QA pipeline, using `qwen3.7-plus` for extraction and QA. MemDaily is scored on all 180 trajectories.
-
-The LongMemEval comparison uses the `deepseek-v4-flash-0731` reader throughout, with reader thinking enabled and judge
-thinking disabled; the benchmark reader and production recall/context packing are separate contracts. See the
-[evaluation guide](tests/eval/README.md) for current isolated-retrieval and E2E regression semantics, and the
-[results index](evaluation/results/README.md) for local artifact naming.
-
-### Known boundary
-
-- In the frozen v0.28 source-first A/B, the current model produced complete packet RAO for only 12% of relation cases;
-  entity coverage@5 stayed at 34.7%, and no expansion-eligible edges were produced. That relation-semantics design and the
-  C-series experiment arms were therefore not productized. Production retains compact Claims, source-bounded RAO rendering,
-  and normal relation expansion; callers must not assume that dense, directional relation chains are reconstructed from flat text.
-
-See the [capability matrix](docs/capability-matrix.md) for maturity, defaults, and evidence, and the [architecture guide](docs/architecture.md) for data flows.
-
-## Project Status
-
-- **Stable:** events and evidence, atomic writes, LLM extraction, embeddings, FTS + Dense + RRF, dual-time filtering, TTL/decay/archival, conflicts and deduplication, REST, Hermes, backups, and auditing.
-- **Beta:** multi-query recall, relation candidate discovery, feedback-driven maintenance, extraction-entailment auditing, semantic-dedup auditing, MCP Server, benchmarks, and LongMemEval.
-- **Experimental:** image evidence and other explicitly marked preview capabilities; disabled by default, with no low-quality fallback.
-
-The current baseline is v1.1.4 with 60 immutable, forward-only migrations. Migrations 055–057 add Claim-mutation
-auditing and retire the legacy conflict judge; migration 058 terminates pending pre-upgrade semantic work, and migration
-059 adds provenance to relation edges. Migration 060 adds legacy-safe Event origin/session fields. Stop all writers and
-back up both the primary database and tombstone sidecar
-before upgrading; old binaries must not reopen an upgraded database.
+HL-Mem is a SQLite-first, single-node memory system. It does not provide PostgreSQL, an external graph database,
+distributed workers, high availability, or multi-tenant isolation. Provider plugins are trusted in-process code rather
+than a security sandbox. See the [support policy](docs/support.md) for the full boundary.
 
 ## Documentation
 
-| Guide | Contents |
+| Document | Contents |
 |---|---|
-| [Documentation index](docs/README.md) | Navigation for maintained documentation |
-| [Configuration reference](docs/configuration.md) | TOML keys, defaults, allowed values, and secret boundary |
-| [Architecture](docs/architecture.md) | Layers, modules, pipelines, storage, and lifecycle |
-| [API reference](docs/api.md) | REST endpoints and request conventions |
-| [Delegation host integration](docs/delegation.en.md) | Pair/group polling, adjudication rules, and a Linux host example |
-| [MCP guide](docs/mcp.md) | stdio arguments, Codex/Claude/Cursor setup, and tool-error behavior |
-| [Compatibility policy](docs/compatibility.md) | Versioning and public contract guarantees |
-| [Capability matrix](docs/capability-matrix.md) | Maturity, defaults, and evidence |
-| [Changelog](docs/CHANGELOG.md) | Release history |
+| [Documentation index](docs/README.md) | All maintained documentation |
+| [Configuration](docs/configuration.md) | Settings, defaults, and secret boundaries |
+| [Architecture](docs/architecture.md) | Data flow, modules, storage, and lifecycle |
+| [API](docs/api.md) | REST endpoints and request contracts |
+| [MCP](docs/mcp.md) | stdio configuration and tool contracts |
+| [Provider plugins](docs/provider-plugins.md) | Extension API and trust boundary |
+| [Compatibility](docs/compatibility.md) | Upgrade, restore, and public contracts |
+| [Changelog](docs/CHANGELOG.md) | Current release and version history |
 
 ## Contributing
 
-Issues and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the seven CI
-preflight checks, data-handling rules, and commit conventions.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development, test, and commit guidance.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE). You may use, modify, and distribute this project subject to its terms, including the required copyright and license notices.
+Licensed under the [Apache License 2.0](LICENSE).

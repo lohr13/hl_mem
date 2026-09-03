@@ -523,15 +523,22 @@ production profile or automatic fake fallback.
 
 Install the Hermes adapter with `uv run python scripts/install_to_hermes.py --hermes-home <HERMES_HOME>`, then restart Hermes.
 
-The offline suite uses fake providers; the real-provider script requires configured credentials:
+The offline suite uses fake providers. During development, run only the directly relevant test file. A final candidate
+normally runs the core suite once with four workers; a second core run is allowed only when the first run causes a code
+change. An identical fast-forward merge reuses the verified commit result. Release-only validation runs separately and
+serially before release:
 
-```bash
-.venv/Scripts/python.exe -m pytest tests/ -q
-.venv/Scripts/python.exe tests/e2e_real.py
+```powershell
+.venv\Scripts\python.exe -m pytest tests/unit/test_relevant_file.py -q --tb=short
+.venv\Scripts\python.exe -W error::ResourceWarning -m pytest tests/ `
+  -m "not release_only" -n 4 -q --tb=short --durations=25
+.venv\Scripts\python.exe -m pytest tests/ -m release_only -q --tb=short
+.venv\Scripts\python.exe tests/e2e_real.py
 ```
 
-These commands are documented for operators; documentation-only changes should still follow the validation scope stated by
-their task. This restructure intentionally does not execute pytest.
+Python 3.13 is the sole CI-authoritative runtime. Package installation metadata is unchanged; installability on another
+Python version is not a CI compatibility promise. The real-provider script requires configured credentials. These commands
+are documented for operators; documentation-only changes should still follow the validation scope stated by their task.
 
 ## 10. Evolution Constraints
 

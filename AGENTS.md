@@ -107,11 +107,27 @@ src/hl_mem/
 
 ## 测试
 
-```bash
-.venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short
+开发过程中只运行与改动直接相关的测试，不启用并行：
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/unit/test_relevant_file.py -q --tb=short
 ```
 
-当前全量 unittest 由 GitHub Actions 验证。
+最终候选通常只运行一次核心全套；只有该次运行暴露问题并导致代码修改时，才允许第二次：
+
+```powershell
+.venv\Scripts\python.exe -W error::ResourceWarning -m pytest tests/ `
+  -m "not release_only" -n 4 -q --tb=short --durations=25
+```
+
+发布前另行串行运行一次发布型验证：
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/ -m release_only -q --tb=short
+```
+
+相同 commit 的 fast-forward 合并复用已有验证结果，不重复全量测试。Python 3.13 是唯一的 CI 权威测试环境；
+包的 Python 安装范围保持不变，其他版本可安装不代表获得 CI 兼容性承诺。
 
 ## 关键设计决策
 
