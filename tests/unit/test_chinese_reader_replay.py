@@ -835,6 +835,24 @@ def test_transport_does_not_retry_ordinary_client_errors(status_code: int) -> No
     assert raised.value.response.content == b""
 
 
+def test_transport_does_not_retry_status_outside_http_5xx() -> None:
+    client, requests = mock_client(
+        [
+            httpx.Response(600, json={"error": "private-body"}),
+            success_envelope(),
+        ]
+    )
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=lambda _: None)
+        with pytest.raises(httpx.HTTPStatusError) as raised:
+            transport("secret", BASE_URL, MODEL, "s", "u")
+    finally:
+        client.close()
+
+    assert len(requests) == 1
+    assert raised.value.response.status_code == 600
+
+
 def test_transport_normalizes_input_output_token_variant_and_verifies_thinking() -> None:
     client, _ = mock_client(
         [
@@ -1154,7 +1172,7 @@ def test_invalid_endpoint_is_rejected_before_transport_call(
 ) -> None:
     transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
 
-    with pytest.raises(replay.ReplayInputError, match="HTTPS endpoint"):
+    with pytest.raises(replay.ReplayAbortedError, match="reader replay aborted"):
         replay.run_replay(
             synthetic_three_arm_cases(include_canary=True),
             transport,
@@ -1165,6 +1183,32 @@ def test_invalid_endpoint_is_rejected_before_transport_call(
         )
 
     assert transport.calls == []
+    state = json.loads((tmp_path / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8"))
+    assert state["status"] == "aborted"
+    assert state["abort_stage"] == "input_validation"
+    assert state["case_states"] == {label: [] for label in replay.ARM_LABELS}
+    assert base_url not in json.dumps(state)
+
+
+def test_malformed_source_mapping_persists_sanitized_preflight_abort(tmp_path: Path) -> None:
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayAbortedError, match="reader replay aborted") as raised:
+        replay.run_replay(
+            {},
+            transport,
+            output_root=tmp_path,
+            canary_only=False,
+            resume=False,
+        )
+
+    assert transport.calls == []
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    state = json.loads((tmp_path / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8"))
+    assert state["status"] == "aborted"
+    assert state["abort_stage"] == "input_validation"
+    assert state["identity_complete"] is False
 
 
 def test_transport_invalid_endpoint_exception_drops_embedded_credentials() -> None:
@@ -1523,6 +1567,46 @@ def test_resume_rejects_authoritative_identity_mismatch_before_call(
     assert transport.calls == []
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda case: case["qa"].update(exact_match=False, answer_correct=False),
+        lambda case: case["answer_entity"].update(entity_coverage_at_5=0.75),
+        lambda case: case["reader_call"].update(attempts=99),
+        lambda case: case["qa"]["usage"].update(private_extra="not-safe"),
+        lambda case: case.update(question="tampered question"),
+    ],
+)
+def test_resume_rejects_tampered_non_canary_authoritative_result(
+    tmp_path: Path,
+    mutation: Any,
+) -> None:
+    sources = synthetic_three_arm_cases(include_canary=True)
+    replay.run_replay(
+        sources,
+        FakeThinkingTransport(answer="synthetic answer", verified=True),
+        output_root=tmp_path,
+        canary_only=False,
+        resume=False,
+    )
+    path = tmp_path / replay.AUTHORITATIVE_STATE_FILE
+    state = json.loads(path.read_text(encoding="utf-8"))
+    mutation(state["case_states"]["qwen37"][1])
+    path.write_text(json.dumps(state), encoding="utf-8")
+    transport = FakeThinkingTransport(answer="synthetic answer", verified=True)
+
+    with pytest.raises(replay.ReplayInputError, match="authoritative replay case result"):
+        replay.run_replay(
+            sources,
+            transport,
+            output_root=tmp_path,
+            canary_only=False,
+            resume=True,
+        )
+
+    assert transport.calls == []
+
+
 def test_resume_repairs_corrupt_projection_before_call(tmp_path: Path) -> None:
     sources = synthetic_three_arm_cases(include_canary=True)
     replay.run_replay(
@@ -1692,6 +1776,31 @@ def test_main_persists_generic_abort_for_fresh_source_validation_failure(
     state_raw = (output_root / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8")
     assert json.loads(state_raw)["status"] == "aborted"
     assert "PRIVATE_MISLABELED_EXTRACTOR" not in captured.err
+
+
+def test_main_persists_generic_preflight_abort_when_source_loading_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_load(manifest: Path, paths: dict[str, Path]) -> dict[str, tuple[replay.ReplayCase, ...]]:
+        del manifest, paths
+        raise replay.ReplayInputError("PRIVATE_MANIFEST_OR_REPORT_FAILURE")
+
+    monkeypatch.setenv("LLM_API_KEY", "synthetic-secret")
+    monkeypatch.setattr(replay, "load_replay_cases", fail_load)
+    output_root = tmp_path / "out"
+
+    exit_code = replay.main(["--output-root", str(output_root)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.err.strip() == "reader replay failed: reader replay aborted"
+    state_raw = (output_root / replay.AUTHORITATIVE_STATE_FILE).read_text(encoding="utf-8")
+    state = json.loads(state_raw)
+    assert state["status"] == "aborted"
+    assert state["abort_stage"] == "input_validation"
+    assert "PRIVATE_MANIFEST_OR_REPORT_FAILURE" not in state_raw
 
 
 def test_main_classifies_exhausted_transient_canary_as_continuable_reader_error(

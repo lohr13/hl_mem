@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import math
@@ -40,6 +41,8 @@ score_answer = _chinese_e2e.score_answer
 score_answer_entity_packet = _chinese_e2e.score_answer_entity_packet
 aggregate_results = _chinese_e2e.aggregate_results
 _run_qa = _memdaily_benchmark._run_qa
+score_qa_accuracy = _memdaily_benchmark.score_qa_accuracy
+abstention_kind = _memdaily_benchmark.abstention_kind
 qa_call_with_retry = _qa_client.qa_call_with_retry
 retry_after_seconds = _http_utils.retry_after_seconds
 read_secret_values = _secrets.read_secret_values
@@ -212,6 +215,14 @@ class ReplayAbortedError(RuntimeError):
     """A sanitized fatal replay failure safe to expose at the CLI boundary."""
 
 
+class _NonRetryableHTTPStatusError(RuntimeError):
+    """A sanitized status outside the retry policy used by the shared helper."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"GLM request failed with HTTP {status_code}")
+        self.status_code = status_code
+
+
 @dataclass(frozen=True)
 class _SanitizedFailure:
     kind: str
@@ -350,6 +361,12 @@ def _safe_status_error(
 
 
 def _describe_failure(error: Exception) -> _SanitizedFailure:
+    if isinstance(error, _NonRetryableHTTPStatusError):
+        return _SanitizedFailure(
+            kind="status",
+            message=str(error),
+            status_code=error.status_code,
+        )
     if isinstance(error, httpx.HTTPStatusError):
         return _SanitizedFailure(
             kind="status",
@@ -449,10 +466,14 @@ class GLMThinkingTransport:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
-            failure = _safe_status_error(
-                error.response.status_code,
-                retry_after=_canonical_retry_after(error.response.headers.get("Retry-After")),
-            )
+            status_code = error.response.status_code
+            if status_code == 429 or 500 <= status_code <= 599:
+                failure = _safe_status_error(
+                    status_code,
+                    retry_after=_canonical_retry_after(error.response.headers.get("Retry-After")),
+                )
+            else:
+                failure = _NonRetryableHTTPStatusError(status_code)
         except httpx.ReadTimeout:
             failure = httpx.ReadTimeout("GLM request timed out")
         except httpx.ConnectTimeout:
@@ -520,7 +541,7 @@ class GLMThinkingTransport:
             if sanitized_failure.kind in {"read_timeout", "connect_timeout"} or (
                 sanitized_failure.kind == "status"
                 and sanitized_failure.status_code is not None
-                and (sanitized_failure.status_code == 429 or sanitized_failure.status_code >= 500)
+                and (sanitized_failure.status_code == 429 or 500 <= sanitized_failure.status_code <= 599)
             ):
                 raise RetryExhaustedTransientError(metadata)
             raise _fresh_exception(sanitized_failure)
@@ -1020,13 +1041,30 @@ def _normalize_https_endpoint(base_url: str) -> str:
 
 def _reader_identity(base_url: str) -> dict[str, Any]:
     normalized = _normalize_https_endpoint(base_url)
+    return _reader_identity_from_digest(hashlib.sha256(normalized.encode("utf-8")).hexdigest())
+
+
+def _reader_identity_from_digest(endpoint_sha256: str) -> dict[str, Any]:
     return {
         "model": MODEL,
         "temperature": GLM_TEMPERATURE,
         "max_tokens": GLM_MAX_TOKENS,
         "timeout_seconds": GLM_REQUEST_TIMEOUT_SECONDS,
-        "endpoint_sha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+        "endpoint_sha256": endpoint_sha256,
     }
+
+
+def _preflight_reader_identity(base_url: str) -> dict[str, Any]:
+    invalid = False
+    try:
+        identity = _reader_identity(base_url)
+    except ReplayInputError as error:
+        _clear_exception_chain(error)
+        invalid = True
+    if invalid:
+        endpoint_sha256 = hashlib.sha256(base_url.encode("utf-8")).hexdigest()
+        return _reader_identity_from_digest(endpoint_sha256)
+    return identity
 
 
 def _versions() -> dict[str, str]:
@@ -1035,6 +1073,34 @@ def _versions() -> dict[str, str]:
         "qa_scorer": OFFICIAL_SCORER_VERSION,
         "answer_entity_scorer": OFFICIAL_ANSWER_ENTITY_SCORER_VERSION,
     }
+
+
+def _persist_preflight_abort(output_root: Path, *, base_url: str) -> None:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    state = {
+        "schema_version": REPLAY_SCHEMA_VERSION,
+        "kind": "chinese_reader_replay_authoritative_state",
+        "status": "aborted",
+        "abort_stage": "input_validation",
+        "identity_complete": False,
+        "started_at": timestamp,
+        "completed_at": timestamp,
+        "updated_at": timestamp,
+        "reader": _preflight_reader_identity(base_url),
+        "thinking": dict(THINKING),
+        "versions": _versions(),
+        "original_qwen_reader": dict(ORIGINAL_QWEN_READER_IDENTITY),
+        "sources": {},
+        "manifest_sha256": None,
+        "scoring_inputs_sha256": None,
+        "extractor_models": dict(EXPECTED_EXTRACTOR_MODELS),
+        "case_sets": {label: [] for label in ARM_LABELS},
+        "logical_calls": 0,
+        "execution_order": [],
+        "failed_case_ids": [],
+        "case_states": {label: [] for label in ARM_LABELS},
+    }
+    _write_json_atomic(_authoritative_state_path(Path(output_root)), state)
 
 
 def _validate_sources(sources: Mapping[str, Sequence[ReplayCase]]) -> None:
@@ -1121,50 +1187,6 @@ def _expected_checkpoint_identity(
     }
 
 
-def _validate_checkpoint(
-    checkpoint: Mapping[str, Any],
-    expected: Mapping[str, Any],
-) -> None:
-    if checkpoint.get("schema_version") != expected["schema_version"] or checkpoint.get("arm") != expected["arm"]:
-        raise ReplayInputError("replay checkpoint identity does not match")
-    source = checkpoint.get("source")
-    expected_source = expected["source"]
-    if not isinstance(source, Mapping) or source.get("sha256") != expected_source["sha256"]:
-        raise ReplayInputError("replay checkpoint source hash does not match")
-    if source.get("extractor_model") != expected_source["extractor_model"]:
-        raise ReplayInputError("replay checkpoint extractor identity does not match")
-    if checkpoint.get("manifest_sha256") != expected["manifest_sha256"]:
-        raise ReplayInputError("replay checkpoint manifest identity does not match")
-    if checkpoint.get("scoring_inputs_sha256") != expected["scoring_inputs_sha256"]:
-        raise ReplayInputError("replay checkpoint scoring inputs do not match")
-    if checkpoint.get("extractor_models") != expected["extractor_models"]:
-        raise ReplayInputError("replay checkpoint extractor identities do not match")
-    if checkpoint.get("reader") != expected["reader"]:
-        raise ReplayInputError("replay checkpoint reader identity does not match")
-    if checkpoint.get("thinking") != expected["thinking"]:
-        raise ReplayInputError("replay checkpoint thinking object does not match")
-    if checkpoint.get("versions") != expected["versions"]:
-        raise ReplayInputError("replay checkpoint prompt/scorer versions do not match")
-    if checkpoint.get("case_ids") != expected["case_ids"]:
-        raise ReplayInputError("replay checkpoint case set does not match")
-
-    completed = checkpoint.get("completed_case_ids")
-    replay_cases = checkpoint.get("cases")
-    if not isinstance(completed, list) or not isinstance(replay_cases, list):
-        raise ReplayInputError("replay checkpoint completed cases are invalid")
-    completed_ids = [str(item) for item in completed]
-    result_ids = [str(item.get("case_id")) for item in replay_cases if isinstance(item, Mapping)]
-    if (
-        len(result_ids) != len(replay_cases)
-        or completed_ids != result_ids
-        or len(set(completed_ids)) != len(completed_ids)
-        or not set(completed_ids).issubset(set(expected["case_ids"]))
-    ):
-        raise ReplayInputError("replay checkpoint completed case set is invalid")
-    if checkpoint.get("metrics") != aggregate_results(replay_cases):
-        raise ReplayInputError("replay checkpoint metrics do not match its cases")
-
-
 def _arm_status(
     label: str,
     replay_cases: Sequence[Mapping[str, Any]],
@@ -1191,75 +1213,6 @@ def _ordered_replay_cases(
     ordered.extend(("qwen37", case) for case in qwen_cases if case.case_id != CANARY_CASE_ID)
     ordered.extend((label, case) for label in ARM_LABELS[1:] for case in sources[label])
     return ordered
-
-
-def _validate_resume_progress(
-    sources: Mapping[str, Sequence[ReplayCase]],
-    checkpoints: Mapping[str, Mapping[str, Any]],
-    states: Mapping[str, Sequence[Mapping[str, Any]]],
-    summary: Mapping[str, Any],
-    execution_order: Sequence[str],
-) -> None:
-    raw_status = summary.get("status")
-    if not isinstance(raw_status, str) or raw_status not in SUMMARY_STATUSES:
-        raise ReplayInputError("replay summary status is invalid")
-    status = raw_status
-
-    canonical_pairs = _ordered_replay_cases(sources)
-    canonical_order = [f"{label}:{case.case_id}" for label, case in canonical_pairs]
-    if list(execution_order) != canonical_order[: len(execution_order)]:
-        raise ReplayInputError("replay summary execution order is not a canonical prefix")
-
-    for label in ARM_LABELS:
-        expected_ids = [
-            case.case_id for pair_label, case in canonical_pairs[: len(execution_order)] if pair_label == label
-        ]
-        if checkpoints[label].get("completed_case_ids") != expected_ids:
-            raise ReplayInputError("replay execution order and arm checkpoint prefixes do not match")
-        expected_status = _arm_status(label, states[label], len(sources[label]), status)
-        if checkpoints[label].get("status") != expected_status:
-            raise ReplayInputError(f"replay checkpoint status is incoherent for {label}")
-
-    count = len(execution_order)
-    has_reader_failures = any(case.get("reader_error") for arm_cases in states.values() for case in arm_cases)
-    if status in {"canary_completed", "mode_unverified", "canary_failed"} and count != 1:
-        raise ReplayInputError(f"replay summary status {status} requires exactly one canary call")
-    if status == "running" and not 1 <= count < len(canonical_order):
-        raise ReplayInputError("replay summary running status has an invalid call count")
-    if status in {"completed", "completed_with_failures"} and count != len(canonical_order):
-        raise ReplayInputError(f"replay summary status {status} requires all logical calls")
-    if status == "completed" and has_reader_failures:
-        raise ReplayInputError("replay summary completed status conflicts with reader failures")
-    if status == "completed_with_failures" and not has_reader_failures:
-        raise ReplayInputError("replay summary completed_with_failures status requires a reader failure")
-
-    qwen_results = states["qwen37"]
-    canary_result = qwen_results[0] if qwen_results else None
-    reader_call = canary_result.get("reader_call") if canary_result is not None else None
-    canary_verified = (
-        canary_result is not None
-        and not canary_result.get("reader_error")
-        and isinstance(canary_result.get("qa"), Mapping)
-        and isinstance(reader_call, Mapping)
-        and reader_call.get("thinking_verified") is True
-    )
-    if status not in {"mode_unverified", "canary_failed", "aborted"} and not canary_verified:
-        raise ReplayInputError("replay checkpoint does not contain a successful verified Qwen canary")
-    if status == "mode_unverified" and (
-        canary_result is None
-        or canary_result.get("reader_error")
-        or not isinstance(reader_call, Mapping)
-        or reader_call.get("thinking_verified") is not False
-    ):
-        raise ReplayInputError("replay mode_unverified status does not match the Qwen canary")
-    if status == "canary_failed" and (canary_result is None or not canary_result.get("reader_error")):
-        raise ReplayInputError("replay canary_failed status does not match the Qwen canary")
-
-    expected_failed_ids = [
-        f"{label}:{case.get('case_id')}" for label in ARM_LABELS for case in states[label] if case.get("reader_error")
-    ]
-    if summary.get("failed_case_ids") != expected_failed_ids:
-        raise ReplayInputError("replay summary failed case IDs do not match arm checkpoints")
 
 
 def _ranking(arms: Mapping[str, Mapping[str, Any]], metric_group: str) -> list[list[str]]:
@@ -1296,6 +1249,32 @@ def _canary_evidence(
     }
 
 
+def _authoritative_identity(
+    sources: Mapping[str, Sequence[ReplayCase]],
+    *,
+    base_url: str,
+) -> dict[str, Any]:
+    first_arm = sources[ARM_LABELS[0]][0].arm
+    return {
+        "reader": _reader_identity(base_url),
+        "thinking": dict(THINKING),
+        "versions": _versions(),
+        "original_qwen_reader": dict(ORIGINAL_QWEN_READER_IDENTITY),
+        "sources": {
+            label: {
+                "path": str(sources[label][0].arm.report_path),
+                "sha256": sources[label][0].arm.report_sha256,
+                "extractor_model": sources[label][0].arm.extractor_model,
+            }
+            for label in ARM_LABELS
+        },
+        "manifest_sha256": first_arm.manifest_sha256,
+        "scoring_inputs_sha256": first_arm.scoring_inputs_sha256,
+        "extractor_models": dict(EXPECTED_EXTRACTOR_MODELS),
+        "case_sets": {label: [case.case_id for case in sources[label]] for label in ARM_LABELS},
+    }
+
+
 def _build_summary(
     sources: Mapping[str, Sequence[ReplayCase]],
     states: Mapping[str, Sequence[Mapping[str, Any]]],
@@ -1310,22 +1289,22 @@ def _build_summary(
 ) -> dict[str, Any]:
     arms = {label: summarize_arm(sources[label], states[label]) for label in ARM_LABELS}
     terminal = status != "running"
-    first_arm = sources[ARM_LABELS[0]][0].arm
+    identity = _authoritative_identity(sources, base_url=base_url)
     summary = {
         "schema_version": REPLAY_SCHEMA_VERSION,
         "status": status,
         "started_at": started_at,
         "completed_at": updated_at if terminal else None,
         "updated_at": updated_at,
-        "reader": _reader_identity(base_url),
-        "thinking": dict(THINKING),
-        "versions": _versions(),
-        "original_qwen_reader": dict(ORIGINAL_QWEN_READER_IDENTITY),
-        "source_hashes": {label: sources[label][0].arm.report_sha256 for label in ARM_LABELS},
-        "manifest_sha256": first_arm.manifest_sha256,
-        "scoring_inputs_sha256": first_arm.scoring_inputs_sha256,
-        "extractor_models": dict(EXPECTED_EXTRACTOR_MODELS),
-        "case_sets": {label: [case.case_id for case in sources[label]] for label in ARM_LABELS},
+        "reader": identity["reader"],
+        "thinking": identity["thinking"],
+        "versions": identity["versions"],
+        "original_qwen_reader": identity["original_qwen_reader"],
+        "source_hashes": {label: identity["sources"][label]["sha256"] for label in ARM_LABELS},
+        "manifest_sha256": identity["manifest_sha256"],
+        "scoring_inputs_sha256": identity["scoring_inputs_sha256"],
+        "extractor_models": identity["extractor_models"],
+        "case_sets": identity["case_sets"],
         "logical_calls": len(execution_order),
         "execution_order": list(execution_order),
         "failed_case_ids": [
@@ -1361,7 +1340,6 @@ def _build_authoritative_state(
     aborted_case_id: str | None = None,
     abort_stage: str | None = None,
 ) -> dict[str, Any]:
-    first_arm = sources[ARM_LABELS[0]][0].arm
     state = {
         "schema_version": REPLAY_SCHEMA_VERSION,
         "kind": "chinese_reader_replay_authoritative_state",
@@ -1369,22 +1347,7 @@ def _build_authoritative_state(
         "started_at": started_at,
         "completed_at": updated_at if status != "running" else None,
         "updated_at": updated_at,
-        "reader": _reader_identity(base_url),
-        "thinking": dict(THINKING),
-        "versions": _versions(),
-        "original_qwen_reader": dict(ORIGINAL_QWEN_READER_IDENTITY),
-        "sources": {
-            label: {
-                "path": str(sources[label][0].arm.report_path),
-                "sha256": sources[label][0].arm.report_sha256,
-                "extractor_model": sources[label][0].arm.extractor_model,
-            }
-            for label in ARM_LABELS
-        },
-        "manifest_sha256": first_arm.manifest_sha256,
-        "scoring_inputs_sha256": first_arm.scoring_inputs_sha256,
-        "extractor_models": dict(EXPECTED_EXTRACTOR_MODELS),
-        "case_sets": {label: [case.case_id for case in sources[label]] for label in ARM_LABELS},
+        **_authoritative_identity(sources, base_url=base_url),
         "logical_calls": len(execution_order),
         "execution_order": list(execution_order),
         "failed_case_ids": [
@@ -1487,21 +1450,144 @@ def _persist_replay(
     )
 
 
+def _validate_reader_call_metadata(
+    raw_call: object,
+    *,
+    failed: bool,
+) -> Mapping[str, Any]:
+    expected_fields = {field.name for field in dataclasses.fields(ReaderCallMetadata)}
+    if not isinstance(raw_call, Mapping) or set(raw_call) != expected_fields:
+        raise ReplayInputError("authoritative replay case result has invalid reader metadata")
+    for name in ("input_tokens", "output_tokens", "reasoning_tokens", "total_tokens", "attempts"):
+        value = raw_call.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ReplayInputError("authoritative replay case result has invalid reader metadata")
+    attempts = raw_call.get("attempts")
+    latency = raw_call.get("latency_seconds")
+    thinking_verified = raw_call.get("thinking_verified")
+    if (
+        not isinstance(attempts, int)
+        or not 1 <= attempts <= GLM_MAX_ATTEMPTS
+        or isinstance(latency, bool)
+        or not isinstance(latency, (int, float))
+        or not math.isfinite(float(latency))
+        or latency < 0
+        or not isinstance(thinking_verified, bool)
+    ):
+        raise ReplayInputError("authoritative replay case result has invalid reader metadata")
+    if failed and (
+        any(raw_call.get(name) != 0 for name in ("input_tokens", "output_tokens", "reasoning_tokens", "total_tokens"))
+        or thinking_verified
+    ):
+        raise ReplayInputError("authoritative replay case result has invalid failed-reader metadata")
+    return raw_call
+
+
+def _expected_replayed_qa(replay_case: ReplayCase, qa: Mapping[str, Any]) -> dict[str, Any]:
+    source_qa = replay_case.source_case.get("qa")
+    predicted = qa.get("predicted_answer")
+    predicted_choice = qa.get("predicted_choice")
+    if (
+        not isinstance(source_qa, Mapping)
+        or not isinstance(predicted, str)
+        or not predicted.strip()
+        or not isinstance(predicted_choice, str)
+    ):
+        raise ReplayInputError("authoritative replay case result has invalid QA output")
+    answerability = source_qa.get("answerability")
+    if not isinstance(answerability, str):
+        raise ReplayInputError("authoritative replay case result has invalid QA output")
+    choices = replay_case.trajectory.choices
+    if (not choices and predicted_choice) or (
+        predicted_choice and (predicted_choice not in choices or predicted != choices[predicted_choice])
+    ):
+        raise ReplayInputError("authoritative replay case result has invalid QA choice")
+    scores = score_qa_accuracy(
+        predicted,
+        replay_case.trajectory.answer,
+        choices=choices or None,
+        ground_truth_choice=replay_case.trajectory.ground_truth_choice,
+    )
+    expected = {
+        "model": MODEL,
+        "predicted_answer": predicted,
+        "predicted_choice": predicted_choice,
+        "gold_answer": replay_case.trajectory.answer,
+        "ground_truth_choice": replay_case.trajectory.ground_truth_choice,
+        "exact_match": scores["exact_match"],
+        "f1": scores["f1"],
+        "choice_correct": scores["choice_correct"],
+        "answerability": answerability,
+        "abstention_kind": abstention_kind(answerability),
+        "usage": {"total_tokens": qa.get("usage", {}).get("total_tokens")},
+    }
+    if replay_case.dataset == "perltqa":
+        expected.update(
+            score_answer(
+                predicted,
+                replay_case.answer_anchors,
+                replay_case.accepted_rubrics,
+            )
+        )
+    return expected
+
+
+def _validate_authoritative_case_result(
+    replay_case: ReplayCase,
+    result: Mapping[str, Any],
+) -> None:
+    derived_fields = {"qa", "answer_entity", "reader_call", "reader_error", "messages"}
+    expected_source = {key: value for key, value in replay_case.source_case.items() if key not in derived_fields}
+    actual_source = {key: value for key, value in result.items() if key not in derived_fields}
+    if actual_source != expected_source:
+        raise ReplayInputError("authoritative replay case result changed immutable source fields")
+
+    failed = result.get("reader_error") is not None
+    reader_call = _validate_reader_call_metadata(result.get("reader_call"), failed=failed)
+    if failed:
+        if (
+            result.get("reader_error") != "reader_call_failed"
+            or result.get("qa") is not None
+            or result.get("answer_entity") is not None
+        ):
+            raise ReplayInputError("authoritative replay case result has invalid reader failure")
+        return
+    if "reader_error" in result:
+        raise ReplayInputError("authoritative replay case result has an unexpected reader error")
+
+    qa = result.get("qa")
+    if not isinstance(qa, Mapping):
+        raise ReplayInputError("authoritative replay case result has invalid QA scoring")
+    usage = qa.get("usage")
+    if (
+        not isinstance(usage, Mapping)
+        or set(usage) != {"total_tokens"}
+        or usage.get("total_tokens") != reader_call.get("total_tokens")
+    ):
+        raise ReplayInputError("authoritative replay case result has inconsistent token usage")
+    if dict(qa) != _expected_replayed_qa(replay_case, qa):
+        raise ReplayInputError("authoritative replay case result has invalid QA scoring")
+    expected_answer_entity = score_answer_entity_packet(
+        replay_case.retrieved,
+        replay_case.answer_entity_gold,
+        answer_text=str(qa["predicted_answer"]),
+        k=5,
+    )
+    if result.get("answer_entity") != expected_answer_entity:
+        raise ReplayInputError("authoritative replay case result has invalid answer-entity scoring")
+
+
 def _validate_authoritative_state(
     state: Mapping[str, Any],
     sources: Mapping[str, Sequence[ReplayCase]],
     *,
     base_url: str,
 ) -> dict[str, list[dict[str, Any]]]:
-    expected_identity = _build_authoritative_state(
-        sources,
-        {label: [] for label in ARM_LABELS},
-        base_url=base_url,
-        status="running",
-        execution_order=[],
-        started_at="identity-only",
-        updated_at="identity-only",
-    )
+    expected_identity = {
+        "schema_version": REPLAY_SCHEMA_VERSION,
+        "kind": "chinese_reader_replay_authoritative_state",
+        **_authoritative_identity(sources, base_url=base_url),
+    }
     for field in (
         "schema_version",
         "kind",
@@ -1541,12 +1627,13 @@ def _validate_authoritative_state(
     if execution_order != canonical_order[: len(execution_order)]:
         raise ReplayInputError("authoritative replay execution order is not a canonical prefix")
     for label in ARM_LABELS:
-        expected_ids = [
-            case.case_id for pair_label, case in canonical_pairs[: len(execution_order)] if pair_label == label
-        ]
+        expected_cases = [case for pair_label, case in canonical_pairs[: len(execution_order)] if pair_label == label]
+        expected_ids = [case.case_id for case in expected_cases]
         actual_ids = [str(case.get("case_id")) for case in states[label]]
         if actual_ids != expected_ids:
             raise ReplayInputError("authoritative replay case states do not match execution order")
+        for expected_case, result in zip(expected_cases, states[label], strict=True):
+            _validate_authoritative_case_result(expected_case, result)
 
     failed_case_ids = [
         f"{label}:{case.get('case_id')}" for label in ARM_LABELS for case in states[label] if case.get("reader_error")
@@ -1740,6 +1827,8 @@ def _resume_state(
             base_url=base_url,
         )
     )
+    if state.get("status") == "aborted":
+        raise ReplayInputError("cannot resume replay with status aborted")
     states = _validate_authoritative_state(state, sources, base_url=base_url)
     summary = _project_authoritative_state(
         sources,
@@ -1748,7 +1837,7 @@ def _resume_state(
         base_url=base_url,
     )
     status = str(state.get("status") or "")
-    if status in {"mode_unverified", "canary_failed", "aborted"}:
+    if status in {"mode_unverified", "canary_failed"}:
         raise ReplayInputError(f"cannot resume replay with status {status}")
     started_at = state.get("started_at")
     if not isinstance(started_at, str) or not started_at:
@@ -1782,7 +1871,17 @@ def run_replay(
 ) -> dict[str, Any]:
     """Run or resume all three fixed reader arms with a physical Qwen canary first."""
     output_root = Path(output_root)
-    _reader_identity(base_url)
+    endpoint_invalid = False
+    try:
+        _reader_identity(base_url)
+    except ReplayInputError as error:
+        _clear_exception_chain(error)
+        endpoint_invalid = True
+    if endpoint_invalid:
+        if not resume:
+            _persist_preflight_abort(output_root, base_url=base_url)
+        del sources, transport, api_key, base_url, canary_only, resume
+        raise ReplayAbortedError("reader replay aborted")
     source_validation_failed = False
     try:
         _validate_sources(sources)
@@ -1792,17 +1891,8 @@ def run_replay(
     if source_validation_failed and resume:
         raise ReplayInputError("replay source identity does not match authoritative state")
     if source_validation_failed:
-        started_at = datetime.now(timezone.utc).isoformat()
-        _persist_replay(
-            sources,
-            {label: [] for label in ARM_LABELS},
-            output_root=output_root,
-            base_url=base_url,
-            status="aborted",
-            execution_order=[],
-            started_at=started_at,
-            abort_stage="input_validation",
-        )
+        _persist_preflight_abort(output_root, base_url=base_url)
+        del sources, transport, api_key, base_url, canary_only, resume
         raise ReplayAbortedError("reader replay aborted")
     if resume:
         states, execution_order, started_at, previous_summary = _resume_state(
@@ -1920,7 +2010,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    preflight_failed = False
     try:
+        _reader_identity(args.base_url)
         secrets = read_secret_values(args.env_file, {"LLM_API_KEY"}, os.environ)
         api_key = secrets.get("LLM_API_KEY")
         if is_placeholder_secret(api_key):
@@ -1933,6 +2025,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "qwen38-27b": args.qwen38_27b_report,
             },
         )
+    except (OSError, ReplayInputError, RuntimeError, httpx.HTTPError, ValueError) as error:
+        _clear_exception_chain(error)
+        preflight_failed = True
+    if preflight_failed:
+        _persist_preflight_abort(args.output_root, base_url=args.base_url)
+        print("reader replay failed: reader replay aborted", file=sys.stderr)
+        return 2
+
+    try:
         with httpx.Client(timeout=GLM_REQUEST_TIMEOUT_SECONDS) as client:
             summary = run_replay(
                 sources,
