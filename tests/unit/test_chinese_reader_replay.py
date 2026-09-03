@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from evaluation.tools import run_chinese_reader_replay as replay
@@ -17,6 +19,36 @@ from tests.eval.chinese_e2e import (
     PerLTQABundle,
     SampledInputs,
 )
+
+BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+MODEL = "glm-5.3-flash"
+
+
+def success_envelope() -> dict[str, Any]:
+    return {
+        "choices": [{"message": {"reasoning_content": "private chain", "content": "answer"}}],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 7,
+            "total_tokens": 17,
+            "completion_tokens_details": {"reasoning_tokens": 5},
+        },
+    }
+
+
+def mock_client(
+    actions: list[dict[str, Any] | BaseException],
+) -> tuple[httpx.Client, list[httpx.Request]]:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        action = actions.pop(0)
+        if isinstance(action, BaseException):
+            raise action
+        return httpx.Response(200, json=action)
+
+    return httpx.Client(transport=httpx.MockTransport(handler)), requests
 
 
 def make_gold(case_id: str) -> AnswerEntityGold:
@@ -61,8 +93,7 @@ def make_trajectory(
 def make_inputs(first: MemDailyTrajectory | None = None) -> SampledInputs:
     trajectories = [first] if first is not None else []
     trajectories.extend(
-        make_trajectory(case_id=f"memdaily:simple:events:{index}")
-        for index in range(2 if first is not None else 1, 41)
+        make_trajectory(case_id=f"memdaily:simple:events:{index}") for index in range(2 if first is not None else 1, 41)
     )
     return SampledInputs(perltqa_bundles=(), memdaily_trajectories=tuple(trajectories))
 
@@ -275,9 +306,7 @@ def test_build_trajectory_index_reconstructs_perltqa_metadata_with_one_ingest(
     manifest = replace(
         make_manifest(),
         memdaily={"case_ids": [trajectory.case_id for trajectory in memdaily], "expected_questions": 38},
-        answer_entity_gold_by_case_id={
-            trajectory.case_id: make_gold(trajectory.case_id) for trajectory in memdaily
-        },
+        answer_entity_gold_by_case_id={trajectory.case_id: make_gold(trajectory.case_id) for trajectory in memdaily},
     )
     sampled = SampledInputs(perltqa_bundles=(bundle,), memdaily_trajectories=memdaily)
     monkeypatch.setattr(replay, "load_sample_manifest", lambda path: manifest)
@@ -339,3 +368,197 @@ def test_validate_source_report_returns_copies() -> None:
     assert validated["qa"] is not case["qa"]
     assert validated["retrieved"] is not case["retrieved"]
     assert validated["retrieved"][0] is not case["retrieved"][0]
+
+
+def test_glm_payload_uses_provider_thinking_object() -> None:
+    payload = replay.build_glm_thinking_payload(MODEL, "system", "user")
+
+    assert payload == {
+        "model": "glm-5.3-flash",
+        "messages": [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "user"},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 4096,
+        "thinking": {"type": "enabled"},
+    }
+    assert "enable_thinking" not in payload
+
+
+def test_transport_verifies_thinking_without_retaining_reasoning_content() -> None:
+    client, requests = mock_client([success_envelope()])
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=lambda _: None)
+        answer, total = transport("secret", BASE_URL, MODEL, "s", "u")
+    finally:
+        client.close()
+
+    assert (answer, total) == ("answer", 17)
+    assert transport.last_call is not None
+    assert transport.last_call.thinking_verified is True
+    assert transport.last_call.reasoning_tokens == 5
+    assert "private chain" not in json.dumps(dataclasses.asdict(transport.last_call))
+    assert requests[0].headers["authorization"] == "Bearer secret"
+    assert requests[0].url == f"{BASE_URL}/chat/completions"
+    sent_payload = json.loads(requests[0].content)
+    assert sent_payload["thinking"] == {"type": "enabled"}
+    assert sent_payload["max_tokens"] == 4096
+
+
+def test_transport_retries_transient_failure_at_most_three_times() -> None:
+    client, requests = mock_client([httpx.ReadTimeout("slow"), httpx.ReadTimeout("slow"), success_envelope()])
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=lambda _: None)
+        assert transport("secret", BASE_URL, MODEL, "s", "u")[0] == "answer"
+    finally:
+        client.close()
+
+    assert len(requests) == 3
+    assert transport.last_call is not None
+    assert transport.last_call.attempts == 3
+
+
+def test_transport_stops_after_three_transient_failures() -> None:
+    client, requests = mock_client([httpx.ReadTimeout("slow") for _ in range(4)])
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=3, sleep=lambda _: None)
+        with pytest.raises(httpx.ReadTimeout, match="timed out") as raised:
+            transport("secret", BASE_URL, MODEL, "s", "u")
+    finally:
+        client.close()
+
+    assert len(requests) == 3
+    assert transport.last_call is None
+    assert "slow" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+def test_transport_failure_drops_response_body_headers_and_authorization() -> None:
+    private_body = "private provider response"
+    private_header = "private-header"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            500,
+            request=request,
+            headers={"X-Private": private_header},
+            json={"error": {"message": private_body}},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=1, sleep=lambda _: None)
+        with pytest.raises(httpx.HTTPStatusError) as raised:
+            transport("secret", BASE_URL, MODEL, "s", "u")
+    finally:
+        client.close()
+
+    error = raised.value
+    assert error.response.status_code == 500
+    assert error.response.content == b""
+    assert private_body not in str(error)
+    assert private_header not in str(error.response.headers)
+    assert "secret" not in str(error.request.headers)
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+def test_transport_invalid_json_failure_does_not_retain_response_body() -> None:
+    private_body = 'private response: {"reasoning_content":"private chain"'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, content=private_body)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        transport = replay.GLMThinkingTransport(client, max_attempts=1, sleep=lambda _: None)
+        with pytest.raises(ValueError, match="JSON object") as raised:
+            transport("secret", BASE_URL, MODEL, "s", "u")
+    finally:
+        client.close()
+
+    assert private_body not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert transport.last_call is None
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        (
+            {
+                "prompt_tokens": 11,
+                "completion_tokens": 7,
+                "completion_tokens_details": {"reasoning_tokens": 3},
+            },
+            (11, 7, 3, 18),
+        ),
+        (
+            {
+                "input_tokens": 13,
+                "output_tokens": 9,
+                "output_tokens_details": {"reasoning_tokens": 4},
+            },
+            (13, 9, 4, 22),
+        ),
+    ],
+)
+def test_response_parser_normalizes_token_field_variants(
+    usage: dict[str, Any], expected: tuple[int, int, int, int]
+) -> None:
+    parsed = replay.parse_glm_thinking_response({"choices": [{"message": {"content": "answer"}}], "usage": usage})
+
+    assert (
+        parsed.input_tokens,
+        parsed.output_tokens,
+        parsed.reasoning_tokens,
+        parsed.total_tokens,
+    ) == expected
+    assert parsed.thinking_verified is True
+
+
+def test_response_without_thinking_evidence_is_unverified() -> None:
+    parsed = replay.parse_glm_thinking_response(
+        {
+            "choices": [{"message": {"content": "answer"}}],
+            "usage": {"total_tokens": 2},
+        }
+    )
+
+    assert parsed.thinking_verified is False
+
+
+def test_nonempty_reasoning_content_verifies_thinking_without_token_details() -> None:
+    parsed = replay.parse_glm_thinking_response(
+        {"choices": [{"message": {"reasoning_content": "private chain", "content": "answer"}}]}
+    )
+
+    assert parsed.thinking_verified is True
+    assert not hasattr(parsed, "reasoning_content")
+
+
+def test_response_parser_does_not_retain_invalid_token_value_in_exception_chain() -> None:
+    private_value = "private provider token value"
+
+    with pytest.raises(ValueError, match="invalid token usage") as raised:
+        replay.parse_glm_thinking_response(
+            {
+                "choices": [{"message": {"content": "answer"}}],
+                "usage": {"input_tokens": private_value},
+            }
+        )
+
+    assert private_value not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize("content", [None, "", "   "])
+def test_response_parser_rejects_missing_or_empty_final_content(content: object) -> None:
+    envelope = {"choices": [{"message": {"content": content}}]}
+
+    with pytest.raises(ValueError, match="final answer"):
+        replay.parse_glm_thinking_response(envelope)

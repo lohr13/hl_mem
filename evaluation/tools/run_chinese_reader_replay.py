@@ -4,22 +4,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import Field, dataclass, replace
 from importlib import import_module
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, TypeAlias
+
+import httpx
 
 # These evaluation helpers live below namespace-package roots that mypy otherwise
 # discovers twice when this file is checked by path (``tools`` and
 # ``evaluation.tools``). Runtime lookup preserves the existing public seam while
 # keeping the task's exact standalone mypy command scoped to this module.
 _chinese_e2e = import_module("tests.eval.chinese_e2e")
+_qa_client = import_module("evaluation.tools.longmemeval.qa_client")
 load_sample_manifest = _chinese_e2e.load_sample_manifest
 load_sampled_inputs = _chinese_e2e.load_sampled_inputs
 build_perltqa_ingest_trajectory = _chinese_e2e.build_perltqa_ingest_trajectory
 build_perltqa_question_trajectory = _chinese_e2e.build_perltqa_question_trajectory
+qa_call_with_retry = _qa_client.qa_call_with_retry
 
 AcceptedRubrics: TypeAlias = tuple[tuple[tuple[str, ...], ...], ...]
 
@@ -53,6 +58,7 @@ class AnswerEntityGold(Protocol):
     forbidden_entities: tuple[str, ...]
     forbidden_assertions: tuple[str, ...]
 
+
 EXPECTED_CASE_COUNT = 40
 OFFICIAL_BENCHMARK = "chinese_e2e"
 OFFICIAL_SCORER_VERSION = "deterministic-rubric-v2"
@@ -60,6 +66,8 @@ OFFICIAL_ANSWER_ENTITY_SCORER_VERSION = "answer-entity-packet-v1"
 OFFICIAL_SAMPLE_ID = "zh-e2e-v3"
 OFFICIAL_READER_MODEL = "qwen3.7-plus"
 SUPPORTED_ANSWERABILITY = frozenset({"supported", "low_confidence"})
+GLM_THINKING_MODEL = "glm-5.3-flash"
+GLM_MAX_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -85,6 +93,27 @@ class ReplayCase:
 
 
 @dataclass(frozen=True)
+class ParsedGLMResponse:
+    final_answer: str
+    input_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+    total_tokens: int
+    thinking_verified: bool
+
+
+@dataclass(frozen=True)
+class ReaderCallMetadata:
+    input_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+    total_tokens: int
+    latency_seconds: float
+    attempts: int
+    thinking_verified: bool
+
+
+@dataclass(frozen=True)
 class _TrajectoryCase:
     dataset: str
     slice_name: str
@@ -96,6 +125,190 @@ class _TrajectoryCase:
 
 class ReplayInputError(ValueError):
     """A frozen source report cannot be used for reader replay."""
+
+
+def build_glm_thinking_payload(
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+) -> dict[str, Any]:
+    """Build the fixed evaluation-only GLM thinking request."""
+    return {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 4096,
+        "thinking": {"type": "enabled"},
+    }
+
+
+def _token_count(usage: Mapping[object, object], *field_names: str) -> int:
+    raw_value: object = 0
+    for field_name in field_names:
+        if field_name in usage:
+            raw_value = usage[field_name]
+            break
+    invalid_value = isinstance(raw_value, bool)
+    value = 0
+    if raw_value is not None and isinstance(raw_value, (str, int, float)) and not invalid_value:
+        try:
+            value = int(raw_value)
+        except (ValueError, OverflowError):
+            invalid_value = True
+    elif raw_value is not None:
+        invalid_value = True
+    if invalid_value or value < 0:
+        raise ValueError("GLM response contains invalid token usage")
+    return value
+
+
+def parse_glm_thinking_response(envelope: Mapping[str, Any]) -> ParsedGLMResponse:
+    """Minimize a GLM envelope to the final answer and non-sensitive usage data."""
+    choices = envelope.get("choices")
+    if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)) or not choices:
+        raise ValueError("GLM response is missing a final answer")
+    first_choice = choices[0]
+    if not isinstance(first_choice, Mapping):
+        raise ValueError("GLM response is missing a final answer")
+    message = first_choice.get("message")
+    if not isinstance(message, Mapping):
+        raise ValueError("GLM response is missing a final answer")
+    final_answer = message.get("content")
+    if not isinstance(final_answer, str) or not final_answer.strip():
+        raise ValueError("GLM response is missing a final answer")
+
+    reasoning_content = message.get("reasoning_content")
+    has_reasoning_content = isinstance(reasoning_content, str) and bool(reasoning_content.strip())
+    del reasoning_content
+
+    raw_usage = envelope.get("usage")
+    usage: Mapping[object, object] = raw_usage if isinstance(raw_usage, Mapping) else {}
+    input_tokens = _token_count(usage, "prompt_tokens", "input_tokens")
+    output_tokens = _token_count(usage, "completion_tokens", "output_tokens")
+    raw_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+    if not isinstance(raw_details, Mapping):
+        raise ValueError("GLM response contains invalid token usage")
+    reasoning_tokens = _token_count(raw_details, "reasoning_tokens")
+    total_tokens = _token_count(usage, "total_tokens") or input_tokens + output_tokens
+
+    return ParsedGLMResponse(
+        final_answer=final_answer,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
+        total_tokens=total_tokens,
+        thinking_verified=has_reasoning_content or reasoning_tokens > 0,
+    )
+
+
+def _safe_status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://provider.invalid/chat/completions")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError(
+        f"GLM request failed with HTTP {status_code}",
+        request=request,
+        response=response,
+    )
+
+
+def _response_json(response: httpx.Response) -> Mapping[str, Any]:
+    invalid_json = False
+    try:
+        raw_envelope = response.json()
+    except (TypeError, ValueError, UnicodeError):
+        invalid_json = True
+        raw_envelope = None
+    if invalid_json or not isinstance(raw_envelope, Mapping):
+        raise ValueError("GLM response must be a JSON object")
+    return {str(key): value for key, value in raw_envelope.items()}
+
+
+class GLMThinkingTransport:
+    """Evaluation-only QA chat transport that retains metadata, never reasoning."""
+
+    def __init__(
+        self,
+        client: httpx.Client,
+        *,
+        max_attempts: int = GLM_MAX_ATTEMPTS,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        if not 1 <= max_attempts <= GLM_MAX_ATTEMPTS:
+            raise ValueError("max_attempts must be between 1 and 3")
+        self._client = client
+        self._max_attempts = max_attempts
+        self._sleep = sleep
+        self.last_call: ReaderCallMetadata | None = None
+
+    def _request_once(
+        self,
+        *,
+        url: str,
+        api_key: str,
+        payload: Mapping[str, Any],
+    ) -> ParsedGLMResponse:
+        failure: BaseException | None = None
+        try:
+            response = self._client.post(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            failure = _safe_status_error(error.response.status_code)
+        except httpx.ReadTimeout:
+            failure = httpx.ReadTimeout("GLM request timed out")
+        except httpx.ConnectTimeout:
+            failure = httpx.ConnectTimeout("GLM connection timed out")
+        except httpx.HTTPError:
+            failure = httpx.HTTPError("GLM request failed")
+        if failure is not None:
+            raise failure
+        return parse_glm_thinking_response(_response_json(response))
+
+    def __call__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[str, int]:
+        if model != GLM_THINKING_MODEL:
+            raise ValueError("GLM thinking transport requires glm-5.3-flash")
+        self.last_call = None
+        attempts = 0
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        payload = build_glm_thinking_payload(model, system_prompt, user_prompt)
+        started_at = time.monotonic()
+
+        def request_once() -> ParsedGLMResponse:
+            nonlocal attempts
+            attempts += 1
+            return self._request_once(url=url, api_key=api_key, payload=payload)
+
+        parsed = qa_call_with_retry(
+            request_once,
+            max_attempts=self._max_attempts,
+            sleep=self._sleep,
+        )
+        self.last_call = ReaderCallMetadata(
+            input_tokens=parsed.input_tokens,
+            output_tokens=parsed.output_tokens,
+            reasoning_tokens=parsed.reasoning_tokens,
+            total_tokens=parsed.total_tokens,
+            latency_seconds=time.monotonic() - started_at,
+            attempts=attempts,
+            thinking_verified=parsed.thinking_verified,
+        )
+        return parsed.final_answer, parsed.total_tokens
 
 
 def sha256_file(path: Path) -> str:
@@ -135,8 +348,7 @@ def validate_source_report(
         raise ReplayInputError(f"source report scorer_version must be {OFFICIAL_SCORER_VERSION}")
     if report.get("answer_entity_scorer_version") != OFFICIAL_ANSWER_ENTITY_SCORER_VERSION:
         raise ReplayInputError(
-            "source report answer_entity_scorer_version must be "
-            f"{OFFICIAL_ANSWER_ENTITY_SCORER_VERSION}"
+            "source report answer_entity_scorer_version must be " f"{OFFICIAL_ANSWER_ENTITY_SCORER_VERSION}"
         )
 
     sample = report.get("sample")
@@ -171,9 +383,7 @@ def validate_source_report(
         if raw_qa.get("model") != OFFICIAL_READER_MODEL:
             raise ReplayInputError(f"source report case {case_id} QA model must be {OFFICIAL_READER_MODEL}")
         if raw_qa.get("answerability") not in SUPPORTED_ANSWERABILITY:
-            raise ReplayInputError(
-                f"source report case {case_id} answerability must be supported or low_confidence"
-            )
+            raise ReplayInputError(f"source report case {case_id} answerability must be supported or low_confidence")
 
         raw_retrieved = raw_case.get("retrieved")
         if not isinstance(raw_retrieved, list):
