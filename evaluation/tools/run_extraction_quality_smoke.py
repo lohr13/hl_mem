@@ -17,6 +17,8 @@ from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.ingest.llm_extractor import PROMPT_HASH
 from hl_mem.observability.audit import audit_scope
 
+FIXTURE_PATH = Path(__file__).resolve().parents[2] / "tests/eval/fixtures/extraction_quality_smoke_v1.json"
+
 
 @dataclass(frozen=True)
 class ExpectedClaim:
@@ -184,7 +186,7 @@ def _claim_summaries(claims: Sequence[ExtractedClaim]) -> list[dict[str, str]]:
 
 
 def run(args: argparse.Namespace) -> int:
-    cases = load_cases(args.fixture)
+    cases = load_cases(FIXTURE_PATH)
     settings = replace(
         load_settings(args.config, args.env_file),
         verification_mode="off",
@@ -261,11 +263,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--label", required=True)
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument(
-        "--fixture",
-        type=Path,
-        default=Path("tests/eval/fixtures/extraction_quality_smoke_v1.json"),
-    )
     return parser.parse_args(argv)
 
 
