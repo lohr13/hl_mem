@@ -463,6 +463,34 @@ def test_reviewed_rubrics_use_or_between_rubrics_and_and_between_concepts() -> N
     }
 
 
+def test_reviewed_rubric_allows_a_bracketed_entity_title_inside_the_required_concept() -> None:
+    manifest = load_sample_manifest(SAMPLE_MANIFEST_PATH)
+    rubrics = manifest.accepted_rubrics_by_question_hash[
+        "7336d023b16ece6a96cdf8742a314e9aea99b582bdcc7334868172ddd93b8a41"
+    ]
+
+    inserted_title = chinese_e2e.score_answer(
+        "因对电影《那些年我们一起追的女孩》的故事情节着迷",
+        ("对电影故事情节着迷",),
+        rubrics,
+    )
+    original_match = chinese_e2e.score_answer(
+        "因为对电影故事情节着迷",
+        ("对电影故事情节着迷",),
+        rubrics,
+    )
+    wrong_object = chinese_e2e.score_answer(
+        "因对电影《那些年我们一起追的女孩》的演员着迷",
+        ("对电影故事情节着迷",),
+        rubrics,
+    )
+
+    assert inserted_title["answer_correct"] == 1.0
+    assert inserted_title["verdict_basis"] == "reviewed_rubric"
+    assert original_match["answer_correct"] == 1.0
+    assert wrong_object["answer_correct"] == 0.0
+
+
 def test_cases_without_reviewed_rubrics_keep_legacy_anchor_scoring() -> None:
     assert chinese_e2e.score_answer("同义改写", ("官方锚点",), ()) == {
         "answer_correct": 0.0,

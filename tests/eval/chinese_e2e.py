@@ -31,6 +31,7 @@ AcceptedRubrics = tuple[AnswerRubric, ...]
 SCORER_VERSION = "deterministic-rubric-v2"
 ANSWER_ENTITY_SCORER_VERSION = "answer-entity-packet-v1"
 OVERALL_QA_ACCURACY_MINIMUM = 0.90
+_BRACKETED_ENTITY_TITLE_RE = re.compile(r"《[^《》]{1,80}》的?")
 
 # ── Monkey-patch QA to enable thinking for multi-hop reasoning ──────────────
 # The upstream _qa_dashscope_chat sends a plain completion without thinking.
@@ -715,6 +716,11 @@ def _normalized_answer(text: str) -> str:
     return "".join(character.lower() for character in text if character.isalnum())
 
 
+def _normalized_rubric_answers(text: str) -> tuple[str, ...]:
+    candidates = (_normalized_answer(text), _normalized_answer(_BRACKETED_ENTITY_TITLE_RE.sub("", text)))
+    return tuple(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
 def score_answer_anchors(predicted: str, anchors: Sequence[str]) -> float:
     """Require every official PerLTQA answer anchor in the concise reader output."""
     predicted_text = _normalized_answer(predicted)
@@ -737,8 +743,8 @@ def score_answer(
             "scorer_version": SCORER_VERSION,
         }
 
-    predicted_text = _normalized_answer(predicted)
-    rubric_match = bool(predicted_text) and any(
+    predicted_texts = _normalized_rubric_answers(predicted)
+    rubric_match = bool(predicted_texts) and any(
         bool(rubric)
         and all(
             bool(concept)
@@ -746,6 +752,7 @@ def score_answer(
                 normalized_expression in predicted_text
                 for expression in concept
                 if (normalized_expression := _normalized_answer(expression))
+                for predicted_text in predicted_texts
             )
             for concept in rubric
         )
