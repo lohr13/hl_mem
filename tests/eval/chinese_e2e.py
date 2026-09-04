@@ -1087,6 +1087,7 @@ def _run_accounting(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     cache_counts = Counter(str(ingest.get("cache_status") or "unknown") for ingest in unique_ingests.values())
     return {
         "cache_status_counts": dict(sorted(cache_counts.items())),
+        "claim_budget": memdaily_benchmark.aggregate_claim_budget_telemetry(tuple(unique_ingests.values())),
         "usage": {
             "extraction_input_tokens": sum(int(ingest.get("input_tokens", 0)) for ingest in unique_ingests.values()),
             "extraction_output_tokens": sum(int(ingest.get("output_tokens", 0)) for ingest in unique_ingests.values()),

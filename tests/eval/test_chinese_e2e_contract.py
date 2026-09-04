@@ -302,6 +302,13 @@ def test_report_exposes_scores_gate_failures_cache_and_token_costs() -> None:
             "input_tokens": 100,
             "output_tokens": 20,
             "total_tokens": 120,
+            "claim_budget": {
+                "overflow_truncated_count": 1,
+                "generated_claim_count": 20,
+                "retained_claim_count": 16,
+                "dropped_claim_count": 4,
+                "events": [],
+            },
         },
         "qa": {"exact_match": 1.0, "f1": 1.0, "usage": {"total_tokens": 30}},
         "retrieval": {"recall_at_5": 1.0, "mrr": 1.0},
@@ -326,6 +333,14 @@ def test_report_exposes_scores_gate_failures_cache_and_token_costs() -> None:
         "extraction_output_tokens": 20,
         "extraction_total_tokens": 120,
         "qa_total_tokens": 30,
+    }
+    assert report["run"]["claim_budget"] == {
+        "observed_ingests": 1,
+        "unobserved_ingests": 0,
+        "overflow_truncated_count": 1,
+        "generated_claim_count": 20,
+        "retained_claim_count": 16,
+        "dropped_claim_count": 4,
     }
     assert report["gate"]["passed"] is False
     assert report["gate"]["overall_thresholds"] == {"qa_accuracy": 0.90}
