@@ -1,5 +1,19 @@
 # HL-Mem 变更记录
 
+## v1.1.5（2026-09-05）
+
+- 提取 Prompt 恢复原子 claim 粒度：每条 claim 只表达一个有证据、可独立回答的原子事实；复合句（「用户要做X」
+  与「X 的属性」）与可分别回答的枚举必须逐项拆分，枚举中的每项及数量、单位分别保留。普通目标 12→20 条、
+  硬上限 16→24 条（依据：同日真复刻对照实验提取量 223→352、关键事件枚举密度 7→19）；单次确定性截断
+  语义不变；公共 REST/MCP/CLI、数据库 schema、配置 schema 与 Provider Plugin API 均不改变。
+- 实体查询在 enforce 模式下遇到纯第一人称代词（我/我们/I/me 等）时不再生成实体窄化过滤，改为宽召回并记录
+  `fallback_reason=pronoun_only`；其余实体窄化与宽召回行为保持不变。
+- 付费评测运行新增 fail-closed 身份门（`evaluation/tools/run_identity_gate.py`）：运行前后校验 git HEAD、
+  仓库根、LLM 提取器版本、配置 SHA256 与结果 manifest 数量，任一不匹配即抛 `EvaluationIdentityError`；
+  MemDaily 基准运行器已接入该门。该门只作用于评测工具，不进入运行时链路。
+- 评测工具：MemDaily 基准报告提取 cap 命中 telemetry；中文 e2e rubric 接受评分中的方括号实体插入；
+  预注册提取 cap A/B v2 协议文档（`docs/research/2026-09-04-p1-extraction-ab-v2-protocol.md`）。
+
 ## v1.1.4（2026-09-03）
 
 - 提取 Prompt 现在保留明确归因的个人观点、理解、感受、行为原因和实践原则，并把“姓名：发言”中的第一人称绑定到姓名；问题、未采纳引语、助手通识及助手自我陈述继续排除。

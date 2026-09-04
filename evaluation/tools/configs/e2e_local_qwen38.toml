@@ -1,0 +1,99 @@
+# v1.1.3 Chinese E2E eval config: extraction arm = local qwen3.8-27B (llama-server :8090),
+# QA/judge = cloud coding-plan endpoint (HL_MEM_EVAL_QA_* env vars).
+# Derived from production hl_mem.toml; ONLY the [llm] table differs.
+
+schema_version = 1
+
+[database]
+path = "D:/workspace/hl_agent/hl_mem/var/hl_mem.db"
+pool_size = 8
+busy_timeout_seconds = 30
+
+[llm]
+provider = "openai_compatible"
+base_url = "http://127.0.0.1:8090/v1"
+model = "qwen3.8-27b-ud-iq4-xs"
+reasoning_effort = "low"
+structured_mode = "json_object"
+thinking_control = "chat_template_kwargs"
+enable_thinking = false
+timeout = 120
+max_attempts = 3
+[embedding]
+mode = "real"
+base_url = "https://dashscope.aliyuncs.com"
+model = "qwen3.7-text-embedding"
+dim = 2048
+api_mode = "native"
+
+[reranker]
+mode = "on"
+base_url = "https://dashscope.aliyuncs.com"
+model = "qwen3-rerank"
+
+[image_describer]
+mode = "on"
+provider = "dashscope"
+base_url = "https://coding.dashscope.aliyuncs.com/v1"
+model = "qwen3.7-plus"
+timeout_seconds = 20.0
+
+[extraction]
+lesson_signal_mode = "enforce"
+mode = "llm"
+chunk_target_chars = 12000
+verification_mode = "audit"
+
+[recall]
+echo_suppression_mode = "enforce"
+freshness_annotation_mode = "render"
+default_limit = 5
+fts_language = "auto"
+vector_backend = "sqlite_vec"
+vector_scan_limit = 200
+packed_context_token_budget = 2000
+query_expansion_mode = "off"
+query_expansion_model = "glm-4.7"
+query_expansion_provider = "dashscope"
+query_expansion_base_url = "https://coding.dashscope.aliyuncs.com/v1"
+relevance_gate_mode = "observe"
+relevance_reranker_floor = 0.15
+relevance_dense_floor = 0.3
+relevance_relative_drop = 0.3
+relevance_keep_top1 = true
+relevance_intents = [
+    "current_state",
+]
+query_context_mode = "coreference"
+resurrection_mode = "off"
+
+[dedup]
+enabled = true
+threshold = 0.92
+audit_only = true
+llm_enabled = false
+
+[retention]
+temporal_ttl_days_low = 3
+temporal_ttl_days_normal = 7
+temporal_ttl_days_high = 14
+
+[worker]
+poll_interval = 2.0
+maintenance_interval = 600
+job_lease_minutes = 5
+daily_token_limit = 0
+semantic_conflict_consolidation_enabled = false
+policy_induction_enabled = false
+reclassify_enabled = false
+
+[relation]
+discovery_mode = "off"
+
+[hermes]
+enabled = true
+url = "http://127.0.0.1:8200"
+timeout = 30
+
+[plugins]
+enabled = []
