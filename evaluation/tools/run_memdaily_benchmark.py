@@ -30,6 +30,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from evaluation.tools.run_identity_gate import (  # noqa: E402
+    assert_run_identity_from_env,
+    finalize_report_identity,
+)
 from hl_mem import __version__  # noqa: E402
 from hl_mem.application.answerability import Answerability, abstention_kind  # noqa: E402
 from hl_mem.application.ingest import IngestService  # noqa: E402
@@ -1250,7 +1254,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     if not args.source.is_file():
         raise FileNotFoundError(f"MemDaily source not found: {args.source}")
+    if args.clean:
+        raise ValueError("--clean is incompatible with identity postflight; retain cache manifests")
 
+    identity = assert_run_identity_from_env(
+        config_path=args.config,
+        env_path=args.env_file,
+        required=True,
+    )
+    assert identity is not None
     settings = load_settings(args.config, args.env_file)
     # Benchmark DBs are small — force sqlite_scan to avoid sqlite-vec dependency.
     settings = dataclasses.replace(settings, vector_backend="sqlite_scan")
@@ -1342,6 +1354,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_qa=run_qa,
     )
     _write_json_atomic(args.output, report)
+    finalize_report_identity(
+        report,
+        report_path=args.output,
+        expected_extractor_version=identity.expected_extractor_version,
+        expected_manifest_count=total,
+    )
 
     # Generate Markdown report
     md_path = args.output.with_suffix(".md")
