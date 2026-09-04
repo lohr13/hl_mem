@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from hl_mem.application.recall import _QueryExpansionSession
 from hl_mem.ingest.embedder import pack_vector
-from hl_mem.recall.entity_query import filter_entity_candidates, resolve_query_entity
+from hl_mem.recall.entity_query import filter_entity_candidates, plan_query_entity, resolve_query_entity
 from hl_mem.recall.staged_pipeline import RecallConfig, hybrid_claims
 from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 
@@ -32,6 +32,33 @@ def _connection() -> sqlite3.Connection:
     return connection
 
 
+def _add_person_alias(
+    connection: sqlite3.Connection,
+    *,
+    entity_id: str,
+    display_name: str,
+    alias: str,
+) -> None:
+    proof_id = f"alias-{entity_id}"
+    claim_id = f"claim-{entity_id}"
+    connection.execute(
+        "INSERT INTO canonical_entities VALUES (?,?,?,?,?)",
+        (entity_id, "default", "person", display_name, "active"),
+    )
+    connection.execute(
+        "INSERT INTO entity_aliases VALUES (?,?,?,?,?,?,?,NULL)",
+        (proof_id, "default", alias, "person", entity_id, 1, "user_explicit"),
+    )
+    connection.execute(
+        "INSERT INTO claims VALUES (?,?,?,?,NULL)",
+        (claim_id, "default", "active", entity_id),
+    )
+    connection.execute(
+        "INSERT INTO claim_entity_links VALUES (?,?,?)",
+        (claim_id, entity_id, proof_id),
+    )
+
+
 def test_query_entity_resolution_requires_unique_alias_and_complete_link_coverage() -> None:
     connection = _connection()
 
@@ -52,6 +79,67 @@ def test_query_entity_resolution_requires_unique_alias_and_complete_link_coverag
     ambiguous = resolve_query_entity(connection, "pony settings", "default")
     assert ambiguous.confidence_class == "ambiguous"
     assert ambiguous.filter_entity_id is None
+
+
+def test_enforce_pronoun_only_query_fails_wide() -> None:
+    for pronoun in ("我", "我自己"):
+        connection = _connection()
+        _add_person_alias(
+            connection,
+            entity_id="person:user",
+            display_name="User",
+            alias=pronoun,
+        )
+
+        plan = plan_query_entity(connection, f"{pronoun}参加的活动的地点", "default", "enforce")
+
+        assert plan.resolution.confidence_class == "high"
+        assert plan.resolution.mentions == (pronoun,)
+        assert plan.scope_mode == "wide"
+        assert plan.entity_id is None
+        assert plan.search_query == f"{pronoun}参加的活动的地点"
+        assert plan.fallback_reason == "pronoun_only"
+
+
+def test_enforce_named_entity_remains_scoped() -> None:
+    connection = _connection()
+    _add_person_alias(
+        connection,
+        entity_id="person:xu_hui",
+        display_name="许慧",
+        alias="许慧",
+    )
+
+    plan = plan_query_entity(connection, "许慧参加的活动的地点", "default", "enforce")
+
+    assert plan.scope_mode == "entity"
+    assert plan.entity_id == "person:xu_hui"
+    assert plan.search_query == "参加的活动的地点"
+    assert plan.fallback_reason is None
+
+
+def test_enforce_mixed_pronoun_and_name_keeps_existing_multi_entity_fail_wide() -> None:
+    connection = _connection()
+    _add_person_alias(
+        connection,
+        entity_id="person:user",
+        display_name="User",
+        alias="我",
+    )
+    _add_person_alias(
+        connection,
+        entity_id="person:xu_hui",
+        display_name="许慧",
+        alias="许慧",
+    )
+
+    plan = plan_query_entity(connection, "我和许慧参加的活动", "default", "enforce")
+
+    assert plan.resolution.mentions == ("我", "许慧")
+    assert plan.scope_mode == "wide"
+    assert plan.entity_id is None
+    assert plan.search_query == "我和许慧参加的活动"
+    assert plan.fallback_reason == "multiple_entities"
 
 
 def _claim(claim_id: str, entity_id: str | None) -> dict[str, object]:
