@@ -294,7 +294,7 @@ class OverflowLLMClient(NoClaimsLLMClient):
 def test_worker_completes_overflowing_extraction_in_one_attempt(tmp_path) -> None:
     path = tmp_path / "claim-budget.db"
     connection = Database(path).open()
-    values = [f"The user recorded durable item {index}" for index in range(17)]
+    values = [f"The user recorded durable item {index}" for index in range(25)]
     queue(connection, content={"text": "\n".join(values)})
     client = OverflowLLMClient(values)
     extractor = LLMExtractor(
@@ -313,10 +313,10 @@ def test_worker_completes_overflowing_extraction_in_one_attempt(tmp_path) -> Non
 
     job = connection.execute("SELECT status,attempts FROM jobs WHERE id='job'").fetchone()
     assert result["status"] == "succeeded"
-    assert result["claims"] == 16
+    assert result["claims"] == 24
     assert (job["status"], job["attempts"]) == ("succeeded", 1)
     assert client.calls == 1
-    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 16
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 24
 
 
 class CustomVersionLLMExtractor(LLMExtractor):

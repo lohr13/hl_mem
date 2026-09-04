@@ -12,7 +12,7 @@ class ExtractionPromptQualityTest(unittest.TestCase):
 
     def test_prompt_contains_compact_contract_and_core_guidance(self) -> None:
         for expected in (
-            "对未来有价值且上下文完整的记忆",
+            "对未来有价值的原子事实",
             "脱离上下文仍可理解",
             "subject 用标准名称",
             '"kind"',
@@ -20,24 +20,24 @@ class ExtractionPromptQualityTest(unittest.TestCase):
             '"evidence_quote"',
             '"source_event_indices"',
             "confidence",
-            "最多 16 条",
+            "最多 24 条",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
 
-    def test_prompts_define_context_rich_claim_budget(self) -> None:
+    def test_prompts_define_atomic_claim_budget(self) -> None:
         zh_lines = (
-            "- 粒度：一条记忆对应一个可独立更新、冲突或遗忘的主题、决策或状态变化；同一主题且生命周期相同的背景应合并。",
+            "- 原子性：每条 claim 只表达一个有证据、可独立回答的原子事实；复合句、枚举或结构化记录包含多个事实时逐项拆分，不得合并遗漏。",
             "- 完整性：长期偏好、已采用决策、重要配置、明确计划和状态迁移只要有证据就必须提取；不同主题或可独立变化的槽位不得合并或遗漏；这些类别任一存在时返回空 claims 属于错误。",
             "- 精确性：不得改写、互换或推算日期、时间、频率、持续期、数量及审批条件；状态迁移应保留旧值、新值、生效时间和原因；value 中的每个断言都必须由 evidence_quote 直接支持。",
-            "- 数量由原文决定：可以输出 0 条，不需要凑数；通常不超过 12 条，最多 16 条；必须先按 notability 的 high、medium、low 顺序，再按 confidence 从高到低排列。",
-            "- 保真：在相关记忆中保留具体姓名、日期、数字、单位和约束；不要仅因一句话包含多个名词、数字或从句就拆成多条。",
+            "- 数量由原文决定：可以输出 0 条，不需要凑数；通常不超过 20 条，最多 24 条；必须先按 notability 的 high、medium、low 顺序，再按 confidence 从高到低排列。",
+            "- 保真：在对应原子事实中保留具体姓名、日期、数字、单位和约束。",
         )
         en_lines = (
-            "- Granularity: one memory represents a topic, decision, or state change that can be independently updated, contradicted, or forgotten; merge context with the same topic and lifetime.",
+            "- Atomicity: each claim states one supported, independently answerable atomic fact; split compound sentences, enumerations, and structured records item by item without merging or omitting facts.",
             "- Completeness: always extract evidenced lasting preferences, adopted decisions, important configuration, confirmed plans, and state transitions; never merge or omit distinct topics or independently changing slots; returning empty claims is an error when any of these categories is present.",
             "- Precision: never rewrite, swap, or calculate dates, times, frequencies, durations, quantities, or approval conditions; a state transition must retain its old value, new value, effective time, and reason; every assertion in value must be directly supported by evidence_quote.",
-            "- Let the source determine the count: zero is valid and no padding is needed; normally return at most 12 claims, never more than 16; order strictly by notability high, medium, low, then by confidence descending.",
-            "- Fidelity: keep relevant names, dates, numbers, units, and constraints inside the corresponding memory; do not split merely because a sentence has multiple nouns, numbers, or clauses.",
+            "- Let the source determine the count: zero is valid and no padding is needed; normally return at most 20 claims, never more than 24; order strictly by notability high, medium, low, then by confidence descending.",
+            "- Fidelity: keep relevant names, dates, numbers, units, and constraints inside the corresponding atomic fact.",
         )
 
         for expected in zh_lines:
@@ -49,6 +49,10 @@ class ExtractionPromptQualityTest(unittest.TestCase):
         self.assertNotIn("12–30", SYSTEM_PROMPT)
         self.assertNotIn("12–30", ENGLISH_SYSTEM_PROMPT)
         self.assertNotIn("Maximum 30 claims per chunk", ENGLISH_SYSTEM_PROMPT)
+        self.assertNotIn("同一主题且生命周期相同", SYSTEM_PROMPT)
+        self.assertNotIn("不要仅因一句话", SYSTEM_PROMPT)
+        self.assertNotIn("same topic and lifetime", ENGLISH_SYSTEM_PROMPT)
+        self.assertNotIn("Do not mechanically split", ENGLISH_SYSTEM_PROMPT)
 
     def test_prompt_defines_all_six_kinds(self) -> None:
         for expected in (
@@ -117,6 +121,8 @@ class ExtractionPromptQualityTest(unittest.TestCase):
             "把旧靴子退回 Zara",
             "一次性事件也不得省略",
             "枚举中的每个可独立回答项",
+            "同一主题下的动物、植物、威胁",
+            "动物、植物、威胁分别输出三条 claim",
             "不得计算原文未明确陈述的总数",
         ):
             self.assertIn(expected, SYSTEM_PROMPT)
@@ -127,6 +133,8 @@ class ExtractionPromptQualityTest(unittest.TestCase):
             "return the old boots to Zara",
             "Do not omit one-off events",
             "Each independently answerable item in an enumeration",
+            "animals, plants, threats",
+            "emit three separate claims for the animal, plant, and threat",
             "Do not calculate a total that the source does not explicitly state",
         ):
             self.assertIn(expected, ENGLISH_SYSTEM_PROMPT)
