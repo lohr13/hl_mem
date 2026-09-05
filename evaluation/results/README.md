@@ -8,8 +8,8 @@
 | LongMemEval HL-Mem | `longmemeval_<run>_shard<N>.json` | v0.25.2：43/50（86.0%） |
 | LongMemEval full-context | `longmemeval_fullcontext_shard<N>.json` | 46/50（92.0%） |
 | LongMemEval native RAG | `longmemeval_nativerag_shard<N>.json` | 45/50（90.0%） |
-| MemDaily | `memdaily_v0260_full.json` | v0.26.0（2026-08-15）：180 条全量计分，accuracy 97.2%，F1 0.9855，R@5 97.5% |
-| PerLTQA | `perltqa_v0260_full.json` | v0.26.0（2026-08-15）：378 question，R@5 96.8%，MRR 82.8% |
+| MemDaily | `memdaily_v115_full.json` | v1.1.5（2026-09-04，pronoun fail-wide + atomic prompt）：180 条全量计分，accuracy 97.8%，F1 0.991，R@5 98.3% |
+| PerLTQA | `perltqa_v115_full.json` | v1.1.5（2026-09-04，检索层回归检查）：378 question，R@5 96.8%，MRR 82.7% |
 | v0.27.1 行为变更验证 | 无新增全量 benchmark 产物（沿用 v0.26.0 数字口径） | resurrection：2 次正确复活、0 次误伤，p95 12.7ms；activation：identity 零误杀，confidence 语义分离 |
 | v0.28.0 维护与关系语义 A/B | 无新增全量 benchmark 产物（继续沿用 v0.26/v0.27 公开基线） | canonical-slot：16/16 误配修复、0 回退；source-first：packet RAO 12%、entity@5 34.7% 与基线持平、可扩展边 0，终局不产品化 |
 | v0.28.1 冲突热修 | 无新增全量 benchmark 产物（继续沿用 v0.28.0 发布口径） | `config.port` 边界与 reject 孤儿事务后置条件回归通过；本地存量孤儿清零 |
