@@ -1347,6 +1347,8 @@ def _validate_manifest(
     if not path.is_file():
         raise FileNotFoundError(f"--skip-ingest requires cache manifest: {path}")
     manifest = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, Mapping):
+        raise ValueError(f"cached ingest manifest must contain a JSON object: {path}")
     expected = _manifest_identity(case, settings, relevance_scorer=relevance_scorer)
     mismatches = {key: (manifest.get(key), value) for key, value in expected.items() if manifest.get(key) != value}
     if mismatches:
@@ -2536,21 +2538,30 @@ def _run_case(
     started = time.perf_counter()
     try:
         DATABASE_ROOT.mkdir(parents=True, exist_ok=True)
+        use_cached_ingest = skip_ingest
         if skip_ingest:
             if not database_path.is_file():
                 raise FileNotFoundError(f"--skip-ingest requires cached database: {database_path}")
             _validate_manifest(manifest_path, case, settings)
+        elif database_path.is_file() and manifest_path.is_file():
+            try:
+                _validate_manifest(manifest_path, case, settings)
+            except (OSError, ValueError):
+                _remove_case_artifacts(database_path, manifest_path)
+            else:
+                use_cached_ingest = True
+        else:
+            _remove_case_artifacts(database_path, manifest_path)
+        if use_cached_ingest:
             result["ingest"] = {
                 "skipped": True,
                 "cache_manifest": str(manifest_path.relative_to(ROOT)),
                 **_claim_diagnostic_defaults("unavailable_cache_open_failed"),
             }
-        else:
-            _remove_case_artifacts(database_path, manifest_path)
 
         database = Database(database_path, settings=settings)
         connection = database.open()
-        if skip_ingest:
+        if use_cached_ingest:
             result["ingest"] = _cached_ingest_diagnostics(
                 connection,
                 case,
@@ -3120,6 +3131,14 @@ def _load_resume_report(path: Path) -> tuple[dict[str, Any] | None, list[dict[st
     return payload, cases
 
 
+def _successful_resume_results(results: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        result
+        for result in results
+        if result.get("error") is None and _result_error_type(result) not in {"http_429", "quota"}
+    ]
+
+
 def _resume_model_identity(report: Mapping[str, Any]) -> dict[str, Any]:
     run = report.get("run")
     if not isinstance(run, Mapping):
@@ -3447,7 +3466,7 @@ def _run_full_context_control(
         resume_report, results = _load_resume_report(args.output)
         if resume_report is not None:
             _validate_full_context_resume_report(resume_report, args, settings)
-            results = [result for result in results if _result_error_type(result) not in {"http_429", "quota"}]
+            results = _successful_resume_results(results)
     started_at = generated_started_at
     if resume_report is not None:
         previous_run = resume_report.get("run")
@@ -3750,7 +3769,7 @@ def _run_native_rag_control(
         resume_report, results = _load_resume_report(args.output)
         if resume_report is not None:
             _validate_native_rag_resume_report(resume_report, args, settings)
-            results = [result for result in results if _result_error_type(result) not in {"http_429", "quota"}]
+            results = _successful_resume_results(results)
     started_at = generated_started_at
     if resume_report is not None:
         previous_run = resume_report.get("run")
@@ -3917,7 +3936,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         resume_report, results = _load_resume_report(args.output)
         if resume_report is not None:
             _validate_resume_report(resume_report, args, settings)
-            results = [result for result in results if _result_error_type(result) not in {"http_429", "quota"}]
+            results = _successful_resume_results(results)
     started_at = generated_started_at
     if resume_report is not None:
         previous_run = resume_report.get("run")
