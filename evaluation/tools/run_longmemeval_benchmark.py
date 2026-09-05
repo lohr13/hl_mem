@@ -161,6 +161,7 @@ _DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MILLION = 2.0
 _QWEN37_EMBEDDING_INPUT_CNY_PER_MILLION = 0.5
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
+_WORKER_OK_STATUSES = {"succeeded", "off", "applied", "ambiguous", "observed", "candidate"}
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _RECOMMENDATION_QUESTION_RE = re.compile(
     r"(?ix)(?:\b(?:recommend|suggest|advice|ideas?|resources?|options?)\b|"
@@ -1632,7 +1633,7 @@ def _ingest_case(
             result = worker.run_once(force_extraction=True)
             if result["status"] == "idle":
                 break
-            if result["status"] != "succeeded":
+            if result["status"] not in _WORKER_OK_STATUSES:
                 raise RuntimeError(
                     f"production extraction worker failed for {case.case_id}: "
                     f"{result.get('error') or result['status']}"

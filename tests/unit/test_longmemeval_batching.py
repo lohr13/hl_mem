@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 import httpx
 
@@ -118,6 +118,52 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(result["dedup"], dedup_result)
         self.assertEqual(result["conflicts"], conflict_result)
         self.assertEqual(result["protocol"], runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION)
+
+    def test_ingest_worker_accepts_ambiguous_reconcile_status_but_rejects_dead(self) -> None:
+        case = runner.LongMemEvalCase(
+            case_id="worker-status",
+            question_type="multi-session",
+            question="What happened?",
+            answer="An answer",
+            question_at=None,
+            sessions=(),
+            gold_event_ids=(),
+            gold_session_ids=(),
+        )
+        settings = Settings.for_test()
+        accepted_worker = Mock()
+        accepted_worker.run_once.side_effect = ({"status": "ambiguous"}, {"status": "idle"})
+        with (
+            patch.object(runner, "make_extractor", return_value=object()),
+            patch.object(runner, "_BenchmarkWorker", return_value=accepted_worker),
+            patch.object(runner, "_claim_inflation_diagnostics", return_value={}),
+        ):
+            stats = runner._ingest_case(
+                object(),
+                case,
+                settings,
+                object(),
+                case_number=1,
+                total_hint="1",
+            )
+
+        self.assertEqual(stats["events"], 0)
+
+        dead_worker = Mock()
+        dead_worker.run_once.return_value = {"status": "dead"}
+        with (
+            patch.object(runner, "make_extractor", return_value=object()),
+            patch.object(runner, "_BenchmarkWorker", return_value=dead_worker),
+            self.assertRaisesRegex(RuntimeError, "production extraction worker failed for worker-status: dead"),
+        ):
+            runner._ingest_case(
+                object(),
+                case,
+                settings,
+                object(),
+                case_number=1,
+                total_hint="1",
+            )
 
     def test_run_case_performs_maintenance_after_ingest_before_recall(self) -> None:
         case = runner.normalize_case(_record("case-maintenance-order"))
