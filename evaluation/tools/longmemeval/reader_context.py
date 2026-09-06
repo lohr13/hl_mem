@@ -52,6 +52,54 @@ _ENGLISH_ORDINALS = {
     "ninth": 9,
     "tenth": 10,
 }
+_QUERY_STOPWORDS = frozenset(
+    "a an the i me my we our you your it is are was were do did does have has had "
+    "how what which when where why many much total this that these those of in on at to for "
+    "from with and or by during year years last past".split()
+)
+_COMPLETED_EVENT_RE = re.compile(
+    r"\b(?:I|we)\s+(?:(?:just|recently|already|actually|even)\s+)*"
+    r"(?:\w+ed|went|bought|sold|paid|spent|took|had|got|have\s+been)\b|"
+    r"(?:我|我们).{0,10}(?:参加了|买了|卖了|去了|回来|完成了)",
+    re.IGNORECASE,
+)
+_INTENDED_EVENT_RE = re.compile(
+    r"\b(?:plan(?:s|ned|ning)?|want(?:s|ed|ing)?|intend(?:s|ed|ing)?|hop(?:e|es|ed|ing)|"
+    r"consider(?:s|ed|ing)?|could|would|will|not|never)\b|"
+    r"计划|想要|打算|希望|没有",
+    re.IGNORECASE,
+)
+_WINDOW_HEADER_RE = re.compile(r"(?m)^\[(matched|previous|next) turn (\d+) ([^\]]+)\]\n")
+
+
+def _sentences(content: str) -> list[str]:
+    # A decimal point is not a sentence boundary; retain punctuation and source order.
+    return [part.strip() for part in re.split(r"(?<=[.!?])\s+|(?<=[。！？])|\n+", content) if part.strip()]
+
+
+def _query_units(text: str) -> set[str]:
+    return {
+        (
+            unit[:-3]
+            if len(unit) > 5 and unit.endswith("ing")
+            else unit[:-2] if len(unit) > 5 and unit.endswith("ed") else unit.removesuffix("s")
+        )
+        for unit in reader_match_units(text)
+        if unit not in _QUERY_STOPWORDS
+    }
+
+
+def _completed_relation_score(content: str, question: str) -> float:
+    units = _query_units(question)
+    if not units or not _COMPLETED_EVENT_RE.search(content) or _INTENDED_EVENT_RE.search(content):
+        return 0.0
+    if re.search(
+        r"\b(?:plan(?:s|ned|ning)?|next|upcoming|future|will|should|recommend|suggest)\b|计划|打算|下次",
+        question,
+        re.IGNORECASE,
+    ):
+        return 0.0
+    return 16.0 * len(units & _query_units(content)) / len(units)
 
 
 class ReaderCase(Protocol):
@@ -347,8 +395,15 @@ def reader_turn_score(
     question: str,
     needles: Sequence[tuple[str, float]],
 ) -> float:
-    claim_score = max((weight * reader_match_score(content, needle) for needle, weight in needles), default=0.0)
-    return claim_score + 0.5 * reader_match_score(content, question)
+    return max(
+        (
+            max((weight * reader_match_score(sentence, needle) for needle, weight in needles), default=0.0)
+            + 0.5 * reader_match_score(sentence, question)
+            + _completed_relation_score(sentence, question)
+            for sentence in _sentences(content)
+        ),
+        default=0.0,
+    )
 
 
 def reader_focus_index(content: str, needles: Sequence[tuple[str, float]]) -> int:
@@ -384,8 +439,39 @@ def reader_turn_excerpt(
 ) -> str:
     if estimate_tokens(content) <= token_limit:
         return content
+    sentences = _sentences(content)
+    ranked = sorted(
+        range(len(sentences)),
+        key=lambda index: (
+            -max(
+                (
+                    weight * reader_match_score(sentences[index], needle)
+                    + _completed_relation_score(sentences[index], needle)
+                    for needle, weight in needles
+                ),
+                default=0.0,
+            ),
+            index,
+        ),
+    )
+    selected: list[int] = []
+    seen: set[str] = set()
+    if ranked and needles and estimate_tokens(sentences[ranked[0]]) > token_limit:
+        # Prefer the relevant clause of an overlong sentence to unrelated short sentences.
+        ranked = []
+    for index in ranked:
+        if sentences[index] in seen:
+            continue
+        proposed = sorted([*selected, index])
+        excerpt = "\n[... omitted ...]\n".join(sentences[item] for item in proposed) + "\n[truncated]"
+        if estimate_tokens(excerpt) <= token_limit:
+            selected.append(index)
+            seen.add(sentences[index])
+    if selected:
+        return "\n[... omitted ...]\n".join(sentences[index] for index in sorted(selected)) + "\n[truncated]"
+    # A single over-budget sentence cannot be kept whole; mark the partial excerpt.
     leading_marker = "[earlier text omitted]\n"
-    trailing_marker = "\n[later text omitted]"
+    trailing_marker = "\n[later text omitted]\n[truncated]"
     char_limit = max(1, token_limit * 2 - len(leading_marker) - len(trailing_marker) - 4)
     focus = reader_focus_index(content, needles)
     start = max(0, min(focus - char_limit // 2, len(content) - char_limit))
@@ -449,8 +535,7 @@ def _top_non_overlapping_centers(
     for index in ranked:
         if selected and scores[index] < meaningful_score:
             break
-        window = set(_window_positions(index, len(scores), turn_indices))
-        if any(window.intersection(_window_positions(center, len(scores), turn_indices)) for center in selected):
+        if any(index in _window_positions(center, len(scores), turn_indices) for center in selected):
             continue
         selected.append(index)
         if len(selected) == QA_EVIDENCE_MAX_WINDOWS:
@@ -460,7 +545,7 @@ def _top_non_overlapping_centers(
 
 def _window_limits(window_count: int) -> tuple[int, int]:
     per_window = max(1, _WINDOW_CONTENT_TOKEN_LIMIT // window_count)
-    adjacent = min(QA_ADJACENT_TURN_TOKEN_LIMIT, max(32, per_window // 5))
+    adjacent = min(QA_ADJACENT_TURN_TOKEN_LIMIT, max(24, per_window // 10))
     matched = min(QA_MATCHED_TURN_TOKEN_LIMIT, max(64, per_window - 2 * adjacent - 48))
     return matched, adjacent
 
@@ -474,7 +559,18 @@ def _prefer_question_center(
     """Promote a strong question match already covered only as an adjacent turn."""
     if not question.strip() or not centers:
         return list(centers)
-    question_scores = [reader_match_score(str(message.get("content") or ""), question) for message in messages]
+    question_scores = [
+        max(
+            (
+                reader_match_score(sentence, question)
+                + _completed_relation_score(sentence, question)
+                + 3.0 * len(_query_units(sentence) & _query_units(question)) / max(1, len(_query_units(question)))
+                for sentence in _sentences(str(message.get("content") or ""))
+            ),
+            default=0.0,
+        )
+        for message in messages
+    ]
     question_center = max(range(len(question_scores)), key=lambda index: (question_scores[index], -index))
     if question_scores[question_center] < 1.25 or question_center in centers:
         return list(centers)
@@ -483,6 +579,8 @@ def _prefer_question_center(
         if question_center in _window_positions(center, len(messages), turn_indices):
             promoted[position] = question_center
             return promoted
+    # A relevant relation may be in a different turn from every retrieved claim.
+    promoted[-1] = question_center
     return promoted
 
 
@@ -509,31 +607,38 @@ def reader_turn_window(
     folded_needles = fold_reader_needles(needles)
     parts: list[str] = []
     included_turns: list[int] = []
-    for center in centers:
-        window_turns = _window_positions(center, len(messages), turn_indices)
-        included_turns.extend(window_turns)
-        for index in [center, *(item for item in window_turns if item != center)]:
-            message = messages[index]
-            displayed_turn = displayed_turns[index]
-            if index == center:
-                label = "matched"
-                token_limit = matched_limit
-                if question.strip() and normalize_role(message.get("role")) == "user":
-                    excerpt_needles = [(question, 0.5), *folded_needles]
-                else:
-                    excerpt_needles = [*folded_needles, (question, 0.5)] if question.strip() else folded_needles
-            else:
-                label = "previous" if index < center else "next"
-                token_limit = adjacent_limit
-                excerpt_needles = ()
-            parts.append(
-                f"[{label} turn {displayed_turn} {message.get('role') or 'user'}]\n"
-                + reader_turn_excerpt(
-                    str(message.get("content") or ""),
-                    token_limit,
-                    excerpt_needles,
-                )
+    emitted: set[int] = set()
+    # Reserve evidence sentences for every center before any neighboring explanation.
+    ordered_positions = [(center, center) for center in centers_by_score]
+    ordered_positions.extend(
+        (center, index)
+        for center in centers_by_score
+        for index in _window_positions(center, len(messages), turn_indices)
+        if index not in centers
+    )
+    for center, index in ordered_positions:
+        if index in emitted:
+            continue
+        emitted.add(index)
+        included_turns.append(index)
+        message = messages[index]
+        displayed_turn = displayed_turns[index]
+        if index == center:
+            label = "matched"
+            token_limit = matched_limit
+            excerpt_needles = [*folded_needles, (question, 1.0)] if question.strip() else folded_needles
+        else:
+            label = "previous" if index < center else "next"
+            token_limit = adjacent_limit
+            excerpt_needles = ()
+        parts.append(
+            f"[{label} turn {displayed_turn} {message.get('role') or 'user'}]\n"
+            + reader_turn_excerpt(
+                str(message.get("content") or ""),
+                token_limit,
+                excerpt_needles,
             )
+        )
     content = "\n\n".join(parts)
     return content, {
         "mode": "windowed",
@@ -689,12 +794,14 @@ def load_reader_events(
                 event["evidence_event_ids"] = linked_ids
                 event["content"] = window_content
                 event["window"] = window
+                event["_reader_needles"] = needles
                 events.append(event)
                 emitted_sessions.add(key)
                 continue
         if key is not None and key in emitted_sessions:
             continue
         event = _event_record(row, content)
+        event["_reader_needles"] = tuple((event_needles or {}).get(event_id, ()))
         messages = reader_messages(content)
         if context_mode == "windowed" and messages:
             window_content, window = reader_turn_window(
@@ -772,6 +879,8 @@ def fit_reader_event(
     accepted_events: Sequence[Mapping[str, Any]],
     event: Mapping[str, Any],
     context_mode: str = DEFAULT_READER_CONTEXT_MODE,
+    *,
+    token_limit: int = QA_EVIDENCE_EVENT_TOKEN_LIMIT,
 ) -> dict[str, Any] | None:
     original = str(event.get("content") or "")
     max_chars = min(len(original), QA_EVIDENCE_EVENT_TOKEN_LIMIT * 2)
@@ -782,18 +891,102 @@ def fit_reader_event(
         length = (low + high) // 2
         truncated = length < len(original)
         content = original[:length] + ("\n[truncated]" if truncated else "")
-        candidate = {**event, "content": content}
+        if context_mode == "windowed" and truncated:
+            content = _fit_window_content(
+                original, max(1, length // 2), case.question, event.get("_reader_needles", ())
+            )
+        candidate = {**{key: value for key, value in event.items() if key != "_reader_needles"}, "content": content}
+        if isinstance(event.get("window"), Mapping) and event["window"].get("mode") == "windowed":
+            headers = list(_WINDOW_HEADER_RE.finditer(content))
+            included = sorted({int(header[2]) for header in headers})
+            matched = sorted(int(header[2]) for header in headers if header[1] == "matched")
+            window = dict(event["window"])
+            event_by_turn = dict(zip(window.get("included_turns", []), window.get("included_event_ids", [])))
+            primary = window.get("matched_turn")
+            window.update(
+                included_turns=included,
+                matched_turns=matched,
+                matched_turn=primary if primary in matched else (matched[0] if matched else None),
+            )
+            if "included_event_ids" in window:
+                window["included_event_ids"] = [event_by_turn[turn] for turn in included if turn in event_by_turn]
+            window["match_scores"] = [item for item in window.get("match_scores", []) if item["turn"] in matched]
+            window["match_score"] = next(
+                (item["score"] for item in window["match_scores"] if item["turn"] == window["matched_turn"]), None
+            )
+            candidate["window"] = window
         serialized_event = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
         prompt = render_reader_user_prompt(case, claims, [*accepted_events, candidate], context_mode)
         if (
-            estimate_tokens(serialized_event) <= QA_EVIDENCE_EVENT_TOKEN_LIMIT
+            estimate_tokens(serialized_event) <= min(token_limit, QA_EVIDENCE_EVENT_TOKEN_LIMIT)
             and estimate_tokens(prompt) <= QA_CONTEXT_TOKEN_BUDGET
         ):
-            best = candidate
+            if content.strip():
+                best = candidate
             low = length + 1
         else:
             high = length - 1
     return best
+
+
+def _fit_window_content(
+    content: str, token_limit: int, question: str, needles: Sequence[tuple[str, float]] = ()
+) -> str:
+    """Repack each source block; never prefix-slice through a matched fact sentence."""
+    headers = list(_WINDOW_HEADER_RE.finditer(content))
+    if not headers:
+        return reader_turn_excerpt(content, token_limit, [*needles, (question, 2.0)])
+    blocks = [
+        (
+            header.group(),
+            content[header.end() : headers[index + 1].start() if index + 1 < len(headers) else len(content)],
+        )
+        for index, header in enumerate(headers)
+    ]
+    sentences = [_sentences(body) for _, body in blocks]
+    candidates = [
+        (block, index)
+        for block, items in enumerate(sentences)
+        for index, sentence in enumerate(items)
+        if not sentence.startswith("[")
+    ]
+    candidates.sort(
+        key=lambda pair: (
+            -int(
+                headers[pair[0]][3] == "user" and _completed_relation_score(sentences[pair[0]][pair[1]], question) > 0
+            ),
+            -int(headers[pair[0]][1] == "matched"),
+            -reader_turn_score(sentences[pair[0]][pair[1]], question, needles),
+            pair,
+        )
+    )
+    accepted: dict[int, list[int]] = {}
+
+    def render(selection: Mapping[int, Sequence[int]]) -> str:
+        return "\n\n".join(
+            blocks[block][0]
+            + "\n[... omitted ...]\n".join(sentences[block][index] for index in sorted(indices))
+            + ("\n[truncated]" if len(indices) < len(sentences[block]) else "")
+            for block, indices in sorted(selection.items())
+        )
+
+    # Allocate whole source sentences before spending tokens on another matched topic.
+    # A short quota per window must not truncate a fact that fits the event budget.
+    for block, index in candidates:
+        proposed = {**accepted, block: [*accepted.get(block, []), index]}
+        if estimate_tokens(render(proposed)) <= token_limit:
+            accepted = proposed
+    if accepted:
+        return render(accepted)
+    # Extremely long unbroken input still gets an explicitly marked partial excerpt.
+    if candidates:
+        block, index = candidates[0]
+        remaining = token_limit - estimate_tokens(blocks[block][0]) - 4
+        if remaining >= 24:
+            return blocks[block][0] + reader_turn_excerpt(
+                sentences[block][index], remaining, [*needles, (question, 2.0)]
+            )
+    return ""
 
 
 def build_reader_user_prompt(
@@ -820,10 +1013,18 @@ def build_reader_user_prompt(
             *(event for event in ranked_events if event.get("event_id") != assistant_event["event_id"]),
         ]
     accepted_events: list[dict[str, Any]] = []
-    for event in ranked_events:
-        fitted = fit_reader_event(case, claims, accepted_events, event, context_mode)
+    for index, event in enumerate(ranked_events):
+        remaining = QA_CONTEXT_TOKEN_BUDGET - estimate_tokens(
+            render_reader_user_prompt(case, claims, accepted_events, context_mode)
+        )
+        event_limit = (
+            max(1, remaining // (len(ranked_events) - index) - 4)
+            if context_mode == "windowed"
+            else QA_EVIDENCE_EVENT_TOKEN_LIMIT
+        )
+        fitted = fit_reader_event(case, claims, accepted_events, event, context_mode, token_limit=event_limit)
         if fitted is None:
-            break
+            continue
         accepted_events.append(fitted)
     prompt = render_reader_user_prompt(case, claims, accepted_events, context_mode)
     if estimate_tokens(prompt) > QA_CONTEXT_TOKEN_BUDGET:

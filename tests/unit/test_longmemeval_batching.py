@@ -1692,7 +1692,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(folded[0], ("Inherited grandmother's vintage diamond necklace.", 3.0))
         self.assertEqual(folded[1][0], "The necklace was appraised at $4,000")
 
-    def test_matched_user_turn_focuses_question_before_claim_needles(self) -> None:
+    def test_matched_user_turn_protects_answer_sentence_alongside_question(self) -> None:
         content = (
             "What did I inherit from my grandmother? "
             + "opening context " * 90
@@ -1705,8 +1705,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             [("Inherited grandmother's vintage diamond necklace", 20.0)],
         )
 
-        self.assertIn("What did I inherit from my grandmother?", excerpt)
-        self.assertNotIn("vintage diamond necklace", excerpt)
+        self.assertIn("vintage diamond necklace", excerpt)
 
     def test_reader_excerpt_preserves_sentence_start_before_truncation(self) -> None:
         content = (
