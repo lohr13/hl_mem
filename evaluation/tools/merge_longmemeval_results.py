@@ -46,6 +46,7 @@ CONFIGURATION_FIELDS = (
 )
 # Missing legacy identity stays unknown; it cannot match a known configuration.
 OPTIONAL_CONFIGURATION_FIELDS = (
+    "reader_prompt_protocol",
     "extractor_effective_provider",
     "extractor_base_url",
     "extractor_structured_mode",

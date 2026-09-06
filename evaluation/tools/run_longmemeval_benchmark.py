@@ -152,6 +152,7 @@ DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
 EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
 READER_CONTEXT_PROTOCOL_VERSION = "session-turn-window-v2"
+READER_PROMPT_PROTOCOL_VERSION = "answer-tasks-v1-candidate"
 BENCHMARK_MAINTENANCE_PROTOCOL_VERSION = "deterministic-dedup-conflicts-v1"
 CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
@@ -164,10 +165,21 @@ FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _WORKER_OK_STATUSES = {"succeeded", "off", "applied", "ambiguous", "observed", "candidate"}
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _RECOMMENDATION_QUESTION_RE = re.compile(
-    r"(?ix)(?:\b(?:recommend|suggest|advice|ideas?|resources?|options?)\b|"
+    r"(?ix)(?:\b(?:recommend(?:ations?)?|suggest(?:ions?)?|advice|ideas?)\b|"
     r"\b(?:help\s+(?:me|us)\s+)?(?:choose|pick)\b|\bshould\s+(?:i|we)\b|"
     r"推荐|建议|主意|资源|帮(?:我|我们)?(?:选择|挑选))"
 )
+_PAST_CHOICE_QUESTION_RE = re.compile(
+    r"(?ix)(?:\b(?:did|had|was|were)\b.{0,80}\b(?:recommend|suggest|choose|pick|options?)\b|"
+    r"\b(?:recommended|suggested|chose|picked)\b|"
+    r"(?:上次|之前|以前).{0,30}(?:推荐|建议|选择)|(?:推荐|建议|选择)了什么)"
+)
+_FORWARD_RECOMMENDATION_RE = re.compile(
+    r"(?ix)(?:\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:recommend|suggest)\b|"
+    r"\bplease\s+(?:recommend|suggest)\b|^\s*(?:recommend|suggest)\s+(?:me|us|a|an|some|another)\b|"
+    r"请.{0,20}(?:推荐|建议))"
+)
+_EXPLANATION_QUESTION_RE = re.compile(r"(?ix)(?:\b(?:why|reasons?|explain|caused?)\b|为什么|原因|解释)")
 _COUNT_OR_SUM_QUESTION_RE = re.compile(
     r"(?ix)(?:\b(?:how\s+many|total|sum|altogether|combined)\b|多少|几个|总共|合计|求和)"
 )
@@ -1970,7 +1982,21 @@ def _judge_longmemeval_answer(
 
 
 def _is_preference_recommendation(case: LongMemEvalCase) -> bool:
-    return "preference" in case.question_type.casefold() and bool(_RECOMMENDATION_QUESTION_RE.search(case.question))
+    return _reader_task(case) == "recommendation"
+
+
+def _reader_task(case: LongMemEvalCase) -> str:
+    """Select an answer task from the question, never the benchmark label or gold."""
+    question = case.question
+    # A present request can follow a sentence recalling a previous recommendation.
+    request = re.split(r"[.!?。！？]\s*", question.rstrip("?!。！？"))[-1]
+    if _FORWARD_RECOMMENDATION_RE.search(request) or (
+        _RECOMMENDATION_QUESTION_RE.search(request) and not _PAST_CHOICE_QUESTION_RE.search(request)
+    ):
+        return "recommendation"
+    if _EXPLANATION_QUESTION_RE.search(question):
+        return "explanation"
+    return "fact"
 
 
 def _is_count_or_sum_question(case: LongMemEvalCase) -> bool:
@@ -1978,30 +2004,45 @@ def _is_count_or_sum_question(case: LongMemEvalCase) -> bool:
 
 
 def _reader_system_prompt(case: LongMemEvalCase) -> str:
+    task = _reader_task(case)
     prompt = (
         "You answer questions from retrieved long-term-memory claims and their original evidence events. "
         "Before answering, perform a private Chain-of-Note pass over every relevant record: (1) note each candidate "
         "answer and its exact relation to the question; (2) label whether it was planned or intended, attempted, "
         "or actually executed; (3) use occurred and valid times plus Current Date to resolve updates; "
-        "and (4) compare the candidates and synthesize only the one whose relation and state answer the question. "
+        "and (4) compare the candidates to answer the requested task using the relevant relations and states. "
         "Do not expose these private notes. Keep audition distinct from participation in a production; keep location, "
         "travel duration, and distance distinct; and never treat a plan as completed execution. Related distractors "
-        "must not override evidence with the exact requested relation. Combine records when needed and allow only "
-        "deterministic coreference resolution, simple arithmetic, comparisons, and date calculations. Do not invent "
-        "missing proper nouns, amounts, places, dates, or counts. Say that the information is unavailable only after "
+        "must not override evidence with the exact requested relation. Combine records when needed. "
+        "Say that the information is unavailable only after "
         "checking every claim and evidence event and finding them genuinely insufficient; do not abstain merely "
         "because the wording differs. Count repeated phrasings of the same fact only once and prefer the most complete "
         "version; never automatically merge records whose number, date, weekday, entity, or qualifier differs. Return "
         "only the final answer, without analysis, private notes, or evidence ranks."
     )
-    if _is_preference_recommendation(case):
+    if task == "recommendation":
         prompt += (
             " For this preference recommendation, treat the memories as constraints for generation, not as a closed "
             "catalog of answer strings. You may synthesize a recommendation that satisfies those constraints even when "
             "the specific proper noun is absent from memory. The final answer must explicitly use the known preferences "
             "or experiences that justify the recommendation; if no relevant personal constraint is present, say the "
-            "information is unavailable instead of giving an ungrounded generic recommendation."
+            "information is unavailable instead of giving an ungrounded generic recommendation. "
+            "Separate remembered facts from proposed options; do not claim unverified amenities, prices, or availability. "
+            "If a specific venue or product cannot be verified from the evidence, recommend the suitable features or "
+            "experience and explain the tradeoffs using the visible preferences."
         )
+    else:
+        prompt += (
+            " Do not invent missing proper nouns, amounts, places, dates, or counts. "
+            "For factual derivations, allow only deterministic coreference resolution, simple arithmetic, "
+            "comparisons, and date calculations."
+        )
+        if task == "explanation":
+            prompt += (
+                " For an explanation, connect the supported cause or change to the observed outcome, rather than "
+                "only restating the events. Distinguish a plausible explanation from an established cause; "
+                "qualify any inferred link and do not introduce unsupported personal history."
+            )
     if _is_count_or_sum_question(case):
         prompt += (
             " For count or sum questions, enumerate every record you can see, cautiously deduplicate identical items "
@@ -3068,6 +3109,7 @@ def _report(
                 "extraction_chunk_target_chars": settings.extraction_chunk_target_chars,
                 "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
                 "reader_context_protocol": READER_CONTEXT_PROTOCOL_VERSION,
+                "reader_prompt_protocol": READER_PROMPT_PROTOCOL_VERSION,
                 "query_expansion_model": llm_identity["query_expansion_model"],
                 "query_expansion_mode": settings.query_expansion_mode,
                 "query_expansion_max": settings.query_expansion_max,
@@ -3169,6 +3211,7 @@ def _resume_model_identity(report: Mapping[str, Any]) -> dict[str, Any]:
         "extraction_chunk_target_chars",
         "extraction_chunk_overlap_turns",
         "reader_context_protocol",
+        "reader_prompt_protocol",
         "query_expansion_model",
         "query_expansion_mode",
         "query_expansion_max",
@@ -3213,6 +3256,7 @@ def _validate_resume_report(
         "extraction_chunk_target_chars": settings.extraction_chunk_target_chars,
         "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
         "reader_context_protocol": READER_CONTEXT_PROTOCOL_VERSION,
+        "reader_prompt_protocol": READER_PROMPT_PROTOCOL_VERSION,
         "query_expansion_model": llm_identity["query_expansion_model"],
         "query_expansion_mode": settings.query_expansion_mode,
         "query_expansion_max": settings.query_expansion_max,
