@@ -152,7 +152,7 @@ DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
 EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
 READER_CONTEXT_PROTOCOL_VERSION = "sentence-evidence-window-v3-candidate"
-READER_PROMPT_PROTOCOL_VERSION = "answer-tasks-v1-candidate"
+READER_PROMPT_PROTOCOL_VERSION = "answer-tasks-temporal-v2-candidate"
 BENCHMARK_MAINTENANCE_PROTOCOL_VERSION = "deterministic-dedup-conflicts-v1"
 CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
@@ -2048,19 +2048,31 @@ def _reader_system_prompt(case: LongMemEvalCase) -> str:
             " For count or sum questions, enumerate every record you can see, cautiously deduplicate identical items "
             "so each item is counted once, and only then compute the total."
         )
-    if "knowledge-update" in case.question_type.casefold():
-        prompt += (
-            " For knowledge-update questions, prefer the latest statement that is valid at the question time; older "
-            "conflicting statements are history only and must never override the updated value."
-        )
-    if "temporal" in case.question_type.casefold():
-        prompt += (
-            " For temporal questions, first select the latest baseline effective at the question time, then apply "
-            "weekday conditions or relative offsets to that baseline; never apply an offset to a superseded baseline. "
-            "For a historical question, select the baseline that was effective at that historical time and never import "
-            "a later current value."
-        )
+    prompt += _reader_temporal_guidance()
     return prompt
+
+
+def _reader_temporal_guidance() -> str:
+    """Semantic time rules; model-side grounding keeps evidence and exact as_of unchanged."""
+    return (
+        " For questions involving time, first match the requested event, relation, and completion state, "
+        "then compare the applicable times. Distinguish occurrence time from the statement's valid time: "
+        "occurred_start/occurred_end describe the event, while valid_from and evidence timestamps anchor the statement. "
+        "Resolve relative expressions in evidence against that evidence's timestamp, and relative expressions in the "
+        "question against Current Date. Treat conversational weeks or months as coarse relative periods unless the "
+        "question explicitly requires an exact date or interval; an exact day difference must not outweigh a better "
+        "match for the requested event or milestone. Use precise dates for exact date arithmetic. "
+        "If occurrence time is missing, use the dated statement and its temporal wording cautiously; "
+        "do not turn a plan into a completed event or assert an unsupported occurrence date. "
+        "For a current value or an explicit update of the same fact, prefer the latest statement that is valid at the "
+        "question time; older conflicting statements are history only and must never override the updated value. "
+        "For the most recent completed event, compare event evidence and occurrence times where available; "
+        "separate trips or transactions do not automatically replace each other. "
+        "For a recurring schedule, select the latest baseline effective at the question time, then apply weekday "
+        "conditions or relative offsets to that baseline; never apply an offset to a superseded baseline. "
+        "For a historical question, select the baseline that was effective at that historical time and never import "
+        "a later current value."
+    )
 
 
 def _run_qa(
