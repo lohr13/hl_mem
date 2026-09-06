@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 
 from evaluation.tools.run_longmemeval_benchmark import (  # noqa: E402
     DEFAULT_DATASET,
+    _case_fingerprint,
     _dataset_complete,
     _file_sha256,
     _write_json_atomic,
@@ -43,6 +44,16 @@ CONFIGURATION_FIELDS = (
     "reader",
     "judge",
 )
+# Missing legacy identity stays unknown; it cannot match a known configuration.
+OPTIONAL_CONFIGURATION_FIELDS = (
+    "extractor_effective_provider",
+    "extractor_base_url",
+    "extractor_structured_mode",
+    "extractor_thinking",
+    "query_expansion_model",
+    "query_expansion_mode",
+    "query_expansion_max",
+)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -50,6 +61,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--pattern", default=DEFAULT_PATTERN)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    parser.add_argument(
+        "--partitioned-datasets",
+        action="store_true",
+        help="Verify each shard's dataset hash and contents against --dataset before merging case records.",
+    )
     parser.add_argument("--require-cases", type=int)
     parser.add_argument("--require-no-errors", action="store_true")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -88,6 +104,7 @@ def _configuration_identity(report: Mapping[str, Any], path: Path) -> dict[str, 
         raise ValueError(f"shard report has unsupported run.reader_context_mode: {path}")
     return {
         **{field: models[field] for field in CONFIGURATION_FIELDS},
+        **{field: models.get(field) for field in OPTIONAL_CONFIGURATION_FIELDS},
         "qa_enabled": qa_enabled,
         "reader_context_mode": reader_context_mode,
         "package_version": package_version,
@@ -150,6 +167,7 @@ def merge_reports(
     require_cases: int | None = None,
     require_no_errors: bool = False,
     exclude: Path | None = None,
+    partitioned_datasets: bool = False,
 ) -> dict[str, Any]:
     if require_cases is not None and require_cases < 1:
         raise ValueError("--require-cases must be a positive integer")
@@ -163,13 +181,43 @@ def merge_reports(
         raise FileNotFoundError(f"no shard reports match {pattern!r} in {input_dir}")
 
     dataset_sha256 = _file_sha256(dataset)
+    expected_cases = (
+        {
+            case.case_id: _case_fingerprint(case)
+            for record in iter_case_records(dataset)
+            for case in [normalize_case(record)]
+        }
+        if partitioned_datasets
+        else {}
+    )
+    source_datasets: list[dict[str, Any]] = []
+    source_case_identity: dict[str, dict[str, Any]] = {}
     reports: list[dict[str, Any]] = []
     cases_by_id: dict[str, dict[str, Any]] = {}
     source_by_case_id: dict[str, Path] = {}
     expected_configuration: dict[str, Any] | None = None
     for path in paths:
         report = _read_report(path)
-        if _dataset_hash(report, path) != dataset_sha256:
+        shard_hash = _dataset_hash(report, path)
+        shard_case_ids: set[str] | None = None
+        if partitioned_datasets:
+            shard_path = Path(str(report["dataset"].get("path") or ""))
+            if not shard_path.is_file() or _file_sha256(shard_path) != shard_hash:
+                raise ValueError(f"source dataset sha256 mismatch in shard report: {path}")
+            shard_case_ids = set()
+            for record in iter_case_records(shard_path):
+                case = normalize_case(record)
+                if case.case_id in shard_case_ids or expected_cases.get(case.case_id) != _case_fingerprint(case):
+                    raise ValueError(f"source dataset content mismatch for {case.case_id!r}: {path}")
+                shard_case_ids.add(case.case_id)
+                source_case_identity[case.case_id] = {
+                    "question_type": case.question_type,
+                    "question": case.question,
+                    "answer": case.answer,
+                    "gold_session_ids": list(case.gold_session_ids),
+                }
+            source_datasets.append({"path": str(shard_path.resolve()), "sha256": shard_hash})
+        elif shard_hash != dataset_sha256:
             raise ValueError(f"dataset sha256 mismatch in shard report: {path}")
         configuration = _configuration_identity(report, path)
         if expected_configuration is None:
@@ -182,6 +230,12 @@ def merge_reports(
         for raw_case in raw_cases:
             case = _validated_case(raw_case, path, qa_enabled=bool(configuration["qa_enabled"]))
             case_id = str(case["case_id"])
+            if shard_case_ids is not None and case_id not in shard_case_ids:
+                raise ValueError(f"case/source dataset mismatch for {case_id!r}: {path}")
+            if partitioned_datasets and any(
+                case.get(field) != value for field, value in source_case_identity[case_id].items()
+            ):
+                raise ValueError(f"reported case/source dataset content mismatch for {case_id!r}: {path}")
             if case_id in cases_by_id:
                 raise ValueError(f"duplicate case_id {case_id!r} in {source_by_case_id[case_id]} and {path}")
             cases_by_id[case_id] = case
@@ -223,6 +277,9 @@ def merge_reports(
                 "source_files": [str(path.resolve()) for path in paths],
                 "require_cases": require_cases,
                 "require_no_errors": require_no_errors,
+                "partitioned_datasets": partitioned_datasets,
+                "source_datasets": source_datasets,
+                "aggregation": "eligible-case-mean",
             },
         }
     )
@@ -252,11 +309,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_cases=args.require_cases,
         require_no_errors=args.require_no_errors,
         exclude=args.output,
+        partitioned_datasets=args.partitioned_datasets,
     )
     _write_json_atomic(args.output, report)
     overall = report["metrics"]["overall"]
     print(
-        f"merged cases={overall['cases']} failures={overall['failed_cases']} output={args.output}",
+        f"merged cases={overall['cases']} failures={overall['failed_cases']} "
+        f"R@10={overall['recall_at_10']} eligible={overall['recall_at_10_count']} "
+        f"raw_QA={overall['qa_accuracy']} gate_QA={overall['gate_qa_accuracy']} output={args.output}",
         flush=True,
     )
     return 0

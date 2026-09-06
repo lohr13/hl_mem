@@ -1025,7 +1025,13 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             and result["retrieval"].get("extraction_applicable") is not False
         )
     ]
+    expansion_traces = [item["search_trace"] for item in retrieval_all if isinstance(item.get("search_trace"), Mapping)]
     summary: dict[str, Any] = {
+        "query_expansion_traced_cases": len(expansion_traces),
+        "query_expansion_executed_cases": sum(bool(trace.get("expansions")) for trace in expansion_traces),
+        "query_expansion_total_tokens": sum(
+            int(trace.get("expansion_total_tokens") or 0) for trace in expansion_traces
+        ),
         "cases": len(results),
         "successful_cases": len(successful),
         "failed_cases": len(results) - len(successful),
@@ -1072,6 +1078,9 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         claim_values = [item.get(f"recall_at_{k}") for item in retrieval if item.get(f"recall_at_{k}") is not None]
         summary[f"recall_at_{k}_eligible_numerator"] = len(claim_values)
         summary[f"recall_at_{k}_eligible_denominator"] = len(successful)
+        # Additive components for downstream merging; ineligible cases are not zeros.
+        summary[f"recall_at_{k}_sum"] = sum(float(value) for value in claim_values)
+        summary[f"recall_at_{k}_count"] = len(claim_values)
         session_values = [
             item.get(f"session_recall_at_{k}")
             for item in session_retrieval
@@ -3060,6 +3069,8 @@ def _report(
                 "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
                 "reader_context_protocol": READER_CONTEXT_PROTOCOL_VERSION,
                 "query_expansion_model": llm_identity["query_expansion_model"],
+                "query_expansion_mode": settings.query_expansion_mode,
+                "query_expansion_max": settings.query_expansion_max,
                 "embedder": settings.embedding_model,
                 "embedding_dim": settings.embedding_dim,
                 "embedding_api_mode": settings.embedding_api_mode,
@@ -3159,6 +3170,8 @@ def _resume_model_identity(report: Mapping[str, Any]) -> dict[str, Any]:
         "extraction_chunk_overlap_turns",
         "reader_context_protocol",
         "query_expansion_model",
+        "query_expansion_mode",
+        "query_expansion_max",
         "embedder",
         "embedding_dim",
         "embedding_api_mode",
@@ -3201,6 +3214,8 @@ def _validate_resume_report(
         "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
         "reader_context_protocol": READER_CONTEXT_PROTOCOL_VERSION,
         "query_expansion_model": llm_identity["query_expansion_model"],
+        "query_expansion_mode": settings.query_expansion_mode,
+        "query_expansion_max": settings.query_expansion_max,
         "embedder": settings.embedding_model,
         "embedding_dim": settings.embedding_dim,
         "embedding_api_mode": settings.embedding_api_mode,

@@ -83,6 +83,8 @@ def _shard_report(
                 "extraction_chunk_overlap_turns": 2,
                 "reader_context_protocol": runner.READER_CONTEXT_PROTOCOL_VERSION,
                 "query_expansion_model": "qwen3.7-plus",
+                "query_expansion_mode": "off",
+                "query_expansion_max": 2,
                 "embedder": "qwen3.7-text-embedding",
                 "embedding_dim": 2048,
                 "embedding_api_mode": "native",
@@ -2124,6 +2126,8 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
                 "extractor_thinking": True,
                 "reader_context_protocol": "session-turn-window-v1",
                 "query_expansion_model": "different-expander",
+                "query_expansion_mode": "always",
+                "query_expansion_max": 1,
             }
 
             for field, value in changes.items():
