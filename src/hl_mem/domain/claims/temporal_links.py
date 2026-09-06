@@ -13,6 +13,7 @@ TemporalLinkOutcome = Literal[
     "entails",
     "state_change",
     "distinct_series",
+    "unproven",
     "snapshot_advance",
     "uncertain",
     "not_applicable",
@@ -37,7 +38,9 @@ _SERIES_PRICE_AXES = frozenset(
     {"spot", "close", "low", "high", "open", "average", "target", "cost_estimate", "generic_price"}
 )
 _SNAPSHOT_PRICE_AXES = frozenset({"spot", "close", "low", "high", "open", "average", "generic_price"})
-_GENERIC_SUBJECTS = frozenset({"user", "用户", "assistant", "助手", "default", "unknown", "未知"})
+_GENERIC_SUBJECTS = frozenset(
+    {"user", "personuser", "用户", "assistant", "personassistant", "助手", "default", "unknown", "未知"}
+)
 _FULL_CHINESE_DATE = re.compile(r"(?<!\d)(\d{4})年(\d{1,2})月(\d{1,2})日(?!\d)")
 _FULL_ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
 _CONTEXTUAL_CHINESE_DATE = re.compile(r"(?<![\d年])(\d{1,2})月(\d{1,2})日(?!\d)")
@@ -90,6 +93,10 @@ def evaluate_temporal_link(existing: dict[str, Any], new: dict[str, Any]) -> Tem
     if old_axis is None or new_axis is None:
         return TemporalLinkDecision("not_applicable", None, "no_proven_temporal_axis")
 
+    boundary = _measurement_boundary(existing, new, old_axis, new_axis)
+    if boundary is not None:
+        return boundary
+
     if _REPLACEMENT_MARKER.search(str(new.get("value") or "")):
         return _evaluate_explicit_price_replacement(existing, new, old_axis, new_axis, old_text, new_text)
 
@@ -97,6 +104,72 @@ def evaluate_temporal_link(existing: dict[str, Any], new: dict[str, Any]) -> Tem
     if series_decision is not None:
         return series_decision
     return _evaluate_explicit_price_replacement(existing, new, old_axis, new_axis, old_text, new_text)
+
+
+def _measurement_basis(value: Any) -> tuple[str, str]:
+    """Distinguish a price level from an amount accumulated over a period/event."""
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    accumulated = bool(
+        re.search(r"\b(?:earned|earning|income|revenue|paid|spent|total|salary)\b|收入|赚了|共花|总计", text)
+    )
+    if accumulated and re.search(r"\b(?:annual|yearly)\b|年收入|全年", text):
+        return "annual_total", ":".join(re.findall(r"\b(?:19|20)\d{2}\b", text))
+    if accumulated and re.search(r"\bmonthly\b|月收入|本月收入", text):
+        return "monthly_total", ""
+    if accumulated:
+        return "event_total", ""
+    if re.search(r"\beach\b|\bper\s+(?:item|unit)\b|每件|每个", text):
+        return "unit_price", ""
+    return "price", ""
+
+
+def _measurement_boundary(
+    existing: dict[str, Any], new: dict[str, Any], old_axis: str, new_axis: str
+) -> TemporalLinkDecision | None:
+    # Axis differences already have their own non-competing series decision.
+    if old_axis != new_axis:
+        return None
+    rule_id = f"{TEMPORAL_LINK_RULE_VERSION}:measurement-admission"
+    old_basis, old_period = _measurement_basis(existing.get("value"))
+    new_basis, new_period = _measurement_basis(new.get("value"))
+    if old_basis != new_basis or (old_period and new_period and old_period != new_period):
+        return TemporalLinkDecision("distinct_series", rule_id, "measurement_basis_or_period_differs")
+    target_mode = bool(existing.get("canonical_target_entity_id") or new.get("canonical_target_entity_id"))
+    relation = _price_target_relation(existing, new) if target_mode else _price_subject_relation(existing, new)
+    object_field = "canonical_target_entity_id" if target_mode else "subject_entity_id"
+    old_qualifiers = existing.get("qualifiers") or {}
+    new_qualifiers = new.get("qualifiers") or {}
+    measured_object = old_qualifiers.get("measurement_object")
+    same_measure = bool(measured_object and measured_object == new_qualifiers.get("measurement_object"))
+    same_owner = bool(existing.get(object_field) and existing.get(object_field) == new.get(object_field))
+    owner_types = ("person:", "org:", "organization:", "team:", "account:")
+    is_owner = any(str(claim.get(object_field) or "").casefold().startswith(owner_types) for claim in (existing, new))
+    if is_owner and not same_measure:
+        relation = "missing"
+    elif same_measure and same_owner:
+        relation = "same"
+    if relation == "different":
+        return TemporalLinkDecision(
+            "distinct_series",
+            f"{TEMPORAL_LINK_RULE_VERSION}:series-coordinate",
+            "price_target_differs" if target_mode else "price_subject_differs",
+        )
+    if relation == "missing":
+        return TemporalLinkDecision(
+            "unproven",
+            f"{TEMPORAL_LINK_RULE_VERSION}:snapshot-coordinate",
+            "price_target_missing" if target_mode else "price_subject_missing",
+        )
+    if old_basis.endswith("_total"):
+        # A statement timestamp is not the identity of a transaction or reporting period.
+        keys = ("measurement_period", "transaction_id", "event_id")
+        same_coordinate = any(
+            old_qualifiers.get(key) and old_qualifiers.get(key) == new_qualifiers.get(key) for key in keys
+        )
+        # Owner + calendar year still does not identify a salary, rent, or transaction total.
+        if not same_measure or (not same_coordinate and not (old_period and old_period == new_period)):
+            return TemporalLinkDecision("unproven", rule_id, "measurement_event_or_period_missing")
+    return None
 
 
 def _evaluate_explicit_price_replacement(
@@ -140,20 +213,7 @@ def _evaluate_price_series(
             f"price_measure_differs:{old_axis}:{new_axis}",
         )
 
-    target_mode = bool(existing.get("canonical_target_entity_id") or new.get("canonical_target_entity_id"))
-    subject_relation = _price_target_relation(existing, new) if target_mode else _price_subject_relation(existing, new)
-    if subject_relation == "different":
-        return TemporalLinkDecision(
-            "distinct_series",
-            f"{TEMPORAL_LINK_RULE_VERSION}:series-coordinate",
-            "price_target_differs" if target_mode else "price_subject_differs",
-        )
-    if subject_relation == "missing":
-        return TemporalLinkDecision(
-            "uncertain",
-            f"{TEMPORAL_LINK_RULE_VERSION}:snapshot-coordinate",
-            "price_target_missing" if target_mode else "price_subject_missing",
-        )
+    # Object and measurement identity were proved before entering any price path.
     if old_axis not in _SNAPSHOT_PRICE_AXES:
         return None
 

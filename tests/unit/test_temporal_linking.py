@@ -214,7 +214,7 @@ def test_one_sided_explicit_subject_cannot_reuse_unrelated_container_subject() -
 
     decision = evaluate_temporal_link(old, new)
 
-    assert (decision.outcome, decision.rationale) == ("uncertain", "price_subject_missing")
+    assert (decision.outcome, decision.rationale) == ("unproven", "price_subject_missing")
 
 
 @pytest.mark.parametrize(
@@ -420,7 +420,7 @@ def test_one_sided_canonical_price_target_fails_closed() -> None:
 
     decision = evaluate_temporal_link(old, new)
 
-    assert (decision.outcome, decision.rationale) == ("uncertain", "price_target_missing")
+    assert (decision.outcome, decision.rationale) == ("unproven", "price_target_missing")
 
 
 @pytest.mark.parametrize("attribute", ["config.path", "config.network"])

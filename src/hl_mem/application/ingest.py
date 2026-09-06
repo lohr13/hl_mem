@@ -814,7 +814,7 @@ class IngestService:
                 return _IngestResolution(
                     superseded_member_ids=tuple(str(member["id"]) for member in temporal_resolution.members)
                 )
-            if temporal_resolution.outcome == "distinct_series":
+            if temporal_resolution.outcome in {"distinct_series", "unproven"}:
                 return _IngestResolution()
             claim["status"] = "disputed"
             return _IngestResolution(

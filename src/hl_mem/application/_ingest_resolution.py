@@ -89,10 +89,14 @@ def _resolve_temporal_candidates(
     actionable = [(member, decision) for member, decision in evaluated if decision.outcome != "not_applicable"]
     if not actionable:
         return None
-    competing = [(member, decision) for member, decision in actionable if decision.outcome != "distinct_series"]
+    competing = [
+        (member, decision) for member, decision in actionable if decision.outcome not in {"distinct_series", "unproven"}
+    ]
     selected = competing or actionable
     outcomes = {decision.outcome for _, decision in selected}
     outcome = next(iter(outcomes)) if len(outcomes) == 1 else "uncertain"
+    if not competing and "unproven" in outcomes:
+        outcome = "unproven"
     snapshot_orders = {decision.snapshot_order for _, decision in selected if decision.outcome == "snapshot_advance"}
     mixed_snapshot_order = outcome == "snapshot_advance" and len(snapshot_orders) != 1
     if mixed_snapshot_order:
