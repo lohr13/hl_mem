@@ -589,7 +589,7 @@
       "type": "string"
     },
     {
-      "default": 90.0,
+      "default": 240.0,
       "path": "llm.timeout",
       "required_in_production": false,
       "settings_field": "llm_timeout",

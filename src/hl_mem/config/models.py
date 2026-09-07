@@ -200,7 +200,7 @@ class ExtractionConfig:
 
     llm_max_tokens: int | None = field(default=None, metadata={"toml": "llm.max_tokens"})
 
-    llm_timeout: float = field(default=90.0, metadata={"toml": "llm.timeout"})
+    llm_timeout: float = field(default=240.0, metadata={"toml": "llm.timeout"})
 
     llm_max_attempts: int = field(default=3, metadata={"toml": "llm.max_attempts"})
 

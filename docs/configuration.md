@@ -1,10 +1,10 @@
 # HL-Mem 配置参考
 
-HL-Mem 1.1.5 使用带 `schema_version = 1` 的 TOML 保存非敏感配置，并用 `.env` 或同名进程环境变量保存五个密钥。
+HL-Mem 1.1.6 使用带 `schema_version = 1` 的 TOML 保存非敏感配置，并用 `.env` 或同名进程环境变量保存五个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
-v1.1.5 的 assertion/source/session 治理共用 `[provenance].mode`；存量 `unknown` 保持旧行为，不改变
+v1.1.6 的 assertion/source/session 治理共用 `[provenance].mode`；存量 `unknown` 保持旧行为，不改变
 supersede、召回或注入。
 
 ## 后台自动化默认值
@@ -309,7 +309,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |
 | `llm.thinking_control` | 字符串 | `"auto"` | `auto`、`chat_template_kwargs` | `llm_thinking_control` |
-| `llm.timeout` | 数值 | `90.0` | > 0 | `llm_timeout` |
+| `llm.timeout` | 数值 | `240.0` | > 0 | `llm_timeout` |
 
 `llm.thinking_control = "auto"` 保持 provider 现有请求格式：DashScope 发送顶层 `enable_thinking`，
 Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 `llm.provider = "openai_compatible"` 且

@@ -1,5 +1,18 @@
 # HL-Mem 变更记录
 
+## v1.1.6（2026-09-08）
+
+- LongMemEval 聚合按 eligible case 计算 R@10：合并前校验数据集分片，只把具备有效检索结果的样本计入分母，避免缺失或不可评样本稀释召回率。
+- 金额与测量值冲突准入要求 subject、predicate、slot、单位及测量对象身份一致；对象不同或身份不足时不再错误进入 temporal quarantine，修复生产写入边界。
+- Reader 任务改为依据问题语义分流，不读取 benchmark label 或 gold answer；对普通问答与时序问答选择各自的回答路径，避免评测标签泄漏。
+- Reader 证据窗口保留关系证据与完整事实句，句子边界内裁剪上下文，避免关键主谓宾或时间限定被窗口截断。
+- Temporal grounding 依据事件关系与 applicable time 选择支撑事件，避免仅按记录顺序绑定时间，提升时序答案的证据一致性。
+- 拆分摄入解析与 temporal/measurement 辅助函数，在不改变行为的前提下满足复杂度棘轮预算。
+- **配置兼容性提醒（breaking-ish）**：提取岗的正式默认配置为 `provider = "dashscope"`、
+  `base_url = "https://coding.dashscope.aliyuncs.com/v1"`、`model = "qwen3.7-plus"`，默认超时由 90 秒提高到
+  240 秒。未在 `hl_mem.toml` 显式覆盖 LLM 坐标的升级用户，必须让 `LLM_API_KEY` 包含可访问该 DashScope
+  coding 端点的密钥；继续使用其他供应商时应显式配置 provider、base URL、model 与对应密钥。
+
 ## v1.1.5（2026-09-05）
 
 - 提取 Prompt 恢复原子 claim 粒度：每条 claim 只表达一个有证据、可独立回答的原子事实；复合句（「用户要做X」

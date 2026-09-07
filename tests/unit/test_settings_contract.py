@@ -19,7 +19,7 @@ def test_settings_contract_has_authoritative_defaults() -> None:
     assert settings.llm_model == "qwen3.7-plus"
     assert settings.llm_reasoning_effort is None
     assert settings.llm_max_tokens is None
-    assert settings.llm_timeout == 90
+    assert settings.llm_timeout == 240
     assert settings.llm_structured_mode == "json_object"
     assert settings.llm_thinking_control == "auto"
     assert settings.extractor_mode == "llm"
