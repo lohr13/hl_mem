@@ -51,6 +51,12 @@ def qa_model(default_model: str) -> str:
     return override or default_model
 
 
+def judge_model(default_model: str) -> str:
+    """Resolve the judge-only model override, falling back to the QA model."""
+    override = os.environ.get("HL_MEM_EVAL_JUDGE_MODEL", "").strip()
+    return override or default_model
+
+
 def qa_dashscope_chat(
     api_key: str,
     base_url: str,

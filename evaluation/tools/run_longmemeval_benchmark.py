@@ -48,6 +48,7 @@ from evaluation.tools.longmemeval.native_rag import (  # noqa: E402, F401
 )
 from evaluation.tools.longmemeval.qa_client import (  # noqa: E402, F401
     QAUsage,
+    judge_model,
     qa_call_with_retry,
     qa_dashscope_chat as _qa_dashscope_chat,
     qa_dashscope_chat_detailed as _qa_dashscope_chat_detailed,
@@ -1966,9 +1967,9 @@ def _judge_longmemeval_answer(
     return cast(
         tuple[dict[str, Any], int],
         _judge_longmemeval_answer_impl(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
+            api_key=os.environ.get("HL_MEM_EVAL_JUDGE_API_KEY", "").strip() or api_key,
+            base_url=os.environ.get("HL_MEM_EVAL_JUDGE_BASE_URL", "").strip() or base_url,
+            model=judge_model(model),
             case_id=case_id,
             question_type=question_type,
             question=question,
@@ -3131,7 +3132,7 @@ def _report(
                 "embedding_text_type": settings.embedding_text_type,
                 "reranker": settings.reranker_model if settings.reranker_mode != "off" else "off",
                 "reader": _qa_model(settings) if not args.no_qa else "not_run",
-                "judge": _qa_model(settings) if not args.no_qa else "not_run",
+                "judge": judge_model(_qa_model(settings)) if not args.no_qa else "not_run",
             },
             "retrieval_k": list(RETRIEVAL_KS),
             "metric_relevance": {
@@ -3278,7 +3279,7 @@ def _validate_resume_report(
         "embedding_text_type": settings.embedding_text_type,
         "reranker": reranker,
         "reader": qa_model,
-        "judge": qa_model,
+        "judge": judge_model(qa_model) if not args.no_qa else "not_run",
     }
     if previous_identity != expected_identity:
         raise ValueError("resume output model configuration does not match current settings")
@@ -3463,7 +3464,7 @@ def _full_context_report(
             "reader_timeout_seconds": int(FULL_CONTEXT_READER_TIMEOUT_SECONDS),
             "models": {
                 "reader": model,
-                "judge": model,
+                "judge": judge_model(model),
                 "reader_thinking": True,
                 "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
                 "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
@@ -3513,7 +3514,7 @@ def _validate_full_context_resume_report(
             raise ValueError(f"resume output {field} does not match current full-context run")
     expected_models = {
         "reader": _qa_model(settings),
-        "judge": _qa_model(settings),
+        "judge": judge_model(_qa_model(settings)),
         "reader_thinking": True,
         "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
         "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
@@ -3755,7 +3756,7 @@ def _native_rag_report(
                 "embedding_text_type": None,
                 "embedding_query_instruct": None,
                 "reader": model,
-                "judge": model,
+                "judge": judge_model(model),
                 "reader_thinking": True,
                 "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
                 "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
@@ -3816,7 +3817,7 @@ def _validate_native_rag_resume_report(
         "embedding_text_type": None,
         "embedding_query_instruct": None,
         "reader": _qa_model(settings),
-        "judge": _qa_model(settings),
+        "judge": judge_model(_qa_model(settings)),
         "reader_thinking": True,
         "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
         "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
