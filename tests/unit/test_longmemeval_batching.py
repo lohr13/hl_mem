@@ -2048,6 +2048,11 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(judge_payload["response_format"], {"type": "json_object"})
         self.assertIn("official-style LongMemEval", judge_payload["messages"][0]["content"])
 
+    def test_reader_generation_options_reserve_glm_thinking_and_answer_budget(self) -> None:
+        for model in ("glm-5.3-flash", "glm-5.3", "GLM-5.3-FLASH"):
+            with self.subTest(model=model):
+                self.assertEqual(runner._reader_generation_options(model), {"max_tokens": 2560})
+
     def test_reader_generation_options_keep_qwen_answer_budget_narrow(self) -> None:
         self.assertEqual(
             runner._reader_generation_options("qwen3.7-plus"),

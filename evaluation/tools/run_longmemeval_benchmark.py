@@ -1897,7 +1897,8 @@ def _reader_generation_options(model: str) -> dict[str, int]:
     options = {"max_tokens": READER_ANSWER_TOKEN_BUDGET}
     if folded.startswith(("qwen3.7-", "deepseek-v4-")):
         options["thinking_budget"] = READER_THINKING_TOKEN_BUDGET
-    if folded.startswith("deepseek-v4-"):
+    if folded.startswith(("deepseek-v4-", "glm-")):
+        # These models count reasoning tokens against max_tokens alongside the answer.
         options["max_tokens"] += READER_THINKING_TOKEN_BUDGET
     return options
 
