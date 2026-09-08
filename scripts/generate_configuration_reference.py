@@ -168,6 +168,12 @@ TABLE_NOTES = {
     ],
     "extraction": [
         "",
+        '`extraction.memory_disposition_mode = "enforce"` 在 Event 明确携带',
+        '`metadata.memory_disposition = "exclude"` 时，于图片描述和 Claim 提取前保留 Event 并停止后续处理；',
+        '`"observe"` 只记录 `excluded_by_producer_disposition` 审计后继续，`"off"` 忽略该标记。缺失、非对象',
+        "metadata 或未知 disposition 值均 fail-open，不根据正文或 origin 推断。Hermes cron assistant 输出会显式打标，",
+        "cron prompt/user Event 与交互会话保持原行为。",
+        "",
         "Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_max_events` 时立即提取，否则最多等待",
         "`batch_max_wait_seconds`。显式记忆、无 session 事件和非 message 事件不等待。Hermes 的 `sync_turn` 会原子写入",
         "user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并；Claim 仍分别链接实际来源 Event。",

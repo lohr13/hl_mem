@@ -36,6 +36,7 @@ from hl_mem.workers.deferred import (
     handle_failed_extractions,
     process_recall_side_effect_tasks,
 )
+from hl_mem.workers.filter_audit import audit_filter_decision
 from hl_mem.workers.job_handlers import dispatch_job
 from hl_mem.workers.maintenance import (
     build_deterministic_maintenance,
@@ -160,7 +161,7 @@ class Worker:
             self.database = None
             self.connection = connection
         self.jobs = JobRepository(self.connection)
-        self.filter = event_filter or EventFilter()
+        self.filter = event_filter or EventFilter(settings.memory_disposition_mode)
         self.provider_runtime = provider_runtime
         self._owns_provider_runtime = False
         if self.provider_runtime is None and self.settings.plugins_enabled:
@@ -591,6 +592,11 @@ class Worker:
         event: dict[str, Any],
     ) -> dict[str, Any] | None:
         """逐 Event 执行多模态准备和准入过滤，供窗口构建复用。"""
+        started = time.perf_counter_ns()
+        allowed, reason = self.filter.producer_disposition(event)
+        if not allowed:
+            audit_filter_decision(self.audit, event, allowed=allowed, reason=reason, started_ns=started)
+            return None
         content = json.loads(event["content_json"])
         image_parts = [
             part
@@ -647,19 +653,7 @@ class Worker:
         event["_image_description_event_ids"] = description_event_ids
         started = time.perf_counter_ns()
         allowed, reason = self.filter.should_extract({**event, "content": content})
-        self.audit.emit(
-            "filter",
-            "evaluated",
-            "allow" if allowed else "reject",
-            event_id=event["id"],
-            duration_us=(time.perf_counter_ns() - started) // 1000,
-            detail={
-                "reason": reason,
-                "event_type": event["event_type"],
-                "actor_type": event["actor_type"],
-                "content_chars": len(event["content_json"]),
-            },
-        )
+        audit_filter_decision(self.audit, event, allowed=allowed, reason=reason, started_ns=started)
         if not allowed:
             return None
         return cast(dict[str, Any], content)

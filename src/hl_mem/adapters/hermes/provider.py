@@ -397,6 +397,8 @@ class HLMemProvider:
                 agent_context=self._agent_context,
             )
             assistant_metadata: dict[str, Any] = {"turn_id": turn_id}
+            if turn_provenance.session_kind == "cron":
+                assistant_metadata["memory_disposition"] = "exclude"
             if turn_provenance.external_tools:
                 assistant_metadata["external_source_tools"] = list(turn_provenance.external_tools)
             events = [

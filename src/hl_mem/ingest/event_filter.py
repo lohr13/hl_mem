@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Literal
+
+MemoryDispositionMode = Literal["off", "observe", "enforce"]
 
 
 class EventFilter:
@@ -15,9 +18,25 @@ class EventFilter:
         re.IGNORECASE,
     )
 
+    def __init__(self, memory_disposition_mode: MemoryDispositionMode = "enforce") -> None:
+        self.memory_disposition_mode = memory_disposition_mode
+
+    def producer_disposition(self, event: dict[str, Any]) -> tuple[bool, str | None]:
+        """Return the producer gate before any content preprocessing."""
+        metadata = event.get("metadata")
+        producer_excluded = isinstance(metadata, Mapping) and metadata.get("memory_disposition") == "exclude"
+        if producer_excluded and self.memory_disposition_mode == "enforce":
+            return False, "excluded_by_producer_disposition"
+        if producer_excluded and self.memory_disposition_mode == "observe":
+            return True, "excluded_by_producer_disposition"
+        return True, None
+
     def should_extract(self, event: dict[str, Any]) -> tuple[bool, str]:
+        allowed, disposition_reason = self.producer_disposition(event)
+        if not allowed:
+            return False, disposition_reason or "excluded_by_producer_disposition"
         if event.get("event_type") == "explicit_memory":
-            return True, "explicit_memory"
+            return True, disposition_reason or "explicit_memory"
         content = event.get("content", event.get("content_json", {}))
         if isinstance(content, str):
             try:
@@ -35,7 +54,7 @@ class EventFilter:
         if event.get("actor_type") == "assistant":
             if self._is_status_report(text):
                 return False, "status_report"
-        return True, "eligible"
+        return True, disposition_reason or "eligible"
 
     @staticmethod
     def _text(content: Any) -> str:

@@ -12,6 +12,7 @@ from hl_mem.config.lifecycle import ExpiredCleanupMode as ExpiredCleanupMode
 from hl_mem.config.lifecycle import FeedbackLifecycleMode as FeedbackLifecycleMode
 from hl_mem.config.lifecycle import LifecycleConfig as LifecycleConfig
 from hl_mem.config.plugin_settings import PluginsConfig as PluginsConfig
+from hl_mem.config.runtime_validation import validate_runtime_modes
 from hl_mem.config.secrets import is_placeholder_secret
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.errors import ConfigurationError
@@ -26,6 +27,7 @@ RelationExpansionMode = Literal["off", "on"]
 RelationDiscoveryMode = Literal["off", "audit"]
 ExtractorMode = Literal["fake", "real", "llm"]
 VerificationMode = Literal["off", "audit", "enforce"]
+MemoryDispositionMode = Literal["off", "observe", "enforce"]
 LLMProvider = str
 StructuredOutputModeName = Literal["auto", "json_object", "json_schema"]
 LLMThinkingControl = Literal["auto", "chat_template_kwargs"]
@@ -65,15 +67,6 @@ def parse_daily_cron(value: str, variable_name: str) -> int:
 
 def _toml_field(default: Any, path: str) -> Any:
     return field(default=default, metadata={"toml": path})
-
-
-def _validate_runtime_modes(settings: "Settings") -> None:
-    if settings.entity_constraint_mode not in {"off", "observe", "enforce"}:
-        raise ConfigurationError("recall.entity_constraint_mode must be 'off', 'observe', or 'enforce'")
-    if settings.lesson_signal_mode not in {"off", "observe", "enforce"}:
-        raise ConfigurationError("extraction.lesson_signal_mode must be 'off', 'observe', or 'enforce'")
-    if settings.conflict_auto_mode not in {"off", "l0_only"}:
-        raise ConfigurationError("conflict.auto_mode must be 'off' or 'l0_only'")
 
 
 @dataclass(frozen=True)
@@ -165,6 +158,11 @@ class ExtractionConfig:
     )
 
     lesson_signal_mode: LessonSignalMode = _toml_field("observe", "extraction.lesson_signal_mode")
+
+    memory_disposition_mode: MemoryDispositionMode = _toml_field(
+        "enforce",
+        "extraction.memory_disposition_mode",
+    )
 
     llm_api_key: str | None = field(
         default=None,
@@ -929,7 +927,7 @@ class Settings(
             raise ConfigurationError("worker.job_lease_minutes must be positive")
         if not 1 <= self.conflict_maintenance_max_cases <= 1_000:
             raise ConfigurationError("worker.conflict_maintenance_max_cases must be between 1 and 1000")
-        _validate_runtime_modes(self)
+        validate_runtime_modes(self)
         if not 50 <= self.conflict_maintenance_budget_ms <= 10_000:
             raise ConfigurationError("worker.conflict_maintenance_budget_ms must be between 50 and 10000")
         if not 1 <= self.conflict_failure_backoff_seconds <= 86_400:
@@ -1131,6 +1129,7 @@ class Settings(
             "hermes_manual_conflict_notice": self.hermes_manual_conflict_notice,
             "verification_mode": self.verification_mode,
             "lesson_signal_mode": self.lesson_signal_mode,
+            "memory_disposition_mode": self.memory_disposition_mode,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,

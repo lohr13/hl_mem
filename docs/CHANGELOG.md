@@ -1,5 +1,16 @@
 # HL-Mem 变更记录
 
+## v1.1.7（2026-09-08）
+
+- 修复中等级别的系统自产文本回灌：Hermes cron assistant Event 现在显式携带
+  `metadata.memory_disposition = "exclude"`，默认在图片描述、LLM 提取和 Claim 写入前被过滤；原始 Event 与无正文审计
+  继续保留，避免裁决、维护或诊断报告被重新提取后反复扩大冲突组。
+- 新增 `extraction.memory_disposition_mode = "off" | "observe" | "enforce"`，默认 `enforce`；`observe` 仅记录
+  `excluded_by_producer_disposition` 后保持旧提取行为，`off` 忽略标记。旧客户端缺少 metadata、metadata 畸形或值未知时
+  一律 fail-open，不根据正文、origin 或自由文本相似度猜测。
+- 本次无数据库 migration、存量 Claim 改写或 REST/MCP 变更；不改变 conflict_key、语义归并、来源权威规则及已退役的
+  conflict L2 链路。
+
 ## v1.1.6（2026-09-08）
 
 - LongMemEval 聚合按 eligible case 计算 R@10：合并前校验数据集分片，只把具备有效检索结果的样本计入分母，避免缺失或不可评样本稀释召回率。

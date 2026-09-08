@@ -56,6 +56,8 @@ def queue(
     *,
     event_type="message",
     content=None,
+    metadata=None,
+    actor_type="user",
     origin_class="unknown",
     session_kind="unknown",
 ) -> None:
@@ -64,8 +66,9 @@ def queue(
         {
             "id": event_id,
             "event_type": event_type,
-            "actor_type": "user",
+            "actor_type": actor_type,
             "content_json": json.dumps(content or {"text": "记住使用 SQLite"}, ensure_ascii=False),
+            "metadata_json": json.dumps(metadata, ensure_ascii=False) if metadata is not None else None,
             "occurred_at": now,
             "recorded_at": now,
             "origin_class": origin_class,
@@ -91,6 +94,17 @@ class CountingExtractor:
     def extract(self, _content):
         self.calls += 1
         return [ExtractedClaim(predicate="uses", value="SQLite", subject="hl_mem")]
+
+
+class FailingIfCalledImageDescriber:
+    model = "must-not-run"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def describe(self, *_args, **_kwargs):
+        self.calls += 1
+        raise AssertionError("excluded events must not reach image description")
 
 
 @pytest.mark.parametrize("session_kind", ["heartbeat", "subagent"])
@@ -132,6 +146,52 @@ def test_worker_observe_mode_keeps_automated_extraction_flow(tmp_path) -> None:
     assert result["status"] == "succeeded"
     assert extractor.calls == 1
     assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
+
+
+def test_worker_enforces_producer_exclusion_before_extractor_and_audits_reason(tmp_path) -> None:
+    path = tmp_path / "producer-excluded.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(path),
+        embedding_dim=8,
+        memory_disposition_mode="enforce",
+    )
+    connection = Database(path, settings=settings).open()
+    queue(
+        connection,
+        actor_type="assistant",
+        origin_class="agent",
+        session_kind="cron",
+        metadata={"memory_disposition": "exclude"},
+        content={
+            "text": "自动生成的冲突裁决报告正文",
+            "images": [{"base64_data": "aW1hZ2U=", "mime_type": "image/png"}],
+        },
+    )
+    extractor = CountingExtractor()
+    image_describer = FailingIfCalledImageDescriber()
+    audit = RecordingAudit()
+
+    result = Worker(
+        settings,
+        extractor=extractor,
+        embedder=FakeEmbedder(8),
+        image_describer=image_describer,
+        audit_logger=audit,
+        connection=connection,
+    ).run_once()
+
+    filter_audit = next(event for event in audit.events if event[:2] == ("filter", "evaluated"))
+    assert result["status"] == "succeeded"
+    assert result["claims"] == 0
+    assert extractor.calls == 0
+    assert image_describer.calls == 0
+    assert filter_audit[2] == "reject"
+    assert filter_audit[3]["reason"] == "excluded_by_producer_disposition"
+    assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 0
+    stored_metadata = connection.execute("SELECT metadata_json FROM events").fetchone()["metadata_json"]
+    assert json.loads(stored_metadata) == {"memory_disposition": "exclude"}
 
 
 def test_worker_rechecks_provenance_for_already_queued_job(tmp_path) -> None:

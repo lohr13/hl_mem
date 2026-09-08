@@ -316,6 +316,18 @@
       "type": "integer"
     },
     {
+      "default": "enforce",
+      "path": "extraction.memory_disposition_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "memory_disposition_mode",
+      "type": "string"
+    },
+    {
       "default": "llm",
       "path": "extraction.mode",
       "production_choices": [

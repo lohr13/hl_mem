@@ -1,6 +1,6 @@
 # HL-Mem Architecture
 
-- Document baseline: v1.1.6
+- Document baseline: v1.1.7
 - Updated: 2026-09-03
 - Deployment baseline: local-first, SQLite-first
 
@@ -264,6 +264,11 @@ The bounded window has only two controls: count and maximum wait. An idle timer 
 `sync_turn` already writes the user/assistant pair atomically; adding another debounce state would increase starvation and
 recovery complexity without improving evidence semantics. Explicit memories, non-message Events, and Events without a
 session take the immediate single-Event path. LongMemEval queues the same Events and drains this same Worker path.
+
+An Event producer can explicitly set `metadata.memory_disposition = "exclude"`. The default `enforce` mode retains the
+Event but stops image description and Claim extraction; `observe` audits the same declaration without changing extraction,
+and `off` ignores it. Missing or malformed declarations fail open. Hermes applies this contract to cron assistant output,
+not to the cron prompt, and no content or origin heuristic is used.
 
 Observation and Mental Model derivation is a separate maintenance path, not part of the Claim write transaction. The
 mental-model worker evaluates active evidence after ingestion and writes or refreshes derivations when its evidence rules
