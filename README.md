@@ -157,6 +157,10 @@ HL-Mem 是 SQLite-first 的单机记忆系统，不提供 PostgreSQL、外部图
 | [兼容性策略](docs/compatibility.md) | 升级、恢复与公共契约 |
 | [变更日志](docs/CHANGELOG.md) | 当前版本与发布历史 |
 
+## 反馈
+
+使用问题与经验交流请到 [Discussions](https://github.com/lohr13/hl_mem/discussions)；Bug 与功能请求请提 [Issue](https://github.com/lohr13/hl_mem/issues)。
+
 ## Contributing / 贡献指南
 
 欢迎提交 Issue 和 Pull Request。开发环境、测试和提交约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。

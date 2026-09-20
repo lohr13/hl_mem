@@ -165,6 +165,10 @@ than a security sandbox. See the [support policy](docs/support.md) for the full 
 | [Compatibility](docs/compatibility.md) | Upgrade, restore, and public contracts |
 | [Changelog](docs/CHANGELOG.md) | Current release and version history |
 
+## Feedback
+
+Ask questions and share experience in [Discussions](https://github.com/lohr13/hl_mem/discussions); file bugs and feature requests as [Issues](https://github.com/lohr13/hl_mem/issues).
+
 ## Contributing
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development, test, and commit guidance.
