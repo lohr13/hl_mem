@@ -64,3 +64,4 @@ hl-mem-provider-smoke-*/
 .volc_hz.json
 hl_mem.toml.v*.bak
 docs/TASK-v112-deploy-audit.md
+.env.zhipu_key
