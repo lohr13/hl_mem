@@ -81,6 +81,8 @@ uv run hlmem init
 uv run hlmem server
 ```
 
+国内网络可使用 [Gitee 镜像](https://gitee.com/lohrwws/hl_mem)（自动同步 GitHub）。
+
 开发与测试使用 `uv` 和仓库锁文件。部署、备份、恢复和运行边界见[架构文档](docs/architecture.md)与
 [兼容性策略](docs/compatibility.md)。
 
