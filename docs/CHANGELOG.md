@@ -1,5 +1,43 @@
 # HL-Mem 变更记录
 
+## v1.1.7（2026-09-08）
+
+- 修复中等级别的系统自产文本回灌：Hermes cron assistant Event 现在显式携带
+  `metadata.memory_disposition = "exclude"`，默认在图片描述、LLM 提取和 Claim 写入前被过滤；原始 Event 与无正文审计
+  继续保留，避免裁决、维护或诊断报告被重新提取后反复扩大冲突组。
+- 新增 `extraction.memory_disposition_mode = "off" | "observe" | "enforce"`，默认 `enforce`；`observe` 仅记录
+  `excluded_by_producer_disposition` 后保持旧提取行为，`off` 忽略标记。旧客户端缺少 metadata、metadata 畸形或值未知时
+  一律 fail-open，不根据正文、origin 或自由文本相似度猜测。
+- 本次无数据库 migration、存量 Claim 改写或 REST/MCP 变更；不改变 conflict_key、语义归并、来源权威规则及已退役的
+  conflict L2 链路。
+
+## v1.1.6（2026-09-08）
+
+- LongMemEval 聚合按 eligible case 计算 R@10：合并前校验数据集分片，只把具备有效检索结果的样本计入分母，避免缺失或不可评样本稀释召回率。
+- 金额与测量值冲突准入要求 subject、predicate、slot、单位及测量对象身份一致；对象不同或身份不足时不再错误进入 temporal quarantine，修复生产写入边界。
+- Reader 任务改为依据问题语义分流，不读取 benchmark label 或 gold answer；对普通问答与时序问答选择各自的回答路径，避免评测标签泄漏。
+- Reader 证据窗口保留关系证据与完整事实句，句子边界内裁剪上下文，避免关键主谓宾或时间限定被窗口截断。
+- Temporal grounding 依据事件关系与 applicable time 选择支撑事件，避免仅按记录顺序绑定时间，提升时序答案的证据一致性。
+- 拆分摄入解析与 temporal/measurement 辅助函数，在不改变行为的前提下满足复杂度棘轮预算。
+- **配置兼容性提醒（breaking-ish）**：提取岗的正式默认配置为 `provider = "dashscope"`、
+  `base_url = "https://coding.dashscope.aliyuncs.com/v1"`、`model = "qwen3.7-plus"`，默认超时由 90 秒提高到
+  240 秒。未在 `hl_mem.toml` 显式覆盖 LLM 坐标的升级用户，必须让 `LLM_API_KEY` 包含可访问该 DashScope
+  coding 端点的密钥；继续使用其他供应商时应显式配置 provider、base URL、model 与对应密钥。
+
+## v1.1.5（2026-09-05）
+
+- 提取 Prompt 恢复原子 claim 粒度：每条 claim 只表达一个有证据、可独立回答的原子事实；复合句（「用户要做X」
+  与「X 的属性」）与可分别回答的枚举必须逐项拆分，枚举中的每项及数量、单位分别保留。普通目标 12→20 条、
+  硬上限 16→24 条（依据：同日真复刻对照实验提取量 223→352、关键事件枚举密度 7→19）；单次确定性截断
+  语义不变；公共 REST/MCP/CLI、数据库 schema、配置 schema 与 Provider Plugin API 均不改变。
+- 实体查询在 enforce 模式下遇到纯第一人称代词（我/我们/I/me 等）时不再生成实体窄化过滤，改为宽召回并记录
+  `fallback_reason=pronoun_only`；其余实体窄化与宽召回行为保持不变。
+- 付费评测运行新增 fail-closed 身份门（`evaluation/tools/run_identity_gate.py`）：运行前后校验 git HEAD、
+  仓库根、LLM 提取器版本、配置 SHA256 与结果 manifest 数量，任一不匹配即抛 `EvaluationIdentityError`；
+  MemDaily 基准运行器已接入该门。该门只作用于评测工具，不进入运行时链路。
+- 评测工具：MemDaily 基准报告提取 cap 命中 telemetry；中文 e2e rubric 接受评分中的方括号实体插入；
+  预注册提取 cap A/B v2 协议文档（`docs/research/2026-09-04-p1-extraction-ab-v2-protocol.md`）。
+
 ## v1.1.4（2026-09-03）
 
 - 提取 Prompt 现在保留明确归因的个人观点、理解、感受、行为原因和实践原则，并把“姓名：发言”中的第一人称绑定到姓名；问题、未采纳引语、助手通识及助手自我陈述继续排除。

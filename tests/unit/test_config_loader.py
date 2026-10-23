@@ -912,3 +912,20 @@ def test_provenance_mode_defaults_to_enforce_and_loads_observe(tmp_path: Path) -
     assert configured.provenance_mode == "observe"
     with pytest.raises(ConfigurationError, match="provenance.mode"):
         Settings(provenance_mode="invalid").validate()
+
+
+def test_memory_disposition_mode_defaults_to_enforce_and_loads_rollout_modes(tmp_path: Path) -> None:
+    observed = _load_structural_settings(
+        _write(tmp_path / "memory-disposition-observe.toml", '[extraction]\nmemory_disposition_mode = "observe"\n'),
+        environ={},
+    )
+    disabled = _load_structural_settings(
+        _write(tmp_path / "memory-disposition-off.toml", '[extraction]\nmemory_disposition_mode = "off"\n'),
+        environ={},
+    )
+
+    assert Settings().memory_disposition_mode == "enforce"
+    assert observed.memory_disposition_mode == "observe"
+    assert disabled.memory_disposition_mode == "off"
+    with pytest.raises(ConfigurationError, match="extraction.memory_disposition_mode"):
+        Settings(memory_disposition_mode="invalid").validate()

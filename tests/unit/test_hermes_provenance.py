@@ -127,3 +127,27 @@ def test_sync_turn_preserves_pair_shape_and_adds_only_bounded_provenance(
     assert (assistant["origin_class"], assistant["session_kind"]) == ("external_derived", "interactive")
     assert user["metadata"] == {"turn_id": "7"}
     assert assistant["metadata"] == {"turn_id": "7", "external_source_tools": ["web_search"]}
+
+
+def test_sync_turn_marks_only_cron_assistant_as_excluded(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = HLMemProvider("unused.db", "http://memory.test", timeout=2.0)
+    provider.initialize("cron-session", platform="qqbot", agent_context="cron")
+    requests: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(provider, "_sync_post", lambda path, payload: requests.append((path, payload)) or True)
+    monkeypatch.setattr(provider, "_sync_episode_sync", lambda *_args, **_kwargs: None)
+
+    provider.sync_turn(
+        "scheduled instruction",
+        "generated report",
+        session_id="cron-session",
+        turn_id=8,
+        messages=[
+            {"role": "user", "content": "scheduled instruction"},
+            {"role": "assistant", "content": "generated report"},
+        ],
+    )
+
+    [(_, payload)] = requests
+    user, assistant = payload["events"]
+    assert user["metadata"] == {"turn_id": "8"}
+    assert assistant["metadata"] == {"turn_id": "8", "memory_disposition": "exclude"}

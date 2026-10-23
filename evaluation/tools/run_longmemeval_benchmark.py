@@ -48,6 +48,7 @@ from evaluation.tools.longmemeval.native_rag import (  # noqa: E402, F401
 )
 from evaluation.tools.longmemeval.qa_client import (  # noqa: E402, F401
     QAUsage,
+    judge_model,
     qa_call_with_retry,
     qa_dashscope_chat as _qa_dashscope_chat,
     qa_dashscope_chat_detailed as _qa_dashscope_chat_detailed,
@@ -151,7 +152,8 @@ NATIVE_RAG_EMBEDDING_TIMEOUT_SECONDS = 90.0
 DEFAULT_FAIL_STOP_COUNT = 5
 BENCHMARK_EVENT_MODEL_VERSION = "turn-events-v1"
 EXTRACTION_FRAGMENT_PROTOCOL_VERSION = "production-microbatch-v1"
-READER_CONTEXT_PROTOCOL_VERSION = "session-turn-window-v2"
+READER_CONTEXT_PROTOCOL_VERSION = "sentence-evidence-window-v3-candidate"
+READER_PROMPT_PROTOCOL_VERSION = "answer-tasks-temporal-v2-candidate"
 BENCHMARK_MAINTENANCE_PROTOCOL_VERSION = "deterministic-dedup-conflicts-v1"
 CLAIM_RESTATEMENT_LEXICAL_THRESHOLD = 0.82
 RETRIEVAL_KS = (1, 5, 10)
@@ -161,12 +163,24 @@ _DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MILLION = 2.0
 _QWEN37_EMBEDDING_INPUT_CNY_PER_MILLION = 0.5
 JSON_READ_CHARS = 1024 * 1024
 FALLBACK_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
+_WORKER_OK_STATUSES = {"succeeded", "off", "applied", "ambiguous", "observed", "candidate"}
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _RECOMMENDATION_QUESTION_RE = re.compile(
-    r"(?ix)(?:\b(?:recommend|suggest|advice|ideas?|resources?|options?)\b|"
+    r"(?ix)(?:\b(?:recommend(?:ations?)?|suggest(?:ions?)?|advice|ideas?)\b|"
     r"\b(?:help\s+(?:me|us)\s+)?(?:choose|pick)\b|\bshould\s+(?:i|we)\b|"
     r"推荐|建议|主意|资源|帮(?:我|我们)?(?:选择|挑选))"
 )
+_PAST_CHOICE_QUESTION_RE = re.compile(
+    r"(?ix)(?:\b(?:did|had|was|were)\b.{0,80}\b(?:recommend|suggest|choose|pick|options?)\b|"
+    r"\b(?:recommended|suggested|chose|picked)\b|"
+    r"(?:上次|之前|以前).{0,30}(?:推荐|建议|选择)|(?:推荐|建议|选择)了什么)"
+)
+_FORWARD_RECOMMENDATION_RE = re.compile(
+    r"(?ix)(?:\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:recommend|suggest)\b|"
+    r"\bplease\s+(?:recommend|suggest)\b|^\s*(?:recommend|suggest)\s+(?:me|us|a|an|some|another)\b|"
+    r"请.{0,20}(?:推荐|建议))"
+)
+_EXPLANATION_QUESTION_RE = re.compile(r"(?ix)(?:\b(?:why|reasons?|explain|caused?)\b|为什么|原因|解释)")
 _COUNT_OR_SUM_QUESTION_RE = re.compile(
     r"(?ix)(?:\b(?:how\s+many|total|sum|altogether|combined)\b|多少|几个|总共|合计|求和)"
 )
@@ -1024,7 +1038,13 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             and result["retrieval"].get("extraction_applicable") is not False
         )
     ]
+    expansion_traces = [item["search_trace"] for item in retrieval_all if isinstance(item.get("search_trace"), Mapping)]
     summary: dict[str, Any] = {
+        "query_expansion_traced_cases": len(expansion_traces),
+        "query_expansion_executed_cases": sum(bool(trace.get("expansions")) for trace in expansion_traces),
+        "query_expansion_total_tokens": sum(
+            int(trace.get("expansion_total_tokens") or 0) for trace in expansion_traces
+        ),
         "cases": len(results),
         "successful_cases": len(successful),
         "failed_cases": len(results) - len(successful),
@@ -1071,6 +1091,9 @@ def _aggregate_group(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         claim_values = [item.get(f"recall_at_{k}") for item in retrieval if item.get(f"recall_at_{k}") is not None]
         summary[f"recall_at_{k}_eligible_numerator"] = len(claim_values)
         summary[f"recall_at_{k}_eligible_denominator"] = len(successful)
+        # Additive components for downstream merging; ineligible cases are not zeros.
+        summary[f"recall_at_{k}_sum"] = sum(float(value) for value in claim_values)
+        summary[f"recall_at_{k}_count"] = len(claim_values)
         session_values = [
             item.get(f"session_recall_at_{k}")
             for item in session_retrieval
@@ -1346,6 +1369,8 @@ def _validate_manifest(
     if not path.is_file():
         raise FileNotFoundError(f"--skip-ingest requires cache manifest: {path}")
     manifest = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, Mapping):
+        raise ValueError(f"cached ingest manifest must contain a JSON object: {path}")
     expected = _manifest_identity(case, settings, relevance_scorer=relevance_scorer)
     mismatches = {key: (manifest.get(key), value) for key, value in expected.items() if manifest.get(key) != value}
     if mismatches:
@@ -1632,7 +1657,7 @@ def _ingest_case(
             result = worker.run_once(force_extraction=True)
             if result["status"] == "idle":
                 break
-            if result["status"] != "succeeded":
+            if result["status"] not in _WORKER_OK_STATUSES:
                 raise RuntimeError(
                     f"production extraction worker failed for {case.case_id}: "
                     f"{result.get('error') or result['status']}"
@@ -1872,7 +1897,8 @@ def _reader_generation_options(model: str) -> dict[str, int]:
     options = {"max_tokens": READER_ANSWER_TOKEN_BUDGET}
     if folded.startswith(("qwen3.7-", "deepseek-v4-")):
         options["thinking_budget"] = READER_THINKING_TOKEN_BUDGET
-    if folded.startswith("deepseek-v4-"):
+    if folded.startswith(("deepseek-v4-", "glm-")):
+        # These models count reasoning tokens against max_tokens alongside the answer.
         options["max_tokens"] += READER_THINKING_TOKEN_BUDGET
     return options
 
@@ -1942,9 +1968,9 @@ def _judge_longmemeval_answer(
     return cast(
         tuple[dict[str, Any], int],
         _judge_longmemeval_answer_impl(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
+            api_key=os.environ.get("HL_MEM_EVAL_JUDGE_API_KEY", "").strip() or api_key,
+            base_url=os.environ.get("HL_MEM_EVAL_JUDGE_BASE_URL", "").strip() or base_url,
+            model=judge_model(model),
             case_id=case_id,
             question_type=question_type,
             question=question,
@@ -1958,7 +1984,21 @@ def _judge_longmemeval_answer(
 
 
 def _is_preference_recommendation(case: LongMemEvalCase) -> bool:
-    return "preference" in case.question_type.casefold() and bool(_RECOMMENDATION_QUESTION_RE.search(case.question))
+    return _reader_task(case) == "recommendation"
+
+
+def _reader_task(case: LongMemEvalCase) -> str:
+    """Select an answer task from the question, never the benchmark label or gold."""
+    question = case.question
+    # A present request can follow a sentence recalling a previous recommendation.
+    request = re.split(r"[.!?。！？]\s*", question.rstrip("?!。！？"))[-1]
+    if _FORWARD_RECOMMENDATION_RE.search(request) or (
+        _RECOMMENDATION_QUESTION_RE.search(request) and not _PAST_CHOICE_QUESTION_RE.search(request)
+    ):
+        return "recommendation"
+    if _EXPLANATION_QUESTION_RE.search(question):
+        return "explanation"
+    return "fact"
 
 
 def _is_count_or_sum_question(case: LongMemEvalCase) -> bool:
@@ -1966,48 +2006,75 @@ def _is_count_or_sum_question(case: LongMemEvalCase) -> bool:
 
 
 def _reader_system_prompt(case: LongMemEvalCase) -> str:
+    task = _reader_task(case)
     prompt = (
         "You answer questions from retrieved long-term-memory claims and their original evidence events. "
         "Before answering, perform a private Chain-of-Note pass over every relevant record: (1) note each candidate "
         "answer and its exact relation to the question; (2) label whether it was planned or intended, attempted, "
         "or actually executed; (3) use occurred and valid times plus Current Date to resolve updates; "
-        "and (4) compare the candidates and synthesize only the one whose relation and state answer the question. "
+        "and (4) compare the candidates to answer the requested task using the relevant relations and states. "
         "Do not expose these private notes. Keep audition distinct from participation in a production; keep location, "
         "travel duration, and distance distinct; and never treat a plan as completed execution. Related distractors "
-        "must not override evidence with the exact requested relation. Combine records when needed and allow only "
-        "deterministic coreference resolution, simple arithmetic, comparisons, and date calculations. Do not invent "
-        "missing proper nouns, amounts, places, dates, or counts. Say that the information is unavailable only after "
+        "must not override evidence with the exact requested relation. Combine records when needed. "
+        "Say that the information is unavailable only after "
         "checking every claim and evidence event and finding them genuinely insufficient; do not abstain merely "
         "because the wording differs. Count repeated phrasings of the same fact only once and prefer the most complete "
         "version; never automatically merge records whose number, date, weekday, entity, or qualifier differs. Return "
         "only the final answer, without analysis, private notes, or evidence ranks."
     )
-    if _is_preference_recommendation(case):
+    if task == "recommendation":
         prompt += (
             " For this preference recommendation, treat the memories as constraints for generation, not as a closed "
             "catalog of answer strings. You may synthesize a recommendation that satisfies those constraints even when "
             "the specific proper noun is absent from memory. The final answer must explicitly use the known preferences "
             "or experiences that justify the recommendation; if no relevant personal constraint is present, say the "
-            "information is unavailable instead of giving an ungrounded generic recommendation."
+            "information is unavailable instead of giving an ungrounded generic recommendation. "
+            "Separate remembered facts from proposed options; do not claim unverified amenities, prices, or availability. "
+            "If a specific venue or product cannot be verified from the evidence, recommend the suitable features or "
+            "experience and explain the tradeoffs using the visible preferences."
         )
+    else:
+        prompt += (
+            " Do not invent missing proper nouns, amounts, places, dates, or counts. "
+            "For factual derivations, allow only deterministic coreference resolution, simple arithmetic, "
+            "comparisons, and date calculations."
+        )
+        if task == "explanation":
+            prompt += (
+                " For an explanation, connect the supported cause or change to the observed outcome, rather than "
+                "only restating the events. Distinguish a plausible explanation from an established cause; "
+                "qualify any inferred link and do not introduce unsupported personal history."
+            )
     if _is_count_or_sum_question(case):
         prompt += (
             " For count or sum questions, enumerate every record you can see, cautiously deduplicate identical items "
             "so each item is counted once, and only then compute the total."
         )
-    if "knowledge-update" in case.question_type.casefold():
-        prompt += (
-            " For knowledge-update questions, prefer the latest statement that is valid at the question time; older "
-            "conflicting statements are history only and must never override the updated value."
-        )
-    if "temporal" in case.question_type.casefold():
-        prompt += (
-            " For temporal questions, first select the latest baseline effective at the question time, then apply "
-            "weekday conditions or relative offsets to that baseline; never apply an offset to a superseded baseline. "
-            "For a historical question, select the baseline that was effective at that historical time and never import "
-            "a later current value."
-        )
+    prompt += _reader_temporal_guidance()
     return prompt
+
+
+def _reader_temporal_guidance() -> str:
+    """Semantic time rules; model-side grounding keeps evidence and exact as_of unchanged."""
+    return (
+        " For questions involving time, first match the requested event, relation, and completion state, "
+        "then compare the applicable times. Distinguish occurrence time from the statement's valid time: "
+        "occurred_start/occurred_end describe the event, while valid_from and evidence timestamps anchor the statement. "
+        "Resolve relative expressions in evidence against that evidence's timestamp, and relative expressions in the "
+        "question against Current Date. Treat conversational weeks or months as coarse relative periods unless the "
+        "question explicitly requires an exact date or interval; an exact day difference must not outweigh a better "
+        "match for the requested event or milestone. Use precise dates for exact date arithmetic. "
+        "If occurrence time is missing, use the dated statement and its temporal wording cautiously; "
+        "do not turn a plan into a completed event or assert an unsupported occurrence date. "
+        "For a current value or an explicit update of the same fact, prefer the latest statement that is valid at the "
+        "question time; older conflicting statements are history only and must never override the updated value. "
+        "For the most recent completed event, compare event evidence and occurrence times where available; "
+        "separate trips or transactions do not automatically replace each other. "
+        "For a recurring schedule, select the latest baseline effective at the question time, then apply weekday "
+        "conditions or relative offsets to that baseline; never apply an offset to a superseded baseline. "
+        "For a historical question, select the baseline that was effective at that historical time and never import "
+        "a later current value."
+    )
 
 
 def _run_qa(
@@ -2535,21 +2602,30 @@ def _run_case(
     started = time.perf_counter()
     try:
         DATABASE_ROOT.mkdir(parents=True, exist_ok=True)
+        use_cached_ingest = skip_ingest
         if skip_ingest:
             if not database_path.is_file():
                 raise FileNotFoundError(f"--skip-ingest requires cached database: {database_path}")
             _validate_manifest(manifest_path, case, settings)
+        elif database_path.is_file() and manifest_path.is_file():
+            try:
+                _validate_manifest(manifest_path, case, settings)
+            except (OSError, ValueError):
+                _remove_case_artifacts(database_path, manifest_path)
+            else:
+                use_cached_ingest = True
+        else:
+            _remove_case_artifacts(database_path, manifest_path)
+        if use_cached_ingest:
             result["ingest"] = {
                 "skipped": True,
                 "cache_manifest": str(manifest_path.relative_to(ROOT)),
                 **_claim_diagnostic_defaults("unavailable_cache_open_failed"),
             }
-        else:
-            _remove_case_artifacts(database_path, manifest_path)
 
         database = Database(database_path, settings=settings)
         connection = database.open()
-        if skip_ingest:
+        if use_cached_ingest:
             result["ingest"] = _cached_ingest_diagnostics(
                 connection,
                 case,
@@ -3047,14 +3123,17 @@ def _report(
                 "extraction_chunk_target_chars": settings.extraction_chunk_target_chars,
                 "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
                 "reader_context_protocol": READER_CONTEXT_PROTOCOL_VERSION,
+                "reader_prompt_protocol": READER_PROMPT_PROTOCOL_VERSION,
                 "query_expansion_model": llm_identity["query_expansion_model"],
+                "query_expansion_mode": settings.query_expansion_mode,
+                "query_expansion_max": settings.query_expansion_max,
                 "embedder": settings.embedding_model,
                 "embedding_dim": settings.embedding_dim,
                 "embedding_api_mode": settings.embedding_api_mode,
                 "embedding_text_type": settings.embedding_text_type,
                 "reranker": settings.reranker_model if settings.reranker_mode != "off" else "off",
                 "reader": _qa_model(settings) if not args.no_qa else "not_run",
-                "judge": _qa_model(settings) if not args.no_qa else "not_run",
+                "judge": judge_model(_qa_model(settings)) if not args.no_qa else "not_run",
             },
             "retrieval_k": list(RETRIEVAL_KS),
             "metric_relevance": {
@@ -3119,6 +3198,14 @@ def _load_resume_report(path: Path) -> tuple[dict[str, Any] | None, list[dict[st
     return payload, cases
 
 
+def _successful_resume_results(results: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        result
+        for result in results
+        if result.get("error") is None and _result_error_type(result) not in {"http_429", "quota"}
+    ]
+
+
 def _resume_model_identity(report: Mapping[str, Any]) -> dict[str, Any]:
     run = report.get("run")
     if not isinstance(run, Mapping):
@@ -3138,7 +3225,10 @@ def _resume_model_identity(report: Mapping[str, Any]) -> dict[str, Any]:
         "extraction_chunk_target_chars",
         "extraction_chunk_overlap_turns",
         "reader_context_protocol",
+        "reader_prompt_protocol",
         "query_expansion_model",
+        "query_expansion_mode",
+        "query_expansion_max",
         "embedder",
         "embedding_dim",
         "embedding_api_mode",
@@ -3180,14 +3270,17 @@ def _validate_resume_report(
         "extraction_chunk_target_chars": settings.extraction_chunk_target_chars,
         "extraction_chunk_overlap_turns": settings.extraction_chunk_overlap_turns,
         "reader_context_protocol": READER_CONTEXT_PROTOCOL_VERSION,
+        "reader_prompt_protocol": READER_PROMPT_PROTOCOL_VERSION,
         "query_expansion_model": llm_identity["query_expansion_model"],
+        "query_expansion_mode": settings.query_expansion_mode,
+        "query_expansion_max": settings.query_expansion_max,
         "embedder": settings.embedding_model,
         "embedding_dim": settings.embedding_dim,
         "embedding_api_mode": settings.embedding_api_mode,
         "embedding_text_type": settings.embedding_text_type,
         "reranker": reranker,
         "reader": qa_model,
-        "judge": qa_model,
+        "judge": judge_model(qa_model) if not args.no_qa else "not_run",
     }
     if previous_identity != expected_identity:
         raise ValueError("resume output model configuration does not match current settings")
@@ -3372,7 +3465,7 @@ def _full_context_report(
             "reader_timeout_seconds": int(FULL_CONTEXT_READER_TIMEOUT_SECONDS),
             "models": {
                 "reader": model,
-                "judge": model,
+                "judge": judge_model(model),
                 "reader_thinking": True,
                 "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
                 "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
@@ -3422,7 +3515,7 @@ def _validate_full_context_resume_report(
             raise ValueError(f"resume output {field} does not match current full-context run")
     expected_models = {
         "reader": _qa_model(settings),
-        "judge": _qa_model(settings),
+        "judge": judge_model(_qa_model(settings)),
         "reader_thinking": True,
         "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
         "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
@@ -3446,7 +3539,7 @@ def _run_full_context_control(
         resume_report, results = _load_resume_report(args.output)
         if resume_report is not None:
             _validate_full_context_resume_report(resume_report, args, settings)
-            results = [result for result in results if _result_error_type(result) not in {"http_429", "quota"}]
+            results = _successful_resume_results(results)
     started_at = generated_started_at
     if resume_report is not None:
         previous_run = resume_report.get("run")
@@ -3664,7 +3757,7 @@ def _native_rag_report(
                 "embedding_text_type": None,
                 "embedding_query_instruct": None,
                 "reader": model,
-                "judge": model,
+                "judge": judge_model(model),
                 "reader_thinking": True,
                 "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
                 "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
@@ -3725,7 +3818,7 @@ def _validate_native_rag_resume_report(
         "embedding_text_type": None,
         "embedding_query_instruct": None,
         "reader": _qa_model(settings),
-        "judge": _qa_model(settings),
+        "judge": judge_model(_qa_model(settings)),
         "reader_thinking": True,
         "reader_thinking_budget": READER_THINKING_TOKEN_BUDGET,
         "reader_answer_budget": READER_ANSWER_TOKEN_BUDGET,
@@ -3749,7 +3842,7 @@ def _run_native_rag_control(
         resume_report, results = _load_resume_report(args.output)
         if resume_report is not None:
             _validate_native_rag_resume_report(resume_report, args, settings)
-            results = [result for result in results if _result_error_type(result) not in {"http_429", "quota"}]
+            results = _successful_resume_results(results)
     started_at = generated_started_at
     if resume_report is not None:
         previous_run = resume_report.get("run")
@@ -3916,7 +4009,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         resume_report, results = _load_resume_report(args.output)
         if resume_report is not None:
             _validate_resume_report(resume_report, args, settings)
-            results = [result for result in results if _result_error_type(result) not in {"http_429", "quota"}]
+            results = _successful_resume_results(results)
     started_at = generated_started_at
     if resume_report is not None:
         previous_run = resume_report.get("run")

@@ -263,7 +263,7 @@ def test_text_prefers_paragraph_boundaries_and_can_be_bisected() -> None:
 
 def test_exact_compact_limit_keeps_single_request_with_deprecated_flags_enabled() -> None:
     """Deprecated split flags must not add requests at the hard budget."""
-    values = [f"User recorded baseline item {index:02d}" for index in range(16)]
+    values = [f"User recorded baseline item {index:02d}" for index in range(24)]
     client = _SequenceClient([LLMResponse(_compact_response(values), "stop", 10)])
     audit = _RecordingAudit()
 
@@ -282,7 +282,7 @@ def test_exact_compact_limit_keeps_single_request_with_deprecated_flags_enabled(
 
 def test_legacy_schema_overflow_uses_the_same_hard_budget() -> None:
     """Compatible legacy responses use the same deterministic hard cap."""
-    values = [f"User recorded legacy item {index:02d}" for index in range(20)]
+    values = [f"User recorded legacy item {index:02d}" for index in range(28)]
     client = _SequenceClient([LLMResponse(_full_response(values), "stop", 10)])
     audit = _RecordingAudit()
 
@@ -294,7 +294,7 @@ def test_legacy_schema_overflow_uses_the_same_hard_budget() -> None:
         ).extract("\n".join(values))
 
     assert len(client.requests) == 1
-    assert [claim.value for claim in claims] == values[:16]
+    assert [claim.value for claim in claims] == values[:24]
     assert [event[3]["dropped_claim_count"] for event in audit.events if event[2] == "overflow_truncated"] == [4]
 
 
@@ -354,12 +354,12 @@ def test_claim_count_overflow_is_ranked_and_truncated_without_another_request() 
     )
 
     with audit_scope(audit):
-        claims = extractor.extract("\n".join([*(f"low-{index}" for index in range(16)), "high", "medium"]))
+        claims = extractor.extract("\n".join([*(f"low-{index}" for index in range(24)), "high", "medium"]))
 
     assert [claim.value for claim in claims] == [
         "high",
         "medium",
-        *(f"low-{index}" for index in range(14)),
+        *(f"low-{index}" for index in range(22)),
     ]
     assert len(client.requests) == 1
     assert extractor._schema_retry_count == 0
@@ -371,8 +371,8 @@ def test_claim_count_overflow_is_ranked_and_truncated_without_another_request() 
             "overflow_truncated",
             {
                 "generated_claim_count": 30,
-                "retained_claim_count": 16,
-                "dropped_claim_count": 14,
+                "retained_claim_count": 24,
+                "dropped_claim_count": 6,
                 "chunk_index": 0,
                 "start_unit": 0,
                 "end_unit": 1,
@@ -382,9 +382,9 @@ def test_claim_count_overflow_is_ranked_and_truncated_without_another_request() 
 
 
 def test_malformed_overflow_is_audited_only_after_schema_retry_succeeds() -> None:
-    first_claims = [_compact_fact(f"first-{index}") for index in range(17)]
+    first_claims = [_compact_fact(f"first-{index}") for index in range(25)]
     first_claims[0].pop("subject")
-    second_values = [f"second-{index}" for index in range(17)]
+    second_values = [f"second-{index}" for index in range(25)]
     client = _SequenceClient(
         [
             LLMResponse(
@@ -401,7 +401,7 @@ def test_malformed_overflow_is_audited_only_after_schema_retry_succeeds() -> Non
     with audit_scope(audit):
         claims = extractor.extract("\n".join(second_values))
 
-    assert [claim.value for claim in claims] == second_values[:16]
+    assert [claim.value for claim in claims] == second_values[:24]
     assert len(client.requests) == 2
     assert extractor._schema_retry_count == 1
     assert [event for event in audit.events if event[2] == "overflow_truncated"] == [
@@ -410,8 +410,8 @@ def test_malformed_overflow_is_audited_only_after_schema_retry_succeeds() -> Non
             "claim_budget",
             "overflow_truncated",
             {
-                "generated_claim_count": 17,
-                "retained_claim_count": 16,
+                "generated_claim_count": 25,
+                "retained_claim_count": 24,
                 "dropped_claim_count": 1,
                 "chunk_index": 0,
                 "start_unit": 0,

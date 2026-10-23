@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from evaluation.tools.run_identity_gate import assert_run_identity_from_env, finalize_report_identity
 from tests.eval.chinese_e2e import load_sample_manifest, run_chinese_e2e
 
 pytestmark = [pytest.mark.eval, pytest.mark.real_api]
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_MANIFEST_PATH = Path(__file__).parent / "fixtures" / "chinese_e2e_sample.json"
 DEFAULT_CACHE_ROOT = ROOT / "var" / "eval" / "chinese_e2e_cache"
 DEFAULT_REPORT_PATH = ROOT / "var" / "eval" / "chinese_e2e_report.json"
+EXPECTED_MANIFEST_COUNT = 16
 
 
 def _configured_cache_root() -> Path:
@@ -27,22 +29,37 @@ def _metric(value: object) -> str:
 
 @pytest.mark.timeout(7200)
 def test_chinese_extraction_recall_qa_e2e() -> None:
+    refresh = os.getenv("HL_MEM_CHINESE_E2E_REFRESH") == "1"
+    config_path = os.getenv("HL_MEM_CHINESE_E2E_CONFIG")
+    env_path = os.getenv("HL_MEM_CHINESE_E2E_ENV")
+    report_path = Path(os.getenv("HL_MEM_CHINESE_E2E_REPORT", str(DEFAULT_REPORT_PATH)))
+    resolved_config_path = Path(config_path) if config_path else ROOT / "hl_mem.toml"
+    resolved_env_path = Path(env_path) if env_path else ROOT / ".env"
+    identity = assert_run_identity_from_env(
+        config_path=resolved_config_path,
+        env_path=resolved_env_path,
+        required=True,
+    )
+    assert identity is not None
+
     manifest = load_sample_manifest(SAMPLE_MANIFEST_PATH)
     missing_sources = [item["path"] for item in manifest.sources.values() if not Path(item["path"]).is_file()]
     if missing_sources:
         pytest.skip(f"private Chinese E2E sources are not installed: {missing_sources}")
 
-    refresh = os.getenv("HL_MEM_CHINESE_E2E_REFRESH") == "1"
-    config_path = os.getenv("HL_MEM_CHINESE_E2E_CONFIG")
-    env_path = os.getenv("HL_MEM_CHINESE_E2E_ENV")
-    report_path = Path(os.getenv("HL_MEM_CHINESE_E2E_REPORT", str(DEFAULT_REPORT_PATH)))
     report = run_chinese_e2e(
         manifest_path=SAMPLE_MANIFEST_PATH,
         cache_root=_configured_cache_root(),
         report_path=report_path,
         refresh=refresh,
-        config_path=Path(config_path) if config_path else None,
-        env_path=Path(env_path) if env_path else None,
+        config_path=resolved_config_path,
+        env_path=resolved_env_path,
+    )
+    finalize_report_identity(
+        report,
+        report_path=report_path,
+        expected_extractor_version=identity.expected_extractor_version,
+        expected_manifest_count=EXPECTED_MANIFEST_COUNT,
     )
 
     print("\nChinese extraction -> recall -> QA summary:")

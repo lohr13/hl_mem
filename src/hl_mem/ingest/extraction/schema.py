@@ -11,8 +11,8 @@ from hl_mem.domain.claims.attributes import ALLOWED_TOPIC_TAGS, OPERATIONAL_SLOT
 
 from ..extractors import AssertionKind
 
-ORDINARY_CLAIM_TARGET: Final[int] = 12
-MAX_CLAIMS_PER_CHUNK: Final[int] = 16
+ORDINARY_CLAIM_TARGET: Final[int] = 20
+MAX_CLAIMS_PER_CHUNK: Final[int] = 24
 
 CanonicalSlot: TypeAlias = Literal[
     "preference.ui_theme",

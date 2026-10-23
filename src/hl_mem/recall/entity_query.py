@@ -20,8 +20,31 @@ EntityFallbackReason = Literal[
     "resolution_error",
     "storage_error",
     "mode_off",
+    "pronoun_only",
 ]
 _MAX_ACTIVE_ALIASES = 1024
+_FIRST_PERSON_PRONOUN_ALIASES = frozenset(
+    {
+        "i",
+        "me",
+        "mine",
+        "my",
+        "myself",
+        "our",
+        "ours",
+        "ourselves",
+        "us",
+        "we",
+        "俺",
+        "俺们",
+        "咱",
+        "咱们",
+        "我",
+        "我们",
+        "我自己",
+        "本人",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +145,13 @@ def _residual_query(normalized_query: str, mentions: tuple[QueryEntityMention, .
         " " if unicodedata.category(character)[0] in {"P", "Z"} else character for character in without_mentions
     )
     return " ".join(collapsed.split())
+
+
+def _is_pronoun_only_resolution(resolution: QueryEntityResolution) -> bool:
+    return bool(resolution.mentions) and all(
+        unicodedata.normalize("NFKC", alias).casefold() in _FIRST_PERSON_PRONOUN_ALIASES
+        for alias in resolution.mentions
+    )
 
 
 def _link_coverage_complete(connection: sqlite3.Connection, namespace: str, entity_id: str) -> bool:
@@ -257,6 +287,8 @@ def plan_query_entity(
     fallback_reason = resolution.resolution_reason
     normalized = unicodedata.normalize("NFKC", query).casefold()
     residual = _residual_query(normalized, resolution.mention_spans)
+    if mode == "enforce" and _is_pronoun_only_resolution(resolution):
+        return QueryEntityPlan(resolution, None, residual, query, "wide", "pronoun_only")
     if resolution.confidence_class != "high" or resolution.filter_entity_id is None:
         return QueryEntityPlan(resolution, None, residual, query, "wide", fallback_reason)
     if mode == "observe":
