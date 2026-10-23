@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=2,<3"]
+mcp = ["mcp>=2.2,<3"]
 sqlite-vec = ["sqlite-vec>=0.1.9,<0.2"]
 
 [project.urls]
@@ -43,7 +43,7 @@ dev = [
     "black>=24.0",
     "build>=1.2",
     "isort>=5.13",
-    "mcp>=2,<3",
+    "mcp>=2.2,<3",
     "mypy>=1.10",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
