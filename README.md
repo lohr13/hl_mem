@@ -2,7 +2,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 1.1.4](https://img.shields.io/badge/version-1.1.4-blue.svg)](docs/CHANGELOG.md)
+[![Version: 1.1.7](https://img.shields.io/badge/version-1.1.7-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](#中文) | [English](README_EN.md)
@@ -81,6 +81,8 @@ uv run hlmem init
 uv run hlmem server
 ```
 
+国内网络可使用 [Gitee 镜像](https://gitee.com/lohrwws/hl_mem)（自动同步 GitHub）。
+
 开发与测试使用 `uv` 和仓库锁文件。部署、备份、恢复和运行边界见[架构文档](docs/architecture.md)与
 [兼容性策略](docs/compatibility.md)。
 
@@ -156,6 +158,10 @@ HL-Mem 是 SQLite-first 的单机记忆系统，不提供 PostgreSQL、外部图
 | [Provider 插件](docs/provider-plugins.md) | 扩展 API 与信任边界 |
 | [兼容性策略](docs/compatibility.md) | 升级、恢复与公共契约 |
 | [变更日志](docs/CHANGELOG.md) | 当前版本与发布历史 |
+
+## 反馈
+
+使用问题与经验交流请到 [Discussions](https://github.com/lohr13/hl_mem/discussions)；Bug 与功能请求请提 [Issue](https://github.com/lohr13/hl_mem/issues)。
 
 ## Contributing / 贡献指南
 

@@ -16,6 +16,7 @@ from hl_mem.evaluation.perltqa import (
     PerLTQAQuestion,
 )
 from hl_mem.ingest.embedder import FakeEmbedder
+from hl_mem.observability.audit import current_audit
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 
@@ -46,6 +47,64 @@ def _memdaily_trajectory() -> memdaily_runner.MemDailyTrajectory:
 
 
 class MemDailyAggregationTests(unittest.TestCase):
+    def test_ingest_captures_only_safe_claim_budget_audit_fields(self) -> None:
+        class BudgetEmittingExtractor:
+            extractor_version = memdaily_runner.LLM_EXTRACTOR_VERSION
+            last_input_tokens = 10
+            last_output_tokens = 5
+            last_usage_tokens = 15
+
+            def extract(self, _content: object, _metadata: object) -> list[object]:
+                current_audit().emit(
+                    "extract",
+                    "claim_budget",
+                    "overflow_truncated",
+                    detail={
+                        "generated_claim_count": 20,
+                        "retained_claim_count": 16,
+                        "dropped_claim_count": 4,
+                        "chunk_index": 2,
+                        "start_unit": 3,
+                        "end_unit": 7,
+                        "claim_text": "must not enter the report",
+                    },
+                )
+                return []
+
+        with (
+            patch.object(memdaily_runner, "IngestService"),
+            patch.object(memdaily_runner, "make_extractor", return_value=BudgetEmittingExtractor()),
+        ):
+            result = memdaily_runner._ingest_trajectory(
+                object(),
+                _memdaily_trajectory(),
+                Settings.for_test(),
+                object(),
+                case_number=1,
+                total=1,
+            )
+
+        self.assertEqual(
+            result["claim_budget"],
+            {
+                "overflow_truncated_count": 1,
+                "generated_claim_count": 20,
+                "retained_claim_count": 16,
+                "dropped_claim_count": 4,
+                "events": [
+                    {
+                        "generated_claim_count": 20,
+                        "retained_claim_count": 16,
+                        "dropped_claim_count": 4,
+                        "chunk_index": 2,
+                        "start_unit": 3,
+                        "end_unit": 7,
+                    }
+                ],
+            },
+        )
+        self.assertNotIn("must not enter the report", json.dumps(result, ensure_ascii=False))
+
     def test_reader_accepts_an_explicit_transport_without_mutating_default(self) -> None:
         trajectory = _memdaily_trajectory()
         explicit = Mock(return_value=("An event", 19))
@@ -205,6 +264,43 @@ class MemDailyAggregationTests(unittest.TestCase):
         self.assertEqual(metrics["overall"]["f1"], 0.5)
         self.assertEqual(metrics["overall"]["choice_accuracy"], 0.5)
         self.assertEqual(metrics["by_type"]["simple"]["accuracy"], 0.5)
+
+    def test_memdaily_report_aggregates_claim_budget_counts_and_marks_unobserved_cache_reuse(self) -> None:
+        budget = {
+            "overflow_truncated_count": 2,
+            "generated_claim_count": 38,
+            "retained_claim_count": 32,
+            "dropped_claim_count": 6,
+            "events": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "memdaily.json"
+            source.write_text("{}", encoding="utf-8")
+            report = memdaily_runner._report(
+                (_memdaily_trajectory(), _memdaily_trajectory()),
+                (
+                    {"ingest": {"cache_status": "fresh_ingest", "claim_budget": budget}},
+                    {"ingest": {"cache_status": "reused", "skipped": True}},
+                ),
+                Settings.for_test(),
+                source,
+                "2026-09-04T00:00:00+00:00",
+                "completed",
+                True,
+                False,
+            )
+
+        self.assertEqual(
+            report["run"]["claim_budget"],
+            {
+                "observed_ingests": 1,
+                "unobserved_ingests": 1,
+                "overflow_truncated_count": 2,
+                "generated_claim_count": 38,
+                "retained_claim_count": 32,
+                "dropped_claim_count": 6,
+            },
+        )
 
     def test_cached_ingest_requires_matching_manifest_and_database_version(self) -> None:
         trajectory = _memdaily_trajectory()

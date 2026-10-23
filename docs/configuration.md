@@ -1,10 +1,10 @@
 # HL-Mem 配置参考
 
-HL-Mem 1.1.4 使用带 `schema_version = 1` 的 TOML 保存非敏感配置，并用 `.env` 或同名进程环境变量保存五个密钥。
+HL-Mem 1.1.6 使用带 `schema_version = 1` 的 TOML 保存非敏感配置，并用 `.env` 或同名进程环境变量保存五个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
-v1.1.4 的 assertion/source/session 治理共用 `[provenance].mode`；存量 `unknown` 保持旧行为，不改变
+v1.1.6 的 assertion/source/session 治理共用 `[provenance].mode`；存量 `unknown` 保持旧行为，不改变
 supersede、召回或注入。
 
 ## 后台自动化默认值
@@ -242,9 +242,16 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `extraction.delta_repair_enabled` | 布尔值 | `false` | 已弃用 no-op；仍接受 `true`、`false` | `extraction_delta_repair_enabled` |
 | `extraction.lesson_signal_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `lesson_signal_mode` |
 | `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
+| `extraction.memory_disposition_mode` | 字符串 | `"enforce"` | `off`、`observe`、`enforce` | `memory_disposition_mode` |
 | `extraction.mode` | 字符串 | `"llm"` | 生产为 `real` 或 `llm`；`fake` 仅供测试 | `extractor_mode` |
 | `extraction.soft_split_enabled` | 布尔值 | `false` | 已弃用 no-op；仍接受 `true`、`false` | `extraction_soft_split_enabled` |
 | `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
+
+`extraction.memory_disposition_mode = "enforce"` 在 Event 明确携带
+`metadata.memory_disposition = "exclude"` 时，于图片描述和 Claim 提取前保留 Event 并停止后续处理；
+`"observe"` 只记录 `excluded_by_producer_disposition` 审计后继续，`"off"` 忽略该标记。缺失、非对象
+metadata 或未知 disposition 值均 fail-open，不根据正文或 origin 推断。Hermes cron assistant 输出会显式打标，
+cron prompt/user Event 与交互会话保持原行为。
 
 Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_max_events` 时立即提取，否则最多等待
 `batch_max_wait_seconds`。显式记忆、无 session 事件和非 message 事件不等待。Hermes 的 `sync_turn` 会原子写入
@@ -309,7 +316,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |
 | `llm.thinking_control` | 字符串 | `"auto"` | `auto`、`chat_template_kwargs` | `llm_thinking_control` |
-| `llm.timeout` | 数值 | `90.0` | > 0 | `llm_timeout` |
+| `llm.timeout` | 数值 | `240.0` | > 0 | `llm_timeout` |
 
 `llm.thinking_control = "auto"` 保持 provider 现有请求格式：DashScope 发送顶层 `enable_thinking`，
 Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 `llm.provider = "openai_compatible"` 且

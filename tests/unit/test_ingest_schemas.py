@@ -106,7 +106,7 @@ def test_generated_schema_forbids_extra_fields_recursively() -> None:
     )
 
 
-def test_compact_schema_accepts_at_most_16_claims() -> None:
+def test_compact_schema_accepts_at_most_24_claims() -> None:
     claim = {
         "subject": "用户",
         "value": "用户记录了一条可回答事实",
@@ -117,10 +117,10 @@ def test_compact_schema_accepts_at_most_16_claims() -> None:
         "notability": "medium",
         "evidence_quote": "记录了一条可回答事实",
     }
-    payload = {"claims": [claim.copy() for _ in range(16)], "should_memorize": True}
+    payload = {"claims": [claim.copy() for _ in range(24)], "should_memorize": True}
 
-    assert len(CompactExtractionResponseSchema.model_validate(payload).claims) == 16
-    assert extraction_response_json_schema()["properties"]["claims"]["maxItems"] == 16
+    assert len(CompactExtractionResponseSchema.model_validate(payload).claims) == 24
+    assert extraction_response_json_schema()["properties"]["claims"]["maxItems"] == 24
 
     payload["claims"].append(claim.copy())
     with pytest.raises(ValidationError):
